@@ -5,18 +5,18 @@ A Dual-space Multilevel Kernel-splitting (DMK) Framework for Discrete and Contin
 The DMK framework is a dimension-independent and kernel-independent fast algorithm for computing
 discrete summations
 
-u(x_i) = \sum_{j=1}^N_S K(x_i, y_j) \rho_j, for i = 1, \ldots, N_T
+$$u(x_i) = \sum_{j=1}^N_S K(x_i, y_j) \rho_j, for i = 1, \ldots, N_T$$
 
 or the continuous analog
 
-u(x) = \int_{B} K(x,y) \rho(y) dy.
+$$u(x) = \int_{B} K(x,y) \rho(y) dy.$$
 
-Here the kernel K is assumed to be radially symmetric, i.e., K(x,y)=K(|x-y|) and
+Here the kernel $K$ is assumed to be radially symmetric, i.e., $K(x,y)=K(|x-y|)$ and
 nonoscillatory. This class of kernels cover a wide range of kernels in mathematical physics,
 statistics, and machine learning. For example, the Green's functions of classic PDEs such as the
 Poisson equation, the Yukawa equation, the incompressible Stokes equations all belong to the
-class. The kernel of fractional PDEs, i.e., the power function 1/r^\beta for arbitrary nonnegative
-real number \beta also belongs to this class. Many radial basis functions used in the kernel method
+class. The kernel of fractional PDEs, i.e., the power function $1/r^\beta$ for arbitrary nonnegative
+real number $\beta$ also belongs to this class. Many radial basis functions used in the kernel method
 in statistics clearly belong to the class. And the so-called Matern kernels that are widely used in
 statistics and machine learning also belong to this class.
 
