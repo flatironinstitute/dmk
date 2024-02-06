@@ -12,6 +12,7 @@ find_package(BLAS REQUIRED)
 
 set(DMK_INCLUDES
   ${PROJECT_SOURCE_DIR}/include
+  ${PROJECT_SOURCE_DIR}/extern/eigen
   ${PROJECT_SOURCE_DIR}/extern/SCTL/include
 )
 
