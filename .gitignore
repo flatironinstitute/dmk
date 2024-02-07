@@ -30,3 +30,15 @@
 *.exe
 *.out
 *.app
+int2*
+
+# data files
+fort*
+*.dat
+*.data
+
+# emacs files
+*~
+
+# Latex auxillary files
+out
