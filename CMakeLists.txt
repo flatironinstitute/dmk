@@ -28,3 +28,10 @@ add_library(dmk_shared SHARED $<TARGET_OBJECTS:DMKOBJS>)
 set_target_properties(${PROJECT_NAME}_shared PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
 target_link_libraries(${PROJECT_NAME}_shared OpenMP::OpenMP_CXX MPI::MPI_CXX ${BLAS_LIBRARIES})
 
+add_executable(test_tree test/test_tree.cpp)
+target_include_directories(test_tree PUBLIC ${DMK_INCLUDES})
+target_link_libraries(test_tree dmk MPI::MPI_CXX ${BLAS_LIBRARIES})
+
+add_executable(test_chebyshev test/test_chebyshev.cpp)
+target_include_directories(test_chebyshev PUBLIC ${DMK_INCLUDES})
+target_link_libraries(test_chebyshev dmk MPI::MPI_CXX ${BLAS_LIBRARIES})
