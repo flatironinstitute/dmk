@@ -23,12 +23,21 @@ using LU = Eigen::PartialPivLU<Matrix<T>>;
 
 namespace dmk::chebyshev::fixed {
 
+template <int ORDER, typename T = double>
+inline Eigen::Vector<T, ORDER> get_cheb_nodes(T lb, T ub) {
+    Eigen::Vector<T, ORDER> res;
+    const T mean = 0.5 * (lb + ub);
+    const T hw = 0.5 * (ub - lb);
+    for (int i = 0; i < ORDER; ++i)
+        res[i] = mean + hw * cos(M_PI * (i + 0.5) / ORDER);
+
+    return res;
+}
+
 template <typename T, int ORDER>
 Eigen::Matrix<T, ORDER, ORDER> calc_vandermonde() {
     Eigen::Matrix<T, ORDER, ORDER> V;
-    Eigen::Vector<T, ORDER> cosarray_;
-    for (int i = 0; i < ORDER; ++i)
-        cosarray_[ORDER - i - 1] = cos(M_PI * (i + 0.5) / ORDER);
+    Eigen::Vector<T, ORDER> cosarray_ = get_cheb_nodes<ORDER, T>(-1.0, 1.0);
 
     for (int j = 0; j < ORDER; ++j) {
         V(0, j) = 1;
@@ -59,11 +68,11 @@ inline T cheb_eval(T x, const T *c) {
     // T_i, where res = \Sum_i T_i c_i
     const T x2 = 2 * x;
 
-    T c0 = c[0];
-    T c1 = c[1];
+    T c0 = c[ORDER - 1];
+    T c1 = c[ORDER - 2];
     for (int i = 2; i < ORDER; ++i) {
         T tmp = c1;
-        c1 = c[i] - c0;
+        c1 = c[ORDER - i - 1] - c0;
         c0 = tmp + c0 * x2;
     }
 
@@ -108,17 +117,6 @@ inline T cheb_eval(const Eigen::Vector<T, 3> &x, const T *coeffs_raw) {
     return res;
 }
 
-template <int ORDER, typename T = double>
-inline Eigen::Vector<T, ORDER> get_cheb_nodes(T lb, T ub) {
-    Eigen::Vector<T, ORDER> res;
-    const T mean = 0.5 * (lb + ub);
-    const T hw = 0.5 * (ub - lb);
-    for (int i = 0; i < ORDER; ++i)
-        res[ORDER - i - 1] = mean + hw * cos(M_PI * (i + 0.5) / ORDER);
-
-    return res;
-}
-
 template <int DIM, int ORDER, typename T = double, typename FT>
 inline Eigen::Vector<T, ORDER> fit(FT &&func, const VectorRef<T> &lb, const VectorRef<T> &ub) {
     Eigen::PartialPivLU<Eigen::Matrix<T, ORDER, ORDER>> VLU(calc_vandermonde<T, ORDER>());
@@ -129,7 +127,7 @@ inline Eigen::Vector<T, ORDER> fit(FT &&func, const VectorRef<T> &lb, const Vect
         Eigen::Vector<T, ORDER> F;
         for (int i = 0; i < ORDER; ++i)
             F[i] = func(&xvec[i]);
-        return Eigen::Reverse(VLU.solve(F));
+        return VLU.solve(F);
     }
     if constexpr (DIM == 2) {
         Eigen::Vector<T, ORDER> xvec = get_cheb_nodes<ORDER, T>(lb[0], ub[0]);
@@ -158,7 +156,7 @@ Vector<T> get_cheb_nodes(int order, T lb, T ub) {
     const T mean = 0.5 * (lb + ub);
     const T hw = 0.5 * (ub - lb);
     for (int i = 0; i < order; ++i)
-        nodes[order - i - 1] = mean + hw * cos(M_PI * (i + 0.5) / order);
+        nodes[i] = mean + hw * cos(M_PI * (i + 0.5) / order);
 
     return nodes;
 }
@@ -188,11 +186,11 @@ inline T cheb_eval_1d(int order, const T x, const T *c) {
     // T_i, where res = \Sum_i T_i c_i
     const T x2 = 2 * x;
 
-    T c0 = c[0];
-    T c1 = c[1];
+    T c0 = c[order - 1];
+    T c1 = c[order - 2];
     for (int i = 2; i < order; ++i) {
         T tmp = c1;
-        c1 = c[i] - c0;
+        c1 = c[order - i - 1] - c0;
         c0 = tmp + c0 * x2;
     }
 
@@ -214,11 +212,11 @@ inline void cheb_eval_1d(int order, int N, double lb, double ub, const T *__rest
         vec_t x2 = vec_t::Load(x_p + i);
         x2 = (4.0 * x2 - four_mean) * inv_width;
 
-        vec_t c0 = c_p[0];
-        vec_t c1 = c_p[1];
+        vec_t c0 = c_p[order - 1];
+        vec_t c1 = c_p[order - 2];
         for (int i = 2; i < order; ++i) {
             vec_t tmp = c1;
-            c1 = c_p[i] - c0;
+            c1 = c_p[order - i - 1] - c0;
             c0 = tmp + c0 * x2;
         }
 
@@ -255,7 +253,7 @@ Vector<T> fit(int dim, int order, FT &&func, const VectorRef<T> &lb, const Vecto
 
         for (int i = 0; i < order; ++i)
             F[i] = func(&xvec[i]);
-        return Eigen::Reverse(vlu.solve(F));
+        return vlu.solve(F);
     }
 
     return Vector<T>();
