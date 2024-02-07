@@ -6,7 +6,7 @@ A Dual-space Multilevel Kernel-splitting (DMK) Framework for Discrete and Contin
 The DMK framework is a dimension-independent and kernel-independent fast algorithm for computing
 discrete summations
 
-$$u(x_i) = \sum_{j=1}^{N_S} K(x_i, y_j) \rho_j,\, \text{for~} i = 1, \ldots, N_T$$
+$$u(x_i) = \sum_{j=1}^{N_S} K(x_i, y_j) \rho_j,\quad \text{for~} i = 1, \ldots, N_T$$
 
 or the continuous analog
 
