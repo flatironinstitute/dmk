@@ -102,7 +102,7 @@ DYLIBS += $(LBLAS) $(LDBLASINC)
 # vectorized kernel directory
 SRCDIR = ./vec-kernels/src
 INCDIR = ./vec-kernels/include
-VCLDIR = ./VCL/version2
+VCLDIR = ./extern/VCL/version2
 #
 # objects to compile
 # 
