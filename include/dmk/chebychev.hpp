@@ -23,7 +23,7 @@ using LU = Eigen::PartialPivLU<Matrix<T>>;
 
 namespace dmk::chebyshev::fixed {
 
-template <int ORDER, typename T = double>
+template <int ORDER, typename T>
 inline Eigen::Vector<T, ORDER> get_cheb_nodes(T lb, T ub) {
     Eigen::Vector<T, ORDER> res;
     const T mean = 0.5 * (lb + ub);
@@ -59,8 +59,8 @@ Eigen::Matrix<T, ORDER, ORDER> calc_vandermonde() {
 /// @param[in] x position of point to evaluate (pre-normalized on interval from -1:1)
 /// @param[in] coeffs_raw flat vector of coefficients
 /// @returns value of interpolating function at x
-template <int DIM, int ORDER, typename T = double>
-inline T cheb_eval(const Eigen::Vector<T, DIM> &x, const double *coeffs_raw);
+template <int DIM, int ORDER, typename T>
+inline T cheb_eval(const Eigen::Vector<T, DIM> &x, const T *coeffs_raw);
 
 template <int ORDER, typename T>
 inline T cheb_eval(T x, const T *c) {
@@ -79,12 +79,12 @@ inline T cheb_eval(T x, const T *c) {
     return c1 + c0 * x;
 }
 
-template <int ORDER, typename T = double>
+template <int ORDER, typename T>
 inline T cheb_eval(const Eigen::Vector<T, 1> &x, const T *c) {
     return cheb_eval<ORDER, T>(x[0], c);
 }
 
-template <int ORDER, typename T = double>
+template <int ORDER, typename T>
 inline T cheb_eval(const Eigen::Vector<T, 2> &x, const T *coeffs_raw) {
     // note (RB): There is code to do this with clenshaw's method (twice), but it doesn't seem
     // faster (isolated tests shows it's 3x faster, but that doesn't bear fruit in production
@@ -100,7 +100,7 @@ inline T cheb_eval(const Eigen::Vector<T, 2> &x, const T *coeffs_raw) {
     return Tns.row(0).transpose().dot(coeffs * Tns.row(1).transpose());
 }
 
-template <int ORDER, typename T = double>
+template <int ORDER, typename T>
 inline T cheb_eval(const Eigen::Vector<T, 3> &x, const T *coeffs_raw) {
     Eigen::Vector<T, ORDER> Tn[3];
     Tn[0][0] = Tn[1][0] = Tn[2][0] = 1.0;
@@ -117,7 +117,7 @@ inline T cheb_eval(const Eigen::Vector<T, 3> &x, const T *coeffs_raw) {
     return res;
 }
 
-template <int DIM, int ORDER, typename T = double, typename FT>
+template <int DIM, int ORDER, typename T, typename FT>
 inline Eigen::Vector<T, ORDER> fit(FT &&func, const VectorRef<T> &lb, const VectorRef<T> &ub) {
     Eigen::PartialPivLU<Eigen::Matrix<T, ORDER, ORDER>> VLU(calc_vandermonde<T, ORDER>());
 
@@ -136,7 +136,7 @@ inline Eigen::Vector<T, ORDER> fit(FT &&func, const VectorRef<T> &lb, const Vect
         Eigen::Matrix<T, ORDER, ORDER> F;
         for (int j = 0; j < ORDER; ++j) {
             for (int i = 0; i < ORDER; ++i) {
-                double x[2] = {xvec[i], yvec[j]};
+                T x[2] = {xvec[i], yvec[j]};
                 F(i, j) = func(x);
             }
         }
@@ -164,7 +164,7 @@ Vector<T> get_cheb_nodes(int order, T lb, T ub) {
 template <typename T>
 Matrix<T> calc_vandermonde(int order) {
     Matrix<T> V(order, order);
-    Vector<T> cosarray_ = get_cheb_nodes(order, -1.0, 1.0);
+    Vector<T> cosarray_ = get_cheb_nodes<T>(order, -1.0, 1.0);
 
     for (int j = 0; j < order; ++j) {
         V(0, j) = 1;
@@ -198,7 +198,7 @@ inline T cheb_eval_1d(int order, const T x, const T *c) {
 }
 
 template <typename T, int VecLen>
-inline void cheb_eval_1d(int order, int N, double lb, double ub, const T *__restrict x_p, const T *__restrict c_p,
+inline void cheb_eval_1d(int order, int N, T lb, T ub, const T *__restrict x_p, const T *__restrict c_p,
                          T *__restrict res) {
     // note (RB): uses clenshaw's method to avoid direct calculation of recurrence relation of
     // T_i, where res = \Sum_i T_i c_i
@@ -206,11 +206,11 @@ inline void cheb_eval_1d(int order, int N, double lb, double ub, const T *__rest
     const int remainder = N % VecLen;
     N -= remainder;
 
-    const vec_t inv_width = 1.0 / (ub - lb);
-    const vec_t four_mean = 2.0 * (ub + lb);
+    vec_t inv_width = T(1.0f / (ub - lb));
+    vec_t four_mean = T(2.0 * (ub + lb));
     for (int i = 0; i < N; i += VecLen) {
         vec_t x2 = vec_t::Load(x_p + i);
-        x2 = (4.0 * x2 - four_mean) * inv_width;
+        x2 = (T(4.0) * x2 - four_mean) * inv_width;
 
         vec_t c0 = c_p[order - 1];
         vec_t c1 = c_p[order - 2];
@@ -220,7 +220,7 @@ inline void cheb_eval_1d(int order, int N, double lb, double ub, const T *__rest
             c0 = tmp + c0 * x2;
         }
 
-        c0 = c1 + 0.5 * c0 * x2;
+        c0 = c1 + T(0.5) * c0 * x2;
         c0.Store(res + i);
     }
 
