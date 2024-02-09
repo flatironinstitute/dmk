@@ -22,29 +22,15 @@ void test_eigen(int N) {
     Eigen::VectorX<T> X = Eigen::VectorX<T>::LinSpaced(N, lb[0], ub[0]);
     Eigen::VectorX<T> results = Eigen::VectorX<T>::Zero(N);
 
-    {
-        Eigen::Vector<T, order> coeffs = dmk::chebyshev::fixed::fit<1, order, T>(testfunc<T>, lb, ub);
-        std::string strat = "fixed";
+    Eigen::VectorX<T> coeffs = dmk::chebyshev::fit<T>(1, order, testfunc<T>, lb, ub);
+    std::string strat = "dyn";
 
-        double st = omp_get_wtime();
-        for (int i = 0; i < X.size(); ++i) {
-            T xinterp = (2.0 * X(i) - (ub[0] + lb[0])) / (ub[0] - lb[0]);
-            results[i] = dmk::chebyshev::fixed::cheb_eval<order>(xinterp, coeffs.data());
-        }
-        print_results<T>(order, strat, omp_get_wtime() - st, results);
+    double st = omp_get_wtime();
+    for (int i = 0; i < X.size(); ++i) {
+        T xinterp = (2.0 * X(i) - (ub[0] + lb[0])) / (ub[0] - lb[0]);
+        results[i] = dmk::chebyshev::cheb_eval_1d(order, xinterp, coeffs.data());
     }
-
-    {
-        Eigen::VectorX<T> coeffs = dmk::chebyshev::dynamic::fit<T>(1, order, testfunc<T>, lb, ub);
-        std::string strat = "dyn";
-
-        double st = omp_get_wtime();
-        for (int i = 0; i < X.size(); ++i) {
-            T xinterp = (2.0 * X(i) - (ub[0] + lb[0])) / (ub[0] - lb[0]);
-            results[i] = dmk::chebyshev::dynamic::cheb_eval_1d(order, xinterp, coeffs.data());
-        }
-        print_results<T>(order, strat, omp_get_wtime() - st, results);
-    }
+    print_results<T>(order, strat, omp_get_wtime() - st, results);
 }
 
 template <typename T, int order, int VecLen>
@@ -53,10 +39,9 @@ void test_simd(int N) {
 
     Eigen::VectorX<T> X = Eigen::VectorX<T>::LinSpaced(N, 0.0, 1.0);
     Eigen::VectorX<T> results = Eigen::VectorX<T>::Zero(N);
-    Eigen::VectorX<T> coeffs = dmk::chebyshev::dynamic::fit<T>(1, order, testfunc<T>, lb, ub);
+    Eigen::VectorX<T> coeffs = dmk::chebyshev::fit<T>(1, order, testfunc<T>, lb, ub);
     double st = omp_get_wtime();
-    dmk::chebyshev::dynamic::cheb_eval_1d<T, VecLen>(order, X.size(), lb[0], ub[0], X.data(), coeffs.data(),
-                                                     results.data());
+    dmk::chebyshev::cheb_eval_1d<T, VecLen>(order, X.size(), lb[0], ub[0], X.data(), coeffs.data(), results.data());
     print_results<T>(order, "simd" + std::to_string(VecLen), omp_get_wtime() - st, results);
 }
 
