@@ -17,7 +17,7 @@ template <typename T>
 using Vector = Eigen::VectorX<T>;
 
 template <typename T>
-using VectorRef = Eigen::Ref<Vector<T>>;
+using VectorRef = Eigen::Ref<const Vector<T>>;
 
 template <typename T>
 using LU = Eigen::PartialPivLU<Matrix<T>>;
@@ -38,18 +38,16 @@ inline Matrix<T> calc_vandermonde(const VectorRef<T> &nodes) {
     const int order = nodes.size();
     Matrix<T> V(order, order);
 
-    for (int j = 0; j < order; ++j) {
-        V(0, j) = 1;
-        V(1, j) = nodes(j);
+    for (int i = 0; i < order; ++i) {
+        V(i, 0) = T{1};
+        V(i, 1) = nodes(i);
     }
 
-    for (int i = 2; i < order; ++i) {
-        for (int j = 0; j < order; ++j) {
-            V(i, j) = T(2) * V(i - 1, j) * nodes(j) - V(i - 2, j);
-        }
-    }
+    for (int j = 2; j < order; ++j)
+        for (int i = 0; i < order; ++i)
+            V(i, j) = T(2) * V(i, j - 1) * nodes(i) - V(i, j - 2);
 
-    return V.transpose();
+    return V;
 }
 
 template <typename T>
