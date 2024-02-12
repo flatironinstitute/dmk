@@ -6,8 +6,8 @@
 #include <type_traits>
 
 template <typename T>
-T testfunc(const T *x) {
-    return std::sin(*x * *x * *x) + 0.5;
+T testfunc(const T x) {
+    return std::sin(x * x * x) + 0.5;
 }
 
 template <typename T>
@@ -26,10 +26,9 @@ void test_eigen(int N) {
     std::string strat = "dyn";
 
     double st = omp_get_wtime();
-    for (int i = 0; i < X.size(); ++i) {
-        T xinterp = (2.0 * X(i) - (ub + lb)) / (ub - lb);
-        results[i] = dmk::chebyshev::cheb_eval(order, xinterp, coeffs.data());
-    }
+    for (int i = 0; i < X.size(); ++i)
+        results[i] = dmk::chebyshev::cheb_eval(X[i], order, lb, ub, coeffs.data());
+
     print_results<T>(order, strat, omp_get_wtime() - st, results);
 }
 

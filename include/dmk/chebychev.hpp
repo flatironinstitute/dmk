@@ -8,10 +8,10 @@
 
 namespace dmk::chebyshev {
 template <typename T>
-using Matrix = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
+using Matrix = Eigen::MatrixX<T>;
 
 template <typename T>
-using Vector = Eigen::Vector<T, Eigen::Dynamic>;
+using Vector = Eigen::VectorX<T>;
 
 template <typename T>
 using VectorRef = Eigen::Ref<Vector<T>>;
@@ -56,10 +56,27 @@ Matrix<T> calc_vandermonde(int order) {
 }
 
 template <typename T>
-inline T cheb_eval(int order, const T x, const T *c) {
+inline T cheb_eval(T x, int order, T lb, T ub, const T *c) {
     // note (RB): uses clenshaw's method to avoid direct calculation of recurrence relation of
     // T_i, where res = \Sum_i T_i c_i
-    const T x2 = 2 * x;
+
+    const T x2 = 2.0 * (T{2.0} * x - (ub + lb)) / (ub - lb);
+    T c0 = c[order - 1];
+    T c1 = c[order - 2];
+    for (int i = 2; i < order; ++i) {
+        T tmp = c1;
+        c1 = c[order - i - 1] - c0;
+        c0 = tmp + c0 * x2;
+    }
+
+    return c1 + T{0.5} * c0 * x2;
+}
+
+template <typename T>
+inline T cheb_eval(T x, int order, const T *c) {
+    // note (RB): uses clenshaw's method to avoid direct calculation of recurrence relation of
+    // T_i, where res = \Sum_i T_i c_i
+    const T x2 = T{2.0} * x;
 
     T c0 = c[order - 1];
     T c1 = c[order - 2];
@@ -100,15 +117,19 @@ inline void cheb_eval(int order, int N, T lb, T ub, const T *__restrict x_p, con
     }
 
     for (int i = N; i < N + remainder; ++i)
-        res[i] = cheb_eval(order, x_p[i], c_p);
+        res[i] = cheb_eval(x_p[i], order, c_p);
 }
 
 template <typename T>
 std::pair<Matrix<T>, Matrix<T>> parent_to_child_matrices(int order) {
-    Vector<T> x = get_cheb_nodes(order, T{-1.0}, T{1.0});
-    Eigen::PartialPivLU<Matrix<T>> u(calc_vandermonde<T>(x));
-    Vector<T> xm = get_cheb_nodes(order, T{-1.0}, T{0.0});
-    Vector<T> xp = get_cheb_nodes(order, T{0.0}, T{1.0});
+    Vector<T> x = get_cheb_nodes<T>(order, -1.0, 1.0);
+    LU<T> u(calc_vandermonde<T>(x));
+
+    // Shifted box positions. vec.array() allows element-wise/broadcasting ops
+    Vector<T> xm = 0.5 * x.array() - 0.5;
+    Vector<T> xp = 0.5 * x.array() + 0.5;
+
+    // minus and plus "vandermonde" matrices
     Matrix<T> vm = calc_vandermonde<T>(xm);
     Matrix<T> vp = calc_vandermonde<T>(xp);
 
@@ -124,7 +145,8 @@ Vector<T> fit(int order, FT &&func, T lb, T ub) {
     Vector<T> F(order);
 
     for (int i = 0; i < order; ++i)
-        F[i] = func(&xvec[i]);
+        F[i] = func(xvec[i]);
+
     return vlu.solve(F);
 }
 
