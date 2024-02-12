@@ -14,11 +14,24 @@ T testfunc(const T x) {
 }
 
 template <typename T>
+void fit_test(int order) {
+    T lb{-1.0}, ub{1.0};
+    // return by value
+    Eigen::VectorX<T> coeffs_rbv = fit(order, testfunc<T>, lb, ub);
+    // pass by reference
+    Eigen::VectorX<T> coeffs_pbr(order);
+    fit(order, testfunc<T>, lb, ub, coeffs_pbr.data());
+
+    assert(coeffs_rbv == coeffs_pbr);
+}
+
+template <typename T>
 void interp_test(int order) {
+    // Check that automatic interpolation by passing bounds works the same as the implicit [-1.0, 1.0]
     T lb{-1.0}, ub{1.0};
     Eigen::VectorX<T> coeffs = fit(order, testfunc<T>, lb, ub);
 
-    for (T x = -1.0; x <= 0.0; x += 0.01) {
+    for (T x = lb; x <= ub; x += 0.01) {
         T res = cheb_eval(x, order, coeffs.data());
         T res_alt = cheb_eval(x, order, lb, ub, coeffs.data());
         assert(std::fabs(res - res_alt) <= std::numeric_limits<T>::epsilon());
@@ -27,6 +40,8 @@ void interp_test(int order) {
 
 template <typename T>
 void translation_test(int order) {
+    // Check that parent->child translation matrices work to reasonable precision
+    // Larger bounds shifts -> larger errors.
     T lb{-1.3}, ub{1.2};
     T mid = lb + 0.5 * (ub - lb);
 
@@ -56,6 +71,8 @@ int main(int argc, char *argv[]) {
         translation_test<double>(order);
         interp_test<float>(order);
         interp_test<double>(order);
+        fit_test<float>(order);
+        fit_test<double>(order);
     }
 
     return 0;

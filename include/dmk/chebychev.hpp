@@ -2,11 +2,14 @@
 #define CHEBYCHEV_HPP
 
 #include <sctl.hpp>
+#include <tuple>
+#include <vector>
 
 #include <Eigen/Core>
 #include <Eigen/LU>
 
 namespace dmk::chebyshev {
+
 template <typename T>
 using Matrix = Eigen::MatrixX<T>;
 
@@ -20,7 +23,7 @@ template <typename T>
 using LU = Eigen::PartialPivLU<Matrix<T>>;
 
 template <typename T>
-Vector<T> get_cheb_nodes(int order, T lb, T ub) {
+inline Vector<T> get_cheb_nodes(int order, T lb, T ub) {
     Vector<T> nodes(order);
     const T mean = 0.5 * (lb + ub);
     const T hw = 0.5 * (ub - lb);
@@ -31,7 +34,7 @@ Vector<T> get_cheb_nodes(int order, T lb, T ub) {
 }
 
 template <typename T>
-Matrix<T> calc_vandermonde(const VectorRef<T> &nodes) {
+inline Matrix<T> calc_vandermonde(const VectorRef<T> &nodes) {
     const int order = nodes.size();
     Matrix<T> V(order, order);
 
@@ -50,9 +53,20 @@ Matrix<T> calc_vandermonde(const VectorRef<T> &nodes) {
 }
 
 template <typename T>
-Matrix<T> calc_vandermonde(int order) {
+inline Matrix<T> calc_vandermonde(int order) {
     Vector<T> cosarray = get_cheb_nodes<T>(order, -1.0, 1.0);
     return calc_vandermonde<T>(cosarray);
+}
+
+template <typename T>
+inline const std::pair<Matrix<T>, LU<T>> &get_vandermonde_and_LU(int order) {
+    static std::vector<std::pair<Matrix<T>, LU<T>>> vander_lus(128);
+    if (!vander_lus[order].first.size()) {
+        Matrix<T> vander = calc_vandermonde<T>(order);
+        vander_lus[order] = std::make_pair(vander, LU<T>(vander));
+    }
+
+    return vander_lus[order];
 }
 
 template <typename T>
@@ -121,9 +135,9 @@ inline void cheb_eval(int order, int N, T lb, T ub, const T *__restrict x_p, con
 }
 
 template <typename T>
-std::pair<Matrix<T>, Matrix<T>> parent_to_child_matrices(int order) {
+inline std::pair<Matrix<T>, Matrix<T>> parent_to_child_matrices(int order) {
+    auto &[_, u] = get_vandermonde_and_LU<T>(order);
     Vector<T> x = get_cheb_nodes<T>(order, -1.0, 1.0);
-    LU<T> u(calc_vandermonde<T>(x));
 
     // Shifted box positions. vec.array() allows element-wise/broadcasting ops
     Vector<T> xm = 0.5 * x.array() - 0.5;
@@ -136,10 +150,9 @@ std::pair<Matrix<T>, Matrix<T>> parent_to_child_matrices(int order) {
     return std::make_pair(u.solve(vm), u.solve(vp));
 }
 
-template <typename T, typename FT>
-Vector<T> fit(int order, FT &&func, T lb, T ub) {
-    Matrix<T> lu = calc_vandermonde<T>(order);
-    LU<T> vlu(lu);
+template <typename T>
+inline Vector<T> fit(int order, T (*func)(T), T lb, T ub) {
+    auto &[_, u] = get_vandermonde_and_LU<T>(order);
 
     Vector<T> xvec = get_cheb_nodes<T>(order, lb, ub);
     Vector<T> F(order);
@@ -147,7 +160,13 @@ Vector<T> fit(int order, FT &&func, T lb, T ub) {
     for (int i = 0; i < order; ++i)
         F[i] = func(xvec[i]);
 
-    return vlu.solve(F);
+    return u.solve(F);
+}
+
+template <typename T>
+inline void fit(int order, T (*func)(T), T lb, T ub, T *coeffs) {
+    Eigen::Map<Vector<T>> res(coeffs, order);
+    res = fit(order, func, lb, ub);
 }
 
 } // namespace dmk::chebyshev
