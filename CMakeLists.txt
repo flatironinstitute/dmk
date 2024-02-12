@@ -32,6 +32,10 @@ add_executable(test_tree test/test_tree.cpp)
 target_include_directories(test_tree PUBLIC ${DMK_INCLUDES})
 target_link_libraries(test_tree dmk MPI::MPI_CXX ${BLAS_LIBRARIES})
 
+add_executable(test_chebyshev_perf test/test_chebyshev_perf.cpp)
+target_include_directories(test_chebyshev_perf PUBLIC ${DMK_INCLUDES})
+target_link_libraries(test_chebyshev_perf dmk MPI::MPI_CXX ${BLAS_LIBRARIES})
+
 add_executable(test_chebyshev test/test_chebyshev.cpp)
 target_include_directories(test_chebyshev PUBLIC ${DMK_INCLUDES})
 target_link_libraries(test_chebyshev dmk MPI::MPI_CXX ${BLAS_LIBRARIES})

@@ -31,18 +31,18 @@ Vector<T> get_cheb_nodes(int order, T lb, T ub) {
 }
 
 template <typename T>
-Matrix<T> calc_vandermonde(int order) {
+Matrix<T> calc_vandermonde(const VectorRef<T> &nodes) {
+    const int order = nodes.size();
     Matrix<T> V(order, order);
-    Vector<T> cosarray = get_cheb_nodes<T>(order, -1.0, 1.0);
 
     for (int j = 0; j < order; ++j) {
         V(0, j) = 1;
-        V(1, j) = cosarray(j);
+        V(1, j) = nodes(j);
     }
 
     for (int i = 2; i < order; ++i) {
         for (int j = 0; j < order; ++j) {
-            V(i, j) = T(2) * V(i - 1, j) * cosarray(j) - V(i - 2, j);
+            V(i, j) = T(2) * V(i - 1, j) * nodes(j) - V(i - 2, j);
         }
     }
 
@@ -50,7 +50,13 @@ Matrix<T> calc_vandermonde(int order) {
 }
 
 template <typename T>
-inline T cheb_eval_1d(int order, const T x, const T *c) {
+Matrix<T> calc_vandermonde(int order) {
+    Vector<T> cosarray = get_cheb_nodes<T>(order, -1.0, 1.0);
+    return calc_vandermonde<T>(cosarray);
+}
+
+template <typename T>
+inline T cheb_eval(int order, const T x, const T *c) {
     // note (RB): uses clenshaw's method to avoid direct calculation of recurrence relation of
     // T_i, where res = \Sum_i T_i c_i
     const T x2 = 2 * x;
@@ -67,16 +73,16 @@ inline T cheb_eval_1d(int order, const T x, const T *c) {
 }
 
 template <typename T, int VecLen>
-inline void cheb_eval_1d(int order, int N, T lb, T ub, const T *__restrict x_p, const T *__restrict c_p,
-                         T *__restrict res) {
+inline void cheb_eval(int order, int N, T lb, T ub, const T *__restrict x_p, const T *__restrict c_p,
+                      T *__restrict res) {
     // note (RB): uses clenshaw's method to avoid direct calculation of recurrence relation of
     // T_i, where res = \Sum_i T_i c_i
     using vec_t = sctl::Vec<T, VecLen>;
     const int remainder = N % VecLen;
     N -= remainder;
 
-    vec_t inv_width = T(1.0f / (ub - lb));
-    vec_t four_mean = T(2.0 * (ub + lb));
+    const vec_t inv_width = T(1.0f / (ub - lb));
+    const vec_t four_mean = T(2.0 * (ub + lb));
     for (int i = 0; i < N; i += VecLen) {
         vec_t x2 = vec_t::Load(x_p + i);
         x2 = (T(4.0) * x2 - four_mean) * inv_width;
@@ -94,38 +100,32 @@ inline void cheb_eval_1d(int order, int N, T lb, T ub, const T *__restrict x_p, 
     }
 
     for (int i = N; i < N + remainder; ++i)
-        res[i] = cheb_eval_1d(order, x_p[i], c_p);
+        res[i] = cheb_eval(order, x_p[i], c_p);
 }
 
 template <typename T>
-Vector<T> cheb_eval(int dim, int order, const VectorRef<T> &x, const VectorRef<T> &coeffs) {
-    if (dim == 1) {
-        const int N = x / order;
-        Vector<T> res(N);
-        for (int i = 0; i < N; ++i)
-            res[i] = cheb_eval_1d(order, x[i], coeffs.data());
+std::pair<Matrix<T>, Matrix<T>> parent_to_child_matrices(int order) {
+    Vector<T> x = get_cheb_nodes(order, T{-1.0}, T{1.0});
+    Matrix<T> u = Eigen::Inverse(calc_vandermonde<T>(x));
+    Vector<T> xm = get_cheb_nodes(order, T{-1.0}, T{0.0});
+    Vector<T> xp = get_cheb_nodes(order, T{0.0}, T{1.0});
+    Matrix<T> vm = calc_vandermonde<T>(xm);
+    Matrix<T> vp = calc_vandermonde<T>(xp);
 
-        return res;
-    }
-
-    return Vector<T>();
+    return std::make_pair(u * vm, u * vp);
 }
 
 template <typename T, typename FT>
-Vector<T> fit(int dim, int order, FT &&func, const VectorRef<T> &lb, const VectorRef<T> &ub) {
+Vector<T> fit(int order, FT &&func, T lb, T ub) {
     Matrix<T> lu = calc_vandermonde<T>(order);
     LU<T> vlu(lu);
 
-    if (dim == 1) {
-        Vector<T> xvec = get_cheb_nodes<T>(order, lb[0], ub[0]);
-        Vector<T> F(order);
+    Vector<T> xvec = get_cheb_nodes<T>(order, lb, ub);
+    Vector<T> F(order);
 
-        for (int i = 0; i < order; ++i)
-            F[i] = func(&xvec[i]);
-        return vlu.solve(F);
-    }
-
-    return Vector<T>();
+    for (int i = 0; i < order; ++i)
+        F[i] = func(&xvec[i]);
+    return vlu.solve(F);
 }
 
 } // namespace dmk::chebyshev
