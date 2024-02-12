@@ -106,13 +106,13 @@ inline void cheb_eval(int order, int N, T lb, T ub, const T *__restrict x_p, con
 template <typename T>
 std::pair<Matrix<T>, Matrix<T>> parent_to_child_matrices(int order) {
     Vector<T> x = get_cheb_nodes(order, T{-1.0}, T{1.0});
-    Matrix<T> u = Eigen::Inverse(calc_vandermonde<T>(x));
+    Eigen::PartialPivLU<Matrix<T>> u(calc_vandermonde<T>(x));
     Vector<T> xm = get_cheb_nodes(order, T{-1.0}, T{0.0});
     Vector<T> xp = get_cheb_nodes(order, T{0.0}, T{1.0});
     Matrix<T> vm = calc_vandermonde<T>(xm);
     Matrix<T> vp = calc_vandermonde<T>(xp);
 
-    return std::make_pair(u * vm, u * vp);
+    return std::make_pair(u.solve(vm), u.solve(vp));
 }
 
 template <typename T, typename FT>
