@@ -4,7 +4,7 @@ project(dmk LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_compile_options("-march=native;-DSCTL_HAVE_MPI;-DSCTL_HAVE_BLAS;-DSCTL_HAVE_LAPACK")
+add_compile_options("-march=native;-DSCTL_HAVE_MPI;-DEIGEN_USE_BLAS")
 
 find_package(OpenMP REQUIRED)
 find_package(MPI REQUIRED)
@@ -16,7 +16,7 @@ set(DMK_INCLUDES
   ${PROJECT_SOURCE_DIR}/extern/SCTL/include
 )
 
-set(DMK_SRC src/dmk.cpp)
+set(DMK_SRC src/dmk.cpp src/proxy.cpp)
 add_library(DMKOBJS OBJECT ${DMK_SRC})
 set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES})
@@ -32,10 +32,18 @@ add_executable(test_tree test/test_tree.cpp)
 target_include_directories(test_tree PUBLIC ${DMK_INCLUDES})
 target_link_libraries(test_tree dmk MPI::MPI_CXX ${BLAS_LIBRARIES})
 
-add_executable(test_chebyshev_perf test/test_chebyshev_perf.cpp)
-target_include_directories(test_chebyshev_perf PUBLIC ${DMK_INCLUDES})
-target_link_libraries(test_chebyshev_perf dmk MPI::MPI_CXX ${BLAS_LIBRARIES})
+add_executable(test_chebyshev_poly_perf test/test_chebyshev_poly_perf.cpp)
+target_include_directories(test_chebyshev_poly_perf PUBLIC ${DMK_INCLUDES})
+target_link_libraries(test_chebyshev_poly_perf dmk MPI::MPI_CXX ${BLAS_LIBRARIES})
+
+add_executable(test_chebyshev_eval_perf test/test_chebyshev_eval_perf.cpp)
+target_include_directories(test_chebyshev_eval_perf PUBLIC ${DMK_INCLUDES})
+target_link_libraries(test_chebyshev_eval_perf dmk MPI::MPI_CXX ${BLAS_LIBRARIES})
 
 add_executable(test_chebyshev test/test_chebyshev.cpp)
 target_include_directories(test_chebyshev PUBLIC ${DMK_INCLUDES})
 target_link_libraries(test_chebyshev dmk MPI::MPI_CXX ${BLAS_LIBRARIES})
+
+add_executable(test_proxy test/test_proxy.cpp)
+target_include_directories(test_proxy PUBLIC ${DMK_INCLUDES})
+target_link_libraries(test_proxy dmk MPI::MPI_CXX ${BLAS_LIBRARIES})

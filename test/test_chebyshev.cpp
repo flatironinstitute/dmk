@@ -32,8 +32,8 @@ void interp_test(int order) {
     Eigen::VectorX<T> coeffs = fit(order, testfunc<T>, lb, ub);
 
     for (T x = lb; x <= ub; x += 0.01) {
-        T res = cheb_eval(x, order, coeffs.data());
-        T res_alt = cheb_eval(x, order, lb, ub, coeffs.data());
+        T res = evaluate(x, order, coeffs.data());
+        T res_alt = evaluate(x, order, lb, ub, coeffs.data());
         assert(std::fabs(res - res_alt) <= std::numeric_limits<T>::epsilon());
     }
 }
@@ -52,14 +52,14 @@ void translation_test(int order) {
     Eigen::VectorX<T> coeffs_p = tp * coeffs;
 
     for (T x = lb; x <= mid; x += 0.01) {
-        T res = cheb_eval<T>(x, order, lb, ub, coeffs.data());
-        T res_alt = cheb_eval<T>(x, order, lb, mid, coeffs_m.data());
+        T res = evaluate<T>(x, order, lb, ub, coeffs.data());
+        T res_alt = evaluate<T>(x, order, lb, mid, coeffs_m.data());
         assert(std::fabs(res - res_alt) < 10 * std::numeric_limits<T>::epsilon());
     }
 
     for (T x = mid; x <= ub; x += 0.01) {
-        T res = cheb_eval<T>(x, order, lb, ub, coeffs.data());
-        T res_alt = cheb_eval<T>(x, order, mid, ub, coeffs_p.data());
+        T res = evaluate<T>(x, order, lb, ub, coeffs.data());
+        T res_alt = evaluate<T>(x, order, mid, ub, coeffs_p.data());
         assert(std::fabs(res - res_alt) < 10 * std::numeric_limits<T>::epsilon());
     }
 }

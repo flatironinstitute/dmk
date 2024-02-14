@@ -17,7 +17,16 @@ template <typename T>
 using Vector = Eigen::VectorX<T>;
 
 template <typename T>
-using VectorRef = Eigen::Ref<const Vector<T>>;
+using VectorRef = Eigen::Ref<Vector<T>>;
+
+template <typename T>
+using CVectorRef = Eigen::Ref<const Vector<T>>;
+
+template <typename T>
+using MatrixRef = Eigen::Ref<Matrix<T>>;
+
+template <typename T>
+using CMatrixRef = Eigen::Ref<const Matrix<T>>;
 
 template <typename T>
 using LU = Eigen::PartialPivLU<Matrix<T>>;
@@ -34,7 +43,7 @@ inline Vector<T> get_cheb_nodes(int order, T lb, T ub) {
 }
 
 template <typename T>
-inline Matrix<T> calc_vandermonde(const VectorRef<T> &nodes) {
+inline Matrix<T> calc_vandermonde(const CVectorRef<T> &nodes) {
     const int order = nodes.size();
     Matrix<T> V(order, order);
 
@@ -48,6 +57,47 @@ inline Matrix<T> calc_vandermonde(const VectorRef<T> &nodes) {
             V(i, j) = T(2) * V(i, j - 1) * nodes(i) - V(i, j - 2);
 
     return V;
+}
+
+template <typename T>
+inline void calc_polynomial(int order, T x, VectorRef<T> poly) {
+    poly[0] = 1.0;
+    poly[1] = x;
+
+    for (int i = 2; i < order; ++i)
+        poly[i] = T{2} * poly[i - 1] - poly[i - 2];
+}
+
+template <typename T>
+inline void calc_polynomial(int order, T x, T *poly_) {
+    Eigen::Map<Vector<T>> poly(poly_, order);
+    calc_polynomial<T>(order, x, poly);
+}
+
+template <typename T>
+inline Vector<T> calc_polynomial(int order, T x) {
+    Vector<T> poly(order);
+    calc_polynomial<T>(order, x, poly);
+    return poly;
+}
+
+template <typename T>
+inline void calc_polynomial(int order, const CVectorRef<T> &x, MatrixRef<T> poly) {
+    // Memory bottlenecked. Not really worth optimizing
+    const int ns = x.rows();
+    for (int i = 0; i < ns; ++i) {
+        poly(0, i) = T{1.0};
+        poly(1, i) = x[i];
+        for (int j = 2; j < order; ++j)
+            poly(j, i) = T{2} * poly(j - 1, i) * x[i] - poly(j - 2, i);
+    }
+}
+
+template <typename T>
+inline void calc_polynomial(int order, int n_poly, const T *x, T* poly) {
+    Eigen::Map<const Vector<T>> x_(x, n_poly);
+    Eigen::Map<Matrix<T>> poly_(poly, order, n_poly);
+    calc_polynomial<T>(order, x_, poly_);
 }
 
 template <typename T>
@@ -68,7 +118,7 @@ inline const std::pair<Matrix<T>, LU<T>> &get_vandermonde_and_LU(int order) {
 }
 
 template <typename T>
-inline T cheb_eval(T x, int order, T lb, T ub, const T *c) {
+inline T evaluate(T x, int order, T lb, T ub, const T *c) {
     // note (RB): uses clenshaw's method to avoid direct calculation of recurrence relation of
     // T_i, where res = \Sum_i T_i c_i
 
@@ -85,7 +135,7 @@ inline T cheb_eval(T x, int order, T lb, T ub, const T *c) {
 }
 
 template <typename T>
-inline T cheb_eval(T x, int order, const T *c) {
+inline T evaluate(T x, int order, const T *c) {
     // note (RB): uses clenshaw's method to avoid direct calculation of recurrence relation of
     // T_i, where res = \Sum_i T_i c_i
     const T x2 = T{2.0} * x;
@@ -102,8 +152,8 @@ inline T cheb_eval(T x, int order, const T *c) {
 }
 
 template <typename T, int VecLen>
-inline void cheb_eval(int order, int N, T lb, T ub, const T *__restrict x_p, const T *__restrict c_p,
-                      T *__restrict res) {
+inline void evaluate(int order, int N, T lb, T ub, const T *__restrict x_p, const T *__restrict c_p,
+                     T *__restrict res) {
     // note (RB): uses clenshaw's method to avoid direct calculation of recurrence relation of
     // T_i, where res = \Sum_i T_i c_i
     using vec_t = sctl::Vec<T, VecLen>;
@@ -129,7 +179,7 @@ inline void cheb_eval(int order, int N, T lb, T ub, const T *__restrict x_p, con
     }
 
     for (int i = N; i < N + remainder; ++i)
-        res[i] = cheb_eval(x_p[i], order, c_p);
+        res[i] = evaluate(x_p[i], order, c_p);
 }
 
 template <typename T>
