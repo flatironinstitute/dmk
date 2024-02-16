@@ -1,7 +1,10 @@
 #ifndef _VEC_KERNELS_HPP_
 #define _VEC_KERNELS_HPP_
 
+#ifndef NDEBUG
 #define NDEBUG
+#endif
+
 #include <sctl.hpp>
 #include <sctllog.h>
 
