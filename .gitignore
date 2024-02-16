@@ -36,9 +36,16 @@ int2*
 fort*
 *.dat
 *.data
+l3dptsa.txt
 
 # emacs files
 *~
+TAGS
 
 # Latex auxillary files
 out
+
+# Build and various utilities
+/compile_commands.json
+/.cache
+/build
