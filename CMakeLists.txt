@@ -1,11 +1,19 @@
-cmake_minimum_required(VERSION 3.9)
+cmake_minimum_required(VERSION 3.18)
 
 project(dmk LANGUAGES CXX Fortran)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -std=legacy")
 
-add_compile_options("-march=native;-DSCTL_HAVE_MPI;-DEIGEN_USE_BLAS")
+if (CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
+  set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -std=legacy")
+  add_compile_options("-ffast-math")
+endif()
+if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
+  add_compile_options("-DSCTL_HAVE_SVML")
+  add_link_options("-lstdc++")
+endif()
+
+add_compile_options("-march=native;-DSCTL_HAVE_MPI;-DEIGEN_USE_BLAS;-funroll-loops")
 
 find_package(OpenMP REQUIRED)
 find_package(MPI REQUIRED)
@@ -45,16 +53,7 @@ target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX DMKOBJS)
 
 add_library(dmk_shared SHARED)
 set_target_properties(${PROJECT_NAME}_shared PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
-target_link_libraries(${PROJECT_NAME}_shared DMKOBJS OpenMP::OpenMP_CXX MPI::MPI_CXX ${BLAS_LIBRARIES})
+target_link_libraries(${PROJECT_NAME}_shared DMKOBJS OpenMP::OpenMP_CXX MPI::MPI_CXX BLAS::BLAS)
 
-add_executable(test_chebyshev_poly_perf test/test_chebyshev_poly_perf.cpp)
-target_link_libraries(test_chebyshev_poly_perf dmk_shared)
 
-add_executable(test_chebyshev_eval_perf test/test_chebyshev_eval_perf.cpp)
-target_link_libraries(test_chebyshev_eval_perf dmk_shared)
-
-add_executable(test_chebyshev test/test_chebyshev.cpp)
-target_link_libraries(test_chebyshev dmk_shared)
-
-add_executable(test_proxy test/test_proxy.cpp)
-target_link_libraries(test_proxy dmk_shared)
+add_subdirectory(test)

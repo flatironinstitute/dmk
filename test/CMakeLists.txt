@@ -1,0 +1,12 @@
+
+add_executable(test_chebyshev_poly_perf test_chebyshev_poly_perf.cpp)
+target_link_libraries(test_chebyshev_poly_perf dmk_shared)
+
+add_executable(test_chebyshev_eval_perf test_chebyshev_eval_perf.cpp)
+target_link_libraries(test_chebyshev_eval_perf dmk_shared)
+
+add_executable(test_chebyshev test_chebyshev.cpp)
+target_link_libraries(test_chebyshev dmk_shared)
+
+add_executable(test_proxy test_proxy.cpp)
+target_link_libraries(test_proxy dmk_shared)
