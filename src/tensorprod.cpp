@@ -35,9 +35,9 @@ template <typename T>
 void transform_3d(int nin, int nout, int add_flag, const T *fin, const T *umat, T *fout) {
     T alpha{1.0};
     T beta{0.0};
-    T ff[nout * nout * nout];
-    T ff2[nin * nout * nin];
-    T fft[nout * nout * nin];
+    T *ff = new T[nout * nout * nout];
+    T *ff2 = new T[nin * nout * nin];
+    T *fft = new T[nout * nout * nin];
 
     const char n = 'n', t = 't';
     const int nin2 = nin * nin;
@@ -66,6 +66,10 @@ void transform_3d(int nin, int nout, int add_flag, const T *fin, const T *umat, 
         sgemm_(&n, &t, &nout, &nout2, &nin, &alpha, umat, &nout, ff2, &nout2, &beta, fout, &nout);
     else
         dgemm_(&n, &t, &nout, &nout2, &nin, &alpha, umat, &nout, ff2, &nout2, &beta, fout, &nout);
+
+    delete[] ff;
+    delete[] ff2;
+    delete[] fft;
 }
 
 template <typename T>

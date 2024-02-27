@@ -46,7 +46,7 @@ set_target_properties(dmk_ref_shared PROPERTIES OUTPUT_NAME dmk_ref)
 set(DMK_SRC src/dmk.cpp src/proxy.cpp)
 add_library(DMKOBJS OBJECT ${DMK_SRC})
 set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES})
+target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES} ${MPI_CXX_INCLUDE_DIRS})
 
 add_library(dmk STATIC)
 target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX DMKOBJS)
