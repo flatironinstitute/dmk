@@ -23,7 +23,10 @@ set(DMK_INCLUDES
   ${PROJECT_SOURCE_DIR}/include
   ${PROJECT_SOURCE_DIR}/extern/eigen
   ${PROJECT_SOURCE_DIR}/extern/SCTL/include
+  ${PROJECT_SOURCE_DIR}/extern/spdlog/include
 )
+
+add_subdirectory(extern/spdlog EXCLUDE_FROM_ALL)
 
 file(GLOB DMK_REF_COMMON_SRC "src/common/*.f" "vec-kernels/src/libkernels.cpp")
 add_library(dmk_ref_common OBJECT ${DMK_REF_COMMON_SRC})
@@ -49,11 +52,11 @@ set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES} ${MPI_CXX_INCLUDE_DIRS})
 
 add_library(dmk STATIC)
-target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX DMKOBJS)
+target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX DMKOBJS spdlog::spdlog)
 
 add_library(dmk_shared SHARED)
 set_target_properties(${PROJECT_NAME}_shared PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
-target_link_libraries(${PROJECT_NAME}_shared DMKOBJS OpenMP::OpenMP_CXX MPI::MPI_CXX BLAS::BLAS)
+target_link_libraries(${PROJECT_NAME}_shared DMKOBJS OpenMP::OpenMP_CXX MPI::MPI_CXX BLAS::BLAS spdlog)
 
 
 add_subdirectory(test)

@@ -23,8 +23,20 @@ typedef struct pdmk_params {
     bool use_periodic = false;          // use PBC -- not implemented
     bool use_charge = true;             // use charges in charge array
     bool use_dipole = false;            // use dipoles in dipole array
-    int n_per_leaf = 2000;    // tuning: number of particles per leaf in N-tree
+    int n_per_leaf = 2000;              // tuning: number of particles per leaf in N-tree
 } pdmk_params;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+void pdmk(pdmk_params params, int n_src, const double *r_src, const double *charge, const double *normal,
+          const double *dipole_str, int n_trg, const double *r_trg, double *pot, double *grad, double *hess,
+          double *pottarg, double *gradtarg, double *hesstarg);
+void pdmkf(pdmk_params params, int n_src, const float *r_src, const float *charge, const float *normal,
+           const float *dipole_str, int n_trg, const float *r_trg, float *pot, float *grad, float *hess, float *pottarg,
+           float *gradtarg, float *hesstarg);
+#ifdef __cplusplus
+}
+#endif
 
 #endif
