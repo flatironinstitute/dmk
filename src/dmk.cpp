@@ -31,13 +31,15 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     auto comm = sctl::Comm::World();
     sctl::PtTree<T, DIM> tree(comm);
 
-    auto r_vec = sctl::Vector<T>(n_src, const_cast<T *>(r_src), false);
-    auto charge_vec = sctl::Vector<T>(n_src, const_cast<T *>(r_src), false);
+    sctl::Vector<T> r_src_vec(n_src, const_cast<T *>(r_src), false);
+    sctl::Vector<T> r_trg_vec(n_trg, const_cast<T *>(r_trg), false);
+    sctl::Vector<T> charge_vec(n_src * params.n_mfm, const_cast<T *>(charge), false);
 
     logger.debug("Building tree");
-    tree.AddParticles("pdmk_src", r_vec);
+    tree.AddParticles("pdmk_src", r_src_vec);
     tree.AddParticleData("pdmk_charge", "pdmk_src", charge_vec);
-    tree.UpdateRefinement(r_vec, params.n_per_leaf, balance_21, params.use_periodic);
+    tree.AddParticles("pdmk_trg", r_trg_vec);
+    tree.UpdateRefinement(r_src_vec, params.n_per_leaf, balance_21, params.use_periodic);
     logger.debug("Tree build completed");
 }
 

@@ -13,3 +13,6 @@ target_link_libraries(test_proxy dmk_shared)
 
 add_executable(test_tensorprod test_tensorprod.cpp)
 target_link_libraries(test_tensorprod dmk_shared dmk_ref)
+
+add_executable(test_tree test_tree.cpp)
+target_link_libraries(test_tree dmk_shared)
