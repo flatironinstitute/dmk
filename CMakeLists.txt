@@ -28,17 +28,17 @@ set(DMK_INCLUDES
 
 add_subdirectory(extern/spdlog EXCLUDE_FROM_ALL)
 
-file(GLOB DMK_REF_COMMON_SRC "src/common/*.f" "vec-kernels/src/libkernels.cpp")
+file(GLOB_RECURSE DMK_REF_COMMON_SRC "src/common/*.f*" "vec-kernels/src/libkernels.cpp")
 add_library(dmk_ref_common OBJECT ${DMK_REF_COMMON_SRC})
 set_target_properties(dmk_ref_common PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(dmk_ref_common PRIVATE "extern/VCL/version2" "vec-kernels/include")
 
-file(GLOB DMK_REF_PDMK_SRC "src/pdmk/**.f")
+file(GLOB_RECURSE DMK_REF_PDMK_SRC "src/pdmk/*.f")
 list(REMOVE_ITEM DMK_REF_PDMK_SRC "${CMAKE_SOURCE_DIR}/src/pdmk/kernelevaluation/l3dkernels_fast.f")
 add_library(dmk_ref_pdmk OBJECT ${DMK_REF_PDMK_SRC})
 set_target_properties(dmk_ref_pdmk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-file(GLOB DMK_REF_BDMK_SRC "src/bdmk/**.f")
+file(GLOB_RECURSE DMK_REF_BDMK_SRC "src/bdmk/*.f")
 add_library(dmk_ref_bdmk OBJECT ${DMK_REF_BDMK_SRC})
 set_target_properties(dmk_ref_bdmk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
