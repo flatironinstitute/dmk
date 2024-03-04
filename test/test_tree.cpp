@@ -27,21 +27,21 @@ int main(int argc, char *argv[]) {
             std::tie(X[18], X[19]) = std::make_pair(14., 14.);
             X /= 16.0;
         }
-        tree.AddParticles("DMK", X);
-        tree.AddParticleData("str", "DMK", f);
+        tree.AddParticles("pdmk_src", X);
+        tree.AddParticleData("pdmk_charge", "pdmk_src", f);
         tree.UpdateRefinement(X, 1, true, false);
         tree.WriteTreeVTK("tree");
-        tree.WriteParticleVTK("str", "str");
+        tree.WriteParticleVTK("str", "pdmk_charge");
 
         const auto &mids = tree.GetNodeMID();
         const auto &attrs = tree.GetNodeAttr();
         sctl::Vector<double> data_part;
         sctl::Vector<sctl::Long> cnt_part;
-        tree.GetData(data_part, cnt_part, "DMK");
+        tree.GetData(data_part, cnt_part, "pdmk_src");
 
         sctl::Vector<double> data_charge;
         sctl::Vector<sctl::Long> cnt_charge;
-        tree.GetData(data_charge, cnt_charge, "str");
+        tree.GetData(data_charge, cnt_charge, "pdmk_src");
 
         dmk::TreeData tree_data(tree, 1);
 
