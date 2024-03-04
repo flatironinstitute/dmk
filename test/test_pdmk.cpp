@@ -28,8 +28,10 @@ int main(int argc, char *argv[]) {
     params.kernel = DMK_YUKAWA;
     params.use_periodic = false;
     params.use_dipole = false;
+    params.log_level = 0;
 
-    pdmk(params, n_src_per_rank, X.data(), pot.data(), nullptr, nullptr, 0, nullptr, pot.data(), nullptr, nullptr, nullptr, nullptr, nullptr);
+    pdmk(params, n_src_per_rank, X.data(), pot.data(), nullptr, nullptr, 0, nullptr, pot.data(), nullptr, nullptr,
+         nullptr, nullptr, nullptr);
 
     MPI_Finalize();
 

@@ -1,8 +1,57 @@
 #include <dmk.h>
+#include <dmk/chebychev.hpp>
 #include <dmk/logger.h>
+#include <dmk/tree.hpp>
 #include <sctl.hpp>
 
-namespace DMK {
+#include <mpi.h>
+#include <stdexcept>
+#include <tuple>
+
+namespace dmk {
+
+std::tuple<int, double, double, double> get_PSWF_truncated_kernel_pwterms(int n_dim, double eps) {
+    constexpr double boxsize = 1.0;
+    const int ndigits = std::round(log10(1.0 / eps) - 0.1);
+    int npw;
+    double hpw, ws, rl;
+
+    if (ndigits <= 3) {
+        npw = 13;
+        hpw = M_PI * 0.34 / boxsize;
+    } else if (ndigits <= 6) {
+        npw = 25;
+        hpw = M_PI * 0.357 / boxsize;
+    } else if (ndigits <= 9) {
+        npw = 39;
+        hpw = M_PI * 0.357 / boxsize;
+    } else if (ndigits <= 12) {
+        npw = 53;
+        hpw = M_PI * 0.338 / boxsize;
+    }
+
+    ws = 0.5 * std::pow(hpw, n_dim) / std::pow(M_PI, n_dim - 1);
+    rl = boxsize * sqrt((double)n_dim) * 2;
+
+    return std::make_tuple(npw, hpw, ws, rl);
+}
+
+std::pair<int, int> get_pwmax_and_poly_order(int dim, double eps, dmk_ikernel kernel) {
+    int ndigits = std::round(log10(1.0 / eps) - 0.1);
+    // clang-format off
+    if (kernel == DMK_SQRT_LAPLACE && dim == 3) {
+        if (ndigits <= 3) return {13, 9};
+        if (ndigits <= 6) return {27, 18};
+        if (ndigits <= 9) return {39, 28};
+        if (ndigits <= 12) return {55, 38};
+    }
+    if (ndigits <= 3) return {13, 9};
+    if (ndigits <= 6) return {25, 18};
+    if (ndigits <= 9) return {39, 28};
+    if (ndigits <= 12) return {53, 38};
+    // clang-format on
+    throw std::runtime_error("Requested precision too high");
+}
 
 template <typename T, int DIM>
 void zero_potentials(dmk_pgh level, int ns, int nd, T *pot, T *grad, T *hess) {
@@ -16,7 +65,7 @@ void zero_potentials(dmk_pgh level, int ns, int nd, T *pot, T *grad, T *hess) {
 
 template <typename T>
 T procl180_rescale(T eps) {
-    T cs[] = {
+    constexpr T cs[] = {
         .43368E-16, .10048E+01, .17298E+01, .22271E+01, .26382E+01, .30035E+01, .33409E+01, .36598E+01, .39658E+01,
         .42621E+01, .45513E+01, .48347E+01, .51136E+01, .53887E+01, .56606E+01, .59299E+01, .61968E+01, .64616E+01,
         .67247E+01, .69862E+01, .72462E+01, .75049E+01, .77625E+01, .80189E+01, .82744E+01, .85289E+01, .87826E+01,
@@ -61,6 +110,7 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     auto &logger = dmk::get_logger(params.log_level);
     logger->debug("PDMK called");
 
+    // 0: Initialization
     sctl::PtTree<T, DIM> tree(sctl::Comm::World());
     sctl::Vector<T> r_src_vec(n_src, const_cast<T *>(r_src), false);
     sctl::Vector<T> r_trg_vec(n_trg, const_cast<T *>(r_trg), false);
@@ -80,19 +130,35 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     T beta = procl180_rescale(params.eps);
     logger->debug("prolate parameter value = {}", beta);
 
+    logger->debug("Generating tree traversal metadata");
+    // FIXME: This reduction probably shouldn't be necessary
+    dmk::TreeData tree_data(tree, n_src);
+    logger->debug("Done generating tree traversal metadata");
 
+    // 1: Precomputation
+    const auto [n_pw_max, n_order] = get_pwmax_and_poly_order(DIM, params.eps, params.kernel);
+    Eigen::MatrixX<T> p2c_m, p2c_p, c2p_m, c2p_p;
+
+    logger->debug("Generating p2c and c2p matrices");
+    std::tie(p2c_m, p2c_p) = dmk::chebyshev::parent_to_child_matrices<T>(n_order);
+    c2p_m = p2c_m.transpose().eval();
+    c2p_p = p2c_p.transpose().eval();
+    logger->debug("Finished creating matrices");
+
+    auto [n_pw, pw_stepsize, pw_weight, pw_radius] = get_PSWF_truncated_kernel_pwterms(params.n_dim, params.eps);
+    logger->debug("Planewave params: n: {}, stepsize: {}, weight: {}, radius: {}", n_pw, pw_stepsize, pw_weight, pw_radius);
 }
 
-} // namespace DMK
+} // namespace dmk
 extern "C" {
 void pdmkf(pdmk_params params, int n_src, const float *r_src, const float *charge, const float *normal,
            const float *dipole_str, int n_trg, const float *r_trg, float *pot, float *grad, float *hess, float *pottarg,
            float *gradtarg, float *hesstarg) {
     if (params.n_dim == 2)
-        return DMK::pdmk<float, 2>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess,
+        return dmk::pdmk<float, 2>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess,
                                    pottarg, gradtarg, hesstarg);
     if (params.n_dim == 3)
-        return DMK::pdmk<float, 3>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess,
+        return dmk::pdmk<float, 3>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess,
                                    pottarg, gradtarg, hesstarg);
 }
 
@@ -100,10 +166,10 @@ void pdmk(pdmk_params params, int n_src, const double *r_src, const double *char
           const double *dipole_str, int n_trg, const double *r_trg, double *pot, double *grad, double *hess,
           double *pottarg, double *gradtarg, double *hesstarg) {
     if (params.n_dim == 2)
-        return DMK::pdmk<double, 2>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess,
+        return dmk::pdmk<double, 2>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess,
                                     pottarg, gradtarg, hesstarg);
     if (params.n_dim == 3)
-        return DMK::pdmk<double, 3>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess,
+        return dmk::pdmk<double, 3>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess,
                                     pottarg, gradtarg, hesstarg);
 }
 }
