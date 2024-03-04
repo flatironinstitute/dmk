@@ -1,24 +1,8 @@
 #include <dmk.h>
+#include <dmk/logger.h>
 #include <sctl.hpp>
 
-#include <spdlog/cfg/env.h>
-#include <spdlog/sinks/null_sink.h>
-#include <spdlog/spdlog.h>
-
 namespace DMK {
-spdlog::logger &get_logger() {
-    bool first_call = true;
-    if (first_call) {
-        first_call = false;
-        auto comm = sctl::Comm::World();
-        if (comm.Rank() == 0)
-            spdlog::logger("DMK", std::make_shared<spdlog::sinks::ansicolor_stderr_sink_st>());
-        else
-            spdlog::logger("DMK", std::make_shared<spdlog::sinks::null_sink_st>());
-    }
-
-    return *spdlog::get("DMK");
-}
 
 template <typename T, int DIM>
 void zero_potentials(dmk_pgh level, int ns, int nd, T *pot, T *grad, T *hess) {
@@ -74,27 +58,27 @@ T procl180_rescale(T eps) {
 template <typename T, int DIM>
 void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge, const T *normal, const T *dipole_str,
           int n_trg, const T *r_trg, T *pot, T *grad, T *hess, T *pottarg, T *gradtarg, T *hesstarg) {
-    spdlog::cfg::load_env_levels();
-    auto &logger = get_logger();
-    logger.debug("PDMK called");
+    auto &logger = dmk::get_logger(params.log_level);
+    logger->debug("PDMK called");
 
     sctl::PtTree<T, DIM> tree(sctl::Comm::World());
     sctl::Vector<T> r_src_vec(n_src, const_cast<T *>(r_src), false);
     sctl::Vector<T> r_trg_vec(n_trg, const_cast<T *>(r_trg), false);
     sctl::Vector<T> charge_vec(n_src * params.n_mfm, const_cast<T *>(charge), false);
 
-    logger.debug("Building tree");
+    logger->debug("Building tree");
     tree.AddParticles("pdmk_src", r_src_vec);
     tree.AddParticleData("pdmk_charge", "pdmk_src", charge_vec);
     tree.AddParticles("pdmk_trg", r_trg_vec);
     tree.UpdateRefinement(r_src_vec, params.n_per_leaf, true, params.use_periodic); // balance21 = true
-    logger.debug("Tree build completed");
-
+    logger->debug("Tree build completed");
+    logger->debug("Zeroing source and target potentials");
     zero_potentials<T, DIM>(params.pgh, n_src, params.n_mfm, pot, grad, hess);
     zero_potentials<T, DIM>(params.pgh_target, n_trg, params.n_mfm, pot, grad, hess);
+    logger->debug("Zeroing complete");
 
     T beta = procl180_rescale(params.eps);
-    spdlog::debug("prolate parameter value = {}", beta);
+    logger->debug("prolate parameter value = {}", beta);
 
 
 }

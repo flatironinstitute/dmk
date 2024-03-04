@@ -24,6 +24,7 @@ typedef struct pdmk_params {
     bool use_charge = true;             // use charges in charge array
     bool use_dipole = false;            // use dipoles in dipole array
     int n_per_leaf = 2000;              // tuning: number of particles per leaf in N-tree
+    int log_level = 0;                  // 0: critical, 1: Error, 2: Warn, 3: Info, 4: Debug, 5: Trace
 } pdmk_params;
 
 #ifdef __cplusplus
