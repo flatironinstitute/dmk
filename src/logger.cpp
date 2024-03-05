@@ -20,7 +20,7 @@ std::shared_ptr<spdlog::logger> &get_logger() {
         else
             logger = std::make_shared<spdlog::logger>(
                 spdlog::logger("DMK", std::make_shared<spdlog::sinks::null_sink_st>()));
-        logger->set_pattern("[%6o] [%n] [%l] %v");
+        logger->set_pattern("[%8i] [%n] [%l] %v");
     }
 
     return logger;

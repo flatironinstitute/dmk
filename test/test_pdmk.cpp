@@ -1,8 +1,8 @@
-#include <cstdlib>
 #include <dmk.h>
 #include <mpi.h>
 
 #include <cassert>
+#include <cstdlib>
 #include <vector>
 
 int main(int argc, char *argv[]) {
@@ -10,7 +10,7 @@ int main(int argc, char *argv[]) {
     MPI_Init_thread(&argc, &argv, req, &prov);
     assert(prov == req);
 
-    constexpr int DIM = 2;
+    constexpr int DIM = 3;
     constexpr int n_src_per_rank = 1e6;
     std::vector<double> X(DIM * n_src_per_rank);
     std::vector<double> rho(n_src_per_rank);
@@ -30,6 +30,8 @@ int main(int argc, char *argv[]) {
     params.use_dipole = false;
     params.log_level = 0;
 
+    pdmk(params, n_src_per_rank, X.data(), pot.data(), nullptr, nullptr, 0, nullptr, pot.data(), nullptr, nullptr,
+         nullptr, nullptr, nullptr);
     pdmk(params, n_src_per_rank, X.data(), pot.data(), nullptr, nullptr, 0, nullptr, pot.data(), nullptr, nullptr,
          nullptr, nullptr, nullptr);
 

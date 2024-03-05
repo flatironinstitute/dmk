@@ -52,11 +52,11 @@ set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES} ${MPI_CXX_INCLUDE_DIRS})
 
 add_library(dmk STATIC)
-target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX DMKOBJS spdlog::spdlog)
+target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX DMKOBJS dmk_ref_common spdlog::spdlog)
 
 add_library(dmk_shared SHARED)
 set_target_properties(${PROJECT_NAME}_shared PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
-target_link_libraries(${PROJECT_NAME}_shared DMKOBJS OpenMP::OpenMP_CXX MPI::MPI_CXX BLAS::BLAS spdlog)
+target_link_libraries(${PROJECT_NAME}_shared DMKOBJS dmk_ref_common OpenMP::OpenMP_CXX MPI::MPI_CXX BLAS::BLAS spdlog)
 
 
 add_subdirectory(test)

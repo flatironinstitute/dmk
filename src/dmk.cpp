@@ -1,5 +1,6 @@
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
+#include <dmk/fortran.h>
 #include <dmk/logger.h>
 #include <dmk/tree.hpp>
 #include <sctl.hpp>
@@ -7,12 +8,45 @@
 #include <mpi.h>
 #include <stdexcept>
 #include <tuple>
+#include <utility>
+
 
 namespace dmk {
+struct ProlateFuncs {
+    ProlateFuncs(double beta_, int lenw_) : beta(beta_), lenw(lenw_) {
+        int ier;
+        workarray.resize(5000);
+        prol0ini_(&ier, &beta, workarray.data(), &rlam20, &rkhi, &lenw, &keep, &ltot);
+        if (ier)
+            throw std::runtime_error("Unable to init ProlateFuncs");
+    }
 
-std::tuple<int, double, double, double> get_PSWF_truncated_kernel_pwterms(int n_dim, double eps) {
-    constexpr double boxsize = 1.0;
-    const int ndigits = std::round(log10(1.0 / eps) - 0.1);
+    std::pair<double, double> eval_val_derivative(double x) const {
+        // wrapper for prol0eva routine - evaluates the function \psi^c_0 and its
+        // derivative at the user-specified point x \in R^1.
+        double psi0, derpsi0;
+        prol0eva_(&x, workarray.data(), &psi0, &derpsi0);
+        return std::make_pair(psi0, derpsi0);
+    }
+
+    double eval_val(double x) const {
+        auto [val, dum] = eval_val_derivative(x);
+        return val;
+    }
+
+    double eval_derivative(double x) const {
+        auto [dum, der] = eval_val_derivative(x);
+        return der;
+    }
+
+    double beta;
+    int lenw, keep, ltot;
+    std::vector<double> workarray;
+    double rlam20, rkhi;
+};
+
+template <int DIM>
+std::tuple<int, double, double, double> get_PSWF_truncated_kernel_pwterms(int ndigits, double boxsize) {
     int npw;
     double hpw, ws, rl;
 
@@ -30,14 +64,110 @@ std::tuple<int, double, double, double> get_PSWF_truncated_kernel_pwterms(int n_
         hpw = M_PI * 0.338 / boxsize;
     }
 
-    ws = 0.5 * std::pow(hpw, n_dim) / std::pow(M_PI, n_dim - 1);
-    rl = boxsize * sqrt((double)n_dim) * 2;
+    constexpr double factor = 1.0 / sctl::pow<DIM - 1>(M_PI);
+    constexpr double sqrt_dim = DIM == 2 ? 1.4142135623730951 : 1.7320508075688772;
+    ws = 0.5 * sctl::pow<DIM>(hpw) * factor;
+    rl = boxsize * sqrt_dim;
 
     return std::make_tuple(npw, hpw, ws, rl);
 }
 
-std::pair<int, int> get_pwmax_and_poly_order(int dim, double eps, dmk_ikernel kernel) {
-    int ndigits = std::round(log10(1.0 / eps) - 0.1);
+template <typename T>
+struct FourierData {
+    FourierData<T>(dmk_ikernel kernel_, int n_dim_, int ndigits, int n_pw_max, T fparam_,
+                   const std::vector<double> &boxsize_)
+        : kernel(kernel_), n_dim(n_dim_), fparam(fparam_), boxsize(boxsize_), n_levels(boxsize_.size()),
+          n_fourier_max(n_dim_ * sctl::pow(n_pw_max / 2, 2)) {
+        npw.resize(n_levels);
+        nfourier.resize(n_levels);
+        hpw.resize(n_levels);
+        ws.resize(n_levels);
+        rl.resize(n_levels);
+
+        if (n_dim == 2)
+            std::tie(npw[0], hpw[0], ws[0], rl[0]) = get_PSWF_truncated_kernel_pwterms<2>(ndigits, boxsize[0]);
+        else if (n_dim == 3)
+            std::tie(npw[0], hpw[0], ws[0], rl[0]) = get_PSWF_truncated_kernel_pwterms<3>(ndigits, boxsize[0]);
+
+        dkernelft.resize(n_fourier_max * n_levels);
+    }
+
+    void yukawa_windowed_kernel_Fourier_transform(T beta, ProlateFuncs &prolate_funcs) {
+        // compute the Fourier transform of the truncated kernel
+        // of the Yukawa kernel in two and three dimensions
+        const T &rlambda = fparam;
+        const T rlambda2 = rlambda * rlambda;
+        auto fhat = &dkernelft[0];
+
+        // determine whether one needs to smooth out the 1/(k^2+lambda^2) factor at the origin.
+        // needed in the calculation of kernel-smoothing when there is low-frequency breakdown
+        const bool near_correction = (rlambda * boxsize[0] / beta < 1E-2);
+        T dk0, dk1, delam;
+        if (near_correction) {
+            double arg = rl[0] * rlambda;
+            if (n_dim == 2) {
+                dk0 = besk0_(&arg);
+                dk1 = besk1_(&arg);
+            } else if (n_dim == 3)
+                delam = std::exp(-arg);
+        }
+
+        double psi0 = prolate_funcs.eval_val(0);
+
+        nfourier[0] = n_dim * sctl::pow(npw[0] / 2, 2);
+        for (int i = 0; i < nfourier[0]; ++i) {
+            const double rk = sqrt((double)i) * hpw[0];
+            const double xi2 = rk * rk + rlambda2;
+            const double xi = sqrt(xi2);
+            const double xval = xi * boxsize[0] / beta;
+            const double fval = (xval <= 1.0) ? prolate_funcs.eval_val(xval) : 0.0;
+
+            fhat[i] = ws[0] * fval / (psi0 * xi2);
+
+            if (near_correction) {
+                double sker;
+                if (n_dim == 2) {
+                    double xsc = rl[0] * rk;
+                    sker = -rl[0] * fparam * besj0_(&xsc) * dk1 + 1.0 + xsc * besj1_(&xsc) * dk0;
+                } else if (n_dim == 3) {
+                    double xsc = rl[0] * rk;
+                    sker = 1 - delam * (cos(xsc) + rlambda / rk * sin(xsc));
+                }
+                fhat[i] *= sker;
+            }
+        }
+    }
+
+    void update_windowed_kernel_Fourier_transform(T beta, ProlateFuncs &pf) {
+        switch (kernel) {
+        case dmk_ikernel::DMK_YUKAWA: {
+            return yukawa_windowed_kernel_Fourier_transform(beta, pf);
+        }
+        case dmk_ikernel::DMK_LAPLACE: {
+            throw std::runtime_error("Laplace kernel not supported yet.");
+        }
+        case dmk_ikernel::DMK_SQRT_LAPLACE: {
+            throw std::runtime_error("SQRT Laplace kernel not supported yet.");
+        }
+        }
+    }
+
+    const dmk_ikernel kernel;
+    const int n_dim;
+    const int n_levels;
+    const int n_fourier_max;
+    const T fparam;
+    std::vector<T> dkernelft;
+    std::vector<int> npw;
+    std::vector<int> nfourier;
+    std::vector<T> hpw;
+    std::vector<T> ws;
+    std::vector<T> rl;
+
+    const std::vector<double> &boxsize;
+};
+
+std::pair<int, int> get_pwmax_and_poly_order(int dim, int ndigits, dmk_ikernel kernel) {
     // clang-format off
     if (kernel == DMK_SQRT_LAPLACE && dim == 3) {
         if (ndigits <= 3) return {13, 9};
@@ -112,11 +242,11 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
 
     // 0: Initialization
     sctl::PtTree<T, DIM> tree(sctl::Comm::World());
-    sctl::Vector<T> r_src_vec(n_src, const_cast<T *>(r_src), false);
-    sctl::Vector<T> r_trg_vec(n_trg, const_cast<T *>(r_trg), false);
+    sctl::Vector<T> r_src_vec(n_src * params.n_dim, const_cast<T *>(r_src), false);
+    sctl::Vector<T> r_trg_vec(n_trg * params.n_dim, const_cast<T *>(r_trg), false);
     sctl::Vector<T> charge_vec(n_src * params.n_mfm, const_cast<T *>(charge), false);
 
-    logger->debug("Building tree");
+    logger->debug("Building tree and sorting points");
     tree.AddParticles("pdmk_src", r_src_vec);
     tree.AddParticleData("pdmk_charge", "pdmk_src", charge_vec);
     tree.AddParticles("pdmk_trg", r_trg_vec);
@@ -127,8 +257,10 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     zero_potentials<T, DIM>(params.pgh_target, n_trg, params.n_mfm, pot, grad, hess);
     logger->debug("Zeroing complete");
 
-    T beta = procl180_rescale(params.eps);
+    double beta = procl180_rescale(params.eps);
     logger->debug("prolate parameter value = {}", beta);
+    ProlateFuncs prolate_funcs(beta, 10000);
+    logger->debug("Initialized prolate function data");
 
     logger->debug("Generating tree traversal metadata");
     // FIXME: This reduction probably shouldn't be necessary
@@ -136,17 +268,21 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     logger->debug("Done generating tree traversal metadata");
 
     // 1: Precomputation
-    const auto [n_pw_max, n_order] = get_pwmax_and_poly_order(DIM, params.eps, params.kernel);
+    const int ndigits = std::round(log10(1.0 / params.eps) - 0.1);
+    const auto [n_pw_max, n_order] = get_pwmax_and_poly_order(DIM, ndigits, params.kernel);
     Eigen::MatrixX<T> p2c_m, p2c_p, c2p_m, c2p_p;
 
-    logger->debug("Generating p2c and c2p matrices");
+    logger->debug("Generating p2c and c2p matrices of order {}", n_order);
     std::tie(p2c_m, p2c_p) = dmk::chebyshev::parent_to_child_matrices<T>(n_order);
     c2p_m = p2c_m.transpose().eval();
     c2p_p = p2c_p.transpose().eval();
-    logger->debug("Finished creating matrices");
+    logger->debug("Finished generating matrices");
 
-    auto [n_pw, pw_stepsize, pw_weight, pw_radius] = get_PSWF_truncated_kernel_pwterms(params.n_dim, params.eps);
-    logger->debug("Planewave params: n: {}, stepsize: {}, weight: {}, radius: {}", n_pw, pw_stepsize, pw_weight, pw_radius);
+    FourierData<T> fourier_data(params.kernel, DIM, ndigits, n_pw_max, 6.0, tree_data.boxsize);
+    logger->debug("Planewave params at root box: n_max, {}, n: {}, stepsize: {}, weight: {}, radius: {}", n_pw_max,
+                  fourier_data.npw[0], fourier_data.hpw[0], fourier_data.ws[0], fourier_data.rl[0]);
+    fourier_data.update_windowed_kernel_Fourier_transform(beta, prolate_funcs);
+    logger->debug("Truncated fourier transform for kernel {} at root box generated", int(params.kernel));
 }
 
 } // namespace dmk

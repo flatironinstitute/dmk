@@ -12,9 +12,12 @@ struct TreeData {
     std::vector<std::vector<int>> level_indices;
     std::vector<int> src_counts_local;
     std::vector<int> src_counts_global;
+    std::vector<double> boxsize;
 
     template <typename TREE>
     TreeData(const TREE &tree, int ns);
+
+    int n_levels() const { return level_indices.size(); }
 };
 
 } // namespace dmk

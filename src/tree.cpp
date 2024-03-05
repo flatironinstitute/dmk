@@ -35,6 +35,10 @@ TreeData::TreeData(const TREE &tree, int ns) {
     }
     max_depth++;
     level_indices.resize(max_depth);
+    boxsize.resize(max_depth);
+    boxsize[0] = 1.0;
+    for (int i = 1; i < max_depth; ++i)
+        boxsize[i] = 0.5 * boxsize[i - 1];
 
     for (int i_level = max_depth - 1; i_level >= 0; i_level--) {
         for (auto i_node : level_indices[i_level]) {
