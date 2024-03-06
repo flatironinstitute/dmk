@@ -13,6 +13,7 @@ void prolate_intvals_(const double *, const double *, double *, double *, double
 void legeexps_(const int *, const int *, double *, double *, double *, double *);
 void chebexps_(const int *, const int *, double *, double *, double *, double *);
 void hank103_(const double _Complex *, double _Complex *, double _Complex *, const int *);
+double hkrand_(int *);
 }
 
 #endif

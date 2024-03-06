@@ -18,4 +18,4 @@ add_executable(test_tree test_tree.cpp)
 target_link_libraries(test_tree dmk_shared)
 
 add_executable(test_pdmk test_pdmk.cpp)
-target_link_libraries(test_pdmk dmk_shared)
+target_link_libraries(test_pdmk dmk_shared dmk_ref)
