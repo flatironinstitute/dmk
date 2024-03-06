@@ -436,7 +436,7 @@ c     leaf boxes
 
       if (nboxsrcpts(1).le.ndiv) ifleafbox(1)=1
       
-      do ilev=0,nlevels
+      do ilev=1,nlevels
          do ibox=itree(2*ilev+1),itree(2*ilev+2)
             dad =  itree(iptr(3)+ibox-1)
             if (nboxsrcpts(ibox) .le. ndiv .and.
@@ -616,7 +616,7 @@ C$    time1=omp_get_wtime()
       allocate(nfourier(-1:nlevels-1))
       allocate(hpw(-1:nlevels-1))
       allocate(ws(-1:nlevels-1))
-      allocate(rl(-1:nlevels-1))
+      allocate(rl(-1:nlevels))
 
 c     truncated kernel at level -1
       bsize = boxsize(0)
