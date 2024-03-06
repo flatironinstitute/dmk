@@ -37,7 +37,7 @@ inline Vector<T> get_cheb_nodes(int order, T lb, T ub) {
     const T mean = 0.5 * (lb + ub);
     const T hw = 0.5 * (ub - lb);
     for (int i = 0; i < order; ++i)
-        nodes[i] = mean + hw * cos(M_PI * (i + 0.5) / order);
+        nodes[i] = mean + hw * cos(M_PI * ((order - i - 1) + 0.5) / order);
 
     return nodes;
 }
@@ -94,7 +94,7 @@ inline void calc_polynomial(int order, const CVectorRef<T> &x, MatrixRef<T> poly
 }
 
 template <typename T>
-inline void calc_polynomial(int order, int n_poly, const T *x, T* poly) {
+inline void calc_polynomial(int order, int n_poly, const T *x, T *poly) {
     Eigen::Map<const Vector<T>> x_(x, n_poly);
     Eigen::Map<Matrix<T>> poly_(poly, order, n_poly);
     calc_polynomial<T>(order, x_, poly_);

@@ -132,6 +132,8 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     logger->debug("Truncated fourier transform for kernel {} at root box generated", int(params.kernel));
     fourier_data.update_difference_kernels(prolate_funcs);
     logger->debug("Finished calculating difference kernels");
+    fourier_data.update_local_coeffs(params.eps, prolate_funcs);
+    logger->debug("Finished updating local potential expansion coefficients");
 }
 
 } // namespace dmk

@@ -6,6 +6,7 @@
 #include <limits>
 
 #include <dmk/chebychev.hpp>
+#include <dmk/fortran.h>
 using namespace dmk::chebyshev;
 
 template <typename T>
@@ -64,6 +65,24 @@ void translation_test(int order) {
     }
 }
 
+void fort_test(int order) {
+    int i_type = 2;
+    std::vector<double> u(order * order), v(order * order), w(order), r(order);
+    chebexps_(&i_type, &order, r.data(), u.data(), v.data(), w.data());
+
+    auto rcpp = dmk::chebyshev::get_cheb_nodes(order, -1.0, 1.0);
+    auto [vmat, _] = dmk::chebyshev::get_vandermonde_and_LU<double>(order);
+
+    double node_norm = (rcpp - Eigen::Map<Eigen::VectorXd>(r.data(), r.size())).norm() / order;
+    double vmat_norm = (vmat - Eigen::Map<Eigen::MatrixXd>(v.data(), order, order)).norm() / (order * order);
+    double umat_norm = (vmat.inverse() - Eigen::Map<Eigen::MatrixXd>(u.data(), order, order)).norm() / (order * order);
+
+    constexpr double eps = std::numeric_limits<double>::epsilon();
+    assert(node_norm < eps);
+    assert(vmat_norm < eps);
+    assert(umat_norm < eps);
+}
+
 int main(int argc, char *argv[]) {
 
     for (int order = 8; order < 32; order += 2) {
@@ -73,6 +92,7 @@ int main(int argc, char *argv[]) {
         interp_test<double>(order);
         fit_test<float>(order);
         fit_test<double>(order);
+        fort_test(order);
     }
 
     return 0;

@@ -4,7 +4,6 @@
 #include "../dmk.h"
 #include <vector>
 
-
 namespace dmk {
 struct ProlateFuncs;
 
@@ -17,6 +16,8 @@ struct FourierData {
     void yukawa_difference_kernel_fourier_transform(int i_level, ProlateFuncs &pf);
     void update_difference_kernel(int i_level, ProlateFuncs &pf);
     void update_difference_kernels(ProlateFuncs &pf);
+    void update_local_coeffs_yukawa(T eps, ProlateFuncs &pf);
+    void update_local_coeffs(T eps, ProlateFuncs &pf);
 
     const dmk_ikernel kernel;
     const T beta;
@@ -31,6 +32,12 @@ struct FourierData {
     std::vector<T> hpw;
     std::vector<T> ws;
     std::vector<T> rl;
+
+    // Local chebyshev polynomial coefficients for yukawa potential
+    std::vector<double> coeffs1;
+    std::vector<double> coeffs2;
+    std::vector<int> ncoeffs1;
+    std::vector<int> ncoeffs2;
 
     const std::vector<double> &boxsize;
 };
