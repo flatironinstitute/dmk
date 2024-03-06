@@ -20,7 +20,7 @@ int main(int argc, char *argv[]) {
         x = drand48();
 
     pdmk_params params;
-    params.eps = 1e-8;
+    params.eps = 1e-6;
     params.n_dim = DIM;
     params.n_per_leaf = 2000;
     params.n_mfm = 1;
