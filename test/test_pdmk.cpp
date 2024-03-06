@@ -64,23 +64,24 @@ int main(int argc, char *argv[]) {
     MPI_Init_thread(&argc, &argv, req, &prov);
     assert(prov == req);
 
-    constexpr int DIM = 3;
+    constexpr int n_dim = 3;
     constexpr int n_src_per_rank = 1e6;
     constexpr int n_trg_per_rank = 0;
-    std::vector<double> X(DIM * n_src_per_rank);
-    std::vector<double> charges(n_src_per_rank);
-    std::vector<double> rnormal(DIM * n_src_per_rank);
-    std::vector<double> dipstr(n_src_per_rank);
-    std::vector<double> pot(n_src_per_rank);
-    std::vector<double> r_trg(n_trg_per_rank);
+    constexpr int nd = 1;
+    std::vector<double> X(n_dim * n_src_per_rank);
+    std::vector<double> charges(nd * n_src_per_rank);
+    std::vector<double> rnormal(n_dim * n_src_per_rank);
+    std::vector<double> dipstr(nd * n_src_per_rank);
+    std::vector<double> pot(nd * n_src_per_rank);
+    std::vector<double> r_trg(n_dim * n_trg_per_rank);
 
-    init_data(DIM, 1, n_src_per_rank, false, X.data(), rnormal.data(), charges.data(), dipstr.data());
+    init_data(n_dim, 1, n_src_per_rank, false, X.data(), rnormal.data(), charges.data(), dipstr.data());
 
     pdmk_params params;
     params.eps = 1e-6;
-    params.n_dim = DIM;
-    params.n_per_leaf = 2000;
-    params.n_mfm = 1;
+    params.n_dim = n_dim;
+    params.n_per_leaf = 80;
+    params.n_mfm = nd;
     params.pgh = DMK_POTENTIAL;
     params.kernel = DMK_YUKAWA;
     params.use_periodic = false;
