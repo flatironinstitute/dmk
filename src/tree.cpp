@@ -24,7 +24,6 @@ TreeData::TreeData(const TREE &tree, int ns) {
     src_counts_local.resize(n_nodes);
     src_counts_global.resize(n_nodes);
 
-    std::vector<std::vector<int>> level_indices;
     level_indices.resize(SCTL_MAX_DEPTH);
 
     int8_t max_depth = 0;
