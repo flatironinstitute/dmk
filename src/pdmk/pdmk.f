@@ -436,13 +436,9 @@ c     leaf boxes
 
       if (nboxsrcpts(1).le.ndiv) ifleafbox(1)=1
       
-      do ilev=0,nlevels
+      do ilev=1,nlevels
          do ibox=itree(2*ilev+1),itree(2*ilev+2)
             dad =  itree(iptr(3)+ibox-1)
-c           dad = -1 -> out of bounds access in nboxsrcpts
-            if (dad.lt.1) then
-               dad = 1
-            endif
             if (nboxsrcpts(ibox) .le. ndiv .and.
      1          nboxsrcpts(dad).gt.ndiv .and.
      2          nboxsrcpts(ibox) .gt. 0) then
