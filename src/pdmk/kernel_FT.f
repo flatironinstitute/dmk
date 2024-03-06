@@ -870,7 +870,7 @@ c     when the kernel is singular or nearly singular!!
      1             +1+xsc*besj1(xsc)*dk0
             elseif (dim.eq.3) then
                xsc=rl*rk
-               sker=1-delam*(cos(xsc)+rlambda/xs(i)*sin(xsc))
+               sker=1-delam*(cos(xsc)+rlambda/rk*sin(xsc))
             endif               
             fhat(i)=fhat(i)*sker
          endif         
