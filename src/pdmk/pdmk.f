@@ -439,6 +439,10 @@ c     leaf boxes
       do ilev=0,nlevels
          do ibox=itree(2*ilev+1),itree(2*ilev+2)
             dad =  itree(iptr(3)+ibox-1)
+c           dad = -1 -> out of bounds access in nboxsrcpts
+            if (dad.lt.1) then
+               dad = 1
+            endif
             if (nboxsrcpts(ibox) .le. ndiv .and.
      1          nboxsrcpts(dad).gt.ndiv .and.
      2          nboxsrcpts(ibox) .gt. 0) then
@@ -616,7 +620,7 @@ C$    time1=omp_get_wtime()
       allocate(nfourier(-1:nlevels-1))
       allocate(hpw(-1:nlevels-1))
       allocate(ws(-1:nlevels-1))
-      allocate(rl(-1:nlevels-1))
+      allocate(rl(-1:nlevels))
 
 c     truncated kernel at level -1
       bsize = boxsize(0)
