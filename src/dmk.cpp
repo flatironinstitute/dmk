@@ -124,8 +124,7 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     c2p_p = p2c_p.transpose().eval();
     logger->debug("Finished generating matrices");
 
-    // fixme: fixed parameter for yukawa (6.0)
-    FourierData<T> fourier_data(params.kernel, DIM, ndigits, n_pw_max, 6.0, beta, tree_data.boxsize);
+    FourierData<T> fourier_data(params.kernel, DIM, ndigits, n_pw_max, params.fparam, beta, tree_data.boxsize);
     logger->debug("Planewave params at root box: n_max, {}, n: {}, stepsize: {}, weight: {}, radius: {}", n_pw_max,
                   fourier_data.npw[0], fourier_data.hpw[0], fourier_data.ws[0], fourier_data.rl[0]);
     fourier_data.update_windowed_kernel_fourier_transform(prolate_funcs);

@@ -65,7 +65,7 @@ inline void calc_polynomial(int order, T x, VectorRef<T> poly) {
     poly[1] = x;
 
     for (int i = 2; i < order; ++i)
-        poly[i] = T{2} * poly[i - 1] - poly[i - 2];
+        poly[i] = T{2} * x * poly[i - 1] - poly[i - 2];
 }
 
 template <typename T>
