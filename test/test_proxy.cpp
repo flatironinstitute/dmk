@@ -1,17 +1,22 @@
+#include <cassert>
 #include <dmk/proxy.hpp>
 #include <omp.h>
 #include <cstdlib>
+#include <iostream>
 
-int main(int argc, char *argv[]) {
-    int n_order = 24;
-    int n_src = 4000;
-    int n_charge_dim = 3;
-    int n_dim = 2;
+#include <Eigen/Core>
 
-    std::vector<double> r_src(n_src * n_dim);
-    std::vector<double> charge(n_src * n_charge_dim);
-    std::vector<double> coeffs(n_order * n_order * n_src * n_charge_dim);
-    double center[2] = {0.5, 0.5};
+extern "C" {
+void pdmk_charge2proxycharge_(int *ndim, int *nd, int *norder, int *ns, double *sources, double *charge, double *cen,
+                              double *sc, double *coefs);
+}
+
+void test_fortran(int n_dim, int n_charge_dim, int n_order, int n_src) {
+    Eigen::VectorX<double> r_src(n_src * n_dim);
+    Eigen::VectorX<double> charge(n_src * n_charge_dim);
+    Eigen::VectorX<double> coeffs(int(pow(n_order, n_dim)) * n_charge_dim);
+    Eigen::VectorX<double> coeffs_fort(int(pow(n_order, n_dim)) * n_charge_dim);
+    double center[3] = {0.5, 0.5, 0.5};
     double scale_factor = 1.0;
 
     for (int i = 0; i < n_src * n_dim; ++i)
@@ -20,9 +25,22 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < n_src * n_charge_dim; ++i)
         charge[i] = drand48() - 0.5;
 
-    int n_iters = 1e7 / n_src;
-    for (int i = 0; i < n_iters; ++i)
-        dmk::proxy::charge2proxycharge(n_dim, n_charge_dim, n_order, r_src, charge, center, scale_factor, coeffs);
+    dmk::proxy::charge2proxycharge(n_dim, n_charge_dim, n_order, n_src, r_src.data(), charge.data(), center,
+                                   scale_factor, coeffs.data());
+
+    pdmk_charge2proxycharge_(&n_dim, &n_charge_dim, &n_order, &n_src, r_src.data(), charge.data(), center,
+                             &scale_factor, coeffs_fort.data());
+    double l2 = (coeffs - coeffs_fort).norm() / coeffs.size();
+    assert(l2 < 1E-16);
+}
+
+int main(int argc, char *argv[]) {
+    int n_order = 24;
+    int n_src = 200;
+    int n_charge_dim = 1;
+
+    test_fortran(2, n_charge_dim, n_order, n_src);
+    test_fortran(3, n_charge_dim, n_order, n_src);
 
     return 0;
 }

@@ -5,8 +5,8 @@
 
 namespace dmk::proxy {
 template <typename T>
-void charge2proxycharge(int n_dim, int n_charge_dim, int order, const std::vector<T> &r_src,
-                        const std::vector<T> &charge, T *center, T scale_factor, std::vector<T> &coeffs);
+void charge2proxycharge(int n_dim, int n_charge_dim, int order, int n_src, const T *r_src, const T *charge,
+                        const T *center, T scale_factor, T *coeffs);
 }
 
 #endif
