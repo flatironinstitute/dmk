@@ -4,6 +4,7 @@
 #include <dmk/fourier_data.hpp>
 #include <dmk/logger.h>
 #include <dmk/prolate_funcs.hpp>
+#include <dmk/proxy.hpp>
 #include <dmk/tree.hpp>
 #include <sctl.hpp>
 
@@ -109,9 +110,10 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     logger->debug("Initialized prolate function data");
 
     logger->debug("Generating tree traversal metadata");
-    // FIXME: This reduction probably shouldn't be necessary
-    dmk::TreeData tree_data(tree, n_src);
+    dmk::TreeData<T, DIM> tree_data(tree, params.n_per_leaf);
     logger->debug("Done generating tree traversal metadata");
+    logger->debug("Tree has {} levels, {} boxes, {} leaves, {} incoming pw, and {} outgoing pw", tree_data.n_levels(),
+                  tree_data.n_boxes(), tree_data.n_leaves(), tree_data.n_in(), tree_data.n_out());
 
     // 1: Precomputation
     const int ndigits = std::round(log10(1.0 / params.eps) - 0.1);
@@ -133,6 +135,26 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     logger->debug("Finished calculating difference kernels");
     fourier_data.update_local_coeffs(params.eps, prolate_funcs);
     logger->debug("Finished updating local potential expansion coefficients");
+
+
+    const int n_boxes = tree_data.n_boxes();
+    std::vector<Eigen::MatrixX<T>> proxy_coeffs(n_boxes);
+    for (int i_box = 0; i_box < n_boxes; ++i_box) {
+        if (!tree_data.leaf_flag_traditional[i_box])
+            continue;
+
+        tree_data.src_counts_local[i_box];
+        // proxy::charge2proxycharge(DIM, params.n_mfm, n_order, int n_src, const T *r_src, const T *charge,
+        //                           const T *center, T scale_factor, T *coeffs);
+    }
+    // std::vector<int> level_sorted_counts;
+    // level_sorted_counts.reserve(tree_data.n_boxes());
+    // for (int i_level = 0; i_level < tree_data.n_levels(); ++i_level) {
+    //     for (const auto &inds : tree_data.level_indices)
+    //         for (const auto ind : inds)
+    //             level_sorted_counts.push_back(tree_data.src_counts_local[ind]);
+    // }
+    // tree.WriteTreeVTK("pdmk_tree");
 }
 
 } // namespace dmk
