@@ -5,6 +5,7 @@
 #include <dmk/logger.h>
 #include <dmk/prolate_funcs.hpp>
 #include <dmk/proxy.hpp>
+#include <dmk/tensorprod.hpp>
 #include <dmk/tree.hpp>
 #include <sctl.hpp>
 
@@ -14,6 +15,64 @@
 #include <utility>
 
 namespace dmk {
+
+template <typename T>
+std::pair<std::vector<T>, std::vector<T>> get_c2p_p2c_matrices(int dim, int order) {
+    std::array<Eigen::MatrixX<T>, 2> c2p_mp;
+    std::array<Eigen::MatrixX<T>, 2> p2c_mp;
+
+    std::tie(p2c_mp[0], p2c_mp[1]) = dmk::chebyshev::parent_to_child_matrices<T>(order);
+    c2p_mp[0] = p2c_mp[0].transpose().eval();
+    c2p_mp[1] = p2c_mp[1].transpose().eval();
+
+    const int mc = std::pow(2, dim);
+
+    std::pair<std::vector<T>, std::vector<T>> res;
+    auto &[c2p, p2c] = res;
+
+    c2p.resize(order * order * dim * mc);
+    p2c.resize(order * order * dim * mc);
+
+    const int blocksize = order * order;
+    const int matsize = order * order * sizeof(T);
+    if (dim == 1) {
+        memcpy(c2p.data(), c2p_mp[0].data(), matsize);
+        memcpy(c2p.data() + blocksize, p2c_mp[1].data(), matsize);
+
+        memcpy(p2c.data(), p2c_mp[0].data(), matsize);
+        memcpy(p2c.data() + blocksize, p2c_mp[1].data(), matsize);
+    }
+    if (dim == 2) {
+        int offset = 0;
+        for (int j = 0; j < 2; ++j) {
+            for (int i = 0; i < 2; ++i) {
+                for (auto idx : {i, j}) {
+                    memcpy(c2p.data() + offset, c2p_mp[idx].data(), matsize);
+                    memcpy(p2c.data() + offset, p2c_mp[idx].data(), matsize);
+                    offset += blocksize;
+                }
+            }
+        }
+    }
+
+    if (dim == 3) {
+        int offset = 0;
+        for (int k = 0; k < 2; ++k) {
+            for (int j = 0; j < 2; ++j) {
+                for (int i = 0; i < 2; ++i) {
+                    for (auto idx : {i, j, k}) {
+                        memcpy(c2p.data() + offset, c2p_mp[idx].data(), matsize);
+                        memcpy(p2c.data() + offset, p2c_mp[idx].data(), matsize);
+                        offset += blocksize;
+                    }
+                }
+            }
+        }
+    }
+
+    return res;
+}
+
 std::pair<int, int> get_pwmax_and_poly_order(int dim, int ndigits, dmk_ikernel kernel) {
     // clang-format off
     if (kernel == DMK_SQRT_LAPLACE && dim == 3) {
@@ -118,12 +177,9 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     // 1: Precomputation
     const int ndigits = std::round(log10(1.0 / params.eps) - 0.1);
     const auto [n_pw_max, n_order] = get_pwmax_and_poly_order(DIM, ndigits, params.kernel);
-    Eigen::MatrixX<T> p2c_m, p2c_p, c2p_m, c2p_p;
 
     logger->debug("Generating p2c and c2p matrices of order {}", n_order);
-    std::tie(p2c_m, p2c_p) = dmk::chebyshev::parent_to_child_matrices<T>(n_order);
-    c2p_m = p2c_m.transpose().eval();
-    c2p_p = p2c_p.transpose().eval();
+    auto [c2p, p2c] = get_c2p_p2c_matrices<T>(DIM, n_order);
     logger->debug("Finished generating matrices");
 
     FourierData<T> fourier_data(params.kernel, DIM, ndigits, n_pw_max, params.fparam, beta, tree_data.boxsize);
@@ -140,14 +196,38 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     std::vector<std::vector<T>> proxy_coeffs(n_boxes);
     const int n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
     for (int i_box = 0; i_box < n_boxes; ++i_box) {
-        if (!tree_data.out_flag[i_box])
-            continue;
-        proxy_coeffs[i_box].resize(n_coeffs);
-        proxy::charge2proxycharge(DIM, params.n_mfm, n_order, tree_data.src_counts_local[i_box],
-                                  tree_data.r_src_ptr(i_box), tree_data.charge_ptr(i_box), tree_data.center_ptr(i_box),
-                                  tree_data.scale_factors[i_box], proxy_coeffs[i_box].data());
+        if (tree_data.leaf_flag[i_box]) {
+            proxy_coeffs[i_box].resize(n_coeffs);
+            proxy::charge2proxycharge(DIM, params.n_mfm, n_order, tree_data.src_counts_local[i_box],
+                                      tree_data.r_src_ptr(i_box), tree_data.charge_ptr(i_box),
+                                      tree_data.center_ptr(i_box), tree_data.scale_factors[i_box],
+                                      proxy_coeffs[i_box].data());
+        }
     }
-    logger->debug("Finished building proxy charges");
+    logger->debug("Finished building leaf proxy charges");
+
+    constexpr int n_children = 1u << DIM;
+    for (int i_level = tree_data.n_levels() - 1; i_level >= 0; --i_level) {
+        for (auto parent_box : tree_data.level_indices[i_level]) {
+            if (tree_data.leaf_flag[parent_box] || !tree_data.out_flag[parent_box])
+                continue;
+
+            auto &children = tree_data.node_lists[parent_box].child;
+            proxy_coeffs[parent_box].resize(n_coeffs);
+
+            for (int i_child = 0; i_child < n_children; ++i_child) {
+                const int child_box = children[i_child];
+
+                constexpr bool add_flag = true;
+                if (proxy_coeffs[child_box].size()) {
+                    tensorprod::transform(DIM, params.n_mfm, n_order, n_order, add_flag, proxy_coeffs[child_box].data(),
+                                          &c2p[i_child * DIM * n_order * n_order], proxy_coeffs[parent_box].data());
+                }
+            }
+        }
+    }
+
+    logger->debug("Finished building proxy charges for non-leaf boxes");
 }
 
 } // namespace dmk
