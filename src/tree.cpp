@@ -80,7 +80,7 @@ TreeData<T, DIM>::TreeData(const sctl::PtTree<T, DIM> &tree_, int ndiv, int nd)
     for (int i_node = 0; i_node < n_nodes; ++i_node) {
         for (auto &neighb : node_lists[i_node].nbr) {
             // neighb = -1 -> no neighb at current level in that direction
-            if (neighb != -1 && out_flag[neighb] && src_counts_global[i_node] > 0) {
+            if (neighb != -1 && out_flag[neighb] && src_counts_global[neighb] > 0) {
                 in_flag[i_node] = true;
                 break;
             }
