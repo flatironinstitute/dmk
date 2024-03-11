@@ -1,6 +1,6 @@
-#include <sctl.hpp>
 #include <dmk/tree.hpp>
 #include <mpi.h>
+#include <sctl.hpp>
 
 int main(int argc, char *argv[]) {
     sctl::Comm::MPI_Init(&argc, &argv);
@@ -43,7 +43,7 @@ int main(int argc, char *argv[]) {
         sctl::Vector<sctl::Long> cnt_charge;
         tree.GetData(data_charge, cnt_charge, "pdmk_src");
 
-        dmk::TreeData<double, DIM> tree_data(tree, 1);
+        dmk::TreeData<double, DIM> tree_data(tree, 1, 1);
 
         sctl::Long offset_part{0}, offset_charge{0};
         for (std::size_t i_node = 0; i_node < mids.Dim(); ++i_node) {

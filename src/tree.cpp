@@ -6,12 +6,11 @@
 namespace dmk {
 
 template <typename T, int DIM>
-TreeData<T, DIM>::TreeData(const sctl::PtTree<T, DIM> &tree_, int ndiv)
+TreeData<T, DIM>::TreeData(const sctl::PtTree<T, DIM> &tree_, int ndiv, int nd)
     : tree(tree_), node_attr(tree.GetNodeAttr()), node_mid(tree.GetNodeMID()), node_lists(tree.GetNodeLists()) {
     const int n_nodes = n_boxes();
-    sctl::Vector<double> data_part;
-    sctl::Vector<sctl::Long> cnt_part;
-    tree.GetData(data_part, cnt_part, "pdmk_src");
+    tree.GetData(r_src_sorted, r_src_cnt, "pdmk_src");
+    tree.GetData(charge_sorted, charge_cnt, "pdmk_charge");
 
     leaf_flag_traditional.resize(n_nodes);
     leaf_flag.resize(n_nodes);
@@ -19,8 +18,17 @@ TreeData<T, DIM>::TreeData(const sctl::PtTree<T, DIM> &tree_, int ndiv)
     out_flag.resize(n_nodes);
     src_counts_local.resize(n_nodes);
     src_counts_global.resize(n_nodes);
+    r_src_offsets.resize(n_nodes);
+    charge_offsets.resize(n_nodes);
+    centers.resize(n_nodes * DIM);
+    scale_factors.resize(n_nodes);
 
     level_indices.resize(SCTL_MAX_DEPTH);
+
+    for (int i_node = 1; i_node < n_nodes; ++i_node) {
+        r_src_offsets[i_node] = r_src_offsets[i_node - 1] + DIM * r_src_cnt[i_node - 1];
+        charge_offsets[i_node] = charge_offsets[i_node - 1] + nd * charge_cnt[i_node - 1];
+    }
 
     int8_t max_depth = 0;
     for (int i_node = 0; i_node < n_nodes; ++i_node) {
@@ -35,13 +43,25 @@ TreeData<T, DIM>::TreeData(const sctl::PtTree<T, DIM> &tree_, int ndiv)
     for (int i = 1; i < max_depth; ++i)
         boxsize[i] = 0.5 * boxsize[i - 1];
 
+    T scale = 1.0;
+    for (int i_level = 0; i_level < n_levels(); ++i_level) {
+        for (auto i_node : level_indices[i_level]) {
+            auto &node = node_mid[i_node];
+            auto node_origin = node.template origin<T>();
+            for (int i = 0; i < DIM; ++i)
+                centers[i_node * DIM + i] = node_origin[i] + 0.5 * scale;
+            scale_factors[i_node] = scale;
+        }
+        scale *= 0.5;
+    }
+
     for (int i_level = max_depth - 1; i_level >= 0; i_level--) {
         for (auto i_node : level_indices[i_level]) {
             auto &node = node_mid[i_node];
             assert(i_level == node.Depth());
 
             leaf_flag_traditional[i_node] = node_attr[i_node].Leaf;
-            src_counts_local[i_node] += cnt_part[i_node];
+            src_counts_local[i_node] += r_src_cnt[i_node];
             if (node_lists[i_node].parent != -1)
                 src_counts_local[node_lists[i_node].parent] += src_counts_local[i_node];
         }
