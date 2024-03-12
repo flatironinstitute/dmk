@@ -5,15 +5,11 @@ c
      1    npbox,nboxes,nlevels,ltree,itree,iptr,centers,boxsize,
      2    fvals,ifpgh,pot,grad,hess,ntarg,targs,
      3    ifpghtarg,pote,grade,hesse,tottimeinfo)
-cccc     3    ifpghtarg,pote,grade,hesse,tottimeinfo,flvals,fl2vals)
 c     
 c
 c     This code computes the volume potential on a box for densities
 c     defined on a tensor product grid of each leaf node in an adaptive tree.
 c
-c     The interaction kernel is either the Yukawa kernel e^{-\beta r}/r or
-c     the power function 1/r^\beta
-c 
 c     input
 c     nd - integer
 c          number of right hand sides
@@ -646,12 +642,10 @@ C$    time2=omp_get_wtime()
       
 c     evaluate potential at extra targets
       if (ifpghtarg.ge.1) then
-         allocate(coefsp(nd,npbox,nboxes))
-         call treedata_trans_nd(ndim,nd,nlevels,itree,
-     1       iptr,boxsize,norder,pot,coefsp,umat_nd)
-         call treedata_evalt_nd(ndim,nd,ipoly,norder,nboxes,nlevels,
-     1       ltree,itree,iptr,centers,boxsize,coefsp,
-     2       ntarg,targs,pote)
+         call bdmk_potevaltarg(nd,ndim,ipoly,norder,
+     1    nboxes,nlevels,ltree,itree,iptr,centers,boxsize,
+     2    pot,ntarg,targs,
+     3    pote)
       endif
 
 cccc  call prin2('pote=*',pote,240)
@@ -848,4 +842,100 @@ c      if (boxsize(0) .le. dcutoff) npwlevel=0
 
       return
       end
+c      
+c
+c
+c
+      subroutine bdmk_potevaltarg(nd,ndim,ipoly,norder,
+     1    nboxes,nlevels,ltree,itree,iptr,centers,boxsize,
+     2    pot,ntarg,targs,
+     3    pottarg)
+c     
+c
+c     This code computes the volume potential on arbitrary targets given
+c     the potential on a tensor product grid of each leaf node in an adaptive tree.
+c
+c     input
+c     nd - integer
+c          number of right hand sides
+c     ndim - integer
+c           dimension of the underlying space
+c     ipoly - integer
+c            0: Legendre polynomials
+c            1: Chebyshev polynomials
+c     norder - integer
+c           order of expansions for input function value array
+c     nboxes - integer
+c            number of boxes
+c     nlevels - integer
+c            number of levels
+c     ltree - integer
+c            length of array containing the tree structure
+c     itree - integer(ltree)
+c            array containing the tree structure
+c     iptr - integer(8)
+c            pointer to various parts of the tree structure
+c           iptr(1) - laddr
+c           iptr(2) - ilevel
+c           iptr(3) - iparent
+c           iptr(4) - nchild
+c           iptr(5) - ichild
+c           iptr(6) - ncoll
+c           iptr(7) - coll
+c           iptr(8) - ltree
+c     centers - double precision (ndim,nboxes)
+c           xyz coordintes of boxes in the tree structure
+c     boxsize - double precision (0:nlevels)
+c           size of boxes at each of the levels
+c     pot - double precision (nd,npbox,nboxes)
+c            volume potential on the tree structure (note that 
+c           the potential is non-zero only in the leaf boxes of the new tree
+c     ntarg - number of targets
+c     targs - double precision (ndim,ntarg)
+c            coordinates of target points
+c
+c     output:
+c     pottarg - double precision (nd,ntarg)
+c            volume potential at targets
+c
+      implicit none
+      integer nd,ndim,ipoly
+      integer nboxes,nlevels,ntarg
+      integer iptr(8),ltree
+      integer itree(ltree),norder,npbox
+      real *8 targs(ndim,ntarg)
+
+      real *8 pot(nd,norder**ndim,nboxes)
+
+      real *8 pottarg(nd,ntarg)
+
+      real *8 centers(ndim,nboxes)
+      real *8 boxsize(0:nlevels)
+
+c     local variables
+      integer norder2,i
+      real *8 umat(norder,norder)
+      real *8 vmat(norder,norder)
+      real *8 vpmat(norder,norder)
+      real *8 vppmat(norder,norder)
+      real *8 umat_nd(norder,norder,ndim)
       
+      real *8, allocatable :: coefsp(:,:,:)
+
+      
+      call ortho_eval_tables(ipoly,norder,umat,vmat,vpmat,vppmat)
+      norder2=norder*norder
+      do i=1,ndim
+         call dcopy_f77(norder2,umat,1,umat_nd(1,1,i),1)
+      enddo
+      
+      allocate(coefsp(nd,norder**ndim,nboxes))
+      call treedata_trans_nd(ndim,nd,
+     1    nlevels,itree,iptr,boxsize,
+     2    norder,pot,coefsp,umat_nd)
+      call treedata_evalt_nd(ndim,nd,ipoly,norder,
+     1    nboxes,nlevels,ltree,itree,iptr,centers,boxsize,
+     2    coefsp,ntarg,targs,pottarg)
+
+      return
+      end
