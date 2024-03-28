@@ -47,7 +47,7 @@ TreeData<T, DIM>::TreeData(const sctl::PtTree<T, DIM> &tree_, int ndiv, int nd)
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         for (auto i_node : level_indices[i_level]) {
             auto &node = node_mid[i_node];
-            auto node_origin = node.template origin<T>();
+            auto node_origin = node.template Coord<T>();
             for (int i = 0; i < DIM; ++i)
                 centers[i_node * DIM + i] = node_origin[i] + 0.5 * scale;
             scale_factors[i_node] = scale;
