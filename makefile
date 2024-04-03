@@ -154,6 +154,7 @@ PDMKOBJS = $(PDMK)/lndiv.o \
 	$(PDMK)/pdmk_pwterms.o \
 	$(PDMK)/pdmk_local.o \
 	$(PDMK)/kernel_FT.o \
+	$(PDMK)/stokes_kernel_FT.o \
 	$(PDMK)/pdmk_pwrouts.o \
 	$(PDMK)/pdmk.o 
 
@@ -240,10 +241,6 @@ test-dyn: $(DYNAMICLIB)  test/pdmk-dyn
 test/pdmk-static:
 	$(FC) $(FFLAGS) test/pdmk/testpdmk.f -o test/pdmk/int2-pdmk lib-static/$(STATICLIB) $(LIBS) 
 
-test/bdmk-static:
-	$(FC) $(FFLAGS) test/bdmk/testbdmk.f -o test/bdmk/int2-bdmk lib-static/$(STATICLIB) $(LIBS)
-
-
 #
 # Linking test files to dynamic libraries
 #
@@ -251,9 +248,6 @@ test/bdmk-static:
 test/pdmk-dyn:
 	$(FC) $(FFLAGS) test/pdmk/testpdmk.f -o test/pdmk/int2-pdmk $(ABSDYNLIB) $(LBLAS) $(LDBLASINC)
 
-
-test/bdmk-dyn:
-	$(FC) $(FFLAGS) test/bdmk/testbdmk.f -o test/bdmk/int2-bdmk $(ABSDYNLIB) $(LBLAS) $(LDBLASINC)
 
 #
 # housekeeping routines

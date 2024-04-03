@@ -10,7 +10,7 @@ C
      1    beta,ndim,bsize,eps,hpw,npw,ws)
 c      
 c     Determine the number of terms in the plane wave expansions 
-c     for boxes with side length = bsize for the PSWF truncated kernel
+c     for boxes with side length = bsize for the PSWF difference kernel
 c
 c     INPUT:
 c     bsize: side length of the box
@@ -62,6 +62,19 @@ c
          endif
       endif
 
+      if (ikernel .eq. 3) then
+         hpw = pi*0.667d0/bsize
+         if (ndigits.le.3) then
+            npw=25
+         elseif (ndigits.le.6) then
+            npw=39
+         elseif (ndigits.le.9) then
+            npw=53
+         elseif (ndigits.le.12) then
+            npw=69
+         endif
+      endif
+      
       ws = hpw**ndim/pi**(ndim-1)/2
       
       return
@@ -70,11 +83,11 @@ c
 c
 c
 c
-      subroutine get_PSWF_truncated_kernel_pwterms(ikernel,rpars,
+      subroutine get_PSWF_windowed_kernel_pwterms(ikernel,rpars,
      1    beta,ndim,bsize,eps,hpw,npw,ws,rl)
 c      
 c     Determine the number of terms in the plane wave expansions 
-c     for boxes with side length = bsize for the PSWF truncated kernel
+c     for boxes with side length = bsize for the PSWF windowed kernel
 c
 c     INPUT:
 c     bsize: side length of the box
@@ -115,13 +128,18 @@ c         hpw = pi*0.358d0/bsize
          hpw = pi*0.338d0/bsize
       endif
 
-c      if (ikernel.eq.0) then
-c         rlambda=rpars(1)
-c         npw2=npw/2
-c         hpw0=sqrt((beta/bsize)**2-rlambda**2)/npw2
-c         print *, hpw, hpw0
-c         if (hpw0.lt.hpw) hpw=(hpw0+hpw)/2
-c      endif
+      if (ikernel .eq. 3) then
+         hpw = pi*0.357d0/bsize
+         if (ndigits.le.3) then
+            npw=25
+         elseif (ndigits.le.6) then
+            npw=39
+         elseif (ndigits.le.9) then
+            npw=53
+         elseif (ndigits.le.12) then
+            npw=69
+         endif
+      endif
       
       ws = hpw**ndim/pi**(ndim-1)/2
 c      rl = bsize*(sqrt(ndim*1.0d0)+1)

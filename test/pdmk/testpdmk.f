@@ -28,7 +28,7 @@ c
 c     nd - number of different densities
       nd=1
 c     dim - dimension of the problem
-      dim=2
+      dim=3
 c     ikernel - 0: Yukawa kernel; 1: Laplace kernel; 2: square root Laplace kernel
       ikernel = 1
 c     rlambda - the parameter in the Yukawa kernel or the exponent of the
@@ -49,7 +49,7 @@ c     whether to have dipole sources -> 1: yes; 0: no
 c     evaluation flag for sources -> 1: pot; 2: pot+grad; 3: pot+grad+hess
       ifpgh=1
 c     evaluation flag for targets -> 1: pot; 2: pot+grad; 3: pot+grad+hess
-      ifpghtarg=0
+      ifpghtarg=1
 c
 c     
 c
@@ -58,10 +58,8 @@ c
       iw = 70
       iw2 = 80
 
-      ifuniform=0
+      ifuniform=1
 
-      do ikernel=1,1
-      do dim=3,3
       if (ikernel.eq.0.and.dim.eq.2.and.ifuniform.eq.1) then
          open(iw, file='y2dptsu.txt', position='append')
       elseif (ikernel.eq.0.and.dim.eq.2.and.ifuniform.eq.0) then
@@ -95,7 +93,8 @@ cccc  open(iw2, file='timing.txt', position='append')
 cccc         do j=4,4
          do j=1,1
             nsrc=nsrcs(j)
-cccc            nsrc=1*10**6
+cccc            nsrc=3
+            nsrc=1*10**5
             ntarg=nsrc
             if (ifpghtarg.eq.0) ntarg=1
 c
@@ -115,8 +114,6 @@ c$$$         write(iw2,*) pps(j,1), pps(j,2), pps(j,3), pps(j,4)
 c$$$      enddo
       
       close(iw)
-      enddo
-      enddo
 cccc      close(iw2)
 
       end
@@ -272,17 +269,9 @@ C$    t2=omp_get_wtime()
       pps=(nsrc*ifpgh+ntarg*ifpghtarg+0.0d0)/(t2-t1)
       call prin2('time in pdmk=*',t2-t1,1)
       totinfo(2)=nsrc*1.0d0
-c     time on building the tree and sorting the points
-      totinfo(3)=timeinfo(1)+timeinfo(2)
-c     time on the plane-wave part
-      totinfo(4)=timeinfo(4)+timeinfo(5)+timeinfo(6)
-c     time on direct interactions
-      totinfo(5)=timeinfo(7)
-c     total time
-      totinfo(6)=t2-t1
       call prin2('points per sec=*',pps,1)
 
-      nprint=20
+      nprint=min(20,nts)
 cccc      nprint=nts
       call prin2('pot=*',pot,nd*nprint)
 cccc      call prin2('gradtarg=*',gradtarg,nd*dim*ntt)
@@ -290,27 +279,24 @@ cccc      call prin2('hesstarg=*',hesstarg,nd*6*ntt)
 
       thresh=1.0d-16
       call cpu_time(t1)
-C$      t1 = omp_get_wtime()      
+C$    t1 = omp_get_wtime()      
       call kernel_direct(nd,dim,ikernel,rpars,
      1    thresh,1,nsrc,sources,
      1    ifcharge,charges,ifdipole,rnormal,dipstr,
      2    1,nts,sources,ifpgh,potex,gradex,hessex)
       call prin2('potex=*',potex,nd*nprint)
       call cpu_time(t2)
-C$       t2 = omp_get_wtime()      
-cccc      print *, 'direct eval time = ', t2-t1
-cccc      print *, potex(1,80), abs((pot(1,80)-potex(1,80))/potex(1,80))
+C$    t2 = omp_get_wtime()      
+
       call kernel_direct(nd,dim,ikernel,rpars,
      1    thresh,1,nsrc,sources,
      1    ifcharge,charges,ifdipole,rnormal,dipstr,
      2    1,ntt,targ,ifpghtarg,pottargex,gradtargex,hesstargex)
       if (ifpghtarg.gt.0) then
-         call prin2('pottarg=*',pottarg,nd*ntt)
-         call prin2('pottargex=*',pottargex,ntt*nd)
+         nprint=min(20,ntt)
+         call prin2('pottarg=*',pottarg,nd*nprint)
+         call prin2('pottargex=*',pottargex,nd*nprint)
       endif
-cccc      call prin2('gradtargex=*',gradtargex,3*ntt*nd)
-cccc      call prin2('hesstargex=*',hesstargex,6*ntt*nd)
-cccc      call prin2('source80=*',sources(1,80),dim)
       
       if (ifpgh .gt. 0)
      1    call derr(potex,pot,nts*nd,errps,pnorm,errpa)

@@ -1,41 +1,51 @@
 c
 c     Compute the radial Fourier transform 
-c     of the truncated and difference kernels
+c     of the windowed and difference kernels
 c     of various kernels in two and three dimensions. The kernel splitting 
 c     is done with the prolate spheroidal wave functions.
 c
 c      
 c      
 c
-      subroutine get_truncated_kernel_Fourier_transform(ikernel,
+      subroutine get_windowed_kernel_Fourier_transform(ikernel,
      1    rpars,dim,beta,
      2    bsize,rl,npw,hpw,ws,wprolate,nfourier,fhat)
       implicit none
-      integer dim,npw,nfourier,ikernel
+      integer dim,npw,nfourier,ikernel,i
       real *8 rpars(*),beta,bsize,rl,hpw,ws
       real *8 wprolate(*)
-
+      real *8 xi(0:nfourier)
       real *8 fhat(0:nfourier)
 
+      do i=0,nfourier
+         xi(i)=sqrt(1.0d0*i)*hpw
+      enddo
+      
       if (ikernel.eq.0) then
-         call yukawa_truncated_kernel_Fourier_transform(dim,rpars,
+         call yukawa_windowed_kernel_Fourier_transform(dim,rpars,
      1    beta,bsize,rl,npw,hpw,ws,wprolate,nfourier,fhat)
       elseif (ikernel .eq.1) then
          if (dim.eq.2) then
-            call log_truncated_kernel_Fourier_transform(dim,beta,
+            call log_windowed_kernel_Fourier_transform(dim,beta,
      1          bsize,rl,npw,hpw,ws,wprolate,nfourier,fhat)
          elseif (dim.eq.3) then
-            call l3d_truncated_kernel_Fourier_transform(dim,beta,
+            call l3d_windowed_kernel_Fourier_transform(dim,beta,
      1          bsize,rl,npw,hpw,ws,wprolate,nfourier,fhat)
          endif
       elseif (ikernel.eq.2) then
          if (dim.eq.2) then
-            call sl2d_truncated_kernel_Fourier_transform(dim,beta,
+            call sl2d_windowed_kernel_Fourier_transform(dim,beta,
      1          bsize,rl,npw,hpw,ws,wprolate,nfourier,fhat)
          elseif (dim.eq.3) then
-            call sl3d_truncated_kernel_Fourier_transform(dim,beta,
+            call sl3d_windowed_kernel_Fourier_transform(dim,beta,
      1          bsize,rl,npw,hpw,ws,wprolate,nfourier,fhat)
          endif
+      elseif (ikernel.eq.3) then
+         call stokes_windowed_kernel_Fourier_transform(dim,beta,
+     1          bsize,rl,xi,wprolate,nfourier+1,fhat)
+         do i=0,nfourier
+            fhat(i)=fhat(i)*ws
+         enddo
       endif
 
       return
@@ -47,13 +57,17 @@ c
       subroutine get_difference_kernel_Fourier_transform(ikernel,
      1    rpars,dim,beta,
      2    bsizesmall,bsizebig,npw,hpw,ws,wprolate,nfourier,fhat)
-      implicit real *8 (a-h,o-z)
-      integer dim,npw,nfourier,ikernel
+      implicit none
+      integer dim,npw,nfourier,ikernel,i
       real *8 rpars(*),beta,bsizesmall,bsizebig,hpw,ws
       real *8 wprolate(*)
-
+      real *8 xi(0:nfourier)
       real *8 fhat(0:nfourier)
 
+      do i=0,nfourier
+         xi(i)=sqrt(1.0d0*i)*hpw
+      enddo
+      
       if (ikernel.eq.0) then
          call yukawa_difference_kernel_Fourier_transform(dim,rpars,
      1    beta,bsizesmall,bsizebig,npw,hpw,ws,wprolate,nfourier,fhat)
@@ -73,6 +87,12 @@ c
             call sl3d_difference_kernel_Fourier_transform(dim,beta,
      1          bsizesmall,bsizebig,npw,hpw,ws,wprolate,nfourier,fhat)
          endif
+      elseif (ikernel.eq.3) then
+         call stokes_difference_kernel_Fourier_transform(dim,beta,
+     1       bsizesmall,bsizebig,xi,wprolate,nfourier+1,fhat)
+         do i=0,nfourier
+            fhat(i)=fhat(i)*ws
+         enddo
       endif
 
       return
@@ -160,10 +180,10 @@ c
 c
 c
 c
-      subroutine sl2d_truncated_kernel_Fourier_transform(dim,beta,
+      subroutine sl2d_windowed_kernel_Fourier_transform(dim,beta,
      1    bsize,rl,npw,hpw,ws,wprolate,nfourier,fhat)
 c
-c     compute the Fourier transform of the truncated kernel
+c     compute the Fourier transform of the windowed kernel
 c     of the 1/r kernel in two dimensions
 c
       implicit real *8 (a-h,o-z)
@@ -308,10 +328,10 @@ c
 c
 c
 c
-      subroutine l3d_truncated_kernel_Fourier_transform(dim,beta,
+      subroutine l3d_windowed_kernel_Fourier_transform(dim,beta,
      1    bsize,rl,npw,hpw,ws,wprolate,nfourier,fhat)
 c
-c     compute the Fourier transform of the truncated kernel
+c     compute the Fourier transform of the windowed kernel
 c     of the 1/r kernel in three dimensions
 c
       implicit real *8 (a-h,o-z)
@@ -458,10 +478,10 @@ c
 c
 c
 c
-      subroutine sl3d_truncated_kernel_Fourier_transform(dim,beta,
+      subroutine sl3d_windowed_kernel_Fourier_transform(dim,beta,
      1    bsize,rl,npw,hpw,ws,wprolate,nfourier,fhat)
 c
-c     compute the Fourier transform of the truncated kernel
+c     compute the Fourier transform of the windowed kernel
 c     of the 1/r^2 kernel in three dimensions
 c
       implicit real *8 (a-h,o-z)
@@ -613,10 +633,10 @@ c
 c
 c
 c
-      subroutine log_truncated_kernel_Fourier_transform(dim,beta,
+      subroutine log_windowed_kernel_Fourier_transform(dim,beta,
      1    bsize,rl,npw,hpw,ws,wprolate,nfourier,fhat)
 c
-c     compute the Fourier transform of the truncated kernel
+c     compute the Fourier transform of the windowed kernel
 c     of the log kernel in two dimensions
 c
       implicit real *8 (a-h,o-z)
@@ -667,10 +687,10 @@ c
 c
 c
 c
-      subroutine log_truncated_kernel(dim,beta,
+      subroutine log_windowed_kernel(dim,beta,
      1    bsize,rl,wprolate,rval,fval)
 c
-c     compute the value of the truncated kernel
+c     compute the value of the windowed kernel
 c     of the log kernel in two dimensions
 c
       implicit real *8 (a-h,o-z)
@@ -800,10 +820,10 @@ c
 c
 c
 c
-      subroutine yukawa_truncated_kernel_Fourier_transform(dim,rpars,
+      subroutine yukawa_windowed_kernel_Fourier_transform(dim,rpars,
      1    beta,bsize,rl,npw,hpw,ws,wprolate,nfourier,fhat)
 c
-c     compute the Fourier transform of the truncated kernel
+c     compute the Fourier transform of the windowed kernel
 c     of the Yukawa kernel in two and three dimensions
 c
       implicit real *8 (a-h,o-z)
@@ -884,10 +904,10 @@ c
 c
 c
 c
-      subroutine yukawa_truncated_kernel_value_at_zero(dim,rpars,beta,
+      subroutine yukawa_windowed_kernel_value_at_zero(dim,rpars,beta,
      1    bsize,rl,wprolate,fval)
 c
-c     compute the value of the truncated kernel at the origin
+c     compute the value of the windowed kernel at the origin
 c     of the Yukawa kernel in two and three dimensions
 c
 c     Output: T_l(0) for self interactions
@@ -977,21 +997,15 @@ c
 c
 c
 c
-      subroutine yukawa_local_kernel_coefs(eps,dim,rpars,beta,
-     1    bsize,rl,wprolate,ncoefs1,coefs1,ncoefs2,coefs2)
+      subroutine yukawa_residual_kernel_coefs(eps,dim,rpars,beta,
+     1    bsize,rl,wprolate,ncoefs1,coefs1)
 c
 c     compute the Chebyshev expansion coefficients of 
-c     the Yukawa local kernel in two and three dimensions
+c     the Yukawa residual kernel in two and three dimensions
 c
 c     Output:
 c       ncoefs1 - order of Chebyshev expansions for points in list1
 c       coefs1  - Chebyshev expansion coefficients for points in list1
-c       ncoefs2 - order of Chebyshev expansions for points in list2
-c       coefs2  - Chebyshev expansion coefficients for points in list2
-c      
-c      
-c      
-c      
 c      
       implicit real *8 (a-h,o-z)
       integer dim
@@ -999,12 +1013,12 @@ c
       real *8 beta,bsize
 
       real *8 rpars(*),wprolate(*)
-      real *8 coefs1(*),coefs2(*)
+      real *8 coefs1(*)
       
-      real *8 xs(1000),whts(1000),fvals1(1000),fvals2(1000)
-      real *8 r1(1000),r2(1000),w1(1000),w2(1000),fhat(1000)
-      real *8, allocatable :: ftker1(:,:),ftker2(:,:),u1(:,:),u2(:,:)
-      real *8, allocatable :: v1(:,:),v2(:,:)
+      real *8 xs(1000),whts(1000),fvals1(1000)
+      real *8 r1(1000),w1(1000),fhat(1000)
+      real *8, allocatable :: ftker1(:,:),u1(:,:)
+      real *8, allocatable :: v1(:,:)
       
       real *8 xval,fval,psi0,derpsi0
 
@@ -1080,14 +1094,10 @@ c     at the origin
 
       itype = 2
       nr1 = 100
-      nr2 = 100
       allocate(ftker1(nquad,nr1))
-      allocate(ftker2(nquad,nr2))
       allocate(u1(nr1,nr1),v1(nr1,nr1))
-      allocate(u2(nr2,nr2),v2(nr2,nr2))
 
       call chebexps(itype,nr1,r1,u1,v1,w1)
-      call chebexps(itype,nr2,r2,u2,v2,w2)
       
 c     Chebyshev nodes on [0,bsize] for list1
       do i=1,nr1
@@ -1150,115 +1160,9 @@ c     on how to chop a Chebyshev series
          endif
       enddo
 
-c     repeat the whole procedure for points in list2, where the
-c     whole local kernel is smooth.
-c     Chebyshev nodes on [(bsize/2)^2,bsize^2] for list2
-      shift=bsize**2/4
-      dlen=bsize**2*3.0d0/4
-      do i=1,nr2
-         r2(i)=(r2(i)+1)/2*dlen+shift
-      enddo
-
-      if (dim.eq.2) then
-         ifexpon=1
-         do i=1,nr2
-         do j=1,nquad
-            z=sqrt(r2(i))*xs(j)
-            call hank103(z,h0,h1,ifexpon)
-            dj0=dble(h0)
-            ftker2(j,i)=dj0
-         enddo
-         enddo
-      elseif (dim.eq.3) then
-         do i=1,nr2
-         do j=1,nquad
-            dd=sqrt(r2(i))*xs(j)
-            ftker2(j,i)=sin(dd)/dd
-         enddo
-         enddo
-      endif
-
-      do i=1,nr2
-         fvals2(i)=0
-         do j=1,nquad
-            fvals2(i)=fvals2(i)-ftker2(j,i)*fhat(j)
-         enddo
-      enddo
-
-      if (dim.eq.3) then
-         do i=1,nr2
-            r=sqrt(r2(i))
-            fvals2(i)=fvals2(i)+exp(-rlambda*r)/r
-         enddo
-      elseif (dim.eq.2) then
-         do i=1,nr2
-            r=sqrt(r2(i))
-            dd=rlambda*r
-            
-            fvals2(i)=fvals2(i)+besk0(dd)
-         enddo
-      endif
-      
-      do i=1,nr2
-         coefs2(i)=0
-         do j=1,nr2
-            coefs2(i)=coefs2(i)+u2(i,j)*fvals2(j)
-         enddo
-      enddo
-      
-      coefsmax=abs(coefs2(1))
-      do i=2,nr2
-         if (abs(coefs2(i)) .gt. coefsmax) then
-            coefsmax=abs(coefs2(i))
-         endif
-      enddo
-
-      
-      ncoefs2=1
-      releps = eps*coefsmax
-      do i=1,nr2-2
-         if ((abs(coefs2(i)).lt. releps) .and.
-     1       (abs(coefs2(i+1)).lt. releps) .and.
-     2       (abs(coefs2(i+2)).lt. releps)) then
-            ncoefs2=i
-            exit
-         endif
-      enddo
-
-c      print *, 'bsize=',bsize, rlambda*bsize/beta
-c      call prin2('coefs1=*',coefs1,ncoefs1)
-c      call prin2('coefs2=*',coefs2,ncoefs2)
-c      pause
-      
       return
       end
 c
 c
 c
 c
-c
-c
-      
-c
-c
-c
-
-
-c
-c
-c
-c
-
-
-c
-c
-c
-c
-
-
-
-
-c
-c
-c
-c      
