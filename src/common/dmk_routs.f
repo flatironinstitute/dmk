@@ -432,7 +432,7 @@ C*********************************************************************C
      1    tab_coefs2pw,pwexp)
 C*********************************************************************C
       implicit none
-      integer nd,n,npw,ind,m1,m2,m3,k3
+      integer nd,n,npw,ind,m1,m2,m3,k3,npw2
       real *8 coefs(n,n,nd)
       complex *16 tab_coefs2pw(npw,n)
       complex *16 pwexp(npw,(npw+1)/2,nd)
@@ -443,6 +443,8 @@ C*********************************************************************C
 c
       complex *16 zcoefs(n,n)
 
+      npw2 = (npw+1)/2
+      
       alpha=1.0d0
       beta=0.0d0
       do ind = 1,nd
@@ -453,11 +455,11 @@ c
          enddo
       
 c        transform in y
-         call zgemm('n','t',n,(npw+1)/2,n,alpha,zcoefs,n,
+         call zgemm('n','t',n,npw2,n,alpha,zcoefs,n,
      1       tab_coefs2pw,npw,beta,ff,n)
 c
 c        transform in x
-         call zgemm('n','n',npw,(npw+1)/2,n,alpha,
+         call zgemm('n','n',npw,npw2,n,alpha,
      1       tab_coefs2pw,npw,ff,n,
      2       beta,pwexp(1,1,ind),npw)
 c     
@@ -473,7 +475,7 @@ C*********************************************************************C
      1    tab_coefs2pw,pwexp)
 C*********************************************************************C
       implicit none
-      integer nd,n,npw,ind,m1,m2,m3,k3
+      integer nd,n,npw,ind,m1,m2,m3,k3,npw2
       real *8 coefs(n,n,n,nd)
       complex *16 tab_coefs2pw(npw,n)
       complex *16 pwexp(npw,npw,(npw+1)/2,nd)
@@ -486,6 +488,8 @@ C*********************************************************************C
 c
       complex *16 zcoefs(n,n,n)
 
+      npw2=(npw+1)/2
+      
       alpha=1.0d0
       beta=0.0d0
       do ind = 1,nd
@@ -497,23 +501,23 @@ c
          enddo
          enddo
 c        transform in z
-         call zgemm('n','t',n*n,(npw+1)/2,n,alpha,zcoefs,n*n,
+         call zgemm('n','t',n*n,npw2,n,alpha,zcoefs,n*n,
      1       tab_coefs2pw,npw,beta,ff,n*n)
 c
          do m1 = 1,n
-         do k3 = 1,(npw+1)/2
+         do k3 = 1,npw2
          do m2 = 1,n
             fft(m2,k3,m1) = ff(m1,m2,k3)
          enddo
          enddo
          enddo
 c        transform in y
-         call zgemm('n','n',npw,((npw+1)/2)*n,n,alpha,
+         call zgemm('n','n',npw,npw2*n,n,alpha,
      1       tab_coefs2pw,npw,fft,n,
      2       beta,ff2,npw)
 c        transform in x
-         call zgemm('n','t',npw,npw*((npw+1)/2),n,alpha,
-     1       tab_coefs2pw,npw,ff2,npw*((npw+1)/2),
+         call zgemm('n','t',npw,npw*npw2,n,alpha,
+     1       tab_coefs2pw,npw,ff2,npw*npw2,
      2       beta,pwexp(1,1,1,ind),npw)
 c     
       enddo
@@ -651,7 +655,7 @@ c
          enddo
       
 c        transform in y
-         call zgemm('t','n',n,n*(npw/2+1),npw,alpha,
+         call zgemm('t','n',n,((npw+1)/2)*n,npw,alpha,
      1       tab_pw2coefs,npw,fft,npw,beta,ff2t,n)
          
          do m3 = 1,(npw+1)/2
@@ -808,6 +812,145 @@ C
       enddo
       enddo
 c
+      return
+      end
+c
+c
+c
+c
+C*********************************************************************
+c
+c     multiply the Fourier transform of density with the Fourier 
+c     transform of the kernel: charge+dipole -> potential
+C
+C*********************************************************************
+      subroutine dmk_multiply_kernelFT_cd2p(nd,ndim,ifcharge,ifdipole,
+     1    nexp,pwexp,radialft,rk)
+
+c     The Fourier transform of the windowed and difference kernels
+c
+C     INPUT
+C
+c     nd      = vector length (for vector input)
+C     delta   = Gaussian variance
+C     nexp      = number of terms in PW expansion
+C     pwexp   = Fourier transform of the density
+C     radialft = radial part of the Fourier transform of the kernel
+C     rk      = (k_x,k_y,k_z), i.e., xyz coordinates of the Fourier nodes
+c      
+C     OUTPUT:
+C
+C     pwexp = Fourier transform of the potential
+C
+      implicit none
+      integer nd,ndim,ifcharge,ifdipole,nexp
+      integer i,j,n,ind,id
+      complex *16 pwexp(nexp,nd,*)
+      real *8 radialft(nexp),rk(ndim,nexp),dd,di
+
+      complex *16 ima
+      data ima/(0.0d0,1.0d0)/
+      complex *16, allocatable :: pwexp1(:,:)
+      
+      allocate(pwexp1(nexp,nd))
+      
+      do ind=1,nd
+         do n=1,nexp
+            pwexp1(n,ind)=0.0d0
+         enddo
+      enddo
+
+      id=0
+      
+      if (ifcharge.eq.1) then
+         id=id+1
+         do ind=1,nd
+            do n=1,nexp
+               pwexp1(n,ind)=pwexp(n,ind,id)
+            enddo
+         enddo
+      endif
+      
+      if (ifdipole.eq.1) then
+         do ind=1,nd
+            do n=1,nexp
+               do j=1,ndim
+                  pwexp1(n,ind)=pwexp1(n,ind)
+     1                -pwexp(n,ind,j+id)*ima*rk(j,n)
+               enddo
+            enddo
+         enddo
+      endif
+
+      do ind=1,nd
+         do n=1,nexp
+            pwexp(n,ind,1)=pwexp1(n,ind)*radialft(n)
+         enddo
+      enddo
+      
+               
+      return
+      end
+c
+c
+c
+c
+C*********************************************************************
+c
+c     multiply the Fourier transform of density with the Fourier 
+c     transform of the kernel for the Stokeslet
+C
+C*********************************************************************
+      subroutine stokesdmk_multiply_kernelFT(ndim,nd,nexp,pwexp,
+     1    radialft,rk,rksq)
+
+c     The Fourier transform of the windowed and difference kernels
+c     of the Stokeslet has the same structure as that of the original
+c     Stokeslet. That is,
+
+c     F(k)_{ij} = f(|k|) (-|k|^2 \delta_{ij} + k_i k_j),
+c     where f(|k|) is the radial part.
+      
+C     INPUT
+C
+c     nd      = vector length (for vector input)
+C     delta   = Gaussian variance
+C     nn      = number of terms in PW expansion
+C     pwexp   = Fourier transform of the density
+C     radialft = radial part of the Fourier transform of the kernel
+C     rk      = (k_x,k_y,k_z), i.e., xyz coordinates of the Fourier nodes
+c     rksq    = |k|^2
+      
+C     OUTPUT:
+C
+C     pwexp = Fourier transform of the potential
+C
+      implicit none
+      integer nd,i,j,n,ind,nexp,ndim
+      complex *16 pwexp(nexp,nd,ndim)
+      real *8 radialft(nexp),rk(ndim,nexp),rksq(nexp),dd,di
+      
+      complex *16, allocatable :: pwexp1(:)
+      
+      allocate(pwexp1(nexp))
+      
+      do ind=1,nd
+         do n=1,nexp
+            pwexp1(n)=0.0d0
+            do j=1,ndim
+               pwexp1(n)=pwexp1(n)+pwexp(n,ind,j)*rk(j,n)
+            enddo
+         enddo
+
+         do n=1,nexp
+            dd=rksq(n)*radialft(n)
+            do i=1,ndim
+               di=rk(i,n)*radialft(n)
+               pwexp(n,ind,i)=pwexp1(n)*di-pwexp(n,ind,i)*dd
+            enddo
+         enddo
+      enddo
+         
       return
       end
 c
