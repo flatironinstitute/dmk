@@ -33,13 +33,13 @@ c     ikernel - 0: Yukawa kernel; 1: Laplace kernel; 2: square root Laplace kern
       ikernel = 1
 c     beta - the parameter in the Yukawa kernel or the exponent of the
 c     power function kernel
-      beta=6.0d0
+      beta=0.1d-5
 c     polynomial expansion order in each dimension
       norder=16
 c     nd - number of different densities
       nd=1
 c     ndim - dimension of the underlying space
-      ndim=2
+      ndim=3
 c     ifpgh = 1: potential; 2: pot+grad; 3: pot+grad+hess
       ifpgh=1
 c     ifpghtarg: flag for arbitrary targets
@@ -51,7 +51,7 @@ c
 c     test all parameters
 c
 c      do ikernel=0,2
-      do ikernel=1,1
+      do ikernel=0,0
 c      do ndim=2,3
       do ndim=2,2
       
@@ -74,9 +74,9 @@ c      write(iw,*) 'ipoly=',ipoly,' iperiod=',iperiod,' norder =',norder
 c      write(iw,*) 'ndim=',ndim,' ifpgh=',ifpgh
       
 c      do i=1,4
-      do i=3,3
+      do i=4,4
          eps = epsvals(i)
-         do j=2,2
+         do j=1,1
 c         do j=3,3
             if (ndim.eq.2) then
                rsig=rsig2(j)
@@ -198,7 +198,8 @@ cccc  call prini_off()
 c
 c     initialize function parameters
 c
-      boxlen = 1.0d0
+      boxlen = 1.18d0
+cccc      boxlen = 1.0d0
 c     gaussian variance of the input data
 c      rsig = 1.0d0/4000.0d0
 c      rsig = 0.00025d0
@@ -290,23 +291,23 @@ c     fifth gaussian
          if (ndim.eq.2) then
 c            dpars(1) = 70.0d0
 c            dpars(1) = 90.0d0
-            dpars(1) = rsig
 c     dpars(1) = 200.0d0
+            dpars(1) = rsig
             dpars(2) = 0.25d0
          endif
       endif
       
       ifpgh=1
-      ifpghtarg=0
+      ifpghtarg=1
 
-      ntarg = 240
+      ntarg = 20
       nhess = ndim*(ndim+1)/2
       allocate(targs(ndim,ntarg),pote(nd,ntarg))
       allocate(grade(nd,ndim,ntarg),hesse(nd,nhess,ntarg))
 
       do i=1,ntarg
          do j=1,ndim
-            targs(j,i) = hkrand(0)-0.5d0
+            targs(j,i) = (hkrand(0)-0.5d0)*boxlen
          enddo
       enddo
 
@@ -429,8 +430,8 @@ c     example 1a
          else
             errp = abserrp/rnormp
          endif
-cccc         call prin2('pot l2 norm=*',rnormp,1)
-cccc         call prin2('absolute pot l2 error=*',abserrp,1)
+         call prin2('pot l2 norm=*',rnormp,1)
+         call prin2('absolute pot l2 error=*',abserrp,1)
          call prin2('relative pot l2 error=*',errp,1)
 
          if (1.eq.2) then
@@ -469,16 +470,17 @@ cccc         call prin2('absolute pot l2 error=*',abserrp,1)
 c     compute exact solutions on arbitrary targets      
       if (ifpghtarg.ge.1) then
          allocate(potexe(nd,ntarg))
-
-         do j=1,ntarg
+         ntest=ntarg
+         do j=1,ntest
             call uexact(nd,targs(1,j),dpars,zpars,ipars,
      1          potexe(1,j))
          enddo
 c
 c     compute relative error
-         call derr(potexe,pote,nd*ntarg,errpe)
+         call derr(potexe,pote,nd*ntest,errpe)
          call prin2('relative pottarg l2 error=*',errpe,1)
-         call prin2('potexe=*',potexe,ntarg)
+         call prin2('pote=*',pote,ntest)
+         call prin2('potexe=*',potexe,ntest)
       endif
       
       return
@@ -537,6 +539,7 @@ c     number of Gaussians
          expr=exp(-ralpha)
          do ind=1,nd
             f(ind)=(-ndim-alpha+2+alpha*ralpha)*alpha*expr*rbeta
+c            f(ind)=(ralpha-1)*alpha*alpha*expr*rbeta
          enddo
       endif
 
@@ -674,6 +677,11 @@ cccc         call vdTGamma(1,alpha/2,gval)
       
       if (ndim.eq.3) then
          dfac=-4*pi
+c         if (ikernel.eq.0) then
+c            dfac=-2*pi
+c         elseif (ikernel.eq.1) then
+c            dfac=2*pi
+c         endif
          call fgaussn(nd,targ,dpars,zpars,ipars,pot)
          do ind=1,nd
             pot(ind)=pot(ind)*dfac

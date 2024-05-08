@@ -580,7 +580,14 @@ C$OMP$SCHEDULE(DYNAMIC)
              do j=1,npbox
                 do ind=1,nd
                    rnorm=rnorm+fex(ind,j,ibox)**2
+c                   if (rnorm.lt.abs(fex(ind,j,ibox))) then
+c                      rnorm=abs(fex(ind,j,ibox))
+c                   endif
                    abserr=abserr+(fex(ind,j,ibox)-fcomp(ind,j,ibox))**2
+c                   if (abserr.lt.
+c     1                 abs(fex(ind,j,ibox)-fcomp(ind,j,ibox))) then
+c                      abserr = abs(fex(ind,j,ibox)-fcomp(ind,j,ibox))
+c                   endif 
                 enddo
              enddo
           endif

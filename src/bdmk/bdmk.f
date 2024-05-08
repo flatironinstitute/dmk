@@ -1,5 +1,5 @@
 c     Genuine O(N) algorithm
-c     Last modified by Shidong Jiang on 02/05/2024
+c     Last modified by Shidong Jiang on 05/06/2024
 c      
       subroutine bdmk(nd,ndim,eps,ikernel,beta,ipoly,norder,
      1    npbox,nboxes,nlevels,ltree,itree,iptr,centers,boxsize,
@@ -18,7 +18,7 @@ c           dimension of the underlying space
 c     eps - double precision
 c           precision requested
 c     ikernel - integer
-c            0: the Yukawa kernel; 1: the power kernel; 2: the log kernel in 2D. 
+c            0: the Yukawa kernel; 1: the Laplace kernel; 2: the square-root Laplace kernel. 
 c     beta - double precision
 c            either the parameter in the Yukawa kernel or the exponent of the power
 c            function kernel
@@ -102,7 +102,7 @@ c
       real *8 centers(ndim,nboxes)
       real *8 boxsize(0:nlevels)
       real *8 tottimeinfo(*)
-      real *8 timeinfo(20,-10:20)
+      real *8 timeinfo(20,-100:20)
 
 
       real *8 umat(norder,norder)
@@ -122,7 +122,8 @@ cccc      real *8, allocatable :: fl3vals(:,:,:)
       real *8, allocatable :: potgs(:,:,:)
 
       real *8 ws(200),deltas(200),pval(200),xs(200),whts(200),whtsp(200)
-      integer npwlevels(200),ipwaddr(2,-10:nlevels+1),ipw(-10:nlevels+1)
+      integer npwlevels(200)
+      integer ipwaddr(2,-100:nlevels+1),ipw(-100:nlevels+1)
       integer porder,ncbox,mc,ipoly0
       
       real *8, allocatable :: proxycharge(:,:,:)
@@ -137,7 +138,7 @@ cccc      real *8, allocatable :: fl3vals(:,:,:)
 
       integer ilev,ng,i,istart,ntaylor,norder2,j,ibox,ind,n,m
       integer k,porder2,iend,ngs,npwlevel,jbox,itype,ipoly,nchild
-      integer ifprint,ier,ifexpon
+      integer ifprint,ier,ifexpon,nlevstart
       real *8 fv(0:10),c(0:10)
       real *8 dlogr0,r2,r4,r6,dk1,dk0
       real *8 pi,r0,de,br,br2,br3,br4,br5,br6,br7,br8,br9
@@ -156,7 +157,7 @@ cccc      real *8, allocatable :: fl3vals(:,:,:)
 c     r0 is the cutoff length, i.e., for r>r0, 1/r is well apprxoimated by
 c     sum of Gaussians. Thus, one only needs to compute the correction for
 c     r\in [0,r0]
-      call get_sognodes(ndim,ikernel,eps,nlevels,norder,beta,
+      call get_sognodes(ndim,ikernel,eps,boxsize(0),nlevels,norder,beta,
      1    r0,ng,ws,deltas)
 c     for the log kernel, there is a nonzero constant mode
       if (ndim.eq.2 .and. ikernel.eq.1) then
@@ -170,8 +171,10 @@ c     for the log kernel, there is a nonzero constant mode
       call prin2('r0=*',r0,1)
       call prin2('deltas=*',deltas,ng)
       call prin2('ws=*',ws,ng)
+      call prin2('boxsize=*',boxsize,nlevels+1)
 
-      do ilev=-10,nlevels+1
+      nlevstart=-100
+      do ilev=nlevstart,nlevels+1
          ipw(ilev)=0
       enddo
       
@@ -181,17 +184,17 @@ c     for the log kernel, there is a nonzero constant mode
       enddo
 
       istart=1
-      ipwaddr(1,-10)=1
-      ipwaddr(2,-10)=0
-
-      do ilev=-9,nlevels+1
+      ipwaddr(1,nlevstart)=1
+      ipwaddr(2,nlevstart)=ipw(nlevstart)
+      
+      do ilev=nlevstart+1,nlevels+1
          istart=ipwaddr(2,ilev-1)+1
          ipwaddr(1,ilev)=istart
          ipwaddr(2,ilev)=istart+ipw(ilev)-1
       enddo
       call prinf('npwlevels=*',npwlevels,ng)
-      call prinf('ipw=*',ipw,nlevels+12)
-      call prinf('ipwaddr=*',ipwaddr,2*(nlevels+12))
+      call prinf('ipw=*',ipw,nlevels-nlevstart+2)
+      call prinf('ipwaddr=*',ipwaddr,2*(nlevels-nlevstart+2))
 
 
 
@@ -213,7 +216,6 @@ c        c(k) = int_0^r0 exp(-beta*r)/r * r^(2k)*r^2 dr
          b2=beta*beta
          b4=b2*b2
          b6=b2*b4
-
          ebr=exp(-br)
          if (br.gt.1d-3) then
             c(0)=1/b2-ebr*(br+1)/b2
@@ -240,20 +242,29 @@ c        K_1(beta*r0)
          br3=br2*br
          br4=br3*br
          br5=br4*br
+         br6=br5*br
          
          b2=beta*beta
          b4=b2*b2
          b6=b2*b4
 
+         dd = eulergamma+log(br/2)
+         if (br.le.1.0d-3) then
+c-x^2*(eulergamma/2-log(2)/2+log(x)/2- 1/4)-x^4*(eulergamma/16 - log(2)/16 + log(x)/16 - 5/64)
+             
+            c(0)=-(br2*(dd-0.5d0)/2+br4*(dd-5.0d0/4)/16)/b2
+         else
+            c(0)=(1-br*dk1)/b2
+         endif
 
-         c(0)=(1-br*dk1)/b2
 
          if (br.le.1.0d-3) then
-            c(1)=-(eulergamma+log(br/2)-0.25d0)*br4/4/b4
+            c(1)=-((dd-0.25d0)*br4/4 + (dd-7.0d0/6)*br6/24)/b4
          else
             c(1)=(4-2*br2*dk0-br*(br2+4)*dk1)/b4            
          endif
-c         c(2)=120/b6-ebr*(br5+5*br4+20*br3+60*br2+120*br+120)/b6
+
+
       elseif (ndim.eq.3 .and. ikernel.eq.1) then
 c        c(k) = int_0^r0 r^(-1) r^2 r^(2k) dr
          do k=0,ntaylor
@@ -266,9 +277,12 @@ c        c(k) = int_0^r0 log(r) r r^(2k) dr
          r2=r0*r0
          r4=r2*r2
          r6=r2*r4
-         c(0) = r2*(dlogr0-0.5d0)/2-c0*r2/2
-         c(1) = r4*(dlogr0-0.25d0)/4-c0*r4/4
-         c(2) = r6*(dlogr0-1.0d0/6)/6-c0*r6/6
+c         c(0) = r2*(dlogr0-0.5d0)/2-c0*r2/2
+c         c(1) = r4*(dlogr0-0.25d0)/4-c0*r4/4
+c         c(2) = r6*(dlogr0-1.0d0/6)/6-c0*r6/6
+         c(0) = r2*(dlogr0-0.5d0-c0)/2
+         c(1) = r4*(dlogr0-0.25d0-c0)/4
+         c(2) = r6*(dlogr0-1.0d0/6-c0)/6
       elseif (ikernel.eq.2) then
 c        c(k) = int_0^r0 r^(-2) r^(2k) r^2dr for 3D
 c        c(k) = int_0^r0 r^(-1) r^(2k) rdr for 2D
@@ -298,8 +312,9 @@ c        2 pi is the perimeter of the unit circle
          c(0)=c(0)*2*pi
 c        2=2!, and 1/2 comes from the fact, say, x^2 has 1/2 contribution of r^2
          c(1)=c(1)*2*pi/2/2
+cccc         c(1)=c(1)*2*pi/2
 c        24=4!, and 3/8 comes from the fact, say, x^4 has 3/8 contribution of r^4
-         c(2)=c(2)*2*pi/24*3/8
+c         c(2)=c(2)*2*pi/24*3/8
          c(2)=0
 c        7!=5040
          c(3)=c(3)*2*pi/720*5/16
@@ -314,7 +329,7 @@ c        7!=5040
          c(3)=c(3)*4*pi/5040
       endif
 
-      call prin2('c=*',c,ntaylor+1)
+      call prin2('after substracting gaussian contri, c=*',c,ntaylor+1)
       
       call ortho_eval_tables(ipoly,norder,umat,vmat,vpmat,vppmat)
       norder2=norder*norder
@@ -370,6 +385,7 @@ cccc             endif
                 pot(ind,j,ibox)=c(0)*fvals(ind,j,ibox)
      1              +c(1)*flvals(ind,j,ibox)+c(2)*fl2vals(ind,j,ibox)
 cccc  2                 +c(3)*fl3vals(ind,j,ibox)
+cccc                pot(ind,j,ibox)=0
              enddo
              enddo
           endif
@@ -510,7 +526,7 @@ c     compute 1D potential evaluation matrix, used in proxypotential to pot eval
       endif
 
 c     needed for the logarithmic kernel log(r)
-      if (ndim.eq.2 .and. ikernel.eq.1) then
+      if (ndim.eq.2 .and. ikernel.le.1) then
          allocate(whtsnd(norder*norder))
          k=0
          do j=1,norder
@@ -563,7 +579,7 @@ c     now call box FGT with many deltas
 C$OMP PARALLEL DO DEFAULT(SHARED)
 C$OMP$PRIVATE(ilev,istart,iend,ngs,npwlevel,i)
 C$OMP$SCHEDULE(DYNAMIC)  
-      do ilev=-10,nlevels+1
+      do ilev=nlevstart,nlevels+1
          istart=ipwaddr(1,ilev)
          iend=ipwaddr(2,ilev)
          ngs=iend-istart+1
@@ -596,7 +612,7 @@ C$    time1=omp_get_wtime()
       enddo
 
 c     add the contribution from the constant term for the logarithmic kernel
-      if (ndim .eq.2 .and. ikernel.eq.1) then
+      if (ndim .eq.2 .and. ikernel.le.1) then
          allocate(fint(nd))
          do ind=1,nd
             fint(ind)=0.0d0
@@ -618,22 +634,24 @@ c     add the contribution from the constant term for the logarithmic kernel
             enddo
          enddo
 
-         do ind=1,nd
-            fint(ind)=fint(ind)*c0
-         enddo
+         call prin2('the integral of the rhs=*',fint,nd)
 
-         call prin2('fint=*',fint,nd)
-         
-         do ibox=1,nboxes
-            nchild = itree(iptr(4)+ibox-1)
-            if (nchild.eq.0) then
-               do i=1,npbox
-                  do ind=1,nd
-                     pot(ind,i,ibox)=pot(ind,i,ibox)+fint(ind)
+
+         if (ikernel.eq.1) then
+            do ind=1,nd
+               fint(ind)=fint(ind)*c0
+            enddo
+            do ibox=1,nboxes
+               nchild = itree(iptr(4)+ibox-1)
+               if (nchild.eq.0) then
+                  do i=1,npbox
+                     do ind=1,nd
+                        pot(ind,i,ibox)=pot(ind,i,ibox)+fint(ind)
+                     enddo
                   enddo
-               enddo
-            endif
-         enddo
+               endif
+            enddo
+         endif
       endif
       
       call cpu_time(time2)
@@ -814,23 +832,28 @@ c
       subroutine find_npwlevel(eps,nlevels,boxsize,delta,npwlevel)
       implicit real *8 (a-h,o-z)
       real *8 boxsize(0:nlevels)
-      real *8 boxsize0(-10:nlevels)
+      real *8, allocatable :: boxsize0(:)
 
+      nlevstart=-100
 c     cutoff length      
       dcutoff = sqrt(delta*log(1.0d0/eps))
-cccc      call prin2(' dcutoff=*',dcutoff,1)
 
+      allocate(boxsize0(nlevstart:nlevels))
+      
       do ilev=0,nlevels
          boxsize0(ilev)=boxsize(ilev)
       enddo
       
-      do ilev=-1,-10,-1
+      do ilev=-1,nlevstart,-1
          boxsize0(ilev)=boxsize0(ilev+1)*2
       enddo
+
+cccc      call prin2(' dcutoff=*',dcutoff,1)
+cccc      call prin2(' boxsize0=*',boxsize0(-10),nlevels+11)
       
 c     find the cutoff level
       npwlevel = nlevels+1
-      do i=nlevels,-10,-1
+      do i=nlevels,nlevstart,-1
          if (boxsize0(i).ge. dcutoff) then
             npwlevel=i
             exit
@@ -838,7 +861,11 @@ c     find the cutoff level
       enddo
 c
       if (boxsize(nlevels).gt.dcutoff) npwlevel=nlevels+1
-c      if (boxsize(0) .le. dcutoff) npwlevel=0
+      if (boxsize0(nlevstart) .lt. dcutoff) then
+         print *, 'warning: npwlevel<-100 no implemented!'
+         npwlevel=nlevstart
+         pause
+      endif
 
       return
       end

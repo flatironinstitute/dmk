@@ -28,7 +28,7 @@ c
 c     nd - number of different densities
       nd=1
 c     dim - dimension of the problem
-      dim=3
+      dim=2
 c     ikernel - 0: Yukawa kernel; 1: Laplace kernel; 2: square root Laplace kernel
       ikernel = 1
 c     rlambda - the parameter in the Yukawa kernel or the exponent of the
@@ -43,9 +43,9 @@ c     ntarg: number of extra targets
 c     nsrc: number of source points
 
 c     whether to have monopole sources -> 1: yes; 0: no
-      ifcharge=1
+      ifcharge=0
 c     whether to have dipole sources -> 1: yes; 0: no
-      ifdipole=0
+      ifdipole=1
 c     evaluation flag for sources -> 1: pot; 2: pot+grad; 3: pot+grad+hess
       ifpgh=1
 c     evaluation flag for targets -> 1: pot; 2: pot+grad; 3: pot+grad+hess
@@ -193,11 +193,11 @@ c        uniform source distribution
          endif
 
          do k=1,dim
-            rnormal(k,i) = hkrand(0)
+            rnormal(k,i) = hkrand(0)-0.5d0
          enddo
          do ind = 1,nd
             charges(ind,i) = hkrand(0)-0.5d0 
-            dipstr(ind,i) = hkrand(0)
+            dipstr(ind,i) = hkrand(0)-0.5d0
          enddo
       enddo
 

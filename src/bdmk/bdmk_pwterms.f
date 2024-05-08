@@ -3,6 +3,7 @@ C     Get planewave expansion length for many deltas at the same level ilev
 c      
       implicit real*8 (a-h,o-z)
 
+      if (ilev.lt.-10) goto 2000
       if (eps.gt.1d-3 .and. eps.le.1d-2) then
          call dmkpwterms_md2(ilev,npw)
       elseif (eps.gt.1d-4 .and. eps.le.1d-3) then
@@ -24,7 +25,11 @@ c
       elseif (eps.gt.1d-12 .and. eps.le.1d-11) then
          call dmkpwterms_md11(ilev,npw)
       endif
+      return
       
+ 2000 continue
+      pi=4*atan(1.0d0)
+      npw=2*ceiling(2*log(10/eps)/pi)
       return
       end 
 c
@@ -219,7 +224,7 @@ c
       
       return
       end 
-c
+c     
 c
 c
 c
@@ -228,13 +233,14 @@ C
 C get plane wave approximation nodes and weights
 C
 C*********************************************************************
-      subroutine get_pwnodes_md(eps,nlevels,ilev,npw,ws,ts)
+      subroutine get_pwnodes_md(eps,nlevels,ilev,npw,ws,ts,bs0)
 C
 C     Get planewave expansion weights,nodes for many deltas at the same level ilev
 c      
       implicit real *8 (a-h,o-z)
       real *8 ws(*),ts(*)
 
+      if (ilev.lt.-10) goto 2000
       if (eps.gt.1d-3 .and. eps.le.1d-2) then
          call get_pwnodes_md2(nlevels,ilev,npw,ws,ts)
       elseif (eps.gt.1d-4 .and. eps.le.1d-3) then
@@ -257,6 +263,35 @@ c
          call get_pwnodes_md11(nlevels,ilev,npw,ws,ts)
       endif
 
+      do i=1,npw
+         ts(i)=ts(i)/bs0
+         ws(i)=ws(i)/bs0
+      enddo
+
+      return
+      
+ 2000 continue
+      deltamax=4.00**(-ilev)/log(10/eps)
+      pi=4*atan(1.0d0)
+      h=2*pi/sqrt(deltamax*log(10/eps))
+      
+cccc      print *, ilev, deltamax, h
+      npw2=npw/2
+      do i=1,npw2
+         ts(i+npw2)=h*(i-0.5d0)
+         ws(i+npw2)=h/2/sqrt(pi)
+      enddo
+
+      do i=1,npw2
+         ts(npw2-i+1)=-ts(i+npw2)
+         ws(npw2-i+1)=ws(i+npw2)
+      enddo
+
+      do i=1,npw
+         ts(i)=ts(i)/bs0
+         ws(i)=ws(i)/bs0
+      enddo
+      
       return
       end 
 c

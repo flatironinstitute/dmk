@@ -174,6 +174,7 @@ c     scale is the ratio of the source box size to the target box size.
          elseif (i0.eq.-1) then
             k=-2**m0-2**(m0+1)*(j0-1)
          endif
+
          if (k.lt.-nloctab) exit
          scale(k)=2.0d0**i0
          cen(k)=k/2.0d0**m0
@@ -251,7 +252,6 @@ c
             if (i2.gt.0 .and.i1.eq.0) i1=1
             ind_loc(1,j,k)=i1
          enddo
-            
       enddo
       enddo
 

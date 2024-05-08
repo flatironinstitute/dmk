@@ -94,3 +94,88 @@ c
 c
 c
 c
+c
+c
+c
+c
+c**********************************************************************
+      subroutine logdirectdp(ndim,nd,sources,ns,dipstr,dipvec,
+     $           targ,nt,pot,thresh)
+cf2py  intent(in) nd
+cf2py  intent(in) ns,sources,dipstr,dipvec,targ,nt,thresh
+cf2py  intent(out) pot
+      implicit none
+c**********************************************************************
+c
+c     This subroutine INCREMENTS the potentials POT
+c     at the target points TARGET, due to a vector of
+c     charges at SOURCE(2,ns). 
+c     We use the unscaled version of log
+c     response: i.e., log|z|
+c     
+c     pot(ii,i)  = \sum_j dipstr(ii,j)* dipstr(ii,:,j) \cdot
+c                               \nabla_src \log |targ(:,i)-sources(:,j)|
+c
+c     The potential is not computed if |r| < thresh
+c     (Recommended value for threshold in an FMM is 
+c     R*eps, where R is the size of the computation
+c     domain and eps is machine precision
+c     
+c---------------------------------------------------------------------
+c     INPUT:
+c
+c     sources(2,ns) :   location of the sources
+c     ns            :   number of sources
+c     dipstr(nd,ns) :   dipole strengths
+c     dipvec(nd,2,ns) :   dipole orientations
+c     targ(2,nt)    :   location of the targets
+c     thresh        :   threshold for computing potential
+c---------------------------------------------------------------------
+c     OUTPUT:
+c
+c     pot(nd,nt)   (real *8)      : potential is incremented
+c---------------------------------------------------------------------
+      integer i,ns,ii,nd,j,nt,ndim,k
+      real *8 sources(ndim,ns),targ(ndim,nt),rr,r
+      real *8 thresh,thresh2,p1,p2
+      real *8 pot(nd,nt)
+      real *8 dipstr(nd,ns)
+      real *8 dipvec(ndim,ns)
+      real *8 diff(ndim),dd,dp(ndim)
+c
+      thresh2 = thresh*thresh
+      
+      do j = 1,nt
+         do i = 1,ns
+            do k=1,ndim
+               diff(k)=targ(k,j)-sources(k,i)
+            enddo
+            dd=diff(1)**2
+            do k=2,ndim
+               dd=dd+diff(k)**2
+            enddo
+            if(dd.le.thresh2) goto 1000
+
+            do k=1,ndim
+               dp(k)=-diff(k)/dd
+            enddo
+
+            rr=0
+            do k=1,ndim
+               rr=rr+dipvec(k,i)*dp(k)
+            enddo
+
+            do ii=1,nd
+               pot(ii,j) = pot(ii,j) + dipstr(ii,i)*rr
+            enddo
+ 1000       continue
+         enddo
+      enddo
+      return
+      end
+c
+c
+c
+c
+c
+c

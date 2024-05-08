@@ -370,7 +370,7 @@ c
 C$    time1=omp_get_wtime()
 c      
 c     get planewave nodes and weights
-      call get_pwnodes_md(eps,nlevels,npwlevel,npw,ws,ts)
+      call get_pwnodes_md(eps,nlevels,npwlevel,npw,ws,ts,bs0)
       do i=1,npw
          ws0(i)=1.0d0
       enddo
@@ -485,6 +485,7 @@ c     no tree refinement, the tree is the usual level-restricted tree
       mrefinelev=0
       nloctab=2**(mrefinelev+1)*(mrefinelev+3)
 
+      if (ifprint.eq.1) call prinf('nloctab=*',nloctab,1)
       nloctab2=2*nloctab+1
       allocate(  tab_loc(norder,norder,nloctab2,ndelta,0:nlevels))
       allocate( tabx_loc(norder,norder,nloctab2,ndelta,0:nlevels))
@@ -500,7 +501,7 @@ c     no tree refinement, the tree is the usual level-restricted tree
      3       ind_loc(1,1,1,id,ilev))
       enddo
       enddo
-
+      
 c     direct evaluation if the cutoff level is >= the maximum level 
       if (npwlevel .ge. nlevels) goto 1800
 cccc      if (npwlevel .ge. nlevels) goto 3000
@@ -511,9 +512,6 @@ c     compute the planewave expansion weights for all deltas
       do i=1,ndim-1
          nexp = nexp*npw
       enddo
-
-      nthd = 1
-C$    nthd = omp_get_max_threads()
 
       allocate(wpwexp(nexp))
       call mk_kernel_Fourier_transform(ndim,ndelta,deltas,
@@ -739,7 +737,6 @@ cccc       jbox is the source box
              bs = boxsize(jlev)
              call bdmk_find_loctab_ind(ndim,iperiod,
      1           centers(1,ibox),centers(1,jbox),bs,bs0,mrefinelev,ixyz)
-cccc  call prinf('ixyz=*',ixyz,ndim)
              do id=1,kdelta
                 call bdmk_tens_prod_to_potloc(ndim,nd,norder,
      1              dwhts(id),fvals(1,1,jbox),pot(1,1,ibox),

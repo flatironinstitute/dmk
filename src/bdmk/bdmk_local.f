@@ -739,7 +739,7 @@ c
       bs=sboxsize/2**(2+mrefinelev)
 
       do i=1,ndim
-         dx = (tcenter(i)-scenter(i))/bs
+         dx = nint((tcenter(i)-scenter(i))/bs)
          if (iperiod .eq. 1) then
             dxp1=dx-bs0/bs
             dxm1=dx+bs0/bs

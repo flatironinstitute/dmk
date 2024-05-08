@@ -24,10 +24,13 @@ c
       if (ikernel.eq.0) then
          call yukawa_windowed_kernel_Fourier_transform(dim,rpars,
      1    beta,bsize,rl,npw,hpw,ws,wprolate,nfourier,fhat)
-      elseif (ikernel .eq.1) then
+      elseif (ikernel .eq.1 .or. ikernel.eq.4) then
          if (dim.eq.2) then
             call log_windowed_kernel_Fourier_transform(dim,beta,
-     1          bsize,rl,npw,hpw,ws,wprolate,nfourier,fhat)
+     1          bsize,rl,xi,wprolate,nfourier+1,fhat)
+            do i=0,nfourier
+               fhat(i)=fhat(i)*ws
+            enddo
          elseif (dim.eq.3) then
             call l3d_windowed_kernel_Fourier_transform(dim,beta,
      1          bsize,rl,npw,hpw,ws,wprolate,nfourier,fhat)
@@ -71,7 +74,7 @@ c
       if (ikernel.eq.0) then
          call yukawa_difference_kernel_Fourier_transform(dim,rpars,
      1    beta,bsizesmall,bsizebig,npw,hpw,ws,wprolate,nfourier,fhat)
-      elseif (ikernel .eq.1) then
+      elseif (ikernel .eq.1 .or.ikernel.eq.4) then
          if (dim.eq.2) then
             call log_difference_kernel_Fourier_transform(dim,beta,
      1          bsizesmall,bsizebig,npw,hpw,ws,wprolate,nfourier,fhat)
@@ -634,7 +637,7 @@ c
 c
 c
       subroutine log_windowed_kernel_Fourier_transform(dim,beta,
-     1    bsize,rl,npw,hpw,ws,wprolate,nfourier,fhat)
+     1    bsize,rl,rk,wprolate,nfourier,fhat)
 c
 c     compute the Fourier transform of the windowed kernel
 c     of the log kernel in two dimensions
@@ -643,39 +646,38 @@ c
       integer dim
       real *8 beta,bsizesmall,bsizebig,hpw,ws
 
-      real *8 wprolate(*)
+      real *8 wprolate(*),rk(*),fhat(*)
 
       real *8 xs(1000),whts(1000),fvals(1000)
       real *8 xval,fval,psi0,derpsi0
-      real *8 fhat(0:nfourier)
-      complex *16 z,h0,h1
+      real *8 x,dj0,dj1
+      external besj0,besj1
       
       zero=0.0d0
       call prol0eva(zero,wprolate,psi0,derpsi0)
       
       ifexpon=1
       dfac=rl*log(rl)
-      do i=0,nfourier
-         if (i.eq.0) then
-            fhat(i)=ws*(-0.25d0*rl*rl+0.5d0*dfac*rl)
+      do i=1,nfourier
+         xval=rk(i)*bsize/beta
+         if (xval.lt.1) then
+            call prol0eva(xval,wprolate,fval,derpsi0)
          else
-            rk=sqrt(i*1.0d0)*hpw
-            rk2=rk*rk
-            
-            xval=rk*bsize/beta
-            if (xval.lt.1) then
-               call prol0eva(xval,wprolate,fval,derpsi0)
-            else
-               fval=0.0d0
-            endif
-            z=rl*rk
-            call hank103(z,h0,h1,ifexpon)
-            dj0=dble(h0)
-            dj1=dble(h1)
+            fval=0.0d0
+         endif
 
-            tker=-(1-dj0)/rk2+dfac*dj1/rk
+         fhat(i) = fval/psi0
             
-            fhat(i)=ws*tker*fval/psi0
+         x=rl*rk(i)
+         if (x.gt.1d-10) then
+            dj0=besj0(x)
+            dj1=besj1(x)
+            
+            tker=-(1-dj0)/rk(i)**2+dfac*dj1/rk(i)
+            
+            fhat(i)=fhat(i)*tker
+         else
+            fhat(i)=-0.25d0*rl*rl+0.5d0*dfac*rl
          endif
       enddo
 
@@ -738,6 +740,166 @@ c
          endif
 
          fval=fval+fhat*dj0*whts(i)*xs(i)
+      enddo
+
+      return
+      end
+c
+c
+c
+c
+c
+c
+c
+c
+      subroutine log_residual_kernel_coefs(eps,dim,beta,
+     1    bsize,rl,wprolate,ncoefs,coefs)
+c
+c     compute the Chebyshev expansion coefficients of 
+c     the log dipole potential residual kernel in two and three dimensions
+c
+c     Output:
+c     ncoefs      - order of Chebyshev expansions for residual
+c                    interactions for points
+c     coefs  - Chebyshev expansion coefficients
+c      
+c      
+c      
+      implicit none
+      integer dim,itype,nquad,i,nr,listtype
+
+      real *8 beta,bsize,twooverpi,u,v,ws,shift,dlen,rl,eps
+
+      real *8 wprolate(*)
+      real *8 coefs(*)
+
+      integer ncoefs
+      
+      real *8 rks(1000),whts(1000)
+
+      real *8 r1(1000),fhat(1000)
+      
+      twooverpi=2.0d0/(4.0d0*atan(1.0d0))
+      
+      itype = 1
+      nquad = 200
+      call legeexps(itype,nquad,rks,u,v,whts)
+      do i=1,nquad
+         rks(i)=(rks(i)+1)/2*beta/bsize
+         whts(i)=whts(i)/2*beta/bsize
+      enddo
+
+      call log_windowed_kernel_Fourier_transform(dim,
+     1    beta,bsize,rl,rks,wprolate,nquad,fhat)
+
+      do i=1,nquad
+         if (dim.eq.2) then
+            fhat(i)=fhat(i)*whts(i)*rks(i)
+         elseif (dim.eq.3) then
+            fhat(i)=fhat(i)*whts(i)*rks(i)*rks(i)*twooverpi
+         endif
+      enddo
+
+      itype = 0
+      nr = 100
+      call chebexps(itype,nr,r1,u,v,ws)
+      
+c     Chebyshev nodes on [0,bsize] 
+      do i=1,nr
+         if (dim.eq.3) then
+            r1(i)=(r1(i)+1)/2*bsize
+         elseif (dim.eq.2) then
+            r1(i)=(r1(i)+1)/2*bsize*bsize
+         endif
+      enddo
+
+      call log_residual_kernel_coefs0(dim,nquad,rks,fhat,
+     1    nr,r1,coefs)
+
+      call find_chebyshev_expansion_length(eps,nr,coefs,ncoefs)
+
+cccc output for Matlab to produce monomial coefficients for SIMD fast kernel evaluation         
+cccc 1111 format(E23.16, 50(1x,E23.16))
+cccc      print *, 'ncoefs=', ncoefs
+cccc      
+cccc      write(*,'(a)', advance='no') 'chebc = ['
+cccc      write(*,1111,advance='no') (coefs(i), i=1,ncoefs)
+cccc      write(*,*) '];'
+cccc      pause
+      
+      return
+      end
+c
+c
+c
+c
+      subroutine log_residual_kernel_coefs0(dim,nk,dks,fhat,
+     1    nr,rvals,coefs)
+      
+      implicit none
+      integer dim,nk,nr
+      real *8 dks(nk),whts(nk),fhat(nk)
+      real *8 rvals(nr),coefs(nr)
+
+      integer i,j,itype
+      real *8 fvals(nr)
+      real *8 df(1000)
+      real *8 x,r,dd,dj0,dj1
+      real *8, allocatable :: drft(:,:)
+      real *8, allocatable :: u(:,:),v(:,:)
+      real *8, allocatable :: xs(:),ws(:)
+
+      real *8 besj0,besj1
+      external besj0,besj1
+      
+c     first derivative of the radial fourier transform kernel
+      allocate(drft(nk,nr))
+
+      if (dim.eq.2) then
+         do i=1,nr
+         do j=1,nk
+            r=sqrt(rvals(i))
+            dd=r*dks(j)
+            dj0=besj0(dd)
+            dj1=besj1(dd)
+
+            drft(j,i)= -dks(j)*dj1
+         enddo
+         enddo
+      elseif (dim.eq.3) then
+         do i=1,nr
+         do j=1,nk
+            r=sqrt(rvals(i))
+            dd=r*dks(j)
+            drft(j,i)= (dd*cos(dd)-sin(dd))*dks(j)/dd**2
+         enddo
+         enddo
+      endif
+
+      do i=1,nr
+         df(i)=0
+         do j=1,nk
+            df(i)=df(i)+drft(j,i)*fhat(j)
+         enddo
+      enddo
+
+      do i=1,nr
+         r=sqrt(rvals(i))
+         fvals(i) = df(i)*r
+      enddo
+
+      itype = 2
+      allocate(u(nr,nr),v(nr,nr))
+      allocate(xs(nr),ws(nr))
+
+      call chebexps(itype,nr,xs,u,v,ws)
+
+c     calculate the Chebyshev expansion coefficients
+      do i=1,nr
+         coefs(i)=0
+         do j=1,nr
+            coefs(i)=coefs(i)+u(i,j)*fvals(j)
+         enddo
       enddo
 
       return
@@ -998,7 +1160,7 @@ c
 c
 c
       subroutine yukawa_residual_kernel_coefs(eps,dim,rpars,beta,
-     1    bsize,rl,wprolate,ncoefs1,coefs1)
+     1    bsize,rl,wprolate,ncoefs1,coefs1,ncoefs2,coefs2)
 c
 c     compute the Chebyshev expansion coefficients of 
 c     the Yukawa residual kernel in two and three dimensions
@@ -1006,6 +1168,12 @@ c
 c     Output:
 c       ncoefs1 - order of Chebyshev expansions for points in list1
 c       coefs1  - Chebyshev expansion coefficients for points in list1
+c       ncoefs2 - order of Chebyshev expansions for points in list2
+c       coefs2  - Chebyshev expansion coefficients for points in list2
+c      
+c      
+c      
+c      
 c      
       implicit real *8 (a-h,o-z)
       integer dim
@@ -1013,12 +1181,12 @@ c
       real *8 beta,bsize
 
       real *8 rpars(*),wprolate(*)
-      real *8 coefs1(*)
+      real *8 coefs1(*),coefs2(*)
       
-      real *8 xs(1000),whts(1000),fvals1(1000)
-      real *8 r1(1000),w1(1000),fhat(1000)
-      real *8, allocatable :: ftker1(:,:),u1(:,:)
-      real *8, allocatable :: v1(:,:)
+      real *8 xs(1000),whts(1000),fvals1(1000),fvals2(1000)
+      real *8 r1(1000),r2(1000),w1(1000),w2(1000),fhat(1000)
+      real *8, allocatable :: ftker1(:,:),ftker2(:,:),u1(:,:),u2(:,:)
+      real *8, allocatable :: v1(:,:),v2(:,:)
       
       real *8 xval,fval,psi0,derpsi0
 
@@ -1094,10 +1262,14 @@ c     at the origin
 
       itype = 2
       nr1 = 100
+      nr2 = 100
       allocate(ftker1(nquad,nr1))
+      allocate(ftker2(nquad,nr2))
       allocate(u1(nr1,nr1),v1(nr1,nr1))
+      allocate(u2(nr2,nr2),v2(nr2,nr2))
 
       call chebexps(itype,nr1,r1,u1,v1,w1)
+      call chebexps(itype,nr2,r2,u2,v2,w2)
       
 c     Chebyshev nodes on [0,bsize] for list1
       do i=1,nr1
@@ -1156,6 +1328,81 @@ c     on how to chop a Chebyshev series
      1       (abs(coefs1(i+1)).lt. releps) .and.
      2       (abs(coefs1(i+2)).lt. releps)) then
             ncoefs1=i
+            exit
+         endif
+      enddo
+
+c     repeat the whole procedure for points in list2, where the
+c     whole local kernel is smooth.
+c     Chebyshev nodes on [(bsize/2)^2,bsize^2] for list2
+      shift=bsize**2/4
+      dlen=bsize**2*3.0d0/4
+      do i=1,nr2
+         r2(i)=(r2(i)+1)/2*dlen+shift
+      enddo
+
+      if (dim.eq.2) then
+         ifexpon=1
+         do i=1,nr2
+         do j=1,nquad
+            z=sqrt(r2(i))*xs(j)
+            call hank103(z,h0,h1,ifexpon)
+            dj0=dble(h0)
+            ftker2(j,i)=dj0
+         enddo
+         enddo
+      elseif (dim.eq.3) then
+         do i=1,nr2
+         do j=1,nquad
+            dd=sqrt(r2(i))*xs(j)
+            ftker2(j,i)=sin(dd)/dd
+         enddo
+         enddo
+      endif
+
+      do i=1,nr2
+         fvals2(i)=0
+         do j=1,nquad
+            fvals2(i)=fvals2(i)-ftker2(j,i)*fhat(j)
+         enddo
+      enddo
+
+      if (dim.eq.3) then
+         do i=1,nr2
+            r=sqrt(r2(i))
+            fvals2(i)=fvals2(i)+exp(-rlambda*r)/r
+         enddo
+      elseif (dim.eq.2) then
+         do i=1,nr2
+            r=sqrt(r2(i))
+            dd=rlambda*r
+            
+            fvals2(i)=fvals2(i)+besk0(dd)
+         enddo
+      endif
+      
+      do i=1,nr2
+         coefs2(i)=0
+         do j=1,nr2
+            coefs2(i)=coefs2(i)+u2(i,j)*fvals2(j)
+         enddo
+      enddo
+      
+      coefsmax=abs(coefs2(1))
+      do i=2,nr2
+         if (abs(coefs2(i)) .gt. coefsmax) then
+            coefsmax=abs(coefs2(i))
+         endif
+      enddo
+
+      
+      ncoefs2=1
+      releps = eps*coefsmax
+      do i=1,nr2-2
+         if ((abs(coefs2(i)).lt. releps) .and.
+     1       (abs(coefs2(i+1)).lt. releps) .and.
+     2       (abs(coefs2(i+2)).lt. releps)) then
+            ncoefs2=i
             exit
          endif
       enddo

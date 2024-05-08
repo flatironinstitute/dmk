@@ -2,13 +2,24 @@
 EXEC = int2-bdmk
 
 #HOST = osx
+#HOST=linux-gfortran
 HOST=linux-ifort
 
 ifeq ($(HOST),osx)
 FC = gfortran
-FFLAGS = -O3 -march=native -std=legacy --openmp -funroll-loops -c -w
-FLINK = gfortran -w --openmp -o $(EXEC)
+#FFLAGS = -O3 -march=native -std=legacy --openmp -funroll-loops -c -w
+FFLAGS = -fPIC -O3 -march=native -std=legacy -funroll-loops -c -w
+FLINK = gfortran -w -o $(EXEC)
 FEND = -lopenblas ${LDFLAGS}
+FEND = -L/opt/intel/oneapi/lib/intel64 -Wl,--no-as-needed -lmkl_gf_lp64 -lmkl_sequential -lmkl_core -lm -ldl
+#FEND = -lopenblas -Wl,--no-as-needed 
+endif
+
+ifeq ($(HOST),linux-gfortran)
+FC = gfortran
+FFLAGS = -fPIC -O3 -march=native -std=legacy -funroll-loops -c -w
+FLINK = gfortran -w -o $(EXEC)
+FEND = -L/opt/intel/oneapi/lib/intel64 -lmkl_gf_lp64 -lmkl_sequential -lmkl_core -lm -ldl
 endif
 
 ifeq ($(HOST),linux-ifort)

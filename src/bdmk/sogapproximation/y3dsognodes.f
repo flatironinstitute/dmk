@@ -19,11 +19,13 @@ C*********************************************************************
       if (eps.gt.1d-7) then
          h = 0.7d0*2*pi/log(1.2d0/eps)
       else
-         h = 0.72d0*2*pi/log(1.2d0/eps)
+c         h = 0.72d0*2*pi/log(1.2d0/eps)
+         h = 0.65d0*2*pi/log(1.2d0/eps)
       endif
 
       tlower = -log(2.0d0/beta*sqrt(log(1.2d0/eps)))
-      tupper = log(rmax/rmin*sqrt(log(1.2d0/eps)))
+c      tupper = log(rmax/rmin*sqrt(log(1.2d0/eps)))
+      tupper = log(1.0d0/rmin*sqrt(log(1.2d0/eps)))
 
       mmin=floor(tlower/h)
       mmax=ceiling(tupper/h)
