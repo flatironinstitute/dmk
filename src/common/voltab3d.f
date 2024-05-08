@@ -91,7 +91,38 @@ c     local
 
       return
       end
+
+      subroutine meshnd(ndim,x1d,nx,xnd)
+      implicit real *8 (a-h,o-z)
+      dimension x1d(nx),xnd(ndim,*)
+
+      if (ndim.eq.2) then
+         call mesh2d(x1d,nx,x1d,nx,xnd)
+      elseif (ndim.eq.3) then
+         call mesh3d(x1d,nx,x1d,nx,x1d,nx,xnd)
+      endif
+
+      return
+      end
       
+      subroutine meshndsq(ndim,nt,xnd,xsq)
+      implicit real *8 (a-h,o-z)
+      dimension xnd(ndim,nt),xsq(nt)
+
+      do i=1,nt
+         xsq(i)=xnd(1,i)*xnd(1,i)
+      enddo
+      
+      do i=1,nt
+         do j=2,ndim
+            xsq(i)=xsq(i)+xnd(j,i)*xnd(j,i)
+         enddo
+      enddo
+
+      return
+      end
+
+
       subroutine mesh3d(x,nx,y,ny,z,nz,xyz)
       implicit real *8 (a-h,o-z)
       dimension x(*), y(*), z(*), xyz(3,*)

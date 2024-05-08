@@ -1873,11 +1873,304 @@ C$OMP END PARALLEL DO
 c      
 c
 c
+cc      
+c      
+c
 c
 c
 c----------------------------------------------------------------
 c      
       subroutine pdmk_find_all_pwexp_boxes(ndim,nboxes,
+     1    nlevels,ltree,itree,iptr,
+     2    ndiv,nboxsrcpts,nboxtargpts,
+     3    ifpwexpform,ifpwexpeval,iftensprodeval)
+c
+c
+c     Determine whether a box needs plane wave expansions
+c     in the point dmk.
+c
+c     At the cutoff level, i.e., npwlevel, a box needs
+c     plane wave expansion if it's nonempty box and it has a colleague
+c     with more than ndiv source points
+c                  
+c     Thus, a leaf box at the cutoff level may or may not 
+c     have plane wave expansion.
+c     But if it has plane wave expansion, then the self interaction
+c     is handled by the plane wave expansion instead of 
+c     direct evaluation. 
+c      
+c      
+c     INPUT arguments
+c     ndim        in: integer
+c                 dimension of the space
+c
+c     npwlevel    in: integer
+c                 Cutoff level
+c
+c     nboxes      in: integer
+c                 Total number of boxes
+c
+c     nlevels     in: integer
+c                 Number of levels
+c
+c     itree       in: integer(ltree)
+c                   array containing tree info - see start of file
+c                   for documentation
+c     ltree       in: integer
+c                   length of itree array
+c 
+c     iptr        in: integer(8)
+c                   pointer for various arrays in itree
+c
+c--------------------------------------------------------------
+c     OUTPUT arguments:
+c     ifpwexp     out: integer(nboxes)
+c                 ifpwexp(ibox)=1, ibox needs plane wave expansion
+c                 ifpwexp(ibox)=0, ibox does not need pwexp
+c      
+c---------------------------------------------------------------
+      implicit real *8 (a-h,o-z)
+      integer nlevels,npwlevel,nboxes,ndim
+      integer iptr(8),ltree
+      integer nboxsrcpts(nboxes),nboxtargpts(nboxes)
+      integer itree(ltree)
+      integer ifpwexpform(nboxes),ifpwexpeval(nboxes)
+      integer iftensprodeval(nboxes)
+
+      mnbors=3**ndim
+      mc=2**ndim
+      
+      do i=1,nboxes
+         ifpwexpform(i)=0
+      enddo
+      
+      do i=1,nboxes
+         ifpwexpeval(i)=0
+      enddo
+
+      do i=1,nboxes
+         iftensprodeval(i)=0
+      enddo
+
+      ifpwexpform(1)=1
+      ifpwexpeval(1)=1
+      
+      do ilev=0,nlevels
+         do ibox=itree(2*ilev+1),itree(2*ilev+2)
+            if (nboxsrcpts(ibox).gt.ndiv) ifpwexpform(ibox)=1
+         enddo
+      enddo
+
+      do ilev=0,nlevels
+         do ibox=itree(2*ilev+1),itree(2*ilev+2)         
+            ncoll = itree(iptr(6)+ibox-1)
+            do j=1,ncoll
+               jbox = itree(iptr(7) + (ibox-1)*mnbors+j-1)
+               npts=nboxsrcpts(jbox)+nboxtargpts(jbox)
+               if (ifpwexpform(jbox).eq.1 .and. npts.gt.0) then
+                  ifpwexpeval(ibox)=1
+                  goto 1000
+               endif
+            enddo
+               
+ 1000       continue
+         enddo
+      enddo
+
+      do ilev=0,nlevels
+         do ibox=itree(2*ilev+1),itree(2*ilev+2)         
+            if (ifpwexpeval(ibox).eq.1) then
+               nchild = itree(iptr(4)+ibox-1)
+
+               iftpeval=1
+               do j=1,nchild
+                  jbox = itree(iptr(5) + (ibox-1)*mc+j-1)
+               
+                  if (ifpwexpeval(jbox).eq.1) then
+                     iftpeval=0
+                     goto 2000
+                  endif
+               enddo
+
+               if (iftpeval.eq.1) then
+                  iftensprodeval(ibox)=1
+               endif
+
+ 2000          continue
+
+               if (iftensprodeval(ibox).eq.0) then
+                  do j=1,nchild
+                     jbox = itree(iptr(5) + (ibox-1)*mc+j-1)
+               
+                     if (ifpwexpeval(jbox).eq.0) then
+                        iftensprodeval(jbox)=1
+                     endif
+                  enddo
+               endif
+            endif
+         enddo
+      enddo
+      
+      return
+      end
+c      
+c
+c
+c      
+c      
+c
+c
+c
+c----------------------------------------------------------------
+c      
+      subroutine pdmk_find_all_pwexp_boxes2(ndim,nboxes,
+     1    nlevels,ltree,itree,iptr,
+     2    ndiv,nboxsrcpts,nboxtargpts,ifleafbox,
+     3    ifpwexpform,ifpwexpeval,iftensprodeval)
+c
+c
+c     Determine whether a box needs plane wave expansions
+c     in the point fgt.
+c
+c     At the cutoff level, i.e., npwlevel, a box needs
+c     plane wave expansion if it's nonempty box and it has a colleague
+c     with more than ndiv source points
+c                  
+c     Thus, a leaf box at the cutoff level may or may not 
+c     have plane wave expansion.
+c     But if it has plane wave expansion, then the self interaction
+c     is handled by the plane wave expansion instead of 
+c     direct evaluation. 
+c      
+c      
+c     INPUT arguments
+c     ndim        in: integer
+c                 dimension of the space
+c
+c     npwlevel    in: integer
+c                 Cutoff level
+c
+c     nboxes      in: integer
+c                 Total number of boxes
+c
+c     nlevels     in: integer
+c                 Number of levels
+c
+c     itree       in: integer(ltree)
+c                   array containing tree info - see start of file
+c                   for documentation
+c     ltree       in: integer
+c                   length of itree array
+c 
+c     iptr        in: integer(8)
+c                   pointer for various arrays in itree
+c
+c--------------------------------------------------------------
+c     OUTPUT arguments:
+c     ifpwexp     out: integer(nboxes)
+c                 ifpwexp(ibox)=1, ibox needs plane wave expansion
+c                 ifpwexp(ibox)=0, ibox does not need pwexp
+c      
+c---------------------------------------------------------------
+      implicit real *8 (a-h,o-z)
+      integer nlevels,npwlevel,nboxes,ndim
+      integer iptr(8),ltree
+      integer nboxsrcpts(nboxes),nboxtargpts(nboxes)
+      integer itree(ltree),ifleafbox(nboxes)
+      integer ifpwexpform(nboxes),ifpwexpeval(nboxes)
+      integer iftensprodeval(nboxes)
+
+      mnbors=3**ndim
+      mc=2**ndim
+      
+      do i=1,nboxes
+         ifpwexpform(i)=0
+      enddo
+      
+      do i=1,nboxes
+         ifpwexpeval(i)=0
+      enddo
+
+      do i=1,nboxes
+         iftensprodeval(i)=0
+      enddo
+
+      ifpwexpform(1)=1
+      ifpwexpeval(1)=1
+      
+      do ilev=0,nlevels
+         do ibox=itree(2*ilev+1),itree(2*ilev+2)
+            if (ifleafbox(ibox).eq.0) ifpwexpform(ibox)=1
+         enddo
+      enddo
+
+      do ilev=0,nlevels
+         do ibox=itree(2*ilev+1),itree(2*ilev+2)         
+            ncoll = itree(iptr(6)+ibox-1)
+            do j=1,ncoll
+               jbox = itree(iptr(7) + (ibox-1)*mnbors+j-1)
+               npts=nboxsrcpts(jbox)+nboxtargpts(jbox)
+               if (ifpwexpform(jbox).eq.1 .and. npts.gt.0) then
+                  ifpwexpeval(ibox)=1
+                  goto 1000
+               endif
+            enddo
+               
+ 1000       continue
+         enddo
+      enddo
+
+      do ilev=0,nlevels
+         do ibox=itree(2*ilev+1),itree(2*ilev+2)         
+            if (ifpwexpeval(ibox).eq.1) then
+               nchild = itree(iptr(4)+ibox-1)
+
+               iftpeval=1
+               do j=1,nchild
+                  jbox = itree(iptr(5) + (ibox-1)*mc+j-1)
+               
+                  if (ifpwexpeval(jbox).eq.1) then
+                     iftpeval=0
+                     goto 2000
+                  endif
+               enddo
+
+               if (iftpeval.eq.1) then
+                  iftensprodeval(ibox)=1
+               endif
+
+ 2000          continue
+
+               if (iftensprodeval(ibox).eq.0) then
+                  do j=1,nchild
+                     jbox = itree(iptr(5) + (ibox-1)*mc+j-1)
+               
+                     if (ifpwexpeval(jbox).eq.0) then
+                        iftensprodeval(jbox)=1
+                     endif
+                  enddo
+               endif
+            endif
+         enddo
+      enddo
+      
+      return
+      end
+c      
+c
+c
+c      
+c      
+c
+c
+c
+c      
+c
+c
+c
+c----------------------------------------------------------------
+c      
+      subroutine pdmk_find_all_pwexp_boxes3(ndim,nboxes,
      1    nlevels,ltree,itree,iptr,nboxsrcpts,nboxtargpts,
      2    ifpwexpform,ifpwexpeval,iftensprodeval)
 c
