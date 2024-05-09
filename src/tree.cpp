@@ -6,11 +6,13 @@
 namespace dmk {
 
 template <typename T, int DIM>
-TreeData<T, DIM>::TreeData(const sctl::PtTree<T, DIM> &tree_, int ndiv, int nd)
-    : tree(tree_), node_attr(tree.GetNodeAttr()), node_mid(tree.GetNodeMID()), node_lists(tree.GetNodeLists()) {
+void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     const int n_nodes = n_boxes();
-    tree.GetData(r_src_sorted, r_src_cnt, "pdmk_src");
-    tree.GetData(charge_sorted, charge_cnt, "pdmk_charge");
+    this->GetData(r_src_sorted, r_src_cnt, "pdmk_src");
+    this->GetData(charge_sorted, charge_cnt, "pdmk_charge");
+    const auto &node_attr = this->GetNodeAttr();
+    const auto &node_mid = this->GetNodeMID();
+    const auto &node_lists = this->GetNodeLists();
 
     leaf_flag_traditional.resize(n_nodes);
     leaf_flag.resize(n_nodes);
@@ -88,9 +90,9 @@ TreeData<T, DIM>::TreeData(const sctl::PtTree<T, DIM> &tree_, int ndiv, int nd)
     }
 }
 
-template struct TreeData<float, 2>;
-template struct TreeData<float, 3>;
-template struct TreeData<double, 2>;
-template struct TreeData<double, 3>;
+template struct DMKPtTree<float, 2>;
+template struct DMKPtTree<float, 3>;
+template struct DMKPtTree<double, 2>;
+template struct DMKPtTree<double, 3>;
 
 } // namespace dmk

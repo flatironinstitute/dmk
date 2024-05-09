@@ -9,7 +9,7 @@
 namespace dmk {
 
 template <typename Real, int DIM>
-struct TreeData {
+struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     std::vector<bool> leaf_flag_traditional;
     std::vector<bool> leaf_flag;
     std::vector<bool> in_flag;
@@ -27,22 +27,18 @@ struct TreeData {
     std::vector<Real> centers;
     std::vector<Real> scale_factors;
 
-    TreeData(const sctl::PtTree<Real, DIM> &tree_, int ns, int nd);
+    DMKPtTree<Real, DIM>(const sctl::Comm &comm) : sctl::PtTree<Real, DIM>(comm){};
 
     int n_levels() const { return level_indices.size(); }
     int n_leaves() const { return std::accumulate(leaf_flag.begin(), leaf_flag.end(), 0); }
     int n_leaves_traditional() const { return std::accumulate(leaf_flag_traditional.begin(), leaf_flag.end(), 0); }
     int n_in() const { return std::accumulate(in_flag.begin(), in_flag.end(), 0); }
     int n_out() const { return std::accumulate(out_flag.begin(), out_flag.end(), 0); }
-    int n_boxes() const { return node_mid.Dim(); }
+    int n_boxes() const { return this->GetNodeMID().Dim(); }
+    void generate_metadata(int ns, int nd);
     Real *r_src_ptr(int i_node) { return &r_src_sorted[r_src_offsets[i_node]]; }
     Real *charge_ptr(int i_node) { return &charge_sorted[charge_offsets[i_node]]; }
     Real *center_ptr(int i_node) { return &centers[i_node * DIM]; }
-
-    const sctl::PtTree<Real, DIM> &tree;
-    const sctl::Vector<typename sctl::PtTree<Real, DIM>::NodeAttr> &node_attr;
-    const sctl::Vector<typename sctl::Morton<DIM>> &node_mid;
-    const sctl::Vector<typename sctl::PtTree<Real, DIM>::NodeLists> &node_lists;
 };
 
 } // namespace dmk

@@ -9,7 +9,7 @@ int main(int argc, char *argv[]) {
         constexpr int DIM = 2;
         auto comm = sctl::Comm::World();
         int long N = comm.Rank() == 0 ? 10 : 0;
-        sctl::PtTree<double, DIM> tree(comm);
+        dmk::DMKPtTree<double, DIM> tree(comm);
 
         sctl::Vector<double> X(N * DIM), f(N);
         if (!comm.Rank()) {
@@ -43,11 +43,11 @@ int main(int argc, char *argv[]) {
         sctl::Vector<sctl::Long> cnt_charge;
         tree.GetData(data_charge, cnt_charge, "pdmk_src");
 
-        dmk::TreeData<double, DIM> tree_data(tree, 1, 1);
+        tree.generate_metadata(1, 1);
 
         sctl::Long offset_part{0}, offset_charge{0};
         for (std::size_t i_node = 0; i_node < mids.Dim(); ++i_node) {
-            if (true || tree_data.in_flag[i_node]) {
+            if (true || tree.in_flag[i_node]) {
                 std::cout << comm.Rank() << " " << i_node << " ";
                 std::cout << "(";
                 for (int i = 0; i < cnt_part[i_node]; ++i) {
@@ -65,10 +65,10 @@ int main(int argc, char *argv[]) {
                 // }
                 // std::cout << ") ";
 
-                std::cout << "(" << tree_data.leaf_flag[i_node] << "," << tree_data.out_flag[i_node] << ","
-                          << tree_data.in_flag[i_node] << ") ";
+                std::cout << "(" << tree.leaf_flag[i_node] << "," << tree.out_flag[i_node] << ","
+                          << tree.in_flag[i_node] << ") ";
 
-                std::cout << tree_data.src_counts_local[i_node] << " " << tree_data.src_counts_global[i_node] << " ";
+                std::cout << tree.src_counts_local[i_node] << " " << tree.src_counts_global[i_node] << " ";
 
                 std::cout << mids[i_node] << " " << int(attrs[i_node].Leaf) << " " << int(attrs[i_node].Ghost) << "\n";
 
