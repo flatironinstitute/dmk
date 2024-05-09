@@ -232,6 +232,7 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
 }
 
 } // namespace dmk
+
 extern "C" {
 void pdmkf(pdmk_params params, int n_src, const float *r_src, const float *charge, const float *normal,
            const float *dipole_str, int n_trg, const float *r_trg, float *pot, float *grad, float *hess, float *pottarg,
