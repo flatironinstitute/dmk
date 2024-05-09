@@ -147,7 +147,7 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     logger->debug("PDMK called");
 
     // 0: Initialization
-    sctl::PtTree<T, DIM> tree(sctl::Comm::World());
+    dmk::DMKPtTree<T, DIM> tree(sctl::Comm::World());
     sctl::Vector<T> r_src_vec(n_src * params.n_dim, const_cast<T *>(r_src), false);
     sctl::Vector<T> r_trg_vec(n_trg * params.n_dim, const_cast<T *>(r_trg), false);
     sctl::Vector<T> charge_vec(n_src * params.n_mfm, const_cast<T *>(charge), false);
@@ -163,16 +163,17 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     zero_potentials<T, DIM>(params.pgh_target, n_trg, params.n_mfm, pot, grad, hess);
     logger->debug("Zeroing complete");
 
+    logger->debug("Generating tree traversal metadata");
+    tree.generate_metadata(params.n_per_leaf, params.n_mfm);
+    logger->debug("Done generating tree traversal metadata");
+
+    logger->debug("Tree has {} levels, {} boxes, {} leaves, {} incoming pw, and {} outgoing pw", tree.n_levels(),
+                  tree.n_boxes(), tree.n_leaves(), tree.n_in(), tree.n_out());
+
     double beta = procl180_rescale(params.eps);
     logger->debug("prolate parameter value = {}", beta);
     ProlateFuncs prolate_funcs(beta, 10000);
     logger->debug("Initialized prolate function data");
-
-    logger->debug("Generating tree traversal metadata");
-    dmk::TreeData<T, DIM> tree_data(tree, params.n_per_leaf, params.n_mfm);
-    logger->debug("Done generating tree traversal metadata");
-    logger->debug("Tree has {} levels, {} boxes, {} leaves, {} incoming pw, and {} outgoing pw", tree_data.n_levels(),
-                  tree_data.n_boxes(), tree_data.n_leaves(), tree_data.n_in(), tree_data.n_out());
 
     // 1: Precomputation
     const int ndigits = std::round(log10(1.0 / params.eps) - 0.1);
@@ -182,7 +183,7 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     auto [c2p, p2c] = get_c2p_p2c_matrices<T>(DIM, n_order);
     logger->debug("Finished generating matrices");
 
-    FourierData<T> fourier_data(params.kernel, DIM, ndigits, n_pw_max, params.fparam, beta, tree_data.boxsize);
+    FourierData<T> fourier_data(params.kernel, DIM, ndigits, n_pw_max, params.fparam, beta, tree.boxsize);
     logger->debug("Planewave params at root box: n_max, {}, n: {}, stepsize: {}, weight: {}, radius: {}", n_pw_max,
                   fourier_data.npw[0], fourier_data.hpw[0], fourier_data.ws[0], fourier_data.rl[0]);
     fourier_data.update_windowed_kernel_fourier_transform(prolate_funcs);
@@ -192,27 +193,27 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     fourier_data.update_local_coeffs(params.eps, prolate_funcs);
     logger->debug("Finished updating local potential expansion coefficients");
 
-    const int n_boxes = tree_data.n_boxes();
+    const int n_boxes = tree.n_boxes();
     std::vector<std::vector<T>> proxy_coeffs(n_boxes);
     const int n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
     for (int i_box = 0; i_box < n_boxes; ++i_box) {
-        if (tree_data.leaf_flag[i_box]) {
+        if (tree.leaf_flag[i_box]) {
             proxy_coeffs[i_box].resize(n_coeffs);
-            proxy::charge2proxycharge(DIM, params.n_mfm, n_order, tree_data.src_counts_local[i_box],
-                                      tree_data.r_src_ptr(i_box), tree_data.charge_ptr(i_box),
-                                      tree_data.center_ptr(i_box), tree_data.scale_factors[i_box],
+            proxy::charge2proxycharge(DIM, params.n_mfm, n_order, tree.src_counts_local[i_box], tree.r_src_ptr(i_box),
+                                      tree.charge_ptr(i_box), tree.center_ptr(i_box), tree.scale_factors[i_box],
                                       proxy_coeffs[i_box].data());
         }
     }
     logger->debug("Finished building leaf proxy charges");
 
     constexpr int n_children = 1u << DIM;
-    for (int i_level = tree_data.n_levels() - 1; i_level >= 0; --i_level) {
-        for (auto parent_box : tree_data.level_indices[i_level]) {
-            if (tree_data.leaf_flag[parent_box] || !tree_data.out_flag[parent_box])
+    const auto &node_lists = tree.GetNodeLists();
+    for (int i_level = tree.n_levels() - 1; i_level >= 0; --i_level) {
+        for (auto parent_box : tree.level_indices[i_level]) {
+            if (tree.leaf_flag[parent_box] || !tree.out_flag[parent_box])
                 continue;
 
-            auto &children = tree_data.node_lists[parent_box].child;
+            auto &children = node_lists[parent_box].child;
             proxy_coeffs[parent_box].resize(n_coeffs);
 
             for (int i_child = 0; i_child < n_children; ++i_child) {
@@ -231,6 +232,7 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
 }
 
 } // namespace dmk
+
 extern "C" {
 void pdmkf(pdmk_params params, int n_src, const float *r_src, const float *charge, const float *normal,
            const float *dipole_str, int n_trg, const float *r_trg, float *pot, float *grad, float *hess, float *pottarg,

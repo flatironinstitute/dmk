@@ -2,13 +2,11 @@
 #undef NDEBUG
 #endif
 
-#include <cassert>
-#include <cstdlib>
-#include <dmk/proxy.hpp>
-#include <iostream>
-#include <omp.h>
-
 #include <Eigen/Core>
+#include <cassert>
+#include <dmk/proxy.hpp>
+#include <nanobench.h>
+#include <string>
 
 extern "C" {
 void pdmk_charge2proxycharge_(int *ndim, int *nd, int *norder, int *ns, double *sources, double *charge, double *cen,
@@ -29,34 +27,33 @@ void test_fortran(int n_dim, int n_charge_dim, int n_order, int n_src) {
     for (int i = 0; i < n_src * n_charge_dim; ++i)
         charge[i] = drand48() - 0.5;
 
-    double dt = -omp_get_wtime();
-    int n_iter = 10000;
-    for (int i_iter = 0; i_iter < n_iter; ++i_iter)
+    auto b = ankerl::nanobench::Bench().unit("eval").title("c2pc" + std::to_string(n_dim)).minEpochIterations(20);
+    b.run("c++" + std::to_string(n_order), [&] {
+        coeffs.array() = 0.0;
         dmk::proxy::charge2proxycharge(n_dim, n_charge_dim, n_order, n_src, r_src.data(), charge.data(), center,
                                        scale_factor, coeffs.data());
-    dt += omp_get_wtime();
-    std::cout << dt / n_iter << std::endl;
+    });
 
-    dt = -omp_get_wtime();
-    for (int i_iter = 0; i_iter < n_iter; ++i_iter) {
+    b.run("fort" + std::to_string(n_order), [&] {
         coeffs_fort.array() = 0.0;
         pdmk_charge2proxycharge_(&n_dim, &n_charge_dim, &n_order, &n_src, r_src.data(), charge.data(), center,
                                  &scale_factor, coeffs_fort.data());
-    }
-    dt += omp_get_wtime();
-    std::cout << dt / n_iter << std::endl;
+    });
 
     double l2 = (coeffs - coeffs_fort).norm() / coeffs.size();
     assert(l2 < 1E-16);
 }
 
 int main(int argc, char *argv[]) {
-    int n_order = 18;
-    int n_src = 80;
+    int n_order = 32;
+    int n_src = 500;
     int n_charge_dim = 1;
 
-    test_fortran(2, n_charge_dim, n_order, n_src);
-    test_fortran(3, n_charge_dim, n_order, n_src);
+    int orders[] = {8, 12, 16, 20, 24, 32};
+    for (auto &order : orders)
+        test_fortran(2, n_charge_dim, order, n_src);
+    for (auto &order : orders)
+        test_fortran(3, n_charge_dim, order, n_src);
 
     return 0;
 }
