@@ -2707,7 +2707,7 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   // why converting to sctl::Vector is a bit slow...
   //sctl::Vector<Real> R2_work(NSRC_LIMIT*8, R2_work_buff, false);
   // work array memory stores compressed polynomial evals
-  Real Fval_work[NSRC_LIMIT*8];
+  Real Fres_work[NSRC_LIMIT*8];
   // mask array
   typename Vec::MaskType Mask_work[NSRC_LIMIT];
   // sparse starting index of stored Pval
