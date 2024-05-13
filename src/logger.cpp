@@ -6,28 +6,33 @@
 #include <spdlog/spdlog.h>
 
 namespace dmk {
+std::shared_ptr<spdlog::logger> logger_;
+auto log_level_ = spdlog::level::off;
+
 std::shared_ptr<spdlog::logger> &get_logger() {
     bool first_call = true;
-    static std::shared_ptr<spdlog::logger> logger;
+
     if (first_call) {
         first_call = false;
         spdlog::cfg::load_env_levels();
 
         auto comm = sctl::Comm::World();
         if (comm.Rank() == 0)
-            logger = std::make_shared<spdlog::logger>(
+            logger_ = std::make_shared<spdlog::logger>(
                 spdlog::logger("DMK", std::make_shared<spdlog::sinks::ansicolor_stderr_sink_st>()));
         else
-            logger = std::make_shared<spdlog::logger>(
+            logger_ = std::make_shared<spdlog::logger>(
                 spdlog::logger("DMK", std::make_shared<spdlog::sinks::null_sink_st>()));
-        logger->set_pattern("[%8i] [%n] [%l] %v");
+        logger_->set_pattern("[%8i] [%n] [%l] %v");
     }
 
-    return logger;
+    logger_->set_level(log_level_);
+    return logger_;
 }
+
 std::shared_ptr<spdlog::logger> &get_logger(int level) {
-    auto &logger = get_logger();
-    logger->set_level(spdlog::level::level_enum(level));
-    return logger;
+    log_level_ = spdlog::level::level_enum(level);
+    return get_logger();
 }
+
 } // namespace dmk
