@@ -103,13 +103,18 @@ template <typename T, int DIM>
 void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const std::vector<T> &c2p) {
     auto &logger = dmk::get_logger();
 
-    proxy_coeffs.resize(n_boxes());
     const int n_coeffs = n_mfm * sctl::pow<DIM>(n_order);
+    proxy_coeffs.ReInit(n_boxes() * n_coeffs);
+    proxy_coeffs.SetZero();
+    sctl::Vector<sctl::Long> counts(n_boxes());
+    counts.SetZero();
+
+    const auto &attrs = this->GetNodeAttr();
     for (int i_box = 0; i_box < n_boxes(); ++i_box) {
-        if (leaf_flag[i_box]) {
-            proxy_coeffs[i_box].resize(n_coeffs);
+        if (leaf_flag[i_box] && !attrs[i_box].Ghost) {
             proxy::charge2proxycharge(DIM, n_mfm, n_order, src_counts_local[i_box], r_src_ptr(i_box), charge_ptr(i_box),
-                                      center_ptr(i_box), scale_factors[i_box], proxy_coeffs[i_box].data());
+                                      center_ptr(i_box), scale_factors[i_box], &proxy_coeffs[i_box * n_coeffs]);
+            counts[i_box] += n_coeffs;
         }
     }
     logger->debug("Finished building leaf proxy charges");
@@ -118,23 +123,29 @@ void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const std::v
     const auto &node_lists = this->GetNodeLists();
     for (int i_level = n_levels() - 1; i_level >= 0; --i_level) {
         for (auto parent_box : this->level_indices[i_level]) {
-            if (this->leaf_flag[parent_box] || !this->out_flag[parent_box])
+            if (attrs[parent_box].Ghost || this->leaf_flag[parent_box] || !this->out_flag[parent_box])
                 continue;
 
             auto &children = node_lists[parent_box].child;
-            proxy_coeffs[parent_box].resize(n_coeffs);
-
             for (int i_child = 0; i_child < n_children; ++i_child) {
                 const int child_box = children[i_child];
 
                 constexpr bool add_flag = true;
-                if (proxy_coeffs[child_box].size()) {
-                    tensorprod::transform(DIM, n_mfm, n_order, n_order, add_flag, proxy_coeffs[child_box].data(),
-                                          &c2p[i_child * DIM * n_order * n_order], proxy_coeffs[parent_box].data());
+                if (counts[child_box]) {
+                    tensorprod::transform(DIM, n_mfm, n_order, n_order, add_flag, &proxy_coeffs[child_box * n_coeffs],
+                                          &c2p[i_child * DIM * n_order * n_order], &proxy_coeffs[parent_box * n_coeffs]);
                 }
+                counts[parent_box] = n_coeffs;
             }
         }
     }
+    for (auto &count : counts)
+        count = n_coeffs;
+
+    this->AddData("proxy_coeffs", proxy_coeffs, counts);
+    this->template ReduceBroadcast<T>("proxy_coeffs");
+    this->template GetData<T>(proxy_coeffs, counts, "proxy_coeffs");
+
     logger->debug("Finished building proxy charges for non-leaf boxes");
 }
 

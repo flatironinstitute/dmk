@@ -26,7 +26,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     std::vector<Real> centers;
     std::vector<Real> scale_factors;
 
-    std::vector<std::vector<Real>> proxy_coeffs;
+    sctl::Vector<Real> proxy_coeffs;
 
     DMKPtTree<Real, DIM>(const sctl::Comm &comm) : sctl::PtTree<Real, DIM>(comm){};
 
