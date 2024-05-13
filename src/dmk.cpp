@@ -193,42 +193,7 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     fourier_data.update_local_coeffs(params.eps, prolate_funcs);
     logger->debug("Finished updating local potential expansion coefficients");
 
-    const int n_boxes = tree.n_boxes();
-    std::vector<std::vector<T>> proxy_coeffs(n_boxes);
-    const int n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
-    for (int i_box = 0; i_box < n_boxes; ++i_box) {
-        if (tree.leaf_flag[i_box]) {
-            proxy_coeffs[i_box].resize(n_coeffs);
-            proxy::charge2proxycharge(DIM, params.n_mfm, n_order, tree.src_counts_local[i_box], tree.r_src_ptr(i_box),
-                                      tree.charge_ptr(i_box), tree.center_ptr(i_box), tree.scale_factors[i_box],
-                                      proxy_coeffs[i_box].data());
-        }
-    }
-    logger->debug("Finished building leaf proxy charges");
-
-    constexpr int n_children = 1u << DIM;
-    const auto &node_lists = tree.GetNodeLists();
-    for (int i_level = tree.n_levels() - 1; i_level >= 0; --i_level) {
-        for (auto parent_box : tree.level_indices[i_level]) {
-            if (tree.leaf_flag[parent_box] || !tree.out_flag[parent_box])
-                continue;
-
-            auto &children = node_lists[parent_box].child;
-            proxy_coeffs[parent_box].resize(n_coeffs);
-
-            for (int i_child = 0; i_child < n_children; ++i_child) {
-                const int child_box = children[i_child];
-
-                constexpr bool add_flag = true;
-                if (proxy_coeffs[child_box].size()) {
-                    tensorprod::transform(DIM, params.n_mfm, n_order, n_order, add_flag, proxy_coeffs[child_box].data(),
-                                          &c2p[i_child * DIM * n_order * n_order], proxy_coeffs[parent_box].data());
-                }
-            }
-        }
-    }
-
-    logger->debug("Finished building proxy charges for non-leaf boxes");
+    tree.build_proxy_charges(params.n_mfm, n_order, c2p);
 }
 
 } // namespace dmk

@@ -26,6 +26,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     std::vector<Real> centers;
     std::vector<Real> scale_factors;
 
+    std::vector<std::vector<Real>> proxy_coeffs;
+
     DMKPtTree<Real, DIM>(const sctl::Comm &comm) : sctl::PtTree<Real, DIM>(comm){};
 
     int n_levels() const { return level_indices.size(); }
@@ -37,6 +39,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     Real *r_src_ptr(int i_node) { return &r_src_sorted[r_src_offsets[i_node]]; }
     Real *charge_ptr(int i_node) { return &charge_sorted[charge_offsets[i_node]]; }
     Real *center_ptr(int i_node) { return &centers[i_node * DIM]; }
+
+    void build_proxy_charges(int n_mfm, int n_order, const std::vector<Real> &c2p);
 };
 
 } // namespace dmk

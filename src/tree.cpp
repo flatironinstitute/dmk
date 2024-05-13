@@ -1,3 +1,6 @@
+#include <dmk/logger.h>
+#include <dmk/proxy.hpp>
+#include <dmk/tensorprod.hpp>
 #include <dmk/tree.hpp>
 #include <sctl/tree.hpp>
 
@@ -94,6 +97,45 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
             }
         }
     }
+}
+
+template <typename T, int DIM>
+void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const std::vector<T> &c2p) {
+    auto &logger = dmk::get_logger();
+
+    proxy_coeffs.resize(n_boxes());
+    const int n_coeffs = n_mfm * sctl::pow<DIM>(n_order);
+    for (int i_box = 0; i_box < n_boxes(); ++i_box) {
+        if (leaf_flag[i_box]) {
+            proxy_coeffs[i_box].resize(n_coeffs);
+            proxy::charge2proxycharge(DIM, n_mfm, n_order, src_counts_local[i_box], r_src_ptr(i_box), charge_ptr(i_box),
+                                      center_ptr(i_box), scale_factors[i_box], proxy_coeffs[i_box].data());
+        }
+    }
+    logger->debug("Finished building leaf proxy charges");
+
+    constexpr int n_children = 1u << DIM;
+    const auto &node_lists = this->GetNodeLists();
+    for (int i_level = n_levels() - 1; i_level >= 0; --i_level) {
+        for (auto parent_box : this->level_indices[i_level]) {
+            if (this->leaf_flag[parent_box] || !this->out_flag[parent_box])
+                continue;
+
+            auto &children = node_lists[parent_box].child;
+            proxy_coeffs[parent_box].resize(n_coeffs);
+
+            for (int i_child = 0; i_child < n_children; ++i_child) {
+                const int child_box = children[i_child];
+
+                constexpr bool add_flag = true;
+                if (proxy_coeffs[child_box].size()) {
+                    tensorprod::transform(DIM, n_mfm, n_order, n_order, add_flag, proxy_coeffs[child_box].data(),
+                                          &c2p[i_child * DIM * n_order * n_order], proxy_coeffs[parent_box].data());
+                }
+            }
+        }
+    }
+    logger->debug("Finished building proxy charges for non-leaf boxes");
 }
 
 template struct DMKPtTree<float, 2>;
