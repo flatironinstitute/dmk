@@ -10,13 +10,12 @@ namespace dmk {
 
 template <typename Real, int DIM>
 struct DMKPtTree : public sctl::PtTree<Real, DIM> {
-    std::vector<bool> leaf_flag_traditional;
-    std::vector<bool> leaf_flag;
-    std::vector<bool> in_flag;
-    std::vector<bool> out_flag;
+    sctl::Vector<bool> leaf_flag;
+    sctl::Vector<bool> in_flag;
+    sctl::Vector<bool> out_flag;
     std::vector<std::vector<int>> level_indices;
-    std::vector<int> src_counts_local;
-    std::vector<int> src_counts_global;
+    sctl::Vector<int> src_counts_local;
+    sctl::Vector<int> src_counts_global;
     std::vector<double> boxsize;
     sctl::Vector<Real> r_src_sorted;
     sctl::Vector<sctl::Long> r_src_cnt;
@@ -31,7 +30,6 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     int n_levels() const { return level_indices.size(); }
     int n_leaves() const { return std::accumulate(leaf_flag.begin(), leaf_flag.end(), 0); }
-    int n_leaves_traditional() const { return std::accumulate(leaf_flag_traditional.begin(), leaf_flag.end(), 0); }
     int n_in() const { return std::accumulate(in_flag.begin(), in_flag.end(), 0); }
     int n_out() const { return std::accumulate(out_flag.begin(), out_flag.end(), 0); }
     int n_boxes() const { return this->GetNodeMID().Dim(); }

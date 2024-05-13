@@ -14,12 +14,10 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     const auto &node_mid = this->GetNodeMID();
     const auto &node_lists = this->GetNodeLists();
 
-    leaf_flag_traditional.resize(n_nodes);
-    leaf_flag.resize(n_nodes);
-    in_flag.resize(n_nodes);
-    out_flag.resize(n_nodes);
-    src_counts_local.resize(n_nodes);
-    src_counts_global.resize(n_nodes);
+    leaf_flag.ReInit(n_nodes);
+    in_flag.ReInit(n_nodes);
+    out_flag.ReInit(n_nodes);
+    src_counts_local.ReInit(n_nodes);
     r_src_offsets.resize(n_nodes);
     charge_offsets.resize(n_nodes);
     centers.resize(n_nodes * DIM);
@@ -57,22 +55,29 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
         scale *= 0.5;
     }
 
+    src_counts_local.SetZero();
     for (int i_level = max_depth - 1; i_level >= 0; i_level--) {
         for (auto i_node : level_indices[i_level]) {
             auto &node = node_mid[i_node];
             assert(i_level == node.Depth());
 
-            leaf_flag_traditional[i_node] = node_attr[i_node].Leaf;
             src_counts_local[i_node] += r_src_cnt[i_node];
             if (node_lists[i_node].parent != -1)
                 src_counts_local[node_lists[i_node].parent] += src_counts_local[i_node];
         }
     }
 
-    // FIXME: this doesn't work, trees aren't identical always...
-    // MPI_Allreduce(src_counts_local.data(), src_counts_global.data(), n_nodes, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    src_counts_global = src_counts_local;
+    sctl::Vector<long> counts(src_counts_local.Dim());
+    for (auto &el : counts)
+        el = 1;
+
+    this->template AddData("src_counts", src_counts_local, counts);
+    this->template ReduceBroadcast<int>("src_counts");
+    this->template GetData<int>(src_counts_global, counts, "src_counts");
+
     for (int i_node = 0; i_node < n_nodes; ++i_node) {
+        leaf_flag[i_node] = 0;
+        out_flag[i_node] = 0;
         if (src_counts_global[i_node] > ndiv)
             out_flag[i_node] = true;
         if (src_counts_global[i_node] > 0 && src_counts_global[i_node] <= ndiv && node_lists[i_node].parent >= 0 &&
@@ -80,6 +85,7 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
             leaf_flag[i_node] = true;
     }
     for (int i_node = 0; i_node < n_nodes; ++i_node) {
+        in_flag[i_node] = 0;
         for (auto &neighb : node_lists[i_node].nbr) {
             // neighb = -1 -> no neighb at current level in that direction
             if (neighb != -1 && out_flag[neighb] && src_counts_global[neighb] > 0) {
