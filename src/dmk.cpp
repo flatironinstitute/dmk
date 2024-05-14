@@ -16,63 +16,6 @@
 
 namespace dmk {
 
-template <typename T>
-std::pair<std::vector<T>, std::vector<T>> get_c2p_p2c_matrices(int dim, int order) {
-    std::array<Eigen::MatrixX<T>, 2> c2p_mp;
-    std::array<Eigen::MatrixX<T>, 2> p2c_mp;
-
-    std::tie(p2c_mp[0], p2c_mp[1]) = dmk::chebyshev::parent_to_child_matrices<T>(order);
-    c2p_mp[0] = p2c_mp[0].transpose().eval();
-    c2p_mp[1] = p2c_mp[1].transpose().eval();
-
-    const int mc = std::pow(2, dim);
-
-    std::pair<std::vector<T>, std::vector<T>> res;
-    auto &[c2p, p2c] = res;
-
-    c2p.resize(order * order * dim * mc);
-    p2c.resize(order * order * dim * mc);
-
-    const int blocksize = order * order;
-    const int matsize = order * order * sizeof(T);
-    if (dim == 1) {
-        memcpy(c2p.data(), c2p_mp[0].data(), matsize);
-        memcpy(c2p.data() + blocksize, p2c_mp[1].data(), matsize);
-
-        memcpy(p2c.data(), p2c_mp[0].data(), matsize);
-        memcpy(p2c.data() + blocksize, p2c_mp[1].data(), matsize);
-    }
-    if (dim == 2) {
-        int offset = 0;
-        for (int j = 0; j < 2; ++j) {
-            for (int i = 0; i < 2; ++i) {
-                for (auto idx : {i, j}) {
-                    memcpy(c2p.data() + offset, c2p_mp[idx].data(), matsize);
-                    memcpy(p2c.data() + offset, p2c_mp[idx].data(), matsize);
-                    offset += blocksize;
-                }
-            }
-        }
-    }
-
-    if (dim == 3) {
-        int offset = 0;
-        for (int k = 0; k < 2; ++k) {
-            for (int j = 0; j < 2; ++j) {
-                for (int i = 0; i < 2; ++i) {
-                    for (auto idx : {i, j, k}) {
-                        memcpy(c2p.data() + offset, c2p_mp[idx].data(), matsize);
-                        memcpy(p2c.data() + offset, p2c_mp[idx].data(), matsize);
-                        offset += blocksize;
-                    }
-                }
-            }
-        }
-    }
-
-    return res;
-}
-
 std::pair<int, int> get_pwmax_and_poly_order(int dim, int ndigits, dmk_ikernel kernel) {
     // clang-format off
     if (kernel == DMK_SQRT_LAPLACE && dim == 3) {
@@ -144,6 +87,7 @@ template <typename T, int DIM>
 void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge, const T *normal, const T *dipole_str,
           int n_trg, const T *r_trg, T *pot, T *grad, T *hess, T *pottarg, T *gradtarg, T *hesstarg) {
     auto &logger = dmk::get_logger(params.log_level);
+    auto &rank_logger = dmk::get_rank_logger(params.log_level);
     logger->debug("PDMK called");
 
     // 0: Initialization
@@ -180,7 +124,7 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     const auto [n_pw_max, n_order] = get_pwmax_and_poly_order(DIM, ndigits, params.kernel);
 
     logger->debug("Generating p2c and c2p matrices of order {}", n_order);
-    auto [c2p, p2c] = get_c2p_p2c_matrices<T>(DIM, n_order);
+    auto [c2p, p2c] = dmk::chebyshev::get_c2p_p2c_matrices<T>(DIM, n_order);
     logger->debug("Finished generating matrices");
 
     FourierData<T> fourier_data(params.kernel, DIM, ndigits, n_pw_max, params.fparam, beta, tree.boxsize);
