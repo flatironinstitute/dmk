@@ -10,7 +10,6 @@ namespace dmk {
 
 template <typename Real, int DIM>
 struct DMKPtTree : public sctl::PtTree<Real, DIM> {
-    sctl::Vector<bool> leaf_flag;
     sctl::Vector<bool> in_flag;
     sctl::Vector<bool> out_flag;
     std::vector<std::vector<int>> level_indices;
@@ -31,7 +30,6 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     DMKPtTree<Real, DIM>(const sctl::Comm &comm) : sctl::PtTree<Real, DIM>(comm){};
 
     int n_levels() const { return level_indices.size(); }
-    int n_leaves() const { return std::accumulate(leaf_flag.begin(), leaf_flag.end(), 0); }
     int n_in() const { return std::accumulate(in_flag.begin(), in_flag.end(), 0); }
     int n_out() const { return std::accumulate(out_flag.begin(), out_flag.end(), 0); }
     int n_boxes() const { return this->GetNodeMID().Dim(); }

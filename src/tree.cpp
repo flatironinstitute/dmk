@@ -17,7 +17,6 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     const auto &node_mid = this->GetNodeMID();
     const auto &node_lists = this->GetNodeLists();
 
-    leaf_flag.ReInit(n_nodes);
     in_flag.ReInit(n_nodes);
     out_flag.ReInit(n_nodes);
     src_counts_local.ReInit(n_nodes);
@@ -46,7 +45,7 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     for (int i = 1; i < max_depth; ++i)
         boxsize[i] = 0.5 * boxsize[i - 1];
 
-    T scale = 1.0;
+    T scale = 2.0;
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         for (auto i_node : level_indices[i_level]) {
             auto &node = node_mid[i_node];
@@ -79,16 +78,13 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     this->template GetData<int>(src_counts_global, counts, "src_counts");
 
     for (int i_node = 0; i_node < n_nodes; ++i_node) {
-        leaf_flag[i_node] = 0;
         out_flag[i_node] = 0;
         if (src_counts_global[i_node] > ndiv)
             out_flag[i_node] = true;
-        if (src_counts_global[i_node] > 0 && src_counts_global[i_node] <= ndiv && node_lists[i_node].parent >= 0 &&
-            src_counts_global[node_lists[i_node].parent] > ndiv)
-            leaf_flag[i_node] = true;
     }
     for (int i_node = 0; i_node < n_nodes; ++i_node) {
         in_flag[i_node] = 0;
+
         for (auto &neighb : node_lists[i_node].nbr) {
             // neighb = -1 -> no neighb at current level in that direction
             if (neighb != -1 && out_flag[neighb] && src_counts_global[neighb] > 0) {
@@ -102,6 +98,8 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const std::vector<T> &c2p) {
     auto &logger = dmk::get_logger();
+    auto &rank_logger = dmk::get_rank_logger();
+    this->GetData(r_src_sorted, r_src_cnt, "pdmk_src");
 
     const int n_coeffs = n_mfm * sctl::pow<DIM>(n_order);
     proxy_coeffs.ReInit(n_boxes() * n_coeffs);
@@ -109,44 +107,59 @@ void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const std::v
     sctl::Vector<sctl::Long> counts(n_boxes());
     counts.SetZero();
 
-    const auto &attrs = this->GetNodeAttr();
-    for (int i_box = 0; i_box < n_boxes(); ++i_box) {
-        if (leaf_flag[i_box] && !attrs[i_box].Ghost) {
-            proxy::charge2proxycharge(DIM, n_mfm, n_order, src_counts_local[i_box], r_src_ptr(i_box), charge_ptr(i_box),
-                                      center_ptr(i_box), scale_factors[i_box], &proxy_coeffs[i_box * n_coeffs]);
-            counts[i_box] += n_coeffs;
-        }
-    }
-    logger->debug("Finished building leaf proxy charges");
-
     constexpr int n_children = 1u << DIM;
     const auto &node_lists = this->GetNodeLists();
+    const auto &attrs = this->GetNodeAttr();
+    const auto &node_mid = this->GetNodeMID();
+    int n_direct = 0;
+    for (int i_box = 0; i_box < n_boxes(); ++i_box) {
+        if (r_src_cnt[i_box]) {
+            proxy::charge2proxycharge(DIM, n_mfm, n_order, r_src_cnt[i_box], r_src_ptr(i_box), charge_ptr(i_box),
+                                      center_ptr(i_box), scale_factors[i_box], &proxy_coeffs[i_box * n_coeffs]);
+            counts[i_box] = 1;
+            n_direct++;
+        }
+    }
+    logger->debug("proxy: finished building leaf proxy charges");
+
+    int n_merged = 0;
     for (int i_level = n_levels() - 1; i_level >= 0; --i_level) {
         for (auto parent_box : this->level_indices[i_level]) {
-            if (attrs[parent_box].Ghost || this->leaf_flag[parent_box] || !this->out_flag[parent_box])
-                continue;
-
             auto &children = node_lists[parent_box].child;
             for (int i_child = 0; i_child < n_children; ++i_child) {
                 const int child_box = children[i_child];
+                if (child_box < 0 || !counts[child_box])
+                    continue;
 
                 constexpr bool add_flag = true;
-                if (counts[child_box]) {
-                    tensorprod::transform(DIM, n_mfm, n_order, n_order, add_flag, &proxy_coeffs[child_box * n_coeffs],
-                                          &c2p[i_child * DIM * n_order * n_order], &proxy_coeffs[parent_box * n_coeffs]);
-                }
-                counts[parent_box] = n_coeffs;
+                auto before = proxy_coeffs[parent_box * n_coeffs];
+                tensorprod::transform(DIM, n_mfm, n_order, n_order, add_flag, &proxy_coeffs[child_box * n_coeffs],
+                                      &c2p[i_child * DIM * n_order * n_order], &proxy_coeffs[parent_box * n_coeffs]);
+                counts[parent_box] = 1;
+                n_merged += 1;
             }
         }
     }
-    for (auto &count : counts)
+    int tot_proxy = 0;
+    for (auto &count : counts) {
+        tot_proxy += count;
         count = n_coeffs;
+    }
 
+    logger->debug("Finished building proxy charges for non-leaf boxes");
     this->AddData("proxy_coeffs", proxy_coeffs, counts);
     this->template ReduceBroadcast<T>("proxy_coeffs");
     this->template GetData<T>(proxy_coeffs, counts, "proxy_coeffs");
 
-    logger->debug("Finished building proxy charges for non-leaf boxes");
+    int buf[] = {tot_proxy, n_direct, n_merged};
+    if (this->GetComm().Rank() == 0)
+        MPI_Reduce(MPI_IN_PLACE, buf, 4, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+    else
+        MPI_Reduce(buf, buf, 4, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+
+    logger->debug("proxy: finished broadcasting proxy charges");
+    logger->trace("proxy: n_proxy, n_direct, n_merged: {} {} {}", buf[0], buf[1], buf[2]);
+    rank_logger->trace("proxy: n_proxy_local / n_boxes_local {}", (float)tot_proxy / n_boxes());
 }
 
 template struct DMKPtTree<float, 2>;

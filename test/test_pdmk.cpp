@@ -112,7 +112,7 @@ int main(int argc, char *argv[]) {
 
     std::vector<double> X_root, charges_root, rnormal_root, dipstr_root, pot_root, r_trg_root;
     if (rank == 0)
-        init_data(n_dim, 1, n_src, true, X_root, rnormal_root, charges_root, dipstr_root, 0);
+        init_data(n_dim, 1, n_src, false, X_root, rnormal_root, charges_root, dipstr_root, 0);
 
     auto r_src = scatter(X_root, n_dim);
     auto r_trg = scatter(r_trg_root, n_dim);
@@ -124,7 +124,7 @@ int main(int argc, char *argv[]) {
     pdmk_params params;
     params.eps = 1e-6;
     params.n_dim = n_dim;
-    params.n_per_leaf = 10000;
+    params.n_per_leaf = 2000;
     params.n_mfm = nd;
     params.pgh = DMK_POTENTIAL;
     params.kernel = DMK_YUKAWA;

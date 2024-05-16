@@ -40,7 +40,7 @@ void test_tree() {
         usleep(1000 * comm.Rank());
 
         std::cout << comm.Rank() << "\t" << i_node << "\t";
-        std::cout << "(" << tree.leaf_flag[i_node] << "," << tree.out_flag[i_node] << "," << tree.in_flag[i_node]
+        std::cout << "(" << tree.out_flag[i_node] << "," << tree.in_flag[i_node]
                   << ") ";
         std::cout << tree.src_counts_local[i_node] << "\t" << tree.src_counts_global[i_node] << "\t";
         std::cout << int(attrs[i_node].Leaf) << "\t" << int(attrs[i_node].Ghost) << "\n";
