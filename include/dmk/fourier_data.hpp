@@ -2,6 +2,7 @@
 #define FOURIER_DATA_HPP
 
 #include "../dmk.h"
+#include <complex>
 #include <vector>
 
 namespace dmk {
@@ -25,6 +26,7 @@ struct FourierData {
     const int n_digits;
     const int n_levels;
     const int n_fourier_max;
+    const int n_pw_max;
     const T fparam;
     std::vector<T> dkernelft;
     std::vector<int> npw;
@@ -40,6 +42,8 @@ struct FourierData {
     std::vector<int> ncoeffs2;
 
     const std::vector<double> &boxsize;
+    void calc_planewave_coeff_matrices(int i_level, int n_order, std::complex<T> *prox2pw,
+                                       std::complex<T> *pw2poly) const;
 };
 
 } // namespace dmk

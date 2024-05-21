@@ -6,6 +6,9 @@
 #include <sctl.hpp>
 #include <vector>
 
+template <typename T>
+struct FourierData;
+
 namespace dmk {
 
 template <typename Real, int DIM>
@@ -39,6 +42,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     Real *center_ptr(int i_node) { return &centers[i_node * DIM]; }
 
     void build_proxy_charges(int n_mfm, int n_order, const std::vector<Real> &c2p);
+    void downward_pass(int n_mfm, int n_order, const FourierData<Real> &fourier_data);
 };
 
 } // namespace dmk

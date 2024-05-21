@@ -79,10 +79,10 @@ std::tuple<int, double, double> get_PSWF_difference_kernel_pwterms(dmk_ikernel k
 }
 
 template <typename T>
-FourierData<T>::FourierData(dmk_ikernel kernel_, int n_dim_, int n_digits_, int n_pw_max, T fparam_, T beta_,
+FourierData<T>::FourierData(dmk_ikernel kernel_, int n_dim_, int n_digits_, int n_pw_max_, T fparam_, T beta_,
                             const std::vector<double> &boxsize_)
-    : kernel(kernel_), n_dim(n_dim_), n_digits(n_digits_), fparam(fparam_), beta(beta_), boxsize(boxsize_),
-      n_levels(boxsize_.size()), n_fourier_max(n_dim_ * sctl::pow(n_pw_max / 2, 2)) {
+    : kernel(kernel_), n_dim(n_dim_), n_digits(n_digits_), n_pw_max(n_pw_max_), fparam(fparam_), beta(beta_),
+      boxsize(boxsize_), n_levels(boxsize_.size()), n_fourier_max(n_dim_ * sctl::pow(n_pw_max_ / 2, 2)) {
 
     npw.resize(n_levels + 1);
     nfourier.resize(n_levels + 1);
@@ -395,6 +395,35 @@ void FourierData<T>::update_local_coeffs(T eps, ProlateFuncs &pf) {
     default:
         return;
     }
+}
+
+template <typename T>
+void FourierData<T>::calc_planewave_coeff_matrices(int i_level, int n_order, std::complex<T> *prox2pw_vec,
+                                                   std::complex<T> *pw2poly_vec) const {
+    using matrix_t = Eigen::MatrixX<std::complex<T>>;
+    const T dsq = 0.5 * boxsize[i_level];
+    const int npw_i = npw[i_level];
+    const auto xs = dmk::chebyshev::get_cheb_nodes(n_order, -1.0, 1.0);
+
+    Eigen::Map<matrix_t> prox2pw(prox2pw_vec, npw_i, n_order);
+    Eigen::Map<matrix_t> pw2poly(pw2poly_vec, npw_i, n_order);
+
+    matrix_t tmp(npw_i, n_order);
+    const int shift = npw_i / 2;
+    const T hpw_i = hpw[i_level];
+    for (int i = 0; i < n_order; ++i) {
+        const T factor = xs[i] * dsq * hpw_i;
+        for (int j = 0; j < npw_i; ++j)
+            tmp(j, i) = exp(std::complex<T>{0, T(j - shift) * factor});
+    }
+
+    const auto &[vmat, umat_lu] = chebyshev::get_vandermonde_and_LU<T>(n_order);
+    // Can't use umat_lu.solve() because eigen doesn't support LU with mixed complex/real types
+    const Eigen::MatrixX<T> umat = umat_lu.inverse();
+    pw2poly = tmp * umat.transpose();
+
+    for (int i = 0; i < n_order * npw_i; ++i)
+        prox2pw(i) = std::conj(pw2poly(i));
 }
 
 template struct FourierData<float>;

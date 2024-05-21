@@ -10,6 +10,7 @@
 #include <sctl.hpp>
 
 #include <mpi.h>
+#include <omp.h>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
@@ -88,7 +89,8 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
           int n_trg, const T *r_trg, T *pot, T *grad, T *hess, T *pottarg, T *gradtarg, T *hesstarg) {
     auto &logger = dmk::get_logger(params.log_level);
     auto &rank_logger = dmk::get_rank_logger(params.log_level);
-    logger->debug("PDMK called");
+    logger->info("PDMK called");
+    auto st = omp_get_wtime();
 
     // 0: Initialization
     dmk::DMKPtTree<T, DIM> tree(sctl::Comm::World());
@@ -111,8 +113,8 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     tree.generate_metadata(params.n_per_leaf, params.n_mfm);
     logger->debug("Done generating tree traversal metadata");
 
-    rank_logger->trace("Local tree has {} levels, {} boxes, {} incoming pw, and {} outgoing pw",
-                       tree.n_levels(), tree.n_boxes(), tree.n_in(), tree.n_out());
+    rank_logger->trace("Local tree has {} levels, {} boxes, {} incoming pw, and {} outgoing pw", tree.n_levels(),
+                       tree.n_boxes(), tree.n_in(), tree.n_out());
 
     double beta = procl180_rescale(params.eps);
     logger->debug("prolate parameter value = {}", beta);
@@ -137,7 +139,19 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     fourier_data.update_local_coeffs(params.eps, prolate_funcs);
     logger->debug("Finished updating local potential expansion coefficients");
 
+    // upward pass
     tree.build_proxy_charges(params.n_mfm, n_order, c2p);
+
+    // downward pass
+
+    auto dt = omp_get_wtime() - st;
+    int N = n_src + n_trg;
+    if (tree.GetComm().Rank() == 0)
+        MPI_Reduce(MPI_IN_PLACE, &N, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+    else
+        MPI_Reduce(&N, &N, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+
+    logger->info("PDMK finished in {:.2f} seconds ({:.2f} pts/s)", dt, N / dt);
 }
 
 } // namespace dmk

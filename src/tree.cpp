@@ -1,3 +1,5 @@
+#include <dmk/chebychev.hpp>
+#include <dmk/fourier_data.hpp>
 #include <dmk/logger.h>
 #include <dmk/proxy.hpp>
 #include <dmk/tensorprod.hpp>
@@ -153,13 +155,68 @@ void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const std::v
 
     int buf[] = {tot_proxy, n_direct, n_merged};
     if (this->GetComm().Rank() == 0)
-        MPI_Reduce(MPI_IN_PLACE, buf, 4, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+        MPI_Reduce(MPI_IN_PLACE, buf, 3, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
     else
-        MPI_Reduce(buf, buf, 4, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+        MPI_Reduce(buf, buf, 3, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
 
     logger->debug("proxy: finished broadcasting proxy charges");
     logger->trace("proxy: n_proxy, n_direct, n_merged: {} {} {}", buf[0], buf[1], buf[2]);
     rank_logger->trace("proxy: n_proxy_local / n_boxes_local {}", (float)tot_proxy / n_boxes());
+}
+
+template <typename T, int DIM>
+void DMKPtTree<T, DIM>::downward_pass(int n_mfm, int n_order, const FourierData<T> &fourier_data) {
+    auto &logger = dmk::get_logger();
+    auto &rank_logger = dmk::get_rank_logger();
+
+    const auto &node_lists = this->GetNodeLists();
+    const auto xs = dmk::chebyshev::get_cheb_nodes<T>(n_order, -1.0, 1.0);
+    sctl::Vector<std::complex<T>> poly2pw(n_order * fourier_data.n_pw_max), pw2poly(n_order * fourier_data.n_pw_max);
+
+    for (int i_level = 0; i_level < n_levels(); ++i_level) {
+        fourier_data.calc_planewave_coeff_matrices(i_level, n_order, &poly2pw[0], &pw2poly[0]);
+
+        // Form outgoing expansions
+        for (auto box : level_indices[i_level]) {
+            if (!out_flag[box])
+                continue;
+            // Form the outgoing expansion Φl(box) for the difference kernel Dl from the proxy charge expansion
+            // coefficients using Tprox2pw.
+        }
+
+        // Form incoming expansions
+        for (auto box : level_indices[i_level]) {
+            for (auto child : node_lists[box].child) {
+                if (!out_flag[child])
+                    continue;
+                // Translate the outgoing expansion Φl(child) to the center of box and add to the incoming plane wave
+                // expansion Ψl(box) using Tpwshift.
+            }
+        }
+
+        // Form local expansions
+        for (auto box : level_indices[i_level]) {
+            if (!in_flag[box])
+                continue;
+            // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
+        }
+
+        // Split local expansions
+        for (auto box : level_indices[i_level]) {
+            if (!in_flag[box])
+                continue;
+            for (auto child : node_lists[box].child) {
+                // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
+            }
+        }
+
+        // Evaluation local expansions
+        for (auto box : level_indices[i_level]) {
+            if (!r_src_cnt[box])
+                continue;
+            // Evaluate the mollified potential ufar L at each target x in box.
+        }
+    }
 }
 
 template struct DMKPtTree<float, 2>;
