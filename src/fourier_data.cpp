@@ -81,21 +81,19 @@ std::tuple<int, double, double> get_PSWF_difference_kernel_pwterms(dmk_ikernel k
 template <typename T>
 FourierData<T>::FourierData(dmk_ikernel kernel_, int n_dim_, int n_digits_, int n_pw_max_, T fparam_, T beta_,
                             const std::vector<double> &boxsize_)
-    : kernel(kernel_), n_dim(n_dim_), n_digits(n_digits_), n_pw_max(n_pw_max_), fparam(fparam_), beta(beta_),
-      boxsize(boxsize_), n_levels(boxsize_.size()), n_fourier_max(n_dim_ * sctl::pow(n_pw_max_ / 2, 2)) {
+    : kernel(kernel_), n_dim(n_dim_), n_digits(n_digits_), fparam(fparam_), beta(beta_), boxsize(boxsize_),
+      n_levels(boxsize_.size()), n_fourier(n_dim_ * sctl::pow(n_pw_max_ / 2, 2)) {
 
-    npw.resize(n_levels + 1);
-    nfourier.resize(n_levels + 1);
     hpw.resize(n_levels + 1);
     ws.resize(n_levels + 1);
     rl.resize(n_levels + 1);
 
     if (n_dim == 2)
-        std::tie(npw[0], hpw[0], ws[0], rl[0]) = get_PSWF_truncated_kernel_pwterms<2>(n_digits, boxsize[0]);
+        std::tie(n_pw, hpw[0], ws[0], rl[0]) = get_PSWF_truncated_kernel_pwterms<2>(n_digits, boxsize[0]);
     else if (n_dim == 3)
-        std::tie(npw[0], hpw[0], ws[0], rl[0]) = get_PSWF_truncated_kernel_pwterms<3>(n_digits, boxsize[0]);
+        std::tie(n_pw, hpw[0], ws[0], rl[0]) = get_PSWF_truncated_kernel_pwterms<3>(n_digits, boxsize[0]);
 
-    dkernelft.resize(n_fourier_max * (n_levels + 1));
+    dkernelft.resize(n_fourier * (n_levels + 1));
 
     rl[1] = rl[0];
     for (int i = 2; i < rl.size(); ++i)
@@ -125,8 +123,7 @@ void FourierData<T>::yukawa_windowed_kernel_Fourier_transform(ProlateFuncs &prol
 
     double psi0 = prolate_funcs.eval_val(0);
 
-    nfourier[0] = n_dim * sctl::pow(npw[0] / 2, 2);
-    for (int i = 0; i < nfourier[0]; ++i) {
+    for (int i = 0; i < n_fourier; ++i) {
         const double rk = sqrt((double)i) * hpw[0];
         const double xi2 = rk * rk + rlambda2;
         const double xi = sqrt(xi2);
@@ -167,9 +164,9 @@ void FourierData<T>::yukawa_difference_kernel_fourier_transform(int i_level, Pro
     const double &rlambda = fparam;
     const double rlambda2 = rlambda * rlambda;
     const double psi0 = pf.eval_val(0.0);
-    T *fhat = &dkernelft[(i_level + 1) * n_fourier_max];
+    T *fhat = &dkernelft[(i_level + 1) * n_fourier];
 
-    for (int i = 0; i < nfourier[i_level + 1]; ++i) {
+    for (int i = 0; i < n_fourier; ++i) {
         T rk = sqrt((T)i) * hpw[i_level + 1];
         T xi2 = rk * rk + rlambda2;
         T xi = sqrt(xi2);
@@ -212,16 +209,14 @@ void FourierData<T>::update_difference_kernels(ProlateFuncs &pf) {
     for (int i_level = 0; i_level < n_levels; ++i_level) {
         auto &bsize = boxsize[i_level];
         auto bsize_small = bsize * 0.5;
-        auto &npw_i = npw[i_level + 1];
         auto &hpw_i = hpw[i_level + 1];
         auto &ws_i = ws[i_level + 1];
         auto &rl_i = rl[i_level + 1];
-        auto dkernelft_i = &dkernelft[(i_level + 1) * n_fourier_max];
+        auto dkernelft_i = &dkernelft[(i_level + 1) * n_fourier];
 
         // FIXME: GIVES DIFFERENT NPW THAN OTHER CODE
-        std::tie(npw_i, hpw_i, ws_i) = PSWF_difference_kernel_pwterms(kernel, n_digits, bsize);
-
-        nfourier[i_level + 1] = n_dim * sctl::pow(npw[i_level + 1] / 2, 2);
+        // FIXME: overwrites n_pw
+        std::tie(n_pw, hpw_i, ws_i) = PSWF_difference_kernel_pwterms(kernel, n_digits, bsize);
 
         if (i_level == 0 || kernel == dmk_ikernel::DMK_YUKAWA) {
             update_difference_kernel(i_level, pf);
@@ -236,8 +231,8 @@ void FourierData<T>::update_difference_kernels(ProlateFuncs &pf) {
         else
             scale_factor = 2.0;
 
-        const T *dkernelft_im1 = &dkernelft[i_level * n_fourier_max];
-        for (int i = 0; i < nfourier[1]; ++i)
+        const T *dkernelft_im1 = &dkernelft[i_level * n_fourier];
+        for (int i = 0; i < n_fourier; ++i)
             dkernelft_i[i] = scale_factor * dkernelft_im1[i];
     }
 }
@@ -402,18 +397,17 @@ void FourierData<T>::calc_planewave_coeff_matrices(int i_level, int n_order, std
                                                    std::complex<T> *pw2poly_vec) const {
     using matrix_t = Eigen::MatrixX<std::complex<T>>;
     const T dsq = 0.5 * boxsize[i_level];
-    const int npw_i = npw[i_level];
     const auto xs = dmk::chebyshev::get_cheb_nodes(n_order, -1.0, 1.0);
 
-    Eigen::Map<matrix_t> prox2pw(prox2pw_vec, npw_i, n_order);
-    Eigen::Map<matrix_t> pw2poly(pw2poly_vec, npw_i, n_order);
+    Eigen::Map<matrix_t> prox2pw(prox2pw_vec, n_pw, n_order);
+    Eigen::Map<matrix_t> pw2poly(pw2poly_vec, n_pw, n_order);
 
-    matrix_t tmp(npw_i, n_order);
-    const int shift = npw_i / 2;
+    matrix_t tmp(n_pw, n_order);
+    const int shift = n_pw / 2;
     const T hpw_i = hpw[i_level];
     for (int i = 0; i < n_order; ++i) {
         const T factor = xs[i] * dsq * hpw_i;
-        for (int j = 0; j < npw_i; ++j)
+        for (int j = 0; j < n_pw; ++j)
             tmp(j, i) = exp(std::complex<T>{0, T(j - shift) * factor});
     }
 
@@ -422,7 +416,7 @@ void FourierData<T>::calc_planewave_coeff_matrices(int i_level, int n_order, std
     const Eigen::MatrixX<T> umat = umat_lu.inverse();
     pw2poly = tmp * umat.transpose();
 
-    for (int i = 0; i < n_order * npw_i; ++i)
+    for (int i = 0; i < n_order * n_pw; ++i)
         prox2pw(i) = std::conj(pw2poly(i));
 }
 

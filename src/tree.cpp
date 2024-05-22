@@ -4,6 +4,7 @@
 #include <dmk/proxy.hpp>
 #include <dmk/tensorprod.hpp>
 #include <dmk/tree.hpp>
+#include <dmk/util.hpp>
 #include <sctl/tree.hpp>
 
 #include <mpi.h>
@@ -165,14 +166,65 @@ void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const std::v
 }
 
 template <typename T, int DIM>
-void DMKPtTree<T, DIM>::downward_pass(int n_mfm, int n_order, const FourierData<T> &fourier_data) {
+void tensor_product_fourier_transform(int nexp, int npw, int nfourier, const T *fhat, T *pswfft) {
+    const int npw2 = npw / 2;
+
+    if constexpr (DIM == 1) {
+        for (int j1 = -npw2; j1 <= 0; ++j1)
+            pswfft[j1] = fhat[j1 * j1];
+    } else if constexpr (DIM == 2) {
+        for (int j2 = -npw2, j = 0; j2 <= 0; ++j2)
+            for (int j1 = -npw2; j1 <= (npw - 1) / 2; ++j1, ++j)
+                pswfft[j] = fhat[j1 * j1 + j2 * j2];
+    } else if constexpr (DIM == 3) {
+        for (int j3 = -npw2, j = 0; j3 <= 0; ++j3)
+            for (int j2 = -npw2; j2 <= (npw - 1) / 2; ++j2)
+                for (int j1 = -npw2; j1 <= (npw - 1) / 2; ++j1, ++j)
+                    pswfft[j] = fhat[j1 * j1 + j2 * j2 + j3 * j3];
+    } else
+        static_assert(dmk::util::always_false<T>, "Invalid DIM supplied");
+}
+
+template <typename T>
+void multiply_kernelFT_cd2p(int nd, int ndim, bool ifcharge, bool ifdipole, int nexp, std::complex<T> *pwexp,
+                            T *radialft, T *rk) {
+    sctl::Vector<std::complex<T>> pwexp1(nexp * nd);
+    pwexp1.SetZero();
+
+    if (ifcharge)
+        pwexp1 = sctl::Vector<std::complex<T>>(pwexp, nexp * nd, false);
+
+    if (ifdipole == 1) {
+        for (int ind = 0; ind < nd; ++ind)
+            for (int n = 0; n < nexp; ++n)
+                for (int j = 0; j < ndim; ++j)
+                    pwexp1[n + ind * nd].Imag() -= pwexp[n + nd * (ind + ifcharge + j)] * rk[j + n * ndim];
+    }
+
+    for (int ind = 0; ind < nd; ++ind)
+        for (int n = 0; n < nexp; ++n)
+            pwexp[n + ind * nd] = pwexp1[n + ind * nd] * radialft[n];
+}
+
+template <typename T, int DIM>
+void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, const FourierData<T> &fourier_data) {
     auto &logger = dmk::get_logger();
     auto &rank_logger = dmk::get_rank_logger();
+    const int nd = params.n_mfm;
 
     const auto &node_lists = this->GetNodeLists();
     const auto xs = dmk::chebyshev::get_cheb_nodes<T>(n_order, -1.0, 1.0);
-    sctl::Vector<std::complex<T>> poly2pw(n_order * fourier_data.n_pw_max), pw2poly(n_order * fourier_data.n_pw_max);
+    sctl::Vector<std::complex<T>> poly2pw(n_order * fourier_data.n_pw), pw2poly(n_order * fourier_data.n_pw);
 
+    const int nd_in = params.n_mfm;
+    const int nd_out = nd * (params.use_charge + params.use_dipole * DIM);
+    const int n_pw = fourier_data.n_pw;
+    const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
+    const int pw_in_size = n_pw_modes * nd_in;
+    const int pw_out_size = n_pw_modes * nd_out;
+
+    std::complex<T> *pw_out;
+    std::complex<T> *pw_in;
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         fourier_data.calc_planewave_coeff_matrices(i_level, n_order, &poly2pw[0], &pw2poly[0]);
 
@@ -184,13 +236,16 @@ void DMKPtTree<T, DIM>::downward_pass(int n_mfm, int n_order, const FourierData<
             // coefficients using Tprox2pw.
             // dmk::proxy::proxycharge2pw(DIM, n_mfm, n_order, fourier_data.npw[i_level],
             //                            &proxy_coeffs[box * sctl::pow<DIM>(n_order)], &poly2pw[0],
-            //                            &pw_expansion[box * npw_stride]);
+            //                            &pw_out[box * pw_out_size]);
+
+            // multiply_kernelFT_cd2p(params.n_mfm, DIM, params.use_charge, params.use_dipole, n_pw_modes,
+            //                        &pw_out[box * pw_out_size], fourier_data.dkernelft, fourier_data.rk);
         }
 
         // Form incoming expansions
         for (auto box : level_indices[i_level]) {
             for (auto neighbor : node_lists[box].nbr) {
-                if (neighbor == box || !out_flag[neighbor])
+                if (neighbor < 0 || neighbor == box || !out_flag[neighbor])
                     continue;
                 // Translate the outgoing expansion Φl(colleague) to the center of box and add to the incoming plane wave
                 // expansion Ψl(box) using Tpwshift.
@@ -208,10 +263,7 @@ void DMKPtTree<T, DIM>::downward_pass(int n_mfm, int n_order, const FourierData<
         for (auto box : level_indices[i_level]) {
             if (!in_flag[box])
                 continue;
-            for (auto neighbor : node_lists[box].nbr) {
-                if (neighbor == box)
-                    continue;
-
+            for (auto child : node_lists[box].child) {
                 // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
             }
         }

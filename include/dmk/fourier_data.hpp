@@ -25,12 +25,10 @@ struct FourierData {
     const int n_dim;
     const int n_digits;
     const int n_levels;
-    const int n_fourier_max;
-    const int n_pw_max;
+    int n_pw;
+    const int n_fourier;
     const T fparam;
     std::vector<T> dkernelft;
-    std::vector<int> npw;
-    std::vector<int> nfourier;
     std::vector<T> hpw;
     std::vector<T> ws;
     std::vector<T> rl;

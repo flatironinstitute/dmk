@@ -130,8 +130,8 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     logger->debug("Finished generating matrices");
 
     FourierData<T> fourier_data(params.kernel, DIM, ndigits, n_pw_max, params.fparam, beta, tree.boxsize);
-    logger->debug("Planewave params at root box: n_max, {}, n: {}, stepsize: {}, weight: {}, radius: {}", n_pw_max,
-                  fourier_data.npw[0], fourier_data.hpw[0], fourier_data.ws[0], fourier_data.rl[0]);
+    logger->debug("Planewave params at root box: n: {}, stepsize: {}, weight: {}, radius: {}", fourier_data.n_pw,
+                  fourier_data.hpw[0], fourier_data.ws[0], fourier_data.rl[0]);
     fourier_data.update_windowed_kernel_fourier_transform(prolate_funcs);
     logger->debug("Truncated fourier transform for kernel {} at root box generated", int(params.kernel));
     fourier_data.update_difference_kernels(prolate_funcs);
@@ -143,6 +143,7 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     tree.build_proxy_charges(params.n_mfm, n_order, c2p);
 
     // downward pass
+    tree.downward_pass(params, n_order, fourier_data);
 
     auto dt = omp_get_wtime() - st;
     int N = n_src + n_trg;
