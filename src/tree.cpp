@@ -182,14 +182,17 @@ void DMKPtTree<T, DIM>::downward_pass(int n_mfm, int n_order, const FourierData<
                 continue;
             // Form the outgoing expansion Φl(box) for the difference kernel Dl from the proxy charge expansion
             // coefficients using Tprox2pw.
+            // dmk::proxy::proxycharge2pw(DIM, n_mfm, n_order, fourier_data.npw[i_level],
+            //                            &proxy_coeffs[box * sctl::pow<DIM>(n_order)], &poly2pw[0],
+            //                            &pw_expansion[box * npw_stride]);
         }
 
         // Form incoming expansions
         for (auto box : level_indices[i_level]) {
-            for (auto child : node_lists[box].child) {
-                if (!out_flag[child])
+            for (auto neighbor : node_lists[box].nbr) {
+                if (neighbor == box || !out_flag[neighbor])
                     continue;
-                // Translate the outgoing expansion Φl(child) to the center of box and add to the incoming plane wave
+                // Translate the outgoing expansion Φl(colleague) to the center of box and add to the incoming plane wave
                 // expansion Ψl(box) using Tpwshift.
             }
         }
@@ -205,7 +208,10 @@ void DMKPtTree<T, DIM>::downward_pass(int n_mfm, int n_order, const FourierData<
         for (auto box : level_indices[i_level]) {
             if (!in_flag[box])
                 continue;
-            for (auto child : node_lists[box].child) {
+            for (auto neighbor : node_lists[box].nbr) {
+                if (neighbor == box)
+                    continue;
+
                 // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
             }
         }

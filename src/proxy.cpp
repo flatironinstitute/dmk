@@ -2,6 +2,7 @@
 
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
+#include <dmk/gemm.hpp>
 #include <stdexcept>
 #include <type_traits>
 #include <vector>
@@ -9,6 +10,79 @@
 #include <omp.h>
 
 namespace dmk::proxy {
+
+template <typename T>
+void proxycharge2pw_2d(int n_charge_dim, int n_order, int n_pw, const T *proxy_coeffs, const std::complex<T> *poly2pw,
+                       std::complex<T> *pw_expansion) {
+    using dmk::gemm::gemm;
+    const int n_pw2 = (n_pw + 1) / 2;
+    const int n_pw_coeffs = n_pw * n_pw2;
+    const int n_poly2pw_coeffs = n_order * n_pw;
+    const int n_proxy_coeffs = n_order * n_order;
+
+    sctl::Vector<std::complex<T>> proxy_coeffs_complex(n_proxy_coeffs);
+    sctl::Vector<std::complex<T>> ff(n_order * n_pw2);
+
+    for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
+        for (int i = 0; i < n_proxy_coeffs; ++i)
+            proxy_coeffs_complex[i] = {proxy_coeffs[i + i_dim * n_proxy_coeffs], 0.0};
+
+        // transform in y
+        gemm('n', 't', n_order, n_pw2, n_order, {1.0, 0.0}, &proxy_coeffs_complex[0], n_order, poly2pw, n_pw,
+             {0.0, 0.0}, &ff[0], n_order);
+
+        // transform in x
+        gemm('n', 'n', n_pw, n_pw2, n_order, {1.0, 0.0}, &proxy_coeffs_complex[0], n_pw, &ff[0], n_order, {0.0, 0.0},
+             &pw_expansion[n_pw_coeffs * i_dim], n_pw);
+    }
+}
+
+template <typename T>
+void proxycharge2pw_3d(int n_charge_dim, int n_order, int n_pw, const T *proxy_coeffs, const std::complex<T> *poly2pw,
+                       std::complex<T> *pw_expansion) {
+    using dmk::gemm::gemm;
+    const int n_pw2 = (n_pw + 1) / 2;
+    const int n_proxy_coeffs = sctl::pow<3>(n_order);
+    const int n_pw_coeffs = n_pw * n_pw * n_pw2;
+
+    sctl::Vector<std::complex<T>> ff(n_order * n_order * n_pw2);
+    sctl::Vector<std::complex<T>> fft(n_order * n_pw2 * n_order);
+    sctl::Vector<std::complex<T>> ff2(n_pw * n_pw2 * n_order);
+    sctl::Vector<std::complex<T>> proxy_coeffs_complex(n_order * n_order * n_order);
+
+    for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
+        for (int i = 0; i < n_proxy_coeffs; ++i)
+            proxy_coeffs_complex[i] = proxy_coeffs[i + n_proxy_coeffs * i_dim];
+
+        // transform in z
+        gemm('n', 't', n_order * n_order, n_pw2, n_order, {1.0, 0.0}, &proxy_coeffs_complex[0], n_order * n_order,
+             poly2pw, n_pw, {0.0, 0.0}, &ff[0], n_order * n_order);
+
+        for (int m1 = 0; m1 < n_order; ++m1)
+            for (int k3 = 0; k3 < n_pw2; ++k3)
+                for (int m2 = 0; m2 < n_order; ++m2)
+                    fft[m2 + n_order * (k3 + n_pw2 * m1)] = ff[m1 + n_order * (m2 + n_order * k3)];
+
+        // transform in y
+        gemm('n', 'n', n_pw, n_pw2 * n_order, n_order, {1.0, 0.0}, poly2pw, n_pw, &fft[0], n_order, {0.0, 0.0}, &ff2[0],
+             n_pw);
+
+        // transform in x
+        gemm('n', 't', n_pw, n_pw * n_pw2, n_order, {1.0, 0.0}, poly2pw, n_pw, &ff2[0], n_pw * n_pw2, {0.0, 0.0},
+             &pw_expansion[i_dim * n_pw_coeffs], n_pw);
+    }
+}
+
+template <typename T>
+void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const T *proxy_coeffs,
+                    const std::complex<T> *poly2pw, std::complex<T> *pw_expansion) {
+    if (n_dim == 2)
+        return proxycharge2pw_2d(n_charge_dim, n_order, n_pw, proxy_coeffs, poly2pw, pw_expansion);
+    if (n_dim == 3)
+        return proxycharge2pw_3d(n_charge_dim, n_order, n_pw, proxy_coeffs, poly2pw, pw_expansion);
+
+    throw std::runtime_error("Invalid dimension " + std::to_string(n_dim) + "provided");
+}
 
 template <typename T>
 void charge2proxycharge_2d(int n_charge_dim, int order, int n_src, const T *r_src_, const T *charge_, const T center[2],
@@ -92,4 +166,9 @@ template void charge2proxycharge(int n_dim, int n_charge_dim, int order, int n_s
                                  const float *charge, const float *center, float scale_factor, float *coeffs);
 template void charge2proxycharge(int n_dim, int n_charge_dim, int order, int n_src, const double *r_src,
                                  const double *charge, const double *center, double scale_factor, double *coeffs);
+template void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const float *proxy_coeffs,
+                             const std::complex<float> *poly2pw, std::complex<float> *pw_expansion);
+template void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const double *proxy_coeffs,
+                             const std::complex<double> *poly2pw, std::complex<double> *pw_expansion);
+
 } // namespace dmk::proxy
