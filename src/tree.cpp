@@ -223,10 +223,10 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
     const int pw_in_size = n_pw_modes * nd_in;
     const int pw_out_size = n_pw_modes * nd_out;
 
-    std::complex<T> *pw_out;
-    std::complex<T> *pw_in;
+    sctl::Vector<std::complex<T>> pw_out;
+    sctl::Vector<std::complex<T>> pw_in;
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
-        fourier_data.calc_planewave_coeff_matrices(i_level, n_order, &poly2pw[0], &pw2poly[0]);
+        fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
 
         // Form outgoing expansions
         for (auto box : level_indices[i_level]) {

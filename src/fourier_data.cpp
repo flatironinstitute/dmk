@@ -2,10 +2,13 @@
 #include <dmk/chebychev.hpp>
 #include <dmk/fortran.h>
 #include <dmk/fourier_data.hpp>
+#include <dmk/planewave.hpp>
 #include <dmk/prolate_funcs.hpp>
 
 #include <complex.h>
 #include <sctl.hpp>
+#include <stdexcept>
+#include <string>
 
 namespace dmk {
 
@@ -393,20 +396,42 @@ void FourierData<T>::update_local_coeffs(T eps, ProlateFuncs &pf) {
 }
 
 template <typename T>
-void FourierData<T>::calc_planewave_coeff_matrices(int i_level, int n_order, std::complex<T> *prox2pw_vec,
-                                                   std::complex<T> *pw2poly_vec) const {
+void FourierData<T>::calc_planewave_translation_matrix(int dim, int i_level, T xmin,
+                                                       sctl::Vector<std::complex<T>> &shift_vec) const {
+    constexpr int nmax = 1;
+    sctl::Vector<T> ts(n_pw);
+    int ts_shift = n_pw / 2;
+    for (int i = 0; i < n_pw; ++i)
+        ts[i] = (i - ts_shift) * hpw[i_level];
+
+    if (dim == 1)
+        dmk::calc_planewave_translation_matrix<1>(nmax, xmin, n_pw, ts, shift_vec);
+    else if (dim == 2)
+        dmk::calc_planewave_translation_matrix<2>(nmax, xmin, n_pw, ts, shift_vec);
+    else if (dim == 3)
+        dmk::calc_planewave_translation_matrix<3>(nmax, xmin, n_pw, ts, shift_vec);
+    else
+        throw std::runtime_error("Dimension " + std::to_string(dim) + "not supported");
+}
+
+template <typename T>
+void calc_planewave_coeff_matrices(double boxsize, T hpw, int n_pw, int n_order,
+                                   sctl::Vector<std::complex<T>> &prox2pw_vec,
+                                   sctl::Vector<std::complex<T>> &pw2poly_vec) {
+    assert(n_pw * n_order == prox2pw_vec.Dim());
+    assert(n_pw * n_order == pw2poly_vec.Dim());
+
     using matrix_t = Eigen::MatrixX<std::complex<T>>;
-    const T dsq = 0.5 * boxsize[i_level];
+    const T dsq = 0.5 * boxsize;
     const auto xs = dmk::chebyshev::get_cheb_nodes(n_order, -1.0, 1.0);
 
-    Eigen::Map<matrix_t> prox2pw(prox2pw_vec, n_pw, n_order);
-    Eigen::Map<matrix_t> pw2poly(pw2poly_vec, n_pw, n_order);
+    Eigen::Map<matrix_t> prox2pw(&prox2pw_vec[0], n_pw, n_order);
+    Eigen::Map<matrix_t> pw2poly(&pw2poly_vec[0], n_pw, n_order);
 
     matrix_t tmp(n_pw, n_order);
     const int shift = n_pw / 2;
-    const T hpw_i = hpw[i_level];
     for (int i = 0; i < n_order; ++i) {
-        const T factor = xs[i] * dsq * hpw_i;
+        const T factor = xs[i] * dsq * hpw;
         for (int j = 0; j < n_pw; ++j)
             tmp(j, i) = exp(std::complex<T>{0, T(j - shift) * factor});
     }
@@ -418,6 +443,12 @@ void FourierData<T>::calc_planewave_coeff_matrices(int i_level, int n_order, std
 
     for (int i = 0; i < n_order * n_pw; ++i)
         prox2pw(i) = std::conj(pw2poly(i));
+}
+
+template <typename T>
+void FourierData<T>::calc_planewave_coeff_matrices(int i_level, int n_order, sctl::Vector<std::complex<T>> &prox2pw_vec,
+                                                   sctl::Vector<std::complex<T>> &pw2poly_vec) const {
+    dmk::calc_planewave_coeff_matrices(boxsize[i_level], hpw[i_level], n_pw, n_order, prox2pw_vec, pw2poly_vec);
 }
 
 template struct FourierData<float>;
