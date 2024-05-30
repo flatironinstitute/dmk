@@ -42,12 +42,12 @@ void calc_planewave_translation_matrix(int nmax, T xmin, int npw, const sctl::Ve
 }
 }
 
-template void dmk::calc_planewave_translation_matrix<1>(int, float, int, const sctl::Vector<float> &,
-                                                        sctl::Vector<std::complex<float>> &);
-template void dmk::calc_planewave_translation_matrix<2>(int, float, int, const sctl::Vector<float> &,
-                                                        sctl::Vector<std::complex<float>> &);
-template void dmk::calc_planewave_translation_matrix<3>(int, float, int, const sctl::Vector<float> &,
-                                                        sctl::Vector<std::complex<float>> &);
+// template void dmk::calc_planewave_translation_matrix<1>(int, float, int, const sctl::Vector<float> &,
+//                                                         sctl::Vector<std::complex<float>> &);
+// template void dmk::calc_planewave_translation_matrix<2>(int, float, int, const sctl::Vector<float> &,
+//                                                         sctl::Vector<std::complex<float>> &);
+// template void dmk::calc_planewave_translation_matrix<3>(int, float, int, const sctl::Vector<float> &,
+//                                                         sctl::Vector<std::complex<float>> &);
 template void dmk::calc_planewave_translation_matrix<1>(int, double, int, const sctl::Vector<double> &,
                                                         sctl::Vector<std::complex<double>> &);
 template void dmk::calc_planewave_translation_matrix<2>(int, double, int, const sctl::Vector<double> &,

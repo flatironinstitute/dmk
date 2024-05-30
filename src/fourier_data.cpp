@@ -451,7 +451,7 @@ void FourierData<T>::calc_planewave_coeff_matrices(int i_level, int n_order, sct
     dmk::calc_planewave_coeff_matrices(boxsize[i_level], hpw[i_level], n_pw, n_order, prox2pw_vec, pw2poly_vec);
 }
 
-template struct FourierData<float>;
+// template struct FourierData<float>;
 template struct FourierData<double>;
 
 } // namespace dmk

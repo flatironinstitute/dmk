@@ -104,7 +104,7 @@ int main(int argc, char *argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
     constexpr int n_dim = 3;
-    constexpr int n_src = 1e6;
+    constexpr int n_src = 1e4;
     constexpr int n_trg = 0;
     constexpr int nd = 1;
     int n_src_local = n_src / world_size + (rank < (n_src % world_size));

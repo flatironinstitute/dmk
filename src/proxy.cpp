@@ -162,12 +162,12 @@ void charge2proxycharge(int n_dim, int n_charge_dim, int order, int n_src, const
     throw std::runtime_error("Invalid dimension " + std::to_string(n_dim) + "provided");
 }
 
-template void charge2proxycharge(int n_dim, int n_charge_dim, int order, int n_src, const float *r_src,
-                                 const float *charge, const float *center, float scale_factor, float *coeffs);
+// template void charge2proxycharge(int n_dim, int n_charge_dim, int order, int n_src, const float *r_src,
+//                                  const float *charge, const float *center, float scale_factor, float *coeffs);
 template void charge2proxycharge(int n_dim, int n_charge_dim, int order, int n_src, const double *r_src,
                                  const double *charge, const double *center, double scale_factor, double *coeffs);
-template void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const float *proxy_coeffs,
-                             const std::complex<float> *poly2pw, std::complex<float> *pw_expansion);
+// template void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const float *proxy_coeffs,
+//                              const std::complex<float> *poly2pw, std::complex<float> *pw_expansion);
 template void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const double *proxy_coeffs,
                              const std::complex<double> *poly2pw, std::complex<double> *pw_expansion);
 

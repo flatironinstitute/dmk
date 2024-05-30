@@ -86,8 +86,8 @@ void transform(int n_dim, int nvec, int nin, int nout, int add_flag, const T *fi
     }
 }
 
-template void transform(int n_dim, int nvec, int nin, int nout, int add_flag, const float *fin, const float *umat,
-                        float *fout);
+// template void transform(int n_dim, int nvec, int nin, int nout, int add_flag, const float *fin, const float *umat,
+//                         float *fout);
 template void transform(int n_dim, int nvec, int nin, int nout, int add_flag, const double *fin, const double *umat,
                         double *fout);
 } // namespace dmk::tensorprod

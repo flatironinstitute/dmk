@@ -277,8 +277,8 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
     }
 }
 
-template struct DMKPtTree<float, 2>;
-template struct DMKPtTree<float, 3>;
+// template struct DMKPtTree<float, 2>;
+// template struct DMKPtTree<float, 3>;
 template struct DMKPtTree<double, 2>;
 template struct DMKPtTree<double, 3>;
 
