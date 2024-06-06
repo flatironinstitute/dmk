@@ -21,14 +21,11 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     const auto &node_mid = this->GetNodeMID();
     const auto &node_lists = this->GetNodeLists();
 
-    in_flag.ReInit(n_nodes);
-    out_flag.ReInit(n_nodes);
     src_counts_local.ReInit(n_nodes);
     r_src_offsets.resize(n_nodes);
     charge_offsets.resize(n_nodes);
     centers.resize(n_nodes * DIM);
     scale_factors.resize(n_nodes);
-
     level_indices.resize(SCTL_MAX_DEPTH);
 
     for (int i_node = 1; i_node < n_nodes; ++i_node) {
@@ -80,23 +77,6 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     this->template AddData("src_counts", src_counts_local, counts);
     this->template ReduceBroadcast<int>("src_counts");
     this->template GetData<int>(src_counts_global, counts, "src_counts");
-
-    for (int i_node = 0; i_node < n_nodes; ++i_node) {
-        out_flag[i_node] = 0;
-        if (src_counts_global[i_node] > ndiv)
-            out_flag[i_node] = true;
-    }
-    for (int i_node = 0; i_node < n_nodes; ++i_node) {
-        in_flag[i_node] = 0;
-
-        for (auto &neighb : node_lists[i_node].nbr) {
-            // neighb = -1 -> no neighb at current level in that direction
-            if (neighb != -1 && out_flag[neighb] && src_counts_global[neighb] > 0) {
-                in_flag[i_node] = true;
-                break;
-            }
-        }
-    }
 }
 
 template <typename T, int DIM>
@@ -239,8 +219,8 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
 
         // Form outgoing expansions
         for (auto box : level_indices[i_level]) {
-            if (!out_flag[box])
-                continue;
+            // if (!out_flag[box])
+            //     continue;
             // Form the outgoing expansion Φl(box) for the difference kernel Dl from the proxy charge expansion
             // coefficients using Tprox2pw.
             dmk::proxy::proxycharge2pw(DIM, nd_out, n_order, fourier_data.n_pw,
@@ -254,8 +234,8 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
         // Form incoming expansions
         for (auto box : level_indices[i_level]) {
             for (auto neighbor : node_lists[box].nbr) {
-                if (neighbor < 0 || neighbor == box || !out_flag[neighbor])
-                    continue;
+                // if (neighbor < 0 || neighbor == box || !out_flag[neighbor])
+                //     continue;
                 // Translate the outgoing expansion Φl(colleague) to the center of box and add to the incoming plane
                 // wave expansion Ψl(box) using Tpwshift.
             }
@@ -263,15 +243,15 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
 
         // Form local expansions
         for (auto box : level_indices[i_level]) {
-            if (!in_flag[box])
-                continue;
+            // if (!in_flag[box])
+            //     continue;
             // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
         }
 
         // Split local expansions
         for (auto box : level_indices[i_level]) {
-            if (!in_flag[box])
-                continue;
+            // if (!in_flag[box])
+            //     continue;
             for (auto child : node_lists[box].child) {
                 // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
             }

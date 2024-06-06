@@ -113,8 +113,7 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     tree.generate_metadata(params.n_per_leaf, params.n_mfm);
     logger->debug("Done generating tree traversal metadata");
 
-    rank_logger->trace("Local tree has {} levels, {} boxes, {} incoming pw, and {} outgoing pw", tree.n_levels(),
-                       tree.n_boxes(), tree.n_in(), tree.n_out());
+    rank_logger->trace("Local tree has {} levels and {} boxes", tree.n_levels(), tree.n_boxes());
 
     double beta = procl180_rescale(params.eps);
     logger->debug("prolate parameter value = {}", beta);
