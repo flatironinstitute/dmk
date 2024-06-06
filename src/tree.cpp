@@ -1,4 +1,5 @@
 #include <dmk/chebychev.hpp>
+#include <dmk/fortran.h>
 #include <dmk/fourier_data.hpp>
 #include <dmk/logger.h>
 #include <dmk/proxy.hpp>
@@ -187,18 +188,19 @@ void tensor_product_fourier_transform(int nexp, int npw, int nfourier, const T *
 
 template <typename T>
 void multiply_kernelFT_cd2p(int nd, int ndim, bool ifcharge, bool ifdipole, int nexp, std::complex<T> *pwexp,
-                            T *radialft, T *rk) {
+                            const T *radialft, const T *rk) {
     sctl::Vector<std::complex<T>> pwexp1(nexp * nd);
     pwexp1.SetZero();
 
     if (ifcharge)
-        pwexp1 = sctl::Vector<std::complex<T>>(pwexp, nexp * nd, false);
+        pwexp1 = sctl::Vector<std::complex<T>>(nexp * nd, pwexp, false);
 
     if (ifdipole == 1) {
         for (int ind = 0; ind < nd; ++ind)
             for (int n = 0; n < nexp; ++n)
                 for (int j = 0; j < ndim; ++j)
-                    pwexp1[n + ind * nd].Imag() -= pwexp[n + nd * (ind + ifcharge + j)] * rk[j + n * ndim];
+                    pwexp1[n + ind * nd] -=
+                        pwexp[n + nd * (ind + ifcharge + j)] * rk[j + n * ndim] * std::complex<T>{0.0, 1.0};
     }
 
     for (int ind = 0; ind < nd; ++ind)
@@ -223,10 +225,17 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
     const int pw_in_size = n_pw_modes * nd_in;
     const int pw_out_size = n_pw_modes * nd_out;
 
-    sctl::Vector<std::complex<T>> pw_out;
-    sctl::Vector<std::complex<T>> pw_in;
+    sctl::Vector<std::complex<T>> pw_out(pw_out_size * n_boxes());
+    sctl::Vector<std::complex<T>> pw_in(pw_in_size * n_boxes());
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
+        sctl::Vector<T> ts(n_pw);
+        sctl::Vector<T> rk(sctl::pow<DIM>(n_pw));
+        const int shift = n_pw / 2;
+        for (int i = 0; i < n_pw; ++i)
+            ts[i] = fourier_data.hpw[i_level] * (i - shift);
+        const int dim = DIM;
+        meshnd_(&dim, &ts[0], &n_pw, &rk[0]);
 
         // Form outgoing expansions
         for (auto box : level_indices[i_level]) {
@@ -234,12 +243,12 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
                 continue;
             // Form the outgoing expansion Φl(box) for the difference kernel Dl from the proxy charge expansion
             // coefficients using Tprox2pw.
-            // dmk::proxy::proxycharge2pw(DIM, n_mfm, n_order, fourier_data.npw[i_level],
-            //                            &proxy_coeffs[box * sctl::pow<DIM>(n_order)], &poly2pw[0],
-            //                            &pw_out[box * pw_out_size]);
+            dmk::proxy::proxycharge2pw(DIM, nd_out, n_order, fourier_data.n_pw,
+                                       &proxy_coeffs[box * sctl::pow<DIM>(n_order)], &poly2pw[0],
+                                       &pw_out[box * pw_out_size]);
 
-            // multiply_kernelFT_cd2p(params.n_mfm, DIM, params.use_charge, params.use_dipole, n_pw_modes,
-            //                        &pw_out[box * pw_out_size], fourier_data.dkernelft, fourier_data.rk);
+            // multiply_kernelFT_cd2p(nd_out, DIM, params.use_charge, params.use_dipole, n_pw_modes,
+            //                        &pw_out[box * pw_out_size], fourier_data.dkernelft.data(), &rk[0]);
         }
 
         // Form incoming expansions
@@ -247,8 +256,8 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
             for (auto neighbor : node_lists[box].nbr) {
                 if (neighbor < 0 || neighbor == box || !out_flag[neighbor])
                     continue;
-                // Translate the outgoing expansion Φl(colleague) to the center of box and add to the incoming plane wave
-                // expansion Ψl(box) using Tpwshift.
+                // Translate the outgoing expansion Φl(colleague) to the center of box and add to the incoming plane
+                // wave expansion Ψl(box) using Tpwshift.
             }
         }
 

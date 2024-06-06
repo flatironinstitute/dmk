@@ -159,8 +159,8 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
 
 extern "C" {
 // void pdmkf(pdmk_params params, int n_src, const float *r_src, const float *charge, const float *normal,
-//            const float *dipole_str, int n_trg, const float *r_trg, float *pot, float *grad, float *hess, float *pottarg,
-//            float *gradtarg, float *hesstarg) {
+//            const float *dipole_str, int n_trg, const float *r_trg, float *pot, float *grad, float *hess, float
+//            *pottarg, float *gradtarg, float *hesstarg) {
 //     if (params.n_dim == 2)
 //         return dmk::pdmk<float, 2>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess,
 //                                    pottarg, gradtarg, hesstarg);

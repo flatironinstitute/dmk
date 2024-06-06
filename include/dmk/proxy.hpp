@@ -10,8 +10,8 @@ void charge2proxycharge(int n_dim, int n_charge_dim, int order, int n_src, const
                         const T *center, T scale_factor, T *coeffs);
 
 template <typename T>
-void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, T *proxy_coeffs, const std::complex<T> *poly2pw,
-                    std::complex<T> *pw_expansion);
+void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const T *proxy_coeffs,
+                    const std::complex<T> *poly2pw, std::complex<T> *pw_expansion);
 }
 
 #endif

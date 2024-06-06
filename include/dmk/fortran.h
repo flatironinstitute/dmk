@@ -2,6 +2,8 @@
 #define FORTRAN_H
 
 extern "C" {
+void meshnd_(const int *, const double *, const int *, double *);
+
 double besk0_(double *);
 double besk1_(double *);
 double besj0_(double *);
