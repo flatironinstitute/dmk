@@ -3,7 +3,6 @@
 
 #include <sctl.hpp>
 #include <tuple>
-#include <vector>
 
 #include <Eigen/Core>
 #include <Eigen/LU>
@@ -108,7 +107,7 @@ inline Matrix<T> calc_vandermonde(int order) {
 
 template <typename T>
 inline const std::pair<Matrix<T>, LU<T>> &get_vandermonde_and_LU(int order) {
-    static std::vector<std::pair<Matrix<T>, LU<T>>> vander_lus(128);
+    static sctl::Vector<std::pair<Matrix<T>, LU<T>>> vander_lus(128);
     if (!vander_lus[order].first.size()) {
         Matrix<T> vander = calc_vandermonde<T>(order);
         vander_lus[order] = std::make_pair(vander, LU<T>(vander));
@@ -218,7 +217,7 @@ inline void fit(int order, T (*func)(T), T lb, T ub, T *coeffs) {
 }
 
 template <typename T>
-std::pair<std::vector<T>, std::vector<T>> get_c2p_p2c_matrices(int dim, int order) {
+std::pair<sctl::Vector<T>, sctl::Vector<T>> get_c2p_p2c_matrices(int dim, int order) {
     std::array<Eigen::MatrixX<T>, 2> c2p_mp;
     std::array<Eigen::MatrixX<T>, 2> p2c_mp;
 
@@ -228,28 +227,28 @@ std::pair<std::vector<T>, std::vector<T>> get_c2p_p2c_matrices(int dim, int orde
 
     const int mc = std::pow(2, dim);
 
-    std::pair<std::vector<T>, std::vector<T>> res;
+    std::pair<sctl::Vector<T>, sctl::Vector<T>> res;
     auto &[c2p, p2c] = res;
 
-    c2p.resize(order * order * dim * mc);
-    p2c.resize(order * order * dim * mc);
+    c2p.ReInit(order * order * dim * mc);
+    p2c.ReInit(order * order * dim * mc);
 
     const int blocksize = order * order;
     const int matsize = order * order * sizeof(T);
     if (dim == 1) {
-        memcpy(c2p.data(), c2p_mp[0].data(), matsize);
-        memcpy(c2p.data() + blocksize, p2c_mp[1].data(), matsize);
+        memcpy(&c2p[0], c2p_mp[0].data(), matsize);
+        memcpy(&c2p[0] + blocksize, p2c_mp[1].data(), matsize);
 
-        memcpy(p2c.data(), p2c_mp[0].data(), matsize);
-        memcpy(p2c.data() + blocksize, p2c_mp[1].data(), matsize);
+        memcpy(&p2c[0], p2c_mp[0].data(), matsize);
+        memcpy(&p2c[0] + blocksize, p2c_mp[1].data(), matsize);
     }
     if (dim == 2) {
         int offset = 0;
         for (int j = 0; j < 2; ++j) {
             for (int i = 0; i < 2; ++i) {
                 for (auto idx : {i, j}) {
-                    memcpy(c2p.data() + offset, c2p_mp[idx].data(), matsize);
-                    memcpy(p2c.data() + offset, p2c_mp[idx].data(), matsize);
+                    memcpy(&c2p[0] + offset, c2p_mp[idx].data(), matsize);
+                    memcpy(&p2c[0] + offset, p2c_mp[idx].data(), matsize);
                     offset += blocksize;
                 }
             }
@@ -262,8 +261,8 @@ std::pair<std::vector<T>, std::vector<T>> get_c2p_p2c_matrices(int dim, int orde
             for (int j = 0; j < 2; ++j) {
                 for (int i = 0; i < 2; ++i) {
                     for (auto idx : {i, j, k}) {
-                        memcpy(c2p.data() + offset, c2p_mp[idx].data(), matsize);
-                        memcpy(p2c.data() + offset, p2c_mp[idx].data(), matsize);
+                        memcpy(&c2p[0] + offset, c2p_mp[idx].data(), matsize);
+                        memcpy(&p2c[0] + offset, p2c_mp[idx].data(), matsize);
                         offset += blocksize;
                     }
                 }

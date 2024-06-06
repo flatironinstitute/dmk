@@ -80,7 +80,7 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
 }
 
 template <typename T, int DIM>
-void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const std::vector<T> &c2p) {
+void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const sctl::Vector<T> &c2p) {
     auto &logger = dmk::get_logger();
     auto &rank_logger = dmk::get_rank_logger();
     this->GetData(r_src_sorted, r_src_cnt, "pdmk_src");

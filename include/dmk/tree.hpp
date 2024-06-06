@@ -38,7 +38,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     Real *charge_ptr(int i_node) { return &charge_sorted[charge_offsets[i_node]]; }
     Real *center_ptr(int i_node) { return &centers[i_node * DIM]; }
 
-    void build_proxy_charges(int n_mfm, int n_order, const std::vector<Real> &c2p);
+    void build_proxy_charges(int n_mfm, int n_order, const sctl::Vector<Real> &c2p);
     void downward_pass(const pdmk_params &params, int n_order, const FourierData<Real> &fourier_data);
 };
 
