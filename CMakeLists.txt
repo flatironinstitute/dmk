@@ -13,6 +13,12 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
   add_link_options("-lstdc++")
 endif()
 
+option(DMK_BUILD_TESTS "Build tests" ON)
+
+if (NOT ${DMK_BUILD_TESTS})
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DDOCTEST_CONFIG_DISABLE")
+endif()
+
 add_compile_options("-march=native;-DSCTL_HAVE_MPI;-DSCTL_MAX_DEPTH=62;-DEIGEN_USE_BLAS;-funroll-loops")
 
 find_package(OpenMP REQUIRED)
@@ -61,4 +67,6 @@ add_library(dmk_shared SHARED)
 set_target_properties(${PROJECT_NAME}_shared PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
 target_link_libraries(${PROJECT_NAME}_shared DMKOBJS dmk_ref_common OpenMP::OpenMP_CXX MPI::MPI_CXX BLAS::BLAS spdlog)
 
-add_subdirectory(test)
+if(${DMK_BUILD_TESTS})
+  add_subdirectory(test)
+endif()
