@@ -24,10 +24,12 @@ set(DMK_INCLUDES
   ${PROJECT_SOURCE_DIR}/extern/eigen
   ${PROJECT_SOURCE_DIR}/extern/SCTL/include
   ${PROJECT_SOURCE_DIR}/extern/spdlog/include
+  ${PROJECT_SOURCE_DIR}/extern/doctest
 )
 
 add_subdirectory(extern/spdlog EXCLUDE_FROM_ALL)
 add_subdirectory(extern/nanobench EXCLUDE_FROM_ALL)
+add_subdirectory(extern/doctest)
 
 file(GLOB_RECURSE DMK_REF_COMMON_SRC "src/common/*.f*" "vec-kernels/src/libkernels2.cpp")
 add_library(dmk_ref_common OBJECT ${DMK_REF_COMMON_SRC})

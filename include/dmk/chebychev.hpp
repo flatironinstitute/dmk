@@ -1,5 +1,6 @@
 #ifndef CHEBYCHEV_HPP
 #define CHEBYCHEV_HPP
+#include <doctest/doctest.h>
 
 #include <sctl.hpp>
 #include <tuple>
@@ -271,6 +272,70 @@ std::pair<sctl::Vector<T>, sctl::Vector<T>> get_c2p_p2c_matrices(int dim, int or
     }
 
     return res;
+}
+
+TEST_CASE_TEMPLATE("chebyshev fit", T, float, double) {
+    T lb{-1.0}, ub{1.0};
+    auto testfunc = [](T x) -> T { return std::sin(x * x * x) + 0.5; };
+
+    for (const int order : {5, 9, 16, 24}) {
+        CAPTURE(order);
+        // return by value
+        Eigen::VectorX<T> coeffs_rbv = fit<T>(order, testfunc, lb, ub);
+        // pass by reference
+        Eigen::VectorX<T> coeffs_pbr(order);
+        fit<T>(order, testfunc, lb, ub, coeffs_pbr.data());
+
+        CHECK(coeffs_rbv == coeffs_pbr);
+    }
+}
+
+TEST_CASE_TEMPLATE("chebyshev interpolation", T, float, double) {
+    // Check that automatic interpolation by passing bounds works the same as the implicit [-1.0, 1.0]
+    T lb{-1.0}, ub{1.0};
+    auto testfunc = [](T x) -> T { return std::sin(x * x * x) + 0.5; };
+
+    for (const int order : {5, 9, 16, 24}) {
+        Eigen::VectorX<T> coeffs = fit<T>(order, testfunc, lb, ub);
+        CAPTURE(order);
+
+        for (T x = lb; x <= ub; x += (ub - lb) / 9) {
+            T res = evaluate(x, order, coeffs.data());
+            T res_alt = evaluate(x, order, lb, ub, coeffs.data());
+            CHECK(std::fabs(res - res_alt) <= std::numeric_limits<T>::epsilon());
+        }
+    }
+}
+
+TEST_CASE_TEMPLATE("chebyshev translation", T, float, double) {
+    // Check that parent->child translation matrices work to reasonable precision
+    // Larger bounds shifts -> larger errors.
+    T lb{-1.3}, ub{1.2};
+    T mid = lb + 0.5 * (ub - lb);
+
+    auto testfunc = [](T x) -> T { return std::sin(x * x * x) + 0.5; };
+
+    for (const int order : {5, 9, 16, 24}) {
+        CAPTURE(order);
+
+        Eigen::MatrixX<T> tm, tp;
+        std::tie(tm, tp) = parent_to_child_matrices<T>(order);
+        Eigen::VectorX<T> coeffs = fit<T>(order, testfunc, lb, ub);
+        Eigen::VectorX<T> coeffs_m = tm * coeffs;
+        Eigen::VectorX<T> coeffs_p = tp * coeffs;
+
+        for (T x = lb; x <= mid; x += (mid - lb) / 9) {
+            T res = evaluate<T>(x, order, lb, ub, coeffs.data());
+            T res_alt = evaluate<T>(x, order, lb, mid, coeffs_m.data());
+            CHECK(std::fabs(res - res_alt) <= 4 * std::numeric_limits<T>::epsilon());
+        }
+
+        for (T x = mid; x <= ub; x += (ub - mid) / 9) {
+            T res = evaluate<T>(x, order, lb, ub, coeffs.data());
+            T res_alt = evaluate<T>(x, order, mid, ub, coeffs_p.data());
+            CHECK(std::fabs(res - res_alt) <= 4 * std::numeric_limits<T>::epsilon());
+        }
+    }
 }
 
 } // namespace dmk::chebyshev
