@@ -199,7 +199,7 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
     sctl::Vector<std::complex<T>> poly2pw(n_order * fourier_data.n_pw), pw2poly(n_order * fourier_data.n_pw);
 
     const int nd_in = params.n_mfm;
-    const int nd_out = nd * (params.use_charge + params.use_dipole * DIM);
+    const int nd_out = nd * params.use_charge;
     const int n_pw = fourier_data.n_pw;
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const int pw_in_size = n_pw_modes * nd_in;
@@ -226,9 +226,6 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
             dmk::proxy::proxycharge2pw(DIM, nd_out, n_order, fourier_data.n_pw,
                                        &proxy_coeffs[box * sctl::pow<DIM>(n_order)], &poly2pw[0],
                                        &pw_out[box * pw_out_size]);
-
-            // multiply_kernelFT_cd2p(nd_out, DIM, params.use_charge, params.use_dipole, n_pw_modes,
-            //                        &pw_out[box * pw_out_size], fourier_data.dkernelft.data(), &rk[0]);
         }
 
         // Form incoming expansions

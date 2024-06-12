@@ -21,9 +21,8 @@ typedef struct pdmk_params {
     dmk_pgh pgh = DMK_POTENTIAL;        // level to compute at sources (potential, pot+grad, pot+grad+hess)
     dmk_pgh pgh_target = DMK_POTENTIAL; // level to compute at targets (potential, pot+grad, pot+grad+hess)
     double fparam = 6.0;                // param for selected potential (FIXME: make more flexible)
-    bool use_periodic = false;          // use PBC -- not implemented
+    const bool use_periodic = false;    // use PBC -- not implemented
     bool use_charge = true;             // use charges in charge array
-    bool use_dipole = false;            // use dipoles in dipole array
     int n_per_leaf = 2000;              // tuning: number of particles per leaf in N-tree
     int log_level = 6;                  // 0: trace, 1: debug, 2: info, 3: warn, 4: err, 5: critical, 6: off
 } pdmk_params;

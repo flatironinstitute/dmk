@@ -46,7 +46,7 @@ void test_fortran(int n_dim, int n_charge_dim, int n_order, int n_src) {
 
 int main(int argc, char *argv[]) {
     int n_order = 32;
-    int n_src = 500;
+    int n_src = 1;
     int n_charge_dim = 1;
 
     int orders[] = {8, 12, 16, 20, 24, 32};

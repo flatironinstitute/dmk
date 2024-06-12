@@ -128,8 +128,6 @@ int main(int argc, char *argv[]) {
     params.n_mfm = nd;
     params.pgh = DMK_POTENTIAL;
     params.kernel = DMK_YUKAWA;
-    params.use_periodic = false;
-    params.use_dipole = false;
     params.log_level = 0;
 
     pdmk(params, n_src_local, r_src.data(), charges.data(), rnormal.data(), dipstr.data(), n_trg_local, r_trg.data(),
