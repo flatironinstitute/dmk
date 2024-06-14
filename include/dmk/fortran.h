@@ -16,6 +16,9 @@ void legeexps_(const int *, const int *, double *, double *, double *, double *)
 void chebexps_(const int *, const int *, double *, double *, double *, double *);
 void hank103_(const double _Complex *, double _Complex *, double _Complex *, const int *);
 double hkrand_(int *);
+
+void pdmk_charge2proxycharge_(const int *ndim, const int *nd, const int *norder, const int *ns, const double *sources,
+                              const double *charge, const double *cen, const double *sc, double *coefs);
 }
 
 #endif
