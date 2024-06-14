@@ -54,3 +54,16 @@ SCTL from PVFMM by Dhairya Malhotra and VCL by Agner Fog for SIMD accelerated ke
 2. The box code is src/bdmk/bdmk.f, which requires calling subroutines
 vol_tree_mem and vol_tree_build in src/common/tree_vol_coeffs.f first to build the tree.
 
+# Building the development MPI code on FI resources
+
+```bash
+module load modules/2.3 python gcc/13 openmpi intel-oneapi-mkl flexiblas
+
+git clone git@github.com:flatironinstitute/DMK --recursive
+cd DMK
+mkdir build
+cd build
+
+cmake .. -DCMAKE_BUILD_TYPE=relwithdebinfo -DBLA_VENDOR=FlexiBLAS
+make -j 10
+```
