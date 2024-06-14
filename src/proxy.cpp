@@ -174,10 +174,8 @@ template void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw,
                              const std::complex<double> *poly2pw, std::complex<double> *pw_expansion);
 
 TEST_CASE("[DMK] charge2proxycharge") {
-    int n_dim = 3;
-    int n_order = 24;
-    int n_src = 500;
-    int n_charge_dim = 2;
+    const int n_src = 500;
+    const int n_charge_dim = 2;
 
     for (int n_dim : {2, 3}) {
         CAPTURE(n_dim);
