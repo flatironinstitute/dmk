@@ -19,6 +19,8 @@ double hkrand_(int *);
 
 void pdmk_charge2proxycharge_(const int *ndim, const int *nd, const int *norder, const int *ns, const double *sources,
                               const double *charge, const double *cen, const double *sc, double *coefs);
+void dmk_proxycharge2pw_(const int *ndim, const int *nd, const int *n, const double *coefs, const int *npw,
+                         const double *tab_coefs2pw, double *pwexp);
 }
 
 #endif

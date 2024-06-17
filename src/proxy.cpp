@@ -1,9 +1,10 @@
 #include <Eigen/Core>
 
 #include <dmk.h>
-#include <dmk/fortran.h>
 #include <dmk/chebychev.hpp>
+#include <dmk/fortran.h>
 #include <dmk/gemm.hpp>
+#include <dmk/planewave.hpp>
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
@@ -34,7 +35,7 @@ void proxycharge2pw_2d(int n_charge_dim, int n_order, int n_pw, const T *proxy_c
              {0.0, 0.0}, &ff[0], n_order);
 
         // transform in x
-        gemm('n', 'n', n_pw, n_pw2, n_order, {1.0, 0.0}, &proxy_coeffs_complex[0], n_pw, &ff[0], n_order, {0.0, 0.0},
+        gemm('n', 'n', n_pw, n_pw2, n_order, {1.0, 0.0}, &poly2pw[0], n_pw, &ff[0], n_order, {0.0, 0.0},
              &pw_expansion[n_pw_coeffs * i_dim], n_pw);
     }
 }
@@ -172,6 +173,41 @@ template void charge2proxycharge(int n_dim, int n_charge_dim, int order, int n_s
 //                              const std::complex<float> *poly2pw, std::complex<float> *pw_expansion);
 template void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const double *proxy_coeffs,
                              const std::complex<double> *poly2pw, std::complex<double> *pw_expansion);
+
+TEST_CASE("[DMK] proxycharge2pw") {
+    const int n_charge_dim = 1;
+    const int n_pw = 10;
+    const int n_pw2 = (n_pw + 1) / 2;
+    const int n_pw_coeffs = n_pw * n_pw2;
+
+    for (int n_dim : {2, 3}) {
+        CAPTURE(n_dim);
+        for (int n_order : {10, 16, 24}) {
+            const int n_pw_modes = int(std::pow(n_pw, n_dim - 1)) * ((n_pw + 1) / 2);
+            const int n_pw_coeffs = n_pw_modes * n_charge_dim;
+
+            CAPTURE(n_order);
+            sctl::Vector<double> proxy_coeffs(int(pow(n_order, n_dim)) * n_charge_dim);
+            sctl::Vector<std::complex<double>> poly2pw(n_order * n_pw), pw2poly(n_order * n_pw);
+            Eigen::VectorX<std::complex<double>> pw_coeffs(n_pw_coeffs), pw_coeffs_fort(n_pw_coeffs);
+
+            dmk::calc_planewave_coeff_matrices(1.0, 1.0, n_pw, n_order, poly2pw, pw2poly);
+
+            for (auto &c : proxy_coeffs)
+                c = drand48();
+
+            pw_coeffs.array() = 0.0;
+            proxycharge2pw(n_dim, n_charge_dim, n_order, n_pw, &proxy_coeffs[0], &poly2pw[0], &pw_coeffs[0]);
+
+            pw_coeffs_fort.array() = 0.0;
+            dmk_proxycharge2pw_(&n_dim, &n_charge_dim, &n_order, &proxy_coeffs[0], &n_pw, (double *)&poly2pw[0],
+                                (double *)&pw_coeffs_fort[0]);
+
+            const double l2 = (pw_coeffs - pw_coeffs_fort).norm() / pw_coeffs.size();
+            CHECK(l2 < std::numeric_limits<double>::epsilon());
+        }
+    }
+}
 
 TEST_CASE("[DMK] charge2proxycharge") {
     const int n_src = 500;
