@@ -199,16 +199,19 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
     sctl::Vector<std::complex<T>> poly2pw(n_order * fourier_data.n_pw), pw2poly(n_order * fourier_data.n_pw);
 
     const int nd_in = params.n_mfm;
-    const int nd_out = nd * params.use_charge;
+    const int nd_out = params.n_mfm;
     const int n_pw = fourier_data.n_pw;
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
-    const int pw_in_size = n_pw_modes * nd_in;
-    const int pw_out_size = n_pw_modes * nd_out;
+    const int n_pw_per_box = n_pw_modes * nd_out;
 
-    sctl::Vector<std::complex<T>> pw_out(pw_out_size * n_boxes());
-    sctl::Vector<std::complex<T>> pw_in(pw_in_size * n_boxes());
+    sctl::Vector<std::complex<T>> pw_out(n_pw_per_box * n_boxes());
+    sctl::Vector<std::complex<T>> pw_in(n_pw_per_box * n_boxes());
+    pw_out.SetZero();
+    pw_in.SetZero();
+
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
-        fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
+        constexpr int nmax = 1;
+        sctl::Vector<T> wpwshift(n_pw_modes * sctl::pow<DIM>(2 * nmax + 1));
         sctl::Vector<T> ts(n_pw);
         sctl::Vector<T> rk(sctl::pow<DIM>(n_pw));
         const int shift = n_pw / 2;
@@ -216,23 +219,24 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
             ts[i] = fourier_data.hpw[i_level] * (i - shift);
         const int dim = DIM;
         meshnd_(&dim, &ts[0], &n_pw, &rk[0]);
+        fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
+        mk_pw_translation_matrices_(&dim, &nmax, &n_pw, &ts[0], &nmax, &wpwshift[0]);
 
         // Form outgoing expansions
         for (auto box : level_indices[i_level]) {
-            // if (!out_flag[box])
-            //     continue;
             // Form the outgoing expansion Φl(box) for the difference kernel Dl from the proxy charge expansion
             // coefficients using Tprox2pw.
             dmk::proxy::proxycharge2pw(DIM, nd_out, n_order, fourier_data.n_pw,
                                        &proxy_coeffs[box * sctl::pow<DIM>(n_order)], &poly2pw[0],
-                                       &pw_out[box * pw_out_size]);
+                                       &pw_out[box * n_pw_per_box]);
+            memcpy(&pw_in[box * n_pw_per_box], &pw_out[box * n_pw_per_box], n_pw_per_box * sizeof(std::complex<T>));
         }
 
         // Form incoming expansions
         for (auto box : level_indices[i_level]) {
             for (auto neighbor : node_lists[box].nbr) {
-                // if (neighbor < 0 || neighbor == box || !out_flag[neighbor])
-                //     continue;
+                if (neighbor < 0 || neighbor == box)
+                    continue;
                 // Translate the outgoing expansion Φl(colleague) to the center of box and add to the incoming plane
                 // wave expansion Ψl(box) using Tpwshift.
             }
