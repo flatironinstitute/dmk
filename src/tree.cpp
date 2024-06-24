@@ -239,6 +239,12 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
                     continue;
                 // Translate the outgoing expansion Φl(colleague) to the center of box and add to the incoming plane
                 // wave expansion Ψl(box) using Tpwshift.
+                constexpr int iperiod = 0;
+                int ind;
+                dmk_find_pwshift_ind_(&dim, &iperiod, &centers[box], &centers[neighbor], &boxsize[0], &boxsize[i_level],
+                                      &nmax, &ind);
+                dmk_shiftpw_(&nd_in, &n_pw, (double *)&pw_out[neighbor * n_pw_per_box],
+                             (double *)&pw_in[box * n_pw_per_box], (double *)&wpwshift[n_pw_per_box * ind]);
             }
         }
 

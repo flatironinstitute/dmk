@@ -23,6 +23,9 @@ void dmk_proxycharge2pw_(const int *ndim, const int *nd, const int *n, const dou
                          const double *tab_coefs2pw, double *pwexp);
 void mk_pw_translation_matrices_(const int *ndim, const int *xmin, const int *npw, const double *ts, const int *nmax,
                                  double *wshift);
+void dmk_find_pwshift_ind_(const int *ndim, const int *iperiod, const double *tcenter, const double *scenter,
+                           const double *bs0, const double *xmin, const int *nmax, int *ind);
+void dmk_shiftpw_(const int *nd, const int *nexp, const double *pwexp1, double *pwexp2, const double *wshift);
 }
 
 #endif
