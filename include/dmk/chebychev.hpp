@@ -274,7 +274,7 @@ std::pair<sctl::Vector<T>, sctl::Vector<T>> get_c2p_p2c_matrices(int dim, int or
     return res;
 }
 
-TEST_CASE_TEMPLATE("chebyshev fit", T, float, double) {
+TEST_CASE_TEMPLATE("[DMK] chebyshev fit", T, float, double) {
     T lb{-1.0}, ub{1.0};
     auto testfunc = [](T x) -> T { return std::sin(x * x * x) + 0.5; };
 
@@ -290,7 +290,7 @@ TEST_CASE_TEMPLATE("chebyshev fit", T, float, double) {
     }
 }
 
-TEST_CASE_TEMPLATE("chebyshev interpolation", T, float, double) {
+TEST_CASE_TEMPLATE("[DMK] chebyshev interpolation", T, float, double) {
     // Check that automatic interpolation by passing bounds works the same as the implicit [-1.0, 1.0]
     T lb{-1.0}, ub{1.0};
     auto testfunc = [](T x) -> T { return std::sin(x * x * x) + 0.5; };
@@ -307,7 +307,7 @@ TEST_CASE_TEMPLATE("chebyshev interpolation", T, float, double) {
     }
 }
 
-TEST_CASE_TEMPLATE("chebyshev translation", T, float, double) {
+TEST_CASE_TEMPLATE("[DMK] chebyshev translation", T, float, double) {
     // Check that parent->child translation matrices work to reasonable precision
     // Larger bounds shifts -> larger errors.
     T lb{-1.3}, ub{1.2};

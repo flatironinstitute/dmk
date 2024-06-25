@@ -1,8 +1,8 @@
 #ifndef TREE_HPP
 #define TREE_HPP
 
-#include <dmk.h>
 #include <algorithm>
+#include <dmk.h>
 #include <numeric>
 #include <sctl.hpp>
 #include <vector>
@@ -25,7 +25,6 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> charge_cnt;
     std::vector<sctl::Long> charge_offsets;
     std::vector<Real> centers;
-    std::vector<Real> scale_factors;
 
     sctl::Vector<Real> proxy_coeffs;
 

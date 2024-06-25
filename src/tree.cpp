@@ -25,7 +25,6 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     r_src_offsets.resize(n_nodes);
     charge_offsets.resize(n_nodes);
     centers.resize(n_nodes * DIM);
-    scale_factors.resize(n_nodes);
     level_indices.resize(SCTL_MAX_DEPTH);
 
     for (int i_node = 1; i_node < n_nodes; ++i_node) {
@@ -46,14 +45,13 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     for (int i = 1; i < max_depth; ++i)
         boxsize[i] = 0.5 * boxsize[i - 1];
 
-    T scale = 2.0;
+    T scale = 1.0;
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         for (auto i_node : level_indices[i_level]) {
             auto &node = node_mid[i_node];
             auto node_origin = node.template Coord<T>();
             for (int i = 0; i < DIM; ++i)
                 centers[i_node * DIM + i] = node_origin[i] + 0.5 * scale;
-            scale_factors[i_node] = scale;
         }
         scale *= 0.5;
     }
@@ -99,7 +97,7 @@ void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const sctl::
     for (int i_box = 0; i_box < n_boxes(); ++i_box) {
         if (r_src_cnt[i_box]) {
             proxy::charge2proxycharge(DIM, n_mfm, n_order, r_src_cnt[i_box], r_src_ptr(i_box), charge_ptr(i_box),
-                                      center_ptr(i_box), scale_factors[i_box], &proxy_coeffs[i_box * n_coeffs]);
+                                      center_ptr(i_box), 2.0 / boxsize[i_box], &proxy_coeffs[i_box * n_coeffs]);
             counts[i_box] = 1;
             n_direct++;
         }
@@ -211,16 +209,16 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
 
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         constexpr int nmax = 1;
-        sctl::Vector<T> wpwshift(n_pw_modes * sctl::pow<DIM>(2 * nmax + 1));
+        sctl::Vector<std::complex<T>> wpwshift(n_pw_modes * sctl::pow<DIM>(2 * nmax + 1));
         sctl::Vector<T> ts(n_pw);
-        sctl::Vector<T> rk(sctl::pow<DIM>(n_pw));
+        sctl::Vector<T> rk(DIM * sctl::pow<DIM>(n_pw));
         const int shift = n_pw / 2;
         for (int i = 0; i < n_pw; ++i)
             ts[i] = fourier_data.hpw[i_level] * (i - shift);
         const int dim = DIM;
         meshnd_(&dim, &ts[0], &n_pw, &rk[0]);
         fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
-        mk_pw_translation_matrices_(&dim, &nmax, &n_pw, &ts[0], &nmax, &wpwshift[0]);
+        mk_pw_translation_matrices_(&dim, &boxsize[i_level], &n_pw, &ts[0], &nmax, (T *)&wpwshift[0]);
 
         // Form outgoing expansions
         for (auto box : level_indices[i_level]) {
@@ -241,10 +239,12 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
                 // wave expansion Ψl(box) using Tpwshift.
                 constexpr int iperiod = 0;
                 int ind;
-                dmk_find_pwshift_ind_(&dim, &iperiod, &centers[box], &centers[neighbor], &boxsize[0], &boxsize[i_level],
-                                      &nmax, &ind);
+                dmk_find_pwshift_ind_(&dim, &iperiod, &centers[box * DIM], &centers[neighbor * DIM], &boxsize[0],
+                                      &boxsize[i_level], &nmax, &ind);
+                ind--; // fortran uses 1 based indexing
                 dmk_shiftpw_(&nd_in, &n_pw, (double *)&pw_out[neighbor * n_pw_per_box],
-                             (double *)&pw_in[box * n_pw_per_box], (double *)&wpwshift[n_pw_per_box * ind]);
+                             (double *)&pw_in[box * n_pw_per_box],
+                             (double *)&wpwshift[n_pw * sctl::pow<DIM>(2 * nmax + 1) * ind]);
             }
         }
 

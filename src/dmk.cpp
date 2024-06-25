@@ -11,9 +11,12 @@
 
 #include <mpi.h>
 #include <omp.h>
+#include <random>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
+
+#include <doctest/extensions/doctest_mpi.h>
 
 namespace dmk {
 
@@ -152,6 +155,96 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
         MPI_Reduce(&N, &N, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
 
     logger->info("PDMK finished in {:.2f} seconds ({:.2f} pts/s)", dt, N / dt);
+}
+
+void init_data(int n_dim, int nd, int n_src, bool uniform, std::vector<double> &r_src, std::vector<double> &rnormal,
+               std::vector<double> &charges, std::vector<double> &dipstr, long seed) {
+    r_src.resize(n_dim * n_src);
+    charges.resize(nd * n_src);
+    rnormal.resize(n_dim * n_src);
+    dipstr.resize(nd * n_src);
+
+    double rin = 0.45;
+    double wrig = 0.12;
+    double rwig = 0;
+    int nwig = 6;
+
+    std::default_random_engine eng(seed);
+    std::uniform_real_distribution<double> rng;
+
+    for (int i = 0; i < n_src; ++i) {
+        if (!uniform) {
+            if (n_dim == 2) {
+                double phi = rng(eng) * 2 * M_PI;
+                r_src[i * 3 + 0] = cos(phi);
+                r_src[i * 3 + 1] = sin(phi);
+            }
+            if (n_dim == 3) {
+                double theta = rng(eng) * M_PI;
+                double rr = rin + rwig * cos(nwig * theta);
+                double ct = cos(theta);
+                double st = sin(theta);
+                double phi = rng(eng) * 2 * M_PI;
+                double cp = cos(phi);
+                double sp = sin(phi);
+
+                r_src[i * 3 + 0] = rr * st * cp + 0.5;
+                r_src[i * 3 + 1] = rr * st * sp + 0.5;
+                r_src[i * 3 + 2] = rr * ct + 0.5;
+            }
+        } else {
+            for (int j = 0; j < n_dim; ++j)
+                r_src[i * n_dim + j] = rng(eng);
+        }
+
+        for (int j = 0; j < n_dim; ++j)
+            rnormal[i * n_dim + j] = rng(eng);
+
+        for (int j = 0; j < nd; ++j) {
+            charges[i * nd + j] = rng(eng) - 0.5;
+            dipstr[i * nd + j] = rng(eng);
+        }
+    }
+
+    for (int i = 0; i < nd; ++i) {
+        dipstr[0 * nd + i] = 0.0;
+        dipstr[1 * nd + i] = 0.0;
+        charges[0 * nd + i] = 0.0;
+        charges[1 * nd + i] = 0.0;
+        charges[2 * nd + i] = 1.0;
+    }
+
+    for (int i = 0; i < 3; ++i)
+        r_src[i] = 0.0;
+    for (int i = 3; i < 6; ++i)
+        r_src[i] = 1 - std::numeric_limits<double>::epsilon();
+    for (int i = 6; i < 9; ++i)
+        r_src[i] = 0.05;
+}
+
+MPI_TEST_CASE("[DMK] pdmk 2d", 1) {}
+
+MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
+    constexpr int n_dim = 3;
+    constexpr int n_src = 1e4;
+    constexpr int n_trg = 0;
+    constexpr int nd = 1;
+
+    std::vector<double> r_src, charges, rnormal, dipstr, pot, r_trg;
+    init_data(n_dim, 1, n_src, false, r_src, rnormal, charges, dipstr, 0);
+    pot.resize(n_src * nd);
+
+    pdmk_params params;
+    params.eps = 1e-6;
+    params.n_dim = n_dim;
+    params.n_per_leaf = 100;
+    params.n_mfm = nd;
+    params.pgh = DMK_POTENTIAL;
+    params.kernel = DMK_YUKAWA;
+    params.log_level = 0;
+
+    pdmk(params, n_src, r_src.data(), charges.data(), rnormal.data(), dipstr.data(), n_trg, r_trg.data(), pot.data(),
+         nullptr, nullptr, nullptr, nullptr, nullptr);
 }
 
 } // namespace dmk
