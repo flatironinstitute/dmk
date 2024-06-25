@@ -5,21 +5,16 @@
 #include <dmk/fortran.h>
 #include <dmk/gemm.hpp>
 #include <dmk/planewave.hpp>
+#include <mdspan.hpp>
+#include <dmk/types.hpp>
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
 #include <vector>
-#include <mdspan.hpp>
 
 #include <omp.h>
 
 namespace dmk::proxy {
-    using std::experimental::mdspan;
-    using std::experimental::dextents;
-    using std::experimental::layout_left;    
-
-    // template <typename T>
-    // using mdspan_3d_arr = mdspan<std::complex<T>, dextents<int, 3>, layout_left>;
 
 template <typename T>
 void proxycharge2pw_2d(int n_charge_dim, int n_order, int n_pw, const T *proxy_coeffs, const std::complex<T> *poly2pw,
@@ -59,14 +54,10 @@ void proxycharge2pw_3d(int n_charge_dim, int n_order, int n_pw, const T *proxy_c
     sctl::Vector<std::complex<T>> fft(n_order * n_pw2 * n_order);
     sctl::Vector<std::complex<T>> ff2(n_pw * n_pw2 * n_order);
     sctl::Vector<std::complex<T>> proxy_coeffs_complex(n_order * n_order * n_order);
-    
-    mdspan<std::complex<T>, dextents<int, 3>, layout_left> ff_view(&ff[0],n_order,n_order,n_pw2);
-    mdspan<std::complex<T>, dextents<int, 3>, layout_left> fft_view(&fft[0],n_order,n_pw2,n_order);
 
-    // mdspan_3d_arr ff_view(&ff[0],n_order,n_order,n_pw2);
-    // mdspan_3d_arr fft_view(&fft[0],n_order,n_pw2,n_order);
-    
-    
+    ndview<std::complex<T>, 3> ff_view(&ff[0], n_order, n_order, n_pw2);
+    ndview<std::complex<T>, 3> fft_view(&fft[0], n_order, n_pw2, n_order);
+
     for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
         for (int i = 0; i < n_proxy_coeffs; ++i)
             proxy_coeffs_complex[i] = proxy_coeffs[i + n_proxy_coeffs * i_dim];
@@ -78,8 +69,7 @@ void proxycharge2pw_3d(int n_charge_dim, int n_order, int n_pw, const T *proxy_c
         for (int m1 = 0; m1 < n_order; ++m1)
             for (int k3 = 0; k3 < n_pw2; ++k3)
                 for (int m2 = 0; m2 < n_order; ++m2)
-                    fft_view(m2,k3,m1) = ff_view(m1,m2,k3);
-                    // fft[m2 + n_order * (k3 + n_pw2 * m1)] = ff[m1 + n_order * (m2 + n_order * k3)];
+                    fft_view(m2, k3, m1) = ff_view(m1, m2, k3);
 
         // transform in y
         gemm('n', 'n', n_pw, n_pw2 * n_order, n_order, {1.0, 0.0}, poly2pw, n_pw, &fft[0], n_order, {0.0, 0.0}, &ff2[0],
@@ -87,7 +77,7 @@ void proxycharge2pw_3d(int n_charge_dim, int n_order, int n_pw, const T *proxy_c
 
         // transform in x
         gemm('n', 't', n_pw, n_pw * n_pw2, n_order, {1.0, 0.0}, poly2pw, n_pw, &ff2[0], n_pw * n_pw2, {0.0, 0.0},
-             &pw_expansion[i_dim * n_pw_coeffs], n_pw);             
+             &pw_expansion[i_dim * n_pw_coeffs], n_pw);
     }
 }
 
