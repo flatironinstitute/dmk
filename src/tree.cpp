@@ -187,7 +187,8 @@ void multiply_kernelFT_cd2p(int nd, int ndim, bool ifcharge, bool ifdipole, int 
 }
 
 template <typename T, int DIM>
-void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, const FourierData<T> &fourier_data) {
+void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, const FourierData<T> &fourier_data,
+                                      const sctl::Vector<T> &p2c) {
     auto &logger = dmk::get_logger();
     auto &rank_logger = dmk::get_rank_logger();
     const int nd = params.n_mfm;
@@ -201,9 +202,12 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
     const int n_pw = fourier_data.n_pw;
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const int n_pw_per_box = n_pw_modes * nd_out;
+    const int n_coeffs_per_box = params.n_mfm * sctl::pow<DIM>(n_order);
 
     sctl::Vector<std::complex<T>> pw_out(n_pw_per_box * n_boxes());
     sctl::Vector<std::complex<T>> pw_in(n_pw_per_box * n_boxes());
+    proxy_coeffs_downward.ReInit(proxy_coeffs.Dim());
+    proxy_coeffs_downward.SetZero();
     pw_out.SetZero();
     pw_in.SetZero();
 
@@ -235,6 +239,7 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
             for (auto neighbor : node_lists[box].nbr) {
                 if (neighbor < 0 || neighbor == box)
                     continue;
+
                 // Translate the outgoing expansion Φl(colleague) to the center of box and add to the incoming plane
                 // wave expansion Ψl(box) using Tpwshift.
                 constexpr int iperiod = 0;
@@ -253,15 +258,18 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
             // if (!in_flag[box])
             //     continue;
             // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
-        }
+            dmk_pw2proxypot_(&dim, &nd, &n_order, &n_pw, (double *)&pw_in[box * n_pw_per_box], (double *)&pw2poly[0],
+                             (double *)&proxy_coeffs_downward[box * n_coeffs_per_box]);
 
-        // Split local expansions
-        for (auto box : level_indices[i_level]) {
-            // if (!in_flag[box])
-            //     continue;
+            // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
             for (auto child : node_lists[box].child) {
-                // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
+                if (child < 0)
+                    continue;
+                dmk::tensorprod::transform(dim, nd, n_order, n_order, true,
+                                           &proxy_coeffs_downward[box * n_coeffs_per_box], &p2c[0],
+                                           &proxy_coeffs_downward[child * n_coeffs_per_box]);
             }
+
         }
 
         // Evaluation local expansions

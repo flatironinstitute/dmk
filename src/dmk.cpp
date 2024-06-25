@@ -143,9 +143,7 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
 
     // upward pass
     tree.build_proxy_charges(params.n_mfm, n_order, c2p);
-
-    // downward pass
-    tree.downward_pass(params, n_order, fourier_data);
+    tree.downward_pass(params, n_order, fourier_data, p2c);
 
     auto dt = omp_get_wtime() - st;
     int N = n_src + n_trg;
