@@ -36,16 +36,6 @@ std::pair<int, int> get_pwmax_and_poly_order(int dim, int ndigits, dmk_ikernel k
     throw std::runtime_error("Requested precision too high");
 }
 
-template <typename T, int DIM>
-void zero_potentials(dmk_pgh level, int ns, int nd, T *pot, T *grad, T *hess) {
-    if (level >= DMK_POTENTIAL)
-        memset(pot, 0, ns * nd * sizeof(T));
-    if (level >= DMK_POTENTIAL_GRAD)
-        memset(grad, 0, DIM * ns * nd * sizeof(T));
-    if (level >= DMK_POTENTIAL_GRAD_HESSIAN)
-        memset(hess, 0, (DIM * (DIM + 1)) / 2 * ns * nd * sizeof(T));
-}
-
 template <typename T>
 T procl180_rescale(T eps) {
     constexpr T cs[] = {
@@ -100,17 +90,16 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     sctl::Vector<T> r_src_vec(n_src * params.n_dim, const_cast<T *>(r_src), false);
     sctl::Vector<T> r_trg_vec(n_trg * params.n_dim, const_cast<T *>(r_trg), false);
     sctl::Vector<T> charge_vec(n_src * params.n_mfm, const_cast<T *>(charge), false);
+    sctl::Vector<T> pot_vec(n_trg * params.n_mfm);
+    pot_vec.SetZero();
 
     logger->debug("Building tree and sorting points");
     tree.AddParticles("pdmk_src", r_src_vec);
     tree.AddParticleData("pdmk_charge", "pdmk_src", charge_vec);
     tree.AddParticles("pdmk_trg", r_trg_vec);
+    tree.AddParticleData("pdmk_pot", "pdmk_trg", pot_vec);
     tree.UpdateRefinement(r_src_vec, params.n_per_leaf, true, params.use_periodic); // balance21 = true
     logger->debug("Tree build completed");
-    logger->debug("Zeroing source and target potentials");
-    zero_potentials<T, DIM>(params.pgh, n_src, params.n_mfm, pot, grad, hess);
-    zero_potentials<T, DIM>(params.pgh_target, n_trg, params.n_mfm, pot, grad, hess);
-    logger->debug("Zeroing complete");
 
     logger->debug("Generating tree traversal metadata");
     tree.generate_metadata(params.n_per_leaf, params.n_mfm);

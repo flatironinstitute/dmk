@@ -18,8 +18,7 @@ typedef struct pdmk_params {
     int n_dim = 0;                      // dimension of system
     double eps = 1e-7;                  // target precision
     dmk_ikernel kernel = DMK_YUKAWA;    // evaluation kernel
-    dmk_pgh pgh = DMK_POTENTIAL;        // level to compute at sources (potential, pot+grad, pot+grad+hess)
-    dmk_pgh pgh_target = DMK_POTENTIAL; // level to compute at targets (potential, pot+grad, pot+grad+hess)
+    dmk_pgh pgh = DMK_POTENTIAL;        // level to compute at targets (potential, pot+grad, pot+grad+hess)
     double fparam = 6.0;                // param for selected potential (FIXME: make more flexible)
     const bool use_periodic = false;    // use PBC -- not implemented
     bool use_charge = true;             // use charges in charge array

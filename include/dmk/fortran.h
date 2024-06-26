@@ -28,6 +28,8 @@ void dmk_find_pwshift_ind_(const int *ndim, const int *iperiod, const double *tc
 void dmk_shiftpw_(const int *nd, const int *nexp, const double *pwexp1, double *pwexp2, const double *wshift);
 void dmk_pw2proxypot_(const int *ndim, const int *nd, const int *n, const int *npw, const double *pwexp,
                       const double *tab_pw2coefs, double *coefs);
+void pdmk_ortho_evalt_nd_(const int *ndim, const int *nd, const int *norder, const double *coefs, const int *nt,
+                          const double *targ, const double *cen, const double *sc, double *pot);
 }
 
 #endif

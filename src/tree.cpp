@@ -16,22 +16,29 @@ template <typename T, int DIM>
 void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     const int n_nodes = n_boxes();
     this->GetData(r_src_sorted, r_src_cnt, "pdmk_src");
+    this->GetData(r_trg_sorted, r_trg_cnt, "pdmk_trg");
     this->GetData(charge_sorted, charge_cnt, "pdmk_charge");
+    this->GetData(pot_sorted, pot_cnt, "pdmk_pot");
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_mid = this->GetNodeMID();
     const auto &node_lists = this->GetNodeLists();
 
     src_counts_local.ReInit(n_nodes);
+    trg_counts_local.ReInit(n_nodes);
+
     r_src_offsets.resize(n_nodes);
+    r_trg_offsets.resize(n_nodes);
+    pot_offsets.resize(n_nodes);
     charge_offsets.resize(n_nodes);
-    centers.resize(n_nodes * DIM);
-    level_indices.resize(SCTL_MAX_DEPTH);
 
     for (int i_node = 1; i_node < n_nodes; ++i_node) {
         r_src_offsets[i_node] = r_src_offsets[i_node - 1] + DIM * r_src_cnt[i_node - 1];
+        r_trg_offsets[i_node] = r_trg_offsets[i_node - 1] + DIM * r_trg_cnt[i_node - 1];
+        pot_offsets[i_node] = pot_offsets[i_node - 1] + nd * pot_cnt[i_node - 1];
         charge_offsets[i_node] = charge_offsets[i_node - 1] + nd * charge_cnt[i_node - 1];
     }
 
+    level_indices.resize(SCTL_MAX_DEPTH);
     int8_t max_depth = 0;
     for (int i_node = 0; i_node < n_nodes; ++i_node) {
         auto &node = node_mid[i_node];
@@ -46,6 +53,7 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
         boxsize[i] = 0.5 * boxsize[i - 1];
 
     T scale = 1.0;
+    centers.resize(n_nodes * DIM);
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         for (auto i_node : level_indices[i_level]) {
             auto &node = node_mid[i_node];
@@ -57,14 +65,18 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     }
 
     src_counts_local.SetZero();
+    trg_counts_local.SetZero();
     for (int i_level = max_depth - 1; i_level >= 0; i_level--) {
         for (auto i_node : level_indices[i_level]) {
             auto &node = node_mid[i_node];
             assert(i_level == node.Depth());
 
             src_counts_local[i_node] += r_src_cnt[i_node];
-            if (node_lists[i_node].parent != -1)
+            trg_counts_local[i_node] += r_trg_cnt[i_node];
+            if (node_lists[i_node].parent != -1) {
                 src_counts_local[node_lists[i_node].parent] += src_counts_local[i_node];
+                trg_counts_local[node_lists[i_node].parent] += trg_counts_local[i_node];
+            }
         }
     }
 
@@ -75,6 +87,10 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     this->template AddData("src_counts", src_counts_local, counts);
     this->template ReduceBroadcast<int>("src_counts");
     this->template GetData<int>(src_counts_global, counts, "src_counts");
+
+    this->template AddData("trg_counts", trg_counts_local, counts);
+    this->template ReduceBroadcast<int>("trg_counts");
+    this->template GetData<int>(trg_counts_global, counts, "trg_counts");
 }
 
 template <typename T, int DIM>
@@ -194,6 +210,7 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
     const int nd = params.n_mfm;
 
     const auto &node_lists = this->GetNodeLists();
+    const auto &node_attr = this->GetNodeAttr();
     const auto xs = dmk::chebyshev::get_cheb_nodes<T>(n_order, -1.0, 1.0);
     sctl::Vector<std::complex<T>> poly2pw(n_order * fourier_data.n_pw), pw2poly(n_order * fourier_data.n_pw);
 
@@ -269,14 +286,17 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
                                            &proxy_coeffs_downward[box * n_coeffs_per_box], &p2c[0],
                                            &proxy_coeffs_downward[child * n_coeffs_per_box]);
             }
-
         }
 
         // Evaluation local expansions
         for (auto box : level_indices[i_level]) {
-            if (!r_src_cnt[box])
+            if (!r_trg_cnt[box])
                 continue;
             // Evaluate the mollified potential ufar L at each target x in box.
+            const T sc = 2.0 / boxsize[i_level];
+            const int n_trg = r_trg_cnt[box];
+            pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, &proxy_coeffs_downward[box * n_coeffs_per_box], &n_trg,
+                                 r_trg_ptr(box), &centers[box * dim], &sc, pot_ptr(box));
         }
     }
 }
