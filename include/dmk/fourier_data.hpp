@@ -11,8 +11,8 @@ struct ProlateFuncs;
 
 template <typename T>
 struct FourierData {
-    FourierData<T>(dmk_ikernel kernel_, int n_dim_, int n_digits_, int n_pw_max, T fparam_, T beta_,
-                   const std::vector<double> &boxsize_);
+    FourierData(dmk_ikernel kernel_, int n_dim_, int n_digits_, int n_pw_max, T fparam_, T beta_,
+                const std::vector<double> &boxsize_);
     void yukawa_windowed_kernel_Fourier_transform(ProlateFuncs &pf);
     void update_windowed_kernel_fourier_transform(ProlateFuncs &pf);
     void yukawa_difference_kernel_fourier_transform(int i_level, ProlateFuncs &pf);

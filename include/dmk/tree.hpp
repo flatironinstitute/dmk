@@ -43,7 +43,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<Real> proxy_coeffs;
     sctl::Vector<Real> proxy_coeffs_downward;
 
-    DMKPtTree<Real, DIM>(const sctl::Comm &comm) : sctl::PtTree<Real, DIM>(comm){};
+    DMKPtTree(const sctl::Comm &comm) : sctl::PtTree<Real, DIM>(comm){};
 
     int n_levels() const { return level_indices.size(); }
     int n_boxes() const { return this->GetNodeMID().Dim(); }

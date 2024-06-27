@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.18)
 
 project(dmk LANGUAGES CXX Fortran)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 if (CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
@@ -19,7 +19,8 @@ if (NOT ${DMK_BUILD_TESTS})
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DDOCTEST_CONFIG_DISABLE")
 endif()
 
-add_compile_options("-march=native;-DSCTL_HAVE_MPI;-DSCTL_MAX_DEPTH=62;-DEIGEN_USE_BLAS;-funroll-loops")
+# FIXME: BLAS hack on SCTL to avoid header conflict. Eigen's BLAS define conflicts with SCTL's BLAS, so we don't include SCTL's BLAS header
+add_compile_options("-march=native;-DSPDLOG_USE_STD_FORMAT;-DSCTL_HAVE_MPI;-DSCTL_MAX_DEPTH=62;-DEIGEN_USE_BLAS;-D_SCTL_BLAS_H_;-funroll-loops")
 
 find_package(OpenMP REQUIRED)
 find_package(MPI REQUIRED)
