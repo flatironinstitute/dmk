@@ -83,9 +83,9 @@ std::tuple<int, double, double> get_PSWF_difference_kernel_pwterms(dmk_ikernel k
 
 template <typename T>
 FourierData<T>::FourierData(dmk_ikernel kernel_, int n_dim_, int n_digits_, int n_pw_max_, T fparam_, T beta_,
-                            const std::vector<double> &boxsize_)
+                            const std::vector<double> &boxsize_, ProlateFuncs &pf_)
     : kernel(kernel_), n_dim(n_dim_), n_digits(n_digits_), fparam(fparam_), beta(beta_), boxsize(boxsize_),
-      n_levels(boxsize_.size()), n_fourier(n_dim_ * sctl::pow(n_pw_max_ / 2, 2)) {
+      n_levels(boxsize_.size()), n_fourier(n_dim_ * sctl::pow(n_pw_max_ / 2, 2)), prolate_funcs(pf_) {
 
     hpw.resize(n_levels + 1);
     ws.resize(n_levels + 1);
@@ -104,7 +104,7 @@ FourierData<T>::FourierData(dmk_ikernel kernel_, int n_dim_, int n_digits_, int 
 }
 
 template <typename T>
-void FourierData<T>::yukawa_windowed_kernel_Fourier_transform(ProlateFuncs &prolate_funcs) {
+void FourierData<T>::yukawa_windowed_kernel_Fourier_transform() {
     // compute the Fourier transform of the truncated kernel
     // of the Yukawa kernel in two and three dimensions
     const T &rlambda = fparam;
@@ -150,23 +150,24 @@ void FourierData<T>::yukawa_windowed_kernel_Fourier_transform(ProlateFuncs &prol
 }
 
 template <typename T>
-void FourierData<T>::update_windowed_kernel_fourier_transform(ProlateFuncs &pf) {
+void FourierData<T>::update_windowed_kernel_fourier_transform() {
     switch (kernel) {
     case dmk_ikernel::DMK_YUKAWA:
-        return yukawa_windowed_kernel_Fourier_transform(pf);
+        return yukawa_windowed_kernel_Fourier_transform();
     case dmk_ikernel::DMK_LAPLACE:
         throw std::runtime_error("Laplace kernel not supported yet.");
     case dmk_ikernel::DMK_SQRT_LAPLACE:
         throw std::runtime_error("SQRT Laplace kernel not supported yet.");
     }
 }
+
 template <typename T>
-void FourierData<T>::yukawa_difference_kernel_fourier_transform(int i_level, ProlateFuncs &pf) {
+void FourierData<T>::yukawa_difference_kernel_fourier_transform(int i_level) {
     const T bsizesmall = boxsize[i_level] * 0.5;
     const T bsizebig = boxsize[i_level];
     const double &rlambda = fparam;
     const double rlambda2 = rlambda * rlambda;
-    const double psi0 = pf.eval_val(0.0);
+    const double psi0 = prolate_funcs.eval_val(0.0);
     T *fhat = &dkernelft[(i_level + 1) * n_fourier];
 
     for (int i = 0; i < n_fourier; ++i) {
@@ -174,16 +175,16 @@ void FourierData<T>::yukawa_difference_kernel_fourier_transform(int i_level, Pro
         T xi2 = rk * rk + rlambda2;
         T xi = sqrt(xi2);
         T xval = xi * bsizesmall / beta;
-        T fval1 = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
+        T fval1 = (xval <= 1.0) ? prolate_funcs.eval_val(xval) : 0.0;
 
         xval = xi * bsizebig / beta;
-        T fval2 = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
+        T fval2 = (xval <= 1.0) ? prolate_funcs.eval_val(xval) : 0.0;
         fhat[i] = ws[i_level + 1] * (fval1 - fval2) / (psi0 * xi2);
     }
 
     // re-compute fhat[0] accurately when there is a low-frequency breakdown
     if (rlambda * bsizebig / beta < 1E-4) {
-        const std::array<double, 4> c = pf.intvals(beta);
+        const std::array<double, 4> c = prolate_funcs.intvals(beta);
         const double bsizesmall2 = bsizesmall * bsizesmall;
         const double bsizebig2 = bsizebig * bsizebig;
 
@@ -193,10 +194,19 @@ void FourierData<T>::yukawa_difference_kernel_fourier_transform(int i_level, Pro
 }
 
 template <typename T>
-void FourierData<T>::update_difference_kernel(int i_level, ProlateFuncs &pf) {
+T FourierData<T>::yukawa_windowed_kernel_value_at_zero(int i_level) {
+    const double rpars = fparam;
+    double fval = 0.0;
+    yukawa_windowed_kernel_value_at_zero_(&n_dim, &fparam, &beta, &boxsize[i_level], &rl[i_level],
+                                          prolate_funcs.workarray.data(), &fval);
+    return fval;
+}
+
+template <typename T>
+void FourierData<T>::update_difference_kernel(int i_level) {
     switch (kernel) {
     case dmk_ikernel::DMK_YUKAWA:
-        return yukawa_difference_kernel_fourier_transform(i_level, pf);
+        return yukawa_difference_kernel_fourier_transform(i_level);
     case dmk_ikernel::DMK_LAPLACE:
         throw std::runtime_error("Laplace kernel not supported yet.");
     case dmk_ikernel::DMK_SQRT_LAPLACE:
@@ -205,7 +215,7 @@ void FourierData<T>::update_difference_kernel(int i_level, ProlateFuncs &pf) {
 }
 
 template <typename T>
-void FourierData<T>::update_difference_kernels(ProlateFuncs &pf) {
+void FourierData<T>::update_difference_kernels() {
     auto PSWF_difference_kernel_pwterms =
         (n_dim == 2) ? get_PSWF_difference_kernel_pwterms<2> : get_PSWF_difference_kernel_pwterms<3>;
 
@@ -222,7 +232,7 @@ void FourierData<T>::update_difference_kernels(ProlateFuncs &pf) {
         std::tie(n_pw, hpw_i, ws_i) = PSWF_difference_kernel_pwterms(kernel, n_digits, bsize);
 
         if (i_level == 0 || kernel == dmk_ikernel::DMK_YUKAWA) {
-            update_difference_kernel(i_level, pf);
+            update_difference_kernel(i_level);
             continue;
         }
 
@@ -241,11 +251,11 @@ void FourierData<T>::update_difference_kernels(ProlateFuncs &pf) {
 }
 
 template <typename T>
-void FourierData<T>::update_local_coeffs_yukawa(T eps, ProlateFuncs &pf) {
+void FourierData<T>::update_local_coeffs_yukawa(T eps) {
     constexpr T two_over_pi = 2.0 / M_PI;
     const T &rlambda = fparam;
     const T rlambda2 = rlambda * rlambda;
-    double psi0 = pf.eval_val(0.0);
+    double psi0 = prolate_funcs.eval_val(0.0);
 
     constexpr int i_type = 1;
     constexpr int n_quad = 100;
@@ -287,7 +297,7 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps, ProlateFuncs &pf) {
             const double xi2 = xs[i] * xs[i] + rlambda2;
             const double xval = sqrt(xi2) * bsize / beta;
             if (xval <= 1.0) {
-                fhat[i] = pf.eval_val(xval) / (psi0 * xi2);
+                fhat[i] = prolate_funcs.eval_val(xval) / (psi0 * xi2);
             } else {
                 fhat[i] = 0.0;
                 continue;
@@ -386,10 +396,10 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps, ProlateFuncs &pf) {
 }
 
 template <typename T>
-void FourierData<T>::update_local_coeffs(T eps, ProlateFuncs &pf) {
+void FourierData<T>::update_local_coeffs(T eps) {
     switch (kernel) {
     case dmk_ikernel::DMK_YUKAWA:
-        return update_local_coeffs_yukawa(eps, pf);
+        return update_local_coeffs_yukawa(eps);
     default:
         return;
     }

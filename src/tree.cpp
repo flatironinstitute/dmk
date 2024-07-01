@@ -10,6 +10,7 @@
 #include <sctl/tree.hpp>
 
 #include <mpi.h>
+#include <stdexcept>
 
 namespace dmk {
 
@@ -212,7 +213,7 @@ void multiply_kernelFT_cd2p(int nd, int ndim, bool ifcharge, bool ifdipole, int 
 }
 
 template <typename T, int DIM>
-void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, const FourierData<T> &fourier_data,
+void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, FourierData<T> &fourier_data,
                                       const sctl::Vector<T> &p2c) {
     auto &logger = dmk::get_logger();
     auto &rank_logger = dmk::get_rank_logger();
@@ -301,6 +302,11 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
         const double rsc = 2.0 / boxsize[i_level];
         const double cen = -1.0;
         const double d2max2 = boxsize[i_level] * boxsize[i_level];
+        if (params.kernel != DMK_YUKAWA)
+            throw std::runtime_error("Only yukawa potential supported");
+        // FIXME: more than yukawa...
+        const T w0 = fourier_data.yukawa_windowed_kernel_value_at_zero(i_level);
+
         // Evaluate local expansions and direct interactions
         for (auto box : level_indices[i_level]) {
             if (!r_trg_cnt[box])
@@ -316,12 +322,16 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
             const int ifcharge = params.use_charge;
             const int ifdipole = 0;
             const int one = 1;
-            const int n_src_p1 = r_src_cnt[box] + 1;
+            const int n_src_p1 = r_src_cnt[box] + 1; // not clear if i need the +1 or not...
             const int n_trg_p1 = r_trg_cnt[box] + 1;
             pdmk_direct_c_(&nd, &dim, (int *)&params.kernel, &params.fparam, &ndigits, &rsc, &cen, &ifself,
                            &fourier_data.ncoeffs1[i_level], &fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level],
                            &d2max2, &one, &n_src_p1, r_src_ptr(box), &ifcharge, charge_ptr(box), &ifdipole, nullptr,
                            &one, &n_trg_p1, &n_trg, r_trg_ptr(box), (int *)&params.pgh, pot_ptr(box), nullptr, nullptr);
+
+            // Correct for self-evaluations
+            for (int i = 0; i < nd; ++i)
+                pot_ptr(box)[i] -= w0 * charge_ptr(box)[i];
         }
     }
 }

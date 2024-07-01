@@ -12,14 +12,16 @@ struct ProlateFuncs;
 template <typename T>
 struct FourierData {
     FourierData(dmk_ikernel kernel_, int n_dim_, int n_digits_, int n_pw_max, T fparam_, T beta_,
-                const std::vector<double> &boxsize_);
-    void yukawa_windowed_kernel_Fourier_transform(ProlateFuncs &pf);
-    void update_windowed_kernel_fourier_transform(ProlateFuncs &pf);
-    void yukawa_difference_kernel_fourier_transform(int i_level, ProlateFuncs &pf);
-    void update_difference_kernel(int i_level, ProlateFuncs &pf);
-    void update_difference_kernels(ProlateFuncs &pf);
-    void update_local_coeffs_yukawa(T eps, ProlateFuncs &pf);
-    void update_local_coeffs(T eps, ProlateFuncs &pf);
+                const std::vector<double> &boxsize_, ProlateFuncs &prolate_funcs_);
+
+    void yukawa_windowed_kernel_Fourier_transform();
+    void update_windowed_kernel_fourier_transform();
+    void yukawa_difference_kernel_fourier_transform(int i_level);
+    T yukawa_windowed_kernel_value_at_zero(int i_level);
+    void update_difference_kernel(int i_level);
+    void update_difference_kernels();
+    void update_local_coeffs_yukawa(T eps);
+    void update_local_coeffs(T eps);
 
     const dmk_ikernel kernel;
     const T beta;
@@ -40,6 +42,8 @@ struct FourierData {
     std::vector<int> ncoeffs1;
     std::vector<int> ncoeffs2;
     const int n_coeffs_max = 100;
+
+    ProlateFuncs &prolate_funcs;
 
     const std::vector<double> &boxsize;
     void calc_planewave_coeff_matrices(int i_level, int n_order, sctl::Vector<std::complex<T>> &prox2pw,

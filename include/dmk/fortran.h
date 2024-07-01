@@ -35,6 +35,8 @@ void pdmk_direct_c_(const int *nd, const int *dim, const int *ikernel, const dou
                     const double *d2max, const int *istart, const int *iend, const double *source, const int *ifcharge,
                     const double *charge, const int *ifdipole, const double *dipvec, const int *jstart, const int *jend,
                     const int *ntarget, const double *ctarg, const int *ifpgh, double *pot, double *grad, double *hess);
+void yukawa_windowed_kernel_value_at_zero_(const int *dim, const double *rpars, const double *beta, const double *bsize,
+                                           const double *rl, const double *wprolate, double *fval);
 }
 
 #endif

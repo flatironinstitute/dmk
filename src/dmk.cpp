@@ -120,14 +120,15 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     auto [c2p, p2c] = dmk::chebyshev::get_c2p_p2c_matrices<T>(DIM, n_order);
     logger->debug("Finished generating matrices");
 
-    FourierData<T> fourier_data(params.kernel, DIM, ndigits, n_pw_max, params.fparam, beta, tree.boxsize);
+    FourierData<T> fourier_data(params.kernel, DIM, ndigits, n_pw_max, params.fparam, beta, tree.boxsize,
+                                prolate_funcs);
     logger->debug("Planewave params at root box: n: {}, stepsize: {}, weight: {}, radius: {}", fourier_data.n_pw,
                   fourier_data.hpw[0], fourier_data.ws[0], fourier_data.rl[0]);
-    fourier_data.update_windowed_kernel_fourier_transform(prolate_funcs);
+    fourier_data.update_windowed_kernel_fourier_transform();
     logger->debug("Truncated fourier transform for kernel {} at root box generated", int(params.kernel));
-    fourier_data.update_difference_kernels(prolate_funcs);
+    fourier_data.update_difference_kernels();
     logger->debug("Finished calculating difference kernels");
-    fourier_data.update_local_coeffs(params.eps, prolate_funcs);
+    fourier_data.update_local_coeffs(params.eps);
     logger->debug("Finished updating local potential expansion coefficients");
 
     // upward pass
