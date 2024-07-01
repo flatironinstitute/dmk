@@ -12,6 +12,14 @@
 
 namespace dmk {
 
+/// @brief Build any bookkeeping data associated with the tree
+///
+/// This must be called after the constructor (FIXME: should be done at construction)
+///
+/// @tparam T Floating point format to use (float, double)
+/// @tparam DIM Spatial dimension tree lives in
+/// @param[in] ndiv Maximum number of points allowed for a leaf node
+/// @param[in] nd Number of different "charges" to simultaneously evaluate, a.k.a. the charge dimension
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     const int n_nodes = n_boxes();

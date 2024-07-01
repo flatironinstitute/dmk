@@ -7,10 +7,10 @@
 #include <sctl.hpp>
 #include <vector>
 
-template <typename T>
-struct FourierData;
 
 namespace dmk {
+template <typename T>
+struct FourierData;
 
 template <typename Real, int DIM>
 struct DMKPtTree : public sctl::PtTree<Real, DIM> {
