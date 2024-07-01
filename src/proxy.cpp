@@ -17,12 +17,13 @@ namespace dmk::proxy {
     using dmk::ndview;
 template <typename T>
 
-void proxycharge2pw_2d(int n_charge_dim, int n_order, int n_pw, ndview<const T, 3>& proxy_coeffs, ndview<const std::complex<T>, 2>& poly2pw,
+void proxycharge2pw_2d(ndview<const T, 3>& proxy_coeffs, ndview<const std::complex<T>, 2>& poly2pw,
                        ndview<std::complex<T>, 3>& pw_expansion) {
     using dmk::gemm::gemm;
-    const int n_pw2 = (n_pw + 1) / 2;
-    const int n_pw_coeffs = n_pw * n_pw2;
-    const int n_poly2pw_coeffs = n_order * n_pw;
+    const int n_order = proxy_coeffs.extent(0);
+    const int n_charge_dim = proxy_coeffs.extent(2);
+    const int n_pw = poly2pw.extent(0);
+    const int n_pw2 = pw_expansion.extent(1);
     const int n_proxy_coeffs = n_order * n_order;
 
     sctl::Vector<std::complex<T>> proxy_coeffs_complex(n_proxy_coeffs);
@@ -88,8 +89,8 @@ void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const T 
         ndview<const T, 3> proxy_coeffs_view(proxy_coeffs, n_order, n_order, n_charge_dim);
         ndview<const std::complex<T>, 2> poly2pw_view(poly2pw, n_pw, n_order);
         ndview<std::complex<T>, 3> pw_expansion_view(pw_expansion, n_pw, (n_pw+1)/2, n_charge_dim);
-        
-        return proxycharge2pw_2d(n_charge_dim, n_order, n_pw, proxy_coeffs_view, poly2pw_view, pw_expansion_view);
+
+        return proxycharge2pw_2d(proxy_coeffs_view, poly2pw_view, pw_expansion_view);
     }
     if (n_dim == 3)
         return proxycharge2pw_3d(n_charge_dim, n_order, n_pw, proxy_coeffs, poly2pw, pw_expansion);
