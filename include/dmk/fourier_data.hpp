@@ -39,6 +39,7 @@ struct FourierData {
     std::vector<double> coeffs2;
     std::vector<int> ncoeffs1;
     std::vector<int> ncoeffs2;
+    const int n_coeffs_max = 100;
 
     const std::vector<double> &boxsize;
     void calc_planewave_coeff_matrices(int i_level, int n_order, sctl::Vector<std::complex<T>> &prox2pw,

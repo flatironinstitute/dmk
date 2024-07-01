@@ -253,7 +253,7 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps, ProlateFuncs &pf) {
         w1(n_quad), w2(n_quad), fhat(n_quad);
     double u, v; // dummy vars
     legeexps_(&i_type, &n_quad, xs_base.data(), &u, &v, whts_base.data());
-    const int nr1 = 100, nr2 = 100;
+    const int nr1 = n_coeffs_max, nr2 = n_coeffs_max;
     auto [v1, vlu1] = dmk::chebyshev::get_vandermonde_and_LU<double>(nr1);
     auto [v2, vlu2] = dmk::chebyshev::get_vandermonde_and_LU<double>(nr2);
     Eigen::VectorXd fvals(nr1);

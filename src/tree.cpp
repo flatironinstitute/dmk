@@ -1,3 +1,4 @@
+#include <dmk.h>
 #include <dmk/chebychev.hpp>
 #include <dmk/fortran.h>
 #include <dmk/fourier_data.hpp>
@@ -228,6 +229,7 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const int n_pw_per_box = n_pw_modes * nd_out;
     const int n_coeffs_per_box = params.n_mfm * sctl::pow<DIM>(n_order);
+    const int ndigits = std::round(log10(1.0 / params.eps) - 0.1);
 
     sctl::Vector<std::complex<T>> pw_out(n_pw_per_box * n_boxes());
     sctl::Vector<std::complex<T>> pw_in(n_pw_per_box * n_boxes());
@@ -296,7 +298,10 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
             }
         }
 
-        // Evaluation local expansions
+        const double rsc = 2.0 / boxsize[i_level];
+        const double cen = -1.0;
+        const double d2max2 = boxsize[i_level] * boxsize[i_level];
+        // Evaluate local expansions and direct interactions
         for (auto box : level_indices[i_level]) {
             if (!r_trg_cnt[box])
                 continue;
@@ -305,6 +310,18 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, co
             const int n_trg = r_trg_cnt[box];
             pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, &proxy_coeffs_downward[box * n_coeffs_per_box], &n_trg,
                                  r_trg_ptr(box), &centers[box * dim], &sc, pot_ptr(box));
+
+            // Evaluate the direct interactions
+            const int ifself = 1;
+            const int ifcharge = params.use_charge;
+            const int ifdipole = 0;
+            const int one = 1;
+            const int n_src_p1 = r_src_cnt[box] + 1;
+            const int n_trg_p1 = r_trg_cnt[box] + 1;
+            pdmk_direct_c_(&nd, &dim, (int *)&params.kernel, &params.fparam, &ndigits, &rsc, &cen, &ifself,
+                           &fourier_data.ncoeffs1[i_level], &fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level],
+                           &d2max2, &one, &n_src_p1, r_src_ptr(box), &ifcharge, charge_ptr(box), &ifdipole, nullptr,
+                           &one, &n_trg_p1, &n_trg, r_trg_ptr(box), (int *)&params.pgh, pot_ptr(box), nullptr, nullptr);
         }
     }
 }

@@ -1,13 +1,13 @@
 #ifndef DMK_H
 #define DMK_H
 
-typedef enum {
+typedef enum : int {
     DMK_YUKAWA = 0,
     DMK_LAPLACE = 1,
     DMK_SQRT_LAPLACE = 2,
 } dmk_ikernel;
 
-typedef enum {
+typedef enum : int {
     DMK_POTENTIAL = 1,
     DMK_POTENTIAL_GRAD = 2,
     DMK_POTENTIAL_GRAD_HESSIAN = 3,

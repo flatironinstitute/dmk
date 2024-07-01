@@ -30,6 +30,11 @@ void dmk_pw2proxypot_(const int *ndim, const int *nd, const int *n, const int *n
                       const double *tab_pw2coefs, double *coefs);
 void pdmk_ortho_evalt_nd_(const int *ndim, const int *nd, const int *norder, const double *coefs, const int *nt,
                           const double *targ, const double *cen, const double *sc, double *pot);
+void pdmk_direct_c_(const int *nd, const int *dim, const int *ikernel, const double *rpars, const int *ndigits,
+                    const double *rsc, const double *cen, const int *ifself, const int *ncoefs, const double *coefs,
+                    const double *d2max, const int *istart, const int *iend, const double *source, const int *ifcharge,
+                    const double *charge, const int *ifdipole, const double *dipvec, const int *jstart, const int *jend,
+                    const int *ntarget, const double *ctarg, const int *ifpgh, double *pot, double *grad, double *hess);
 }
 
 #endif
