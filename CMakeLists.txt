@@ -20,7 +20,7 @@ if (NOT ${DMK_BUILD_TESTS})
 endif()
 
 # FIXME: BLAS hack on SCTL to avoid header conflict. Eigen's BLAS define conflicts with SCTL's BLAS, so we don't include SCTL's BLAS header
-add_compile_options("-march=native;-DSPDLOG_USE_STD_FORMAT;-DSCTL_HAVE_MPI;-DSCTL_MAX_DEPTH=62;-DEIGEN_USE_BLAS;-D_SCTL_BLAS_H_;-funroll-loops")
+add_compile_options("-march=native;-DSCTL_HAVE_MPI;-DSCTL_MAX_DEPTH=62;-DEIGEN_USE_BLAS;-D_SCTL_BLAS_H_;-funroll-loops")
 
 find_package(OpenMP REQUIRED)
 find_package(MPI REQUIRED)
