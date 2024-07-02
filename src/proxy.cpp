@@ -5,6 +5,7 @@
 #include <dmk/fortran.h>
 #include <dmk/gemm.hpp>
 #include <dmk/planewave.hpp>
+#include <dmk/types.hpp>
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
@@ -13,14 +14,16 @@
 #include <omp.h>
 
 namespace dmk::proxy {
-
+    using dmk::ndview;
 template <typename T>
-void proxycharge2pw_2d(int n_charge_dim, int n_order, int n_pw, const T *proxy_coeffs, const std::complex<T> *poly2pw,
-                       std::complex<T> *pw_expansion) {
+
+void proxycharge2pw_2d(ndview<const T, 3>& proxy_coeffs, ndview<const std::complex<T>, 2>& poly2pw,
+                       ndview<std::complex<T>, 3>& pw_expansion) {
     using dmk::gemm::gemm;
-    const int n_pw2 = (n_pw + 1) / 2;
-    const int n_pw_coeffs = n_pw * n_pw2;
-    const int n_poly2pw_coeffs = n_order * n_pw;
+    const int n_order = proxy_coeffs.extent(0);
+    const int n_charge_dim = proxy_coeffs.extent(2);
+    const int n_pw = poly2pw.extent(0);
+    const int n_pw2 = pw_expansion.extent(1);
     const int n_proxy_coeffs = n_order * n_order;
 
     sctl::Vector<std::complex<T>> proxy_coeffs_complex(n_proxy_coeffs);
@@ -28,15 +31,15 @@ void proxycharge2pw_2d(int n_charge_dim, int n_order, int n_pw, const T *proxy_c
 
     for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
         for (int i = 0; i < n_proxy_coeffs; ++i)
-            proxy_coeffs_complex[i] = {proxy_coeffs[i + i_dim * n_proxy_coeffs], 0.0};
+            proxy_coeffs_complex[i] = {proxy_coeffs.data_handle()[i + i_dim * n_proxy_coeffs], 0.0};
 
         // transform in y
-        gemm('n', 't', n_order, n_pw2, n_order, {1.0, 0.0}, &proxy_coeffs_complex[0], n_order, poly2pw, n_pw,
+        gemm('n', 't', n_order, n_pw2, n_order, {1.0, 0.0}, &proxy_coeffs_complex[0], n_order, poly2pw.data_handle(), n_pw,
              {0.0, 0.0}, &ff[0], n_order);
 
         // transform in x
-        gemm('n', 'n', n_pw, n_pw2, n_order, {1.0, 0.0}, &poly2pw[0], n_pw, &ff[0], n_order, {0.0, 0.0},
-             &pw_expansion[n_pw_coeffs * i_dim], n_pw);
+        gemm('n', 'n', n_pw, n_pw2, n_order, {1.0, 0.0}, poly2pw.data_handle(), n_pw, &ff[0], n_order, {0.0, 0.0},
+             &pw_expansion(0,0,i_dim), n_pw);
     }
 }
 
@@ -53,6 +56,9 @@ void proxycharge2pw_3d(int n_charge_dim, int n_order, int n_pw, const T *proxy_c
     sctl::Vector<std::complex<T>> ff2(n_pw * n_pw2 * n_order);
     sctl::Vector<std::complex<T>> proxy_coeffs_complex(n_order * n_order * n_order);
 
+    ndview<std::complex<T>, 3> ff_view(&ff[0], n_order, n_order, n_pw2);
+    ndview<std::complex<T>, 3> fft_view(&fft[0], n_order, n_pw2, n_order);
+
     for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
         for (int i = 0; i < n_proxy_coeffs; ++i)
             proxy_coeffs_complex[i] = proxy_coeffs[i + n_proxy_coeffs * i_dim];
@@ -64,7 +70,7 @@ void proxycharge2pw_3d(int n_charge_dim, int n_order, int n_pw, const T *proxy_c
         for (int m1 = 0; m1 < n_order; ++m1)
             for (int k3 = 0; k3 < n_pw2; ++k3)
                 for (int m2 = 0; m2 < n_order; ++m2)
-                    fft[m2 + n_order * (k3 + n_pw2 * m1)] = ff[m1 + n_order * (m2 + n_order * k3)];
+                    fft_view(m2, k3, m1) = ff_view(m1, m2, k3);
 
         // transform in y
         gemm('n', 'n', n_pw, n_pw2 * n_order, n_order, {1.0, 0.0}, poly2pw, n_pw, &fft[0], n_order, {0.0, 0.0}, &ff2[0],
@@ -79,8 +85,13 @@ void proxycharge2pw_3d(int n_charge_dim, int n_order, int n_pw, const T *proxy_c
 template <typename T>
 void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const T *proxy_coeffs,
                     const std::complex<T> *poly2pw, std::complex<T> *pw_expansion) {
-    if (n_dim == 2)
-        return proxycharge2pw_2d(n_charge_dim, n_order, n_pw, proxy_coeffs, poly2pw, pw_expansion);
+    if (n_dim == 2){
+        ndview<const T, 3> proxy_coeffs_view(proxy_coeffs, n_order, n_order, n_charge_dim);
+        ndview<const std::complex<T>, 2> poly2pw_view(poly2pw, n_pw, n_order);
+        ndview<std::complex<T>, 3> pw_expansion_view(pw_expansion, n_pw, (n_pw+1)/2, n_charge_dim);
+
+        return proxycharge2pw_2d(proxy_coeffs_view, poly2pw_view, pw_expansion_view);
+    }
     if (n_dim == 3)
         return proxycharge2pw_3d(n_charge_dim, n_order, n_pw, proxy_coeffs, poly2pw, pw_expansion);
 
