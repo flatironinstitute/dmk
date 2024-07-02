@@ -109,7 +109,7 @@ void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const sctl::
     auto &rank_logger = dmk::get_rank_logger();
     this->GetData(r_src_sorted, r_src_cnt, "pdmk_src");
 
-    const int n_coeffs = n_mfm * sctl::pow<DIM>(n_order);
+    const std::size_t n_coeffs = n_mfm * sctl::pow<DIM>(n_order);
     proxy_coeffs.ReInit(n_boxes() * n_coeffs);
     proxy_coeffs.SetZero();
     sctl::Vector<sctl::Long> counts(n_boxes());
@@ -229,9 +229,9 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
     const int nd_in = params.n_mfm;
     const int nd_out = params.n_mfm;
     const int n_pw = fourier_data.n_pw;
-    const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
-    const int n_pw_per_box = n_pw_modes * nd_out;
-    const int n_coeffs_per_box = params.n_mfm * sctl::pow<DIM>(n_order);
+    const std::size_t n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
+    const std::size_t n_pw_per_box = n_pw_modes * nd_out;
+    const std::size_t n_coeffs_per_box = params.n_mfm * sctl::pow<DIM>(n_order);
     const int ndigits = std::round(log10(1.0 / params.eps) - 0.1);
 
     sctl::Vector<std::complex<T>> pw_out(n_pw_per_box * n_boxes());

@@ -44,8 +44,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     DMKPtTree(const sctl::Comm &comm) : sctl::PtTree<Real, DIM>(comm){};
 
-    int n_levels() const { return level_indices.size(); }
-    int n_boxes() const { return this->GetNodeMID().Dim(); }
+    std::size_t n_levels() const { return level_indices.size(); }
+    std::size_t n_boxes() const { return this->GetNodeMID().Dim(); }
     void generate_metadata(int ns, int nd);
     Real *r_src_ptr(int i_node) { return &r_src_sorted[r_src_offsets[i_node]]; }
     Real *r_trg_ptr(int i_node) { return &r_trg_sorted[r_trg_offsets[i_node]]; }
