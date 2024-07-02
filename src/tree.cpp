@@ -241,6 +241,7 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
     pw_out.SetZero();
     pw_in.SetZero();
 
+    constexpr int n_children = 1u << DIM;
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         constexpr int nmax = 1;
         sctl::Vector<std::complex<T>> wpwshift(n_pw_modes * sctl::pow<DIM>(2 * nmax + 1));
@@ -292,12 +293,14 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
                              (double *)&proxy_coeffs_downward[box * n_coeffs_per_box]);
 
             // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
-            for (auto child : node_lists[box].child) {
+            for (int i_child = 0; i_child < n_children; ++i_child) {
+                const int child = node_lists[box].child[i_child];
                 if (child < 0)
                     continue;
-                dmk::tensorprod::transform(dim, nd, n_order, n_order, true,
-                                           &proxy_coeffs_downward[box * n_coeffs_per_box], &p2c[0],
-                                           &proxy_coeffs_downward[child * n_coeffs_per_box]);
+
+                dmk::tensorprod::transform(
+                    dim, nd, n_order, n_order, true, &proxy_coeffs_downward[box * n_coeffs_per_box],
+                    &p2c[i_child * DIM * n_order * n_order], &proxy_coeffs_downward[child * n_coeffs_per_box]);
             }
         }
 
