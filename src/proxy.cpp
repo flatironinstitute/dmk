@@ -44,10 +44,13 @@ void proxycharge2pw_2d(ndview<const T, 3>& proxy_coeffs, ndview<const std::compl
 }
 
 template <typename T>
-void proxycharge2pw_3d(int n_charge_dim, int n_order, int n_pw, const T *proxy_coeffs, const std::complex<T> *poly2pw,
-                       std::complex<T> *pw_expansion) {
+void proxycharge2pw_3d(ndview<const T, 4>& proxy_coeffs, ndview<const std::complex<T>, 2>& poly2pw,
+                       ndview<std::complex<T>, 4>& pw_expansion) {
     using dmk::gemm::gemm;
-    const int n_pw2 = (n_pw + 1) / 2;
+    const int n_order = proxy_coeffs.extent(0);
+    const int n_charge_dim = proxy_coeffs.extent(3);
+    const int n_pw = poly2pw.extent(0);
+    const int n_pw2 = pw_expansion.extent(2);
     const int n_proxy_coeffs = sctl::pow<3>(n_order);
     const int n_pw_coeffs = n_pw * n_pw * n_pw2;
 
@@ -61,11 +64,11 @@ void proxycharge2pw_3d(int n_charge_dim, int n_order, int n_pw, const T *proxy_c
 
     for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
         for (int i = 0; i < n_proxy_coeffs; ++i)
-            proxy_coeffs_complex[i] = proxy_coeffs[i + n_proxy_coeffs * i_dim];
+            proxy_coeffs_complex[i] = proxy_coeffs.data_handle()[i + i_dim * n_proxy_coeffs];
 
         // transform in z
         gemm('n', 't', n_order * n_order, n_pw2, n_order, {1.0, 0.0}, &proxy_coeffs_complex[0], n_order * n_order,
-             poly2pw, n_pw, {0.0, 0.0}, &ff[0], n_order * n_order);
+             poly2pw.data_handle(), n_pw, {0.0, 0.0}, &ff[0], n_order * n_order);
 
         for (int m1 = 0; m1 < n_order; ++m1)
             for (int k3 = 0; k3 < n_pw2; ++k3)
@@ -73,12 +76,12 @@ void proxycharge2pw_3d(int n_charge_dim, int n_order, int n_pw, const T *proxy_c
                     fft_view(m2, k3, m1) = ff_view(m1, m2, k3);
 
         // transform in y
-        gemm('n', 'n', n_pw, n_pw2 * n_order, n_order, {1.0, 0.0}, poly2pw, n_pw, &fft[0], n_order, {0.0, 0.0}, &ff2[0],
+        gemm('n', 'n', n_pw, n_pw2 * n_order, n_order, {1.0, 0.0}, poly2pw.data_handle(), n_pw, &fft[0], n_order, {0.0, 0.0}, &ff2[0],
              n_pw);
 
         // transform in x
-        gemm('n', 't', n_pw, n_pw * n_pw2, n_order, {1.0, 0.0}, poly2pw, n_pw, &ff2[0], n_pw * n_pw2, {0.0, 0.0},
-             &pw_expansion[i_dim * n_pw_coeffs], n_pw);
+        gemm('n', 't', n_pw, n_pw * n_pw2, n_order, {1.0, 0.0}, poly2pw.data_handle(), n_pw, &ff2[0], n_pw * n_pw2, {0.0, 0.0},
+             &pw_expansion(0,0,0,i_dim), n_pw);
     }
 }
 
@@ -92,9 +95,12 @@ void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const T 
 
         return proxycharge2pw_2d(proxy_coeffs_view, poly2pw_view, pw_expansion_view);
     }
-    if (n_dim == 3)
-        return proxycharge2pw_3d(n_charge_dim, n_order, n_pw, proxy_coeffs, poly2pw, pw_expansion);
-
+    if (n_dim == 3){
+        ndview<const T, 4> proxy_coeffs_view(proxy_coeffs, n_order, n_order, n_order, n_charge_dim);
+        ndview<const std::complex<T>, 2> poly2pw_view(poly2pw, n_pw, n_order);
+        ndview<std::complex<T>, 4> pw_expansion_view(pw_expansion, n_pw, n_pw, (n_pw+1)/2, n_charge_dim);
+        return proxycharge2pw_3d(proxy_coeffs_view, poly2pw_view, pw_expansion_view);
+    }
     throw std::runtime_error("Invalid dimension " + std::to_string(n_dim) + "provided");
 }
 
