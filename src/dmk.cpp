@@ -135,8 +135,12 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     tree.build_proxy_charges(params.n_mfm, n_order, c2p);
     tree.downward_pass(params, n_order, fourier_data, p2c);
 
+    sctl::Vector<T> res;
+    tree.GetParticleData(res, "pdmk_pot");
+    sctl::Vector<T>(res.Dim(), pot, false) = res;
+
     auto dt = omp_get_wtime() - st;
-    int N = n_src + n_trg;
+    int N = n_trg;
     if (tree.GetComm().Rank() == 0)
         MPI_Reduce(MPI_IN_PLACE, &N, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
     else
@@ -156,7 +160,6 @@ void init_data(int n_dim, int nd, int n_src, bool uniform, std::vector<double> &
     double wrig = 0.12;
     double rwig = 0;
     int nwig = 6;
-
     std::default_random_engine eng(seed);
     std::uniform_real_distribution<double> rng;
 
@@ -215,11 +218,12 @@ MPI_TEST_CASE("[DMK] pdmk 2d", 1) {}
 MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
     constexpr int n_dim = 3;
     constexpr int n_src = 1e4;
-    constexpr int n_trg = 0;
+    constexpr int n_trg = n_src;
     constexpr int nd = 1;
 
     std::vector<double> r_src, charges, rnormal, dipstr, pot, r_trg;
     init_data(n_dim, 1, n_src, false, r_src, rnormal, charges, dipstr, 0);
+    r_trg = r_src;
     pot.resize(n_src * nd);
 
     pdmk_params params;
@@ -233,6 +237,21 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
 
     pdmk(params, n_src, r_src.data(), charges.data(), rnormal.data(), dipstr.data(), n_trg, r_trg.data(), pot.data(),
          nullptr, nullptr, nullptr, nullptr, nullptr);
+
+    double test_pot = 0.0;
+    int test_targ = n_trg / 3;
+    for (int i = 0; i < n_src; ++i) {
+        double dr = 0.0;
+        for (int j = 0; j < n_dim; ++j)
+            dr += sctl::pow<2>(r_src[i * n_dim + j] - r_trg[test_targ * n_dim + j]);
+        dr = std::sqrt(dr);
+        if (!dr)
+            continue;
+
+        test_pot += charges[i] * exp(-params.fparam * dr) / dr;
+    }
+    std::cout << "pot[test_targ] = " << pot[test_targ] << std::endl;
+    std::cout << "test_pot = " << test_pot << std::endl;
 }
 
 } // namespace dmk
