@@ -120,10 +120,12 @@ void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const sctl::
     const auto &attrs = this->GetNodeAttr();
     const auto &node_mid = this->GetNodeMID();
     int n_direct = 0;
-    for (int i_box = 0; i_box < n_boxes(); ++i_box) {
-        if (r_src_cnt[i_box]) {
+    for (int i_level = n_levels() - 1; i_level >= 0; --i_level) {
+        for (auto i_box : this->level_indices[i_level]) {
+            if (!r_src_cnt[i_box])
+                continue;
             proxy::charge2proxycharge(DIM, n_mfm, n_order, r_src_cnt[i_box], r_src_ptr(i_box), charge_ptr(i_box),
-                                      center_ptr(i_box), 2.0 / boxsize[i_box], &proxy_coeffs[i_box * n_coeffs]);
+                                      center_ptr(i_box), 2.0 / boxsize[i_level], &proxy_coeffs[i_box * n_coeffs]);
             counts[i_box] = 1;
             n_direct++;
         }
