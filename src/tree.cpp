@@ -103,6 +103,16 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     this->template GetData<int>(trg_counts_global, counts, "trg_counts");
 }
 
+/// @brief Fill out the proxy coefficients used in the upward pass
+///
+/// Updates: proxy_coeffs
+///
+/// @tparam T Floating point format to use (float, double)
+/// @tparam DIM Spatial dimension tree lives in
+/// @param[in] n_mfm Number of different "charges" to simultaneously evaluate, a.k.a. the charge dimension
+/// @param[in] n_order Linear order of the polynomial expansion representing the charge distribution
+/// @param[in] c2p [n_order, n_order, DIM, 2**DIM] Child to parent matrices used to convert child proxy coefficients to
+/// parent proxy coefficients
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const sctl::Vector<T> &c2p) {
     auto &logger = dmk::get_logger();
@@ -141,9 +151,7 @@ void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const sctl::
                 if (child_box < 0 || !counts[child_box])
                     continue;
 
-                constexpr bool add_flag = true;
-                auto before = proxy_coeffs[parent_box * n_coeffs];
-                tensorprod::transform(DIM, n_mfm, n_order, n_order, add_flag, &proxy_coeffs[child_box * n_coeffs],
+                tensorprod::transform(DIM, n_mfm, n_order, n_order, true, &proxy_coeffs[child_box * n_coeffs],
                                       &c2p[i_child * DIM * n_order * n_order], &proxy_coeffs[parent_box * n_coeffs]);
                 counts[parent_box] = 1;
                 n_merged += 1;
@@ -214,6 +222,17 @@ void multiply_kernelFT_cd2p(int nd, int ndim, bool ifcharge, bool ifdipole, int 
             pwexp[n + ind * nd] = pwexp1[n + ind * nd] * radialft[n];
 }
 
+/// @brief Perform the "downward pass"
+///
+/// Updates: proxy_coeffs_downward, tree 'pdmk_pot' particle data
+///
+/// @tparam T Floating point format to use (float, double)
+/// @tparam DIM Spatial dimension tree lives in
+/// @param[in] params User input pdmk params
+/// @param[in] n_order Order of polynomial expansion (FIXME: Should just be fixed)
+/// @param[in,out] fourier_data Various fourier data. Only changes work array (FIXME: lame doc)
+/// @param[in] p2c [n_order, n_order, DIM, 2**DIM] Parent to child matrices used to pass parent proxy charges to their
+/// children
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, FourierData<T> &fourier_data,
                                       const sctl::Vector<T> &p2c) {
@@ -260,7 +279,7 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
             // Form the outgoing expansion Φl(box) for the difference kernel Dl from the proxy charge expansion
             // coefficients using Tprox2pw.
             dmk::proxy::proxycharge2pw(DIM, nd_out, n_order, fourier_data.n_pw,
-                                       &proxy_coeffs[box * sctl::pow<DIM>(n_order)], &poly2pw[0],
+                                       &proxy_coeffs[box * n_coeffs_per_box], &poly2pw[0],
                                        &pw_out[box * n_pw_per_box]);
             memcpy(&pw_in[box * n_pw_per_box], &pw_out[box * n_pw_per_box], n_pw_per_box * sizeof(std::complex<T>));
         }
