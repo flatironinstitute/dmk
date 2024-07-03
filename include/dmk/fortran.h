@@ -37,6 +37,13 @@ void pdmk_direct_c_(const int *nd, const int *dim, const int *ikernel, const dou
                     const int *ntarget, const double *ctarg, const int *ifpgh, double *pot, double *grad, double *hess);
 void yukawa_windowed_kernel_value_at_zero_(const int *dim, const double *rpars, const double *beta, const double *bsize,
                                            const double *rl, const double *wprolate, double *fval);
+void pdmk_(const int *nd, const int *dim, const double *eps, const int *ikernel, const double *rpars,
+           const int *iperiod, const int *ns, const double *sources, const int *ifcharge, const double *charge,
+           const int *ifdipole, const double *rnormal, const double *dipstr, const int *ifpgh, double *pot,
+           double *grad, double *hess, const int *nt, const double *targ, const int *ifpghtarg, double *pottarg,
+           double *gradtarg, double *hesstarg, double *tottimeinfo);
+void tens_prod_trans_add_(const int *ndim, const int *nvec, const int *nin, const double *fin, const int *nout,
+                         double *fout, const double *umat);
 }
 
 #endif

@@ -79,7 +79,7 @@ T procl180_rescale(T eps) {
 
 template <typename T, int DIM>
 void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge, const T *normal, const T *dipole_str,
-          int n_trg, const T *r_trg, T *pot, T *grad, T *hess, T *pottarg, T *gradtarg, T *hesstarg) {
+          int n_trg, const T *r_trg, T *pot, T *grad, T *hess) {
     auto &logger = dmk::get_logger(params.log_level);
     auto &rank_logger = dmk::get_rank_logger(params.log_level);
     logger->info("PDMK called");
@@ -197,14 +197,6 @@ void init_data(int n_dim, int nd, int n_src, bool uniform, std::vector<double> &
         }
     }
 
-    for (int i = 0; i < nd; ++i) {
-        dipstr[0 * nd + i] = 0.0;
-        dipstr[1 * nd + i] = 0.0;
-        charges[0 * nd + i] = 0.0;
-        charges[1 * nd + i] = 0.0;
-        charges[2 * nd + i] = 1.0;
-    }
-
     for (int i = 0; i < 3; ++i)
         r_src[i] = 0.0;
     for (int i = 3; i < 6; ++i)
@@ -217,26 +209,38 @@ MPI_TEST_CASE("[DMK] pdmk 2d", 1) {}
 
 MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
     constexpr int n_dim = 3;
-    constexpr int n_src = 1e4;
+    constexpr int n_src = 10000;
     constexpr int n_trg = n_src;
     constexpr int nd = 1;
 
-    std::vector<double> r_src, charges, rnormal, dipstr, pot, r_trg;
-    init_data(n_dim, 1, n_src, false, r_src, rnormal, charges, dipstr, 0);
+    std::vector<double> r_src, pot_src, grad_src, hess_src, charges, rnormal, dipstr, pot_trg, r_trg, grad_trg,
+        hess_trg;
+    init_data(n_dim, 1, n_src, true, r_src, rnormal, charges, dipstr, 0);
     r_trg = r_src;
-    pot.resize(n_src * nd);
+    pot_src.resize(n_src * nd);
+    grad_src.resize(n_src * nd * n_dim);
+    hess_src.resize(n_src * nd * n_dim * n_dim);
+    pot_trg.resize(n_trg * nd);
+    grad_trg.resize(n_trg * nd * n_dim);
+    hess_trg.resize(n_trg * nd * n_dim * n_dim);
 
     pdmk_params params;
     params.eps = 1e-6;
     params.n_dim = n_dim;
-    params.n_per_leaf = 100;
+    params.n_per_leaf = 80;
     params.n_mfm = nd;
     params.pgh = DMK_POTENTIAL;
     params.kernel = DMK_YUKAWA;
     params.log_level = 0;
+    params.fparam = 6.0;
 
-    pdmk(params, n_src, r_src.data(), charges.data(), rnormal.data(), dipstr.data(), n_trg, r_trg.data(), pot.data(),
-         nullptr, nullptr, nullptr, nullptr, nullptr);
+    pdmk(params, n_src, r_src.data(), charges.data(), rnormal.data(), dipstr.data(), n_trg, r_trg.data(),
+         pot_trg.data(), nullptr, nullptr);
+
+    const int ifdipole = 0;
+    const int iperiod = 0;
+    const int pgh_src = 1;
+    double tottimeinfo[20];
 
     double test_pot = 0.0;
     int test_targ = n_trg / 3;
@@ -250,8 +254,14 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
 
         test_pot += charges[i] * exp(-params.fparam * dr) / dr;
     }
-    std::cout << "pot[test_targ] = " << pot[test_targ] << std::endl;
+    std::cout << "pot[test_targ] = " << pot_trg[test_targ] << std::endl;
     std::cout << "test_pot = " << test_pot << std::endl;
+
+    int zero = 0;
+    pdmk_(&params.n_mfm, &params.n_dim, &params.eps, (int *)&params.kernel, &params.fparam, &iperiod, &n_src,
+          r_src.data(), &params.use_charge, charges.data(), &ifdipole, nullptr, nullptr, &pgh_src, pot_src.data(),
+          grad_src.data(), hess_src.data(), &zero, nullptr, &zero, nullptr, nullptr, nullptr, tottimeinfo);
+    std::cout << "pot_ref[test_targ] = " << pot_src[test_targ] << std::endl;
 }
 
 } // namespace dmk
@@ -269,13 +279,10 @@ extern "C" {
 // }
 
 void pdmk(pdmk_params params, int n_src, const double *r_src, const double *charge, const double *normal,
-          const double *dipole_str, int n_trg, const double *r_trg, double *pot, double *grad, double *hess,
-          double *pottarg, double *gradtarg, double *hesstarg) {
+          const double *dipole_str, int n_trg, const double *r_trg, double *pot, double *grad, double *hess) {
     if (params.n_dim == 2)
-        return dmk::pdmk<double, 2>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess,
-                                    pottarg, gradtarg, hesstarg);
+        return dmk::pdmk<double, 2>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess);
     if (params.n_dim == 3)
-        return dmk::pdmk<double, 3>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess,
-                                    pottarg, gradtarg, hesstarg);
+        return dmk::pdmk<double, 3>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess);
 }
 }

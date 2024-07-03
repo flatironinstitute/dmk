@@ -151,8 +151,12 @@ void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const sctl::
                 if (child_box < 0 || !counts[child_box])
                     continue;
 
-                tensorprod::transform(DIM, n_mfm, n_order, n_order, true, &proxy_coeffs[child_box * n_coeffs],
-                                      &c2p[i_child * DIM * n_order * n_order], &proxy_coeffs[parent_box * n_coeffs]);
+                // FIXME: verify tensorprod::transform is correct and switch to it
+                const int dim = DIM;
+                tens_prod_trans_add_(&dim, &n_mfm, &n_order, &proxy_coeffs[child_box * n_coeffs], &n_order,
+                                     &proxy_coeffs[parent_box * n_coeffs], &c2p[i_child * DIM * n_order * n_order]);
+                // tensorprod::transform(DIM, n_mfm, n_order, n_order, true, &proxy_coeffs[child_box * n_coeffs],
+                //                       &c2p[i_child * DIM * n_order * n_order], &proxy_coeffs[parent_box * n_coeffs]);
                 counts[parent_box] = 1;
                 n_merged += 1;
             }
