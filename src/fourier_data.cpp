@@ -96,7 +96,7 @@ FourierData<T>::FourierData(dmk_ikernel kernel_, int n_dim_, int n_digits_, int 
     else if (n_dim == 3)
         std::tie(n_pw, hpw[0], ws[0], rl[0]) = get_PSWF_truncated_kernel_pwterms<3>(n_digits, boxsize[0]);
 
-    dkernelft.resize(n_fourier * (n_levels + 1));
+    dkernelft.resize((n_fourier + 1) * (n_levels + 1));
 
     rl[1] = rl[0];
     for (int i = 2; i < rl.size(); ++i)
@@ -168,9 +168,9 @@ void FourierData<T>::yukawa_difference_kernel_fourier_transform(int i_level) {
     const double &rlambda = fparam;
     const double rlambda2 = rlambda * rlambda;
     const double psi0 = prolate_funcs.eval_val(0.0);
-    T *fhat = &dkernelft[(i_level + 1) * n_fourier];
+    T *fhat = &dkernelft[(i_level + 1) * (n_fourier + 1)];
 
-    for (int i = 0; i < n_fourier; ++i) {
+    for (int i = 0; i < n_fourier + 1; ++i) {
         T rk = sqrt((T)i) * hpw[i_level + 1];
         T xi2 = rk * rk + rlambda2;
         T xi = sqrt(xi2);
@@ -225,7 +225,7 @@ void FourierData<T>::update_difference_kernels() {
         auto &hpw_i = hpw[i_level + 1];
         auto &ws_i = ws[i_level + 1];
         auto &rl_i = rl[i_level + 1];
-        auto dkernelft_i = &dkernelft[(i_level + 1) * n_fourier];
+        auto dkernelft_i = &dkernelft[(i_level + 1) * (n_fourier + 1)];
 
         // FIXME: GIVES DIFFERENT NPW THAN OTHER CODE
         // FIXME: overwrites n_pw
@@ -244,8 +244,8 @@ void FourierData<T>::update_difference_kernels() {
         else
             scale_factor = 2.0;
 
-        const T *dkernelft_im1 = &dkernelft[i_level * n_fourier];
-        for (int i = 0; i < n_fourier; ++i)
+        const T *dkernelft_im1 = &dkernelft[i_level * (n_fourier + 1)];
+        for (int i = 0; i < n_fourier + 1; ++i)
             dkernelft_i[i] = scale_factor * dkernelft_im1[i];
     }
 }
@@ -425,7 +425,8 @@ void FourierData<T>::calc_planewave_translation_matrix(int dim, int i_level, T x
 template <typename T>
 void FourierData<T>::calc_planewave_coeff_matrices(int i_level, int n_order, sctl::Vector<std::complex<T>> &prox2pw_vec,
                                                    sctl::Vector<std::complex<T>> &pw2poly_vec) const {
-    dmk::calc_planewave_coeff_matrices(boxsize[i_level], hpw[i_level], n_pw, n_order, prox2pw_vec, pw2poly_vec);
+    dmk::calc_planewave_coeff_matrices(boxsize[std::max(i_level, 0)], hpw[i_level + 1], n_pw, n_order, prox2pw_vec,
+                                       pw2poly_vec);
 }
 
 // template struct FourierData<float>;

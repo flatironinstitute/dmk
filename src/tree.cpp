@@ -264,27 +264,54 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
     pw_out.SetZero();
     pw_in.SetZero();
 
+    constexpr int dim = DIM;
+    constexpr int nmax = 1;
+    const int shift = n_pw / 2;
+    const int nexp = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
+    sctl::Vector<std::complex<T>> wpwshift(n_pw_modes * sctl::pow<DIM>(2 * nmax + 1));
+    sctl::Vector<T> ts(n_pw);
+    sctl::Vector<T> rk(DIM * sctl::pow<DIM>(n_pw));
+    sctl::Vector<T> radialft(nexp);
+
+    for (int i = 0; i < n_pw; ++i)
+        ts[i] = fourier_data.hpw[0] * (i - shift);
+    meshnd_(&dim, &ts[0], &n_pw, &rk[0]);
+    mk_tensor_product_fourier_transform_(&dim, &n_pw, &fourier_data.n_fourier, &fourier_data.dkernelft[0], &nexp,
+                                         &radialft[0]);
+    fourier_data.calc_planewave_coeff_matrices(-1, n_order, poly2pw, pw2poly);
+
+    dmk::proxy::proxycharge2pw(DIM, nd_out, n_order, fourier_data.n_pw, &proxy_coeffs[0], &poly2pw[0], &pw_out[0]);
+    // multiply_kernelFT_cd2p(nd_out, dim, params.use_charge, false, fourier_data.n_fourier, &pw_out[0], &radialft[0],
+    //                        &rk[0]);
+    constexpr int zero = 0;
+    dmk_multiply_kernelft_cd2p_(&nd_out, &dim, &params.use_charge, &zero, &nexp, (double *)&pw_out[0], &radialft[0],
+                                &rk[0]);
+    memcpy(&pw_in[0], &pw_out[0], n_pw_per_box * sizeof(std::complex<T>));
+    dmk_pw2proxypot_(&dim, &nd, &n_order, &n_pw, (double *)&pw_in[0], (double *)&pw2poly[0],
+                     (double *)&proxy_coeffs_downward[0]);
+
     constexpr int n_children = 1u << DIM;
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
-        constexpr int nmax = 1;
-        sctl::Vector<std::complex<T>> wpwshift(n_pw_modes * sctl::pow<DIM>(2 * nmax + 1));
-        sctl::Vector<T> ts(n_pw);
-        sctl::Vector<T> rk(DIM * sctl::pow<DIM>(n_pw));
-        const int shift = n_pw / 2;
         for (int i = 0; i < n_pw; ++i)
-            ts[i] = fourier_data.hpw[i_level] * (i - shift);
-        const int dim = DIM;
+            ts[i] = fourier_data.hpw[i_level + 1] * (i - shift);
         meshnd_(&dim, &ts[0], &n_pw, &rk[0]);
         fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
         mk_pw_translation_matrices_(&dim, &boxsize[i_level], &n_pw, &ts[0], &nmax, (T *)&wpwshift[0]);
+        mk_tensor_product_fourier_transform_(&dim, &n_pw, &fourier_data.n_fourier,
+                                             &fourier_data.dkernelft[(i_level + 1) * (fourier_data.n_fourier + 1)],
+                                             &nexp, &radialft[0]);
 
         // Form outgoing expansions
         for (auto box : level_indices[i_level]) {
             // Form the outgoing expansion Φl(box) for the difference kernel Dl from the proxy charge expansion
             // coefficients using Tprox2pw.
-            dmk::proxy::proxycharge2pw(DIM, nd_out, n_order, fourier_data.n_pw,
-                                       &proxy_coeffs[box * n_coeffs_per_box], &poly2pw[0],
-                                       &pw_out[box * n_pw_per_box]);
+            dmk::proxy::proxycharge2pw(DIM, nd_out, n_order, fourier_data.n_pw, &proxy_coeffs[box * n_coeffs_per_box],
+                                       &poly2pw[0], &pw_out[box * n_pw_per_box]);
+            dmk_multiply_kernelft_cd2p_(&nd_out, &dim, &params.use_charge, &zero, &nexp,
+                                        (double *)&pw_out[box * n_pw_per_box], &radialft[0], &rk[0]);
+
+            // multiply_kernelFT_cd2p(nd_out, dim, params.use_charge, false, fourier_data.n_fourier,
+            //                        &pw_out[box * n_pw_per_box], &radialft[0], &rk[0]);
             memcpy(&pw_in[box * n_pw_per_box], &pw_out[box * n_pw_per_box], n_pw_per_box * sizeof(std::complex<T>));
         }
 
@@ -301,9 +328,9 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
                 dmk_find_pwshift_ind_(&dim, &iperiod, &centers[box * DIM], &centers[neighbor * DIM], &boxsize[0],
                                       &boxsize[i_level], &nmax, &ind);
                 ind--; // fortran uses 1 based indexing
-                dmk_shiftpw_(&nd_in, &n_pw, (double *)&pw_out[neighbor * n_pw_per_box],
-                             (double *)&pw_in[box * n_pw_per_box],
-                             (double *)&wpwshift[n_pw * sctl::pow<DIM>(2 * nmax + 1) * ind]);
+                dmk_shiftpw_(&nd_in, &nexp, (double *)&pw_out[neighbor * n_pw_per_box],
+                             (double *)&pw_in[box * n_pw_per_box], (double *)&wpwshift[n_pw_per_box * ind]);
+                printf("");
             }
         }
 
@@ -321,6 +348,9 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
                 if (child < 0)
                     continue;
 
+                // tens_prod_trans_add_(&dim, &nd, &n_order, &proxy_coeffs_downward[box * n_coeffs_per_box], &n_order,
+                //                      &proxy_coeffs_downward[child * n_coeffs_per_box],
+                //                      &p2c[i_child * DIM * n_order * n_order]);
                 dmk::tensorprod::transform(
                     dim, nd, n_order, n_order, true, &proxy_coeffs_downward[box * n_coeffs_per_box],
                     &p2c[i_child * DIM * n_order * n_order], &proxy_coeffs_downward[child * n_coeffs_per_box]);
@@ -362,6 +392,7 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
                 pot_ptr(box)[i] -= w0 * charge_ptr(box)[i];
         }
     }
+    int a = 0;
 }
 
 // template struct DMKPtTree<float, 2>;

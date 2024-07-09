@@ -43,7 +43,11 @@ void pdmk_(const int *nd, const int *dim, const double *eps, const int *ikernel,
            double *grad, double *hess, const int *nt, const double *targ, const int *ifpghtarg, double *pottarg,
            double *gradtarg, double *hesstarg, double *tottimeinfo);
 void tens_prod_trans_add_(const int *ndim, const int *nvec, const int *nin, const double *fin, const int *nout,
-                         double *fout, const double *umat);
+                          double *fout, const double *umat);
+void mk_tensor_product_fourier_transform_(const int *dim, const int *npw, const int *nfourier, const double *fhat,
+                                          const int *nexp, double *pswfft);
+void dmk_multiply_kernelft_cd2p_(const int *nd, const int *ndim, const int *ifcharge, const int *ifdipole,
+                                 const int *nexp, double *pwexp, const double *radialft, const double *rk);
 }
 
 #endif
