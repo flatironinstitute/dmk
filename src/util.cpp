@@ -72,23 +72,23 @@ void mesh_nd(int dim, Real *in, int size, Real *out) {
 }
 
 TEST_CASE("[DMK] mesh_nd") {
-    const int size = 3; // size of x
     for (int dim : {2, 3}) {
-        const int nxyz = dim * std::pow(size, dim);
-        std::vector<double> x = {1.0, 2.0, 3.0};
-        std::vector<double> xy(nxyz);
-        std::vector<double> xy_fort(nxyz);
-        mesh_nd(dim, x.data(), size, xy.data());
-        meshnd_(&dim, x.data(), &size, xy_fort.data());
-        CHECK(xy == xy_fort);
+        std::vector<double> in = {1.0, 2.0, 3.0};
+        const int size = in.size();
+        const int nxyz = dim * pow(size, dim);
+        std::vector<double> out(nxyz);
+        std::vector<double> out_fort(nxyz);
+        mesh_nd(dim, in.data(), size, out.data());
+        meshnd_(&dim, in.data(), &size, out_fort.data());
+        CHECK(out == out_fort);
 
-        for (auto &xval : xy)
+        for (auto &xval : out)
             xval = 0.0;
 
-        ndview<const double, 1> xview(x.data(), size);
-        ndview<double, 2> xyview(xy.data(), dim, std::pow(size, dim));
-        mesh_nd(dim, xview, xyview);
-        CHECK(xy == xy_fort);
+        ndview<const double, 1> in_view(in.data(), size);
+        ndview<double, 2> out_view(out.data(), dim, pow(size, dim));
+        mesh_nd(dim, in_view, out_view);
+        CHECK(out == out_fort);
     }
 }
 

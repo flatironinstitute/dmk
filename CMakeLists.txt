@@ -56,7 +56,8 @@ add_library(dmk_ref STATIC $<TARGET_OBJECTS:dmk_ref_common> $<TARGET_OBJECTS:dmk
 add_library(dmk_ref_shared SHARED $<TARGET_OBJECTS:dmk_ref_common> $<TARGET_OBJECTS:dmk_ref_pdmk> $<TARGET_OBJECTS:dmk_ref_bdmk>)
 set_target_properties(dmk_ref_shared PROPERTIES OUTPUT_NAME dmk_ref)
 
-set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/fourier_data.cpp src/tensorprod.cpp src/planewave.cpp src/util.cpp)
+set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp
+            src/fourier_data.cpp src/tensorprod.cpp src/planewave.cpp)
 add_library(DMKOBJS OBJECT ${DMK_SRC})
 set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES} ${MPI_CXX_INCLUDE_DIRS})
