@@ -8,9 +8,9 @@
 #include <vector>
 
 namespace dmk::util {
-    using dmk::ndview;
+using dmk::ndview;
 template <typename Real>
-void mesh_2d(ndview<const Real, 1>& x, ndview<const Real, 1>& y, ndview<Real, 2>& xy) {
+void mesh_2d(ndview<const Real, 1> &x, ndview<const Real, 1> &y, ndview<Real, 2> &xy) {
     int nx = x.extent(0);
     int ny = y.extent(0);
 
@@ -25,7 +25,7 @@ void mesh_2d(ndview<const Real, 1>& x, ndview<const Real, 1>& y, ndview<Real, 2>
 }
 
 template <typename Real>
-void mesh_3d(ndview<const Real, 1>& x, ndview<const Real, 1>& y, ndview<const Real, 1>& z, ndview<Real, 2>& xyz) {
+void mesh_3d(ndview<const Real, 1> &x, ndview<const Real, 1> &y, ndview<const Real, 1> &z, ndview<Real, 2> &xyz) {
     int nx = x.extent(0);
     int ny = y.extent(0);
     int nz = z.extent(0);
@@ -44,34 +44,52 @@ void mesh_3d(ndview<const Real, 1>& x, ndview<const Real, 1>& y, ndview<const Re
 }
 
 template <typename Real>
-void mesh_nd(int dim, Real* in, int size, Real* out) {
+void mesh_nd(int dim, ndview<const Real, 1> &x, ndview<Real, 2> &out) {
+    if (dim == 2)
+        return mesh_2d(x, x, out);
+    if (dim == 3)
+        return mesh_3d(x, x, x, out);
+
+    throw std::runtime_error("Invalid dimension " + std::to_string(dim) + "provided");
+}
+
+template <typename Real>
+void mesh_nd(int dim, Real *in, int size, Real *out) {
     if (dim == 2) {
         ndview<const Real, 1> x(in, size);
-        ndview<Real, 2> xy(out, 2, size*size);
+        ndview<Real, 2> xy(out, 2, size * size);
 
         return mesh_2d(x, x, xy);
-    } 
+    }
     if (dim == 3) {
         ndview<const Real, 1> x(in, size);
-        ndview<Real, 2> xyz(out, 3, size*size*size);
+        ndview<Real, 2> xyz(out, 3, size * size * size);
 
         return mesh_3d(x, x, x, xyz);
     }
-    
+
     throw std::runtime_error("Invalid dimension " + std::to_string(dim) + "provided");
 }
 
 TEST_CASE("[DMK] mesh_nd") {
-    const int size = 3; //size of x
+    const int size = 3; // size of x
     for (int dim : {2, 3}) {
+        const int nxyz = dim * std::pow(size, dim);
         std::vector<double> x = {1.0, 2.0, 3.0};
-        std::vector<double> in(size);
-        std::vector<double> xy(dim*size*size);
-        std::vector<double> xy_fort(dim*size*size);
-        mesh_nd(dim, in.data(), size, xy.data());
-        meshnd_(&dim, in.data(), &size, xy_fort.data());
+        std::vector<double> xy(nxyz);
+        std::vector<double> xy_fort(nxyz);
+        mesh_nd(dim, x.data(), size, xy.data());
+        meshnd_(&dim, x.data(), &size, xy_fort.data());
+        CHECK(xy == xy_fort);
+
+        for (auto &xval : xy)
+            xval = 0.0;
+
+        ndview<const double, 1> xview(x.data(), size);
+        ndview<double, 2> xyview(xy.data(), dim, std::pow(size, dim));
+        mesh_nd(dim, xview, xyview);
         CHECK(xy == xy_fort);
     }
 }
 
-}// namespace dmk::util
+} // namespace dmk::util
