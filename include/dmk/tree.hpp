@@ -42,6 +42,11 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<Real> proxy_coeffs;
     sctl::Vector<Real> proxy_coeffs_downward;
 
+    sctl::Vector<int> form_pw_expansion;
+    sctl::Vector<int> eval_pw_expansion;
+    sctl::Vector<int> form_tp_expansion;
+    sctl::Vector<int> eval_tp_expansion;
+
     DMKPtTree(const sctl::Comm &comm) : sctl::PtTree<Real, DIM>(comm){};
 
     std::size_t n_levels() const { return level_indices.size(); }

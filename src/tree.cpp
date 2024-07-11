@@ -7,9 +7,9 @@
 #include <dmk/tensorprod.hpp>
 #include <dmk/tree.hpp>
 #include <dmk/util.hpp>
-#include <sctl/tree.hpp>
-
 #include <mpi.h>
+#include <ranges>
+#include <sctl/tree.hpp>
 #include <stdexcept>
 
 namespace dmk {
@@ -74,6 +74,14 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
         scale *= 0.5;
     }
 
+    form_pw_expansion.ReInit(n_nodes);
+    eval_pw_expansion.ReInit(n_nodes);
+    eval_pw_expansion.SetZero();
+    form_tp_expansion.ReInit(n_nodes);
+    form_tp_expansion.SetZero();
+    eval_tp_expansion.ReInit(n_nodes);
+    eval_tp_expansion.SetZero();
+
     src_counts_local.SetZero();
     trg_counts_local.SetZero();
     for (int i_level = max_depth - 1; i_level >= 0; i_level--) {
@@ -101,6 +109,60 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     this->template AddData("trg_counts", trg_counts_local, counts);
     this->template ReduceBroadcast<int>("trg_counts");
     this->template GetData<int>(trg_counts_global, counts, "trg_counts");
+
+    form_pw_expansion[0] = true;
+    eval_pw_expansion[0] = true;
+
+    for (auto box : std::ranges::views::iota(0, n_nodes))
+        form_pw_expansion[box] = !node_attr[box].Leaf;
+
+    for (const auto &level_boxes : level_indices) {
+        for (auto box : level_boxes) {
+            for (auto neighbor : node_lists[box].nbr) {
+                if (neighbor < 0)
+                    continue;
+
+                const int npts = src_counts_global[neighbor] + trg_counts_global[neighbor];
+                if (form_pw_expansion[neighbor] && npts) {
+                    eval_pw_expansion[box] = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    for (const auto &level_boxes : level_indices) {
+        for (auto box : level_boxes) {
+            if (!eval_pw_expansion[box])
+                continue;
+            int tpeval = 1;
+            for (auto child : node_lists[box].child) {
+                if (child < 0)
+                    continue;
+
+                if (eval_pw_expansion[child]) {
+                    tpeval = 0;
+                    break;
+                }
+            }
+            if (tpeval)
+                eval_tp_expansion[box] = true;
+
+            if (!eval_tp_expansion[box]) {
+                for (auto child : node_lists[box].child) {
+                    if (child < 0)
+                        continue;
+
+                    if (!eval_pw_expansion[child])
+                        eval_tp_expansion[child] = true;
+                }
+            }
+        }
+    }
+
+    for (int i_level = 0; i_level < n_levels() - 1; ++i_level)
+        for (auto i_node : level_indices[i_level])
+            form_tp_expansion[i_node] = form_pw_expansion[i_node];
 }
 
 /// @brief Fill out the proxy coefficients used in the upward pass
