@@ -57,9 +57,9 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     }
     max_depth++;
     level_indices.resize(max_depth);
-    boxsize.resize(max_depth);
+    boxsize.resize(max_depth + 1);
     boxsize[0] = 1.0;
-    for (int i = 1; i < max_depth; ++i)
+    for (int i = 1; i < max_depth + 1; ++i)
         boxsize[i] = 0.5 * boxsize[i - 1];
 
     T scale = 1.0;
@@ -325,7 +325,7 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
                 // wave expansion Ψl(box) using Tpwshift.
                 constexpr int iperiod = 0;
                 int ind;
-                dmk_find_pwshift_ind_(&dim, &iperiod, &centers[box * DIM], &centers[neighbor * DIM], &boxsize[0],
+                dmk_find_pwshift_ind_(&dim, &iperiod, center_ptr(box), center_ptr(neighbor), &boxsize[0],
                                       &boxsize[i_level], &nmax, &ind);
                 ind--; // fortran uses 1 based indexing
                 dmk_shiftpw_(&nd_in, &nexp, (double *)&pw_out[neighbor * n_pw_per_box],
@@ -336,8 +336,6 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
 
         // Form local expansions
         for (auto box : level_indices[i_level]) {
-            // if (!in_flag[box])
-            //     continue;
             // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
             dmk_pw2proxypot_(&dim, &nd, &n_order, &n_pw, (double *)&pw_in[box * n_pw_per_box], (double *)&pw2poly[0],
                              (double *)&proxy_coeffs_downward[box * n_coeffs_per_box]);
@@ -348,22 +346,11 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
                 if (child < 0)
                     continue;
 
-                // tens_prod_trans_add_(&dim, &nd, &n_order, &proxy_coeffs_downward[box * n_coeffs_per_box], &n_order,
-                //                      &proxy_coeffs_downward[child * n_coeffs_per_box],
-                //                      &p2c[i_child * DIM * n_order * n_order]);
                 dmk::tensorprod::transform(
                     dim, nd, n_order, n_order, true, &proxy_coeffs_downward[box * n_coeffs_per_box],
                     &p2c[i_child * DIM * n_order * n_order], &proxy_coeffs_downward[child * n_coeffs_per_box]);
             }
         }
-
-        const double rsc = 2.0 / boxsize[i_level];
-        const double cen = -1.0;
-        const double d2max2 = boxsize[i_level] * boxsize[i_level];
-        if (params.kernel != DMK_YUKAWA)
-            throw std::runtime_error("Only yukawa potential supported");
-        // FIXME: more than yukawa...
-        const T w0 = fourier_data.yukawa_windowed_kernel_value_at_zero(i_level);
 
         // Evaluate local expansions and direct interactions
         for (auto box : level_indices[i_level]) {
@@ -373,23 +360,44 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
             const T sc = 2.0 / boxsize[i_level];
             const int n_trg = r_trg_cnt[box];
             pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, &proxy_coeffs_downward[box * n_coeffs_per_box], &n_trg,
-                                 r_trg_ptr(box), &centers[box * dim], &sc, pot_ptr(box));
+                                 r_trg_ptr(box), center_ptr(box), &sc, pot_ptr(box));
+        }
 
+        const double rsc = 2.0 / boxsize[i_level];
+        const double cen = -1.0;
+        const double d2max2 = boxsize[i_level] * boxsize[i_level];
+        if (params.kernel != DMK_YUKAWA)
+            throw std::runtime_error("Only yukawa potential supported");
+        // FIXME: more than yukawa...
+        const T w0 = fourier_data.yukawa_windowed_kernel_value_at_zero(i_level);
+        for (auto box : level_indices[i_level]) {
             // Evaluate the direct interactions
+            if (r_src_cnt[box] == 0)
+                continue;
+
+            const int n_src = r_src_cnt[box];
             const int ifself = 1;
             const int ifcharge = params.use_charge;
             const int ifdipole = 0;
             const int one = 1;
-            const int n_src_p1 = r_src_cnt[box] + 1; // not clear if i need the +1 or not...
-            const int n_trg_p1 = r_trg_cnt[box] + 1;
-            pdmk_direct_c_(&nd, &dim, (int *)&params.kernel, &params.fparam, &ndigits, &rsc, &cen, &ifself,
-                           &fourier_data.ncoeffs1[i_level], &fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level],
-                           &d2max2, &one, &n_src_p1, r_src_ptr(box), &ifcharge, charge_ptr(box), &ifdipole, nullptr,
-                           &one, &n_trg_p1, &n_trg, r_trg_ptr(box), (int *)&params.pgh, pot_ptr(box), nullptr, nullptr);
+            for (auto neighbor : node_lists[box].nbr) {
+                if (neighbor < 0 || r_trg_cnt[neighbor] == 0)
+                    continue;
+                const int n_trg = r_trg_cnt[neighbor];
+
+                Eigen::MatrixX<T> r_trg_transposed =
+                    Eigen::Map<Eigen::MatrixX<T>>(r_trg_ptr(neighbor), dim, n_trg).transpose();
+                pdmk_direct_c_(&nd, &dim, (int *)&params.kernel, &params.fparam, &ndigits, &rsc, &cen, &ifself,
+                               &fourier_data.ncoeffs1[i_level],
+                               &fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level], &d2max2, &one, &n_src,
+                               r_src_ptr(box), &ifcharge, charge_ptr(box), &ifdipole, nullptr, &one, &n_trg, &n_trg,
+                               r_trg_transposed.data(), (int *)&params.pgh, pot_ptr(neighbor), nullptr, nullptr);
+            }
 
             // Correct for self-evaluations
             for (int i = 0; i < nd; ++i)
-                pot_ptr(box)[i] -= w0 * charge_ptr(box)[i];
+                for (int i_src = 0; i_src < n_src; ++i_src)
+                    pot_ptr(box)[i * n_src + i_src] -= w0 * charge_ptr(box)[i * n_src + i_src];
         }
     }
     int a = 0;

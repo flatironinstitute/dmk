@@ -48,6 +48,9 @@ void mk_tensor_product_fourier_transform_(const int *dim, const int *npw, const 
                                           const int *nexp, double *pswfft);
 void dmk_multiply_kernelft_cd2p_(const int *nd, const int *ndim, const int *ifcharge, const int *ifdipole,
                                  const int *nexp, double *pwexp, const double *radialft, const double *rk);
+void yukawa_residual_kernel_coefs_(const double *eps, const int *dim, const double *rpars, const double *beta,
+                                   const double *bsize, const double *rl, double *wprolate, int *ncoefs1,
+                                   double *coefs1, int *ncoefs2, double *coefs2);
 }
 
 #endif
