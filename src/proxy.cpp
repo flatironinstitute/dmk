@@ -130,7 +130,7 @@ void charge2proxycharge_2d(int n_charge_dim, int order, int n_src, const T *r_sr
                 dy(i, i_src) = charge(i_dim, i_src) * poly_y[i];
         }
 
-        MatrixMap(&coeffs[i_dim * order * order], order, order) = poly_x * dy.transpose();
+        MatrixMap(&coeffs[i_dim * order * order], order, order) += poly_x * dy.transpose();
     }
 }
 
@@ -167,7 +167,7 @@ void charge2proxycharge_3d(int n_charge_dim, int order, int n_src, const T *r_sr
                 for (int m = 0; m < n_src; ++m)
                     dyz(m, j + k * order) = poly_y(j, m) * dz(m, k);
 
-        MatrixMap(&coeffs[i_dim * order * order * order], order, order * order) = poly_x * dyz;
+        MatrixMap(&coeffs[i_dim * order * order * order], order, order * order) += poly_x * dyz;
     }
 }
 

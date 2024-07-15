@@ -191,36 +191,47 @@ void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const sctl::
     const auto &node_lists = this->GetNodeLists();
     const auto &attrs = this->GetNodeAttr();
     const auto &node_mid = this->GetNodeMID();
+    const int dim = DIM;
+
     int n_direct = 0;
-    for (int i_level = n_levels() - 1; i_level >= 0; --i_level) {
-        for (auto i_box : this->level_indices[i_level]) {
-            if (!r_src_cnt[i_box])
-                continue;
-            proxy::charge2proxycharge(DIM, n_mfm, n_order, r_src_cnt[i_box], r_src_ptr(i_box), charge_ptr(i_box),
-                                      center_ptr(i_box), 2.0 / boxsize[i_level], &proxy_coeffs[i_box * n_coeffs]);
-            counts[i_box] = 1;
-            n_direct++;
-        }
+    const int start_level = std::max(n_levels() - 2, 0ul);
+    for (auto i_box : level_indices[start_level]) {
+        if (!form_pw_expansion[i_box])
+            continue;
+        proxy::charge2proxycharge(DIM, n_mfm, n_order, src_counts_local[i_box], r_src_ptr(i_box), charge_ptr(i_box),
+                                  center_ptr(i_box), 2.0 / boxsize[start_level], &proxy_coeffs[i_box * n_coeffs]);
+        counts[i_box] = 1;
+        n_direct++;
     }
     logger->debug("proxy: finished building leaf proxy charges");
 
     int n_merged = 0;
-    for (int i_level = n_levels() - 1; i_level >= 0; --i_level) {
-        for (auto parent_box : this->level_indices[i_level]) {
+    for (int i_level = start_level - 1; i_level >= 0; --i_level) {
+        for (auto parent_box : level_indices[i_level]) {
+            if (!form_pw_expansion[parent_box])
+                continue;
+
             auto &children = node_lists[parent_box].child;
             for (int i_child = 0; i_child < n_children; ++i_child) {
                 const int child_box = children[i_child];
-                if (child_box < 0 || !counts[child_box])
+                if (child_box < 0 || !src_counts_local[child_box])
                     continue;
-
-                // FIXME: verify tensorprod::transform is correct and switch to it
-                const int dim = DIM;
-                tens_prod_trans_add_(&dim, &n_mfm, &n_order, &proxy_coeffs[child_box * n_coeffs], &n_order,
-                                     &proxy_coeffs[parent_box * n_coeffs], &c2p[i_child * DIM * n_order * n_order]);
-                // tensorprod::transform(DIM, n_mfm, n_order, n_order, true, &proxy_coeffs[child_box * n_coeffs],
-                //                       &c2p[i_child * DIM * n_order * n_order], &proxy_coeffs[parent_box * n_coeffs]);
-                counts[parent_box] = 1;
-                n_merged += 1;
+                if (form_tp_expansion[child_box]) {
+                    // FIXME: verify tensorprod::transform is correct and switch to it
+                    tens_prod_trans_add_(&dim, &n_mfm, &n_order, &proxy_coeffs[child_box * n_coeffs], &n_order,
+                                         &proxy_coeffs[parent_box * n_coeffs], &c2p[i_child * DIM * n_order * n_order]);
+                    // tensorprod::transform(DIM, n_mfm, n_order, n_order, true, &proxy_coeffs[child_box * n_coeffs],
+                    //                       &c2p[i_child * DIM * n_order * n_order], &proxy_coeffs[parent_box *
+                    //                       n_coeffs]);
+                    counts[parent_box] = 1;
+                    n_merged += 1;
+                } else {
+                    proxy::charge2proxycharge(DIM, n_mfm, n_order, src_counts_local[child_box], r_src_ptr(child_box),
+                                              charge_ptr(child_box), center_ptr(parent_box), 2.0 / boxsize[i_level],
+                                              &proxy_coeffs[parent_box * n_coeffs]);
+                    counts[child_box] = 1;
+                    n_direct++;
+                }
             }
         }
     }
