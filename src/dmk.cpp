@@ -215,7 +215,7 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
 
     std::vector<double> r_src, pot_src, grad_src, hess_src, charges, rnormal, dipstr, pot_trg, r_trg, grad_trg,
         hess_trg;
-    init_data(n_dim, 1, n_src, true, r_src, rnormal, charges, dipstr, 0);
+    init_data(n_dim, 1, n_src, false, r_src, rnormal, charges, dipstr, 0);
     r_trg = r_src;
     pot_src.resize(n_src * nd);
     grad_src.resize(n_src * nd * n_dim);
@@ -255,13 +255,15 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
         test_pot += charges[i] * exp(-params.fparam * dr) / dr;
     }
     std::cout << "pot[test_targ] = " << pot_trg[test_targ] << std::endl;
-    std::cout << "test_pot = " << test_pot << std::endl;
+    std::cout << "test_pot_direct = " << test_pot << std::endl;
+    std::cout << "rel_err[test_targ] = " << std::abs(1.0 - test_pot / pot_trg[test_targ]) << std::endl;
 
     int zero = 0;
     pdmk_(&params.n_mfm, &params.n_dim, &params.eps, (int *)&params.kernel, &params.fparam, &iperiod, &n_src,
           r_src.data(), &params.use_charge, charges.data(), &ifdipole, nullptr, nullptr, &pgh_src, pot_src.data(),
           grad_src.data(), hess_src.data(), &zero, nullptr, &zero, nullptr, nullptr, nullptr, tottimeinfo);
     std::cout << "pot_ref[test_targ] = " << pot_src[test_targ] << std::endl;
+    std::cout << "rel_err_ref[test_targ] = " << std::abs(1.0 - test_pot / pot_src[test_targ]) << std::endl;
 }
 
 } // namespace dmk

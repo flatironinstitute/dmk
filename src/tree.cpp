@@ -354,8 +354,6 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
     fourier_data.calc_planewave_coeff_matrices(-1, n_order, poly2pw, pw2poly);
 
     dmk::proxy::proxycharge2pw(DIM, nd_out, n_order, fourier_data.n_pw, &proxy_coeffs[0], &poly2pw[0], &pw_out[0]);
-    // multiply_kernelFT_cd2p(nd_out, dim, params.use_charge, false, fourier_data.n_fourier, &pw_out[0], &radialft[0],
-    //                        &rk[0]);
     constexpr int zero = 0;
     dmk_multiply_kernelft_cd2p_(&nd_out, &dim, &params.use_charge, &zero, &nexp, (double *)&pw_out[0], &radialft[0],
                                 &rk[0]);
@@ -376,15 +374,15 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
 
         // Form outgoing expansions
         for (auto box : level_indices[i_level]) {
+            if (!form_pw_expansion[box])
+                continue;
+
             // Form the outgoing expansion Φl(box) for the difference kernel Dl from the proxy charge expansion
             // coefficients using Tprox2pw.
             dmk::proxy::proxycharge2pw(DIM, nd_out, n_order, fourier_data.n_pw, &proxy_coeffs[box * n_coeffs_per_box],
                                        &poly2pw[0], &pw_out[box * n_pw_per_box]);
             dmk_multiply_kernelft_cd2p_(&nd_out, &dim, &params.use_charge, &zero, &nexp,
                                         (double *)&pw_out[box * n_pw_per_box], &radialft[0], &rk[0]);
-
-            // multiply_kernelFT_cd2p(nd_out, dim, params.use_charge, false, fourier_data.n_fourier,
-            //                        &pw_out[box * n_pw_per_box], &radialft[0], &rk[0]);
             memcpy(&pw_in[box * n_pw_per_box], &pw_out[box * n_pw_per_box], n_pw_per_box * sizeof(std::complex<T>));
         }
 
@@ -408,32 +406,38 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
         }
 
         // Form local expansions
+        const T sc = 2.0 / boxsize[i_level];
         for (auto box : level_indices[i_level]) {
-            // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
-            dmk_pw2proxypot_(&dim, &nd, &n_order, &n_pw, (double *)&pw_in[box * n_pw_per_box], (double *)&pw2poly[0],
-                             (double *)&proxy_coeffs_downward[box * n_coeffs_per_box]);
+            const int n_trg = trg_counts_local[box];
+            const int n_src = src_counts_local[box];
+            const int n_pts = n_src + n_trg;
 
-            // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
-            for (int i_child = 0; i_child < n_children; ++i_child) {
-                const int child = node_lists[box].child[i_child];
-                if (child < 0)
-                    continue;
+            if (eval_pw_expansion[box] && n_pts) {
+                // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
+                dmk_pw2proxypot_(&dim, &nd, &n_order, &n_pw, (double *)&pw_in[box * n_pw_per_box],
+                                 (double *)&pw2poly[0], (double *)&proxy_coeffs_downward[box * n_coeffs_per_box]);
 
-                dmk::tensorprod::transform(
-                    dim, nd, n_order, n_order, true, &proxy_coeffs_downward[box * n_coeffs_per_box],
-                    &p2c[i_child * DIM * n_order * n_order], &proxy_coeffs_downward[child * n_coeffs_per_box]);
+                if (eval_tp_expansion[box])
+                    pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, &proxy_coeffs_downward[box * n_coeffs_per_box], &n_trg,
+                                         r_trg_ptr(box), center_ptr(box), &sc, pot_ptr(box));
+
+                // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
+                for (int i_child = 0; i_child < n_children; ++i_child) {
+                    const int child = node_lists[box].child[i_child];
+                    if (child < 0)
+                        continue;
+
+                    if (eval_tp_expansion[child] && !eval_pw_expansion[child]) {
+                        int n_trg_child = trg_counts_local[child];
+                        pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, &proxy_coeffs_downward[box * n_coeffs_per_box],
+                                             &n_trg_child, r_trg_ptr(child), center_ptr(child), &sc, pot_ptr(child));
+                    } else if (eval_pw_expansion[child]) {
+                        dmk::tensorprod::transform(
+                            dim, nd, n_order, n_order, true, &proxy_coeffs_downward[box * n_coeffs_per_box],
+                            &p2c[i_child * DIM * n_order * n_order], &proxy_coeffs_downward[child * n_coeffs_per_box]);
+                    }
+                }
             }
-        }
-
-        // Evaluate local expansions and direct interactions
-        for (auto box : level_indices[i_level]) {
-            if (!r_trg_cnt[box])
-                continue;
-            // Evaluate the mollified potential ufar L at each target x in box.
-            const T sc = 2.0 / boxsize[i_level];
-            const int n_trg = r_trg_cnt[box];
-            pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, &proxy_coeffs_downward[box * n_coeffs_per_box], &n_trg,
-                                 r_trg_ptr(box), center_ptr(box), &sc, pot_ptr(box));
         }
 
         const double rsc = 2.0 / boxsize[i_level];
@@ -454,9 +458,9 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
             const int ifdipole = 0;
             const int one = 1;
             for (auto neighbor : node_lists[box].nbr) {
-                if (neighbor < 0 || r_trg_cnt[neighbor] == 0)
+                if (neighbor < 0 || trg_counts_local[neighbor] == 0)
                     continue;
-                const int n_trg = r_trg_cnt[neighbor];
+                const int n_trg = trg_counts_local[neighbor];
 
                 Eigen::MatrixX<T> r_trg_transposed =
                     Eigen::Map<Eigen::MatrixX<T>>(r_trg_ptr(neighbor), dim, n_trg).transpose();
