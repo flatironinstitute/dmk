@@ -3,6 +3,7 @@
 #include <dmk/fortran.h>
 #include <dmk/fourier_data.hpp>
 #include <dmk/logger.h>
+#include <dmk/planewave.hpp>
 #include <dmk/proxy.hpp>
 #include <dmk/tensorprod.hpp>
 #include <dmk/tree.hpp>
@@ -365,7 +366,7 @@ void DMKPtTree<T, DIM>::downward_pass(FourierData<T> &fourier_data, const sctl::
             ts[i] = fourier_data.hpw[i_level + 1] * (i - shift);
         meshnd_(&dim, &ts[0], &n_pw, &rk[0]);
         fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
-        mk_pw_translation_matrices_(&dim, &boxsize[i_level], &n_pw, &ts[0], &nmax, (T *)&wpwshift[0]);
+        dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw, ts, wpwshift);
         mk_tensor_product_fourier_transform_(&dim, &n_pw, &fourier_data.n_fourier,
                                              &fourier_data.dkernelft[(i_level + 1) * (fourier_data.n_fourier + 1)],
                                              &nexp, &radialft[0]);
