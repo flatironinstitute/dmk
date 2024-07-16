@@ -36,7 +36,7 @@ template <typename T>
 void transform_3d(int nin, int nout, int add_flag, const T *fin, const T *umat, T *fout) {
     using dmk::gemm::gemm;
     T alpha{1.0};
-    T beta{0.0};
+
     T *ff = new T[nout * nout * nout];
     T *ff2 = new T[nin * nout * nin];
     T *fft = new T[nout * nout * nin];
@@ -56,8 +56,7 @@ void transform_3d(int nin, int nout, int add_flag, const T *fin, const T *umat, 
     gemm('n', 'n', nout, noutnin, nin, T{1.0}, &umat[1 * nout * nin], nout, fft, nin, T{0.0}, ff2, nout);
 
     // transform in x
-    beta = add_flag ? T{1.0} : 0.0;
-    gemm('n', 't', nout, nout2, nin, T{1.0}, umat, nout, ff2, nout2, T{0.0}, fout, nout);
+    gemm('n', 't', nout, nout2, nin, T{1.0}, umat, nout, ff2, nout2, T(add_flag), fout, nout);
 
     delete[] ff;
     delete[] ff2;

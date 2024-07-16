@@ -217,12 +217,9 @@ void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const sctl::
                 if (child_box < 0 || !src_counts_local[child_box])
                     continue;
                 if (form_tp_expansion[child_box]) {
-                    // FIXME: verify tensorprod::transform is correct and switch to it
-                    tens_prod_trans_add_(&dim, &n_mfm, &n_order, &proxy_coeffs[child_box * n_coeffs], &n_order,
-                                         &proxy_coeffs[parent_box * n_coeffs], &c2p[i_child * DIM * n_order * n_order]);
-                    // tensorprod::transform(DIM, n_mfm, n_order, n_order, true, &proxy_coeffs[child_box * n_coeffs],
-                    //                       &c2p[i_child * DIM * n_order * n_order], &proxy_coeffs[parent_box *
-                    //                       n_coeffs]);
+                    tensorprod::transform(DIM, n_mfm, n_order, n_order, true, &proxy_coeffs[child_box * n_coeffs],
+                                          &c2p[i_child * DIM * n_order * n_order],
+                                          &proxy_coeffs[parent_box * n_coeffs]);
                     counts[parent_box] = 1;
                     n_merged += 1;
                 } else {
@@ -477,7 +474,6 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
                     pot_ptr(box)[i * n_src + i_src] -= w0 * charge_ptr(box)[i * n_src + i_src];
         }
     }
-    int a = 0;
 }
 
 // template struct DMKPtTree<float, 2>;
