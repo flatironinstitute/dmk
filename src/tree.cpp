@@ -215,9 +215,9 @@ void DMKPtTree<T, DIM>::upward_pass(const sctl::Vector<T> &c2p) {
                     counts[parent_box] = 1;
                     n_merged += 1;
                 } else {
-                    proxy::charge2proxycharge(DIM, params.n_mfm, n_order, src_counts_local[child_box], r_src_ptr(child_box),
-                                              charge_ptr(child_box), center_ptr(parent_box), 2.0 / boxsize[i_level],
-                                              proxy_ptr_upward(parent_box));
+                    proxy::charge2proxycharge(DIM, params.n_mfm, n_order, src_counts_local[child_box],
+                                              r_src_ptr(child_box), charge_ptr(child_box), center_ptr(parent_box),
+                                              2.0 / boxsize[i_level], proxy_ptr_upward(parent_box));
                     counts[child_box] = 1;
                     n_direct++;
                 }
@@ -401,29 +401,30 @@ void DMKPtTree<T, DIM>::downward_pass(FourierData<T> &fourier_data, const sctl::
             const int n_src = src_counts_local[box];
             const int n_pts = n_src + n_trg;
 
-            if (eval_pw_expansion[box] && n_pts) {
-                // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
-                dmk_pw2proxypot_(&dim, &nd, &n_order, &n_pw, (double *)&pw_in[box * n_pw_per_box],
-                                 (double *)&pw2poly[0], proxy_ptr_downward(box));
+            if (!eval_pw_expansion[box] || n_pts == 0)
+                continue;
 
-                if (eval_tp_expansion[box])
-                    pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, proxy_ptr_downward(box), &n_trg, r_trg_ptr(box),
-                                         center_ptr(box), &sc, pot_ptr(box));
+            // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
+            dmk_pw2proxypot_(&dim, &nd, &n_order, &n_pw, (double *)&pw_in[box * n_pw_per_box], (double *)&pw2poly[0],
+                             proxy_ptr_downward(box));
 
-                // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
-                for (int i_child = 0; i_child < n_children; ++i_child) {
-                    const int child = node_lists[box].child[i_child];
-                    if (child < 0)
-                        continue;
+            if (eval_tp_expansion[box])
+                pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, proxy_ptr_downward(box), &n_trg, r_trg_ptr(box),
+                                     center_ptr(box), &sc, pot_ptr(box));
 
-                    if (eval_tp_expansion[child] && !eval_pw_expansion[child]) {
-                        int n_trg_child = trg_counts_local[child];
-                        pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, proxy_ptr_downward(box), &n_trg_child,
-                                             r_trg_ptr(child), center_ptr(child), &sc, pot_ptr(child));
-                    } else if (eval_pw_expansion[child]) {
-                        dmk::tensorprod::transform(dim, nd, n_order, n_order, true, proxy_ptr_downward(box),
-                                                   &p2c[i_child * DIM * n_order * n_order], proxy_ptr_downward(child));
-                    }
+            // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
+            for (int i_child = 0; i_child < n_children; ++i_child) {
+                const int child = node_lists[box].child[i_child];
+                if (child < 0)
+                    continue;
+
+                if (eval_tp_expansion[child] && !eval_pw_expansion[child]) {
+                    int n_trg_child = trg_counts_local[child];
+                    pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, proxy_ptr_downward(box), &n_trg_child, r_trg_ptr(child),
+                                         center_ptr(child), &sc, pot_ptr(child));
+                } else if (eval_pw_expansion[child]) {
+                    dmk::tensorprod::transform(dim, nd, n_order, n_order, true, proxy_ptr_downward(box),
+                                               &p2c[i_child * DIM * n_order * n_order], proxy_ptr_downward(child));
                 }
             }
         }
