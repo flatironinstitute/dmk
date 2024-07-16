@@ -40,7 +40,9 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     std::vector<sctl::Long> charge_offsets;
 
     sctl::Vector<Real> proxy_coeffs;
+    sctl::Vector<sctl::Long> proxy_coeffs_offsets;
     sctl::Vector<Real> proxy_coeffs_downward;
+    sctl::Vector<sctl::Long> proxy_coeffs_offsets_downward;
 
     sctl::Vector<int> form_pw_expansion;
     sctl::Vector<int> eval_pw_expansion;
@@ -59,8 +61,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     Real *pot_ptr(int i_node) { return &pot_sorted[pot_offsets[i_node]]; }
     Real *charge_ptr(int i_node) { return &charge_sorted[charge_offsets[i_node]]; }
     Real *center_ptr(int i_node) { return &centers[i_node * DIM]; }
-    Real *proxy_ptr_upward(int i_box) { return &proxy_coeffs[i_box * sctl::pow<DIM>(n_order)]; }
-    Real *proxy_ptr_downward(int i_box) { return &proxy_coeffs_downward[i_box * sctl::pow<DIM>(n_order)]; }
+    Real *proxy_ptr_upward(int i_box) { return &proxy_coeffs[proxy_coeffs_offsets[i_box]]; }
+    Real *proxy_ptr_downward(int i_box) { return &proxy_coeffs_downward[proxy_coeffs_offsets_downward[i_box]]; }
 
     void upward_pass(const sctl::Vector<Real> &c2p);
     void downward_pass(FourierData<Real> &fourier_data, const sctl::Vector<Real> &c2p);

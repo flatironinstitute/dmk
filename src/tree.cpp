@@ -111,8 +111,12 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     form_pw_expansion[0] = true;
     eval_pw_expansion[0] = true;
 
-    for (int box = 0; box < n_nodes; ++box)
+    long n_proxy_boxes_upward = 0;
+    long n_proxy_boxes_downward = 0;
+    for (int box = 0; box < n_nodes; ++box) {
         form_pw_expansion[box] = !node_attr[box].Leaf;
+        n_proxy_boxes_upward += form_pw_expansion[box];
+    }
 
     for (const auto &level_boxes : level_indices) {
         for (auto box : level_boxes) {
@@ -123,6 +127,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
                 const int npts = src_counts_global[neighbor] + trg_counts_global[neighbor];
                 if (form_pw_expansion[neighbor] && npts) {
                     eval_pw_expansion[box] = true;
+                    n_proxy_boxes_downward++;
                     break;
                 }
             }
@@ -157,6 +162,18 @@ void DMKPtTree<T, DIM>::generate_metadata() {
             }
         }
     }
+
+    const int n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
+    proxy_coeffs_offsets.ReInit(n_boxes());
+    proxy_coeffs_offsets_downward.ReInit(n_boxes());
+    proxy_coeffs.ReInit(n_coeffs * n_proxy_boxes_upward);
+    proxy_coeffs_downward.ReInit(n_coeffs * n_proxy_boxes_downward);
+    proxy_coeffs_offsets[0] = 0;
+    proxy_coeffs_offsets_downward[0] = 0;
+    for (int box = 1; box < n_nodes; ++box) {
+        proxy_coeffs_offsets[box] = proxy_coeffs_offsets[box - 1] + form_pw_expansion[box] * n_coeffs;
+        proxy_coeffs_offsets_downward[box] = proxy_coeffs_offsets_downward[box - 1] + eval_pw_expansion[box] * n_coeffs;
+    }
 }
 
 /// @brief Fill out the proxy coefficients used in the upward pass
@@ -176,7 +193,6 @@ void DMKPtTree<T, DIM>::upward_pass(const sctl::Vector<T> &c2p) {
     this->GetData(r_src_sorted, r_src_cnt, "pdmk_src");
 
     const std::size_t n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
-    proxy_coeffs.ReInit(n_boxes() * n_coeffs);
     proxy_coeffs.SetZero();
     sctl::Vector<sctl::Long> counts(n_boxes());
     counts.SetZero();
@@ -226,10 +242,12 @@ void DMKPtTree<T, DIM>::upward_pass(const sctl::Vector<T> &c2p) {
             }
         }
     }
+
     int tot_proxy = 0;
-    for (auto &count : counts) {
+    for (int i = 0; i < n_boxes(); ++i) {
+        auto &count = counts[i];
         tot_proxy += count;
-        count = n_coeffs;
+        count = form_pw_expansion[i] ? n_coeffs : 0;
     }
 
     logger->debug("Finished building proxy charges");
@@ -332,7 +350,6 @@ void DMKPtTree<T, DIM>::downward_pass(FourierData<T> &fourier_data, const sctl::
 
     sctl::Vector<std::complex<T>> pw_out(n_pw_per_box * n_boxes());
     sctl::Vector<std::complex<T>> pw_in(n_pw_per_box * n_boxes());
-    proxy_coeffs_downward.ReInit(proxy_coeffs.Dim());
     proxy_coeffs_downward.SetZero();
     pw_out.SetZero();
     pw_in.SetZero();
