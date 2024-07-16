@@ -6,6 +6,7 @@
 #include <dmk/proxy.hpp>
 #include <dmk/tensorprod.hpp>
 #include <dmk/tree.hpp>
+#include <dmk/types.hpp>
 #include <dmk/util.hpp>
 #include <mpi.h>
 #include <ranges>
@@ -288,6 +289,16 @@ void multiply_kernelFT_cd2p(int nd, int ndim, bool ifcharge, bool ifdipole, int 
             pwexp[n + ind * nd] = pwexp1[n + ind * nd] * radialft[n];
 }
 
+template <typename Complex>
+void shift_planewave(int nd, int nexp, const Complex *pwexp1_, Complex *pwexp2_, const Complex *wpwshift) {
+    dmk::ndview<const Complex, 2> pwexp1(pwexp1_, nexp, nd);
+    dmk::ndview<Complex, 2> pwexp2(pwexp2_, nexp, nd);
+
+    for (int ind = 0; ind < nd; ++ind)
+        for (int j = 0; j < nexp; ++j)
+            pwexp2(j, ind) += pwexp1(j, ind) * wpwshift[j];
+}
+
 /// @brief Perform the "downward pass"
 ///
 /// Updates: proxy_coeffs_downward, tree 'pdmk_pot' particle data
@@ -382,15 +393,13 @@ void DMKPtTree<T, DIM>::downward_pass(FourierData<T> &fourier_data, const sctl::
                     continue;
 
                 // Translate the outgoing expansion Φl(colleague) to the center of box and add to the incoming plane
-                // wave expansion Ψl(box) using Tpwshift.
-                constexpr int iperiod = 0;
-                int ind;
-                dmk_find_pwshift_ind_(&dim, &iperiod, center_ptr(box), center_ptr(neighbor), &boxsize[0],
-                                      &boxsize[i_level], &nmax, &ind);
-                ind--;
-                // const int ind = sctl::pow<3>(dim) - 1 - (&neighbor - &node_lists[box].nbr[0]);
-                dmk_shiftpw_(&nd_in, &nexp, (double *)&pw_out[neighbor * n_pw_per_box],
-                             (double *)&pw_in[box * n_pw_per_box], (double *)&wpwshift[n_pw_per_box * ind]);
+                // wave expansion Ψl(box) using wpwshift.
+
+                // note: neighbors in SCTL are sorted in reverse order to wpwshift
+                // FIXME: check if valid for periodic boundary conditions
+                const int ind = sctl::pow<3>(dim) - 1 - (&neighbor - &node_lists[box].nbr[0]);
+                shift_planewave(nd_in, nexp, &pw_out[neighbor * n_pw_per_box], &pw_in[box * n_pw_per_box],
+                                &wpwshift[n_pw_per_box * ind]);
             }
         }
 
