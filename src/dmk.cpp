@@ -85,8 +85,11 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     logger->info("PDMK called");
     auto st = omp_get_wtime();
 
+    const int ndigits = std::round(log10(1.0 / params.eps) - 0.1);
+    const auto [n_pw_max, n_order] = get_pwmax_and_poly_order(DIM, ndigits, params.kernel);
+
     // 0: Initialization
-    dmk::DMKPtTree<T, DIM> tree(sctl::Comm::World());
+    dmk::DMKPtTree<T, DIM> tree(sctl::Comm::World(), n_order);
     sctl::Vector<T> r_src_vec(n_src * params.n_dim, const_cast<T *>(r_src), false);
     sctl::Vector<T> r_trg_vec(n_trg * params.n_dim, const_cast<T *>(r_trg), false);
     sctl::Vector<T> charge_vec(n_src * params.n_mfm, const_cast<T *>(charge), false);
@@ -113,9 +116,6 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     logger->debug("Initialized prolate function data");
 
     // 1: Precomputation
-    const int ndigits = std::round(log10(1.0 / params.eps) - 0.1);
-    const auto [n_pw_max, n_order] = get_pwmax_and_poly_order(DIM, ndigits, params.kernel);
-
     logger->debug("Generating p2c and c2p matrices of order {}", n_order);
     auto [c2p, p2c] = dmk::chebyshev::get_c2p_p2c_matrices<T>(DIM, n_order);
     logger->debug("Finished generating matrices");
@@ -132,8 +132,8 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     logger->debug("Finished updating local potential expansion coefficients");
 
     // upward pass
-    tree.build_proxy_charges(params.n_mfm, n_order, c2p);
-    tree.downward_pass(params, n_order, fourier_data, p2c);
+    tree.upward_pass(params.n_mfm, c2p);
+    tree.downward_pass(params, fourier_data, p2c);
 
     sctl::Vector<T> res;
     tree.GetParticleData(res, "pdmk_pot");

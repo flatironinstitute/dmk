@@ -176,7 +176,7 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
 /// @param[in] c2p [n_order, n_order, DIM, 2**DIM] Child to parent matrices used to convert child proxy coefficients to
 /// parent proxy coefficients
 template <typename T, int DIM>
-void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const sctl::Vector<T> &c2p) {
+void DMKPtTree<T, DIM>::upward_pass(int n_mfm, const sctl::Vector<T> &c2p) {
     auto &logger = dmk::get_logger();
     auto &rank_logger = dmk::get_rank_logger();
     this->GetData(r_src_sorted, r_src_cnt, "pdmk_src");
@@ -199,7 +199,7 @@ void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const sctl::
         if (!form_pw_expansion[i_box])
             continue;
         proxy::charge2proxycharge(DIM, n_mfm, n_order, src_counts_local[i_box], r_src_ptr(i_box), charge_ptr(i_box),
-                                  center_ptr(i_box), 2.0 / boxsize[start_level], &proxy_coeffs[i_box * n_coeffs]);
+                                  center_ptr(i_box), 2.0 / boxsize[start_level], proxy_ptr_upward(i_box));
         counts[i_box] = 1;
         n_direct++;
     }
@@ -217,15 +217,14 @@ void DMKPtTree<T, DIM>::build_proxy_charges(int n_mfm, int n_order, const sctl::
                 if (child_box < 0 || !src_counts_local[child_box])
                     continue;
                 if (form_tp_expansion[child_box]) {
-                    tensorprod::transform(DIM, n_mfm, n_order, n_order, true, &proxy_coeffs[child_box * n_coeffs],
-                                          &c2p[i_child * DIM * n_order * n_order],
-                                          &proxy_coeffs[parent_box * n_coeffs]);
+                    tensorprod::transform(DIM, n_mfm, n_order, n_order, true, proxy_ptr_upward(child_box),
+                                          &c2p[i_child * DIM * n_order * n_order], proxy_ptr_upward(parent_box));
                     counts[parent_box] = 1;
                     n_merged += 1;
                 } else {
                     proxy::charge2proxycharge(DIM, n_mfm, n_order, src_counts_local[child_box], r_src_ptr(child_box),
                                               charge_ptr(child_box), center_ptr(parent_box), 2.0 / boxsize[i_level],
-                                              &proxy_coeffs[parent_box * n_coeffs]);
+                                              proxy_ptr_upward(parent_box));
                     counts[child_box] = 1;
                     n_direct++;
                 }
@@ -308,7 +307,7 @@ void multiply_kernelFT_cd2p(int nd, int ndim, bool ifcharge, bool ifdipole, int 
 /// @param[in] p2c [n_order, n_order, DIM, 2**DIM] Parent to child matrices used to pass parent proxy charges to their
 /// children
 template <typename T, int DIM>
-void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, FourierData<T> &fourier_data,
+void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, FourierData<T> &fourier_data,
                                       const sctl::Vector<T> &p2c) {
     auto &logger = dmk::get_logger();
     auto &rank_logger = dmk::get_rank_logger();
@@ -350,13 +349,12 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
                                          &radialft[0]);
     fourier_data.calc_planewave_coeff_matrices(-1, n_order, poly2pw, pw2poly);
 
-    dmk::proxy::proxycharge2pw(DIM, nd_out, n_order, fourier_data.n_pw, &proxy_coeffs[0], &poly2pw[0], &pw_out[0]);
+    dmk::proxy::proxycharge2pw(DIM, nd_out, n_order, fourier_data.n_pw, proxy_ptr_upward(0), &poly2pw[0], &pw_out[0]);
     constexpr int zero = 0;
     dmk_multiply_kernelft_cd2p_(&nd_out, &dim, &params.use_charge, &zero, &nexp, (double *)&pw_out[0], &radialft[0],
                                 &rk[0]);
     memcpy(&pw_in[0], &pw_out[0], n_pw_per_box * sizeof(std::complex<T>));
-    dmk_pw2proxypot_(&dim, &nd, &n_order, &n_pw, (double *)&pw_in[0], (double *)&pw2poly[0],
-                     (double *)&proxy_coeffs_downward[0]);
+    dmk_pw2proxypot_(&dim, &nd, &n_order, &n_pw, (double *)&pw_in[0], (double *)&pw2poly[0], proxy_ptr_downward(0));
 
     constexpr int n_children = 1u << DIM;
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
@@ -376,8 +374,8 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
 
             // Form the outgoing expansion Φl(box) for the difference kernel Dl from the proxy charge expansion
             // coefficients using Tprox2pw.
-            dmk::proxy::proxycharge2pw(DIM, nd_out, n_order, fourier_data.n_pw, &proxy_coeffs[box * n_coeffs_per_box],
-                                       &poly2pw[0], &pw_out[box * n_pw_per_box]);
+            dmk::proxy::proxycharge2pw(DIM, nd_out, n_order, fourier_data.n_pw, proxy_ptr_upward(box), &poly2pw[0],
+                                       &pw_out[box * n_pw_per_box]);
             dmk_multiply_kernelft_cd2p_(&nd_out, &dim, &params.use_charge, &zero, &nexp,
                                         (double *)&pw_out[box * n_pw_per_box], &radialft[0], &rk[0]);
             memcpy(&pw_in[box * n_pw_per_box], &pw_out[box * n_pw_per_box], n_pw_per_box * sizeof(std::complex<T>));
@@ -412,11 +410,11 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
             if (eval_pw_expansion[box] && n_pts) {
                 // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
                 dmk_pw2proxypot_(&dim, &nd, &n_order, &n_pw, (double *)&pw_in[box * n_pw_per_box],
-                                 (double *)&pw2poly[0], (double *)&proxy_coeffs_downward[box * n_coeffs_per_box]);
+                                 (double *)&pw2poly[0], proxy_ptr_downward(box));
 
                 if (eval_tp_expansion[box])
-                    pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, &proxy_coeffs_downward[box * n_coeffs_per_box], &n_trg,
-                                         r_trg_ptr(box), center_ptr(box), &sc, pot_ptr(box));
+                    pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, proxy_ptr_downward(box), &n_trg, r_trg_ptr(box),
+                                         center_ptr(box), &sc, pot_ptr(box));
 
                 // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
                 for (int i_child = 0; i_child < n_children; ++i_child) {
@@ -426,12 +424,11 @@ void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, int n_order, Fo
 
                     if (eval_tp_expansion[child] && !eval_pw_expansion[child]) {
                         int n_trg_child = trg_counts_local[child];
-                        pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, &proxy_coeffs_downward[box * n_coeffs_per_box],
-                                             &n_trg_child, r_trg_ptr(child), center_ptr(child), &sc, pot_ptr(child));
+                        pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, proxy_ptr_downward(box), &n_trg_child,
+                                             r_trg_ptr(child), center_ptr(child), &sc, pot_ptr(child));
                     } else if (eval_pw_expansion[child]) {
-                        dmk::tensorprod::transform(
-                            dim, nd, n_order, n_order, true, &proxy_coeffs_downward[box * n_coeffs_per_box],
-                            &p2c[i_child * DIM * n_order * n_order], &proxy_coeffs_downward[child * n_coeffs_per_box]);
+                        dmk::tensorprod::transform(dim, nd, n_order, n_order, true, proxy_ptr_downward(box),
+                                                   &p2c[i_child * DIM * n_order * n_order], proxy_ptr_downward(child));
                     }
                 }
             }
