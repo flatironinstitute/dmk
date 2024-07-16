@@ -20,8 +20,6 @@ namespace dmk {
 ///
 /// @tparam T Floating point format to use (float, double)
 /// @tparam DIM Spatial dimension tree lives in
-/// @param[in] ndiv Maximum number of points allowed for a leaf node
-/// @param[in] nd Number of different "charges" to simultaneously evaluate, a.k.a. the charge dimension
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::generate_metadata() {
     const int n_nodes = n_boxes();
@@ -198,7 +196,7 @@ void DMKPtTree<T, DIM>::upward_pass(const sctl::Vector<T> &c2p) {
         counts[i_box] = 1;
         n_direct++;
     }
-    logger->debug("proxy: finished building leaf proxy charges");
+    logger->debug("proxy: finished building base proxy charges");
 
     int n_merged = 0;
     for (int i_level = start_level - 1; i_level >= 0; --i_level) {
@@ -232,7 +230,7 @@ void DMKPtTree<T, DIM>::upward_pass(const sctl::Vector<T> &c2p) {
         count = n_coeffs;
     }
 
-    logger->debug("Finished building proxy charges for non-leaf boxes");
+    logger->debug("Finished building proxy charges");
     this->AddData("proxy_coeffs", proxy_coeffs, counts);
     this->template ReduceBroadcast<T>("proxy_coeffs");
     this->template GetData<T>(proxy_coeffs, counts, "proxy_coeffs");
