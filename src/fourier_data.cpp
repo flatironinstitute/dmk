@@ -255,12 +255,12 @@ template <typename T>
 void FourierData<T>::update_local_coeffs_yukawa(T eps) {
     const int nr1 = n_coeffs_max, nr2 = n_coeffs_max;
 
-    coeffs1.resize(nr1 * (n_levels + 1));
-    coeffs2.resize(nr2 * (n_levels + 1));
-    ncoeffs1.resize(n_levels + 1);
-    ncoeffs2.resize(n_levels + 1);
+    coeffs1.resize(nr1 * (n_levels));
+    coeffs2.resize(nr2 * (n_levels));
+    ncoeffs1.resize(n_levels);
+    ncoeffs2.resize(n_levels);
 
-    for (int i_level = 0; i_level < n_levels + 1; ++i_level) {
+    for (int i_level = 0; i_level < n_levels; ++i_level) {
         double bsize = boxsize[i_level];
         if (i_level == 0)
             bsize *= 0.5;
