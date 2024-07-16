@@ -375,7 +375,9 @@ void DMKPtTree<T, DIM>::downward_pass(FourierData<T> &fourier_data, const sctl::
 
         // Form incoming expansions
         for (auto box : level_indices[i_level]) {
-            for (auto neighbor : node_lists[box].nbr) {
+            if (src_counts_global[box] + trg_counts_global[box] == 0)
+                continue;
+            for (auto &neighbor : node_lists[box].nbr) {
                 if (neighbor < 0 || neighbor == box)
                     continue;
 
@@ -385,10 +387,10 @@ void DMKPtTree<T, DIM>::downward_pass(FourierData<T> &fourier_data, const sctl::
                 int ind;
                 dmk_find_pwshift_ind_(&dim, &iperiod, center_ptr(box), center_ptr(neighbor), &boxsize[0],
                                       &boxsize[i_level], &nmax, &ind);
-                ind--; // fortran uses 1 based indexing
+                ind--;
+                // const int ind = sctl::pow<3>(dim) - 1 - (&neighbor - &node_lists[box].nbr[0]);
                 dmk_shiftpw_(&nd_in, &nexp, (double *)&pw_out[neighbor * n_pw_per_box],
                              (double *)&pw_in[box * n_pw_per_box], (double *)&wpwshift[n_pw_per_box * ind]);
-                printf("");
             }
         }
 
