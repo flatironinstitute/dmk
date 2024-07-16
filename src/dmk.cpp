@@ -89,7 +89,7 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     const auto [n_pw_max, n_order] = get_pwmax_and_poly_order(DIM, ndigits, params.kernel);
 
     // 0: Initialization
-    dmk::DMKPtTree<T, DIM> tree(sctl::Comm::World(), n_order);
+    dmk::DMKPtTree<T, DIM> tree(sctl::Comm::World(), params, n_order);
     sctl::Vector<T> r_src_vec(n_src * params.n_dim, const_cast<T *>(r_src), false);
     sctl::Vector<T> r_trg_vec(n_trg * params.n_dim, const_cast<T *>(r_trg), false);
     sctl::Vector<T> charge_vec(n_src * params.n_mfm, const_cast<T *>(charge), false);
@@ -105,7 +105,7 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     logger->debug("Tree build completed");
 
     logger->debug("Generating tree traversal metadata");
-    tree.generate_metadata(params.n_per_leaf, params.n_mfm);
+    tree.generate_metadata();
     logger->debug("Done generating tree traversal metadata");
 
     rank_logger->trace("Local tree has {} levels {} boxes", tree.n_levels(), tree.n_boxes());
@@ -132,8 +132,8 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     logger->debug("Finished updating local potential expansion coefficients");
 
     // upward pass
-    tree.upward_pass(params.n_mfm, c2p);
-    tree.downward_pass(params, fourier_data, p2c);
+    tree.upward_pass(c2p);
+    tree.downward_pass(fourier_data, p2c);
 
     sctl::Vector<T> res;
     tree.GetParticleData(res, "pdmk_pot");

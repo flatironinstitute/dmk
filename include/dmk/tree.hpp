@@ -44,15 +44,16 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     sctl::Vector<int> form_pw_expansion;
     sctl::Vector<int> eval_pw_expansion;
-    sctl::Vector<int> form_tp_expansion;
     sctl::Vector<int> eval_tp_expansion;
     const int n_order;
+    const pdmk_params params;
 
-    DMKPtTree(const sctl::Comm &comm, int n_order_) : sctl::PtTree<Real, DIM>(comm), n_order(n_order_){};
+    DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, int n_order_)
+        : sctl::PtTree<Real, DIM>(comm), params(params_), n_order(n_order_){};
 
-    std::size_t n_levels() const { return level_indices.size(); }
+    int n_levels() const { return level_indices.size(); }
     std::size_t n_boxes() const { return this->GetNodeMID().Dim(); }
-    void generate_metadata(int ns, int nd);
+    void generate_metadata();
     Real *r_src_ptr(int i_node) { return &r_src_sorted[r_src_offsets[i_node]]; }
     Real *r_trg_ptr(int i_node) { return &r_trg_sorted[r_trg_offsets[i_node]]; }
     Real *pot_ptr(int i_node) { return &pot_sorted[pot_offsets[i_node]]; }
@@ -61,8 +62,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     Real *proxy_ptr_upward(int i_box) { return &proxy_coeffs[i_box * sctl::pow<DIM>(n_order)]; }
     Real *proxy_ptr_downward(int i_box) { return &proxy_coeffs_downward[i_box * sctl::pow<DIM>(n_order)]; }
 
-    void upward_pass(int n_mfm, const sctl::Vector<Real> &c2p);
-    void downward_pass(const pdmk_params &params, FourierData<Real> &fourier_data, const sctl::Vector<Real> &c2p);
+    void upward_pass(const sctl::Vector<Real> &c2p);
+    void downward_pass(FourierData<Real> &fourier_data, const sctl::Vector<Real> &c2p);
 };
 
 } // namespace dmk

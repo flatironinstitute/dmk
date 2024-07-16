@@ -23,7 +23,7 @@ namespace dmk {
 /// @param[in] ndiv Maximum number of points allowed for a leaf node
 /// @param[in] nd Number of different "charges" to simultaneously evaluate, a.k.a. the charge dimension
 template <typename T, int DIM>
-void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
+void DMKPtTree<T, DIM>::generate_metadata() {
     const int n_nodes = n_boxes();
     this->GetData(r_src_sorted, r_src_cnt, "pdmk_src");
     this->GetData(r_trg_sorted, r_trg_cnt, "pdmk_trg");
@@ -44,8 +44,8 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     for (int i_node = 1; i_node < n_nodes; ++i_node) {
         r_src_offsets[i_node] = r_src_offsets[i_node - 1] + DIM * r_src_cnt[i_node - 1];
         r_trg_offsets[i_node] = r_trg_offsets[i_node - 1] + DIM * r_trg_cnt[i_node - 1];
-        pot_offsets[i_node] = pot_offsets[i_node - 1] + nd * pot_cnt[i_node - 1];
-        charge_offsets[i_node] = charge_offsets[i_node - 1] + nd * charge_cnt[i_node - 1];
+        pot_offsets[i_node] = pot_offsets[i_node - 1] + params.n_mfm * pot_cnt[i_node - 1];
+        charge_offsets[i_node] = charge_offsets[i_node - 1] + params.n_mfm * charge_cnt[i_node - 1];
     }
 
     level_indices.resize(SCTL_MAX_DEPTH);
@@ -77,8 +77,6 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     form_pw_expansion.ReInit(n_nodes);
     eval_pw_expansion.ReInit(n_nodes);
     eval_pw_expansion.SetZero();
-    form_tp_expansion.ReInit(n_nodes);
-    form_tp_expansion.SetZero();
     eval_tp_expansion.ReInit(n_nodes);
     eval_tp_expansion.SetZero();
 
@@ -113,7 +111,7 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
     form_pw_expansion[0] = true;
     eval_pw_expansion[0] = true;
 
-    for (auto box : std::ranges::views::iota(0, n_nodes))
+    for (int box = 0; box < n_nodes; ++box)
         form_pw_expansion[box] = !node_attr[box].Leaf;
 
     for (const auto &level_boxes : level_indices) {
@@ -159,10 +157,6 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
             }
         }
     }
-
-    for (int i_level = 0; i_level < n_levels() - 1; ++i_level)
-        for (auto i_node : level_indices[i_level])
-            form_tp_expansion[i_node] = form_pw_expansion[i_node];
 }
 
 /// @brief Fill out the proxy coefficients used in the upward pass
@@ -176,12 +170,12 @@ void DMKPtTree<T, DIM>::generate_metadata(int ndiv, int nd) {
 /// @param[in] c2p [n_order, n_order, DIM, 2**DIM] Child to parent matrices used to convert child proxy coefficients to
 /// parent proxy coefficients
 template <typename T, int DIM>
-void DMKPtTree<T, DIM>::upward_pass(int n_mfm, const sctl::Vector<T> &c2p) {
+void DMKPtTree<T, DIM>::upward_pass(const sctl::Vector<T> &c2p) {
     auto &logger = dmk::get_logger();
     auto &rank_logger = dmk::get_rank_logger();
     this->GetData(r_src_sorted, r_src_cnt, "pdmk_src");
 
-    const std::size_t n_coeffs = n_mfm * sctl::pow<DIM>(n_order);
+    const std::size_t n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
     proxy_coeffs.ReInit(n_boxes() * n_coeffs);
     proxy_coeffs.SetZero();
     sctl::Vector<sctl::Long> counts(n_boxes());
@@ -194,12 +188,13 @@ void DMKPtTree<T, DIM>::upward_pass(int n_mfm, const sctl::Vector<T> &c2p) {
     const int dim = DIM;
 
     int n_direct = 0;
-    const int start_level = std::max(n_levels() - 2, 0ul);
+    const int start_level = std::max(n_levels() - 2, 0);
     for (auto i_box : level_indices[start_level]) {
         if (!form_pw_expansion[i_box])
             continue;
-        proxy::charge2proxycharge(DIM, n_mfm, n_order, src_counts_local[i_box], r_src_ptr(i_box), charge_ptr(i_box),
-                                  center_ptr(i_box), 2.0 / boxsize[start_level], proxy_ptr_upward(i_box));
+        proxy::charge2proxycharge(DIM, params.n_mfm, n_order, src_counts_local[i_box], r_src_ptr(i_box),
+                                  charge_ptr(i_box), center_ptr(i_box), 2.0 / boxsize[start_level],
+                                  proxy_ptr_upward(i_box));
         counts[i_box] = 1;
         n_direct++;
     }
@@ -216,13 +211,13 @@ void DMKPtTree<T, DIM>::upward_pass(int n_mfm, const sctl::Vector<T> &c2p) {
                 const int child_box = children[i_child];
                 if (child_box < 0 || !src_counts_local[child_box])
                     continue;
-                if (form_tp_expansion[child_box]) {
-                    tensorprod::transform(DIM, n_mfm, n_order, n_order, true, proxy_ptr_upward(child_box),
+                if (form_pw_expansion[child_box]) {
+                    tensorprod::transform(DIM, params.n_mfm, n_order, n_order, true, proxy_ptr_upward(child_box),
                                           &c2p[i_child * DIM * n_order * n_order], proxy_ptr_upward(parent_box));
                     counts[parent_box] = 1;
                     n_merged += 1;
                 } else {
-                    proxy::charge2proxycharge(DIM, n_mfm, n_order, src_counts_local[child_box], r_src_ptr(child_box),
+                    proxy::charge2proxycharge(DIM, params.n_mfm, n_order, src_counts_local[child_box], r_src_ptr(child_box),
                                               charge_ptr(child_box), center_ptr(parent_box), 2.0 / boxsize[i_level],
                                               proxy_ptr_upward(parent_box));
                     counts[child_box] = 1;
@@ -307,8 +302,7 @@ void multiply_kernelFT_cd2p(int nd, int ndim, bool ifcharge, bool ifdipole, int 
 /// @param[in] p2c [n_order, n_order, DIM, 2**DIM] Parent to child matrices used to pass parent proxy charges to their
 /// children
 template <typename T, int DIM>
-void DMKPtTree<T, DIM>::downward_pass(const pdmk_params &params, FourierData<T> &fourier_data,
-                                      const sctl::Vector<T> &p2c) {
+void DMKPtTree<T, DIM>::downward_pass(FourierData<T> &fourier_data, const sctl::Vector<T> &p2c) {
     auto &logger = dmk::get_logger();
     auto &rank_logger = dmk::get_rank_logger();
     const int nd = params.n_mfm;
