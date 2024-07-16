@@ -1,7 +1,9 @@
 #include <Eigen/Core>
 
+#include <sctl.hpp>
 #include <dmk/gemm.hpp>
 #include <dmk/tensorprod.hpp>
+#include <dmk/types.hpp>
 #include <type_traits>
 
 namespace dmk::tensorprod {
@@ -33,34 +35,31 @@ void transform_2d(int nin, int nout, int add_flag, const T *fin_, const T *umat,
 }
 
 template <typename T>
-void transform_3d(int nin, int nout, int add_flag, const T *fin, const T *umat, T *fout) {
-    using dmk::gemm::gemm;
-    T alpha{1.0};
-
-    T *ff = new T[nout * nout * nout];
-    T *ff2 = new T[nin * nout * nin];
-    T *fft = new T[nout * nout * nin];
+void transform_3d(int nin, int nout, int add_flag, const T *fin, const T *umat_, T *fout) {
+    sctl::Vector<T> ff_(nin * nin * nout);
+    sctl::Vector<T> fft_(nin * nout * nin);
+    sctl::Vector<T> ff2(nout * nout * nin);
+    dmk::ndview<const T, 2> umat(umat_, nout * nin, 3);
+    dmk::ndview<T, 3> ff(&ff_[0], nout, nout, nout);
+    dmk::ndview<T, 3> fft(&fft_[0], nout, nout, nin);
 
     const int nin2 = nin * nin;
     const int noutnin = nout * nin;
     const int nout2 = nout * nout;
-    gemm('n', 't', nin2, nout, nin, T{1.0}, fin, nin2, &umat[2 * nout * nin], nout, T{0.0}, ff, nin2);
 
-    // oof
-    for (int j1 = 0; j1 < nin; ++j1)
-        for (int k3 = 0; k3 < nout; ++k3)
-            for (int j2 = 0; j2 < nin; ++j2)
-                fft[j2 + k3 * nin + j1 * nout * nin] = ff[j1 + j2 * nin + k3 * nout * nin];
+    // transform in z
+    dmk::gemm::gemm('n', 't', nin2, nout, nin, T{1.0}, fin, nin2, &umat(0, 2), nout, T{0.0}, &ff(0, 0, 0), nin2);
+
+    for (int k = 0; k < nin; ++k)
+        for (int j = 0; j < nout; ++j)
+            for (int i = 0; i < nin; ++i)
+                fft(i, j, k) = ff(k, i, j);
 
     // transform in y
-    gemm('n', 'n', nout, noutnin, nin, T{1.0}, &umat[1 * nout * nin], nout, fft, nin, T{0.0}, ff2, nout);
+    dmk::gemm::gemm('n', 'n', nout, noutnin, nin, T{1.0}, &umat(0, 1), nout, &fft(0, 0, 0), nin, T{0.0}, &ff2[0], nout);
 
     // transform in x
-    gemm('n', 't', nout, nout2, nin, T{1.0}, umat, nout, ff2, nout2, T(add_flag), fout, nout);
-
-    delete[] ff;
-    delete[] ff2;
-    delete[] fft;
+    dmk::gemm::gemm('n', 't', nout, nout2, nin, T{1.0}, &umat(0, 0), nout, &ff2[0], nout2, T(add_flag), fout, nout);
 }
 
 template <typename T>
