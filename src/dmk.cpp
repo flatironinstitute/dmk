@@ -146,7 +146,7 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     else
         MPI_Reduce(&N, &N, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
 
-    logger->info("PDMK finished in {:.2f} seconds ({:.2f} pts/s)", dt, N / dt);
+    logger->info("PDMK finished in {:.4f} seconds ({:.0f} pts/s)", dt, N / dt);
 }
 
 void init_data(int n_dim, int nd, int n_src, bool uniform, std::vector<double> &r_src, std::vector<double> &rnormal,
@@ -231,16 +231,8 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
     params.n_mfm = nd;
     params.pgh = DMK_POTENTIAL;
     params.kernel = DMK_YUKAWA;
-    params.log_level = 0;
     params.fparam = 6.0;
-
-    pdmk(params, n_src, r_src.data(), charges.data(), rnormal.data(), dipstr.data(), n_trg, r_trg.data(),
-         pot_trg.data(), nullptr, nullptr);
-
-    const int ifdipole = 0;
-    const int iperiod = 0;
-    const int pgh_src = 1;
-    double tottimeinfo[20];
+    params.log_level = SPDLOG_LEVEL_OFF;
 
     double test_pot = 0.0;
     int test_targ = n_trg / 3;
@@ -254,16 +246,13 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
 
         test_pot += charges[i] * exp(-params.fparam * dr) / dr;
     }
-    std::cout << "pot[test_targ] = " << pot_trg[test_targ] << std::endl;
-    std::cout << "test_pot_direct = " << test_pot << std::endl;
-    std::cout << "rel_err[test_targ] = " << std::abs(1.0 - test_pot / pot_trg[test_targ]) << std::endl;
+    for (auto i : {0, 0}) {
+        pdmk(params, n_src, r_src.data(), charges.data(), rnormal.data(), dipstr.data(), n_trg, r_trg.data(),
+             pot_trg.data(), nullptr, nullptr);
+        params.log_level = SPDLOG_LEVEL_INFO;
+    }
 
-    int zero = 0;
-    pdmk_(&params.n_mfm, &params.n_dim, &params.eps, (int *)&params.kernel, &params.fparam, &iperiod, &n_src,
-          r_src.data(), &params.use_charge, charges.data(), &ifdipole, nullptr, nullptr, &pgh_src, pot_src.data(),
-          grad_src.data(), hess_src.data(), &zero, nullptr, &zero, nullptr, nullptr, nullptr, tottimeinfo);
-    std::cout << "pot_ref[test_targ] = " << pot_src[test_targ] << std::endl;
-    std::cout << "rel_err_ref[test_targ] = " << std::abs(1.0 - test_pot / pot_src[test_targ]) << std::endl;
+    REQUIRE(std::abs(1.0 - pot_trg[test_targ] / test_pot) < params.eps);
 }
 
 } // namespace dmk

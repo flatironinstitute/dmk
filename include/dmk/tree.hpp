@@ -2,6 +2,7 @@
 #define TREE_HPP
 
 #include <algorithm>
+#include <complex>
 #include <dmk.h>
 #include <numeric>
 #include <sctl.hpp>
@@ -44,6 +45,11 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<Real> proxy_coeffs_downward;
     sctl::Vector<sctl::Long> proxy_coeffs_offsets_downward;
 
+    sctl::Vector<std::complex<Real>> pw_in;
+    sctl::Vector<sctl::Long> pw_in_offsets;
+    sctl::Vector<std::complex<Real>> pw_out;
+    sctl::Vector<sctl::Long> pw_out_offsets;
+
     sctl::Vector<int> form_pw_expansion;
     sctl::Vector<int> eval_pw_expansion;
     sctl::Vector<int> eval_tp_expansion;
@@ -63,6 +69,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     Real *center_ptr(int i_node) { return &centers[i_node * DIM]; }
     Real *proxy_ptr_upward(int i_box) { return &proxy_coeffs[proxy_coeffs_offsets[i_box]]; }
     Real *proxy_ptr_downward(int i_box) { return &proxy_coeffs_downward[proxy_coeffs_offsets_downward[i_box]]; }
+    std::complex<Real> *pw_in_ptr(int i_box) { return &pw_in[pw_in_offsets[i_box]]; }
+    std::complex<Real> *pw_out_ptr(int i_box) { return &pw_out[pw_out_offsets[i_box]]; }
 
     void upward_pass(const sctl::Vector<Real> &c2p);
     void downward_pass(FourierData<Real> &fourier_data, const sctl::Vector<Real> &c2p);
