@@ -53,6 +53,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<int> form_pw_expansion;
     sctl::Vector<int> eval_pw_expansion;
     sctl::Vector<int> eval_tp_expansion;
+    int n_pw; // FIXME: Assigned well after construction, dangerous hack
     const int n_order;
     const pdmk_params params;
 

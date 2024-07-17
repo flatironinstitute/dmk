@@ -324,8 +324,6 @@ void shift_planewave(int nd, int nexp, const Complex *pwexp1_, Complex *pwexp2_,
 ///
 /// @tparam T Floating point format to use (float, double)
 /// @tparam DIM Spatial dimension tree lives in
-/// @param[in] params User input pdmk params
-/// @param[in] n_order Order of polynomial expansion (FIXME: Should just be fixed)
 /// @param[in,out] fourier_data Various fourier data. Only changes work array (FIXME: lame doc)
 /// @param[in] p2c [n_order, n_order, DIM, 2**DIM] Parent to child matrices used to pass parent proxy charges to their
 /// children
@@ -342,7 +340,8 @@ void DMKPtTree<T, DIM>::downward_pass(FourierData<T> &fourier_data, const sctl::
 
     const int nd_in = params.n_mfm;
     const int nd_out = params.n_mfm;
-    const int n_pw = fourier_data.n_pw;
+    // FIXME: This should be assigned automatically at tree construction (fourier_data should be suboject)
+    n_pw = fourier_data.n_pw;
     const std::size_t n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const std::size_t n_pw_per_box = n_pw_modes * nd_out;
     const std::size_t n_coeffs_per_box = params.n_mfm * sctl::pow<DIM>(n_order);
