@@ -267,7 +267,7 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
 
         yukawa_residual_kernel_coefs_(
             &eps, &n_dim, &fparam, &beta, &bsize, &rl[i_level], prolate_funcs.workarray.data(), &ncoeffs1[i_level],
-            &coeffs1[n_coeffs_max * i_level], &ncoeffs2[n_coeffs_max * i_level], &coeffs2[n_coeffs_max * i_level]);
+            &coeffs1[n_coeffs_max * i_level], &ncoeffs2[i_level], &coeffs2[n_coeffs_max * i_level]);
     }
     return;
 
