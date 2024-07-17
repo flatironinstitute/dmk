@@ -4,6 +4,7 @@
 #include <dmk/chebychev.hpp>
 #include <dmk/fortran.h>
 #include <dmk/types.hpp>
+#include <limits>
 #include <type_traits>
 #include <vector>
 
@@ -153,7 +154,7 @@ TEST_CASE("[DMK] mesh_nd") {
 TEST_CASE("[DMK] mk_tensor_product_fourier_transform") {
     for (int dim : {1, 2, 3}) {
         const int npw = 5;
-        const int nexp = pow(npw, dim - 1) * ((npw + 1) / 2);
+        const int nexp = (int)pow(npw, dim - 1) * ((npw + 1) / 2);
         std::vector<double> fhat = {1.0, 2.0, 3.0, 4.0, 5.0};
         const int nfourier = fhat.size() - 1;
         std::vector<double> pswfft(nexp);
@@ -163,9 +164,8 @@ TEST_CASE("[DMK] mk_tensor_product_fourier_transform") {
         mk_tensor_product_fourier_transform_(&dim, &npw, &nfourier, fhat.data(), &nexp, pswfft_fort.data());
 
         for (int i = 0; i < nexp; ++i) {
-            CHECK(std::abs(pswfft[i] - pswfft_fort[i]) < 1e-6);
+            CHECK(std::abs(pswfft[i] - pswfft_fort[i]) < std::numeric_limits<double>::epsilon());
         }
-
     }
 }
 
