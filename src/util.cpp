@@ -154,7 +154,7 @@ TEST_CASE("[DMK] mesh_nd") {
 TEST_CASE("[DMK] mk_tensor_product_fourier_transform") {
     for (int dim : {1, 2, 3}) {
         const int npw = 5;
-        const int nexp = (int)pow(npw, dim - 1) * ((npw + 1) / 2);
+        const int nexp = static_cast<int>(pow(npw, dim - 1) + 0.5) * ((npw + 1) / 2);
         std::vector<double> fhat = {1.0, 2.0, 3.0, 4.0, 5.0};
         const int nfourier = fhat.size() - 1;
         std::vector<double> pswfft(nexp);
