@@ -32,9 +32,13 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> r_trg_cnt;
     std::vector<sctl::Long> r_trg_offsets;
 
-    sctl::Vector<Real> pot_sorted;
-    sctl::Vector<sctl::Long> pot_cnt;
-    std::vector<sctl::Long> pot_offsets;
+    sctl::Vector<Real> pot_src_sorted;
+    sctl::Vector<sctl::Long> pot_src_cnt;
+    std::vector<sctl::Long> pot_src_offsets;
+
+    sctl::Vector<Real> pot_trg_sorted;
+    sctl::Vector<sctl::Long> pot_trg_cnt;
+    std::vector<sctl::Long> pot_trg_offsets;
 
     sctl::Vector<Real> charge_sorted;
     sctl::Vector<sctl::Long> charge_cnt;
@@ -65,7 +69,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void generate_metadata();
     Real *r_src_ptr(int i_node) { return &r_src_sorted[r_src_offsets[i_node]]; }
     Real *r_trg_ptr(int i_node) { return &r_trg_sorted[r_trg_offsets[i_node]]; }
-    Real *pot_ptr(int i_node) { return &pot_sorted[pot_offsets[i_node]]; }
+    Real *pot_src_ptr(int i_node) { return &pot_src_sorted[pot_src_offsets[i_node]]; }
+    Real *pot_trg_ptr(int i_node) { return &pot_trg_sorted[pot_trg_offsets[i_node]]; }
     Real *charge_ptr(int i_node) { return &charge_sorted[charge_offsets[i_node]]; }
     Real *center_ptr(int i_node) { return &centers[i_node * DIM]; }
     Real *proxy_ptr_upward(int i_box) { return &proxy_coeffs[proxy_coeffs_offsets[i_box]]; }

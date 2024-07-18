@@ -79,7 +79,7 @@ T procl180_rescale(T eps) {
 
 template <typename T, int DIM>
 void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge, const T *normal, const T *dipole_str,
-          int n_trg, const T *r_trg, T *pot, T *grad, T *hess) {
+          int n_trg, const T *r_trg, T *pot_src, T *grad_src, T *hess_src, T *pot_trg, T *grad_trg, T *hess_trg) {
     auto &logger = dmk::get_logger(params.log_level);
     auto &rank_logger = dmk::get_rank_logger(params.log_level);
     logger->info("PDMK called");
@@ -93,14 +93,17 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     sctl::Vector<T> r_src_vec(n_src * params.n_dim, const_cast<T *>(r_src), false);
     sctl::Vector<T> r_trg_vec(n_trg * params.n_dim, const_cast<T *>(r_trg), false);
     sctl::Vector<T> charge_vec(n_src * params.n_mfm, const_cast<T *>(charge), false);
-    sctl::Vector<T> pot_vec(n_trg * params.n_mfm);
-    pot_vec.SetZero();
+    sctl::Vector<T> pot_vec_src(n_src * params.n_mfm);
+    sctl::Vector<T> pot_vec_trg(n_trg * params.n_mfm);
+    pot_vec_src.SetZero();
+    pot_vec_trg.SetZero();
 
     logger->debug("Building tree and sorting points");
     tree.AddParticles("pdmk_src", r_src_vec);
     tree.AddParticleData("pdmk_charge", "pdmk_src", charge_vec);
     tree.AddParticles("pdmk_trg", r_trg_vec);
-    tree.AddParticleData("pdmk_pot", "pdmk_trg", pot_vec);
+    tree.AddParticleData("pdmk_pot_src", "pdmk_src", pot_vec_src);
+    tree.AddParticleData("pdmk_pot_trg", "pdmk_trg", pot_vec_trg);
     tree.UpdateRefinement(r_src_vec, params.n_per_leaf, true, params.use_periodic); // balance21 = true
     logger->debug("Tree build completed");
 
@@ -136,8 +139,10 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     tree.downward_pass(fourier_data, p2c);
 
     sctl::Vector<T> res;
-    tree.GetParticleData(res, "pdmk_pot");
-    sctl::Vector<T>(res.Dim(), pot, false) = res;
+    tree.GetParticleData(res, "pdmk_pot_src");
+    sctl::Vector<T>(res.Dim(), pot_src, false) = res;
+    tree.GetParticleData(res, "pdmk_pot_trg");
+    sctl::Vector<T>(res.Dim(), pot_trg, false) = res;
 
     auto dt = omp_get_wtime() - st;
     int N = n_trg;
@@ -210,13 +215,12 @@ MPI_TEST_CASE("[DMK] pdmk 2d", 1) {}
 MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
     constexpr int n_dim = 3;
     constexpr int n_src = 10000;
-    constexpr int n_trg = n_src;
+    constexpr int n_trg = 0;
     constexpr int nd = 1;
 
     std::vector<double> r_src, pot_src, grad_src, hess_src, charges, rnormal, dipstr, pot_trg, r_trg, grad_trg,
         hess_trg;
     init_data(n_dim, 1, n_src, false, r_src, rnormal, charges, dipstr, 0);
-    r_trg = r_src;
     pot_src.resize(n_src * nd);
     grad_src.resize(n_src * nd * n_dim);
     hess_src.resize(n_src * nd * n_dim * n_dim);
@@ -229,30 +233,30 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
     params.n_dim = n_dim;
     params.n_per_leaf = 80;
     params.n_mfm = nd;
-    params.pgh = DMK_POTENTIAL;
+    params.pgh_src = DMK_POTENTIAL;
     params.kernel = DMK_YUKAWA;
     params.fparam = 6.0;
     params.log_level = SPDLOG_LEVEL_OFF;
 
     double test_pot = 0.0;
-    int test_targ = n_trg / 3;
+    int test_targ = n_src / 3;
     for (int i = 0; i < n_src; ++i) {
         double dr = 0.0;
         for (int j = 0; j < n_dim; ++j)
-            dr += sctl::pow<2>(r_src[i * n_dim + j] - r_trg[test_targ * n_dim + j]);
+            dr += sctl::pow<2>(r_src[i * n_dim + j] - r_src[test_targ * n_dim + j]);
         dr = std::sqrt(dr);
         if (!dr)
             continue;
 
         test_pot += charges[i] * exp(-params.fparam * dr) / dr;
     }
-    for (auto i : {0, 0}) {
-        pdmk(params, n_src, r_src.data(), charges.data(), rnormal.data(), dipstr.data(), n_trg, r_trg.data(),
-             pot_trg.data(), nullptr, nullptr);
+    for (int i = 0; i < 2; ++i) {
+        pdmk(params, n_src, r_src.data(), charges.data(), rnormal.data(), dipstr.data(), n_trg, nullptr, pot_src.data(),
+             nullptr, nullptr, nullptr, nullptr, nullptr);
         params.log_level = SPDLOG_LEVEL_INFO;
     }
 
-    REQUIRE(std::abs(1.0 - pot_trg[test_targ] / test_pot) < params.eps);
+    REQUIRE(std::abs(1.0 - pot_src[test_targ] / test_pot) < params.eps);
 }
 
 } // namespace dmk
@@ -270,10 +274,13 @@ extern "C" {
 // }
 
 void pdmk(pdmk_params params, int n_src, const double *r_src, const double *charge, const double *normal,
-          const double *dipole_str, int n_trg, const double *r_trg, double *pot, double *grad, double *hess) {
+          const double *dipole_str, int n_trg, const double *r_trg, double *pot_src, double *grad_src, double *hess_src,
+          double *pot_trg, double *grad_trg, double *hess_trg) {
     if (params.n_dim == 2)
-        return dmk::pdmk<double, 2>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess);
+        return dmk::pdmk<double, 2>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot_src, grad_src,
+                                    hess_src, pot_trg, grad_trg, hess_trg);
     if (params.n_dim == 3)
-        return dmk::pdmk<double, 3>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess);
+        return dmk::pdmk<double, 3>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot_src, grad_src,
+                                    hess_src, pot_trg, grad_trg, hess_trg);
 }
 }
