@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
 #include <dmk/fortran.h>
@@ -101,8 +102,8 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     logger->debug("Building tree and sorting points");
     tree.AddParticles("pdmk_src", r_src_vec);
     tree.AddParticleData("pdmk_charge", "pdmk_src", charge_vec);
-    tree.AddParticles("pdmk_trg", r_trg_vec);
     tree.AddParticleData("pdmk_pot_src", "pdmk_src", pot_vec_src);
+    tree.AddParticles("pdmk_trg", r_trg_vec);
     tree.AddParticleData("pdmk_pot_trg", "pdmk_trg", pot_vec_trg);
     tree.UpdateRefinement(r_src_vec, params.n_per_leaf, true, params.use_periodic); // balance21 = true
     logger->debug("Tree build completed");
@@ -145,7 +146,7 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     sctl::Vector<T>(res.Dim(), pot_trg, false) = res;
 
     auto dt = omp_get_wtime() - st;
-    int N = n_trg;
+    int N = n_src + n_trg;
     if (tree.GetComm().Rank() == 0)
         MPI_Reduce(MPI_IN_PLACE, &N, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
     else
@@ -215,12 +216,16 @@ MPI_TEST_CASE("[DMK] pdmk 2d", 1) {}
 MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
     constexpr int n_dim = 3;
     constexpr int n_src = 10000;
-    constexpr int n_trg = 0;
     constexpr int nd = 1;
 
     std::vector<double> r_src, pot_src, grad_src, hess_src, charges, rnormal, dipstr, pot_trg, r_trg, grad_trg,
         hess_trg;
     init_data(n_dim, 1, n_src, false, r_src, rnormal, charges, dipstr, 0);
+    r_trg = r_src;
+    std::reverse(r_trg.begin(), r_trg.end());
+    r_trg.resize(n_dim * (n_src - 3));
+    const int n_trg = r_trg.size() / n_dim;
+
     pot_src.resize(n_src * nd);
     grad_src.resize(n_src * nd * n_dim);
     hess_src.resize(n_src * nd * n_dim * n_dim);
@@ -238,25 +243,35 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
     params.fparam = 6.0;
     params.log_level = SPDLOG_LEVEL_OFF;
 
-    double test_pot = 0.0;
-    int test_targ = n_src / 3;
-    for (int i = 0; i < n_src; ++i) {
+    auto yukawa = [&n_dim, &charges, &params](double *r_a, double *r_b) {
         double dr = 0.0;
         for (int j = 0; j < n_dim; ++j)
-            dr += sctl::pow<2>(r_src[i * n_dim + j] - r_src[test_targ * n_dim + j]);
+            dr += sctl::pow<2>(r_a[j] - r_b[j]);
         dr = std::sqrt(dr);
         if (!dr)
-            continue;
+            return 0.0;
 
-        test_pot += charges[i] * exp(-params.fparam * dr) / dr;
+        return std::exp(-params.fparam * dr) / dr;
+    };
+
+    double test_src = 0.0;
+    double test_trg = 0.0;
+    int test_src_i = n_src / 3;
+    int test_trg_i = n_trg / 3;
+
+    for (int i = 0; i < n_src; ++i) {
+        test_src += charges[i] * yukawa(&r_src[i * n_dim], &r_src[test_src_i * n_dim]);
+        test_trg += charges[i] * yukawa(&r_src[i * n_dim], &r_trg[test_trg_i * n_dim]);
     }
+
     for (int i = 0; i < 2; ++i) {
-        pdmk(params, n_src, r_src.data(), charges.data(), rnormal.data(), dipstr.data(), n_trg, nullptr, pot_src.data(),
-             nullptr, nullptr, nullptr, nullptr, nullptr);
+        pdmk(params, n_src, r_src.data(), charges.data(), rnormal.data(), dipstr.data(), n_trg, r_trg.data(),
+             pot_src.data(), nullptr, nullptr, pot_trg.data(), nullptr, nullptr);
         params.log_level = SPDLOG_LEVEL_INFO;
     }
 
-    REQUIRE(std::abs(1.0 - pot_src[test_targ] / test_pot) < params.eps);
+    REQUIRE(std::abs(1.0 - pot_src[test_src_i] / test_src) < params.eps);
+    REQUIRE(std::abs(1.0 - pot_trg[test_trg_i] / test_trg) < params.eps);
 }
 
 } // namespace dmk

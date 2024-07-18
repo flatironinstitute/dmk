@@ -451,9 +451,14 @@ void DMKPtTree<T, DIM>::downward_pass(FourierData<T> &fourier_data, const sctl::
             dmk::planewave_to_proxy_potential(dim, nd, n_order, n_pw, pw_in_ptr(box), &pw2poly[0],
                                               proxy_ptr_downward(box));
 
-            if (eval_tp_expansion[box])
-                pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, proxy_ptr_downward(box), &n_src, r_src_ptr(box),
-                                     center_ptr(box), &sc, pot_src_ptr(box));
+            if (eval_tp_expansion[box]) {
+                if (n_src)
+                    pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, proxy_ptr_downward(box), &n_src, r_src_ptr(box),
+                                         center_ptr(box), &sc, pot_src_ptr(box));
+                if (n_trg)
+                    pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, proxy_ptr_downward(box), &n_trg, r_trg_ptr(box),
+                                         center_ptr(box), &sc, pot_trg_ptr(box));
+            }
 
             // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
             for (int i_child = 0; i_child < n_children; ++i_child) {
@@ -462,9 +467,14 @@ void DMKPtTree<T, DIM>::downward_pass(FourierData<T> &fourier_data, const sctl::
                     continue;
 
                 if (eval_tp_expansion[child] && !eval_pw_expansion[child]) {
-                    int n_src_child = src_counts_local[child];
-                    pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, proxy_ptr_downward(box), &n_src_child, r_src_ptr(child),
-                                         center_ptr(child), &sc, pot_src_ptr(child));
+                    const int n_src_child = src_counts_local[child];
+                    const int n_trg_child = trg_counts_local[child];
+                    if (n_src_child)
+                        pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, proxy_ptr_downward(box), &n_src_child,
+                                             r_src_ptr(child), center_ptr(child), &sc, pot_src_ptr(child));
+                    if (n_trg_child)
+                        pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, proxy_ptr_downward(box), &n_trg_child,
+                                             r_trg_ptr(child), center_ptr(child), &sc, pot_trg_ptr(child));
                 } else if (eval_pw_expansion[child]) {
                     dmk::tensorprod::transform(dim, nd, n_order, n_order, true, proxy_ptr_downward(box),
                                                &p2c[i_child * DIM * n_order * n_order], proxy_ptr_downward(child));
@@ -490,18 +500,31 @@ void DMKPtTree<T, DIM>::downward_pass(FourierData<T> &fourier_data, const sctl::
             const int ifdipole = 0;
             const int one = 1;
             for (auto neighbor : node_lists[box].nbr) {
-                if (neighbor < 0 || src_counts_local[neighbor] == 0)
+                if (neighbor < 0)
                     continue;
                 const int n_src_neighb = src_counts_local[neighbor];
+                const int n_trg_neighb = trg_counts_local[neighbor];
 
-                Eigen::MatrixX<T> r_src_transposed =
-                    Eigen::Map<Eigen::MatrixX<T>>(r_src_ptr(neighbor), dim, n_src_neighb).transpose();
-                pdmk_direct_c_(&nd, &dim, (int *)&params.kernel, &params.fparam, &ndigits, &rsc, &cen, &ifself,
-                               &fourier_data.ncoeffs1[i_level],
-                               &fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level], &d2max2, &one, &n_src,
-                               r_src_ptr(box), &ifcharge, charge_ptr(box), &ifdipole, nullptr, &one, &n_src_neighb,
-                               &n_src_neighb, r_src_transposed.data(), (int *)&params.pgh_src, pot_src_ptr(neighbor),
-                               nullptr, nullptr);
+                if (n_src_neighb) {
+                    Eigen::MatrixX<T> r_src_transposed =
+                        Eigen::Map<Eigen::MatrixX<T>>(r_src_ptr(neighbor), dim, n_src_neighb).transpose();
+                    pdmk_direct_c_(&nd, &dim, (int *)&params.kernel, &params.fparam, &ndigits, &rsc, &cen, &ifself,
+                                   &fourier_data.ncoeffs1[i_level],
+                                   &fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level], &d2max2, &one, &n_src,
+                                   r_src_ptr(box), &ifcharge, charge_ptr(box), &ifdipole, nullptr, &one, &n_src_neighb,
+                                   &n_src_neighb, r_src_transposed.data(), (int *)&params.pgh_src,
+                                   pot_src_ptr(neighbor), nullptr, nullptr);
+                }
+                if (n_trg_neighb) {
+                    Eigen::MatrixX<T> r_trg_transposed =
+                        Eigen::Map<Eigen::MatrixX<T>>(r_trg_ptr(neighbor), dim, n_trg_neighb).transpose();
+                    pdmk_direct_c_(&nd, &dim, (int *)&params.kernel, &params.fparam, &ndigits, &rsc, &cen, &ifself,
+                                   &fourier_data.ncoeffs1[i_level],
+                                   &fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level], &d2max2, &one, &n_src,
+                                   r_src_ptr(box), &ifcharge, charge_ptr(box), &ifdipole, nullptr, &one, &n_trg_neighb,
+                                   &n_trg_neighb, r_trg_transposed.data(), (int *)&params.pgh_trg,
+                                   pot_trg_ptr(neighbor), nullptr, nullptr);
+                }
             }
 
             // Correct for self-evaluations
