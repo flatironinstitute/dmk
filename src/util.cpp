@@ -116,7 +116,7 @@ void mk_tensor_product_fourier_transform_3d(int npw, ndview<const Real, 1> &fhat
 template <typename Real>
 void mk_tensor_product_fourier_transform(int dim, int npw, ndview<const Real, 1> &fhat, ndview<Real, 1> &pswfft) {
     if (dim == 1) {
-       return mk_tensor_product_fourier_transform_1d(npw, fhat, pswfft);
+        return mk_tensor_product_fourier_transform_1d(npw, fhat, pswfft);
     }
     if (dim == 2) {
         return mk_tensor_product_fourier_transform_2d(npw, fhat, pswfft);
@@ -186,7 +186,7 @@ TEST_CASE("[DMK] mk_tensor_product_fourier_transform") {
 
         ndview<const double, 1> fhat_view(fhat.data(), nfourier + 1);
         ndview<double, 1> pswfft_view(pswfft.data(), nexp);
-        mk_tensor_product_fourier_transform(dim, npw, nfourier, fhat.data(), nexp, pswfft.data());
+        mk_tensor_product_fourier_transform(dim, npw, fhat_view, pswfft_view);
         for (int i = 0; i < nexp; ++i) {
             CHECK(std::abs(pswfft[i] - pswfft_fort[i]) < std::numeric_limits<double>::epsilon());
         }
