@@ -114,6 +114,20 @@ void mk_tensor_product_fourier_transform_3d(int npw, ndview<const Real, 1> &fhat
 }
 
 template <typename Real>
+void mk_tensor_product_fourier_transform(int dim, int npw, ndview<const Real, 1> &fhat, ndview<Real, 1> &pswfft) {
+    if (dim == 1) {
+       return mk_tensor_product_fourier_transform_1d(npw, fhat, pswfft);
+    }
+    if (dim == 2) {
+        return mk_tensor_product_fourier_transform_2d(npw, fhat, pswfft);
+    }
+    if (dim == 3) {
+        return mk_tensor_product_fourier_transform_3d(npw, fhat, pswfft);
+    }
+    throw std::runtime_error("Invalid dimension: " + std::to_string(dim));
+}
+
+template <typename Real>
 void mk_tensor_product_fourier_transform(int dim, int npw, int nfourier, Real *fhat, int nexp, Real *pswfft) {
     ndview<const Real, 1> fhat_view(fhat, nfourier + 1);
     ndview<Real, 1> pswfft_view(pswfft, nexp);
@@ -163,6 +177,16 @@ TEST_CASE("[DMK] mk_tensor_product_fourier_transform") {
         mk_tensor_product_fourier_transform(dim, npw, nfourier, fhat.data(), nexp, pswfft.data());
         mk_tensor_product_fourier_transform_(&dim, &npw, &nfourier, fhat.data(), &nexp, pswfft_fort.data());
 
+        for (int i = 0; i < nexp; ++i) {
+            CHECK(std::abs(pswfft[i] - pswfft_fort[i]) < std::numeric_limits<double>::epsilon());
+        }
+
+        for (auto &xval : pswfft)
+            xval = 0.0;
+
+        ndview<const double, 1> fhat_view(fhat.data(), nfourier + 1);
+        ndview<double, 1> pswfft_view(pswfft.data(), nexp);
+        mk_tensor_product_fourier_transform(dim, npw, nfourier, fhat.data(), nexp, pswfft.data());
         for (int i = 0; i < nexp; ++i) {
             CHECK(std::abs(pswfft[i] - pswfft_fort[i]) < std::numeric_limits<double>::epsilon());
         }

@@ -17,7 +17,8 @@ void mesh_nd(int dim, dmk::ndview<const Real, 1> &in, dmk::ndview<Real, 2> &out)
 template <typename Real>
 void mk_tensor_product_fourier_transform(int dim, int npw, int nfourier, Real *fhat, int nexp, Real *pswfft);
 
-
+template <typename Real>
+void mk_tensor_product_fourier_transform(int dim, int npw, ndview<const Real, 1> &fhat, ndview<Real, 1> &pswfft);
 } // namespace dmk::util
 
 #endif
