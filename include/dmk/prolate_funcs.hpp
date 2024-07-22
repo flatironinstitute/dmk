@@ -9,6 +9,8 @@
 
 namespace dmk {
 struct ProlateFuncs {
+    ProlateFuncs() = default;
+
     inline ProlateFuncs(double beta_, int lenw_) : beta(beta_), lenw(lenw_) {
         int ier;
         workarray.resize(lenw);

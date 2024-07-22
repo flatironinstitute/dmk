@@ -57,12 +57,15 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<int> form_pw_expansion;
     sctl::Vector<int> eval_pw_expansion;
     sctl::Vector<int> eval_tp_expansion;
-    int n_pw; // FIXME: Assigned well after construction, dangerous hack
-    const int n_order;
     const pdmk_params params;
+    const int n_digits;
+    const int n_pw_max;
+    const int n_order;
+    int n_pw; // FIXME: Assigned well after construction, dangerous hack
+    FourierData<Real> fourier_data;
 
-    DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, int n_order_)
-        : sctl::PtTree<Real, DIM>(comm), params(params_), n_order(n_order_){};
+    DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, const sctl::Vector<Real> &r_src,
+              const sctl::Vector<Real> &r_trg, const sctl::Vector<Real> &charge);
 
     int n_levels() const { return level_indices.size(); }
     std::size_t n_boxes() const { return this->GetNodeMID().Dim(); }
@@ -79,7 +82,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     std::complex<Real> *pw_out_ptr(int i_box) { return &pw_out[pw_out_offsets[i_box]]; }
 
     void upward_pass(const sctl::Vector<Real> &c2p);
-    void downward_pass(FourierData<Real> &fourier_data, const sctl::Vector<Real> &c2p);
+    void downward_pass(const sctl::Vector<Real> &c2p);
 };
 
 } // namespace dmk
