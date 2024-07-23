@@ -1,7 +1,8 @@
-#ifndef PROXY_HPP
-#define PROXY_HPP
+#ifndef DMK_PROXY_HPP
+#define DMK_PROXY_HPP
 
 #include <complex>
+#include <dmk/types.hpp>
 #include <sctl.hpp>
 
 namespace dmk::proxy {
@@ -17,6 +18,10 @@ void charge2proxycharge(int n_dim, int n_charge_dim, int order, int n_src, const
 template <typename T>
 void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const T *proxy_coeffs,
                     const std::complex<T> *poly2pw, std::complex<T> *pw_expansion);
+
+template <typename T, int DIM>
+void proxycharge2pw(dmk::ndview<const T, DIM + 1> &proxy_coeffs,
+                    dmk::ndview<const std::complex<T>, 2> &poly2pw, dmk::ndview<std::complex<T>, DIM + 1> &pw_expansion);
 }
 
 #endif
