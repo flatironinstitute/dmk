@@ -3,6 +3,7 @@
 
 #include <complex>
 #include <dmk.h>
+#include <dmk/prolate_funcs.hpp>
 #include <sctl.hpp>
 #include <vector>
 
@@ -11,8 +12,9 @@ struct ProlateFuncs;
 
 template <typename T>
 struct FourierData {
-    FourierData(dmk_ikernel kernel_, int n_dim_, int n_digits_, int n_pw_max, T fparam_, T beta_,
-                const std::vector<double> &boxsize_, ProlateFuncs &prolate_funcs_);
+    FourierData() = default;
+    FourierData(dmk_ikernel kernel_, int n_dim_, T eps, int n_digits_, int n_pw_max, T fparam_,
+                const std::vector<double> &boxsize_);
 
     void yukawa_windowed_kernel_Fourier_transform();
     void update_windowed_kernel_fourier_transform();
@@ -23,14 +25,13 @@ struct FourierData {
     void update_local_coeffs_yukawa(T eps);
     void update_local_coeffs(T eps);
 
-    const dmk_ikernel kernel;
-    const T beta;
-    const int n_dim;
-    const int n_digits;
-    const int n_levels;
+    dmk_ikernel kernel;
+    int n_dim;
+    int n_digits;
+    int n_levels;
     int n_pw;
-    const int n_fourier;
-    const T fparam;
+    int n_fourier;
+    T fparam;
     std::vector<T> dkernelft;
     std::vector<T> hpw;
     std::vector<T> ws;
@@ -41,11 +42,12 @@ struct FourierData {
     std::vector<double> coeffs2;
     std::vector<int> ncoeffs1;
     std::vector<int> ncoeffs2;
-    const int n_coeffs_max = 100;
+    int n_coeffs_max = 100;
 
-    ProlateFuncs &prolate_funcs;
+    double beta;
+    ProlateFuncs prolate_funcs;
 
-    const std::vector<double> &boxsize;
+    std::vector<double> boxsize;
     void calc_planewave_coeff_matrices(int i_level, int n_order, sctl::Vector<std::complex<T>> &prox2pw,
                                        sctl::Vector<std::complex<T>> &pw2poly) const;
     void calc_planewave_translation_matrix(int dim, int i_level, T xmin,

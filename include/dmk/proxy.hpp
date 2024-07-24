@@ -1,6 +1,9 @@
 #ifndef DMK_PROXY_HPP
 #define DMK_PROXY_HPP
 
+#include <dmk/fortran.h>
+#include <dmk/types.hpp>
+
 #include <complex>
 #include <dmk/types.hpp>
 #include <sctl.hpp>
@@ -22,6 +25,10 @@ void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const T 
 template <typename T, int DIM>
 void proxycharge2pw(dmk::ndview<const T, DIM + 1> &proxy_coeffs,
                     dmk::ndview<const std::complex<T>, 2> &poly2pw, dmk::ndview<std::complex<T>, DIM + 1> &pw_expansion);
-}
 
+template <typename T, int DIM>
+void eval_targets(const ndview<const T, DIM + 1> &coefs, const ndview<const T, 2> &r_trg, const ndview<const T, 1> &cen,
+                  T sc, const ndview<T, 2> &pot);
+
+} // namespace dmk::proxy
 #endif
