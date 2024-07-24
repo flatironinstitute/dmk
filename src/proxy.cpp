@@ -250,8 +250,8 @@ TEST_CASE("[DMK] proxycharge2pw") {
                 proxycharge2pw<double, 3>(proxy_coeffs_view, poly2pw_view, pw_expansion_view);
             }
 
-            const double l3 = (pw_coeffs - pw_coeffs_fort).norm() / pw_coeffs.size();
-            CHECK(l3 < std::numeric_limits<double>::epsilon());
+            const double rel_err = (pw_coeffs - pw_coeffs_fort).norm() / pw_coeffs.size();
+            CHECK(rel_err < std::numeric_limits<double>::epsilon());
 
         }
     }
