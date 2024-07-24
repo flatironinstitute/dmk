@@ -21,7 +21,6 @@ template <typename T>
 void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const T *proxy_coeffs,
                     const std::complex<T> *poly2pw, std::complex<T> *pw_expansion);
 
-// FIXME: Would be nice to use references for pot, but rvalue issues currently
 template <typename T, int DIM>
 void eval_targets(const ndview<const T, DIM + 1> &coefs, const ndview<const T, 2> &r_trg, const ndview<const T, 1> &cen,
                   T sc, const ndview<T, 2> &pot);
