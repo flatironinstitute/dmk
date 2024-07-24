@@ -96,25 +96,12 @@ void proxycharge2pw(ndview<const T, DIM + 1> &proxy_coeffs,
     throw std::runtime_error("Invalid dimension " + std::to_string(DIM) + "provided");
 }
 
-template <typename T, int DIM>
-void proxycharge2pw(ndview<const T, DIM + 1> &proxy_coeffs,
-                    ndview<const std::complex<T>, 2> &poly2pw, ndview<std::complex<T>, DIM + 1> &pw_expansion) {
-    if constexpr (DIM == 2){
-        return proxycharge2pw_2d(proxy_coeffs, poly2pw, pw_expansion);
-    }
-    if constexpr (DIM == 3){
-        return proxycharge2pw_3d(proxy_coeffs, poly2pw, pw_expansion);
-    }
-    throw std::runtime_error("Invalid dimension " + std::to_string(DIM) + "provided");
-}
-
 template <typename T>
 void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const T *proxy_coeffs,
                     const std::complex<T> *poly2pw, std::complex<T> *pw_expansion) {
     if (n_dim == 2) {
         ndview<const T, 3> proxy_coeffs_view(proxy_coeffs, n_order, n_order, n_charge_dim);
         ndview<const std::complex<T>, 2> poly2pw_view(poly2pw, n_pw, n_order);
-        ndview<std::complex<T>, 3> pw_expansion_view(pw_expansion, n_pw, (n_pw + 1) / 2, n_charge_dim);
         ndview<std::complex<T>, 3> pw_expansion_view(pw_expansion, n_pw, (n_pw + 1) / 2, n_charge_dim);
 
         return proxycharge2pw_2d(proxy_coeffs_view, poly2pw_view, pw_expansion_view);
