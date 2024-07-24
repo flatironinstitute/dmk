@@ -522,11 +522,11 @@ void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
 
             if (eval_tp_expansion[box]) {
                 if (n_src)
-                    pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, proxy_ptr_downward(box), &n_src, r_src_ptr(box),
-                                         center_ptr(box), &sc, pot_src_ptr(box));
+                    proxy::eval_targets<T, DIM>(proxy_view_downward(box), r_src_view(box), center_view(box), sc,
+                                                pot_src_view(box));
                 if (n_trg)
-                    pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, proxy_ptr_downward(box), &n_trg, r_trg_ptr(box),
-                                         center_ptr(box), &sc, pot_trg_ptr(box));
+                    proxy::eval_targets<T, DIM>(proxy_view_downward(box), r_trg_view(box), center_view(box), sc,
+                                                pot_trg_view(box));
             }
 
             // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
@@ -536,14 +536,12 @@ void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
                     continue;
 
                 if (eval_tp_expansion[child] && !eval_pw_expansion[child]) {
-                    const int n_src_child = src_counts_local[child];
-                    const int n_trg_child = trg_counts_local[child];
-                    if (n_src_child)
-                        pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, proxy_ptr_downward(box), &n_src_child,
-                                             r_src_ptr(child), center_ptr(child), &sc, pot_src_ptr(child));
-                    if (n_trg_child)
-                        pdmk_ortho_evalt_nd_(&dim, &nd, &n_order, proxy_ptr_downward(box), &n_trg_child,
-                                             r_trg_ptr(child), center_ptr(child), &sc, pot_trg_ptr(child));
+                    if (src_counts_local[child])
+                        proxy::eval_targets<T, DIM>(proxy_view_downward(box), r_src_view(child), center_view(child), sc,
+                                                    pot_src_view(child));
+                    if (trg_counts_local[child])
+                        proxy::eval_targets<T, DIM>(proxy_view_downward(box), r_trg_view(child), center_view(child), sc,
+                                                    pot_trg_view(child));
                 } else if (eval_pw_expansion[child]) {
                     dmk::tensorprod::transform(dim, nd, n_order, n_order, true, proxy_ptr_downward(box),
                                                &p2c[i_child * DIM * n_order * n_order], proxy_ptr_downward(child));
