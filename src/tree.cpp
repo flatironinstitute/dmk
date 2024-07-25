@@ -450,13 +450,20 @@ void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
 
     for (int i = 0; i < n_pw; ++i)
         ts[i] = fourier_data.hpw[0] * (i - shift);
-    meshnd_(&dim, &ts[0], &n_pw, &rk[0]);
-    mk_tensor_product_fourier_transform_(&dim, &n_pw, &fourier_data.n_fourier, &fourier_data.dkernelft[0], &nexp,
-                                         &radialft[0]);
+    dmk::ndview<const double, 1> ts_view(&ts[0], n_pw);
+    dmk::ndview<double, 2> rk_view(&rk[0], DIM, pow(n_pw, DIM));
+    dmk::util::mesh_nd(DIM, ts_view, rk_view);
+    dmk::ndview<const double, 1> fourier_data_view(&fourier_data.dkernelft[0], fourier_data.n_fourier + 1);
+    dmk::ndview<double, 1> radialft_view(&radialft[0], nexp);
+    dmk::util::mk_tensor_product_fourier_transform(DIM, n_pw, fourier_data_view, radialft_view);
+
     fourier_data.calc_planewave_coeff_matrices(-1, n_order, poly2pw, pw2poly);
 
-    dmk::proxy::proxycharge2pw(DIM, nd_out, n_order, fourier_data.n_pw, proxy_ptr_upward(0), &poly2pw[0],
-                               pw_out_ptr(0));
+    dmk::ndview<const double, DIM + 1> proxy_coeffs_view = proxy_view_upward(0);
+    dmk::ndview<const std::complex<double>, 2> poly2pw_view(&poly2pw[0], fourier_data.n_pw, n_order);
+    dmk::ndview<std::complex<double>, DIM + 1> pw_expansion_view = pw_out_view_downward(0);
+    dmk::proxy::proxycharge2pw<double, DIM>(proxy_coeffs_view, poly2pw_view, pw_expansion_view);
+
     constexpr int zero = 0;
     dmk_multiply_kernelft_cd2p_(&nd_out, &dim, &params.use_charge, &zero, &nexp, (double *)pw_out_ptr(0), &radialft[0],
                                 &rk[0]);
@@ -467,12 +474,16 @@ void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         for (int i = 0; i < n_pw; ++i)
             ts[i] = fourier_data.hpw[i_level + 1] * (i - shift);
-        meshnd_(&dim, &ts[0], &n_pw, &rk[0]);
+        dmk::ndview<const double, 1> ts_view(&ts[0], n_pw);
+        dmk::ndview<double, 2> rk_view(&rk[0], DIM, pow(n_pw, DIM));
+        dmk::util::mesh_nd(DIM, ts_view, rk_view);
+
         fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
         dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw, ts, wpwshift);
-        mk_tensor_product_fourier_transform_(&dim, &n_pw, &fourier_data.n_fourier,
-                                             &fourier_data.dkernelft[(i_level + 1) * (fourier_data.n_fourier + 1)],
-                                             &nexp, &radialft[0]);
+        
+        dmk::ndview<const double, 1> fourier_data_view(&fourier_data.dkernelft[(i_level + 1) * (fourier_data.n_fourier + 1)], fourier_data.n_fourier + 1);
+        dmk::ndview<double, 1> radialft_view(&radialft[0], nexp);
+        dmk::util::mk_tensor_product_fourier_transform(DIM, n_pw, fourier_data_view, radialft_view);
 
         // Form outgoing expansions
         for (auto box : level_indices[i_level]) {
@@ -481,8 +492,11 @@ void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
 
             // Form the outgoing expansion Φl(box) for the difference kernel Dl from the proxy charge expansion
             // coefficients using Tprox2pw.
-            dmk::proxy::proxycharge2pw(DIM, nd_out, n_order, fourier_data.n_pw, proxy_ptr_upward(box), &poly2pw[0],
-                                       pw_out_ptr(box));
+            dmk::ndview<const double, DIM + 1> proxy_coeffs_view = proxy_view_upward(box);
+            dmk::ndview<const std::complex<double>, 2> poly2pw_view(&poly2pw[0], fourier_data.n_pw, n_order);
+            dmk::ndview<std::complex<double>, DIM + 1> pw_expansion_view = pw_out_view_downward(box);
+            dmk::proxy::proxycharge2pw<double, DIM>(proxy_coeffs_view, poly2pw_view, pw_expansion_view);
+            
             dmk_multiply_kernelft_cd2p_(&nd_out, &dim, &params.use_charge, &zero, &nexp, (double *)pw_out_ptr(box),
                                         &radialft[0], &rk[0]);
             memcpy(pw_in_ptr(box), pw_out_ptr(box), n_pw_per_box * sizeof(std::complex<T>));
@@ -516,7 +530,7 @@ void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
             if (!eval_pw_expansion[box] || n_pts == 0)
                 continue;
 
-            // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
+            //Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
             dmk::planewave_to_proxy_potential(dim, nd, n_order, n_pw, pw_in_ptr(box), &pw2poly[0],
                                               proxy_ptr_downward(box));
 
