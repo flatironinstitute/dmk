@@ -161,8 +161,8 @@ void FourierData<T>::yukawa_windowed_kernel_Fourier_transform() {
     if (near_correction) {
         double arg = rl[0] * rlambda;
         if (n_dim == 2) {
-            dk0 = besk0_(&arg);
-            dk1 = besk1_(&arg);
+            dk0 = std::cyl_bessel_j(0, arg);
+            dk1 = std::cyl_bessel_j(1, arg);
         } else if (n_dim == 3)
             delam = std::exp(-arg);
     }
@@ -182,7 +182,7 @@ void FourierData<T>::yukawa_windowed_kernel_Fourier_transform() {
             double sker;
             if (n_dim == 2) {
                 double xsc = rl[0] * rk;
-                sker = -rl[0] * fparam * besj0_(&xsc) * dk1 + 1.0 + xsc * besj1_(&xsc) * dk0;
+                sker = -rl[0] * fparam * std::cyl_bessel_j(0, xsc) * dk1 + 1.0 + xsc * besj1_(&xsc) * dk0;
             } else if (n_dim == 3) {
                 double xsc = rl[0] * rk;
                 sker = 1 - delam * (cos(xsc) + rlambda / rk * sin(xsc));
