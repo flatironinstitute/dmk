@@ -359,26 +359,15 @@ void tensor_product_fourier_transform(int nexp, int npw, int nfourier, const T *
         static_assert(dmk::util::always_false<T>, "Invalid DIM supplied");
 }
 
-template <typename T>
-void multiply_kernelFT_cd2p(int nd, int ndim, bool ifcharge, bool ifdipole, int nexp, std::complex<T> *pwexp,
-                            const T *radialft, const T *rk) {
-    sctl::Vector<std::complex<T>> pwexp1(nexp * nd);
-    pwexp1.SetZero();
-
-    if (ifcharge)
-        pwexp1 = sctl::Vector<std::complex<T>>(nexp * nd, pwexp, false);
-
-    if (ifdipole == 1) {
-        for (int ind = 0; ind < nd; ++ind)
-            for (int n = 0; n < nexp; ++n)
-                for (int j = 0; j < ndim; ++j)
-                    pwexp1[n + ind * nd] -=
-                        pwexp[n + nd * (ind + ifcharge + j)] * rk[j + n * ndim] * std::complex<T>{0.0, 1.0};
-    }
+template <typename T, int DIM>
+void multiply_kernelFT_cd2p(const ndview<std::complex<T>, DIM + 1> &pwexp, const sctl::Vector<T> &radialft) {
+    const int nd = pwexp.extent(DIM);
+    const int nexp = radialft.Dim();
+    ndview<std::complex<T>, 2> pwexp_flat(pwexp.data_handle(), nexp, nd);
 
     for (int ind = 0; ind < nd; ++ind)
         for (int n = 0; n < nexp; ++n)
-            pwexp[n + ind * nd] = pwexp1[n + ind * nd] * radialft[n];
+            pwexp_flat(n, ind) *= radialft[n];
 }
 
 template <typename Complex>
@@ -458,8 +447,7 @@ void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
     dmk::proxy::proxycharge2pw(DIM, nd_out, n_order, fourier_data.n_pw, proxy_ptr_upward(0), &poly2pw[0],
                                pw_out_ptr(0));
     constexpr int zero = 0;
-    dmk_multiply_kernelft_cd2p_(&nd_out, &dim, &params.use_charge, &zero, &nexp, (double *)pw_out_ptr(0), &radialft[0],
-                                &rk[0]);
+    multiply_kernelFT_cd2p<T, DIM>(pw_out_view(0), radialft);
     memcpy(pw_in_ptr(0), pw_out_ptr(0), n_pw_per_box * sizeof(std::complex<T>));
     dmk::planewave_to_proxy_potential(DIM, nd, n_order, n_pw, pw_in_ptr(0), &pw2poly[0], proxy_ptr_downward(0));
 
@@ -483,8 +471,7 @@ void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
             // coefficients using Tprox2pw.
             dmk::proxy::proxycharge2pw(DIM, nd_out, n_order, fourier_data.n_pw, proxy_ptr_upward(box), &poly2pw[0],
                                        pw_out_ptr(box));
-            dmk_multiply_kernelft_cd2p_(&nd_out, &dim, &params.use_charge, &zero, &nexp, (double *)pw_out_ptr(box),
-                                        &radialft[0], &rk[0]);
+            multiply_kernelFT_cd2p<T, DIM>(pw_out_view(box), radialft);
             memcpy(pw_in_ptr(box), pw_out_ptr(box), n_pw_per_box * sizeof(std::complex<T>));
         }
 
