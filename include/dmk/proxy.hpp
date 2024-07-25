@@ -23,8 +23,8 @@ void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const T 
                     const std::complex<T> *poly2pw, std::complex<T> *pw_expansion);
 
 template <typename T, int DIM>
-void proxycharge2pw(dmk::ndview<const T, DIM + 1> &proxy_coeffs,
-                    dmk::ndview<const std::complex<T>, 2> &poly2pw, dmk::ndview<std::complex<T>, DIM + 1> &pw_expansion);
+void proxycharge2pw(const ndview<const T, DIM + 1> &proxy_coeffs, const ndview<const std::complex<T>, 2> &poly2pw,
+                    const ndview<std::complex<T>, DIM + 1> &pw_expansion);
 
 template <typename T, int DIM>
 void eval_targets(const ndview<const T, DIM + 1> &coefs, const ndview<const T, 2> &r_trg, const ndview<const T, 1> &cen,
