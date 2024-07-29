@@ -281,12 +281,8 @@ void DMKPtTree<T, DIM>::upward_pass(const sctl::Vector<T> &c2p) {
     for (auto i_box : level_indices[start_level]) {
         if (!form_pw_expansion[i_box])
             continue;
-        // proxy::charge2proxycharge(DIM, params.n_mfm, n_order, src_counts_local[i_box], r_src_ptr(i_box),
-        //                           charge_ptr(i_box), center_ptr(i_box), 2.0 / boxsize[start_level],
-        //                           proxy_ptr_upward(i_box));
-        proxy::charge2proxycharge<double, DIM>(r_src_view(i_box),
-                                  charge_view(i_box), center_view(i_box), 2.0 / boxsize[start_level],
-                                  proxy_view_upward(i_box));
+        proxy::charge2proxycharge<double, DIM>(r_src_view(i_box), charge_view(i_box), center_view(i_box),
+                                               2.0 / boxsize[start_level], proxy_view_upward(i_box));
         counts[i_box] = 1;
         n_direct++;
     }
@@ -309,12 +305,9 @@ void DMKPtTree<T, DIM>::upward_pass(const sctl::Vector<T> &c2p) {
                     counts[parent_box] = 1;
                     n_merged += 1;
                 } else {
-                    // proxy::charge2proxycharge(DIM, params.n_mfm, n_order, src_counts_local[child_box],
-                    //                           r_src_ptr(child_box), charge_ptr(child_box), center_ptr(parent_box),
-                    //                           2.0 / boxsize[i_level], proxy_ptr_upward(parent_box));
-                    proxy::charge2proxycharge<double, DIM>(r_src_view(child_box),
-                                  charge_view(child_box), center_view(parent_box), 2.0 / boxsize[i_level],
-                                  proxy_view_upward(parent_box));
+                    proxy::charge2proxycharge<double, DIM>(r_src_view(child_box), charge_view(child_box),
+                                                           center_view(parent_box), 2.0 / boxsize[i_level],
+                                                           proxy_view_upward(parent_box));
                     counts[child_box] = 1;
                     n_direct++;
                 }
@@ -473,8 +466,8 @@ void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
         fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
         dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw, ts, wpwshift);
 
-        ndview<const double, 1> fourier_data_view(
-            &fourier_data.dkernelft[(i_level + 1) * (fourier_data.n_fourier + 1)], fourier_data.n_fourier + 1);
+        ndview<const double, 1> fourier_data_view(&fourier_data.dkernelft[(i_level + 1) * (fourier_data.n_fourier + 1)],
+                                                  fourier_data.n_fourier + 1);
         ndview<double, 1> radialft_view(&radialft[0], nexp);
         dmk::util::mk_tensor_product_fourier_transform(DIM, n_pw, fourier_data_view, radialft_view);
 

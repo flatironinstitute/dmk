@@ -133,20 +133,20 @@ void charge2proxycharge_2d(const ndview<const T, 2> &r_src_, const ndview<const 
     CMatrixMap r_src(r_src_.data_handle(), n_dim, n_src);
     CMatrixMap charge(charge_.data_handle(), n_charge_dim, n_src);
 
-    for (int i_src = 0; i_src < n_src; ++i_src)
-        dmk::chebyshev::calc_polynomial(order, scale_factor * (r_src(0, i_src) - center[0]), &poly_x(0, i_src));
+    for (int i_src = 0; i_src < n_src; ++i_src) {
+        dmk::chebyshev::calc_polynomial(order, scale_factor * (r_src(0, i_src) - center(0)), &poly_x(0, i_src));
+    }
 
     for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
         for (int i_src = 0; i_src < n_src; ++i_src) {
             // we recalculate the polynomial rather than caching it because it's so cheap and more cache friendly
             T poly_y[order];
-            dmk::chebyshev::calc_polynomial(order, scale_factor * (r_src(1, i_src) - center[1]), poly_y);
+            dmk::chebyshev::calc_polynomial(order, scale_factor * (r_src(1, i_src) - center(1)), poly_y);
             for (int i = 0; i < order; ++i)
                 dy(i, i_src) = charge(i_dim, i_src) * poly_y[i];
         }
 
-        // MatrixMap(&coeffs[i_dim * order * order], order, order) += poly_x * dy.transpose();
-        MatrixMap(&coeffs(i_dim, 0, 0), order, order) += poly_x * dy.transpose();
+        MatrixMap(&coeffs(i_dim * order * order, 0, 0), order, order) += poly_x * dy.transpose();
     }
 }
 
@@ -155,6 +155,7 @@ void charge2proxycharge_3d(const ndview<const T, 2> &r_src_, const ndview<const 
                            const ndview<const T, 1> &center, T scale_factor, const ndview<T, 4> &coeffs) {
     using MatrixMap = Eigen::Map<Eigen::MatrixX<T>>;
     using CMatrixMap = Eigen::Map<const Eigen::MatrixX<T>>;
+
     const int n_dim = 3;
     const int order = coeffs.extent(0);
     const int n_charge_dim = coeffs.extent(3);
@@ -169,44 +170,35 @@ void charge2proxycharge_3d(const ndview<const T, 2> &r_src_, const ndview<const 
     CMatrixMap r_src(r_src_.data_handle(), n_dim, n_src);
     CMatrixMap charge(charge_.data_handle(), n_charge_dim, n_src);
 
-    for (int i_src = 0; i_src < n_src; ++i_src)
-        dmk::chebyshev::calc_polynomial(order, scale_factor * (r_src(0, i_src) - center[0]), &poly_x(0, i_src));
-    for (int i_src = 0; i_src < n_src; ++i_src)
-        dmk::chebyshev::calc_polynomial(order, scale_factor * (r_src(1, i_src) - center[1]), &poly_y(0, i_src));
-    for (int i_src = 0; i_src < n_src; ++i_src)
-        dmk::chebyshev::calc_polynomial(order, scale_factor * (r_src(2, i_src) - center[2]), &poly_z(0, i_src));
+    for (int i_src = 0; i_src < n_src; ++i_src) {
+        dmk::chebyshev::calc_polynomial(order, scale_factor * (r_src(0, i_src) - center(0)), &poly_x(0, i_src));
+        dmk::chebyshev::calc_polynomial(order, scale_factor * (r_src(1, i_src) - center(1)), &poly_y(0, i_src));
+        dmk::chebyshev::calc_polynomial(order, scale_factor * (r_src(2, i_src) - center(2)), &poly_z(0, i_src));
+    }
 
     for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
-        for (int k = 0; k < order; ++k)
+        for (int k = 0; k < order; ++k) {
             for (int m = 0; m < n_src; ++m)
                 dz(m, k) = charge(i_dim, m) * poly_z(k, m);
+        }
 
-        for (int k = 0; k < order; ++k)
-            for (int j = 0; j < order; ++j)
+        for (int k = 0; k < order; ++k) {
+            for (int j = 0; j < order; ++j) {
                 for (int m = 0; m < n_src; ++m)
                     dyz(m, j + k * order) = poly_y(j, m) * dz(m, k);
-
-        // MatrixMap(&coeffs[i_dim * order * order * order], order, order * order) += poly_x * dyz;
-        MatrixMap(&coeffs(i_dim, 0, 0, 0), order, order * order) += poly_x * dyz;
+            }
+        }
+        MatrixMap(&coeffs(i_dim * order * order * order, 0, 0, 0), order, order * order) += poly_x * dyz;
     }
 }
 
-template <typename T>
-void charge2proxycharge(int n_dim, int n_charge_dim, int order, int n_src, const T *r_src, const T *charge,
-                        const T *center, T scale_factor, T *coeffs) {
-    if (n_dim == 2)
-        return charge2proxycharge_2d(n_charge_dim, order, n_src, r_src, charge, center, scale_factor, coeffs);
-    if (n_dim == 3)
-        return charge2proxycharge_3d(n_charge_dim, order, n_src, r_src, charge, center, scale_factor, coeffs);
-}
-
 template <typename T, int DIM>
-void charge2proxycharge(const ndview<const T, 2> &r_src, const ndview<const T, 2> &charge,
+void charge2proxycharge(const ndview<const T, 2> &r_src_, const ndview<const T, 2> &charge_,
                         const ndview<const T, 1> &center, T scale_factor, const ndview<T, DIM + 1> &coeffs) {
     if constexpr (DIM == 2)
-        return charge2proxycharge_2d(r_src, charge, center, scale_factor, coeffs);
+        return charge2proxycharge_2d(r_src_, charge_, center, scale_factor, coeffs);
     else if constexpr (DIM == 3)
-        return charge2proxycharge_3d(r_src, charge, center, scale_factor, coeffs);
+        return charge2proxycharge_3d(r_src_, charge_, center, scale_factor, coeffs);
     else
         throw std::runtime_error("Invalid dimension " + std::to_string(DIM) + "provided");
 }
@@ -310,12 +302,6 @@ void eval_targets(const ndview<const T, DIM + 1> &coeffs, const ndview<const T, 
         static_assert(dmk::util::always_false<T>, "Invalid DIM supplied");
 }
 
-// template void charge2proxycharge(int n_dim, int n_charge_dim, int order, int n_src, const float *r_src,
-//                                  const float *charge, const float *center, float scale_factor, float *coeffs);
-
-// // template void charge2proxycharge(int n_dim, int n_charge_dim, int order, int n_src, const double *r_src,
-// //                                  const double *charge, const double *center, double scale_factor, double *coeffs);
-
 template void charge2proxycharge<double, 2>(const ndview<const double, 2> &r_src_,
                                             const ndview<const double, 2> &charge_,
                                             const ndview<const double, 1> &center, double scale_factor,
@@ -326,8 +312,6 @@ template void charge2proxycharge<double, 3>(const ndview<const double, 2> &r_src
                                             const ndview<const double, 1> &center, double scale_factor,
                                             const ndview<double, 4> &coeffs);
 
-// template void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const float *proxy_coeffs,
-//                              const std::complex<float> *poly2pw, std::complex<float> *pw_expansion);
 template void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const double *proxy_coeffs,
                              const std::complex<double> *poly2pw, std::complex<double> *pw_expansion);
 
@@ -400,44 +384,49 @@ TEST_CASE("[DMK] proxycharge2pw") {
 TEST_CASE("[DMK] charge2proxycharge") {
     const int n_src = 500;
     const int n_charge_dim = 2;
-    int n_dim = 3;
 
-    // for (int n_dim : {2, 3}) {
-    //     CAPTURE(n_dim);
-    for (int n_order : {10, 16, 24}) {
-        CAPTURE(n_order);
-        Eigen::VectorX<double> r_src(n_src * n_dim);
-        Eigen::VectorX<double> charge(n_src * n_charge_dim);
-        Eigen::VectorX<double> coeffs(int(pow(n_order, n_dim)) * n_charge_dim);
-        Eigen::VectorX<double> coeffs_fort(int(pow(n_order, n_dim)) * n_charge_dim);
-        const double center[] = {0.5, 0.5, 0.5};
-        const double scale_factor = 1.2;
+    for (int n_dim : {2, 3}) {
+        CAPTURE(n_dim);
+        for (int n_order : {10, 16, 24}) {
+            CAPTURE(n_order);
+            Eigen::VectorX<double> r_src(n_src * n_dim);
+            Eigen::VectorX<double> charge(n_src * n_charge_dim);
+            Eigen::VectorX<double> coeffs(int(pow(n_order, n_dim)) * n_charge_dim);
+            Eigen::VectorX<double> coeffs_fort(int(pow(n_order, n_dim)) * n_charge_dim);
+            const double center[] = {0.5, 0.5, 0.5};
+            const double scale_factor = 1.2;
 
-        for (int i = 0; i < n_src * n_dim; ++i)
-            r_src[i] = drand48();
+            for (int i = 0; i < n_src * n_dim; ++i)
+                r_src[i] = drand48();
 
-        for (int i = 0; i < n_src * n_charge_dim; ++i)
-            charge[i] = drand48() - 0.5;
+            for (int i = 0; i < n_src * n_charge_dim; ++i)
+                charge[i] = drand48() - 0.5;
 
-        // coeffs.array() = 0.0;
-        // dmk::proxy::charge2proxycharge(n_dim, n_charge_dim, n_order, n_src, r_src.data(), charge.data(), center,
-        //                                scale_factor, coeffs.data());
+            coeffs.array() = 0.0;
 
-        coeffs.setZero();
+            if (n_dim == 2) {
+                ndview<double, 3> coeffs_view(coeffs.data(), n_order, n_order, n_charge_dim);
+                ndview<const double, 2> src_view(r_src.data(), 2, n_src);
+                ndview<const double, 1> center_view(center, n_dim);
+                ndview<const double, 2> charge_view(charge.data(), n_charge_dim, n_src);
+                dmk::proxy::charge2proxycharge<double, 2>(src_view, charge_view, center_view, scale_factor,
+                                                          coeffs_view);
+            }
+            if (n_dim == 3) {
+                ndview<double, 4> coeffs_view(coeffs.data(), n_order, n_order, n_order, n_charge_dim);
+                ndview<const double, 2> src_view(r_src.data(), 3, n_src);
+                ndview<const double, 1> center_view(center, n_dim);
+                ndview<const double, 2> charge_view(charge.data(), n_charge_dim, n_src);
+                dmk::proxy::charge2proxycharge<double, 3>(src_view, charge_view, center_view, scale_factor,
+                                                          coeffs_view);
+            }
+            coeffs_fort.array() = 0.0;
+            pdmk_charge2proxycharge_(&n_dim, &n_charge_dim, &n_order, &n_src, r_src.data(), charge.data(), center,
+                                     &scale_factor, coeffs_fort.data());
 
-        ndview<double, 4> coeffs_view(coeffs.data(), n_order, n_order, n_order, n_charge_dim);
-        ndview<const double, 2> src_view(r_src.data(), 3, n_src);
-        ndview<const double, 1> center_view(center, n_dim);
-        ndview<const double, 2> charge_view(charge.data(), n_charge_dim, n_src);
-        // ndview<double, 2> pot_view(pot.data(), n_charge_dim, n_trg);
-        charge2proxycharge<double, 3>(src_view, charge_view, center_view, scale_factor, coeffs_view);
-
-        coeffs_fort.array() = 0.0;
-        pdmk_charge2proxycharge_(&n_dim, &n_charge_dim, &n_order, &n_src, r_src.data(), charge.data(), center,
-                                 &scale_factor, coeffs_fort.data());
-
-        const double l2 = (coeffs - coeffs_fort).norm() / coeffs.size();
-        CHECK(l2 < std::numeric_limits<double>::epsilon());
+            const double l2 = (coeffs - coeffs_fort).norm() / coeffs.size();
+            CHECK(l2 < std::numeric_limits<double>::epsilon());
+        }
     }
 }
 
