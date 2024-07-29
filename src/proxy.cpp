@@ -117,8 +117,8 @@ void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const T 
 }
 
 template <typename T>
-void charge2proxycharge_2d(const ndview<const T, 2> &r_src_, const ndview<const T, 2> &charge_, const ndview<const T, 1> &center,
-                           T scale_factor, const ndview<T, 3> &coeffs) {
+void charge2proxycharge_2d(const ndview<const T, 2> &r_src_, const ndview<const T, 2> &charge_,
+                           const ndview<const T, 1> &center, T scale_factor, const ndview<T, 3> &coeffs) {
     using MatrixMap = Eigen::Map<Eigen::MatrixX<T>>;
     using CMatrixMap = Eigen::Map<const Eigen::MatrixX<T>>;
 
@@ -151,9 +151,9 @@ void charge2proxycharge_2d(const ndview<const T, 2> &r_src_, const ndview<const 
 }
 
 template <typename T>
-void charge2proxycharge_3d(const ndview<const T, 2> &r_src_, const ndview<const T, 2> &charge_, const ndview<const T, 1> &center,
-                           T scale_factor, const ndview<T, 4> &coeffs) {
-using MatrixMap = Eigen::Map<Eigen::MatrixX<T>>;
+void charge2proxycharge_3d(const ndview<const T, 2> &r_src_, const ndview<const T, 2> &charge_,
+                           const ndview<const T, 1> &center, T scale_factor, const ndview<T, 4> &coeffs) {
+    using MatrixMap = Eigen::Map<Eigen::MatrixX<T>>;
     using CMatrixMap = Eigen::Map<const Eigen::MatrixX<T>>;
     const int n_dim = 3;
     const int order = coeffs.extent(0);
@@ -198,14 +198,15 @@ void charge2proxycharge(int n_dim, int n_charge_dim, int order, int n_src, const
         return charge2proxycharge_2d(n_charge_dim, order, n_src, r_src, charge, center, scale_factor, coeffs);
     if (n_dim == 3)
         return charge2proxycharge_3d(n_charge_dim, order, n_src, r_src, charge, center, scale_factor, coeffs);
+}
 
 template <typename T, int DIM>
-void charge2proxycharge(const ndview<const T, 2> &r_src_, const ndview<const T, 2> &charge_,
+void charge2proxycharge(const ndview<const T, 2> &r_src, const ndview<const T, 2> &charge,
                         const ndview<const T, 1> &center, T scale_factor, const ndview<T, DIM + 1> &coeffs) {
     if constexpr (DIM == 2)
-        return charge2proxycharge_2d(r_src_, charge_, center, scale_factor, coeffs);
+        return charge2proxycharge_2d(r_src, charge, center, scale_factor, coeffs);
     else if constexpr (DIM == 3)
-        return charge2proxycharge_3d(r_src_, charge_, center, scale_factor, coeffs);
+        return charge2proxycharge_3d(r_src, charge, center, scale_factor, coeffs);
     else
         throw std::runtime_error("Invalid dimension " + std::to_string(DIM) + "provided");
 }
@@ -315,11 +316,15 @@ void eval_targets(const ndview<const T, DIM + 1> &coeffs, const ndview<const T, 
 // // template void charge2proxycharge(int n_dim, int n_charge_dim, int order, int n_src, const double *r_src,
 // //                                  const double *charge, const double *center, double scale_factor, double *coeffs);
 
-template void charge2proxycharge<double, 2>(const ndview<const double, 2> &r_src_, const ndview<const double, 2> &charge_,
-                   const ndview<const double, 1> &center, double scale_factor, const ndview<double, 3> &coeffs);
+template void charge2proxycharge<double, 2>(const ndview<const double, 2> &r_src_,
+                                            const ndview<const double, 2> &charge_,
+                                            const ndview<const double, 1> &center, double scale_factor,
+                                            const ndview<double, 3> &coeffs);
 
-template void charge2proxycharge<double, 3>(const ndview<const double, 2> &r_src_, const ndview<const double, 2> &charge_,
-                   const ndview<const double, 1> &center, double scale_factor, const ndview<double, 4> &coeffs);
+template void charge2proxycharge<double, 3>(const ndview<const double, 2> &r_src_,
+                                            const ndview<const double, 2> &charge_,
+                                            const ndview<const double, 1> &center, double scale_factor,
+                                            const ndview<double, 4> &coeffs);
 
 // template void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const float *proxy_coeffs,
 //                              const std::complex<float> *poly2pw, std::complex<float> *pw_expansion);
@@ -429,12 +434,11 @@ TEST_CASE("[DMK] charge2proxycharge") {
 
         coeffs_fort.array() = 0.0;
         pdmk_charge2proxycharge_(&n_dim, &n_charge_dim, &n_order, &n_src, r_src.data(), charge.data(), center,
-                                    &scale_factor, coeffs_fort.data());
+                                 &scale_factor, coeffs_fort.data());
 
         const double l2 = (coeffs - coeffs_fort).norm() / coeffs.size();
         CHECK(l2 < std::numeric_limits<double>::epsilon());
     }
-    
 }
 
 TEST_CASE("[DMK] eval_targets_3d") {

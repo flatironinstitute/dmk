@@ -19,8 +19,8 @@ void calc_planewave_coeff_matrices(double boxsize, T hpw, int n_pw, int n_order,
 //                         const T *center, T scale_factor, T *coeffs);
 
 template <typename T, int DIM>
-void charge2proxycharge(const ndview<const T, 2> &r_src_, const ndview<const T, 2> &charge_,
-                        const ndview<T, 1> &center, T scale_factor, const ndview<T, DIM + 1> &coeffs);
+void charge2proxycharge(const ndview<const T, 2> &r_src, const ndview<const T, 2> &charge,
+                        const ndview<const T, 1> &center, T scale_factor, const ndview<T, DIM + 1> &coeffs);
 
 template <typename T>
 void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const T *proxy_coeffs,
