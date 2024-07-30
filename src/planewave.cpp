@@ -56,7 +56,7 @@ void pw2proxypot_3d(int n_charge_dim, int n_order, int n_pw, const std::complex<
     sctl::Vector<std::complex<Real>> ff2_(n_order * n_order * half_n_pw_p1);
     sctl::Vector<std::complex<Real>> zcoefs_(n_order * n_order * n_order);
 
-    ndview<const std::complex<Real>, 3> pw_expansion(pw_expansion_, n_pw, half_n_pw_p1, n_charge_dim);
+    ndview<const std::complex<Real>, 4> pw_expansion(pw_expansion_, n_pw, n_pw, half_n_pw_p1, n_charge_dim);
     ndview<const std::complex<Real>, 2> pw_to_coefs_mat(pw_to_coefs_mat_, n_pw, n_order);
     ndview<Real, 4> proxy_coeffs(proxy_coeffs_, n_order, n_order, n_order, n_charge_dim);
 
@@ -70,8 +70,8 @@ void pw2proxypot_3d(int n_charge_dim, int n_order, int n_pw, const std::complex<
     const std::complex<Real> alpha = {1.0, 0.0};
     const std::complex<Real> beta = {0.0, 0.0};
     for (int i = 0; i < n_charge_dim; ++i) {
-        gemm('t', 'n', n_order, n_pw * half_n_pw_p1, n_pw, alpha, &pw_to_coefs_mat(0, 0), n_pw, &pw_expansion(0, 0, i),
-             n_pw, beta, &ff(0, 0, 0), n_order);
+        gemm('t', 'n', n_order, n_pw * half_n_pw_p1, n_pw, alpha, &pw_to_coefs_mat(0, 0), n_pw,
+             &pw_expansion(0, 0, 0, i), n_pw, beta, &ff(0, 0, 0), n_order);
 
         for (int k1 = 0; k1 < n_order; ++k1)
             for (int m3 = 0; m3 < half_n_pw_p1; ++m3)
