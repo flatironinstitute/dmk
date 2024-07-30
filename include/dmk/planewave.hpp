@@ -3,12 +3,18 @@
 
 #include <complex>
 #include <sctl.hpp>
+#include <dmk/types.hpp>
 
 namespace dmk {
-template <typename Real>
-void planewave_to_proxy_potential(int dim, int n_charge_dim, int n_order, int n_pw,
-                                  const std::complex<Real> *pw_expansion_, const std::complex<Real> *pw_to_coefs_mat_,
-                                  Real *proxy_coeffs_);
+// template <typename Real>
+// void planewave_to_proxy_potential(int dim, int n_charge_dim, int n_order, int n_pw,
+//                                   const std::complex<Real> *pw_expansion_, const std::complex<Real> *pw_to_coefs_mat_,
+//                                   Real *proxy_coeffs_);
+
+template <typename Real, int DIM>
+void planewave_to_proxy_potential(const ndview<const std::complex<Real>, DIM + 1> &pw_expansion, 
+                                  const ndview<const std::complex<Real>, 2> &pw_to_coefs_mat,
+                                  const ndview<Real, DIM + 1> &proxy_coeffs);
 
 template <typename T>
 void calc_planewave_coeff_matrices(double boxsize, T hpw, int n_pw, int n_order,
