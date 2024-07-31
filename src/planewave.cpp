@@ -11,7 +11,6 @@ template <typename Real>
 void pw2proxypot_2d(const ndview<const std::complex<Real>, 3> &pw_expansion,
                     const ndview<const std::complex<Real>, 2> &pw_to_coefs_mat, const ndview<Real, 3> &proxy_coeffs) {
     using dmk::gemm::gemm;
-    // const int half_n_pw_p1 = (n_pw + 1) / 2;
 
     const int n_order = proxy_coeffs.extent(0);
     const int n_charge_dim = proxy_coeffs.extent(2);
@@ -21,10 +20,6 @@ void pw2proxypot_2d(const ndview<const std::complex<Real>, 3> &pw_expansion,
 
     sctl::Vector<std::complex<Real>> ff_(n_order * n_pw2);
     sctl::Vector<std::complex<Real>> zcoefs_(n_order * n_order);
-
-    ndview<const std::complex<Real>, 3> pw_expansion(pw_expansion_, n_pw, half_n_pw_p1, n_charge_dim);
-    ndview<const std::complex<Real>, 2> pw_to_coefs_mat(pw_to_coefs_mat_, n_pw, n_order);
-    ndview<Real, 3> proxy_coeffs(proxy_coeffs_, n_order, n_order, n_charge_dim);
 
     ndview<std::complex<Real>, 2> ff(&ff_[0], n_order, n_pw2);
     ndview<std::complex<Real>, 2> zcoefs(&zcoefs_[0], n_order, n_order);
@@ -54,10 +49,9 @@ template <typename Real>
 void pw2proxypot_3d(const ndview<const std::complex<Real>, 4> &pw_expansion,
                     const ndview<const std::complex<Real>, 2> &pw_to_coefs_mat, const ndview<Real, 4> &proxy_coeffs) {
     using dmk::gemm::gemm;
-    // const int half_n_pw_p1 = (n_pw + 1) / 2;
 
     const int n_order = proxy_coeffs.extent(0);
-    const int n_charge_dim = proxy_coeffs.extent(2);
+    const int n_charge_dim = proxy_coeffs.extent(3);
     const int n_pw = pw_expansion.extent(0);
     const int n_pw2 = pw_expansion.extent(2);
     const int n_proxy_coeffs = n_order * n_order;
@@ -67,10 +61,6 @@ void pw2proxypot_3d(const ndview<const std::complex<Real>, 4> &pw_expansion,
     sctl::Vector<std::complex<Real>> ff2t_(n_order * n_pw2 * n_order);
     sctl::Vector<std::complex<Real>> ff2_(n_order * n_order * n_pw2);
     sctl::Vector<std::complex<Real>> zcoefs_(n_order * n_order * n_order);
-
-    ndview<const std::complex<Real>, 3> pw_expansion(pw_expansion_, n_pw, half_n_pw_p1, n_charge_dim);
-    ndview<const std::complex<Real>, 2> pw_to_coefs_mat(pw_to_coefs_mat_, n_pw, n_order);
-    ndview<Real, 4> proxy_coeffs(proxy_coeffs_, n_order, n_order, n_order, n_charge_dim);
 
     ndview<std::complex<Real>, 3> ff(&ff_[0], n_order, n_pw, n_pw2);
     ndview<std::complex<Real>, 3> fft(&fft_[0], n_pw, n_pw2, n_order);
@@ -201,8 +191,6 @@ void calc_planewave_translation_matrix(int nmax, T xmin, int npw, const sctl::Ve
 //                                                         sctl::Vector<std::complex<float>> &);
 // template void dmk::calc_planewave_translation_matrix<3>(int, float, int, const sctl::Vector<float> &,
 //                                                         sctl::Vector<std::complex<float>> &);
-// template void dmk::planewave_to_proxy_potential<double>(int, int, int, int, const std::complex<double> *,
-//                                                         const std::complex<double> *, double *);
 template void dmk::planewave_to_proxy_potential<double, 2>(const ndview<const std::complex<double>, 3> &pw_expansion,
                                                            const ndview<const std::complex<double>, 2> &pw_to_coefs_mat,
                                                            const ndview<double, 3> &proxy_coeffs);
