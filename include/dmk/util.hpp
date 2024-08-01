@@ -1,8 +1,8 @@
 #ifndef UTIL_HPP
 #define UTIL_HPP
 
-#include <type_traits>
 #include <dmk/types.hpp>
+#include <type_traits>
 
 namespace dmk::util {
 template <class...>
@@ -12,12 +12,14 @@ template <typename Real>
 void mesh_nd(int dim, Real *in, int size, Real *out);
 
 template <typename Real>
-void mesh_nd(int dim, dmk::ndview<const Real, 1> &in, dmk::ndview<Real, 2> &out);
+void mesh_nd(int dim, const ndview<const Real, 1> &in, const ndview<Real, 2> &out);
 
 template <typename Real>
 void mk_tensor_product_fourier_transform(int dim, int npw, int nfourier, Real *fhat, int nexp, Real *pswfft);
 
-
+template <typename Real>
+void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const Real, 1> &fhat,
+                                         const ndview<Real, 1> &pswfft);
 } // namespace dmk::util
 
 #endif

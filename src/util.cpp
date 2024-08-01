@@ -11,7 +11,7 @@
 namespace dmk::util {
 using dmk::ndview;
 template <typename Real>
-void mesh_2d(ndview<const Real, 1> &x, ndview<const Real, 1> &y, ndview<Real, 2> &xy) {
+void mesh_2d(const ndview<const Real, 1> &x, const ndview<const Real, 1> &y, const ndview<Real, 2> &xy) {
     int nx = x.extent(0);
     int ny = y.extent(0);
 
@@ -26,7 +26,8 @@ void mesh_2d(ndview<const Real, 1> &x, ndview<const Real, 1> &y, ndview<Real, 2>
 }
 
 template <typename Real>
-void mesh_3d(ndview<const Real, 1> &x, ndview<const Real, 1> &y, ndview<const Real, 1> &z, ndview<Real, 2> &xyz) {
+void mesh_3d(const ndview<const Real, 1> &x, const ndview<const Real, 1> &y, const ndview<const Real, 1> &z,
+             const ndview<Real, 2> &xyz) {
     int nx = x.extent(0);
     int ny = y.extent(0);
     int nz = z.extent(0);
@@ -45,7 +46,7 @@ void mesh_3d(ndview<const Real, 1> &x, ndview<const Real, 1> &y, ndview<const Re
 }
 
 template <typename Real>
-void mesh_nd(int dim, ndview<const Real, 1> &in, ndview<Real, 2> &out) {
+void mesh_nd(int dim, const ndview<const Real, 1> &in, const ndview<Real, 2> &out) {
     if (dim == 2)
         return mesh_2d(in, in, out);
     if (dim == 3)
@@ -73,7 +74,7 @@ void mesh_nd(int dim, Real *in, int size, Real *out) {
 }
 
 template <typename Real>
-void mk_tensor_product_fourier_transform_1d(int npw, ndview<const Real, 1> &fhat, ndview<Real, 1> &pswfft) {
+void mk_tensor_product_fourier_transform_1d(int npw, const ndview<const Real, 1> &fhat, const ndview<Real, 1> &pswfft) {
     int npw2 = npw / 2;
     int ind = 0;
     for (int j1 = -npw2; j1 <= 0; ++j1) {
@@ -83,7 +84,7 @@ void mk_tensor_product_fourier_transform_1d(int npw, ndview<const Real, 1> &fhat
 }
 
 template <typename Real>
-void mk_tensor_product_fourier_transform_2d(int npw, ndview<const Real, 1> &fhat, ndview<Real, 1> &pswfft) {
+void mk_tensor_product_fourier_transform_2d(int npw, const ndview<const Real, 1> &fhat, const ndview<Real, 1> &pswfft) {
     int npw2 = npw / 2;
     int npw3 = (npw - 1) / 2;
     int ind = 0;
@@ -97,7 +98,7 @@ void mk_tensor_product_fourier_transform_2d(int npw, ndview<const Real, 1> &fhat
 }
 
 template <typename Real>
-void mk_tensor_product_fourier_transform_3d(int npw, ndview<const Real, 1> &fhat, ndview<Real, 1> &pswfft) {
+void mk_tensor_product_fourier_transform_3d(int npw, const ndview<const Real, 1> &fhat, const ndview<Real, 1> &pswfft) {
     int npw2 = npw / 2;
     int npw3 = (npw - 1) / 2;
     int ind = 0;
@@ -111,6 +112,21 @@ void mk_tensor_product_fourier_transform_3d(int npw, ndview<const Real, 1> &fhat
             }
         }
     }
+}
+
+template <typename Real>
+void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const Real, 1> &fhat,
+                                         const ndview<Real, 1> &pswfft) {
+    if (dim == 1) {
+        return mk_tensor_product_fourier_transform_1d(npw, fhat, pswfft);
+    }
+    if (dim == 2) {
+        return mk_tensor_product_fourier_transform_2d(npw, fhat, pswfft);
+    }
+    if (dim == 3) {
+        return mk_tensor_product_fourier_transform_3d(npw, fhat, pswfft);
+    }
+    throw std::runtime_error("Invalid dimension: " + std::to_string(dim));
 }
 
 template <typename Real>
@@ -163,6 +179,16 @@ TEST_CASE("[DMK] mk_tensor_product_fourier_transform") {
         mk_tensor_product_fourier_transform(dim, npw, nfourier, fhat.data(), nexp, pswfft.data());
         mk_tensor_product_fourier_transform_(&dim, &npw, &nfourier, fhat.data(), &nexp, pswfft_fort.data());
 
+        for (int i = 0; i < nexp; ++i) {
+            CHECK(std::abs(pswfft[i] - pswfft_fort[i]) < std::numeric_limits<double>::epsilon());
+        }
+
+        for (auto &xval : pswfft)
+            xval = 0.0;
+
+        ndview<const double, 1> fhat_view(fhat.data(), nfourier + 1);
+        ndview<double, 1> pswfft_view(pswfft.data(), nexp);
+        mk_tensor_product_fourier_transform(dim, npw, fhat_view, pswfft_view);
         for (int i = 0; i < nexp; ++i) {
             CHECK(std::abs(pswfft[i] - pswfft_fort[i]) < std::numeric_limits<double>::epsilon());
         }
