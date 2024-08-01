@@ -4,8 +4,10 @@
 #include <dmk/fourier_data.hpp>
 #include <dmk/planewave.hpp>
 #include <dmk/prolate_funcs.hpp>
+#include <dmk/types.hpp>
 
 #include <complex.h>
+#include <limits>
 #include <sctl.hpp>
 #include <stdexcept>
 #include <string>
@@ -296,6 +298,7 @@ void FourierData<T>::update_difference_kernels() {
 
 template <typename T>
 void FourierData<T>::update_local_coeffs_yukawa(T eps) {
+    // FIXME: This whole routine is a mess and only works with doubles anyway
     const int nr1 = n_coeffs_max, nr2 = n_coeffs_max;
 
     coeffs1.resize(nr1 * (n_levels));
@@ -303,152 +306,143 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
     ncoeffs1.resize(n_levels);
     ncoeffs2.resize(n_levels);
 
+    constexpr T two_over_pi = 2.0 / M_PI;
+    const T &rlambda = fparam;
+    const T rlambda2 = rlambda * rlambda;
+    double psi0 = prolate_funcs.eval_val(0.0);
+
+    constexpr int i_type = 1;
+    constexpr int n_quad = 100;
+    std::vector<double> xs(n_quad), xs_base(n_quad), whts(n_quad), whts_base(n_quad), r1(n_quad), r2(n_quad),
+        w1(n_quad), w2(n_quad), fhat(n_quad);
+    double u, v; // dummy vars
+    legeexps_(&i_type, &n_quad, xs_base.data(), &u, &v, whts_base.data());
+    auto [v1, vlu1] = dmk::chebyshev::get_vandermonde_and_LU<double>(nr1);
+    auto [v2, vlu2] = dmk::chebyshev::get_vandermonde_and_LU<double>(nr2);
+    Eigen::VectorXd fvals(nr1);
+
     for (int i_level = 0; i_level < n_levels; ++i_level) {
-        double bsize = boxsize[i_level];
+        auto bsize = boxsize[i_level];
         if (i_level == 0)
             bsize *= 0.5;
 
-        yukawa_residual_kernel_coefs_(
-            &eps, &n_dim, &fparam, &beta, &bsize, &rl[i_level], prolate_funcs.workarray.data(), &ncoeffs1[i_level],
-            &coeffs1[n_coeffs_max * i_level], &ncoeffs2[i_level], &coeffs2[n_coeffs_max * i_level]);
+        double scale_factor = beta / (2.0 * bsize);
+        for (int i = 0; i < n_quad; ++i) {
+            xs[i] = scale_factor * (xs_base[i] + 1.0);
+            whts[i] = scale_factor * whts_base[i];
+        }
+
+        const bool near_correction = rlambda * bsize / beta < 1E-2;
+        double dk0, dk1, delam;
+        if (near_correction) {
+            double arg = rl[i_level] * rlambda;
+            if (n_dim == 2) {
+                dk0 = besk0_(&arg);
+                dk1 = besk1_(&arg);
+            } else
+                delam = std::exp(-arg);
+        }
+
+        for (int i = 0; i < n_quad; ++i) {
+            const double xi2 = xs[i] * xs[i] + rlambda2;
+            const double xval = sqrt(xi2) * bsize / beta;
+            if (xval <= 1.0) {
+                fhat[i] = prolate_funcs.eval_val(xval) / (psi0 * xi2);
+            } else {
+                fhat[i] = 0.0;
+                continue;
+            }
+            fhat[i] *= (n_dim == 2) ? whts[i] * xs[i] : whts[i] * xs[i] * xs[i] * two_over_pi;
+
+            if (near_correction) {
+                double xsc = rl[i_level] * xs[i];
+                if (n_dim == 2)
+                    fhat[i] *= -rl[i_level] + rlambda + besj0_(&xsc) * dk1 + 1 + xsc * besj1_(&xsc) * dk0;
+                else
+                    fhat[i] *= 1 - delam * (std::cos(xsc) + rlambda / xs[i] * std::sin(xsc));
+            }
+        }
+
+        Eigen::VectorXd r1 = dmk::chebyshev::get_cheb_nodes(nr1, 0., bsize);
+        if (n_dim == 2) {
+            const int actual_hankel = 1;
+            for (int i = 0; i < nr1; ++i) {
+                fvals(i) = 0.0;
+                for (int j = 0; j < n_quad; ++j) {
+                    std::complex<double> z = r1[i] * xs[j];
+                    std::complex<double> h0, h1;
+                    hank103_(reinterpret_cast<_Complex double *>(&z), reinterpret_cast<_Complex double *>(&h0),
+                             reinterpret_cast<_Complex double *>(&h1), &actual_hankel);
+                    fvals(i) -= h0.real() * fhat[j];
+                }
+            }
+        } else if (n_dim == 3) {
+            for (int i = 0; i < nr1; ++i) {
+                fvals(i) = 0.0;
+                for (int j = 0; j < n_quad; ++j) {
+                    double dd = r1[i] * xs[j];
+                    fvals(i) -= sin(dd) / dd * fhat[j];
+                }
+            }
+        }
+
+        Eigen::Map<Eigen::VectorXd> coeffs1_lvl(coeffs1.data() + nr1 * i_level, nr1);
+        coeffs1_lvl = vlu1.solve(fvals);
+        double coefsmax = coeffs1_lvl.array().abs().maxCoeff();
+        double releps = eps * coefsmax;
+
+        ncoeffs1[i_level] = 1;
+        for (int i = 0; i < nr1 - 2; ++i) {
+            if (std::fabs(coeffs1_lvl(i)) < releps && std::fabs(coeffs1_lvl(i + 1)) < releps &&
+                std::fabs(coeffs1_lvl(i + 2)) < releps) {
+                ncoeffs1[i_level] = i + 1;
+                break;
+            }
+        }
+
+        // coeffs2
+        Eigen::VectorXd r2 = dmk::chebyshev::get_cheb_nodes(nr2, 0.25 * bsize * bsize, bsize * bsize);
+        if (n_dim == 2) {
+            const int actual_hankel = 1;
+            for (int i = 0; i < nr2; ++i) {
+                fvals(i) = 0.0;
+                const double r = sqrt(r2(i));
+                for (int j = 0; j < n_quad; ++j) {
+                    std::complex<double> z = r * xs[j];
+                    std::complex<double> h0, h1;
+                    hank103_(reinterpret_cast<_Complex double *>(&z), reinterpret_cast<_Complex double *>(&h0),
+                             reinterpret_cast<_Complex double *>(&h1), &actual_hankel);
+                    fvals(i) -= h0.real() * fhat[j];
+                }
+                double dd = rlambda * r;
+                fvals(i) += besk0_(&dd);
+            }
+        } else if (n_dim == 3) {
+            for (int i = 0; i < nr2; ++i) {
+                fvals(i) = 0.0;
+                const double r = sqrt(r2(i));
+                for (int j = 0; j < n_quad; ++j) {
+                    double dd = r * xs[j];
+                    fvals(i) -= std::sin(dd) / dd * fhat[j];
+                }
+                fvals(i) += std::exp(-rlambda * r) / r;
+            }
+        }
+
+        Eigen::Map<Eigen::VectorXd> coeffs2_lvl(coeffs2.data() + nr2 * (i_level), nr2);
+        coeffs2_lvl = vlu2.solve(fvals);
+
+        coefsmax = coeffs2_lvl.array().abs().maxCoeff();
+        releps = eps * coefsmax;
+        ncoeffs2[i_level] = 1;
+        for (int i = 0; i < nr2 - 2; ++i) {
+            if (std::fabs(coeffs2_lvl(i)) < releps && std::fabs(coeffs2_lvl(i + 1)) < releps &&
+                std::fabs(coeffs2_lvl(i + 2)) < releps) {
+                ncoeffs2[i_level] = i + 1;
+                break;
+            }
+        }
     }
-    return;
-
-    // constexpr T two_over_pi = 2.0 / M_PI;
-    // const T &rlambda = fparam;
-    // const T rlambda2 = rlambda * rlambda;
-    // double psi0 = prolate_funcs.eval_val(0.0);
-
-    // constexpr int i_type = 1;
-    // constexpr int n_quad = 100;
-    // std::vector<double> xs(n_quad), xs_base(n_quad), whts(n_quad), whts_base(n_quad), r1(n_quad), r2(n_quad),
-    //     w1(n_quad), w2(n_quad), fhat(n_quad);
-    // double u, v; // dummy vars
-    // legeexps_(&i_type, &n_quad, xs_base.data(), &u, &v, whts_base.data());
-    // auto [v1, vlu1] = dmk::chebyshev::get_vandermonde_and_LU<double>(nr1);
-    // auto [v2, vlu2] = dmk::chebyshev::get_vandermonde_and_LU<double>(nr2);
-    // Eigen::VectorXd fvals(nr1);
-
-    // for (int i_level = 0; i_level < n_levels; ++i_level) {
-    //     auto &bsize = boxsize[i_level];
-
-    //     double scale_factor = beta / (2.0 * bsize);
-    //     for (int i = 0; i < n_quad; ++i) {
-    //         xs[i] = scale_factor * (xs_base[i] + 1.0);
-    //         whts[i] = scale_factor * whts_base[i];
-    //     }
-
-    //     const bool near_correction = rlambda * bsize / beta < 1E-2;
-    //     double dk0, dk1, delam;
-    //     if (near_correction) {
-    //         double arg = rl[i_level + 1] * rlambda;
-    //         if (n_dim == 2) {
-    //             dk0 = besk0_(&arg);
-    //             dk1 = besk1_(&arg);
-    //         } else
-    //             delam = std::exp(-arg);
-    //     }
-
-    //     for (int i = 0; i < n_quad; ++i) {
-    //         const double xi2 = xs[i] * xs[i] + rlambda2;
-    //         const double xval = sqrt(xi2) * bsize / beta;
-    //         if (xval <= 1.0) {
-    //             fhat[i] = prolate_funcs.eval_val(xval) / (psi0 * xi2);
-    //         } else {
-    //             fhat[i] = 0.0;
-    //             continue;
-    //         }
-    //         fhat[i] *= (n_dim == 2) ? whts[i] * xs[i] : whts[i] * xs[i] * xs[i] * two_over_pi;
-
-    //         if (near_correction) {
-    //             double xsc = rl[i_level + 1] * xs[i];
-    //             if (n_dim == 2)
-    //                 fhat[i] *= -rl[i_level + 1] + rlambda + besj0_(&xsc) * dk1 + 1 + xsc * besj1_(&xsc) * dk0;
-    //             else
-    //                 fhat[i] *= 1 - delam * (std::cos(xsc) + rlambda / xs[i] * std::sin(xsc));
-    //         }
-    //     }
-
-    //     Eigen::VectorXd r1 = dmk::chebyshev::get_cheb_nodes(nr1, 0., bsize);
-    //     if (n_dim == 2) {
-    //         const int actual_hankel = 1;
-    //         for (int i = 0; i < nr1; ++i) {
-    //             fvals(i) = 0.0;
-    //             for (int j = 0; j < n_quad; ++j) {
-    //                 std::complex<double> z = r1[i] * xs[j];
-    //                 std::complex<double> h0, h1;
-    //                 hank103_(reinterpret_cast<_Complex double *>(&z), reinterpret_cast<_Complex double *>(&h0),
-    //                          reinterpret_cast<_Complex double *>(&h1), &actual_hankel);
-    //                 fvals(i) -= h0.real() * fhat[j];
-    //             }
-    //         }
-    //     } else if (n_dim == 3) {
-    //         for (int i = 0; i < nr1; ++i) {
-    //             fvals(i) = 0.0;
-    //             for (int j = 0; j < n_quad; ++j) {
-    //                 double dd = r1[i] * xs[j];
-    //                 fvals(i) -= sin(dd) / dd * fhat[j];
-    //             }
-    //         }
-    //     }
-
-    //     Eigen::Map<Eigen::VectorXd> coeffs1_lvl(coeffs1.data() + nr1 * (i_level + 1), nr1);
-    //     coeffs1_lvl = vlu1.solve(fvals);
-    //     double coefsmax = coeffs1_lvl.array().abs().maxCoeff();
-    //     double releps = eps * coefsmax;
-
-    //     ncoeffs1[i_level + 1] = 1;
-    //     for (int i = 0; i < nr1 - 2; ++i) {
-    //         if (std::fabs(coeffs1_lvl(i)) < releps && std::fabs(coeffs1_lvl(i + 1)) < releps &&
-    //             std::fabs(coeffs1_lvl(i + 2)) < releps) {
-    //             ncoeffs1[i_level + 1] = i + 1;
-    //             break;
-    //         }
-    //     }
-
-    //     // coeffs2
-    //     Eigen::VectorXd r2 = dmk::chebyshev::get_cheb_nodes(nr2, 0.25 * bsize * bsize, bsize * bsize);
-    //     if (n_dim == 2) {
-    //         const int actual_hankel = 1;
-    //         for (int i = 0; i < nr2; ++i) {
-    //             fvals(i) = 0.0;
-    //             const double r = sqrt(r2(i));
-    //             for (int j = 0; j < n_quad; ++j) {
-    //                 std::complex<double> z = r * xs[j];
-    //                 std::complex<double> h0, h1;
-    //                 hank103_(reinterpret_cast<_Complex double *>(&z), reinterpret_cast<_Complex double *>(&h0),
-    //                          reinterpret_cast<_Complex double *>(&h1), &actual_hankel);
-    //                 fvals(i) -= h0.real() * fhat[j];
-    //             }
-    //             double dd = rlambda * r;
-    //             fvals(i) += besk0_(&dd);
-    //         }
-    //     } else if (n_dim == 3) {
-    //         for (int i = 0; i < nr2; ++i) {
-    //             fvals(i) = 0.0;
-    //             const double r = sqrt(r2(i));
-    //             for (int j = 0; j < n_quad; ++j) {
-    //                 double dd = r * xs[j];
-    //                 fvals(i) -= std::sin(dd) / dd * fhat[j];
-    //             }
-    //             fvals(i) += std::exp(-rlambda * r) / r;
-    //         }
-    //     }
-
-    //     Eigen::Map<Eigen::VectorXd> coeffs2_lvl(coeffs2.data() + nr2 * (i_level + 1), nr2);
-    //     coeffs2_lvl = vlu2.solve(fvals);
-
-    //     coefsmax = coeffs2_lvl.array().abs().maxCoeff();
-    //     releps = eps * coefsmax;
-    //     ncoeffs2[i_level + 1] = 1;
-    //     for (int i = 0; i < nr2 - 2; ++i) {
-    //         if (std::fabs(coeffs2_lvl(i)) < releps && std::fabs(coeffs2_lvl(i + 1)) < releps &&
-    //             std::fabs(coeffs2_lvl(i + 2)) < releps) {
-    //             ncoeffs2[i_level + 1] = i + 1;
-    //             break;
-    //         }
-    //     }
-    // }
 }
 
 template <typename T>
@@ -487,5 +481,28 @@ void FourierData<T>::calc_planewave_coeff_matrices(int i_level, int n_order, sct
 
 // template struct FourierData<float>;
 template struct FourierData<double>;
+
+TEST_CASE("[DMK] bessel functions") {
+    double x = 1.0;
+    double fy = besk0_(&x);
+    double cy = std::cyl_bessel_k(0, x);
+    REQUIRE(std::abs(fy - cy) < std::numeric_limits<double>::epsilon());
+
+    fy = besk1_(&x);
+    cy = std::cyl_bessel_k(1, x);
+    REQUIRE(std::abs(fy - cy) < std::numeric_limits<double>::epsilon());
+
+    fy = besj0_(&x);
+    cy = std::cyl_bessel_j(0, x);
+
+    std::complex<double> z(x, 0.0);
+    std::complex<double> h0, h1;
+    constexpr int actual_hankel = 1;
+    hank103_(reinterpret_cast<_Complex double *>(&z), reinterpret_cast<_Complex double *>(&h0),
+             reinterpret_cast<_Complex double *>(&h1), &actual_hankel);
+
+    std::complex<double> h0c(std::cyl_bessel_j(0, z.real()), std::cyl_neumann(0, z.real()));
+    REQUIRE(std::abs(h0 - h0c) < 2 * std::numeric_limits<double>::epsilon());
+}
 
 } // namespace dmk
