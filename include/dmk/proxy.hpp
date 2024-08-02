@@ -2,7 +2,6 @@
 #define DMK_PROXY_HPP
 
 #include <dmk/fortran.h>
-#include <dmk/types.hpp>
 
 #include <complex>
 #include <dmk/types.hpp>

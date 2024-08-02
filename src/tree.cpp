@@ -300,8 +300,9 @@ void DMKPtTree<T, DIM>::upward_pass(const sctl::Vector<T> &c2p) {
                 if (child_box < 0 || !src_counts_local[child_box])
                     continue;
                 if (form_pw_expansion[child_box]) {
-                    tensorprod::transform(DIM, params.n_mfm, n_order, n_order, true, proxy_ptr_upward(child_box),
-                                          &c2p[i_child * DIM * n_order * n_order], proxy_ptr_upward(parent_box));
+                    ndview<const double, 2> c2p_view(&c2p[i_child * DIM * n_order * n_order], n_order, DIM);
+                    tensorprod::transform<double, DIM>(params.n_mfm, true, proxy_view_upward(child_box), c2p_view,
+                                                       proxy_view_upward(parent_box));
                     counts[parent_box] = 1;
                     n_merged += 1;
                 } else {
@@ -542,8 +543,9 @@ void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
                         proxy::eval_targets<T, DIM>(proxy_view_downward(box), r_trg_view(child), center_view(child), sc,
                                                     pot_trg_view(child));
                 } else if (eval_pw_expansion[child]) {
-                    dmk::tensorprod::transform(dim, nd, n_order, n_order, true, proxy_ptr_downward(box),
-                                               &p2c[i_child * DIM * n_order * n_order], proxy_ptr_downward(child));
+                    ndview<const double, 2> p2c_view(&p2c[i_child * DIM * n_order * n_order], n_order, DIM);
+                    dmk::tensorprod::transform<double, DIM>(nd, true, proxy_view_downward(box), p2c_view,
+                                                            proxy_view_downward(child));
                 }
             }
         }

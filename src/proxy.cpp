@@ -15,7 +15,6 @@
 
 namespace dmk::proxy {
 template <typename T>
-
 void proxycharge2pw_2d(const ndview<const T, 3> &proxy_coeffs, const ndview<const std::complex<T>, 2> &poly2pw,
                        const ndview<std::complex<T>, 3> &pw_expansion) {
     using dmk::gemm::gemm;
