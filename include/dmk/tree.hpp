@@ -65,6 +65,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     const int n_order;
     int n_pw; // FIXME: Assigned well after construction, dangerous hack
     FourierData<Real> fourier_data;
+    sctl::Vector<Real> c2p;
+    sctl::Vector<Real> p2c;
 
     DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, const sctl::Vector<Real> &r_src,
               const sctl::Vector<Real> &r_trg, const sctl::Vector<Real> &charge);
@@ -199,8 +201,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
             static_assert(dmk::util::always_false<std::complex<Real>>, "Invalid DIM supplied");
     }
 
-    void upward_pass(const sctl::Vector<Real> &c2p);
-    void downward_pass(const sctl::Vector<Real> &c2p);
+    void upward_pass();
+    void downward_pass();
 };
 
 } // namespace dmk

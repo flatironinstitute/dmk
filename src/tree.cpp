@@ -68,7 +68,7 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 
     // 1: Precomputation
     logger->debug("Generating p2c and c2p matrices of order {}", n_order);
-    auto [c2p, p2c] = dmk::chebyshev::get_c2p_p2c_matrices<Real>(DIM, n_order);
+    std::tie(c2p, p2c) = dmk::chebyshev::get_c2p_p2c_matrices<Real>(DIM, n_order);
     logger->debug("Finished generating matrices");
 
     fourier_data = FourierData<Real>(params.kernel, DIM, params.eps, n_digits, n_pw_max, params.fparam, boxsize);
@@ -82,8 +82,8 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     logger->debug("Finished updating local potential expansion coefficients");
 
     // upward pass
-    upward_pass(c2p);
-    downward_pass(p2c);
+    upward_pass();
+    downward_pass();
 }
 
 /// @brief Build any bookkeeping data associated with the tree
@@ -260,7 +260,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
 /// @param[in] c2p [n_order, n_order, DIM, 2**DIM] Child to parent matrices used to convert child proxy coefficients to
 /// parent proxy coefficients
 template <typename T, int DIM>
-void DMKPtTree<T, DIM>::upward_pass(const sctl::Vector<T> &c2p) {
+void DMKPtTree<T, DIM>::upward_pass() {
     auto &logger = dmk::get_logger();
     auto &rank_logger = dmk::get_rank_logger();
     this->GetData(r_src_sorted, r_src_cnt, "pdmk_src");
@@ -389,7 +389,7 @@ void shift_planewave(int nd, int nexp, const Complex *pwexp1_, Complex *pwexp2_,
 /// @param[in] p2c [n_order, n_order, DIM, 2**DIM] Parent to child matrices used to pass parent proxy charges to their
 /// children
 template <typename T, int DIM>
-void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
+void DMKPtTree<T, DIM>::downward_pass() {
     auto &logger = dmk::get_logger();
     auto &rank_logger = dmk::get_rank_logger();
     const int nd = params.n_mfm;
