@@ -25,8 +25,8 @@ namespace dmk {
 template <typename T, int DIM>
 void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge, const T *normal, const T *dipole_str,
           int n_trg, const T *r_trg, T *pot_src, T *grad_src, T *hess_src, T *pot_trg, T *grad_trg, T *hess_trg) {
-    auto &logger = dmk::get_logger(params.log_level);
-    auto &rank_logger = dmk::get_rank_logger(params.log_level);
+    auto &logger = dmk::get_logger(sctl::Comm::World(), params.log_level);
+    auto &rank_logger = dmk::get_rank_logger(sctl::Comm::World(), params.log_level);
     logger->info("PDMK called");
     auto st = omp_get_wtime();
 
@@ -59,21 +59,23 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
     constexpr int n_dim = 3;
     constexpr int n_src = 10000;
     constexpr int nd = 1;
+    constexpr bool uniform = false;
+    constexpr bool set_fixed_charges = true;
 
-    std::vector<double> r_src, pot_src, grad_src, hess_src, charges, rnormal, dipstr, pot_trg, r_trg, grad_trg,
+    sctl::Vector<double> r_src, pot_src, grad_src, hess_src, charges, rnormal, dipstr, pot_trg, r_trg, grad_trg,
         hess_trg;
-    dmk::util::init_test_data(n_dim, 1, n_src, false, r_src, rnormal, charges, dipstr, 0);
+    dmk::util::init_test_data(n_dim, 1, n_src, uniform, set_fixed_charges, r_src, rnormal, charges, dipstr, 0);
     r_trg = r_src;
     std::reverse(r_trg.begin(), r_trg.end());
-    r_trg.resize(n_dim * (n_src - 3));
-    const int n_trg = r_trg.size() / n_dim;
+    r_trg.ReInit(n_dim * (n_src - set_fixed_charges * 3));
+    const int n_trg = r_trg.Dim() / n_dim;
 
-    pot_src.resize(n_src * nd);
-    grad_src.resize(n_src * nd * n_dim);
-    hess_src.resize(n_src * nd * n_dim * n_dim);
-    pot_trg.resize(n_trg * nd);
-    grad_trg.resize(n_trg * nd * n_dim);
-    hess_trg.resize(n_trg * nd * n_dim * n_dim);
+    pot_src.ReInit(n_src * nd);
+    grad_src.ReInit(n_src * nd * n_dim);
+    hess_src.ReInit(n_src * nd * n_dim * n_dim);
+    pot_trg.ReInit(n_trg * nd);
+    grad_trg.ReInit(n_trg * nd * n_dim);
+    hess_trg.ReInit(n_trg * nd * n_dim * n_dim);
 
     pdmk_params params;
     params.eps = 1e-6;
@@ -107,8 +109,8 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
     }
 
     for (int i = 0; i < 2; ++i) {
-        pdmk(params, n_src, r_src.data(), charges.data(), rnormal.data(), dipstr.data(), n_trg, r_trg.data(),
-             pot_src.data(), nullptr, nullptr, pot_trg.data(), nullptr, nullptr);
+        pdmk(params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0], &pot_src[0], nullptr,
+             nullptr, &pot_trg[0], nullptr, nullptr);
         params.log_level = SPDLOG_LEVEL_INFO;
     }
 

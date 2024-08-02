@@ -9,15 +9,16 @@ namespace dmk {
 std::shared_ptr<spdlog::logger> logger_;
 std::shared_ptr<spdlog::logger> rank_logger_;
 auto log_level_ = spdlog::level::off;
+MPI_Comm comm_;
 
-std::shared_ptr<spdlog::logger> &get_logger() {
+std::shared_ptr<spdlog::logger> &get_logger(const sctl::Comm &comm) {
     bool first_call = true;
 
-    if (first_call) {
+    if (first_call || comm.GetMPI_Comm() != comm_) {
         first_call = false;
         spdlog::cfg::load_env_levels();
+        comm_ = comm.GetMPI_Comm();
 
-        auto comm = sctl::Comm::World();
         if (comm.Rank() == 0)
             logger_ = std::make_shared<spdlog::logger>(
                 spdlog::logger("DMK", std::make_shared<spdlog::sinks::ansicolor_stderr_sink_st>()));
@@ -31,19 +32,19 @@ std::shared_ptr<spdlog::logger> &get_logger() {
     return logger_;
 }
 
-std::shared_ptr<spdlog::logger> &get_logger(int level) {
+std::shared_ptr<spdlog::logger> &get_logger(const sctl::Comm &comm, int level) {
     log_level_ = spdlog::level::level_enum(level);
-    return get_logger();
+    return get_logger(comm);
 }
 
-std::shared_ptr<spdlog::logger> &get_rank_logger() {
+std::shared_ptr<spdlog::logger> &get_rank_logger(const sctl::Comm &comm) {
     bool first_call = true;
 
-    if (first_call) {
+    if (first_call || comm.GetMPI_Comm() != comm_) {
         first_call = false;
+        comm_ = comm.GetMPI_Comm();
         spdlog::cfg::load_env_levels();
 
-        auto comm = sctl::Comm::World();
         rank_logger_ = std::make_shared<spdlog::logger>(spdlog::logger(
             "DMK-" + std::to_string(comm.Rank()), std::make_shared<spdlog::sinks::ansicolor_stderr_sink_st>()));
         rank_logger_->set_pattern("[%8i] [%n] [%l] %v");
@@ -53,9 +54,9 @@ std::shared_ptr<spdlog::logger> &get_rank_logger() {
     return rank_logger_;
 }
 
-std::shared_ptr<spdlog::logger> &get_rank_logger(int level) {
+std::shared_ptr<spdlog::logger> &get_rank_logger(const sctl::Comm &comm, int level) {
     log_level_ = spdlog::level::level_enum(level);
-    return get_rank_logger();
+    return get_rank_logger(comm);
 }
 
 } // namespace dmk

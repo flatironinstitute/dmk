@@ -1,3 +1,4 @@
+#include "sctl/comm.hpp"
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
 #include <dmk/fortran.h>
@@ -10,6 +11,8 @@
 #include <dmk/tree.hpp>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
+#include <doctest/extensions/doctest_mpi.h>
+#include <limits>
 #include <mpi.h>
 #include <ranges>
 #include <sctl/tree.hpp>
@@ -39,8 +42,8 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     : sctl::PtTree<Real, DIM>(comm), params(params_), n_digits(std::round(log10(1.0 / params_.eps) - 0.1)),
       n_pw_max(get_pwmax_and_poly_order(DIM, n_digits, params_.kernel).first),
       n_order(get_pwmax_and_poly_order(DIM, n_digits, params_.kernel).second) {
-    auto &logger = dmk::get_logger(params.log_level);
-    auto &rank_logger = dmk::get_rank_logger(params.log_level);
+    auto &logger = dmk::get_logger(comm, params.log_level);
+    auto &rank_logger = dmk::get_rank_logger(comm, params.log_level);
 
     const int n_src = r_src.Dim() / DIM;
     const int n_trg = r_trg.Dim() / DIM;
@@ -257,8 +260,8 @@ void DMKPtTree<T, DIM>::generate_metadata() {
 /// parent proxy coefficients
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::upward_pass() {
-    auto &logger = dmk::get_logger();
-    auto &rank_logger = dmk::get_rank_logger();
+    auto &logger = dmk::get_logger(this->GetComm());
+    auto &rank_logger = dmk::get_rank_logger(this->GetComm());
     this->GetData(r_src_sorted, r_src_cnt, "pdmk_src");
 
     const std::size_t n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
@@ -324,10 +327,11 @@ void DMKPtTree<T, DIM>::upward_pass() {
     this->template GetData<T>(proxy_coeffs, counts, "proxy_coeffs");
 
     int buf[] = {tot_proxy, n_direct, n_merged};
+    auto comm = this->GetComm().GetMPI_Comm();
     if (this->GetComm().Rank() == 0)
-        MPI_Reduce(MPI_IN_PLACE, buf, 3, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+        MPI_Reduce(MPI_IN_PLACE, buf, 3, MPI_INT, MPI_SUM, 0, comm);
     else
-        MPI_Reduce(buf, buf, 3, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+        MPI_Reduce(buf, buf, 3, MPI_INT, MPI_SUM, 0, comm);
 
     logger->debug("proxy: finished broadcasting proxy charges");
     logger->trace("proxy: n_proxy, n_direct, n_merged: {} {} {}", buf[0], buf[1], buf[2]);
@@ -386,8 +390,8 @@ void shift_planewave(int nd, int nexp, const Complex *pwexp1_, Complex *pwexp2_,
 /// children
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::downward_pass() {
-    auto &logger = dmk::get_logger();
-    auto &rank_logger = dmk::get_rank_logger();
+    auto &logger = dmk::get_logger(this->GetComm());
+    auto &rank_logger = dmk::get_rank_logger(this->GetComm());
     const int nd = params.n_mfm;
 
     const auto &node_lists = this->GetNodeLists();
@@ -595,6 +599,49 @@ void DMKPtTree<T, DIM>::downward_pass() {
                     pot_src_ptr(box)[i * n_src + i_src] -= w0 * charge_ptr(box)[i * n_src + i_src];
         }
     }
+}
+
+MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 4 ranks", 4) {
+    constexpr int n_dim = 3;
+    constexpr int n_src = 5e4;
+    constexpr int n_trg = 5e4;
+    constexpr int n_charge_dim = 1;
+    constexpr bool uniform = false;
+    const bool set_fixed_charges = !test_rank;
+    const int seed = test_rank;
+
+    sctl::Vector<double> r_src, r_trg, r_src_norms, charges, dipoles, pot_src, grad_src, hess_src, pot_trg, grad_trg,
+        hess_trg;
+    if (test_rank == 0)
+        dmk::util::init_test_data(n_dim, n_charge_dim, n_src, uniform, set_fixed_charges, r_src, r_src_norms, charges,
+                                  dipoles, seed);
+    sctl::Vector<double> r_src_single(test_nb_procs * n_src * n_dim), r_trg_single(test_nb_procs * n_trg * n_dim),
+        charges_single(test_nb_procs * n_src * n_charge_dim);
+
+    pdmk_params params;
+    params.eps = 1E-6;
+    params.kernel = DMK_YUKAWA;
+    params.log_level = SPDLOG_LEVEL_OFF;
+    params.fparam = 6.0;
+    params.n_dim = n_dim;
+    params.n_mfm = n_charge_dim;
+    params.n_per_leaf = 80;
+
+    auto comm = sctl::Comm(test_comm);
+    DMKPtTree<double, n_dim> tree(comm, params, r_src, r_trg, charges);
+    tree.upward_pass();
+    MPI_Barrier(test_comm);
+
+    bool passed = true;
+    if (test_rank == 0) {
+        DMKPtTree<double, n_dim> tree_single(sctl::Comm::Self(), params, r_src, r_trg, charges);
+        tree_single.upward_pass();
+        MPI_CHECK(0, std::abs(tree_single.proxy_view_upward(0)(1, 1, 1, 0) - tree.proxy_view_upward(0)(1, 1, 1, 0)) <
+                         5 * std::numeric_limits<double>::epsilon());
+    }
+
+    MPI_Barrier(test_comm);
+    REQUIRE(passed);
 }
 
 // template struct DMKPtTree<float, 2>;

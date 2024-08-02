@@ -148,12 +148,12 @@ void mk_tensor_product_fourier_transform(int dim, int npw, int nfourier, Real *f
 }
 
 template <typename Real>
-void init_test_data(int n_dim, int nd, int n_src, bool uniform, std::vector<Real> &r_src, std::vector<Real> &rnormal,
-                    std::vector<Real> &charges, std::vector<Real> &dipstr, long seed) {
-    r_src.resize(n_dim * n_src);
-    charges.resize(nd * n_src);
-    rnormal.resize(n_dim * n_src);
-    dipstr.resize(nd * n_src);
+void init_test_data(int n_dim, int nd, int n_src, bool uniform, bool set_fixed_charges, sctl::Vector<Real> &r_src,
+                    sctl::Vector<Real> &rnormal, sctl::Vector<Real> &charges, sctl::Vector<Real> &dipstr, long seed) {
+    r_src.ReInit(n_dim * n_src);
+    charges.ReInit(nd * n_src);
+    rnormal.ReInit(n_dim * n_src);
+    dipstr.ReInit(nd * n_src);
 
     double rin = 0.45;
     double wrig = 0.12;
@@ -196,24 +196,24 @@ void init_test_data(int n_dim, int nd, int n_src, bool uniform, std::vector<Real
         }
     }
 
-    if (n_src > 0)
+    if (set_fixed_charges && n_src > 0)
         for (int i = 0; i < n_dim; ++i)
             r_src[i] = 0.0;
-    if (n_src > 1)
+    if (set_fixed_charges && n_src > 1)
         for (int i = n_dim; i < 2 * n_dim; ++i)
             r_src[i] = 1 - std::numeric_limits<double>::epsilon();
-    if (n_src > 2)
+    if (set_fixed_charges && n_src > 2)
         for (int i = 2 * n_dim; i < 3 * n_dim; ++i)
             r_src[i] = 0.05;
 }
 
-template void init_test_data<float>(int n_dim, int nd, int n_src, bool uniform, std::vector<float> &r_src,
-                                    std::vector<float> &rnormal, std::vector<float> &charges,
-                                    std::vector<float> &dipstr, long seed);
+template void init_test_data<float>(int n_dim, int nd, int n_src, bool uniform, bool set_fixed_charges,
+                                    sctl::Vector<float> &r_src, sctl::Vector<float> &rnormal,
+                                    sctl::Vector<float> &charges, sctl::Vector<float> &dipstr, long seed);
 
-template void init_test_data<double>(int n_dim, int nd, int n_src, bool uniform, std::vector<double> &r_src,
-                                     std::vector<double> &rnormal, std::vector<double> &charges,
-                                     std::vector<double> &dipstr, long seed);
+template void init_test_data<double>(int n_dim, int nd, int n_src, bool uniform, bool set_fixed_charges,
+                                     sctl::Vector<double> &r_src, sctl::Vector<double> &rnormal,
+                                     sctl::Vector<double> &charges, sctl::Vector<double> &dipstr, long seed);
 
 TEST_CASE("[DMK] mesh_nd") {
     for (int dim : {2, 3}) {
@@ -265,4 +265,3 @@ TEST_CASE("[DMK] mk_tensor_product_fourier_transform") {
 }
 
 } // namespace dmk::util
-
