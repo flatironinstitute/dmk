@@ -8,6 +8,7 @@
 #include <dmk/proxy.hpp>
 #include <dmk/tensorprod.hpp>
 #include <dmk/tree.hpp>
+#include <dmk/util.hpp>
 #include <sctl.hpp>
 
 #include <mpi.h>
@@ -34,6 +35,9 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     sctl::Vector<T> charge_vec(n_src * params.n_mfm, const_cast<T *>(charge), false);
 
     DMKPtTree<T, DIM> tree(sctl::Comm::World(), params, r_src_vec, r_trg_vec, charge_vec);
+    sctl::Comm::Self();
+    tree.upward_pass();
+    tree.downward_pass();
 
     sctl::Vector<T> res;
     tree.GetParticleData(res, "pdmk_pot_src");
@@ -51,64 +55,6 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     logger->info("PDMK finished in {:.4f} seconds ({:.0f} pts/s)", dt, N / dt);
 }
 
-void init_data(int n_dim, int nd, int n_src, bool uniform, std::vector<double> &r_src, std::vector<double> &rnormal,
-               std::vector<double> &charges, std::vector<double> &dipstr, long seed) {
-    r_src.resize(n_dim * n_src);
-    charges.resize(nd * n_src);
-    rnormal.resize(n_dim * n_src);
-    dipstr.resize(nd * n_src);
-
-    double rin = 0.45;
-    double wrig = 0.12;
-    double rwig = 0;
-    int nwig = 6;
-    std::default_random_engine eng(seed);
-    std::uniform_real_distribution<double> rng;
-
-    for (int i = 0; i < n_src; ++i) {
-        if (!uniform) {
-            if (n_dim == 2) {
-                double phi = rng(eng) * 2 * M_PI;
-                r_src[i * 3 + 0] = cos(phi);
-                r_src[i * 3 + 1] = sin(phi);
-            }
-            if (n_dim == 3) {
-                double theta = rng(eng) * M_PI;
-                double rr = rin + rwig * cos(nwig * theta);
-                double ct = cos(theta);
-                double st = sin(theta);
-                double phi = rng(eng) * 2 * M_PI;
-                double cp = cos(phi);
-                double sp = sin(phi);
-
-                r_src[i * 3 + 0] = rr * st * cp + 0.5;
-                r_src[i * 3 + 1] = rr * st * sp + 0.5;
-                r_src[i * 3 + 2] = rr * ct + 0.5;
-            }
-        } else {
-            for (int j = 0; j < n_dim; ++j)
-                r_src[i * n_dim + j] = rng(eng);
-        }
-
-        for (int j = 0; j < n_dim; ++j)
-            rnormal[i * n_dim + j] = rng(eng);
-
-        for (int j = 0; j < nd; ++j) {
-            charges[i * nd + j] = rng(eng) - 0.5;
-            dipstr[i * nd + j] = rng(eng);
-        }
-    }
-
-    for (int i = 0; i < 3; ++i)
-        r_src[i] = 0.0;
-    for (int i = 3; i < 6; ++i)
-        r_src[i] = 1 - std::numeric_limits<double>::epsilon();
-    for (int i = 6; i < 9; ++i)
-        r_src[i] = 0.05;
-}
-
-MPI_TEST_CASE("[DMK] pdmk 2d", 1) {}
-
 MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
     constexpr int n_dim = 3;
     constexpr int n_src = 10000;
@@ -116,7 +62,7 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
 
     std::vector<double> r_src, pot_src, grad_src, hess_src, charges, rnormal, dipstr, pot_trg, r_trg, grad_trg,
         hess_trg;
-    init_data(n_dim, 1, n_src, false, r_src, rnormal, charges, dipstr, 0);
+    dmk::util::init_test_data(n_dim, 1, n_src, false, r_src, rnormal, charges, dipstr, 0);
     r_trg = r_src;
     std::reverse(r_trg.begin(), r_trg.end());
     r_trg.resize(n_dim * (n_src - 3));

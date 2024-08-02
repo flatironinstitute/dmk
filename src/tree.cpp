@@ -80,10 +80,6 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     logger->debug("Finished calculating difference kernels");
     fourier_data.update_local_coeffs(params.eps);
     logger->debug("Finished updating local potential expansion coefficients");
-
-    // upward pass
-    upward_pass();
-    downward_pass();
 }
 
 /// @brief Build any bookkeeping data associated with the tree

@@ -20,6 +20,10 @@ void mk_tensor_product_fourier_transform(int dim, int npw, int nfourier, Real *f
 template <typename Real>
 void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const Real, 1> &fhat,
                                          const ndview<Real, 1> &pswfft);
+
+template <typename Real>
+void init_test_data(int n_dim, int nd, int n_src, bool uniform, std::vector<Real> &r_src, std::vector<Real> &rnormal,
+                    std::vector<Real> &charges, std::vector<Real> &dipstr, long seed);
 } // namespace dmk::util
 
 #endif

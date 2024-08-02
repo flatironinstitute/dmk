@@ -5,6 +5,7 @@
 #include <dmk/fortran.h>
 #include <dmk/types.hpp>
 #include <limits>
+#include <random>
 #include <type_traits>
 #include <vector>
 
@@ -146,6 +147,74 @@ void mk_tensor_product_fourier_transform(int dim, int npw, int nfourier, Real *f
     throw std::runtime_error("Invalid dimension: " + std::to_string(dim));
 }
 
+template <typename Real>
+void init_test_data(int n_dim, int nd, int n_src, bool uniform, std::vector<Real> &r_src, std::vector<Real> &rnormal,
+                    std::vector<Real> &charges, std::vector<Real> &dipstr, long seed) {
+    r_src.resize(n_dim * n_src);
+    charges.resize(nd * n_src);
+    rnormal.resize(n_dim * n_src);
+    dipstr.resize(nd * n_src);
+
+    double rin = 0.45;
+    double wrig = 0.12;
+    double rwig = 0;
+    int nwig = 6;
+    std::default_random_engine eng(seed);
+    std::uniform_real_distribution<double> rng;
+
+    for (int i = 0; i < n_src; ++i) {
+        if (!uniform) {
+            if (n_dim == 2) {
+                double phi = rng(eng) * 2 * M_PI;
+                r_src[i * 3 + 0] = cos(phi);
+                r_src[i * 3 + 1] = sin(phi);
+            }
+            if (n_dim == 3) {
+                double theta = rng(eng) * M_PI;
+                double rr = rin + rwig * cos(nwig * theta);
+                double ct = cos(theta);
+                double st = sin(theta);
+                double phi = rng(eng) * 2 * M_PI;
+                double cp = cos(phi);
+                double sp = sin(phi);
+
+                r_src[i * 3 + 0] = rr * st * cp + 0.5;
+                r_src[i * 3 + 1] = rr * st * sp + 0.5;
+                r_src[i * 3 + 2] = rr * ct + 0.5;
+            }
+        } else {
+            for (int j = 0; j < n_dim; ++j)
+                r_src[i * n_dim + j] = rng(eng);
+        }
+
+        for (int j = 0; j < n_dim; ++j)
+            rnormal[i * n_dim + j] = rng(eng);
+
+        for (int j = 0; j < nd; ++j) {
+            charges[i * nd + j] = rng(eng) - 0.5;
+            dipstr[i * nd + j] = rng(eng);
+        }
+    }
+
+    if (n_src > 0)
+        for (int i = 0; i < n_dim; ++i)
+            r_src[i] = 0.0;
+    if (n_src > 1)
+        for (int i = n_dim; i < 2 * n_dim; ++i)
+            r_src[i] = 1 - std::numeric_limits<double>::epsilon();
+    if (n_src > 2)
+        for (int i = 2 * n_dim; i < 3 * n_dim; ++i)
+            r_src[i] = 0.05;
+}
+
+template void init_test_data<float>(int n_dim, int nd, int n_src, bool uniform, std::vector<float> &r_src,
+                                    std::vector<float> &rnormal, std::vector<float> &charges,
+                                    std::vector<float> &dipstr, long seed);
+
+template void init_test_data<double>(int n_dim, int nd, int n_src, bool uniform, std::vector<double> &r_src,
+                                     std::vector<double> &rnormal, std::vector<double> &charges,
+                                     std::vector<double> &dipstr, long seed);
+
 TEST_CASE("[DMK] mesh_nd") {
     for (int dim : {2, 3}) {
         std::vector<double> in = {1.0, 2.0, 3.0};
@@ -196,3 +265,4 @@ TEST_CASE("[DMK] mk_tensor_product_fourier_transform") {
 }
 
 } // namespace dmk::util
+
