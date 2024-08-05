@@ -254,10 +254,6 @@ void DMKPtTree<T, DIM>::generate_metadata() {
 ///
 /// @tparam T Floating point format to use (float, double)
 /// @tparam DIM Spatial dimension tree lives in
-/// @param[in] n_mfm Number of different "charges" to simultaneously evaluate, a.k.a. the charge dimension
-/// @param[in] n_order Linear order of the polynomial expansion representing the charge distribution
-/// @param[in] c2p [n_order, n_order, DIM, 2**DIM] Child to parent matrices used to convert child proxy coefficients to
-/// parent proxy coefficients
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::upward_pass() {
     auto &logger = dmk::get_logger(this->GetComm());
@@ -266,8 +262,6 @@ void DMKPtTree<T, DIM>::upward_pass() {
 
     const std::size_t n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
     proxy_coeffs.SetZero();
-    sctl::Vector<sctl::Long> counts(n_boxes());
-    counts.SetZero();
 
     constexpr int n_children = 1u << DIM;
     const auto &node_lists = this->GetNodeLists();
@@ -280,10 +274,9 @@ void DMKPtTree<T, DIM>::upward_pass() {
     for (auto i_box : level_indices[start_level]) {
         if (!form_pw_expansion[i_box])
             continue;
+
         proxy::charge2proxycharge<double, DIM>(r_src_view(i_box), charge_view(i_box), center_view(i_box),
                                                2.0 / boxsize[start_level], proxy_view_upward(i_box));
-        counts[i_box] = 1;
-        n_direct++;
     }
     logger->debug("proxy: finished building base proxy charges");
 
@@ -298,44 +291,28 @@ void DMKPtTree<T, DIM>::upward_pass() {
                 const int child_box = children[i_child];
                 if (child_box < 0 || !src_counts_local[child_box])
                     continue;
-                if (form_pw_expansion[child_box]) {
+
+                if (form_pw_expansion[child_box])
                     tensorprod::transform(DIM, params.n_mfm, n_order, n_order, true, proxy_ptr_upward(child_box),
                                           &c2p[i_child * DIM * n_order * n_order], proxy_ptr_upward(parent_box));
-                    counts[parent_box] = 1;
-                    n_merged += 1;
-                } else {
+                else
                     proxy::charge2proxycharge<double, DIM>(r_src_view(child_box), charge_view(child_box),
                                                            center_view(parent_box), 2.0 / boxsize[i_level],
                                                            proxy_view_upward(parent_box));
-                    counts[child_box] = 1;
-                    n_direct++;
-                }
             }
         }
     }
 
-    int tot_proxy = 0;
-    for (int i = 0; i < n_boxes(); ++i) {
-        auto &count = counts[i];
-        tot_proxy += count;
-        count = form_pw_expansion[i] ? n_coeffs : 0;
-    }
+    sctl::Vector<sctl::Long> counts(n_boxes());
+    for (int i = 0; i < n_boxes(); ++i)
+        counts[i] = form_pw_expansion[i] ? n_coeffs : 0;
 
     logger->debug("Finished building proxy charges");
     this->AddData("proxy_coeffs", proxy_coeffs, counts);
     this->template ReduceBroadcast<T>("proxy_coeffs");
     this->template GetData<T>(proxy_coeffs, counts, "proxy_coeffs");
 
-    int buf[] = {tot_proxy, n_direct, n_merged};
-    auto comm = this->GetComm().GetMPI_Comm();
-    if (this->GetComm().Rank() == 0)
-        MPI_Reduce(MPI_IN_PLACE, buf, 3, MPI_INT, MPI_SUM, 0, comm);
-    else
-        MPI_Reduce(buf, buf, 3, MPI_INT, MPI_SUM, 0, comm);
-
     logger->debug("proxy: finished broadcasting proxy charges");
-    logger->trace("proxy: n_proxy, n_direct, n_merged: {} {} {}", buf[0], buf[1], buf[2]);
-    rank_logger->trace("proxy: n_proxy_local / n_boxes_local {}", (float)tot_proxy / n_boxes());
 }
 
 template <typename T, int DIM>
@@ -635,7 +612,6 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 4 ranks", 4) {
 
         DMKPtTree<double, n_dim> tree_single(sctl::Comm::Self(), params, r_src, r_trg, charges);
         tree_single.upward_pass();
-        tree_single.WriteTreeVTK("tree_single");
         MPI_CHECK(0, std::abs(tree_single.proxy_view_upward(0)(1, 1, 1, 0) - tree.proxy_view_upward(0)(1, 1, 1, 0)) <
                          5 * std::numeric_limits<double>::epsilon());
     }
