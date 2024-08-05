@@ -23,8 +23,9 @@ void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const Re
                                          const ndview<Real, 1> &pswfft);
 
 template <typename Real>
-void init_test_data(int n_dim, int nd, int n_src, bool uniform, bool set_fixed_charges, sctl::Vector<Real> &r_src,
-                    sctl::Vector<Real> &rnormal, sctl::Vector<Real> &charges, sctl::Vector<Real> &dipstr, long seed);
+void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
+                    sctl::Vector<Real> &r_src, sctl::Vector<Real> &r_trg, sctl::Vector<Real> &rnormal,
+                    sctl::Vector<Real> &charges, sctl::Vector<Real> &dipstr, long seed);
 } // namespace dmk::util
 
 #endif

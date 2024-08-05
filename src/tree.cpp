@@ -607,16 +607,13 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 4 ranks", 4) {
     constexpr int n_trg = 5e4;
     constexpr int n_charge_dim = 1;
     constexpr bool uniform = false;
-    const bool set_fixed_charges = !test_rank;
     const int seed = test_rank;
 
     sctl::Vector<double> r_src, r_trg, r_src_norms, charges, dipoles, pot_src, grad_src, hess_src, pot_trg, grad_trg,
         hess_trg;
-    if (test_rank == 0)
-        dmk::util::init_test_data(n_dim, n_charge_dim, n_src, uniform, set_fixed_charges, r_src, r_src_norms, charges,
+    if (test_rank == 1)
+        dmk::util::init_test_data(n_dim, n_charge_dim, n_src, n_trg, uniform, true, r_src, r_trg, r_src_norms, charges,
                                   dipoles, seed);
-    sctl::Vector<double> r_src_single(test_nb_procs * n_src * n_dim), r_trg_single(test_nb_procs * n_trg * n_dim),
-        charges_single(test_nb_procs * n_src * n_charge_dim);
 
     pdmk_params params;
     params.eps = 1E-6;
@@ -630,18 +627,18 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 4 ranks", 4) {
     auto comm = sctl::Comm(test_comm);
     DMKPtTree<double, n_dim> tree(comm, params, r_src, r_trg, charges);
     tree.upward_pass();
-    MPI_Barrier(test_comm);
+    tree.WriteTreeVTK("tree");
 
-    bool passed = true;
     if (test_rank == 0) {
+        dmk::util::init_test_data(n_dim, n_charge_dim, n_src, n_trg, uniform, true, r_src, r_trg, r_src_norms, charges,
+                                  dipoles, seed);
+
         DMKPtTree<double, n_dim> tree_single(sctl::Comm::Self(), params, r_src, r_trg, charges);
         tree_single.upward_pass();
+        tree_single.WriteTreeVTK("tree_single");
         MPI_CHECK(0, std::abs(tree_single.proxy_view_upward(0)(1, 1, 1, 0) - tree.proxy_view_upward(0)(1, 1, 1, 0)) <
                          5 * std::numeric_limits<double>::epsilon());
     }
-
-    MPI_Barrier(test_comm);
-    REQUIRE(passed);
 }
 
 // template struct DMKPtTree<float, 2>;

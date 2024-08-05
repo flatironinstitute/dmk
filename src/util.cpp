@@ -4,6 +4,7 @@
 #include <dmk/chebychev.hpp>
 #include <dmk/fortran.h>
 #include <dmk/types.hpp>
+#include <dmk/util.hpp>
 #include <limits>
 #include <random>
 #include <type_traits>
@@ -148,9 +149,11 @@ void mk_tensor_product_fourier_transform(int dim, int npw, int nfourier, Real *f
 }
 
 template <typename Real>
-void init_test_data(int n_dim, int nd, int n_src, bool uniform, bool set_fixed_charges, sctl::Vector<Real> &r_src,
-                    sctl::Vector<Real> &rnormal, sctl::Vector<Real> &charges, sctl::Vector<Real> &dipstr, long seed) {
+void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
+                    sctl::Vector<Real> &r_src, sctl::Vector<Real> &r_trg, sctl::Vector<Real> &rnormal,
+                    sctl::Vector<Real> &charges, sctl::Vector<Real> &dipstr, long seed) {
     r_src.ReInit(n_dim * n_src);
+    r_trg.ReInit(n_dim * n_trg);
     charges.ReInit(nd * n_src);
     rnormal.ReInit(n_dim * n_src);
     dipstr.ReInit(nd * n_src);
@@ -196,6 +199,32 @@ void init_test_data(int n_dim, int nd, int n_src, bool uniform, bool set_fixed_c
         }
     }
 
+    for (int i_trg = 0; i_trg < n_trg; ++i_trg) {
+        if (!uniform) {
+            if (n_dim == 2) {
+                double phi = rng(eng) * 2 * M_PI;
+                r_trg[i_trg * 3 + 0] = cos(phi);
+                r_trg[i_trg * 3 + 1] = sin(phi);
+            }
+            if (n_dim == 3) {
+                double theta = rng(eng) * M_PI;
+                double rr = rin + rwig * cos(nwig * theta);
+                double ct = cos(theta);
+                double st = sin(theta);
+                double phi = rng(eng) * 2 * M_PI;
+                double cp = cos(phi);
+                double sp = sin(phi);
+
+                r_trg[i_trg * 3 + 0] = rr * st * cp + 0.5;
+                r_trg[i_trg * 3 + 1] = rr * st * sp + 0.5;
+                r_trg[i_trg * 3 + 2] = rr * ct + 0.5;
+            }
+        } else {
+            for (int j = 0; j < n_dim; ++j)
+                r_trg[i_trg * n_dim + j] = rng(eng);
+        }
+    }
+
     if (set_fixed_charges && n_src > 0)
         for (int i = 0; i < n_dim; ++i)
             r_src[i] = 0.0;
@@ -207,13 +236,15 @@ void init_test_data(int n_dim, int nd, int n_src, bool uniform, bool set_fixed_c
             r_src[i] = 0.05;
 }
 
-template void init_test_data<float>(int n_dim, int nd, int n_src, bool uniform, bool set_fixed_charges,
-                                    sctl::Vector<float> &r_src, sctl::Vector<float> &rnormal,
-                                    sctl::Vector<float> &charges, sctl::Vector<float> &dipstr, long seed);
+template void init_test_data<float>(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
+                                    sctl::Vector<float> &r_src, sctl::Vector<float> &r_trg,
+                                    sctl::Vector<float> &rnormal, sctl::Vector<float> &charges,
+                                    sctl::Vector<float> &dipstr, long seed);
 
-template void init_test_data<double>(int n_dim, int nd, int n_src, bool uniform, bool set_fixed_charges,
-                                     sctl::Vector<double> &r_src, sctl::Vector<double> &rnormal,
-                                     sctl::Vector<double> &charges, sctl::Vector<double> &dipstr, long seed);
+template void init_test_data<double>(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
+                                     sctl::Vector<double> &r_src, sctl::Vector<double> &r_trg,
+                                     sctl::Vector<double> &rnormal, sctl::Vector<double> &charges,
+                                     sctl::Vector<double> &dipstr, long seed);
 
 TEST_CASE("[DMK] mesh_nd") {
     for (int dim : {2, 3}) {

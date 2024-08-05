@@ -64,7 +64,8 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
 
     sctl::Vector<double> r_src, pot_src, grad_src, hess_src, charges, rnormal, dipstr, pot_trg, r_trg, grad_trg,
         hess_trg;
-    dmk::util::init_test_data(n_dim, 1, n_src, uniform, set_fixed_charges, r_src, rnormal, charges, dipstr, 0);
+    dmk::util::init_test_data(n_dim, 1, n_src, 0, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, dipstr,
+                              0);
     r_trg = r_src;
     std::reverse(r_trg.begin(), r_trg.end());
     r_trg.ReInit(n_dim * (n_src - set_fixed_charges * 3));
