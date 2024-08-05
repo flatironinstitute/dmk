@@ -351,9 +351,12 @@ void multiply_kernelFT_cd2p(const ndview<std::complex<T>, DIM + 1> &pwexp, const
 }
 
 template <typename Complex, int DIM>
-void shift_planewave(int nd, int nexp, const ndview<std::complex<Complex>, DIM + 1> &pwexp1_,
+void shift_planewave(const ndview<std::complex<Complex>, DIM + 1> &pwexp1_,
                      const ndview<std::complex<Complex>, DIM + 1> &pwexp2_,
                      const ndview<const std::complex<Complex>, 1> &wpwshift) {
+
+    const int nd = pwexp1_.extent(DIM);
+    const int nexp = wpwshift.extent(0);
 
     dmk::ndview<const std::complex<Complex>, 2> pwexp1(pwexp1_.data_handle(), nexp, nd);
     dmk::ndview<std::complex<Complex>, 2> pwexp2(pwexp2_.data_handle(), nexp, nd);
@@ -486,8 +489,7 @@ void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
                 const int ind = sctl::pow<3>(dim) - 1 - (&neighbor - &node_lists[box].nbr[0]);
 
                 ndview<const std::complex<double>, 1> wpwshift_view(&wpwshift[n_pw_per_box * ind], nexp);
-                shift_planewave<double, DIM>(nd_in, nexp, pw_out_view(neighbor), pw_in_view_downward(box),
-                                             wpwshift_view);
+                shift_planewave<double, DIM>(pw_out_view(neighbor), pw_in_view_downward(box), wpwshift_view);
             }
         }
 
