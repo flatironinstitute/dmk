@@ -350,14 +350,17 @@ void multiply_kernelFT_cd2p(const ndview<std::complex<T>, DIM + 1> &pwexp, const
             pwexp_flat(n, ind) *= radialft[n];
 }
 
-template <typename Complex>
-void shift_planewave(int nd, int nexp, const Complex *pwexp1_, Complex *pwexp2_, const Complex *wpwshift) {
-    dmk::ndview<const Complex, 2> pwexp1(pwexp1_, nexp, nd);
-    dmk::ndview<Complex, 2> pwexp2(pwexp2_, nexp, nd);
+template <typename Complex, int DIM>
+void shift_planewave(int nd, int nexp, const ndview<std::complex<Complex>, DIM + 1> &pwexp1_,
+                     const ndview<std::complex<Complex>, DIM + 1> &pwexp2_,
+                     const ndview<const std::complex<Complex>, 1> &wpwshift) {
+
+    dmk::ndview<const std::complex<Complex>, 2> pwexp1(pwexp1_.data_handle(), nexp, nd);
+    dmk::ndview<std::complex<Complex>, 2> pwexp2(pwexp2_.data_handle(), nexp, nd);
 
     for (int ind = 0; ind < nd; ++ind)
         for (int j = 0; j < nexp; ++j)
-            pwexp2(j, ind) += pwexp1(j, ind) * wpwshift[j];
+            pwexp2(j, ind) += pwexp1(j, ind) * wpwshift(j);
 }
 
 /// @brief Perform the "downward pass"
@@ -481,7 +484,10 @@ void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
                 // note: neighbors in SCTL are sorted in reverse order to wpwshift
                 // FIXME: check if valid for periodic boundary conditions
                 const int ind = sctl::pow<3>(dim) - 1 - (&neighbor - &node_lists[box].nbr[0]);
-                shift_planewave(nd_in, nexp, pw_out_ptr(neighbor), pw_in_ptr(box), &wpwshift[n_pw_per_box * ind]);
+
+                ndview<const std::complex<double>, 1> wpwshift_view(&wpwshift[n_pw_per_box * ind], nexp);
+                shift_planewave<double, DIM>(nd_in, nexp, pw_out_view(neighbor), pw_in_view_downward(box),
+                                             wpwshift_view);
             }
         }
 
