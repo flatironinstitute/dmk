@@ -317,26 +317,6 @@ void DMKPtTree<T, DIM>::upward_pass() {
 }
 
 template <typename T, int DIM>
-void tensor_product_fourier_transform(int nexp, int npw, int nfourier, const T *fhat, T *pswfft) {
-    const int npw2 = npw / 2;
-
-    if constexpr (DIM == 1) {
-        for (int j1 = -npw2; j1 <= 0; ++j1)
-            pswfft[j1] = fhat[j1 * j1];
-    } else if constexpr (DIM == 2) {
-        for (int j2 = -npw2, j = 0; j2 <= 0; ++j2)
-            for (int j1 = -npw2; j1 <= (npw - 1) / 2; ++j1, ++j)
-                pswfft[j] = fhat[j1 * j1 + j2 * j2];
-    } else if constexpr (DIM == 3) {
-        for (int j3 = -npw2, j = 0; j3 <= 0; ++j3)
-            for (int j2 = -npw2; j2 <= (npw - 1) / 2; ++j2)
-                for (int j1 = -npw2; j1 <= (npw - 1) / 2; ++j1, ++j)
-                    pswfft[j] = fhat[j1 * j1 + j2 * j2 + j3 * j3];
-    } else
-        static_assert(dmk::util::always_false<T>, "Invalid DIM supplied");
-}
-
-template <typename T, int DIM>
 void multiply_kernelFT_cd2p(const ndview<std::complex<T>, DIM + 1> &pwexp, const sctl::Vector<T> &radialft) {
     const int nd = pwexp.extent(DIM);
     const int nexp = radialft.Dim();
