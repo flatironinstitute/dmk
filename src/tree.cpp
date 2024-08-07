@@ -273,7 +273,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
     int n_direct = 0;
     const int start_level = std::max(n_levels() - 2, 0);
     for (auto i_box : level_indices[start_level]) {
-        if (!form_pw_expansion[i_box])
+        if (!form_pw_expansion[i_box] || !src_counts_local[i_box])
             continue;
 
         proxy::charge2proxycharge<T, DIM>(r_src_view(i_box), charge_view(i_box), center_view(i_box),
@@ -410,16 +410,15 @@ void DMKPtTree<T, DIM>::downward_pass() {
     const std::size_t n_coeffs_per_box = params.n_mfm * sctl::pow<DIM>(n_order);
 
     const int shift = n_pw / 2;
-    const int nexp = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     sctl::Vector<std::complex<T>> wpwshift(n_pw_modes * sctl::pow<DIM>(2 * nmax + 1));
     sctl::Vector<T> ts(n_pw);
-    sctl::Vector<T> radialft(nexp);
+    sctl::Vector<T> radialft(n_pw_modes);
     for (int i = 0; i < n_pw; ++i)
         ts[i] = fourier_data.hpw[0] * (i - shift);
 
     dmk::util::mk_tensor_product_fourier_transform(
         DIM, n_pw, ndview<const T, 1>(&fourier_data.dkernelft[0], fourier_data.n_fourier + 1),
-        ndview<T, 1>(&radialft[0], nexp));
+        ndview<T, 1>(&radialft[0], n_pw_modes));
 
     sctl::Vector<std::complex<T>> poly2pw(n_order * fourier_data.n_pw), pw2poly(n_order * fourier_data.n_pw);
     fourier_data.calc_planewave_coeff_matrices(-1, n_order, poly2pw, pw2poly);
@@ -441,13 +440,11 @@ void DMKPtTree<T, DIM>::downward_pass() {
         fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
         dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw, ts, wpwshift);
 
-        ndview<const T, 1>(&fourier_data.dkernelft[(i_level + 1) * (fourier_data.n_fourier + 1)],
-                           fourier_data.n_fourier + 1);
         dmk::util::mk_tensor_product_fourier_transform(
             DIM, n_pw,
             ndview<const T, 1>(&fourier_data.dkernelft[(i_level + 1) * (fourier_data.n_fourier + 1)],
                                fourier_data.n_fourier + 1),
-            ndview<T, 1>(&radialft[0], nexp));
+            ndview<T, 1>(&radialft[0], n_pw_modes));
 
         // Form outgoing expansions
         for (auto box : level_indices[i_level]) {
@@ -476,8 +473,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
                 // note: neighbors in SCTL are sorted in reverse order to wpwshift
                 // FIXME: check if valid for periodic boundary conditions
                 const int ind = sctl::pow<3>(dim) - 1 - (&neighbor - &node_lists[box].nbr[0]);
-                shift_planewave(params.n_mfm, nexp, pw_out_ptr(neighbor), pw_in_ptr(box),
-                                &wpwshift[n_pw_per_box * ind]);
+                shift_planewave(nd, n_pw_modes, pw_out_ptr(neighbor), pw_in_ptr(box), &wpwshift[n_pw_per_box * ind]);
             }
         }
 

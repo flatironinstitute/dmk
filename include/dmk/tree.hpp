@@ -111,10 +111,10 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     Real *charge_ptr(int i_node) { return &charge_sorted[charge_offsets[i_node]]; }
     const Real *charge_ptr(int i_node) const { return &charge_sorted[charge_offsets[i_node]]; }
     ndview<Real, 2> charge_view(int i_node) {
-        return ndview<Real, 2>(charge_ptr(i_node), params.n_mfm, trg_counts_local[i_node]);
+        return ndview<Real, 2>(charge_ptr(i_node), params.n_mfm, src_counts_local[i_node]);
     }
     ndview<const Real, 2> charge_view(int i_node) const {
-        return ndview<const Real, 2>(charge_ptr(i_node), params.n_mfm, trg_counts_local[i_node]);
+        return ndview<const Real, 2>(charge_ptr(i_node), params.n_mfm, src_counts_local[i_node]);
     }
 
     Real *center_ptr(int i_node) { return &centers[i_node * DIM]; }
