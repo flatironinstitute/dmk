@@ -74,6 +74,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     int n_levels() const { return level_indices.size(); }
     std::size_t n_boxes() const { return this->GetNodeMID().Dim(); }
     void generate_metadata();
+    void init_planewave_data();
 
     Real *r_src_ptr(int i_node) { return &r_src_sorted[r_src_offsets[i_node]]; }
     const Real *r_src_ptr(int i_node) const { return &r_src_sorted[r_src_offsets[i_node]]; }
