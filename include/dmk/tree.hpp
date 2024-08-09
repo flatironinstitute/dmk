@@ -164,7 +164,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     std::complex<Real> *pw_in_ptr(int i_box) { return &pw_in[pw_in_offsets[i_box]]; }
     const std::complex<Real> *pw_in_ptr(int i_box) const { return &pw_in[pw_in_offsets[i_box]]; }
-    ndview<std::complex<Real>, DIM + 1> pw_in_view_downward(int i_box) {
+    ndview<std::complex<Real>, DIM + 1> pw_in_view(int i_box) {
         if constexpr (DIM == 2)
             return ndview<std::complex<Real>, DIM + 1>(pw_in_ptr(i_box), n_pw, (n_pw + 1) / 2, params.n_mfm);
         else if constexpr (DIM == 3)
@@ -172,7 +172,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
         else
             static_assert(dmk::util::always_false<std::complex<Real>>, "Invalid DIM supplied");
     }
-    ndview<const std::complex<Real>, DIM + 1> pw_in_view_downward(int i_box) const {
+    ndview<const std::complex<Real>, DIM + 1> pw_in_view(int i_box) const {
         if constexpr (DIM == 2)
             return ndview<const std::complex<Real>, DIM + 1>(pw_in_ptr(i_box), n_pw, (n_pw + 1) / 2, params.n_mfm);
         else if constexpr (DIM == 3)

@@ -78,12 +78,20 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
     grad_trg.ReInit(n_trg * nd * n_dim);
     hess_trg.ReInit(n_trg * nd * n_dim * n_dim);
 
+    auto pot_src_fort = pot_src;
+    auto grad_src_fort = grad_src;
+    auto hess_src_fort = hess_src;
+    auto pot_trg_fort = pot_trg;
+    auto grad_trg_fort = grad_trg;
+    auto hess_trg_fort = hess_trg;
+
     pdmk_params params;
     params.eps = 1e-6;
     params.n_dim = n_dim;
     params.n_per_leaf = 80;
     params.n_mfm = nd;
     params.pgh_src = DMK_POTENTIAL;
+    params.pgh_trg = DMK_POTENTIAL;
     params.kernel = DMK_YUKAWA;
     params.fparam = 6.0;
     params.log_level = SPDLOG_LEVEL_OFF;
@@ -99,14 +107,16 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
         return std::exp(-params.fparam * dr) / dr;
     };
 
-    double test_src = 0.0;
-    double test_trg = 0.0;
-    int test_src_i = n_src / 3;
-    int test_trg_i = n_trg / 3;
+    const int n_test_src = std::min(n_src, 100);
+    const int n_test_trg = std::min(n_trg, 100);
+    std::vector<double> test_src(n_test_src);
+    std::vector<double> test_trg(n_test_trg);
 
-    for (int i = 0; i < n_src; ++i) {
-        test_src += charges[i] * yukawa(&r_src[i * n_dim], &r_src[test_src_i * n_dim]);
-        test_trg += charges[i] * yukawa(&r_src[i * n_dim], &r_trg[test_trg_i * n_dim]);
+    for (int i_src = 0; i_src < n_src; ++i_src) {
+        for (int i_trg = 0; i_trg < n_test_src; ++i_trg)
+            test_src[i_trg] += charges[i_src] * yukawa(&r_src[i_src * n_dim], &r_src[i_trg * n_dim]);
+        for (int i_trg = 0; i_trg < n_test_trg; ++i_trg)
+            test_trg[i_trg] += charges[i_src] * yukawa(&r_src[i_src * n_dim], &r_trg[i_trg * n_dim]);
     }
 
     for (int i = 0; i < 2; ++i) {
@@ -115,8 +125,25 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
         params.log_level = SPDLOG_LEVEL_INFO;
     }
 
-    REQUIRE(std::abs(1.0 - pot_src[test_src_i] / test_src) < params.eps);
-    REQUIRE(std::abs(1.0 - pot_trg[test_trg_i] / test_trg) < params.eps);
+    double tottimeinfo[20];
+    int use_dipole = 0;
+
+    pdmk_(&nd, &n_dim, &params.eps, (int *)&params.kernel, &params.fparam, &params.use_periodic, &n_src, &r_src[0],
+          &params.use_charge, &charges[0], &use_dipole, nullptr, nullptr, (int *)&params.pgh_src, &pot_src_fort[0],
+          &grad_src_fort[0], &hess_src_fort[0], &n_trg, &r_trg[0], (int *)&params.pgh_trg, &pot_trg_fort[0],
+          &grad_trg_fort[0], &hess_trg_fort[0], tottimeinfo);
+
+    double l2_err_src = 0.0;
+    double l2_err_trg = 0.0;
+    for (int i = 0; i < n_test_src; ++i)
+        l2_err_src += sctl::pow<2>(1.0 - pot_src[i] / test_src[i]);
+    for (int i = 0; i < n_test_trg; ++i)
+        l2_err_trg += sctl::pow<2>(1.0 - pot_trg[i] / test_trg[i]);
+
+    l2_err_src = std::sqrt(l2_err_src) / n_test_src;
+    l2_err_trg = std::sqrt(l2_err_trg) / n_test_trg;
+    CHECK(l2_err_src < params.eps);
+    CHECK(l2_err_trg < params.eps);
 }
 
 } // namespace dmk

@@ -58,6 +58,12 @@ template <int DIM, typename T>
 void calc_planewave_translation_matrix(int nmax, T xmin, int npw, const sctl::Vector<T> &ts,
                                        sctl::Vector<std::complex<T>> &shift_vec);
 
+template <typename Real, int DIM>
+void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, Real boxsize,
+                            ProlateFuncs &pf, sctl::Vector<Real> &windowed_kernel);
+template <typename Real, int DIM>
+void get_difference_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, Real boxsize,
+                              ProlateFuncs &pf, sctl::Vector<Real> &windowed_kernel);
 } // namespace dmk
 
 #endif

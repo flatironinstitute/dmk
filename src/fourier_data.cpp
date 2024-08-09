@@ -15,7 +15,7 @@
 namespace dmk {
 template <typename T>
 T procl180_rescale(T eps) {
-    constexpr T cs[] = {
+    constexpr float cs[] = {
         .43368E-16, .10048E+01, .17298E+01, .22271E+01, .26382E+01, .30035E+01, .33409E+01, .36598E+01, .39658E+01,
         .42621E+01, .45513E+01, .48347E+01, .51136E+01, .53887E+01, .56606E+01, .59299E+01, .61968E+01, .64616E+01,
         .67247E+01, .69862E+01, .72462E+01, .75049E+01, .77625E+01, .80189E+01, .82744E+01, .85289E+01, .87826E+01,
@@ -123,6 +123,116 @@ std::tuple<int, double, double> get_PSWF_difference_kernel_pwterms(dmk_ikernel k
     return std::make_tuple(npw, hpw, ws);
 }
 
+template <int DIM>
+std::tuple<int, double, double, double> get_PSWF_windowed_kernel_pwterms(int ndigits, double boxsize) {
+    int npw;
+    double hpw, ws, rl;
+
+    if (ndigits <= 3) {
+        npw = 13;
+        hpw = M_PI * 0.34 / boxsize;
+    } else if (ndigits <= 6) {
+        npw = 25;
+        hpw = M_PI * 0.357 / boxsize;
+    } else if (ndigits <= 9) {
+        npw = 39;
+        hpw = M_PI * 0.357 / boxsize;
+    } else if (ndigits <= 12) {
+        npw = 53;
+        hpw = M_PI * 0.338 / boxsize;
+    }
+
+    constexpr double factor = 0.5 / sctl::pow<DIM - 1>(M_PI);
+    ws = sctl::pow<DIM>(hpw) * factor;
+
+    constexpr double two_sqrt_dim = DIM == 2 ? 2 * 1.4142135623730951 : 2 * 1.7320508075688772;
+    rl = boxsize * two_sqrt_dim;
+
+    return std::make_tuple(npw, hpw, ws, rl);
+}
+
+template <typename Real, int DIM>
+void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, Real boxsize,
+                            ProlateFuncs &pf, sctl::Vector<Real> &windowed_ft) {
+    auto [npw, hpw, ws, rl] = get_PSWF_windowed_kernel_pwterms<DIM>(ndigits, boxsize);
+    const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
+    windowed_ft.ReInit(n_fourier);
+    const Real rlambda = rpars[0];
+    const Real rlambda2 = rlambda * rlambda;
+
+    // determine whether one needs to smooth out the 1/(k^2+lambda^2) factor at the origin.
+    // needed in the calculation of kernel-smoothing when there is low-frequency breakdown
+    const bool near_correction = (rlambda * boxsize / beta < 1E-2);
+    Real dk0, dk1, delam;
+    if (near_correction) {
+        Real arg = rl * rlambda;
+        if constexpr (DIM == 2) {
+            dk0 = std::cyl_bessel_j(0, arg);
+            dk1 = std::cyl_bessel_j(1, arg);
+        } else if constexpr (DIM == 3)
+            delam = std::exp(-arg);
+    }
+
+    const Real psi0 = pf.eval_val(0);
+    for (int i = 0; i < n_fourier; ++i) {
+        const Real rk = sqrt((Real)i) * hpw;
+        const Real xi2 = rk * rk + rlambda2;
+        const Real xi = sqrt(xi2);
+        const Real xval = xi * boxsize / beta;
+        const Real fval = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
+
+        windowed_ft[i] = ws * fval / (psi0 * xi2);
+
+        if (near_correction) {
+            double sker;
+            if constexpr (DIM == 2) {
+                Real xsc = rl * rk;
+                sker =
+                    -rl * rlambda * std::cyl_bessel_j(0, xsc) * dk1 + Real{1.0} + xsc * std::cyl_bessel_j(1, xsc) * dk0;
+            } else if constexpr (DIM == 3) {
+                Real xsc = rl * rk;
+                sker = 1 - delam * (cos(xsc) + rlambda / rk * sin(xsc));
+            }
+            windowed_ft[i] *= sker;
+        }
+    }
+}
+
+template <typename Real, int DIM>
+void get_difference_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, Real boxsize,
+                              ProlateFuncs &pf, sctl::Vector<Real> &diff_kernel_ft) {
+    const Real bsizesmall = boxsize * 0.5;
+    const Real bsizebig = boxsize;
+    const Real rlambda = *rpars;
+    const Real rlambda2 = rlambda * rlambda;
+    const Real psi0 = pf.eval_val(0.0);
+    const auto [npw, hpw, ws] = get_PSWF_difference_kernel_pwterms<DIM>(kernel, ndigits, boxsize);
+    const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
+    diff_kernel_ft.ReInit(n_fourier);
+
+    for (int i = 0; i < n_fourier; ++i) {
+        Real rk = sqrt((Real)i) * hpw;
+        Real xi2 = rk * rk + rlambda2;
+        Real xi = sqrt(xi2);
+        Real xval = xi * bsizesmall / beta;
+        Real fval1 = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
+
+        xval = xi * bsizebig / beta;
+        Real fval2 = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
+        diff_kernel_ft[i] = ws * (fval1 - fval2) / (psi0 * xi2);
+    }
+
+    // re-compute fhat[0] accurately when there is a low-frequency breakdown
+    if (rlambda * bsizebig / beta < 1E-4) {
+        const std::array<double, 4> c = pf.intvals(beta);
+        const double bsizesmall2 = bsizesmall * bsizesmall;
+        const double bsizebig2 = bsizebig * bsizebig;
+
+        diff_kernel_ft[0] = ws * c[2] * (bsizebig2 - bsizesmall2) / 2 +
+                            ws * (bsizesmall2 * bsizesmall2 - bsizebig2 * bsizebig2) * rlambda2 * c[3] / (c[0] * 24);
+    }
+}
+
 template <typename T>
 FourierData<T>::FourierData(dmk_ikernel kernel_, int n_dim_, T eps, int n_digits_, int n_pw_max, T fparam_,
                             const std::vector<double> &boxsize_)
@@ -137,9 +247,9 @@ FourierData<T>::FourierData(dmk_ikernel kernel_, int n_dim_, T eps, int n_digits
     rl.resize(n_levels + 1);
 
     if (n_dim == 2)
-        std::tie(n_pw, hpw[0], ws[0], rl[0]) = get_PSWF_truncated_kernel_pwterms<2>(n_digits, boxsize[0]);
+        std::tie(n_pw, hpw[0], ws[0], rl[0]) = get_PSWF_windowed_kernel_pwterms<2>(n_digits, boxsize[0]);
     else if (n_dim == 3)
-        std::tie(n_pw, hpw[0], ws[0], rl[0]) = get_PSWF_truncated_kernel_pwterms<3>(n_digits, boxsize[0]);
+        std::tie(n_pw, hpw[0], ws[0], rl[0]) = get_PSWF_windowed_kernel_pwterms<3>(n_digits, boxsize[0]);
 
     dkernelft.resize((n_fourier + 1) * (n_levels + 1));
 
@@ -481,6 +591,17 @@ void FourierData<T>::calc_planewave_coeff_matrices(int i_level, int n_order, sct
 
 // template struct FourierData<float>;
 template struct FourierData<double>;
+
+template void get_windowed_kernel_ft<double, 2>(dmk_ikernel kernel, const double *rpars, double beta, int ndigits,
+                                                double boxsize, ProlateFuncs &pf, sctl::Vector<double> &radialft);
+template void get_windowed_kernel_ft<double, 3>(dmk_ikernel kernel, const double *rpars, double beta, int ndigits,
+                                                double boxsize, ProlateFuncs &pf, sctl::Vector<double> &radialft);
+template void get_difference_kernel_ft<double, 2>(dmk_ikernel kernel, const double *rpars, double beta, int ndigits,
+                                                  double boxsize, ProlateFuncs &pf,
+                                                  sctl::Vector<double> &diff_kernel_ft);
+template void get_difference_kernel_ft<double, 3>(dmk_ikernel kernel, const double *rpars, double beta, int ndigits,
+                                                  double boxsize, ProlateFuncs &pf,
+                                                  sctl::Vector<double> &diff_kernel_ft);
 
 TEST_CASE("[DMK] bessel functions") {
     double x = 1.0;

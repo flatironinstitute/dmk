@@ -393,12 +393,11 @@ void DMKPtTree<T, DIM>::downward_pass() {
     sctl::Vector<std::complex<T>> wpwshift(n_pw_modes * sctl::pow<DIM>(2 * nmax + 1));
     sctl::Vector<T> ts(n_pw);
     sctl::Vector<T> radialft(n_pw_modes);
-    for (int i = 0; i < n_pw; ++i)
-        ts[i] = fourier_data.hpw[0] * (i - shift);
-
-    dmk::util::mk_tensor_product_fourier_transform(
-        DIM, n_pw, ndview<const T, 1>(&fourier_data.dkernelft[0], fourier_data.n_fourier + 1),
-        ndview<T, 1>(&radialft[0], n_pw_modes));
+    sctl::Vector<T> kernel_ft;
+    get_windowed_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta, n_digits, boxsize[0],
+                                   fourier_data.prolate_funcs, kernel_ft);
+    util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<const T, 1>(&kernel_ft[0], kernel_ft.Dim()),
+                                              ndview<T, 1>(&radialft[0], n_pw_modes));
 
     sctl::Vector<std::complex<T>> poly2pw(n_order * fourier_data.n_pw), pw2poly(n_order * fourier_data.n_pw);
     fourier_data.calc_planewave_coeff_matrices(-1, n_order, poly2pw, pw2poly);
@@ -410,7 +409,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
     memcpy(pw_in_ptr(0), pw_out_ptr(0), n_pw_per_box * sizeof(std::complex<T>));
 
     proxy_coeffs_downward.SetZero();
-    dmk::planewave_to_proxy_potential<T, DIM>(pw_in_view_downward(0), pw2poly_view, proxy_view_downward(0));
+    dmk::planewave_to_proxy_potential<T, DIM>(pw_in_view(0), pw2poly_view, proxy_view_downward(0));
 
     constexpr int n_children = 1u << DIM;
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
@@ -420,11 +419,11 @@ void DMKPtTree<T, DIM>::downward_pass() {
         fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
         dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw, ts, wpwshift);
 
-        dmk::util::mk_tensor_product_fourier_transform(
-            DIM, n_pw,
-            ndview<const T, 1>(&fourier_data.dkernelft[(i_level + 1) * (fourier_data.n_fourier + 1)],
-                               fourier_data.n_fourier + 1),
-            ndview<T, 1>(&radialft[0], n_pw_modes));
+        get_difference_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta, n_digits, boxsize[i_level],
+                                         fourier_data.prolate_funcs, kernel_ft);
+
+        util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<const T, 1>(&kernel_ft[0], kernel_ft.Dim()),
+                                                  ndview<T, 1>(&radialft[0], n_pw_modes));
 
         // Form outgoing expansions
         for (auto box : level_indices[i_level]) {
@@ -468,7 +467,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
                 continue;
 
             // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
-            dmk::planewave_to_proxy_potential<T, DIM>(pw_in_view_downward(box), pw2poly_view, proxy_view_downward(box));
+            dmk::planewave_to_proxy_potential<T, DIM>(pw_in_view(box), pw2poly_view, proxy_view_downward(box));
 
             if (eval_tp_expansion[box]) {
                 if (n_src)
@@ -487,10 +486,10 @@ void DMKPtTree<T, DIM>::downward_pass() {
 
                 if (eval_tp_expansion[child] && !eval_pw_expansion[child]) {
                     if (src_counts_local[child])
-                        proxy::eval_targets<T, DIM>(proxy_view_downward(box), r_src_view(child), center_view(child), sc,
+                        proxy::eval_targets<T, DIM>(proxy_view_downward(box), r_src_view(child), center_view(box), sc,
                                                     pot_src_view(child));
                     if (trg_counts_local[child])
-                        proxy::eval_targets<T, DIM>(proxy_view_downward(box), r_trg_view(child), center_view(child), sc,
+                        proxy::eval_targets<T, DIM>(proxy_view_downward(box), r_trg_view(child), center_view(box), sc,
                                                     pot_trg_view(child));
                 } else if (eval_pw_expansion[child]) {
                     dmk::tensorprod::transform(dim, nd, n_order, n_order, true, proxy_ptr_downward(box),
@@ -508,7 +507,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
         const T w0 = fourier_data.yukawa_windowed_kernel_value_at_zero(i_level);
         for (auto box : level_indices[i_level]) {
             // Evaluate the direct interactions
-            if (r_src_cnt[box] == 0)
+            if (!r_src_cnt[box])
                 continue;
 
             const int n_src = r_src_cnt[box];
@@ -562,7 +561,7 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 4 ranks", 4) {
 
     sctl::Vector<double> r_src, r_trg, r_src_norms, charges, dipoles, pot_src, grad_src, hess_src, pot_trg, grad_trg,
         hess_trg;
-    if (test_rank == 1)
+    if (test_rank == 0)
         dmk::util::init_test_data(n_dim, n_charge_dim, n_src, n_trg, uniform, true, r_src, r_trg, r_src_norms, charges,
                                   dipoles, seed);
 
@@ -578,7 +577,6 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 4 ranks", 4) {
     auto comm = sctl::Comm(test_comm);
     DMKPtTree<double, n_dim> tree(comm, params, r_src, r_trg, charges);
     tree.upward_pass();
-    tree.WriteTreeVTK("tree");
 
     if (test_rank == 0) {
         dmk::util::init_test_data(n_dim, n_charge_dim, n_src, n_trg, uniform, true, r_src, r_trg, r_src_norms, charges,
