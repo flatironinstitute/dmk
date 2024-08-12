@@ -8,6 +8,7 @@
 #include <dmk/util.hpp>
 #include <numeric>
 #include <sctl.hpp>
+#include <span>
 #include <vector>
 
 namespace dmk {
@@ -75,6 +76,10 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     std::size_t n_boxes() const { return this->GetNodeMID().Dim(); }
     void generate_metadata();
     void init_planewave_data();
+
+    std::span<const int> direct_neighbs(int i_box) const {
+        return std::span<const int>(direct_neighbs_[i_box].data(), n_direct_neighbs_[i_box]);
+    }
 
     Real *r_src_ptr(int i_node) { return &r_src_sorted[r_src_offsets[i_node]]; }
     const Real *r_src_ptr(int i_node) const { return &r_src_sorted[r_src_offsets[i_node]]; }
@@ -204,6 +209,10 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     void upward_pass();
     void downward_pass();
+
+  private:
+    sctl::Vector<std::array<int, sctl::pow<DIM>(3)>> direct_neighbs_;
+    sctl::Vector<int> n_direct_neighbs_;
 };
 
 } // namespace dmk

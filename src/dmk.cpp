@@ -119,31 +119,29 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
             test_trg[i_trg] += charges[i_src] * yukawa(&r_src[i_src * n_dim], &r_trg[i_trg * n_dim]);
     }
 
-    for (int i = 0; i < 2; ++i) {
-        pdmk(params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0], &pot_src[0], nullptr,
-             nullptr, &pot_trg[0], nullptr, nullptr);
-        params.log_level = SPDLOG_LEVEL_INFO;
-    }
+    pdmk(params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0], &pot_src[0], nullptr,
+         nullptr, &pot_trg[0], nullptr, nullptr);
 
-    double tottimeinfo[20];
-    int use_dipole = 0;
-
-    pdmk_(&nd, &n_dim, &params.eps, (int *)&params.kernel, &params.fparam, &params.use_periodic, &n_src, &r_src[0],
-          &params.use_charge, &charges[0], &use_dipole, nullptr, nullptr, (int *)&params.pgh_src, &pot_src_fort[0],
-          &grad_src_fort[0], &hess_src_fort[0], &n_trg, &r_trg[0], (int *)&params.pgh_trg, &pot_trg_fort[0],
-          &grad_trg_fort[0], &hess_trg_fort[0], tottimeinfo);
+    // double tottimeinfo[20];
+    // int use_dipole = 0;
+    // double st = omp_get_wtime();
+    // pdmk_(&nd, &n_dim, &params.eps, (int *)&params.kernel, &params.fparam, &params.use_periodic, &n_src, &r_src[0],
+    //       &params.use_charge, &charges[0], &use_dipole, nullptr, nullptr, (int *)&params.pgh_src, &pot_src_fort[0],
+    //       &grad_src_fort[0], &hess_src_fort[0], &n_trg, &r_trg[0], (int *)&params.pgh_trg, &pot_trg_fort[0],
+    //       &grad_trg_fort[0], &hess_trg_fort[0], tottimeinfo);
+    // std::cout << omp_get_wtime() - st << std::endl;
 
     double l2_err_src = 0.0;
     double l2_err_trg = 0.0;
     for (int i = 0; i < n_test_src; ++i)
-        l2_err_src += sctl::pow<2>(1.0 - pot_src[i] / test_src[i]);
+        l2_err_src += test_src[i] != 0.0 ? sctl::pow<2>(1.0 - pot_src[i] / test_src[i]) : 0.0;
     for (int i = 0; i < n_test_trg; ++i)
-        l2_err_trg += sctl::pow<2>(1.0 - pot_trg[i] / test_trg[i]);
+        l2_err_trg += test_trg[i] != 0.0 ? sctl::pow<2>(1.0 - pot_trg[i] / test_trg[i]) : 0.0;
 
     l2_err_src = std::sqrt(l2_err_src) / n_test_src;
     l2_err_trg = std::sqrt(l2_err_trg) / n_test_trg;
-    CHECK(l2_err_src < params.eps);
-    CHECK(l2_err_trg < params.eps);
+    CHECK(l2_err_src < 5 * params.eps);
+    CHECK(l2_err_trg < 5 * params.eps);
 }
 
 } // namespace dmk

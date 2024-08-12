@@ -1,4 +1,3 @@
-#include "sctl/comm.hpp"
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
 #include <dmk/fortran.h>
@@ -232,6 +231,43 @@ void DMKPtTree<T, DIM>::generate_metadata() {
                         eval_tp_expansion[child] = true;
                 }
             }
+        }
+    }
+
+    direct_neighbs_.ReInit(n_nodes);
+    n_direct_neighbs_.ReInit(n_nodes);
+    for (int i_level = 0; i_level < n_levels(); ++i_level) {
+        for (int box : level_indices[i_level]) {
+            if (!r_src_cnt[box]) {
+                n_direct_neighbs_[box] = 0;
+                continue;
+            }
+
+            int i_neighb = 0;
+            for (auto neighb : node_lists[box].nbr)
+                if (neighb >= 0)
+                    direct_neighbs_[box][i_neighb++] = neighb;
+
+            if (i_level == 0) {
+                n_direct_neighbs_[box] = i_neighb;
+                continue;
+            }
+
+            const double cutoff = 0.5 * 1.05 * (boxsize[i_level] + boxsize[i_level - 1]);
+            for (auto neighb : node_lists[node_lists[box].parent].nbr) {
+                if (neighb < 0 || !node_attr[neighb].Leaf)
+                    continue;
+
+                bool inrange = true;
+                for (int k = 0; k < DIM; ++k) {
+                    const double distance = std::abs(center_ptr(box)[k] - center_ptr(neighb)[k]);
+                    if (distance > cutoff)
+                        inrange = false;
+                }
+                if (inrange)
+                    direct_neighbs_[box][i_neighb++] = neighb;
+            }
+            n_direct_neighbs_[box] = i_neighb;
         }
     }
 
@@ -498,9 +534,10 @@ void DMKPtTree<T, DIM>::downward_pass() {
             }
         }
 
-        const double rsc = 2.0 / boxsize[i_level];
+        double bsize = i_level == 0 ? 0.5 * boxsize[i_level] : boxsize[i_level];
+        const double rsc = 2.0 / bsize;
         const double cen = -1.0;
-        const double d2max2 = boxsize[i_level] * boxsize[i_level];
+        const double d2max = bsize * bsize;
         if (params.kernel != DMK_YUKAWA)
             throw std::runtime_error("Only yukawa potential supported");
         // FIXME: more than yukawa...
@@ -515,7 +552,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
             const int ifcharge = params.use_charge;
             const int ifdipole = 0;
             const int one = 1;
-            for (auto neighbor : node_lists[box].nbr) {
+            for (auto neighbor : direct_neighbs(box)) {
                 if (neighbor < 0)
                     continue;
                 const int n_src_neighb = src_counts_local[neighbor];
@@ -526,7 +563,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
                         Eigen::Map<Eigen::MatrixX<T>>(r_src_ptr(neighbor), dim, n_src_neighb).transpose();
                     pdmk_direct_c_(&nd, &dim, (int *)&params.kernel, &params.fparam, &n_digits, &rsc, &cen, &ifself,
                                    &fourier_data.ncoeffs1[i_level],
-                                   &fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level], &d2max2, &one, &n_src,
+                                   &fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level], &d2max, &one, &n_src,
                                    r_src_ptr(box), &ifcharge, charge_ptr(box), &ifdipole, nullptr, &one, &n_src_neighb,
                                    &n_src_neighb, r_src_transposed.data(), (int *)&params.pgh_src,
                                    pot_src_ptr(neighbor), nullptr, nullptr);
@@ -536,7 +573,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
                         Eigen::Map<Eigen::MatrixX<T>>(r_trg_ptr(neighbor), dim, n_trg_neighb).transpose();
                     pdmk_direct_c_(&nd, &dim, (int *)&params.kernel, &params.fparam, &n_digits, &rsc, &cen, &ifself,
                                    &fourier_data.ncoeffs1[i_level],
-                                   &fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level], &d2max2, &one, &n_src,
+                                   &fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level], &d2max, &one, &n_src,
                                    r_src_ptr(box), &ifcharge, charge_ptr(box), &ifdipole, nullptr, &one, &n_trg_neighb,
                                    &n_trg_neighb, r_trg_transposed.data(), (int *)&params.pgh_trg,
                                    pot_trg_ptr(neighbor), nullptr, nullptr);
