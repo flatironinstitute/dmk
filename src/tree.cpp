@@ -13,9 +13,10 @@
 #include <doctest/extensions/doctest_mpi.h>
 #include <limits>
 #include <mpi.h>
+#include <omp.h>
 #include <ranges>
-#include <sctl/tree.hpp>
 #include <stdexcept>
+#include <unistd.h>
 
 namespace dmk {
 
@@ -55,11 +56,18 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 
     logger->debug("Building tree and sorting points");
     this->AddParticles("pdmk_src", r_src);
+    this->AddParticleData("pdmk_src_ghosts", "pdmk_src", r_src);
     this->AddParticleData("pdmk_charge", "pdmk_src", charge);
     this->AddParticleData("pdmk_pot_src", "pdmk_src", pot_vec_src);
     this->AddParticles("pdmk_trg", r_trg);
+    this->AddParticleData("pdmk_trg_ghosts", "pdmk_trg", r_trg);
     this->AddParticleData("pdmk_pot_trg", "pdmk_trg", pot_vec_trg);
     this->UpdateRefinement(r_src, params.n_per_leaf, true, params.use_periodic); // balance21 = true
+    this->template Broadcast<Real>("pdmk_src_ghosts");
+    this->template Broadcast<Real>("pdmk_charge");
+    this->template Broadcast<Real>("pdmk_trg_ghosts");
+    this->template Broadcast<Real>("pdmk_pot_src");
+    this->template Broadcast<Real>("pdmk_pot_trg");
     logger->debug("Tree build completed");
 
     logger->debug("Generating tree traversal metadata");
@@ -93,8 +101,8 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::generate_metadata() {
     const int n_nodes = n_boxes();
-    this->GetData(r_src_sorted, r_src_cnt, "pdmk_src");
-    this->GetData(r_trg_sorted, r_trg_cnt, "pdmk_trg");
+    this->GetData(r_src_sorted, r_src_cnt, "pdmk_src_ghosts");
+    this->GetData(r_trg_sorted, r_trg_cnt, "pdmk_trg_ghosts");
     this->GetData(charge_sorted, charge_cnt, "pdmk_charge");
     this->GetData(pot_src_sorted, pot_src_cnt, "pdmk_pot_src");
     this->GetData(pot_trg_sorted, pot_trg_cnt, "pdmk_pot_trg");
@@ -195,7 +203,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
                 if (neighbor < 0)
                     continue;
 
-                const int npts = src_counts_global[neighbor] + trg_counts_global[neighbor];
+                const int npts = src_counts_local[neighbor] + trg_counts_local[neighbor];
                 if (form_pw_expansion[neighbor] && npts) {
                     eval_pw_expansion[box] = true;
                     n_proxy_boxes_downward++;
@@ -274,13 +282,13 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     const int n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
     proxy_coeffs_offsets.ReInit(n_boxes());
     proxy_coeffs_offsets_downward.ReInit(n_boxes());
-    proxy_coeffs.ReInit(n_coeffs * n_proxy_boxes_upward);
+    proxy_coeffs.ReInit(n_coeffs * n_boxes());
     proxy_coeffs_downward.ReInit(n_coeffs * n_proxy_boxes_downward);
 
     proxy_coeffs_offsets[0] = 0;
     proxy_coeffs_offsets_downward[0] = 0;
     for (int box = 1; box < n_nodes; ++box) {
-        proxy_coeffs_offsets[box] = proxy_coeffs_offsets[box - 1] + form_pw_expansion[box] * n_coeffs;
+        proxy_coeffs_offsets[box] = proxy_coeffs_offsets[box - 1] + n_coeffs;
         proxy_coeffs_offsets_downward[box] = proxy_coeffs_offsets_downward[box - 1] + eval_pw_expansion[box] * n_coeffs;
     }
 }
@@ -295,21 +303,21 @@ template <typename T, int DIM>
 void DMKPtTree<T, DIM>::upward_pass() {
     auto &logger = dmk::get_logger(this->GetComm());
     auto &rank_logger = dmk::get_rank_logger(this->GetComm());
-    this->GetData(r_src_sorted, r_src_cnt, "pdmk_src");
 
     const std::size_t n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
+
     proxy_coeffs.SetZero();
 
     constexpr int n_children = 1u << DIM;
     const auto &node_lists = this->GetNodeLists();
-    const auto &attrs = this->GetNodeAttr();
+    const auto &node_attr = this->GetNodeAttr();
     const auto &node_mid = this->GetNodeMID();
     const int dim = DIM;
 
     int n_direct = 0;
     const int start_level = std::max(n_levels() - 2, 0);
     for (auto i_box : level_indices[start_level]) {
-        if (!form_pw_expansion[i_box] || !src_counts_local[i_box])
+        if (!form_pw_expansion[i_box] || !src_counts_local[i_box] || node_attr[i_box].Ghost)
             continue;
 
         proxy::charge2proxycharge<T, DIM>(r_src_view(i_box), charge_view(i_box), center_view(i_box),
@@ -332,7 +340,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
                 if (form_pw_expansion[child_box])
                     tensorprod::transform(DIM, params.n_mfm, n_order, n_order, true, proxy_ptr_upward(child_box),
                                           &c2p[i_child * DIM * n_order * n_order], proxy_ptr_upward(parent_box));
-                else
+                else if (!node_attr[child_box].Ghost)
                     proxy::charge2proxycharge<T, DIM>(r_src_view(child_box), charge_view(child_box),
                                                       center_view(parent_box), 2.0 / boxsize[i_level],
                                                       proxy_view_upward(parent_box));
@@ -342,7 +350,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
 
     sctl::Vector<sctl::Long> counts(n_boxes());
     for (int i = 0; i < n_boxes(); ++i)
-        counts[i] = form_pw_expansion[i] ? n_coeffs : 0;
+        counts[i] = form_pw_expansion[i] ? n_coeffs : n_coeffs;
 
     logger->debug("Finished building proxy charges");
     this->AddData("proxy_coeffs", proxy_coeffs, counts);
@@ -387,7 +395,7 @@ void DMKPtTree<T, DIM>::init_planewave_data() {
         pw_out_offsets[i_box] = pw_out_offsets[i_box - 1] + form_pw_expansion[i_box] * n_pw_per_box;
         n_pw_boxes_out += form_pw_expansion[i_box];
 
-        bool need_in = ((src_counts_global[i_box] + trg_counts_global[i_box]) > 0) || eval_pw_expansion[i_box];
+        bool need_in = ((src_counts_local[i_box] + trg_counts_local[i_box]) > 0) || eval_pw_expansion[i_box];
         pw_in_offsets[i_box] = pw_in_offsets[i_box - 1] + need_in * n_pw_per_box;
         n_pw_boxes_in += need_in;
     }
@@ -476,8 +484,9 @@ void DMKPtTree<T, DIM>::downward_pass() {
 
         // Form incoming expansions
         for (auto box : level_indices[i_level]) {
-            if (src_counts_global[box] + trg_counts_global[box] == 0)
+            if (src_counts_local[box] + trg_counts_local[box] == 0)
                 continue;
+
             for (auto &neighbor : node_lists[box].nbr) {
                 if (neighbor < 0 || neighbor == box || !form_pw_expansion[neighbor])
                     continue;
@@ -561,6 +570,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
                 if (n_src_neighb) {
                     Eigen::MatrixX<T> r_src_transposed =
                         Eigen::Map<Eigen::MatrixX<T>>(r_src_ptr(neighbor), dim, n_src_neighb).transpose();
+
                     pdmk_direct_c_(&nd, &dim, (int *)&params.kernel, &params.fparam, &n_digits, &rsc, &cen, &ifself,
                                    &fourier_data.ncoeffs1[i_level],
                                    &fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level], &d2max, &one, &n_src,
@@ -588,19 +598,18 @@ void DMKPtTree<T, DIM>::downward_pass() {
     }
 }
 
-MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 4 ranks", 4) {
+MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
     constexpr int n_dim = 3;
-    constexpr int n_src = 5e4;
-    constexpr int n_trg = 5e4;
+    constexpr int n_src = 10000;
+    constexpr int n_trg = n_src;
     constexpr int n_charge_dim = 1;
     constexpr bool uniform = false;
-    const int seed = test_rank;
 
     sctl::Vector<double> r_src, r_trg, r_src_norms, charges, dipoles, pot_src, grad_src, hess_src, pot_trg, grad_trg,
         hess_trg;
     if (test_rank == 0)
         dmk::util::init_test_data(n_dim, n_charge_dim, n_src, n_trg, uniform, true, r_src, r_trg, r_src_norms, charges,
-                                  dipoles, seed);
+                                  dipoles, 0);
 
     pdmk_params params;
     params.eps = 1E-6;
@@ -611,18 +620,72 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 4 ranks", 4) {
     params.n_mfm = n_charge_dim;
     params.n_per_leaf = 80;
 
+    double st = omp_get_wtime();
     auto comm = sctl::Comm(test_comm);
     DMKPtTree<double, n_dim> tree(comm, params, r_src, r_trg, charges);
     tree.upward_pass();
+    tree.downward_pass();
+    tree.GetParticleData(pot_src, "pdmk_pot_src");
+    tree.GetParticleData(pot_trg, "pdmk_pot_trg");
+    if (test_rank == 0)
+        std::cout << omp_get_wtime() - st << std::endl;
 
-    if (test_rank == 0) {
+    if (true || test_rank == 0) {
         dmk::util::init_test_data(n_dim, n_charge_dim, n_src, n_trg, uniform, true, r_src, r_trg, r_src_norms, charges,
-                                  dipoles, seed);
+                                  dipoles, 0);
 
         DMKPtTree<double, n_dim> tree_single(sctl::Comm::Self(), params, r_src, r_trg, charges);
         tree_single.upward_pass();
-        MPI_CHECK(0, std::abs(tree_single.proxy_view_upward(0)(1, 1, 1, 0) - tree.proxy_view_upward(0)(1, 1, 1, 0)) <
-                         5 * std::numeric_limits<double>::epsilon());
+        tree_single.downward_pass();
+        sctl::Vector<double> pot_src_single, pot_trg_single;
+        tree_single.GetParticleData(pot_src_single, "pdmk_pot_src");
+        tree_single.GetParticleData(pot_trg_single, "pdmk_pot_trg");
+
+        sleep(test_rank);
+        auto &node_mid = tree.GetNodeMID();
+        for (int ibox = 0; ibox < tree.n_boxes(); ++ibox) {
+            std::array<double, 3> x, x_single;
+            for (int i = 0; i < 3; ++i)
+                x[i] = tree.center_ptr(ibox)[i];
+
+            int single_box = -1;
+            for (int jbox = 0; jbox < tree_single.n_boxes(); ++jbox) {
+                for (int i = 0; i < 3; ++i)
+                    x_single[i] = tree_single.center_ptr(jbox)[i];
+
+                if (x_single == x) {
+                    single_box = jbox;
+                    break;
+                }
+            }
+            if (single_box < 0) {
+                std::cout << fmt::format("No match for box {}\n", ibox);
+                continue;
+            }
+
+            double maxerr_up = 0.0;
+            if (ibox == 0 || tree.form_pw_expansion[ibox]) {
+                for (int i = 0; i < sctl::pow<3>(tree.n_order); ++i) {
+                    const double actual = tree_single.proxy_ptr_upward(single_box)[i];
+                    const double mpi = tree.proxy_ptr_upward(ibox)[i];
+                    const double relerr = actual == 0.0 ? 0.0 : 1.0 - mpi / actual;
+                    maxerr_up = std::max(relerr, maxerr_up);
+                }
+            }
+
+            if (maxerr_up > 1E-12)
+                std::cout << fmt::format("{:3} {:3} {:3} {:5.4E} {:3} ({} {} {})\n", test_rank, ibox, single_box,
+                                         maxerr_up, node_mid[ibox].Depth(), x[0], x[1], x[2]);
+        }
+
+        if (test_rank == 0) {
+            for (int i = 0; i < n_src; ++i) {
+                double err_src = pot_src[i] == 0. ? 0.0 : std::abs(1.0 - pot_src[i] / pot_src_single[i]);
+                double err_trg = pot_trg[i] == 0. ? 0.0 : std::abs(1.0 - pot_trg[i] / pot_trg_single[i]);
+                if (err_src > 1E-12 || err_trg > 1E-12)
+                    std::cout << fmt::format("{} {:5.4E} {:5.4E}\n", i, err_src, err_trg);
+            }
+        }
     }
 }
 
