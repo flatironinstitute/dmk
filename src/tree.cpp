@@ -55,12 +55,15 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     pot_vec_trg.SetZero();
 
     logger->debug("Building tree and sorting points");
+    constexpr bool balance21 = true; // Use "2-1" balancing for the tree, i.e. bordering boxes
+                                     // never more than one level away in depth
+    constexpr int halo = 0;          // Only grab nearest neighbors as 'ghosts'
     this->AddParticles("pdmk_src", r_src);
     this->AddParticles("pdmk_trg", r_trg);
     this->AddParticleData("pdmk_charge", "pdmk_src", charge);
     this->AddParticleData("pdmk_pot_src", "pdmk_src", pot_vec_src);
     this->AddParticleData("pdmk_pot_trg", "pdmk_trg", pot_vec_trg);
-    this->UpdateRefinement(r_src, params.n_per_leaf, true, params.use_periodic); // balance21 = true
+    this->UpdateRefinement(r_src, params.n_per_leaf, balance21, params.use_periodic, halo);
     this->template Broadcast<Real>("pdmk_src");
     this->template Broadcast<Real>("pdmk_trg");
     this->template Broadcast<Real>("pdmk_charge");
