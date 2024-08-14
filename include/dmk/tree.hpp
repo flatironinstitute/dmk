@@ -127,8 +127,14 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     ndview<Real, 1> center_view(int i_node) { return ndview<Real, 1>(center_ptr(i_node), DIM); }
     ndview<const Real, 1> center_view(int i_node) const { return ndview<const Real, 1>(center_ptr(i_node), DIM); }
 
-    Real *proxy_ptr_upward(int i_box) { return &proxy_coeffs[proxy_coeffs_offsets[i_box]]; }
-    const Real *proxy_ptr_upward(int i_box) const { return &proxy_coeffs[proxy_coeffs_offsets[i_box]]; }
+    Real *proxy_ptr_upward(int i_box) {
+        assert(proxy_coeffs_offsets[i_box] != -1);
+        return &proxy_coeffs[proxy_coeffs_offsets[i_box]];
+    }
+    const Real *proxy_ptr_upward(int i_box) const {
+        assert(proxy_coeffs_offsets[i_box] != -1);
+        return &proxy_coeffs[proxy_coeffs_offsets[i_box]];
+    }
     ndview<Real, DIM + 1> proxy_view_upward(int i_box) {
         if constexpr (DIM == 2)
             return ndview<Real, DIM + 1>(proxy_ptr_upward(i_box), n_order, n_order, params.n_mfm);

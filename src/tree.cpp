@@ -56,18 +56,29 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 
     logger->debug("Building tree and sorting points");
     this->AddParticles("pdmk_src", r_src);
-    this->AddParticleData("pdmk_src_ghosts", "pdmk_src", r_src);
     this->AddParticleData("pdmk_charge", "pdmk_src", charge);
     this->AddParticleData("pdmk_pot_src", "pdmk_src", pot_vec_src);
     this->AddParticles("pdmk_trg", r_trg);
-    this->AddParticleData("pdmk_trg_ghosts", "pdmk_trg", r_trg);
     this->AddParticleData("pdmk_pot_trg", "pdmk_trg", pot_vec_trg);
     this->UpdateRefinement(r_src, params.n_per_leaf, true, params.use_periodic); // balance21 = true
-    this->template Broadcast<Real>("pdmk_src_ghosts");
     this->template Broadcast<Real>("pdmk_charge");
-    this->template Broadcast<Real>("pdmk_trg_ghosts");
     this->template Broadcast<Real>("pdmk_pot_src");
     this->template Broadcast<Real>("pdmk_pot_trg");
+    if (this->GetComm().Size() > 1) {
+        this->AddParticleData("pdmk_src_ghosts", "pdmk_src", r_src);
+        this->AddParticleData("pdmk_trg_ghosts", "pdmk_trg", r_trg);
+        this->template Broadcast<Real>("pdmk_src_ghosts");
+        this->template Broadcast<Real>("pdmk_trg_ghosts");
+        this->GetData(r_src_sorted, r_src_cnt, "pdmk_src_ghosts");
+        this->GetData(r_trg_sorted, r_trg_cnt, "pdmk_trg_ghosts");
+    } else {
+        this->GetData(r_src_sorted, r_src_cnt, "pdmk_src");
+        this->GetData(r_trg_sorted, r_trg_cnt, "pdmk_trg");
+    }
+    this->GetData(charge_sorted, charge_cnt, "pdmk_charge");
+    this->GetData(pot_src_sorted, pot_src_cnt, "pdmk_pot_src");
+    this->GetData(pot_trg_sorted, pot_trg_cnt, "pdmk_pot_trg");
+
     logger->debug("Tree build completed");
 
     logger->debug("Generating tree traversal metadata");
@@ -101,11 +112,6 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::generate_metadata() {
     const int n_nodes = n_boxes();
-    this->GetData(r_src_sorted, r_src_cnt, "pdmk_src_ghosts");
-    this->GetData(r_trg_sorted, r_trg_cnt, "pdmk_trg_ghosts");
-    this->GetData(charge_sorted, charge_cnt, "pdmk_charge");
-    this->GetData(pot_src_sorted, pot_src_cnt, "pdmk_pot_src");
-    this->GetData(pot_trg_sorted, pot_trg_cnt, "pdmk_pot_trg");
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_mid = this->GetNodeMID();
     const auto &node_lists = this->GetNodeLists();
@@ -174,18 +180,6 @@ void DMKPtTree<T, DIM>::generate_metadata() {
             }
         }
     }
-
-    sctl::Vector<long> counts(src_counts_local.Dim());
-    for (auto &el : counts)
-        el = 1;
-
-    this->template AddData("src_counts", src_counts_local, counts);
-    this->template ReduceBroadcast<int>("src_counts");
-    this->template GetData<int>(src_counts_global, counts, "src_counts");
-
-    this->template AddData("trg_counts", trg_counts_local, counts);
-    this->template ReduceBroadcast<int>("trg_counts");
-    this->template GetData<int>(trg_counts_global, counts, "trg_counts");
 
     form_pw_expansion[0] = true;
     eval_pw_expansion[0] = true;
@@ -279,17 +273,32 @@ void DMKPtTree<T, DIM>::generate_metadata() {
         }
     }
 
+    sctl::Vector<sctl::Long> counts(n_boxes());
     const int n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
+    for (int i = 0; i < n_boxes(); ++i)
+        counts[i] = form_pw_expansion[i] ? n_coeffs : 0;
+
+    proxy_coeffs.ReInit(n_coeffs * n_proxy_boxes_upward);
+    proxy_coeffs.SetZero();
+    this->AddData("proxy_coeffs", proxy_coeffs, counts);
+    this->template GetData<T>(proxy_coeffs, counts, "proxy_coeffs");
+
     proxy_coeffs_offsets.ReInit(n_boxes());
     proxy_coeffs_offsets_downward.ReInit(n_boxes());
-    proxy_coeffs.ReInit(n_coeffs * n_boxes());
     proxy_coeffs_downward.ReInit(n_coeffs * n_proxy_boxes_downward);
 
     proxy_coeffs_offsets[0] = 0;
     proxy_coeffs_offsets_downward[0] = 0;
+    long last_offset = 0;
     for (int box = 1; box < n_nodes; ++box) {
-        proxy_coeffs_offsets[box] = proxy_coeffs_offsets[box - 1] + n_coeffs;
-        proxy_coeffs_offsets_downward[box] = proxy_coeffs_offsets_downward[box - 1] + eval_pw_expansion[box] * n_coeffs;
+        if (counts[box]) {
+            proxy_coeffs_offsets[box] = last_offset + n_coeffs;
+            last_offset = proxy_coeffs_offsets[box];
+        } else
+            proxy_coeffs_offsets[box] = -1;
+
+        proxy_coeffs_offsets_downward[box] =
+            proxy_coeffs_offsets_downward[box - 1] + eval_pw_expansion[box - 1] * n_coeffs;
     }
 }
 
@@ -305,8 +314,6 @@ void DMKPtTree<T, DIM>::upward_pass() {
     auto &rank_logger = dmk::get_rank_logger(this->GetComm());
 
     const std::size_t n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
-
-    proxy_coeffs.SetZero();
 
     constexpr int n_children = 1u << DIM;
     const auto &node_lists = this->GetNodeLists();
@@ -348,14 +355,19 @@ void DMKPtTree<T, DIM>::upward_pass() {
         }
     }
 
-    sctl::Vector<sctl::Long> counts(n_boxes());
-    for (int i = 0; i < n_boxes(); ++i)
-        counts[i] = form_pw_expansion[i] ? n_coeffs : n_coeffs;
-
     logger->debug("Finished building proxy charges");
-    this->AddData("proxy_coeffs", proxy_coeffs, counts);
+    sctl::Vector<sctl::Long> counts;
     this->template ReduceBroadcast<T>("proxy_coeffs");
     this->template GetData<T>(proxy_coeffs, counts, "proxy_coeffs");
+    proxy_coeffs_offsets[0] = 0;
+    long last_offset = 0;
+    for (int box = 1; box < n_boxes(); ++box) {
+        if (counts[box]) {
+            proxy_coeffs_offsets[box] = last_offset + n_coeffs;
+            last_offset = proxy_coeffs_offsets[box];
+        } else
+            proxy_coeffs_offsets[box] = -1;
+    }
 
     logger->debug("proxy: finished broadcasting proxy charges");
 }
@@ -668,12 +680,12 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
                 for (int i = 0; i < sctl::pow<3>(tree.n_order); ++i) {
                     const double actual = tree_single.proxy_ptr_upward(single_box)[i];
                     const double mpi = tree.proxy_ptr_upward(ibox)[i];
-                    const double relerr = actual == 0.0 ? 0.0 : 1.0 - mpi / actual;
+                    const double relerr = actual == 0.0 ? 0.0 : (mpi - actual) / mpi;
                     maxerr_up = std::max(relerr, maxerr_up);
                 }
             }
 
-            if (maxerr_up > 1E-12)
+            if (maxerr_up > 1E-14)
                 std::cout << fmt::format("{:3} {:3} {:3} {:5.4E} {:3} ({} {} {})\n", test_rank, ibox, single_box,
                                          maxerr_up, node_mid[ibox].Depth(), x[0], x[1], x[2]);
         }
