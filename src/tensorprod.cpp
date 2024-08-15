@@ -1,9 +1,9 @@
 #include <Eigen/Core>
 
-#include <sctl.hpp>
 #include <dmk/gemm.hpp>
 #include <dmk/tensorprod.hpp>
 #include <dmk/types.hpp>
+#include <sctl.hpp>
 #include <type_traits>
 
 namespace dmk::tensorprod {
@@ -84,8 +84,8 @@ void transform(int n_dim, int nvec, int nin, int nout, int add_flag, const T *fi
     }
 }
 
-// template void transform(int n_dim, int nvec, int nin, int nout, int add_flag, const float *fin, const float *umat,
-//                         float *fout);
+template void transform(int n_dim, int nvec, int nin, int nout, int add_flag, const float *fin, const float *umat,
+                        float *fout);
 template void transform(int n_dim, int nvec, int nin, int nout, int add_flag, const double *fin, const double *umat,
                         double *fout);
 } // namespace dmk::tensorprod

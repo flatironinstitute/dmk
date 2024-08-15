@@ -117,8 +117,7 @@ void planewave_to_proxy_potential(const ndview<const std::complex<Real>, DIM + 1
 }
 
 template <typename T>
-void calc_planewave_coeff_matrices(double boxsize, T hpw, int n_pw, int n_order,
-                                   sctl::Vector<std::complex<T>> &prox2pw_vec,
+void calc_planewave_coeff_matrices(T boxsize, T hpw, int n_pw, int n_order, sctl::Vector<std::complex<T>> &prox2pw_vec,
                                    sctl::Vector<std::complex<T>> &pw2poly_vec) {
     assert(n_pw * n_order == prox2pw_vec.Dim());
     assert(n_pw * n_order == pw2poly_vec.Dim());
@@ -187,21 +186,30 @@ void calc_planewave_translation_matrix(int nmax, T xmin, int npw, const sctl::Ve
 }
 } // namespace dmk
 
-// template void dmk::calc_planewave_translation_matrix<2>(int, float, int, const sctl::Vector<float> &,
-//                                                         sctl::Vector<std::complex<float>> &);
-// template void dmk::calc_planewave_translation_matrix<3>(int, float, int, const sctl::Vector<float> &,
-//                                                         sctl::Vector<std::complex<float>> &);
+template void dmk::planewave_to_proxy_potential<float, 2>(const ndview<const std::complex<float>, 3> &pw_expansion,
+                                                          const ndview<const std::complex<float>, 2> &pw_to_coefs_mat,
+                                                          const ndview<float, 3> &proxy_coeffs);
+template void dmk::planewave_to_proxy_potential<float, 3>(const ndview<const std::complex<float>, 4> &pw_expansion,
+                                                          const ndview<const std::complex<float>, 2> &pw_to_coefs_mat,
+                                                          const ndview<float, 4> &proxy_coeffs);
 template void dmk::planewave_to_proxy_potential<double, 2>(const ndview<const std::complex<double>, 3> &pw_expansion,
                                                            const ndview<const std::complex<double>, 2> &pw_to_coefs_mat,
                                                            const ndview<double, 3> &proxy_coeffs);
 template void dmk::planewave_to_proxy_potential<double, 3>(const ndview<const std::complex<double>, 4> &pw_expansion,
                                                            const ndview<const std::complex<double>, 2> &pw_to_coefs_mat,
                                                            const ndview<double, 4> &proxy_coeffs);
+template void dmk::calc_planewave_translation_matrix<2>(int, float, int, const sctl::Vector<float> &,
+                                                        sctl::Vector<std::complex<float>> &);
+template void dmk::calc_planewave_translation_matrix<3>(int, float, int, const sctl::Vector<float> &,
+                                                        sctl::Vector<std::complex<float>> &);
 template void dmk::calc_planewave_translation_matrix<2>(int, double, int, const sctl::Vector<double> &,
                                                         sctl::Vector<std::complex<double>> &);
 template void dmk::calc_planewave_translation_matrix<3>(int, double, int, const sctl::Vector<double> &,
                                                         sctl::Vector<std::complex<double>> &);
 
+template void dmk::calc_planewave_coeff_matrices<float>(float boxsize, float hpw, int n_pw, int n_order,
+                                                        sctl::Vector<std::complex<float>> &prox2pw_vec,
+                                                        sctl::Vector<std::complex<float>> &pw2poly_vec);
 template void dmk::calc_planewave_coeff_matrices<double>(double boxsize, double hpw, int n_pw, int n_order,
                                                          sctl::Vector<std::complex<double>> &prox2pw_vec,
                                                          sctl::Vector<std::complex<double>> &pw2poly_vec);

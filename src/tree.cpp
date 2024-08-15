@@ -695,7 +695,7 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
 }
 
 // template struct DMKPtTree<float, 2>;
-// template struct DMKPtTree<float, 3>;
+template struct DMKPtTree<float, 3>;
 template struct DMKPtTree<double, 2>;
 template struct DMKPtTree<double, 3>;
 

@@ -45,7 +45,7 @@ void yukawa_direct_eval(const ndview<const Real, 2> &r_src, const std::array<std
 template <typename Real, int DIM>
 void direct_eval(dmk_ikernel ikernel, const ndview<const Real, 2> &r_src,
                  const std::array<std::span<const Real>, DIM> &r_trg, const ndview<const Real, 2> &charges,
-                 const ndview<const Real, 1> &coeffs, const Real *kernel_params, Real scale, Real center, Real d2max,
+                 const ndview<const Real, 1> &coeffs, const double *kernel_params, Real scale, Real center, Real d2max,
                  const ndview<Real, 2> &u) {
     switch (ikernel) {
     case dmk_ikernel::DMK_YUKAWA:
@@ -66,6 +66,16 @@ void direct_eval(dmk_ikernel ikernel, const ndview<const Real, 2> &r_src,
     }
 }
 
+template void direct_eval<float, 2>(dmk_ikernel ikernel, const ndview<const float, 2> &r_src,
+                                    const std::array<std::span<const float>, 2> &r_trg,
+                                    const ndview<const float, 2> &charges, const ndview<const float, 1> &coeffs,
+                                    const double *kernel_params, float scale, float center, float d2max,
+                                    const ndview<float, 2> &u);
+template void direct_eval<float, 3>(dmk_ikernel ikernel, const ndview<const float, 2> &r_src,
+                                    const std::array<std::span<const float>, 3> &r_trg,
+                                    const ndview<const float, 2> &charges, const ndview<const float, 1> &coeffs,
+                                    const double *kernel_params, float scale, float center, float d2max,
+                                    const ndview<float, 2> &u);
 template void direct_eval<double, 2>(dmk_ikernel ikernel, const ndview<const double, 2> &r_src,
                                      const std::array<std::span<const double>, 2> &r_trg,
                                      const ndview<const double, 2> &charges, const ndview<const double, 1> &coeffs,

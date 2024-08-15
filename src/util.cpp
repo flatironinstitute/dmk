@@ -267,6 +267,11 @@ TEST_CASE("[DMK] mesh_nd") {
     }
 }
 
+template void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const double, 1> &fhat,
+                                                  const ndview<double, 1> &pswfft);
+template void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const float, 1> &fhat,
+                                                  const ndview<float, 1> &pswfft);
+
 TEST_CASE("[DMK] mk_tensor_product_fourier_transform") {
     for (int dim : {1, 2, 3}) {
         const int npw = 5;
