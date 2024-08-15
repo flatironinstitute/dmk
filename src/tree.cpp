@@ -462,6 +462,9 @@ void DMKPtTree<T, DIM>::downward_pass() {
     proxy_coeffs_downward.SetZero();
     dmk::planewave_to_proxy_potential<T, DIM>(pw_in_view(0), pw2poly_view, proxy_view_downward(0));
 
+    Eigen::MatrixX<T> r_src_t = Eigen::Map<Eigen::MatrixX<T>>(r_src_ptr(0), dim, src_counts_local[0]).transpose();
+    Eigen::MatrixX<T> r_trg_t = Eigen::Map<Eigen::MatrixX<T>>(r_trg_ptr(0), dim, trg_counts_local[0]).transpose();
+
     constexpr int n_children = 1u << DIM;
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         for (int i = 0; i < n_pw; ++i)
@@ -566,27 +569,22 @@ void DMKPtTree<T, DIM>::downward_pass() {
             if (!r_src_cnt[box])
                 continue;
 
-            const int n_src = r_src_cnt[box];
-            const int ifself = 1;
-            const int ifcharge = params.use_charge;
-            const int ifdipole = 0;
-            const int one = 1;
             for (auto neighbor : direct_neighbs(box)) {
                 const int n_src_neighb = src_counts_local[neighbor];
                 const int n_trg_neighb = trg_counts_local[neighbor];
 
+                std::array<std::span<const T>, DIM> r_trg;
                 if (n_src_neighb) {
-                    Eigen::MatrixX<T> r_src_transposed =
-                        Eigen::Map<Eigen::MatrixX<T>>(r_src_ptr(neighbor), dim, n_src_neighb).transpose();
-                    const ndview<const T, 2> r_trg(r_src_transposed.data(), n_src_neighb, dim);
+                    for (int i = 0; i < DIM; ++i)
+                        r_trg[i] = std::span<const T>(&r_src_t(r_src_offsets[neighbor] / DIM, i), n_src_neighb);
 
                     direct_eval<T, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
                                         &params.fparam, rsc, cen, d2max, pot_src_view(neighbor));
                 }
                 if (n_trg_neighb) {
-                    Eigen::MatrixX<T> r_trg_transposed =
-                        Eigen::Map<Eigen::MatrixX<T>>(r_trg_ptr(neighbor), dim, n_trg_neighb).transpose();
-                    const ndview<const T, 2> r_trg(r_trg_transposed.data(), n_trg_neighb, dim);
+                    for (int i = 0; i < DIM; ++i)
+                        r_trg[i] = std::span<const T>(&r_trg_t(r_trg_offsets[neighbor] / DIM, i), n_trg_neighb);
+
                     direct_eval<T, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
                                         &params.fparam, rsc, cen, d2max, pot_trg_view(neighbor));
                 }
@@ -595,7 +593,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
             // Correct for self-evaluations
             auto pot = pot_src_view(box);
             auto charge = charge_view(box);
-            for (int i_src = 0; i_src < n_src; ++i_src)
+            for (int i_src = 0; i_src < r_src_cnt[box]; ++i_src)
                 for (int i = 0; i < nd; ++i)
                     pot(i, i_src) -= w0 * charge(i, i_src);
         }
