@@ -568,8 +568,6 @@ void DMKPtTree<T, DIM>::downward_pass() {
             const int ifdipole = 0;
             const int one = 1;
             for (auto neighbor : direct_neighbs(box)) {
-                if (neighbor < 0)
-                    continue;
                 const int n_src_neighb = src_counts_local[neighbor];
                 const int n_trg_neighb = trg_counts_local[neighbor];
 

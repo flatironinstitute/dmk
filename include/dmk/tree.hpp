@@ -22,10 +22,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     std::vector<Real> centers;
 
     sctl::Vector<int> src_counts_local;
-    sctl::Vector<int> src_counts_global;
-
     sctl::Vector<int> trg_counts_local;
-    sctl::Vector<int> trg_counts_global;
 
     sctl::Vector<Real> r_src_sorted;
     sctl::Vector<sctl::Long> r_src_cnt;
