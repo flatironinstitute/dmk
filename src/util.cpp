@@ -230,7 +230,7 @@ void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool 
             r_src[i] = 0.0;
     if (set_fixed_charges && n_src > 1)
         for (int i = n_dim; i < 2 * n_dim; ++i)
-            r_src[i] = 1 - std::numeric_limits<double>::epsilon();
+            r_src[i] = 1 - std::numeric_limits<Real>::epsilon();
     if (set_fixed_charges && n_src > 2)
         for (int i = 2 * n_dim; i < 3 * n_dim; ++i)
             r_src[i] = 0.05;

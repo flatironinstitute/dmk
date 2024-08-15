@@ -55,6 +55,56 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     logger->info("PDMK finished in {:.4f} seconds ({:.0f} pts/s)", dt, N / dt);
 }
 
+MPI_TEST_CASE("[DMK] pdmk 3d float", 1) {
+    constexpr int n_dim = 3;
+    constexpr int n_src = 10000;
+    constexpr int n_trg = 10000;
+    constexpr int nd = 1;
+    constexpr bool uniform = false;
+    constexpr bool set_fixed_charges = true;
+
+    sctl::Vector<double> r_src, pot_src, grad_src, hess_src, charges, rnormal, dipstr, pot_trg, r_trg;
+    sctl::Vector<float> r_srcf, pot_srcf, grad_srcf, hess_srcf, chargesf, rnormalf, dipstrf, pot_trgf, r_trgf;
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges,
+                              dipstr, 0);
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, uniform, set_fixed_charges, r_srcf, r_trgf, rnormalf, chargesf,
+                              dipstrf, 0);
+    pot_src.ReInit(n_src * nd);
+    pot_trg.ReInit(n_trg * nd);
+    pot_srcf.ReInit(n_src * nd);
+    pot_trgf.ReInit(n_trg * nd);
+
+    pdmk_params params;
+    params.eps = 1e-10;
+    params.n_dim = n_dim;
+    params.n_per_leaf = 80;
+    params.n_mfm = nd;
+    params.pgh_src = DMK_POTENTIAL;
+    params.pgh_trg = DMK_POTENTIAL;
+    params.kernel = DMK_YUKAWA;
+    params.fparam = 6.0;
+    params.log_level = SPDLOG_LEVEL_OFF;
+
+    pdmk(params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0], &pot_src[0], nullptr,
+         nullptr, &pot_trg[0], nullptr, nullptr);
+
+    params.eps = 1e-5;
+    pdmkf(params, n_src, &r_srcf[0], &chargesf[0], &rnormalf[0], &dipstrf[0], n_trg, &r_trgf[0], &pot_srcf[0], nullptr,
+          nullptr, &pot_trgf[0], nullptr, nullptr);
+
+    double l2_err_src = 0.0;
+    double l2_err_trg = 0.0;
+    for (int i = 0; i < n_src; ++i)
+        l2_err_src += pot_src[i] != 0.0 ? sctl::pow<2>(1.0 - pot_srcf[i] / pot_src[i]) : 0.0;
+    for (int i = 0; i < n_trg; ++i)
+        l2_err_trg += pot_trg[i] != 0.0 ? sctl::pow<2>(1.0 - pot_trgf[i] / pot_trg[i]) : 0.0;
+
+    l2_err_src = std::sqrt(l2_err_src) / n_src;
+    l2_err_trg = std::sqrt(l2_err_trg) / n_trg;
+    CHECK(l2_err_src < 6 * params.eps);
+    CHECK(l2_err_trg < 6 * params.eps);
+}
+
 MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
     constexpr int n_dim = 3;
     constexpr int n_src = 10000;
@@ -147,16 +197,17 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
 } // namespace dmk
 
 extern "C" {
-// void pdmkf(pdmk_params params, int n_src, const float *r_src, const float *charge, const float *normal,
-//            const float *dipole_str, int n_trg, const float *r_trg, float *pot, float *grad, float *hess, float
-//            *pottarg, float *gradtarg, float *hesstarg) {
-//     if (params.n_dim == 2)
-//         return dmk::pdmk<float, 2>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess,
-//                                    pottarg, gradtarg, hesstarg);
-//     if (params.n_dim == 3)
-//         return dmk::pdmk<float, 3>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess,
-//                                    pottarg, gradtarg, hesstarg);
-// }
+
+void pdmkf(pdmk_params params, int n_src, const float *r_src, const float *charge, const float *normal,
+           const float *dipole_str, int n_trg, const float *r_trg, float *pot_src, float *grad_src, float *hess_src,
+           float *pot_trg, float *grad_trg, float *hess_trg) {
+    if (params.n_dim == 2)
+        return dmk::pdmk<float, 2>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot_src, grad_src,
+                                   hess_src, pot_trg, grad_trg, hess_trg);
+    if (params.n_dim == 3)
+        return dmk::pdmk<float, 3>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot_src, grad_src,
+                                   hess_src, pot_trg, grad_trg, hess_trg);
+}
 
 void pdmk(pdmk_params params, int n_src, const double *r_src, const double *charge, const double *normal,
           const double *dipole_str, int n_trg, const double *r_trg, double *pot_src, double *grad_src, double *hess_src,
