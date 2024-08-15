@@ -1,5 +1,6 @@
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
+#include <dmk/direct.hpp>
 #include <dmk/fortran.h>
 #include <dmk/fourier_data.hpp>
 #include <dmk/logger.h>
@@ -557,6 +558,9 @@ void DMKPtTree<T, DIM>::downward_pass() {
             throw std::runtime_error("Only yukawa potential supported");
         // FIXME: more than yukawa...
         const T w0 = fourier_data.yukawa_windowed_kernel_value_at_zero(i_level);
+
+        const ndview<const T, 1> cheb_coeffs(&fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level],
+                                             fourier_data.ncoeffs1[i_level]);
         for (auto box : level_indices[i_level]) {
             // Evaluate the direct interactions
             if (!r_src_cnt[box])
@@ -574,30 +578,26 @@ void DMKPtTree<T, DIM>::downward_pass() {
                 if (n_src_neighb) {
                     Eigen::MatrixX<T> r_src_transposed =
                         Eigen::Map<Eigen::MatrixX<T>>(r_src_ptr(neighbor), dim, n_src_neighb).transpose();
+                    const ndview<const T, 2> r_trg(r_src_transposed.data(), n_src_neighb, dim);
 
-                    pdmk_direct_c_(&nd, &dim, (int *)&params.kernel, &params.fparam, &n_digits, &rsc, &cen, &ifself,
-                                   &fourier_data.ncoeffs1[i_level],
-                                   &fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level], &d2max, &one, &n_src,
-                                   r_src_ptr(box), &ifcharge, charge_ptr(box), &ifdipole, nullptr, &one, &n_src_neighb,
-                                   &n_src_neighb, r_src_transposed.data(), (int *)&params.pgh_src,
-                                   pot_src_ptr(neighbor), nullptr, nullptr);
+                    direct_eval<T, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
+                                        &params.fparam, rsc, cen, d2max, pot_src_view(neighbor));
                 }
                 if (n_trg_neighb) {
                     Eigen::MatrixX<T> r_trg_transposed =
                         Eigen::Map<Eigen::MatrixX<T>>(r_trg_ptr(neighbor), dim, n_trg_neighb).transpose();
-                    pdmk_direct_c_(&nd, &dim, (int *)&params.kernel, &params.fparam, &n_digits, &rsc, &cen, &ifself,
-                                   &fourier_data.ncoeffs1[i_level],
-                                   &fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level], &d2max, &one, &n_src,
-                                   r_src_ptr(box), &ifcharge, charge_ptr(box), &ifdipole, nullptr, &one, &n_trg_neighb,
-                                   &n_trg_neighb, r_trg_transposed.data(), (int *)&params.pgh_trg,
-                                   pot_trg_ptr(neighbor), nullptr, nullptr);
+                    const ndview<const T, 2> r_trg(r_trg_transposed.data(), n_trg_neighb, dim);
+                    direct_eval<T, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
+                                        &params.fparam, rsc, cen, d2max, pot_trg_view(neighbor));
                 }
             }
 
             // Correct for self-evaluations
-            for (int i = 0; i < nd; ++i)
-                for (int i_src = 0; i_src < n_src; ++i_src)
-                    pot_src_ptr(box)[i * n_src + i_src] -= w0 * charge_ptr(box)[i * n_src + i_src];
+            auto pot = pot_src_view(box);
+            auto charge = charge_view(box);
+            for (int i_src = 0; i_src < n_src; ++i_src)
+                for (int i = 0; i < nd; ++i)
+                    pot(i, i_src) -= w0 * charge(i, i_src);
         }
     }
 }

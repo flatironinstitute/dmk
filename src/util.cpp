@@ -271,17 +271,19 @@ TEST_CASE("[DMK] mk_tensor_product_fourier_transform") {
     for (int dim : {1, 2, 3}) {
         const int npw = 5;
         const int nexp = static_cast<int>(pow(npw, dim - 1) + 0.5) * ((npw + 1) / 2);
-        std::vector<double> fhat = {1.0, 2.0, 3.0, 4.0, 5.0};
-        const int nfourier = fhat.size() - 1;
+        const int nfourier = dim * sctl::pow<2>(npw / 2);
+        std::vector<double> fhat(nfourier + 1);
+        for (int i = 0; i < fhat.size(); ++i)
+            fhat[i] = i;
+
         std::vector<double> pswfft(nexp);
         std::vector<double> pswfft_fort(nexp);
 
         mk_tensor_product_fourier_transform(dim, npw, nfourier, fhat.data(), nexp, pswfft.data());
         mk_tensor_product_fourier_transform_(&dim, &npw, &nfourier, fhat.data(), &nexp, pswfft_fort.data());
 
-        for (int i = 0; i < nexp; ++i) {
+        for (int i = 0; i < nexp; ++i)
             CHECK(std::abs(pswfft[i] - pswfft_fort[i]) < std::numeric_limits<double>::epsilon());
-        }
 
         for (auto &xval : pswfft)
             xval = 0.0;
@@ -289,9 +291,8 @@ TEST_CASE("[DMK] mk_tensor_product_fourier_transform") {
         ndview<const double, 1> fhat_view(fhat.data(), nfourier + 1);
         ndview<double, 1> pswfft_view(pswfft.data(), nexp);
         mk_tensor_product_fourier_transform(dim, npw, fhat_view, pswfft_view);
-        for (int i = 0; i < nexp; ++i) {
+        for (int i = 0; i < nexp; ++i)
             CHECK(std::abs(pswfft[i] - pswfft_fort[i]) < std::numeric_limits<double>::epsilon());
-        }
     }
 }
 
