@@ -26,23 +26,23 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     sctl::Vector<Real> r_src_sorted;
     sctl::Vector<sctl::Long> r_src_cnt;
-    std::vector<sctl::Long> r_src_offsets;
+    sctl::Vector<sctl::Long> r_src_offsets;
 
     sctl::Vector<Real> r_trg_sorted;
     sctl::Vector<sctl::Long> r_trg_cnt;
-    std::vector<sctl::Long> r_trg_offsets;
+    sctl::Vector<sctl::Long> r_trg_offsets;
 
     sctl::Vector<Real> pot_src_sorted;
     sctl::Vector<sctl::Long> pot_src_cnt;
-    std::vector<sctl::Long> pot_src_offsets;
+    sctl::Vector<sctl::Long> pot_src_offsets;
 
     sctl::Vector<Real> pot_trg_sorted;
     sctl::Vector<sctl::Long> pot_trg_cnt;
-    std::vector<sctl::Long> pot_trg_offsets;
+    sctl::Vector<sctl::Long> pot_trg_offsets;
 
     sctl::Vector<Real> charge_sorted;
     sctl::Vector<sctl::Long> charge_cnt;
-    std::vector<sctl::Long> charge_offsets;
+    sctl::Vector<sctl::Long> charge_offsets;
 
     sctl::Vector<Real> proxy_coeffs;
     sctl::Vector<sctl::Long> proxy_coeffs_offsets;
@@ -78,22 +78,40 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
         return std::span<const int>(direct_neighbs_[i_box].data(), n_direct_neighbs_[i_box]);
     }
 
-    Real *r_src_ptr(int i_node) { return &r_src_sorted[r_src_offsets[i_node]]; }
-    const Real *r_src_ptr(int i_node) const { return &r_src_sorted[r_src_offsets[i_node]]; }
+    Real *r_src_ptr(int i_node) {
+        assert(src_counts_local[i_node]);
+        return &r_src_sorted[r_src_offsets[i_node]];
+    }
+    const Real *r_src_ptr(int i_node) const {
+        assert(src_counts_local[i_node]);
+        return &r_src_sorted[r_src_offsets[i_node]];
+    }
     ndview<Real, 2> r_src_view(int i_node) { return ndview<Real, 2>(r_src_ptr(i_node), DIM, src_counts_local[i_node]); }
     ndview<const Real, 2> r_src_view(int i_node) const {
         return ndview<const Real, 2>(r_src_ptr(i_node), DIM, src_counts_local[i_node]);
     }
 
-    Real *r_trg_ptr(int i_node) { return &r_trg_sorted[r_trg_offsets[i_node]]; }
-    const Real *r_trg_ptr(int i_node) const { return &r_trg_sorted[r_trg_offsets[i_node]]; }
+    Real *r_trg_ptr(int i_node) {
+        assert(trg_counts_local[i_node]);
+        return &r_trg_sorted[r_trg_offsets[i_node]];
+    }
+    const Real *r_trg_ptr(int i_node) const {
+        assert(trg_counts_local[i_node]);
+        return &r_trg_sorted[r_trg_offsets[i_node]];
+    }
     ndview<Real, 2> r_trg_view(int i_node) { return ndview<Real, 2>(r_trg_ptr(i_node), DIM, trg_counts_local[i_node]); }
     ndview<const Real, 2> r_trg_view(int i_node) const {
         return ndview<const Real, 2>(r_trg_ptr(i_node), DIM, trg_counts_local[i_node]);
     }
 
-    Real *pot_src_ptr(int i_node) { return &pot_src_sorted[pot_src_offsets[i_node]]; }
-    const Real *pot_src_ptr(int i_node) const { return &pot_src_sorted[pot_src_offsets[i_node]]; }
+    Real *pot_src_ptr(int i_node) {
+        assert(src_counts_local[i_node]);
+        return &pot_src_sorted[pot_src_offsets[i_node]];
+    }
+    const Real *pot_src_ptr(int i_node) const {
+        assert(src_counts_local[i_node]);
+        return &pot_src_sorted[pot_src_offsets[i_node]];
+    }
     ndview<Real, 2> pot_src_view(int i_node) {
         return ndview<Real, 2>(pot_src_ptr(i_node), params.n_mfm, src_counts_local[i_node]);
     }
@@ -101,8 +119,14 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
         return ndview<const Real, 2>(pot_src_ptr(i_node), params.n_mfm, src_counts_local[i_node]);
     }
 
-    Real *pot_trg_ptr(int i_node) { return &pot_trg_sorted[pot_trg_offsets[i_node]]; }
-    const Real *pot_trg_ptr(int i_node) const { return &pot_trg_sorted[pot_trg_offsets[i_node]]; }
+    Real *pot_trg_ptr(int i_node) {
+        assert(trg_counts_local[i_node]);
+        return &pot_trg_sorted[pot_trg_offsets[i_node]];
+    }
+    const Real *pot_trg_ptr(int i_node) const {
+        assert(trg_counts_local[i_node]);
+        return &pot_trg_sorted[pot_trg_offsets[i_node]];
+    }
     ndview<Real, 2> pot_trg_view(int i_node) {
         return ndview<Real, 2>(pot_trg_ptr(i_node), params.n_mfm, trg_counts_local[i_node]);
     }
@@ -110,8 +134,14 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
         return ndview<const Real, 2>(pot_trg_ptr(i_node), params.n_mfm, trg_counts_local[i_node]);
     }
 
-    Real *charge_ptr(int i_node) { return &charge_sorted[charge_offsets[i_node]]; }
-    const Real *charge_ptr(int i_node) const { return &charge_sorted[charge_offsets[i_node]]; }
+    Real *charge_ptr(int i_node) {
+        assert(src_counts_local[i_node]);
+        return &charge_sorted[charge_offsets[i_node]];
+    }
+    const Real *charge_ptr(int i_node) const {
+        assert(src_counts_local[i_node]);
+        return &charge_sorted[charge_offsets[i_node]];
+    }
     ndview<Real, 2> charge_view(int i_node) {
         return ndview<Real, 2>(charge_ptr(i_node), params.n_mfm, src_counts_local[i_node]);
     }
@@ -149,8 +179,12 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
             static_assert(dmk::util::always_false<Real>, "Invalid DIM supplied");
     }
 
-    Real *proxy_ptr_downward(int i_box) { return &proxy_coeffs_downward[proxy_coeffs_offsets_downward[i_box]]; }
+    Real *proxy_ptr_downward(int i_box) {
+        assert(proxy_coeffs_offsets_downward[i_box] != -1);
+        return &proxy_coeffs_downward[proxy_coeffs_offsets_downward[i_box]];
+    }
     const Real *proxy_ptr_downward(int i_box) const {
+        assert(proxy_coeffs_offsets_downward[i_box] != -1);
         return &proxy_coeffs_downward[proxy_coeffs_offsets_downward[i_box]];
     }
     ndview<Real, DIM + 1> proxy_view_downward(int i_box) {

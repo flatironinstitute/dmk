@@ -37,6 +37,20 @@ std::pair<int, int> get_pwmax_and_poly_order(int dim, int ndigits, dmk_ikernel k
     throw std::runtime_error("Requested precision too high");
 }
 
+void update_offsets_from_counts(const sctl::Vector<sctl::Long> &counts, sctl::Long N,
+                                sctl::Vector<sctl::Long> &offsets) {
+    offsets.ReInit(counts.Dim());
+    sctl::Long last_offset;
+    for (int i = 0; i < counts.Dim(); ++i) {
+        if (counts[i]) {
+            offsets[i] = last_offset;
+            last_offset += N;
+        }
+        else
+            offsets[i] = -1;
+    }
+}
+
 template <typename Real, int DIM>
 DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, const sctl::Vector<Real> &r_src,
                                 const sctl::Vector<Real> &r_trg, const sctl::Vector<Real> &charge)
@@ -115,13 +129,13 @@ void DMKPtTree<T, DIM>::generate_metadata() {
 
     src_counts_local.ReInit(n_nodes);
     trg_counts_local.ReInit(n_nodes);
+    r_src_offsets.ReInit(n_nodes);
+    r_trg_offsets.ReInit(n_nodes);
+    pot_src_offsets.ReInit(n_nodes);
+    pot_trg_offsets.ReInit(n_nodes);
+    charge_offsets.ReInit(n_nodes);
 
-    r_src_offsets.resize(n_nodes);
-    r_trg_offsets.resize(n_nodes);
-    pot_src_offsets.resize(n_nodes);
-    pot_trg_offsets.resize(n_nodes);
-    charge_offsets.resize(n_nodes);
-
+    r_src_offsets[0] = r_trg_offsets[0] = pot_src_offsets[0] = pot_trg_offsets[0] = charge_offsets[0] = 0;
     for (int i_node = 1; i_node < n_nodes; ++i_node) {
         r_src_offsets[i_node] = r_src_offsets[i_node - 1] + DIM * r_src_cnt[i_node - 1];
         r_trg_offsets[i_node] = r_trg_offsets[i_node - 1] + DIM * r_trg_cnt[i_node - 1];
@@ -292,10 +306,15 @@ void DMKPtTree<T, DIM>::generate_metadata() {
 
     proxy_coeffs_offsets_downward.ReInit(n_boxes());
     proxy_coeffs_downward.ReInit(n_coeffs * n_proxy_boxes_downward);
-    proxy_coeffs_offsets_downward[0] = 0;
-    for (int box = 1; box < n_nodes; ++box)
-        proxy_coeffs_offsets_downward[box] =
-            proxy_coeffs_offsets_downward[box - 1] + eval_pw_expansion[box - 1] * n_coeffs;
+    last_offset = 0;
+    for (int box = 0; box < n_nodes; ++box) {
+        if (eval_pw_expansion[box]) {
+            proxy_coeffs_offsets_downward[box] = last_offset;
+            last_offset += n_coeffs;
+        }
+        else
+            proxy_coeffs_downward[box] = -1;
+    }
 }
 
 /// @brief Fill out the proxy coefficients used in the upward pass
@@ -419,9 +438,6 @@ void DMKPtTree<T, DIM>::init_planewave_data() {
 ///
 /// @tparam T Floating point format to use (float, double)
 /// @tparam DIM Spatial dimension tree lives in
-/// @param[in,out] fourier_data Various fourier data. Only changes work array (FIXME: lame doc)
-/// @param[in] p2c [n_order, n_order, DIM, 2**DIM] Parent to child matrices used to pass parent proxy charges to their
-/// children
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::downward_pass() {
     auto &logger = dmk::get_logger(this->GetComm());
