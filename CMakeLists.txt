@@ -57,7 +57,7 @@ add_library(dmk_ref_shared SHARED $<TARGET_OBJECTS:dmk_ref_common> $<TARGET_OBJE
 set_target_properties(dmk_ref_shared PROPERTIES OUTPUT_NAME dmk_ref)
 
 set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp
-            src/fourier_data.cpp src/tensorprod.cpp src/planewave.cpp src/direct.cpp)
+            src/fourier_data.cpp src/tensorprod.cpp src/planewave.cpp src/direct.cpp src/doctest.cpp)
 add_library(DMKOBJS OBJECT ${DMK_SRC})
 set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES} ${MPI_CXX_INCLUDE_DIRS})
@@ -67,7 +67,7 @@ target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX DMKOBJS dmk_ref_common 
 
 add_library(dmk_shared SHARED)
 set_target_properties(${PROJECT_NAME}_shared PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
-target_link_libraries(${PROJECT_NAME}_shared DMKOBJS dmk_ref_common OpenMP::OpenMP_CXX MPI::MPI_CXX BLAS::BLAS spdlog)
+target_link_libraries(${PROJECT_NAME}_shared DMKOBJS dmk_ref_common OpenMP::OpenMP_CXX MPI::MPI_CXX BLAS::BLAS spdlog doctest)
 
 if(${DMK_BUILD_TESTS})
   add_subdirectory(test)
