@@ -7,7 +7,6 @@
 #include <dmk/types.hpp>
 
 #include <complex.h>
-#include <limits>
 #include <sctl.hpp>
 #include <stdexcept>
 #include <string>

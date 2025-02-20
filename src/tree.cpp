@@ -12,10 +12,8 @@
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
 #include <doctest/extensions/doctest_mpi.h>
-#include <limits>
 #include <mpi.h>
 #include <omp.h>
-#include <ranges>
 #include <stdexcept>
 #include <unistd.h>
 

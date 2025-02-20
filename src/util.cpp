@@ -7,7 +7,6 @@
 #include <dmk/util.hpp>
 #include <limits>
 #include <random>
-#include <type_traits>
 #include <vector>
 
 namespace dmk::util {

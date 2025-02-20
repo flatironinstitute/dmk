@@ -4,7 +4,6 @@
 #include <dmk/tensorprod.hpp>
 #include <dmk/types.hpp>
 #include <sctl.hpp>
-#include <type_traits>
 
 namespace dmk::tensorprod {
 
