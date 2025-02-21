@@ -4,8 +4,9 @@
 #include <dmk/chebychev.hpp>
 #include <dmk/fortran.h>
 #include <dmk/types.hpp>
+#include <dmk/util.hpp>
 #include <limits>
-#include <type_traits>
+#include <random>
 #include <vector>
 
 namespace dmk::util {
@@ -146,6 +147,104 @@ void mk_tensor_product_fourier_transform(int dim, int npw, int nfourier, Real *f
     throw std::runtime_error("Invalid dimension: " + std::to_string(dim));
 }
 
+template <typename Real>
+void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
+                    sctl::Vector<Real> &r_src, sctl::Vector<Real> &r_trg, sctl::Vector<Real> &rnormal,
+                    sctl::Vector<Real> &charges, sctl::Vector<Real> &dipstr, long seed) {
+    r_src.ReInit(n_dim * n_src);
+    r_trg.ReInit(n_dim * n_trg);
+    charges.ReInit(nd * n_src);
+    rnormal.ReInit(n_dim * n_src);
+    dipstr.ReInit(nd * n_src);
+
+    double rin = 0.45;
+    double wrig = 0.12;
+    double rwig = 0;
+    int nwig = 6;
+    std::default_random_engine eng(seed);
+    std::uniform_real_distribution<double> rng;
+
+    for (int i = 0; i < n_src; ++i) {
+        if (!uniform) {
+            if (n_dim == 2) {
+                double phi = rng(eng) * 2 * M_PI;
+                r_src[i * 3 + 0] = cos(phi);
+                r_src[i * 3 + 1] = sin(phi);
+            }
+            if (n_dim == 3) {
+                double theta = rng(eng) * M_PI;
+                double rr = rin + rwig * cos(nwig * theta);
+                double ct = cos(theta);
+                double st = sin(theta);
+                double phi = rng(eng) * 2 * M_PI;
+                double cp = cos(phi);
+                double sp = sin(phi);
+
+                r_src[i * 3 + 0] = rr * st * cp + 0.5;
+                r_src[i * 3 + 1] = rr * st * sp + 0.5;
+                r_src[i * 3 + 2] = rr * ct + 0.5;
+            }
+        } else {
+            for (int j = 0; j < n_dim; ++j)
+                r_src[i * n_dim + j] = rng(eng);
+        }
+
+        for (int j = 0; j < n_dim; ++j)
+            rnormal[i * n_dim + j] = rng(eng);
+
+        for (int j = 0; j < nd; ++j) {
+            charges[i * nd + j] = rng(eng) - 0.5;
+            dipstr[i * nd + j] = rng(eng);
+        }
+    }
+
+    for (int i_trg = 0; i_trg < n_trg; ++i_trg) {
+        if (!uniform) {
+            if (n_dim == 2) {
+                double phi = rng(eng) * 2 * M_PI;
+                r_trg[i_trg * 3 + 0] = cos(phi);
+                r_trg[i_trg * 3 + 1] = sin(phi);
+            }
+            if (n_dim == 3) {
+                double theta = rng(eng) * M_PI;
+                double rr = rin + rwig * cos(nwig * theta);
+                double ct = cos(theta);
+                double st = sin(theta);
+                double phi = rng(eng) * 2 * M_PI;
+                double cp = cos(phi);
+                double sp = sin(phi);
+
+                r_trg[i_trg * 3 + 0] = rr * st * cp + 0.5;
+                r_trg[i_trg * 3 + 1] = rr * st * sp + 0.5;
+                r_trg[i_trg * 3 + 2] = rr * ct + 0.5;
+            }
+        } else {
+            for (int j = 0; j < n_dim; ++j)
+                r_trg[i_trg * n_dim + j] = rng(eng);
+        }
+    }
+
+    if (set_fixed_charges && n_src > 0)
+        for (int i = 0; i < n_dim; ++i)
+            r_src[i] = 0.0;
+    if (set_fixed_charges && n_src > 1)
+        for (int i = n_dim; i < 2 * n_dim; ++i)
+            r_src[i] = 1 - std::numeric_limits<Real>::epsilon();
+    if (set_fixed_charges && n_src > 2)
+        for (int i = 2 * n_dim; i < 3 * n_dim; ++i)
+            r_src[i] = 0.05;
+}
+
+template void init_test_data<float>(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
+                                    sctl::Vector<float> &r_src, sctl::Vector<float> &r_trg,
+                                    sctl::Vector<float> &rnormal, sctl::Vector<float> &charges,
+                                    sctl::Vector<float> &dipstr, long seed);
+
+template void init_test_data<double>(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
+                                     sctl::Vector<double> &r_src, sctl::Vector<double> &r_trg,
+                                     sctl::Vector<double> &rnormal, sctl::Vector<double> &charges,
+                                     sctl::Vector<double> &dipstr, long seed);
+
 TEST_CASE("[DMK] mesh_nd") {
     for (int dim : {2, 3}) {
         std::vector<double> in = {1.0, 2.0, 3.0};
@@ -167,21 +266,28 @@ TEST_CASE("[DMK] mesh_nd") {
     }
 }
 
+template void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const double, 1> &fhat,
+                                                  const ndview<double, 1> &pswfft);
+template void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const float, 1> &fhat,
+                                                  const ndview<float, 1> &pswfft);
+
 TEST_CASE("[DMK] mk_tensor_product_fourier_transform") {
     for (int dim : {1, 2, 3}) {
         const int npw = 5;
         const int nexp = static_cast<int>(pow(npw, dim - 1) + 0.5) * ((npw + 1) / 2);
-        std::vector<double> fhat = {1.0, 2.0, 3.0, 4.0, 5.0};
-        const int nfourier = fhat.size() - 1;
+        const int nfourier = dim * sctl::pow<2>(npw / 2);
+        std::vector<double> fhat(nfourier + 1);
+        for (int i = 0; i < fhat.size(); ++i)
+            fhat[i] = i;
+
         std::vector<double> pswfft(nexp);
         std::vector<double> pswfft_fort(nexp);
 
         mk_tensor_product_fourier_transform(dim, npw, nfourier, fhat.data(), nexp, pswfft.data());
         mk_tensor_product_fourier_transform_(&dim, &npw, &nfourier, fhat.data(), &nexp, pswfft_fort.data());
 
-        for (int i = 0; i < nexp; ++i) {
+        for (int i = 0; i < nexp; ++i)
             CHECK(std::abs(pswfft[i] - pswfft_fort[i]) < std::numeric_limits<double>::epsilon());
-        }
 
         for (auto &xval : pswfft)
             xval = 0.0;
@@ -189,9 +295,8 @@ TEST_CASE("[DMK] mk_tensor_product_fourier_transform") {
         ndview<const double, 1> fhat_view(fhat.data(), nfourier + 1);
         ndview<double, 1> pswfft_view(pswfft.data(), nexp);
         mk_tensor_product_fourier_transform(dim, npw, fhat_view, pswfft_view);
-        for (int i = 0; i < nexp; ++i) {
+        for (int i = 0; i < nexp; ++i)
             CHECK(std::abs(pswfft[i] - pswfft_fort[i]) < std::numeric_limits<double>::epsilon());
-        }
     }
 }
 

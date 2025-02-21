@@ -4,6 +4,7 @@
 #include <dmk/fourier_data.hpp>
 #include <dmk/planewave.hpp>
 #include <dmk/prolate_funcs.hpp>
+#include <dmk/types.hpp>
 
 #include <complex.h>
 #include <sctl.hpp>
@@ -13,7 +14,7 @@
 namespace dmk {
 template <typename T>
 T procl180_rescale(T eps) {
-    constexpr T cs[] = {
+    constexpr float cs[] = {
         .43368E-16, .10048E+01, .17298E+01, .22271E+01, .26382E+01, .30035E+01, .33409E+01, .36598E+01, .39658E+01,
         .42621E+01, .45513E+01, .48347E+01, .51136E+01, .53887E+01, .56606E+01, .59299E+01, .61968E+01, .64616E+01,
         .67247E+01, .69862E+01, .72462E+01, .75049E+01, .77625E+01, .80189E+01, .82744E+01, .85289E+01, .87826E+01,
@@ -121,9 +122,119 @@ std::tuple<int, double, double> get_PSWF_difference_kernel_pwterms(dmk_ikernel k
     return std::make_tuple(npw, hpw, ws);
 }
 
+template <int DIM>
+std::tuple<int, double, double, double> get_PSWF_windowed_kernel_pwterms(int ndigits, double boxsize) {
+    int npw;
+    double hpw, ws, rl;
+
+    if (ndigits <= 3) {
+        npw = 13;
+        hpw = M_PI * 0.34 / boxsize;
+    } else if (ndigits <= 6) {
+        npw = 25;
+        hpw = M_PI * 0.357 / boxsize;
+    } else if (ndigits <= 9) {
+        npw = 39;
+        hpw = M_PI * 0.357 / boxsize;
+    } else if (ndigits <= 12) {
+        npw = 53;
+        hpw = M_PI * 0.338 / boxsize;
+    }
+
+    constexpr double factor = 0.5 / sctl::pow<DIM - 1>(M_PI);
+    ws = sctl::pow<DIM>(hpw) * factor;
+
+    constexpr double two_sqrt_dim = DIM == 2 ? 2 * 1.4142135623730951 : 2 * 1.7320508075688772;
+    rl = boxsize * two_sqrt_dim;
+
+    return std::make_tuple(npw, hpw, ws, rl);
+}
+
+template <typename Real, int DIM>
+void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, Real boxsize,
+                            ProlateFuncs &pf, sctl::Vector<Real> &windowed_ft) {
+    auto [npw, hpw, ws, rl] = get_PSWF_windowed_kernel_pwterms<DIM>(ndigits, boxsize);
+    const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
+    windowed_ft.ReInit(n_fourier);
+    const Real rlambda = rpars[0];
+    const Real rlambda2 = rlambda * rlambda;
+
+    // determine whether one needs to smooth out the 1/(k^2+lambda^2) factor at the origin.
+    // needed in the calculation of kernel-smoothing when there is low-frequency breakdown
+    const bool near_correction = (rlambda * boxsize / beta < 1E-2);
+    Real dk0, dk1, delam;
+    if (near_correction) {
+        Real arg = rl * rlambda;
+        if constexpr (DIM == 2) {
+            dk0 = std::cyl_bessel_j(0, arg);
+            dk1 = std::cyl_bessel_j(1, arg);
+        } else if constexpr (DIM == 3)
+            delam = std::exp(-arg);
+    }
+
+    const Real psi0 = pf.eval_val(0);
+    for (int i = 0; i < n_fourier; ++i) {
+        const Real rk = sqrt((Real)i) * hpw;
+        const Real xi2 = rk * rk + rlambda2;
+        const Real xi = sqrt(xi2);
+        const Real xval = xi * boxsize / beta;
+        const Real fval = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
+
+        windowed_ft[i] = ws * fval / (psi0 * xi2);
+
+        if (near_correction) {
+            Real sker;
+            if constexpr (DIM == 2) {
+                Real xsc = rl * rk;
+                sker =
+                    -rl * rlambda * std::cyl_bessel_j(0, xsc) * dk1 + Real{1.0} + xsc * std::cyl_bessel_j(1, xsc) * dk0;
+            } else if constexpr (DIM == 3) {
+                Real xsc = rl * rk;
+                sker = 1 - delam * (cos(xsc) + rlambda / rk * sin(xsc));
+            }
+            windowed_ft[i] *= sker;
+        }
+    }
+}
+
+template <typename Real, int DIM>
+void get_difference_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, Real boxsize,
+                              ProlateFuncs &pf, sctl::Vector<Real> &diff_kernel_ft) {
+    const Real bsizesmall = boxsize * 0.5;
+    const Real bsizebig = boxsize;
+    const Real rlambda = *rpars;
+    const Real rlambda2 = rlambda * rlambda;
+    const Real psi0 = pf.eval_val(0.0);
+    const auto [npw, hpw, ws] = get_PSWF_difference_kernel_pwterms<DIM>(kernel, ndigits, boxsize);
+    const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
+    diff_kernel_ft.ReInit(n_fourier);
+
+    for (int i = 0; i < n_fourier; ++i) {
+        Real rk = sqrt((Real)i) * hpw;
+        Real xi2 = rk * rk + rlambda2;
+        Real xi = sqrt(xi2);
+        Real xval = xi * bsizesmall / beta;
+        Real fval1 = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
+
+        xval = xi * bsizebig / beta;
+        Real fval2 = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
+        diff_kernel_ft[i] = ws * (fval1 - fval2) / (psi0 * xi2);
+    }
+
+    // re-compute fhat[0] accurately when there is a low-frequency breakdown
+    if (rlambda * bsizebig / beta < 1E-4) {
+        const std::array<double, 4> c = pf.intvals(beta);
+        const Real bsizesmall2 = bsizesmall * bsizesmall;
+        const Real bsizebig2 = bsizebig * bsizebig;
+
+        diff_kernel_ft[0] = ws * c[2] * (bsizebig2 - bsizesmall2) / 2 +
+                            ws * (bsizesmall2 * bsizesmall2 - bsizebig2 * bsizebig2) * rlambda2 * c[3] / (c[0] * 24);
+    }
+}
+
 template <typename T>
 FourierData<T>::FourierData(dmk_ikernel kernel_, int n_dim_, T eps, int n_digits_, int n_pw_max, T fparam_,
-                            const std::vector<double> &boxsize_)
+                            const std::vector<T> &boxsize_)
     : kernel(kernel_), n_dim(n_dim_), n_digits(n_digits_), fparam(fparam_), boxsize(boxsize_),
       n_levels(boxsize_.size()), n_fourier(n_dim_ * sctl::pow(n_pw_max / 2, 2)) {
 
@@ -135,9 +246,9 @@ FourierData<T>::FourierData(dmk_ikernel kernel_, int n_dim_, T eps, int n_digits
     rl.resize(n_levels + 1);
 
     if (n_dim == 2)
-        std::tie(n_pw, hpw[0], ws[0], rl[0]) = get_PSWF_truncated_kernel_pwterms<2>(n_digits, boxsize[0]);
+        std::tie(n_pw, hpw[0], ws[0], rl[0]) = get_PSWF_windowed_kernel_pwterms<2>(n_digits, boxsize[0]);
     else if (n_dim == 3)
-        std::tie(n_pw, hpw[0], ws[0], rl[0]) = get_PSWF_truncated_kernel_pwterms<3>(n_digits, boxsize[0]);
+        std::tie(n_pw, hpw[0], ws[0], rl[0]) = get_PSWF_windowed_kernel_pwterms<3>(n_digits, boxsize[0]);
 
     dkernelft.resize((n_fourier + 1) * (n_levels + 1));
 
@@ -159,7 +270,7 @@ void FourierData<T>::yukawa_windowed_kernel_Fourier_transform() {
     const bool near_correction = (rlambda * boxsize[0] / beta < 1E-2);
     T dk0, dk1, delam;
     if (near_correction) {
-        double arg = rl[0] * rlambda;
+        T arg = rl[0] * rlambda;
         if (n_dim == 2) {
             dk0 = std::cyl_bessel_j(0, arg);
             dk1 = std::cyl_bessel_j(1, arg);
@@ -167,24 +278,24 @@ void FourierData<T>::yukawa_windowed_kernel_Fourier_transform() {
             delam = std::exp(-arg);
     }
 
-    double psi0 = prolate_funcs.eval_val(0);
+    T psi0 = prolate_funcs.eval_val(0);
 
     for (int i = 0; i < n_fourier; ++i) {
-        const double rk = sqrt((double)i) * hpw[0];
-        const double xi2 = rk * rk + rlambda2;
-        const double xi = sqrt(xi2);
-        const double xval = xi * boxsize[0] / beta;
-        const double fval = (xval <= 1.0) ? prolate_funcs.eval_val(xval) : 0.0;
+        const T rk = sqrt((T)i) * hpw[0];
+        const T xi2 = rk * rk + rlambda2;
+        const T xi = sqrt(xi2);
+        const T xval = xi * boxsize[0] / beta;
+        const T fval = (xval <= 1.0) ? prolate_funcs.eval_val(xval) : 0.0;
 
         fhat[i] = ws[0] * fval / (psi0 * xi2);
 
         if (near_correction) {
-            double sker;
+            T sker;
             if (n_dim == 2) {
-                double xsc = rl[0] * rk;
-                sker = -rl[0] * fparam * std::cyl_bessel_j(0, xsc) * dk1 + 1.0 + xsc * besj1_(&xsc) * dk0;
+                T xsc = rl[0] * rk;
+                sker = -rl[0] * fparam * std::cyl_bessel_j(0, xsc) * dk1 + 1.0 + xsc * std::cyl_bessel_j(1, xsc) * dk0;
             } else if (n_dim == 3) {
-                double xsc = rl[0] * rk;
+                T xsc = rl[0] * rk;
                 sker = 1 - delam * (cos(xsc) + rlambda / rk * sin(xsc));
             }
             fhat[i] *= sker;
@@ -204,24 +315,24 @@ void FourierData<T>::update_windowed_kernel_fourier_transform() {
     }
 }
 
-template <typename T>
-void FourierData<T>::yukawa_difference_kernel_fourier_transform(int i_level) {
-    const T bsizesmall = boxsize[i_level] * 0.5;
-    const T bsizebig = boxsize[i_level];
-    const double &rlambda = fparam;
-    const double rlambda2 = rlambda * rlambda;
-    const double psi0 = prolate_funcs.eval_val(0.0);
-    T *fhat = &dkernelft[(i_level + 1) * (n_fourier + 1)];
+template <typename Real>
+void FourierData<Real>::yukawa_difference_kernel_fourier_transform(int i_level) {
+    const Real bsizesmall = boxsize[i_level] * 0.5;
+    const Real bsizebig = boxsize[i_level];
+    const Real rlambda = fparam;
+    const Real rlambda2 = rlambda * rlambda;
+    const Real psi0 = prolate_funcs.eval_val(0.0);
+    Real *fhat = &dkernelft[(i_level + 1) * (n_fourier + 1)];
 
     for (int i = 0; i < n_fourier + 1; ++i) {
-        T rk = sqrt((T)i) * hpw[i_level + 1];
-        T xi2 = rk * rk + rlambda2;
-        T xi = sqrt(xi2);
-        T xval = xi * bsizesmall / beta;
-        T fval1 = (xval <= 1.0) ? prolate_funcs.eval_val(xval) : 0.0;
+        Real rk = sqrt((Real)i) * hpw[i_level + 1];
+        Real xi2 = rk * rk + rlambda2;
+        Real xi = sqrt(xi2);
+        Real xval = xi * bsizesmall / beta;
+        Real fval1 = (xval <= 1.0) ? prolate_funcs.eval_val(xval) : 0.0;
 
         xval = xi * bsizebig / beta;
-        T fval2 = (xval <= 1.0) ? prolate_funcs.eval_val(xval) : 0.0;
+        Real fval2 = (xval <= 1.0) ? prolate_funcs.eval_val(xval) : 0.0;
         fhat[i] = ws[i_level + 1] * (fval1 - fval2) / (psi0 * xi2);
     }
 
@@ -238,11 +349,12 @@ void FourierData<T>::yukawa_difference_kernel_fourier_transform(int i_level) {
 
 template <typename T>
 T FourierData<T>::yukawa_windowed_kernel_value_at_zero(int i_level) {
-    const double rpars = fparam;
     double fval = 0.0;
     double bsize = (i_level == 0) ? 0.5 * boxsize[i_level] : boxsize[i_level];
-    yukawa_windowed_kernel_value_at_zero_(&n_dim, &fparam, &beta, &bsize, &rl[i_level], prolate_funcs.workarray.data(),
-                                          &fval);
+    double beta_ = beta;
+    double rl_ = rl[i_level];
+    double rpars = fparam;
+    yukawa_windowed_kernel_value_at_zero_(&n_dim, &rpars, &beta_, &bsize, &rl_, prolate_funcs.workarray.data(), &fval);
     return fval;
 }
 
@@ -296,6 +408,7 @@ void FourierData<T>::update_difference_kernels() {
 
 template <typename T>
 void FourierData<T>::update_local_coeffs_yukawa(T eps) {
+    // FIXME: This whole routine is a mess and only works with doubles anyway
     const int nr1 = n_coeffs_max, nr2 = n_coeffs_max;
 
     coeffs1.resize(nr1 * (n_levels));
@@ -303,152 +416,132 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
     ncoeffs1.resize(n_levels);
     ncoeffs2.resize(n_levels);
 
+    constexpr T two_over_pi = 2.0 / M_PI;
+    const T &rlambda = fparam;
+    const T rlambda2 = rlambda * rlambda;
+    double psi0 = prolate_funcs.eval_val(0.0);
+
+    constexpr int i_type = 1;
+    constexpr int n_quad = 100;
+    std::vector<double> xs(n_quad), xs_base(n_quad), whts(n_quad), whts_base(n_quad), r1(n_quad), r2(n_quad),
+        w1(n_quad), w2(n_quad), fhat(n_quad);
+    double u, v; // dummy vars
+    legeexps_(&i_type, &n_quad, xs_base.data(), &u, &v, whts_base.data());
+    auto [v1, vlu1] = dmk::chebyshev::get_vandermonde_and_LU<T>(nr1);
+    auto [v2, vlu2] = dmk::chebyshev::get_vandermonde_and_LU<T>(nr2);
+    Eigen::VectorX<T> fvals(nr1);
+
     for (int i_level = 0; i_level < n_levels; ++i_level) {
-        double bsize = boxsize[i_level];
+        auto bsize = boxsize[i_level];
         if (i_level == 0)
             bsize *= 0.5;
 
-        yukawa_residual_kernel_coefs_(
-            &eps, &n_dim, &fparam, &beta, &bsize, &rl[i_level], prolate_funcs.workarray.data(), &ncoeffs1[i_level],
-            &coeffs1[n_coeffs_max * i_level], &ncoeffs2[i_level], &coeffs2[n_coeffs_max * i_level]);
+        T scale_factor = beta / (2.0 * bsize);
+        for (int i = 0; i < n_quad; ++i) {
+            xs[i] = scale_factor * (xs_base[i] + 1.0);
+            whts[i] = scale_factor * whts_base[i];
+        }
+
+        const bool near_correction = rlambda * bsize / beta < 1E-2;
+        T dk0, dk1, delam;
+        if (near_correction) {
+            T arg = rl[i_level] * rlambda;
+            if (n_dim == 2) {
+                dk0 = std::cyl_bessel_k(0, arg);
+                dk1 = std::cyl_bessel_k(1, arg);
+            } else
+                delam = std::exp(-arg);
+        }
+
+        for (int i = 0; i < n_quad; ++i) {
+            const T xi2 = xs[i] * xs[i] + rlambda2;
+            const T xval = sqrt(xi2) * bsize / beta;
+            if (xval <= 1.0) {
+                fhat[i] = prolate_funcs.eval_val(xval) / (psi0 * xi2);
+            } else {
+                fhat[i] = 0.0;
+                continue;
+            }
+            fhat[i] *= (n_dim == 2) ? whts[i] * xs[i] : whts[i] * xs[i] * xs[i] * two_over_pi;
+
+            if (near_correction) {
+                T xsc = rl[i_level] * xs[i];
+                if (n_dim == 2)
+                    fhat[i] *= -rl[i_level] + rlambda + std::cyl_bessel_j(0, xsc) * dk1 + 1 +
+                               xsc * std::cyl_bessel_j(1, xsc) * dk0;
+                else
+                    fhat[i] *= 1 - delam * (std::cos(xsc) + rlambda / xs[i] * std::sin(xsc));
+            }
+        }
+
+        Eigen::VectorX<T> r1 = dmk::chebyshev::get_cheb_nodes(nr1, T{0.}, bsize);
+        if (n_dim == 2) {
+            for (int i = 0; i < nr1; ++i) {
+                fvals(i) = 0.0;
+                for (int j = 0; j < n_quad; ++j)
+                    fvals(i) -= std::cyl_bessel_j(0, r1[i] * xs[j]) * fhat[j];
+            }
+        } else if (n_dim == 3) {
+            for (int i = 0; i < nr1; ++i) {
+                fvals(i) = 0.0;
+                for (int j = 0; j < n_quad; ++j) {
+                    T dd = r1[i] * xs[j];
+                    fvals(i) -= sin(dd) / dd * fhat[j];
+                }
+            }
+        }
+
+        Eigen::Map<Eigen::VectorX<T>> coeffs1_lvl(coeffs1.data() + nr1 * i_level, nr1);
+        coeffs1_lvl = vlu1.solve(fvals);
+        T coefsmax = coeffs1_lvl.array().abs().maxCoeff();
+        T releps = eps * coefsmax;
+
+        ncoeffs1[i_level] = 1;
+        for (int i = 0; i < nr1 - 2; ++i) {
+            if (std::fabs(coeffs1_lvl(i)) < releps && std::fabs(coeffs1_lvl(i + 1)) < releps &&
+                std::fabs(coeffs1_lvl(i + 2)) < releps) {
+                ncoeffs1[i_level] = i + 1;
+                break;
+            }
+        }
+
+        // coeffs2
+        Eigen::VectorX<T> r2 = dmk::chebyshev::get_cheb_nodes(nr2, T{0.25} * bsize * bsize, bsize * bsize);
+        if (n_dim == 2) {
+            for (int i = 0; i < nr2; ++i) {
+                fvals(i) = 0.0;
+                const T r = sqrt(r2(i));
+                for (int j = 0; j < n_quad; ++j)
+                    fvals(i) -= std::cyl_bessel_j(0, r * xs[j]) * fhat[j];
+
+                fvals(i) += std::cyl_bessel_j(0, rlambda * r);
+            }
+        } else if (n_dim == 3) {
+            for (int i = 0; i < nr2; ++i) {
+                fvals(i) = 0.0;
+                const T r = sqrt(r2(i));
+                for (int j = 0; j < n_quad; ++j) {
+                    T dd = r * xs[j];
+                    fvals(i) -= std::sin(dd) / dd * fhat[j];
+                }
+                fvals(i) += std::exp(-rlambda * r) / r;
+            }
+        }
+
+        Eigen::Map<Eigen::VectorX<T>> coeffs2_lvl(coeffs2.data() + nr2 * (i_level), nr2);
+        coeffs2_lvl = vlu2.solve(fvals);
+
+        coefsmax = coeffs2_lvl.array().abs().maxCoeff();
+        releps = eps * coefsmax;
+        ncoeffs2[i_level] = 1;
+        for (int i = 0; i < nr2 - 2; ++i) {
+            if (std::fabs(coeffs2_lvl(i)) < releps && std::fabs(coeffs2_lvl(i + 1)) < releps &&
+                std::fabs(coeffs2_lvl(i + 2)) < releps) {
+                ncoeffs2[i_level] = i + 1;
+                break;
+            }
+        }
     }
-    return;
-
-    // constexpr T two_over_pi = 2.0 / M_PI;
-    // const T &rlambda = fparam;
-    // const T rlambda2 = rlambda * rlambda;
-    // double psi0 = prolate_funcs.eval_val(0.0);
-
-    // constexpr int i_type = 1;
-    // constexpr int n_quad = 100;
-    // std::vector<double> xs(n_quad), xs_base(n_quad), whts(n_quad), whts_base(n_quad), r1(n_quad), r2(n_quad),
-    //     w1(n_quad), w2(n_quad), fhat(n_quad);
-    // double u, v; // dummy vars
-    // legeexps_(&i_type, &n_quad, xs_base.data(), &u, &v, whts_base.data());
-    // auto [v1, vlu1] = dmk::chebyshev::get_vandermonde_and_LU<double>(nr1);
-    // auto [v2, vlu2] = dmk::chebyshev::get_vandermonde_and_LU<double>(nr2);
-    // Eigen::VectorXd fvals(nr1);
-
-    // for (int i_level = 0; i_level < n_levels; ++i_level) {
-    //     auto &bsize = boxsize[i_level];
-
-    //     double scale_factor = beta / (2.0 * bsize);
-    //     for (int i = 0; i < n_quad; ++i) {
-    //         xs[i] = scale_factor * (xs_base[i] + 1.0);
-    //         whts[i] = scale_factor * whts_base[i];
-    //     }
-
-    //     const bool near_correction = rlambda * bsize / beta < 1E-2;
-    //     double dk0, dk1, delam;
-    //     if (near_correction) {
-    //         double arg = rl[i_level + 1] * rlambda;
-    //         if (n_dim == 2) {
-    //             dk0 = besk0_(&arg);
-    //             dk1 = besk1_(&arg);
-    //         } else
-    //             delam = std::exp(-arg);
-    //     }
-
-    //     for (int i = 0; i < n_quad; ++i) {
-    //         const double xi2 = xs[i] * xs[i] + rlambda2;
-    //         const double xval = sqrt(xi2) * bsize / beta;
-    //         if (xval <= 1.0) {
-    //             fhat[i] = prolate_funcs.eval_val(xval) / (psi0 * xi2);
-    //         } else {
-    //             fhat[i] = 0.0;
-    //             continue;
-    //         }
-    //         fhat[i] *= (n_dim == 2) ? whts[i] * xs[i] : whts[i] * xs[i] * xs[i] * two_over_pi;
-
-    //         if (near_correction) {
-    //             double xsc = rl[i_level + 1] * xs[i];
-    //             if (n_dim == 2)
-    //                 fhat[i] *= -rl[i_level + 1] + rlambda + besj0_(&xsc) * dk1 + 1 + xsc * besj1_(&xsc) * dk0;
-    //             else
-    //                 fhat[i] *= 1 - delam * (std::cos(xsc) + rlambda / xs[i] * std::sin(xsc));
-    //         }
-    //     }
-
-    //     Eigen::VectorXd r1 = dmk::chebyshev::get_cheb_nodes(nr1, 0., bsize);
-    //     if (n_dim == 2) {
-    //         const int actual_hankel = 1;
-    //         for (int i = 0; i < nr1; ++i) {
-    //             fvals(i) = 0.0;
-    //             for (int j = 0; j < n_quad; ++j) {
-    //                 std::complex<double> z = r1[i] * xs[j];
-    //                 std::complex<double> h0, h1;
-    //                 hank103_(reinterpret_cast<_Complex double *>(&z), reinterpret_cast<_Complex double *>(&h0),
-    //                          reinterpret_cast<_Complex double *>(&h1), &actual_hankel);
-    //                 fvals(i) -= h0.real() * fhat[j];
-    //             }
-    //         }
-    //     } else if (n_dim == 3) {
-    //         for (int i = 0; i < nr1; ++i) {
-    //             fvals(i) = 0.0;
-    //             for (int j = 0; j < n_quad; ++j) {
-    //                 double dd = r1[i] * xs[j];
-    //                 fvals(i) -= sin(dd) / dd * fhat[j];
-    //             }
-    //         }
-    //     }
-
-    //     Eigen::Map<Eigen::VectorXd> coeffs1_lvl(coeffs1.data() + nr1 * (i_level + 1), nr1);
-    //     coeffs1_lvl = vlu1.solve(fvals);
-    //     double coefsmax = coeffs1_lvl.array().abs().maxCoeff();
-    //     double releps = eps * coefsmax;
-
-    //     ncoeffs1[i_level + 1] = 1;
-    //     for (int i = 0; i < nr1 - 2; ++i) {
-    //         if (std::fabs(coeffs1_lvl(i)) < releps && std::fabs(coeffs1_lvl(i + 1)) < releps &&
-    //             std::fabs(coeffs1_lvl(i + 2)) < releps) {
-    //             ncoeffs1[i_level + 1] = i + 1;
-    //             break;
-    //         }
-    //     }
-
-    //     // coeffs2
-    //     Eigen::VectorXd r2 = dmk::chebyshev::get_cheb_nodes(nr2, 0.25 * bsize * bsize, bsize * bsize);
-    //     if (n_dim == 2) {
-    //         const int actual_hankel = 1;
-    //         for (int i = 0; i < nr2; ++i) {
-    //             fvals(i) = 0.0;
-    //             const double r = sqrt(r2(i));
-    //             for (int j = 0; j < n_quad; ++j) {
-    //                 std::complex<double> z = r * xs[j];
-    //                 std::complex<double> h0, h1;
-    //                 hank103_(reinterpret_cast<_Complex double *>(&z), reinterpret_cast<_Complex double *>(&h0),
-    //                          reinterpret_cast<_Complex double *>(&h1), &actual_hankel);
-    //                 fvals(i) -= h0.real() * fhat[j];
-    //             }
-    //             double dd = rlambda * r;
-    //             fvals(i) += besk0_(&dd);
-    //         }
-    //     } else if (n_dim == 3) {
-    //         for (int i = 0; i < nr2; ++i) {
-    //             fvals(i) = 0.0;
-    //             const double r = sqrt(r2(i));
-    //             for (int j = 0; j < n_quad; ++j) {
-    //                 double dd = r * xs[j];
-    //                 fvals(i) -= std::sin(dd) / dd * fhat[j];
-    //             }
-    //             fvals(i) += std::exp(-rlambda * r) / r;
-    //         }
-    //     }
-
-    //     Eigen::Map<Eigen::VectorXd> coeffs2_lvl(coeffs2.data() + nr2 * (i_level + 1), nr2);
-    //     coeffs2_lvl = vlu2.solve(fvals);
-
-    //     coefsmax = coeffs2_lvl.array().abs().maxCoeff();
-    //     releps = eps * coefsmax;
-    //     ncoeffs2[i_level + 1] = 1;
-    //     for (int i = 0; i < nr2 - 2; ++i) {
-    //         if (std::fabs(coeffs2_lvl(i)) < releps && std::fabs(coeffs2_lvl(i + 1)) < releps &&
-    //             std::fabs(coeffs2_lvl(i + 2)) < releps) {
-    //             ncoeffs2[i_level + 1] = i + 1;
-    //             break;
-    //         }
-    //     }
-    // }
 }
 
 template <typename T>
@@ -485,7 +578,49 @@ void FourierData<T>::calc_planewave_coeff_matrices(int i_level, int n_order, sct
                                        pw2poly_vec);
 }
 
-// template struct FourierData<float>;
+template struct FourierData<float>;
 template struct FourierData<double>;
+
+template void get_windowed_kernel_ft<float, 2>(dmk_ikernel kernel, const double *rpars, float beta, int ndigits,
+                                               float boxsize, ProlateFuncs &pf, sctl::Vector<float> &radialft);
+template void get_windowed_kernel_ft<float, 3>(dmk_ikernel kernel, const double *rpars, float beta, int ndigits,
+                                               float boxsize, ProlateFuncs &pf, sctl::Vector<float> &radialft);
+template void get_windowed_kernel_ft<double, 2>(dmk_ikernel kernel, const double *rpars, double beta, int ndigits,
+                                                double boxsize, ProlateFuncs &pf, sctl::Vector<double> &radialft);
+template void get_windowed_kernel_ft<double, 3>(dmk_ikernel kernel, const double *rpars, double beta, int ndigits,
+                                                double boxsize, ProlateFuncs &pf, sctl::Vector<double> &radialft);
+template void get_difference_kernel_ft<float, 2>(dmk_ikernel kernel, const double *rpars, float beta, int ndigits,
+                                                 float boxsize, ProlateFuncs &pf, sctl::Vector<float> &diff_kernel_ft);
+template void get_difference_kernel_ft<float, 3>(dmk_ikernel kernel, const double *rpars, float beta, int ndigits,
+                                                 float boxsize, ProlateFuncs &pf, sctl::Vector<float> &diff_kernel_ft);
+template void get_difference_kernel_ft<double, 2>(dmk_ikernel kernel, const double *rpars, double beta, int ndigits,
+                                                  double boxsize, ProlateFuncs &pf,
+                                                  sctl::Vector<double> &diff_kernel_ft);
+template void get_difference_kernel_ft<double, 3>(dmk_ikernel kernel, const double *rpars, double beta, int ndigits,
+                                                  double boxsize, ProlateFuncs &pf,
+                                                  sctl::Vector<double> &diff_kernel_ft);
+
+TEST_CASE("[DMK] bessel functions") {
+    double x = 1.0;
+    double fy = besk0_(&x);
+    double cy = std::cyl_bessel_k(0, x);
+    REQUIRE(std::abs(fy - cy) < std::numeric_limits<double>::epsilon());
+
+    fy = besk1_(&x);
+    cy = std::cyl_bessel_k(1, x);
+    REQUIRE(std::abs(fy - cy) < std::numeric_limits<double>::epsilon());
+
+    fy = besj0_(&x);
+    cy = std::cyl_bessel_j(0, x);
+
+    std::complex<double> z(x, 0.0);
+    std::complex<double> h0, h1;
+    constexpr int actual_hankel = 1;
+    hank103_(reinterpret_cast<_Complex double *>(&z), reinterpret_cast<_Complex double *>(&h0),
+             reinterpret_cast<_Complex double *>(&h1), &actual_hankel);
+
+    std::complex<double> h0c(std::cyl_bessel_j(0, z.real()), std::cyl_neumann(0, z.real()));
+    REQUIRE(std::abs(h0 - h0c) < 2 * std::numeric_limits<double>::epsilon());
+}
 
 } // namespace dmk

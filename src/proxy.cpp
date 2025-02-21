@@ -8,8 +8,6 @@
 #include <dmk/types.hpp>
 #include <limits>
 #include <stdexcept>
-#include <type_traits>
-#include <vector>
 
 #include <omp.h>
 
@@ -301,6 +299,12 @@ void eval_targets(const ndview<const T, DIM + 1> &coeffs, const ndview<const T, 
         static_assert(dmk::util::always_false<T>, "Invalid DIM supplied");
 }
 
+template void charge2proxycharge<float, 2>(const ndview<const float, 2> &r_src_, const ndview<const float, 2> &charge_,
+                                           const ndview<const float, 1> &center, float scale_factor,
+                                           const ndview<float, 3> &coeffs);
+template void charge2proxycharge<float, 3>(const ndview<const float, 2> &r_src_, const ndview<const float, 2> &charge_,
+                                           const ndview<const float, 1> &center, float scale_factor,
+                                           const ndview<float, 4> &coeffs);
 template void charge2proxycharge<double, 2>(const ndview<const double, 2> &r_src_,
                                             const ndview<const double, 2> &charge_,
                                             const ndview<const double, 1> &center, double scale_factor,
@@ -311,16 +315,29 @@ template void charge2proxycharge<double, 3>(const ndview<const double, 2> &r_src
                                             const ndview<const double, 1> &center, double scale_factor,
                                             const ndview<double, 4> &coeffs);
 
+template void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const float *proxy_coeffs,
+                             const std::complex<float> *poly2pw, std::complex<float> *pw_expansion);
 template void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const double *proxy_coeffs,
                              const std::complex<double> *poly2pw, std::complex<double> *pw_expansion);
 
+template void proxycharge2pw<float, 2>(const ndview<const float, 3> &proxy_coeffs,
+                                       const ndview<const std::complex<float>, 2> &poly2pw,
+                                       const ndview<std::complex<float>, 3> &pw_expansion);
+template void proxycharge2pw<float, 3>(const ndview<const float, 4> &proxy_coeffs,
+                                       const ndview<const std::complex<float>, 2> &poly2pw,
+                                       const ndview<std::complex<float>, 4> &pw_expansion);
 template void proxycharge2pw<double, 2>(const ndview<const double, 3> &proxy_coeffs,
                                         const ndview<const std::complex<double>, 2> &poly2pw,
                                         const ndview<std::complex<double>, 3> &pw_expansion);
-
 template void proxycharge2pw<double, 3>(const ndview<const double, 4> &proxy_coeffs,
                                         const ndview<const std::complex<double>, 2> &poly2pw,
                                         const ndview<std::complex<double>, 4> &pw_expansion);
+
+template void eval_targets<float, 2>(const ndview<const float, 3> &coeffs, const ndview<const float, 2> &targ,
+                                     const ndview<const float, 1> &cen, float sc, const ndview<float, 2> &pot);
+
+template void eval_targets<float, 3>(const ndview<const float, 4> &coeffs, const ndview<const float, 2> &targ,
+                                     const ndview<const float, 1> &cen, float sc, const ndview<float, 2> &pot);
 
 template void eval_targets<double, 2>(const ndview<const double, 3> &coeffs, const ndview<const double, 2> &targ,
                                       const ndview<const double, 1> &cen, double sc, const ndview<double, 2> &pot);

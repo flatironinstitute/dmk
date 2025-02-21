@@ -8,14 +8,11 @@
 #include <dmk/proxy.hpp>
 #include <dmk/tensorprod.hpp>
 #include <dmk/tree.hpp>
+#include <dmk/util.hpp>
 #include <sctl.hpp>
 
 #include <mpi.h>
 #include <omp.h>
-#include <random>
-#include <stdexcept>
-#include <tuple>
-#include <utility>
 
 #include <doctest/extensions/doctest_mpi.h>
 
@@ -24,8 +21,8 @@ namespace dmk {
 template <typename T, int DIM>
 void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge, const T *normal, const T *dipole_str,
           int n_trg, const T *r_trg, T *pot_src, T *grad_src, T *hess_src, T *pot_trg, T *grad_trg, T *hess_trg) {
-    auto &logger = dmk::get_logger(params.log_level);
-    auto &rank_logger = dmk::get_rank_logger(params.log_level);
+    auto &logger = dmk::get_logger(sctl::Comm::World(), params.log_level);
+    auto &rank_logger = dmk::get_rank_logger(sctl::Comm::World(), params.log_level);
     logger->info("PDMK called");
     auto st = omp_get_wtime();
 
@@ -34,6 +31,9 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     sctl::Vector<T> charge_vec(n_src * params.n_mfm, const_cast<T *>(charge), false);
 
     DMKPtTree<T, DIM> tree(sctl::Comm::World(), params, r_src_vec, r_trg_vec, charge_vec);
+    sctl::Comm::Self();
+    tree.upward_pass();
+    tree.downward_pass();
 
     sctl::Vector<T> res;
     tree.GetParticleData(res, "pdmk_pot_src");
@@ -51,83 +51,85 @@ void pdmk(const pdmk_params &params, int n_src, const T *r_src, const T *charge,
     logger->info("PDMK finished in {:.4f} seconds ({:.0f} pts/s)", dt, N / dt);
 }
 
-void init_data(int n_dim, int nd, int n_src, bool uniform, std::vector<double> &r_src, std::vector<double> &rnormal,
-               std::vector<double> &charges, std::vector<double> &dipstr, long seed) {
-    r_src.resize(n_dim * n_src);
-    charges.resize(nd * n_src);
-    rnormal.resize(n_dim * n_src);
-    dipstr.resize(nd * n_src);
+MPI_TEST_CASE("[DMK] pdmk 3d float", 1) {
+    constexpr int n_dim = 3;
+    constexpr int n_src = 10000;
+    constexpr int n_trg = 10000;
+    constexpr int nd = 1;
+    constexpr bool uniform = false;
+    constexpr bool set_fixed_charges = true;
 
-    double rin = 0.45;
-    double wrig = 0.12;
-    double rwig = 0;
-    int nwig = 6;
-    std::default_random_engine eng(seed);
-    std::uniform_real_distribution<double> rng;
+    sctl::Vector<double> r_src, pot_src, grad_src, hess_src, charges, rnormal, dipstr, pot_trg, r_trg;
+    sctl::Vector<float> r_srcf, pot_srcf, grad_srcf, hess_srcf, chargesf, rnormalf, dipstrf, pot_trgf, r_trgf;
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges,
+                              dipstr, 0);
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, uniform, set_fixed_charges, r_srcf, r_trgf, rnormalf, chargesf,
+                              dipstrf, 0);
+    pot_src.ReInit(n_src * nd);
+    pot_trg.ReInit(n_trg * nd);
+    pot_srcf.ReInit(n_src * nd);
+    pot_trgf.ReInit(n_trg * nd);
 
-    for (int i = 0; i < n_src; ++i) {
-        if (!uniform) {
-            if (n_dim == 2) {
-                double phi = rng(eng) * 2 * M_PI;
-                r_src[i * 3 + 0] = cos(phi);
-                r_src[i * 3 + 1] = sin(phi);
-            }
-            if (n_dim == 3) {
-                double theta = rng(eng) * M_PI;
-                double rr = rin + rwig * cos(nwig * theta);
-                double ct = cos(theta);
-                double st = sin(theta);
-                double phi = rng(eng) * 2 * M_PI;
-                double cp = cos(phi);
-                double sp = sin(phi);
+    pdmk_params params;
+    params.eps = 1e-10;
+    params.n_dim = n_dim;
+    params.n_per_leaf = 80;
+    params.n_mfm = nd;
+    params.pgh_src = DMK_POTENTIAL;
+    params.pgh_trg = DMK_POTENTIAL;
+    params.kernel = DMK_YUKAWA;
+    params.fparam = 6.0;
+    params.log_level = SPDLOG_LEVEL_OFF;
 
-                r_src[i * 3 + 0] = rr * st * cp + 0.5;
-                r_src[i * 3 + 1] = rr * st * sp + 0.5;
-                r_src[i * 3 + 2] = rr * ct + 0.5;
-            }
-        } else {
-            for (int j = 0; j < n_dim; ++j)
-                r_src[i * n_dim + j] = rng(eng);
-        }
+    pdmk(params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0], &pot_src[0], nullptr,
+         nullptr, &pot_trg[0], nullptr, nullptr);
 
-        for (int j = 0; j < n_dim; ++j)
-            rnormal[i * n_dim + j] = rng(eng);
+    params.eps = 1e-5;
+    pdmkf(params, n_src, &r_srcf[0], &chargesf[0], &rnormalf[0], &dipstrf[0], n_trg, &r_trgf[0], &pot_srcf[0], nullptr,
+          nullptr, &pot_trgf[0], nullptr, nullptr);
 
-        for (int j = 0; j < nd; ++j) {
-            charges[i * nd + j] = rng(eng) - 0.5;
-            dipstr[i * nd + j] = rng(eng);
-        }
-    }
+    double l2_err_src = 0.0;
+    double l2_err_trg = 0.0;
+    for (int i = 0; i < n_src; ++i)
+        l2_err_src += pot_src[i] != 0.0 ? sctl::pow<2>(1.0 - pot_srcf[i] / pot_src[i]) : 0.0;
+    for (int i = 0; i < n_trg; ++i)
+        l2_err_trg += pot_trg[i] != 0.0 ? sctl::pow<2>(1.0 - pot_trgf[i] / pot_trg[i]) : 0.0;
 
-    for (int i = 0; i < 3; ++i)
-        r_src[i] = 0.0;
-    for (int i = 3; i < 6; ++i)
-        r_src[i] = 1 - std::numeric_limits<double>::epsilon();
-    for (int i = 6; i < 9; ++i)
-        r_src[i] = 0.05;
+    l2_err_src = std::sqrt(l2_err_src) / n_src;
+    l2_err_trg = std::sqrt(l2_err_trg) / n_trg;
+    CHECK(l2_err_src < 6 * params.eps);
+    CHECK(l2_err_trg < 6 * params.eps);
 }
-
-MPI_TEST_CASE("[DMK] pdmk 2d", 1) {}
 
 MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
     constexpr int n_dim = 3;
     constexpr int n_src = 10000;
     constexpr int nd = 1;
+    constexpr bool uniform = false;
+    constexpr bool set_fixed_charges = true;
 
-    std::vector<double> r_src, pot_src, grad_src, hess_src, charges, rnormal, dipstr, pot_trg, r_trg, grad_trg,
+    sctl::Vector<double> r_src, pot_src, grad_src, hess_src, charges, rnormal, dipstr, pot_trg, r_trg, grad_trg,
         hess_trg;
-    init_data(n_dim, 1, n_src, false, r_src, rnormal, charges, dipstr, 0);
+    dmk::util::init_test_data(n_dim, 1, n_src, 0, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, dipstr,
+                              0);
     r_trg = r_src;
     std::reverse(r_trg.begin(), r_trg.end());
-    r_trg.resize(n_dim * (n_src - 3));
-    const int n_trg = r_trg.size() / n_dim;
+    r_trg.ReInit(n_dim * (n_src - set_fixed_charges * 3));
+    const int n_trg = r_trg.Dim() / n_dim;
 
-    pot_src.resize(n_src * nd);
-    grad_src.resize(n_src * nd * n_dim);
-    hess_src.resize(n_src * nd * n_dim * n_dim);
-    pot_trg.resize(n_trg * nd);
-    grad_trg.resize(n_trg * nd * n_dim);
-    hess_trg.resize(n_trg * nd * n_dim * n_dim);
+    pot_src.ReInit(n_src * nd);
+    grad_src.ReInit(n_src * nd * n_dim);
+    hess_src.ReInit(n_src * nd * n_dim * n_dim);
+    pot_trg.ReInit(n_trg * nd);
+    grad_trg.ReInit(n_trg * nd * n_dim);
+    hess_trg.ReInit(n_trg * nd * n_dim * n_dim);
+
+    auto pot_src_fort = pot_src;
+    auto grad_src_fort = grad_src;
+    auto hess_src_fort = hess_src;
+    auto pot_trg_fort = pot_trg;
+    auto grad_trg_fort = grad_trg;
+    auto hess_trg_fort = hess_trg;
 
     pdmk_params params;
     params.eps = 1e-6;
@@ -135,6 +137,7 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
     params.n_per_leaf = 80;
     params.n_mfm = nd;
     params.pgh_src = DMK_POTENTIAL;
+    params.pgh_trg = DMK_POTENTIAL;
     params.kernel = DMK_YUKAWA;
     params.fparam = 6.0;
     params.log_level = SPDLOG_LEVEL_OFF;
@@ -150,39 +153,57 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
         return std::exp(-params.fparam * dr) / dr;
     };
 
-    double test_src = 0.0;
-    double test_trg = 0.0;
-    int test_src_i = n_src / 3;
-    int test_trg_i = n_trg / 3;
+    const int n_test_src = std::min(n_src, 100);
+    const int n_test_trg = std::min(n_trg, 100);
+    std::vector<double> test_src(n_test_src);
+    std::vector<double> test_trg(n_test_trg);
 
-    for (int i = 0; i < n_src; ++i) {
-        test_src += charges[i] * yukawa(&r_src[i * n_dim], &r_src[test_src_i * n_dim]);
-        test_trg += charges[i] * yukawa(&r_src[i * n_dim], &r_trg[test_trg_i * n_dim]);
+    for (int i_src = 0; i_src < n_src; ++i_src) {
+        for (int i_trg = 0; i_trg < n_test_src; ++i_trg)
+            test_src[i_trg] += charges[i_src] * yukawa(&r_src[i_src * n_dim], &r_src[i_trg * n_dim]);
+        for (int i_trg = 0; i_trg < n_test_trg; ++i_trg)
+            test_trg[i_trg] += charges[i_src] * yukawa(&r_src[i_src * n_dim], &r_trg[i_trg * n_dim]);
     }
 
-    for (int i = 0; i < 2; ++i) {
-        pdmk(params, n_src, r_src.data(), charges.data(), rnormal.data(), dipstr.data(), n_trg, r_trg.data(),
-             pot_src.data(), nullptr, nullptr, pot_trg.data(), nullptr, nullptr);
-        params.log_level = SPDLOG_LEVEL_INFO;
-    }
+    pdmk(params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0], &pot_src[0], nullptr,
+         nullptr, &pot_trg[0], nullptr, nullptr);
 
-    REQUIRE(std::abs(1.0 - pot_src[test_src_i] / test_src) < params.eps);
-    REQUIRE(std::abs(1.0 - pot_trg[test_trg_i] / test_trg) < params.eps);
+    // double tottimeinfo[20];
+    // int use_dipole = 0;
+    // double st = omp_get_wtime();
+    // pdmk_(&nd, &n_dim, &params.eps, (int *)&params.kernel, &params.fparam, &params.use_periodic, &n_src, &r_src[0],
+    //       &params.use_charge, &charges[0], &use_dipole, nullptr, nullptr, (int *)&params.pgh_src, &pot_src_fort[0],
+    //       &grad_src_fort[0], &hess_src_fort[0], &n_trg, &r_trg[0], (int *)&params.pgh_trg, &pot_trg_fort[0],
+    //       &grad_trg_fort[0], &hess_trg_fort[0], tottimeinfo);
+    // std::cout << omp_get_wtime() - st << std::endl;
+
+    double l2_err_src = 0.0;
+    double l2_err_trg = 0.0;
+    for (int i = 0; i < n_test_src; ++i)
+        l2_err_src += test_src[i] != 0.0 ? sctl::pow<2>(1.0 - pot_src[i] / test_src[i]) : 0.0;
+    for (int i = 0; i < n_test_trg; ++i)
+        l2_err_trg += test_trg[i] != 0.0 ? sctl::pow<2>(1.0 - pot_trg[i] / test_trg[i]) : 0.0;
+
+    l2_err_src = std::sqrt(l2_err_src) / n_test_src;
+    l2_err_trg = std::sqrt(l2_err_trg) / n_test_trg;
+    CHECK(l2_err_src < 5 * params.eps);
+    CHECK(l2_err_trg < 5 * params.eps);
 }
 
 } // namespace dmk
 
 extern "C" {
-// void pdmkf(pdmk_params params, int n_src, const float *r_src, const float *charge, const float *normal,
-//            const float *dipole_str, int n_trg, const float *r_trg, float *pot, float *grad, float *hess, float
-//            *pottarg, float *gradtarg, float *hesstarg) {
-//     if (params.n_dim == 2)
-//         return dmk::pdmk<float, 2>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess,
-//                                    pottarg, gradtarg, hesstarg);
-//     if (params.n_dim == 3)
-//         return dmk::pdmk<float, 3>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot, grad, hess,
-//                                    pottarg, gradtarg, hesstarg);
-// }
+
+void pdmkf(pdmk_params params, int n_src, const float *r_src, const float *charge, const float *normal,
+           const float *dipole_str, int n_trg, const float *r_trg, float *pot_src, float *grad_src, float *hess_src,
+           float *pot_trg, float *grad_trg, float *hess_trg) {
+    if (params.n_dim == 2)
+        return dmk::pdmk<float, 2>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot_src, grad_src,
+                                   hess_src, pot_trg, grad_trg, hess_trg);
+    if (params.n_dim == 3)
+        return dmk::pdmk<float, 3>(params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot_src, grad_src,
+                                   hess_src, pot_trg, grad_trg, hess_trg);
+}
 
 void pdmk(pdmk_params params, int n_src, const double *r_src, const double *charge, const double *normal,
           const double *dipole_str, int n_trg, const double *r_trg, double *pot_src, double *grad_src, double *hess_src,

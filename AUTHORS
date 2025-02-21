@@ -1,5 +1,5 @@
-Main developer: Shidong Jiang (sjiang@flatironinstitute.org)
-
+Main developers: Fortran code: Shidong Jiang (sjiang@flatironinstitute.org), 2022
+                 C++ code: Robert Blackwell (rblackwell@flatironinstitute.org), 2024
 Contributors:
 
 1. Libin Lu (llu@flatironinstitute.org) and Dhairya Malhotra (dmalhotra@flatironinstitute.org)
@@ -13,4 +13,4 @@ at Yale University and his associates.
 4. Fortran 90 files in src/common/specialfunctions: see the documents therein. The code is
 distributed under the GNU GPL license.
 
-
+5. Various tests and fortran->c++ ports from Aman Rani.

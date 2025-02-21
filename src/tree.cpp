@@ -1,5 +1,6 @@
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
+#include <dmk/direct.hpp>
 #include <dmk/fortran.h>
 #include <dmk/fourier_data.hpp>
 #include <dmk/logger.h>
@@ -10,10 +11,11 @@
 #include <dmk/tree.hpp>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
+#include <doctest/extensions/doctest_mpi.h>
 #include <mpi.h>
-#include <ranges>
-#include <sctl/tree.hpp>
+#include <omp.h>
 #include <stdexcept>
+#include <unistd.h>
 
 namespace dmk {
 
@@ -33,14 +35,27 @@ std::pair<int, int> get_pwmax_and_poly_order(int dim, int ndigits, dmk_ikernel k
     throw std::runtime_error("Requested precision too high");
 }
 
+void update_offsets_from_counts(const sctl::Vector<sctl::Long> &counts, sctl::Long N,
+                                sctl::Vector<sctl::Long> &offsets) {
+    offsets.ReInit(counts.Dim());
+    sctl::Long last_offset;
+    for (int i = 0; i < counts.Dim(); ++i) {
+        if (counts[i]) {
+            offsets[i] = last_offset;
+            last_offset += N;
+        } else
+            offsets[i] = -1;
+    }
+}
+
 template <typename Real, int DIM>
 DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, const sctl::Vector<Real> &r_src,
                                 const sctl::Vector<Real> &r_trg, const sctl::Vector<Real> &charge)
     : sctl::PtTree<Real, DIM>(comm), params(params_), n_digits(std::round(log10(1.0 / params_.eps) - 0.1)),
       n_pw_max(get_pwmax_and_poly_order(DIM, n_digits, params_.kernel).first),
       n_order(get_pwmax_and_poly_order(DIM, n_digits, params_.kernel).second) {
-    auto &logger = dmk::get_logger(params.log_level);
-    auto &rank_logger = dmk::get_rank_logger(params.log_level);
+    auto &logger = dmk::get_logger(comm, params.log_level);
+    auto &rank_logger = dmk::get_rank_logger(comm, params.log_level);
 
     const int n_src = r_src.Dim() / DIM;
     const int n_trg = r_trg.Dim() / DIM;
@@ -52,12 +67,26 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     pot_vec_trg.SetZero();
 
     logger->debug("Building tree and sorting points");
+    constexpr bool balance21 = true; // Use "2-1" balancing for the tree, i.e. bordering boxes
+                                     // never more than one level away in depth
+    constexpr int halo = 0;          // Only grab nearest neighbors as 'ghosts'
     this->AddParticles("pdmk_src", r_src);
+    this->AddParticles("pdmk_trg", r_trg);
     this->AddParticleData("pdmk_charge", "pdmk_src", charge);
     this->AddParticleData("pdmk_pot_src", "pdmk_src", pot_vec_src);
-    this->AddParticles("pdmk_trg", r_trg);
     this->AddParticleData("pdmk_pot_trg", "pdmk_trg", pot_vec_trg);
-    this->UpdateRefinement(r_src, params.n_per_leaf, true, params.use_periodic); // balance21 = true
+    this->UpdateRefinement(r_src, params.n_per_leaf, balance21, params.use_periodic, halo);
+    this->template Broadcast<Real>("pdmk_src");
+    this->template Broadcast<Real>("pdmk_trg");
+    this->template Broadcast<Real>("pdmk_charge");
+    this->template Broadcast<Real>("pdmk_pot_src");
+    this->template Broadcast<Real>("pdmk_pot_trg");
+    this->GetData(r_src_sorted, r_src_cnt, "pdmk_src");
+    this->GetData(r_trg_sorted, r_trg_cnt, "pdmk_trg");
+    this->GetData(charge_sorted, charge_cnt, "pdmk_charge");
+    this->GetData(pot_src_sorted, pot_src_cnt, "pdmk_pot_src");
+    this->GetData(pot_trg_sorted, pot_trg_cnt, "pdmk_pot_trg");
+
     logger->debug("Tree build completed");
 
     logger->debug("Generating tree traversal metadata");
@@ -68,7 +97,7 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 
     // 1: Precomputation
     logger->debug("Generating p2c and c2p matrices of order {}", n_order);
-    auto [c2p, p2c] = dmk::chebyshev::get_c2p_p2c_matrices<Real>(DIM, n_order);
+    std::tie(c2p, p2c) = dmk::chebyshev::get_c2p_p2c_matrices<Real>(DIM, n_order);
     logger->debug("Finished generating matrices");
 
     fourier_data = FourierData<Real>(params.kernel, DIM, params.eps, n_digits, n_pw_max, params.fparam, boxsize);
@@ -80,10 +109,6 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     logger->debug("Finished calculating difference kernels");
     fourier_data.update_local_coeffs(params.eps);
     logger->debug("Finished updating local potential expansion coefficients");
-
-    // upward pass
-    upward_pass(c2p);
-    downward_pass(p2c);
 }
 
 /// @brief Build any bookkeeping data associated with the tree
@@ -95,24 +120,19 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::generate_metadata() {
     const int n_nodes = n_boxes();
-    this->GetData(r_src_sorted, r_src_cnt, "pdmk_src");
-    this->GetData(r_trg_sorted, r_trg_cnt, "pdmk_trg");
-    this->GetData(charge_sorted, charge_cnt, "pdmk_charge");
-    this->GetData(pot_src_sorted, pot_src_cnt, "pdmk_pot_src");
-    this->GetData(pot_trg_sorted, pot_trg_cnt, "pdmk_pot_trg");
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_mid = this->GetNodeMID();
     const auto &node_lists = this->GetNodeLists();
 
     src_counts_local.ReInit(n_nodes);
     trg_counts_local.ReInit(n_nodes);
+    r_src_offsets.ReInit(n_nodes);
+    r_trg_offsets.ReInit(n_nodes);
+    pot_src_offsets.ReInit(n_nodes);
+    pot_trg_offsets.ReInit(n_nodes);
+    charge_offsets.ReInit(n_nodes);
 
-    r_src_offsets.resize(n_nodes);
-    r_trg_offsets.resize(n_nodes);
-    pot_src_offsets.resize(n_nodes);
-    pot_trg_offsets.resize(n_nodes);
-    charge_offsets.resize(n_nodes);
-
+    r_src_offsets[0] = r_trg_offsets[0] = pot_src_offsets[0] = pot_trg_offsets[0] = charge_offsets[0] = 0;
     for (int i_node = 1; i_node < n_nodes; ++i_node) {
         r_src_offsets[i_node] = r_src_offsets[i_node - 1] + DIM * r_src_cnt[i_node - 1];
         r_trg_offsets[i_node] = r_trg_offsets[i_node - 1] + DIM * r_trg_cnt[i_node - 1];
@@ -169,18 +189,6 @@ void DMKPtTree<T, DIM>::generate_metadata() {
         }
     }
 
-    sctl::Vector<long> counts(src_counts_local.Dim());
-    for (auto &el : counts)
-        el = 1;
-
-    this->template AddData("src_counts", src_counts_local, counts);
-    this->template ReduceBroadcast<int>("src_counts");
-    this->template GetData<int>(src_counts_global, counts, "src_counts");
-
-    this->template AddData("trg_counts", trg_counts_local, counts);
-    this->template ReduceBroadcast<int>("trg_counts");
-    this->template GetData<int>(trg_counts_global, counts, "trg_counts");
-
     form_pw_expansion[0] = true;
     eval_pw_expansion[0] = true;
 
@@ -197,7 +205,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
                 if (neighbor < 0)
                     continue;
 
-                const int npts = src_counts_global[neighbor] + trg_counts_global[neighbor];
+                const int npts = src_counts_local[neighbor] + trg_counts_local[neighbor];
                 if (form_pw_expansion[neighbor] && npts) {
                     eval_pw_expansion[box] = true;
                     n_proxy_boxes_downward++;
@@ -236,16 +244,72 @@ void DMKPtTree<T, DIM>::generate_metadata() {
         }
     }
 
+    direct_neighbs_.ReInit(n_nodes);
+    n_direct_neighbs_.ReInit(n_nodes);
+    for (int i_level = 0; i_level < n_levels(); ++i_level) {
+        for (int box : level_indices[i_level]) {
+            if (!r_src_cnt[box]) {
+                n_direct_neighbs_[box] = 0;
+                continue;
+            }
+
+            int i_neighb = 0;
+            for (auto neighb : node_lists[box].nbr)
+                if (neighb >= 0)
+                    direct_neighbs_[box][i_neighb++] = neighb;
+
+            if (i_level == 0) {
+                n_direct_neighbs_[box] = i_neighb;
+                continue;
+            }
+
+            const double cutoff = 0.5 * 1.05 * (boxsize[i_level] + boxsize[i_level - 1]);
+            for (auto neighb : node_lists[node_lists[box].parent].nbr) {
+                if (neighb < 0 || !node_attr[neighb].Leaf)
+                    continue;
+
+                bool inrange = true;
+                for (int k = 0; k < DIM; ++k) {
+                    const double distance = std::abs(center_ptr(box)[k] - center_ptr(neighb)[k]);
+                    if (distance > cutoff)
+                        inrange = false;
+                }
+                if (inrange)
+                    direct_neighbs_[box][i_neighb++] = neighb;
+            }
+            n_direct_neighbs_[box] = i_neighb;
+        }
+    }
+
+    sctl::Vector<sctl::Long> counts(n_boxes());
     const int n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
-    proxy_coeffs_offsets.ReInit(n_boxes());
-    proxy_coeffs_offsets_downward.ReInit(n_boxes());
+    for (int i = 0; i < n_boxes(); ++i)
+        counts[i] = form_pw_expansion[i] ? n_coeffs : 0;
+
     proxy_coeffs.ReInit(n_coeffs * n_proxy_boxes_upward);
+    proxy_coeffs.SetZero();
+    this->AddData("proxy_coeffs", proxy_coeffs, counts);
+    this->template GetData<T>(proxy_coeffs, counts, "proxy_coeffs");
+    proxy_coeffs_offsets.ReInit(n_boxes());
+
+    long last_offset = 0;
+    for (int box = 0; box < n_nodes; ++box) {
+        if (counts[box]) {
+            proxy_coeffs_offsets[box] = last_offset;
+            last_offset += n_coeffs;
+        } else
+            proxy_coeffs_offsets[box] = -1;
+    }
+
+    proxy_coeffs_offsets_downward.ReInit(n_boxes());
     proxy_coeffs_downward.ReInit(n_coeffs * n_proxy_boxes_downward);
-    proxy_coeffs_offsets[0] = 0;
-    proxy_coeffs_offsets_downward[0] = 0;
-    for (int box = 1; box < n_nodes; ++box) {
-        proxy_coeffs_offsets[box] = proxy_coeffs_offsets[box - 1] + form_pw_expansion[box] * n_coeffs;
-        proxy_coeffs_offsets_downward[box] = proxy_coeffs_offsets_downward[box - 1] + eval_pw_expansion[box] * n_coeffs;
+    last_offset = 0;
+    for (int box = 0; box < n_nodes; ++box) {
+        if (eval_pw_expansion[box]) {
+            proxy_coeffs_offsets_downward[box] = last_offset;
+            last_offset += n_coeffs;
+        } else
+            proxy_coeffs_downward[box] = -1;
     }
 }
 
@@ -255,36 +319,27 @@ void DMKPtTree<T, DIM>::generate_metadata() {
 ///
 /// @tparam T Floating point format to use (float, double)
 /// @tparam DIM Spatial dimension tree lives in
-/// @param[in] n_mfm Number of different "charges" to simultaneously evaluate, a.k.a. the charge dimension
-/// @param[in] n_order Linear order of the polynomial expansion representing the charge distribution
-/// @param[in] c2p [n_order, n_order, DIM, 2**DIM] Child to parent matrices used to convert child proxy coefficients to
-/// parent proxy coefficients
 template <typename T, int DIM>
-void DMKPtTree<T, DIM>::upward_pass(const sctl::Vector<T> &c2p) {
-    auto &logger = dmk::get_logger();
-    auto &rank_logger = dmk::get_rank_logger();
-    this->GetData(r_src_sorted, r_src_cnt, "pdmk_src");
+void DMKPtTree<T, DIM>::upward_pass() {
+    auto &logger = dmk::get_logger(this->GetComm());
+    auto &rank_logger = dmk::get_rank_logger(this->GetComm());
 
     const std::size_t n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
-    proxy_coeffs.SetZero();
-    sctl::Vector<sctl::Long> counts(n_boxes());
-    counts.SetZero();
 
     constexpr int n_children = 1u << DIM;
     const auto &node_lists = this->GetNodeLists();
-    const auto &attrs = this->GetNodeAttr();
+    const auto &node_attr = this->GetNodeAttr();
     const auto &node_mid = this->GetNodeMID();
     const int dim = DIM;
 
     int n_direct = 0;
     const int start_level = std::max(n_levels() - 2, 0);
     for (auto i_box : level_indices[start_level]) {
-        if (!form_pw_expansion[i_box])
+        if (!form_pw_expansion[i_box] || !src_counts_local[i_box] || node_attr[i_box].Ghost)
             continue;
-        proxy::charge2proxycharge<double, DIM>(r_src_view(i_box), charge_view(i_box), center_view(i_box),
-                                               2.0 / boxsize[start_level], proxy_view_upward(i_box));
-        counts[i_box] = 1;
-        n_direct++;
+
+        proxy::charge2proxycharge<T, DIM>(r_src_view(i_box), charge_view(i_box), center_view(i_box),
+                                          2.0 / boxsize[start_level], proxy_view_upward(i_box));
     }
     logger->debug("proxy: finished building base proxy charges");
 
@@ -299,44 +354,34 @@ void DMKPtTree<T, DIM>::upward_pass(const sctl::Vector<T> &c2p) {
                 const int child_box = children[i_child];
                 if (child_box < 0 || !src_counts_local[child_box])
                     continue;
+
                 if (form_pw_expansion[child_box]) {
-                    ndview<const double, 2> c2p_view(&c2p[i_child * DIM * n_order * n_order], n_order, DIM);
-                    tensorprod::transform<double, DIM>(params.n_mfm, true, proxy_view_upward(child_box), c2p_view,
-                                                       proxy_view_upward(parent_box));
-                    counts[parent_box] = 1;
-                    n_merged += 1;
-                } else {
-                    proxy::charge2proxycharge<double, DIM>(r_src_view(child_box), charge_view(child_box),
-                                                           center_view(parent_box), 2.0 / boxsize[i_level],
-                                                           proxy_view_upward(parent_box));
-                    counts[child_box] = 1;
-                    n_direct++;
+                    ndview<const T, 2> c2p_view(&c2p[i_child * DIM * n_order * n_order], n_order, DIM);
+                    tensorprod::transform<T, DIM>(params.n_mfm, true, proxy_view_upward(child_box), c2p_view,
+                                                  proxy_view_upward(parent_box));
+                } else if (!node_attr[child_box].Ghost) {
+                    proxy::charge2proxycharge<T, DIM>(r_src_view(child_box), charge_view(child_box),
+                                                      center_view(parent_box), 2.0 / boxsize[i_level],
+                                                      proxy_view_upward(parent_box));
                 }
             }
         }
     }
 
-    int tot_proxy = 0;
-    for (int i = 0; i < n_boxes(); ++i) {
-        auto &count = counts[i];
-        tot_proxy += count;
-        count = form_pw_expansion[i] ? n_coeffs : 0;
-    }
-
     logger->debug("Finished building proxy charges");
-    this->AddData("proxy_coeffs", proxy_coeffs, counts);
+    sctl::Vector<sctl::Long> counts;
     this->template ReduceBroadcast<T>("proxy_coeffs");
     this->template GetData<T>(proxy_coeffs, counts, "proxy_coeffs");
-
-    int buf[] = {tot_proxy, n_direct, n_merged};
-    if (this->GetComm().Rank() == 0)
-        MPI_Reduce(MPI_IN_PLACE, buf, 3, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-    else
-        MPI_Reduce(buf, buf, 3, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+    long last_offset = 0;
+    for (int box = 0; box < n_boxes(); ++box) {
+        if (counts[box]) {
+            proxy_coeffs_offsets[box] = last_offset;
+            last_offset += n_coeffs;
+        } else
+            proxy_coeffs_offsets[box] = -1;
+    }
 
     logger->debug("proxy: finished broadcasting proxy charges");
-    logger->trace("proxy: n_proxy, n_direct, n_merged: {} {} {}", buf[0], buf[1], buf[2]);
-    rank_logger->trace("proxy: n_proxy_local / n_boxes_local {}", (float)tot_proxy / n_boxes());
 }
 
 template <typename T, int DIM>
@@ -366,33 +411,10 @@ void shift_planewave(const ndview<std::complex<Complex>, DIM + 1> &pwexp1_,
             pwexp2(j, ind) += pwexp1(j, ind) * wpwshift(j);
 }
 
-/// @brief Perform the "downward pass"
-///
-/// Updates: proxy_coeffs_downward, tree 'pdmk_pot' particle data
-///
-/// @tparam T Floating point format to use (float, double)
-/// @tparam DIM Spatial dimension tree lives in
-/// @param[in,out] fourier_data Various fourier data. Only changes work array (FIXME: lame doc)
-/// @param[in] p2c [n_order, n_order, DIM, 2**DIM] Parent to child matrices used to pass parent proxy charges to their
-/// children
 template <typename T, int DIM>
-void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
-    auto &logger = dmk::get_logger();
-    auto &rank_logger = dmk::get_rank_logger();
-    const int nd = params.n_mfm;
-
-    const auto &node_lists = this->GetNodeLists();
-    const auto &node_attr = this->GetNodeAttr();
-    const auto xs = dmk::chebyshev::get_cheb_nodes<T>(n_order, -1.0, 1.0);
-    sctl::Vector<std::complex<T>> poly2pw(n_order * fourier_data.n_pw), pw2poly(n_order * fourier_data.n_pw);
-
-    const int nd_in = params.n_mfm;
-    const int nd_out = params.n_mfm;
-    // FIXME: This should be assigned automatically at tree construction (fourier_data should be suboject)
-    n_pw = fourier_data.n_pw;
+void DMKPtTree<T, DIM>::init_planewave_data() {
     const std::size_t n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
-    const std::size_t n_pw_per_box = n_pw_modes * nd_out;
-    const std::size_t n_coeffs_per_box = params.n_mfm * sctl::pow<DIM>(n_order);
+    const std::size_t n_pw_per_box = n_pw_modes * params.n_mfm;
 
     pw_in_offsets.ReInit(n_boxes());
     pw_out_offsets.ReInit(n_boxes());
@@ -403,61 +425,79 @@ void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
         pw_out_offsets[i_box] = pw_out_offsets[i_box - 1] + form_pw_expansion[i_box] * n_pw_per_box;
         n_pw_boxes_out += form_pw_expansion[i_box];
 
-        bool need_in = ((src_counts_global[i_box] + trg_counts_global[i_box]) > 0) || eval_pw_expansion[i_box];
+        bool need_in = ((src_counts_local[i_box] + trg_counts_local[i_box]) > 0) || eval_pw_expansion[i_box];
         pw_in_offsets[i_box] = pw_in_offsets[i_box - 1] + need_in * n_pw_per_box;
         n_pw_boxes_in += need_in;
     }
 
     pw_out.ReInit(n_pw_per_box * n_pw_boxes_out);
     pw_in.ReInit(n_pw_per_box * n_pw_boxes_in);
-    proxy_coeffs_downward.SetZero();
     pw_out.SetZero();
     pw_in.SetZero();
+}
 
+/// @brief Perform the "downward pass"
+///
+/// Updates: proxy_coeffs_downward, tree 'pdmk_pot' particle data
+///
+/// @tparam T Floating point format to use (float, double)
+/// @tparam DIM Spatial dimension tree lives in
+template <typename T, int DIM>
+void DMKPtTree<T, DIM>::downward_pass() {
+    auto &logger = dmk::get_logger(this->GetComm());
+    auto &rank_logger = dmk::get_rank_logger(this->GetComm());
     constexpr int dim = DIM;
     constexpr int nmax = 1;
+    const int nd = params.n_mfm;
+    // FIXME: This should be assigned automatically at tree construction (fourier_data should be suboject)
+    n_pw = fourier_data.n_pw;
+
+    const auto &node_lists = this->GetNodeLists();
+    const auto &node_attr = this->GetNodeAttr();
+
+    init_planewave_data();
+    const std::size_t n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
+    const std::size_t n_pw_per_box = n_pw_modes * nd;
+    const std::size_t n_coeffs_per_box = params.n_mfm * sctl::pow<DIM>(n_order);
+
     const int shift = n_pw / 2;
-    const int nexp = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     sctl::Vector<std::complex<T>> wpwshift(n_pw_modes * sctl::pow<DIM>(2 * nmax + 1));
     sctl::Vector<T> ts(n_pw);
-    sctl::Vector<T> rk(DIM * sctl::pow<DIM>(n_pw));
-    sctl::Vector<T> radialft(nexp);
+    sctl::Vector<T> radialft(n_pw_modes);
+    sctl::Vector<T> kernel_ft;
+    get_windowed_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta, n_digits, boxsize[0],
+                                   fourier_data.prolate_funcs, kernel_ft);
+    util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<const T, 1>(&kernel_ft[0], kernel_ft.Dim()),
+                                              ndview<T, 1>(&radialft[0], n_pw_modes));
 
-    for (int i = 0; i < n_pw; ++i)
-        ts[i] = fourier_data.hpw[0] * (i - shift);
-    ndview<const double, 1> ts_view(&ts[0], n_pw);
-    ndview<double, 2> rk_view(&rk[0], DIM, pow(n_pw, DIM));
-    dmk::util::mesh_nd(DIM, ts_view, rk_view);
-    ndview<const double, 1> fourier_data_view(&fourier_data.dkernelft[0], fourier_data.n_fourier + 1);
-    ndview<double, 1> radialft_view(&radialft[0], nexp);
-    dmk::util::mk_tensor_product_fourier_transform(DIM, n_pw, fourier_data_view, radialft_view);
-
+    sctl::Vector<std::complex<T>> poly2pw(n_order * fourier_data.n_pw), pw2poly(n_order * fourier_data.n_pw);
     fourier_data.calc_planewave_coeff_matrices(-1, n_order, poly2pw, pw2poly);
+    ndview<const std::complex<T>, 2> poly2pw_view(&poly2pw[0], fourier_data.n_pw, n_order);
+    ndview<const std::complex<T>, 2> pw2poly_view(&pw2poly[0], fourier_data.n_pw, n_order);
 
-    ndview<const std::complex<double>, 2> poly2pw_view(&poly2pw[0], fourier_data.n_pw, n_order);
-    dmk::proxy::proxycharge2pw<double, DIM>(proxy_view_upward(0), poly2pw_view, pw_out_view(0));
-
-    constexpr int zero = 0;
+    dmk::proxy::proxycharge2pw<T, DIM>(proxy_view_upward(0), poly2pw_view, pw_out_view(0));
     multiply_kernelFT_cd2p<T, DIM>(pw_out_view(0), radialft);
     memcpy(pw_in_ptr(0), pw_out_ptr(0), n_pw_per_box * sizeof(std::complex<T>));
-    ndview<const std::complex<double>, 2> pw2poly_view(&pw2poly[0], fourier_data.n_pw, n_order);
-    dmk::planewave_to_proxy_potential<double, DIM>(pw_in_view_downward(0), pw2poly_view, proxy_view_downward(0));
+
+    proxy_coeffs_downward.SetZero();
+    dmk::planewave_to_proxy_potential<T, DIM>(pw_in_view(0), pw2poly_view, proxy_view_downward(0));
+
+    Eigen::MatrixX<T> r_src_t = Eigen::Map<Eigen::MatrixX<T>>(r_src_ptr(0), dim, src_counts_local[0]).transpose();
+    Eigen::MatrixX<T> r_trg_t = Eigen::Map<Eigen::MatrixX<T>>(r_trg_ptr(0), dim, trg_counts_local[0]).transpose();
 
     constexpr int n_children = 1u << DIM;
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         for (int i = 0; i < n_pw; ++i)
             ts[i] = fourier_data.hpw[i_level + 1] * (i - shift);
-        ndview<const double, 1> ts_view(&ts[0], n_pw);
-        ndview<double, 2> rk_view(&rk[0], DIM, pow(n_pw, DIM));
-        dmk::util::mesh_nd(DIM, ts_view, rk_view);
 
         fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
         dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw, ts, wpwshift);
 
-        ndview<const double, 1> fourier_data_view(&fourier_data.dkernelft[(i_level + 1) * (fourier_data.n_fourier + 1)],
-                                                  fourier_data.n_fourier + 1);
-        ndview<double, 1> radialft_view(&radialft[0], nexp);
-        dmk::util::mk_tensor_product_fourier_transform(DIM, n_pw, fourier_data_view, radialft_view);
+        get_difference_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta, n_digits, boxsize[i_level],
+                                         fourier_data.prolate_funcs, kernel_ft);
+
+        util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<const T, 1>(&kernel_ft[0], kernel_ft.Dim()),
+                                                  ndview<T, 1>(&radialft[0], n_pw_modes));
 
         // Form outgoing expansions
         for (auto box : level_indices[i_level]) {
@@ -466,8 +506,7 @@ void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
 
             // Form the outgoing expansion Φl(box) for the difference kernel Dl from the proxy charge expansion
             // coefficients using Tprox2pw.
-            ndview<const std::complex<double>, 2> poly2pw_view(&poly2pw[0], fourier_data.n_pw, n_order);
-            dmk::proxy::proxycharge2pw<double, DIM>(proxy_view_upward(box), poly2pw_view, pw_out_view(box));
+            dmk::proxy::proxycharge2pw<T, DIM>(proxy_view_upward(box), poly2pw_view, pw_out_view(box));
 
             multiply_kernelFT_cd2p<T, DIM>(pw_out_view(box), radialft);
             memcpy(pw_in_ptr(box), pw_out_ptr(box), n_pw_per_box * sizeof(std::complex<T>));
@@ -475,8 +514,9 @@ void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
 
         // Form incoming expansions
         for (auto box : level_indices[i_level]) {
-            if (src_counts_global[box] + trg_counts_global[box] == 0)
+            if (src_counts_local[box] + trg_counts_local[box] == 0)
                 continue;
+
             for (auto &neighbor : node_lists[box].nbr) {
                 if (neighbor < 0 || neighbor == box || !form_pw_expansion[neighbor])
                     continue;
@@ -488,8 +528,8 @@ void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
                 // FIXME: check if valid for periodic boundary conditions
                 const int ind = sctl::pow<3>(dim) - 1 - (&neighbor - &node_lists[box].nbr[0]);
 
-                ndview<const std::complex<double>, 1> wpwshift_view(&wpwshift[n_pw_per_box * ind], nexp);
-                shift_planewave<double, DIM>(pw_out_view(neighbor), pw_in_view_downward(box), wpwshift_view);
+                ndview<const std::complex<T>, 1> wpwshift_view(&wpwshift[n_pw_per_box * ind], n_pw_per_box);
+                shift_planewave<T, DIM>(pw_out_view(neighbor), pw_in_view(box), wpwshift_view);
             }
         }
 
@@ -504,9 +544,7 @@ void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
                 continue;
 
             // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
-            ndview<const std::complex<double>, 2> pw2poly_view(&pw2poly[0], fourier_data.n_pw, n_order);
-            dmk::planewave_to_proxy_potential<double, DIM>(pw_in_view_downward(box), pw2poly_view,
-                                                           proxy_view_downward(box));
+            dmk::planewave_to_proxy_potential<T, DIM>(pw_in_view(box), pw2poly_view, proxy_view_downward(box));
 
             if (eval_tp_expansion[box]) {
                 if (n_src)
@@ -525,74 +563,162 @@ void DMKPtTree<T, DIM>::downward_pass(const sctl::Vector<T> &p2c) {
 
                 if (eval_tp_expansion[child] && !eval_pw_expansion[child]) {
                     if (src_counts_local[child])
-                        proxy::eval_targets<T, DIM>(proxy_view_downward(box), r_src_view(child), center_view(child), sc,
+                        proxy::eval_targets<T, DIM>(proxy_view_downward(box), r_src_view(child), center_view(box), sc,
                                                     pot_src_view(child));
                     if (trg_counts_local[child])
-                        proxy::eval_targets<T, DIM>(proxy_view_downward(box), r_trg_view(child), center_view(child), sc,
+                        proxy::eval_targets<T, DIM>(proxy_view_downward(box), r_trg_view(child), center_view(box), sc,
                                                     pot_trg_view(child));
                 } else if (eval_pw_expansion[child]) {
-                    ndview<const double, 2> p2c_view(&p2c[i_child * DIM * n_order * n_order], n_order, DIM);
-                    dmk::tensorprod::transform<double, DIM>(nd, true, proxy_view_downward(box), p2c_view,
-                                                            proxy_view_downward(child));
+                    ndview<const T, 2> p2c_view(&p2c[i_child * DIM * n_order * n_order], n_order, DIM);
+                    dmk::tensorprod::transform<T, DIM>(nd, true, proxy_view_downward(box), p2c_view,
+                                                       proxy_view_downward(child));
                 }
             }
         }
 
-        const double rsc = 2.0 / boxsize[i_level];
+        double bsize = i_level == 0 ? 0.5 * boxsize[i_level] : boxsize[i_level];
+        const double rsc = 2.0 / bsize;
         const double cen = -1.0;
-        const double d2max2 = boxsize[i_level] * boxsize[i_level];
+        const double d2max = bsize * bsize;
         if (params.kernel != DMK_YUKAWA)
             throw std::runtime_error("Only yukawa potential supported");
         // FIXME: more than yukawa...
         const T w0 = fourier_data.yukawa_windowed_kernel_value_at_zero(i_level);
+
+        const ndview<const T, 1> cheb_coeffs(&fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level],
+                                             fourier_data.ncoeffs1[i_level]);
         for (auto box : level_indices[i_level]) {
             // Evaluate the direct interactions
-            if (r_src_cnt[box] == 0)
+            if (!r_src_cnt[box])
                 continue;
 
-            const int n_src = r_src_cnt[box];
-            const int ifself = 1;
-            const int ifcharge = params.use_charge;
-            const int ifdipole = 0;
-            const int one = 1;
-            for (auto neighbor : node_lists[box].nbr) {
-                if (neighbor < 0)
-                    continue;
+            for (auto neighbor : direct_neighbs(box)) {
                 const int n_src_neighb = src_counts_local[neighbor];
                 const int n_trg_neighb = trg_counts_local[neighbor];
 
+                std::array<std::span<const T>, DIM> r_trg;
                 if (n_src_neighb) {
-                    Eigen::MatrixX<T> r_src_transposed =
-                        Eigen::Map<Eigen::MatrixX<T>>(r_src_ptr(neighbor), dim, n_src_neighb).transpose();
-                    pdmk_direct_c_(&nd, &dim, (int *)&params.kernel, &params.fparam, &n_digits, &rsc, &cen, &ifself,
-                                   &fourier_data.ncoeffs1[i_level],
-                                   &fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level], &d2max2, &one, &n_src,
-                                   r_src_ptr(box), &ifcharge, charge_ptr(box), &ifdipole, nullptr, &one, &n_src_neighb,
-                                   &n_src_neighb, r_src_transposed.data(), (int *)&params.pgh_src,
-                                   pot_src_ptr(neighbor), nullptr, nullptr);
+                    for (int i = 0; i < DIM; ++i)
+                        r_trg[i] = std::span<const T>(&r_src_t(r_src_offsets[neighbor] / DIM, i), n_src_neighb);
+
+                    direct_eval<T, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
+                                        &params.fparam, rsc, cen, d2max, pot_src_view(neighbor));
                 }
                 if (n_trg_neighb) {
-                    Eigen::MatrixX<T> r_trg_transposed =
-                        Eigen::Map<Eigen::MatrixX<T>>(r_trg_ptr(neighbor), dim, n_trg_neighb).transpose();
-                    pdmk_direct_c_(&nd, &dim, (int *)&params.kernel, &params.fparam, &n_digits, &rsc, &cen, &ifself,
-                                   &fourier_data.ncoeffs1[i_level],
-                                   &fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level], &d2max2, &one, &n_src,
-                                   r_src_ptr(box), &ifcharge, charge_ptr(box), &ifdipole, nullptr, &one, &n_trg_neighb,
-                                   &n_trg_neighb, r_trg_transposed.data(), (int *)&params.pgh_trg,
-                                   pot_trg_ptr(neighbor), nullptr, nullptr);
+                    for (int i = 0; i < DIM; ++i)
+                        r_trg[i] = std::span<const T>(&r_trg_t(r_trg_offsets[neighbor] / DIM, i), n_trg_neighb);
+
+                    direct_eval<T, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
+                                        &params.fparam, rsc, cen, d2max, pot_trg_view(neighbor));
                 }
             }
 
             // Correct for self-evaluations
-            for (int i = 0; i < nd; ++i)
-                for (int i_src = 0; i_src < n_src; ++i_src)
-                    pot_src_ptr(box)[i * n_src + i_src] -= w0 * charge_ptr(box)[i * n_src + i_src];
+            auto pot = pot_src_view(box);
+            auto charge = charge_view(box);
+            for (int i_src = 0; i_src < r_src_cnt[box]; ++i_src)
+                for (int i = 0; i < nd; ++i)
+                    pot(i, i_src) -= w0 * charge(i, i_src);
         }
     }
 }
 
-// template struct DMKPtTree<float, 2>;
-// template struct DMKPtTree<float, 3>;
+MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
+    constexpr int n_dim = 3;
+    constexpr int n_src = 10000;
+    constexpr int n_trg = n_src;
+    constexpr int n_charge_dim = 1;
+    constexpr bool uniform = false;
+
+    sctl::Vector<double> r_src, r_trg, r_src_norms, charges, dipoles, pot_src, grad_src, hess_src, pot_trg, grad_trg,
+        hess_trg;
+    if (test_rank == 0)
+        dmk::util::init_test_data(n_dim, n_charge_dim, n_src, n_trg, uniform, true, r_src, r_trg, r_src_norms, charges,
+                                  dipoles, 0);
+
+    pdmk_params params;
+    params.eps = 1E-6;
+    params.kernel = DMK_YUKAWA;
+    params.log_level = SPDLOG_LEVEL_OFF;
+    params.fparam = 6.0;
+    params.n_dim = n_dim;
+    params.n_mfm = n_charge_dim;
+    params.n_per_leaf = 80;
+
+    double st = omp_get_wtime();
+    auto comm = sctl::Comm(test_comm);
+    DMKPtTree<double, n_dim> tree(comm, params, r_src, r_trg, charges);
+    tree.upward_pass();
+    tree.downward_pass();
+    tree.GetParticleData(pot_src, "pdmk_pot_src");
+    tree.GetParticleData(pot_trg, "pdmk_pot_trg");
+    if (test_rank == 0)
+        std::cout << omp_get_wtime() - st << std::endl;
+
+    if (true || test_rank == 0) {
+        dmk::util::init_test_data(n_dim, n_charge_dim, n_src, n_trg, uniform, true, r_src, r_trg, r_src_norms, charges,
+                                  dipoles, 0);
+
+        DMKPtTree<double, n_dim> tree_single(sctl::Comm::Self(), params, r_src, r_trg, charges);
+        tree_single.upward_pass();
+        tree_single.downward_pass();
+        sctl::Vector<double> pot_src_single, pot_trg_single;
+        tree_single.GetParticleData(pot_src_single, "pdmk_pot_src");
+        tree_single.GetParticleData(pot_trg_single, "pdmk_pot_trg");
+
+        sleep(test_rank);
+        auto &node_mid = tree.GetNodeMID();
+        for (int ibox = 0; ibox < tree.n_boxes(); ++ibox) {
+            std::array<double, 3> x, x_single;
+            for (int i = 0; i < 3; ++i)
+                x[i] = tree.center_ptr(ibox)[i];
+
+            int single_box = -1;
+            for (int jbox = 0; jbox < tree_single.n_boxes(); ++jbox) {
+                for (int i = 0; i < 3; ++i)
+                    x_single[i] = tree_single.center_ptr(jbox)[i];
+
+                if (x_single == x) {
+                    single_box = jbox;
+                    break;
+                }
+            }
+            if (single_box < 0) {
+                std::cout << fmt::format("No match for box {}\n", ibox);
+                continue;
+            }
+
+            double maxerr_up = 0.0;
+            if (ibox == 0 || tree.form_pw_expansion[ibox]) {
+                double max_actual = 0.0;
+                for (int i = 0; i < sctl::pow<3>(tree.n_order); ++i) {
+                    const double actual = tree_single.proxy_ptr_upward(single_box)[i];
+                    const double mpi = tree.proxy_ptr_upward(ibox)[i];
+                    const double err = std::abs(mpi - actual);
+                    maxerr_up = std::max(err, maxerr_up);
+                    max_actual = std::max(std::abs(actual), max_actual);
+                }
+                maxerr_up = max_actual ? maxerr_up / max_actual : 0.0;
+            }
+
+            if (maxerr_up > 1E-14)
+                std::cout << fmt::format("{:3} {:3} {:3} {:5.4E} {:3} ({} {} {})\n", test_rank, ibox, single_box,
+                                         maxerr_up, node_mid[ibox].Depth(), x[0], x[1], x[2]);
+        }
+
+        if (test_rank == 0) {
+            for (int i = 0; i < n_src; ++i) {
+                double err_src = pot_src[i] == 0. ? 0.0 : std::abs(1.0 - pot_src[i] / pot_src_single[i]);
+                double err_trg = pot_trg[i] == 0. ? 0.0 : std::abs(1.0 - pot_trg[i] / pot_trg_single[i]);
+                if (err_src > 1E-12 || err_trg > 1E-12)
+                    std::cout << fmt::format("{} {:5.4E} {:5.4E}\n", i, err_src, err_trg);
+            }
+        }
+    }
+}
+
+template struct DMKPtTree<float, 2>;
+template struct DMKPtTree<float, 3>;
 template struct DMKPtTree<double, 2>;
 template struct DMKPtTree<double, 3>;
 

@@ -1952,7 +1952,10 @@ c
            if (ifpwexpform(ibox).eq.1) then
               iaddr(1,ibox) = istart + itmp*nn1
               itmp = itmp+1
+           else
+              iaddr(1,ibox) = -1
            endif
+
          enddo
          istart = istart + itmp*nn1
       enddo
@@ -1965,6 +1968,8 @@ c
            if (ifpwexpeval(ibox).eq.1) then
               iaddr(2,ibox) = istart + itmp2*nn2
               itmp2 = itmp2+1
+           else
+              iaddr(2,ibox) = -1
            endif
          enddo
          istart = istart + itmp2*nn2

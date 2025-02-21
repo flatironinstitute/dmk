@@ -4,7 +4,6 @@
 #include <dmk/tensorprod.hpp>
 #include <dmk/types.hpp>
 #include <sctl.hpp>
-#include <type_traits>
 
 namespace dmk::tensorprod {
 
@@ -45,10 +44,10 @@ void transform_3d(int add_flag, const ndview<const T, 3> &fin, const ndview<cons
                   const ndview<T, 3> &fout) {
     const int nin = fin.extent(0);
     const int nout = fout.extent(0);
-      const int nin2 = nin * nin;
+    const int nin2 = nin * nin;
     const int noutnin = nout * nin;
     const int nout2 = nout * nout;
-    
+
     sctl::Vector<T> ff_(nin * nin * nout);
     sctl::Vector<T> fft_(nin * nout * nin);
     sctl::Vector<T> ff2(nout * nout * nin);
@@ -108,6 +107,12 @@ void transform(int nvec, int add_flag, const ndview<const T, DIM + 1> &fin, cons
     }
 }
 
+template void transform<float, 1>(int nvec, int add_flag, const dmk::ndview<const float, 2> &fin,
+                                  const dmk::ndview<const float, 2> &umat, const ndview<float, 2> &fout);
+template void transform<float, 2>(int nvec, int add_flag, const dmk::ndview<const float, 3> &fin,
+                                  const dmk::ndview<const float, 2> &umat, const ndview<float, 3> &fout);
+template void transform<float, 3>(int nvec, int add_flag, const dmk::ndview<const float, 4> &fin,
+                                  const dmk::ndview<const float, 2> &umat, const ndview<float, 4> &fout);
 template void transform<double, 1>(int nvec, int add_flag, const dmk::ndview<const double, 2> &fin,
                                    const dmk::ndview<const double, 2> &umat, const ndview<double, 2> &fout);
 template void transform<double, 2>(int nvec, int add_flag, const dmk::ndview<const double, 3> &fin,

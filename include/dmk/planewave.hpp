@@ -12,8 +12,7 @@ void planewave_to_proxy_potential(const ndview<const std::complex<Real>, DIM + 1
                                   const ndview<Real, DIM + 1> &proxy_coeffs);
 
 template <typename T>
-void calc_planewave_coeff_matrices(double boxsize, T hpw, int n_pw, int n_order,
-                                   sctl::Vector<std::complex<T>> &prox2pw_vec,
+void calc_planewave_coeff_matrices(T boxsize, T hpw, int n_pw, int n_order, sctl::Vector<std::complex<T>> &prox2pw_vec,
                                    sctl::Vector<std::complex<T>> &pw2poly_vec);
 
 template <int DIM, typename T>
