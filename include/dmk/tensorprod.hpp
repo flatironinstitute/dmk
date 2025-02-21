@@ -1,9 +1,12 @@
 #ifndef TENSORPROD_HPP
 #define TENSORPROD_HPP
 
+#include <dmk/types.hpp>
+
 namespace dmk::tensorprod {
-template <typename T>
-void transform(int n_dim, int nvec, int nin, int nout, int add_flag, const T *fin, const T *umat, T *fout);
+template <typename T, int DIM>
+void transform(int nvec, int add_flag, const ndview<const T, DIM + 1> &fin, const ndview<const T, 2> &umat,
+               const ndview<T, DIM + 1> &fout);
 }
 
 #endif

@@ -43,8 +43,7 @@ void update_offsets_from_counts(const sctl::Vector<sctl::Long> &counts, sctl::Lo
         if (counts[i]) {
             offsets[i] = last_offset;
             last_offset += N;
-        }
-        else
+        } else
             offsets[i] = -1;
     }
 }
@@ -309,8 +308,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
         if (eval_pw_expansion[box]) {
             proxy_coeffs_offsets_downward[box] = last_offset;
             last_offset += n_coeffs;
-        }
-        else
+        } else
             proxy_coeffs_downward[box] = -1;
     }
 }
@@ -357,13 +355,15 @@ void DMKPtTree<T, DIM>::upward_pass() {
                 if (child_box < 0 || !src_counts_local[child_box])
                     continue;
 
-                if (form_pw_expansion[child_box])
-                    tensorprod::transform(DIM, params.n_mfm, n_order, n_order, true, proxy_ptr_upward(child_box),
-                                          &c2p[i_child * DIM * n_order * n_order], proxy_ptr_upward(parent_box));
-                else if (!node_attr[child_box].Ghost)
+                if (form_pw_expansion[child_box]) {
+                    ndview<const T, 2> c2p_view(&c2p[i_child * DIM * n_order * n_order], n_order, DIM);
+                    tensorprod::transform<T, DIM>(params.n_mfm, true, proxy_view_upward(child_box), c2p_view,
+                                                  proxy_view_upward(parent_box));
+                } else if (!node_attr[child_box].Ghost) {
                     proxy::charge2proxycharge<T, DIM>(r_src_view(child_box), charge_view(child_box),
                                                       center_view(parent_box), 2.0 / boxsize[i_level],
                                                       proxy_view_upward(parent_box));
+                }
             }
         }
     }
@@ -395,14 +395,20 @@ void multiply_kernelFT_cd2p(const ndview<std::complex<T>, DIM + 1> &pwexp, const
             pwexp_flat(n, ind) *= radialft[n];
 }
 
-template <typename Complex>
-void shift_planewave(int nd, int nexp, const Complex *pwexp1_, Complex *pwexp2_, const Complex *wpwshift) {
-    dmk::ndview<const Complex, 2> pwexp1(pwexp1_, nexp, nd);
-    dmk::ndview<Complex, 2> pwexp2(pwexp2_, nexp, nd);
+template <typename Complex, int DIM>
+void shift_planewave(const ndview<std::complex<Complex>, DIM + 1> &pwexp1_,
+                     const ndview<std::complex<Complex>, DIM + 1> &pwexp2_,
+                     const ndview<const std::complex<Complex>, 1> &wpwshift) {
+
+    const int nd = pwexp1_.extent(DIM);
+    const int nexp = wpwshift.extent(0);
+
+    dmk::ndview<const std::complex<Complex>, 2> pwexp1(pwexp1_.data_handle(), nexp, nd);
+    dmk::ndview<std::complex<Complex>, 2> pwexp2(pwexp2_.data_handle(), nexp, nd);
 
     for (int ind = 0; ind < nd; ++ind)
         for (int j = 0; j < nexp; ++j)
-            pwexp2(j, ind) += pwexp1(j, ind) * wpwshift[j];
+            pwexp2(j, ind) += pwexp1(j, ind) * wpwshift(j);
 }
 
 template <typename T, int DIM>
@@ -521,7 +527,9 @@ void DMKPtTree<T, DIM>::downward_pass() {
                 // note: neighbors in SCTL are sorted in reverse order to wpwshift
                 // FIXME: check if valid for periodic boundary conditions
                 const int ind = sctl::pow<3>(dim) - 1 - (&neighbor - &node_lists[box].nbr[0]);
-                shift_planewave(nd, n_pw_modes, pw_out_ptr(neighbor), pw_in_ptr(box), &wpwshift[n_pw_per_box * ind]);
+
+                ndview<const std::complex<T>, 1> wpwshift_view(&wpwshift[n_pw_per_box * ind], n_pw_per_box);
+                shift_planewave<T, DIM>(pw_out_view(neighbor), pw_in_view(box), wpwshift_view);
             }
         }
 
@@ -561,8 +569,9 @@ void DMKPtTree<T, DIM>::downward_pass() {
                         proxy::eval_targets<T, DIM>(proxy_view_downward(box), r_trg_view(child), center_view(box), sc,
                                                     pot_trg_view(child));
                 } else if (eval_pw_expansion[child]) {
-                    dmk::tensorprod::transform(dim, nd, n_order, n_order, true, proxy_ptr_downward(box),
-                                               &p2c[i_child * DIM * n_order * n_order], proxy_ptr_downward(child));
+                    ndview<const T, 2> p2c_view(&p2c[i_child * DIM * n_order * n_order], n_order, DIM);
+                    dmk::tensorprod::transform<T, DIM>(nd, true, proxy_view_downward(box), p2c_view,
+                                                       proxy_view_downward(child));
                 }
             }
         }

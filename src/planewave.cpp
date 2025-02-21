@@ -1,5 +1,6 @@
 #include <Eigen/Core>
 #include <dmk/chebychev.hpp>
+#include <dmk/fortran.h>
 #include <dmk/gemm.hpp>
 #include <dmk/planewave.hpp>
 #include <dmk/types.hpp>
@@ -16,7 +17,6 @@ void pw2proxypot_2d(const ndview<const std::complex<Real>, 3> &pw_expansion,
     const int n_charge_dim = proxy_coeffs.extent(2);
     const int n_pw = pw_expansion.extent(0);
     const int n_pw2 = pw_expansion.extent(1);
-    const int n_proxy_coeffs = n_order * n_order;
 
     sctl::Vector<std::complex<Real>> ff_(n_order * n_pw2);
     sctl::Vector<std::complex<Real>> zcoefs_(n_order * n_order);
@@ -25,6 +25,7 @@ void pw2proxypot_2d(const ndview<const std::complex<Real>, 3> &pw_expansion,
     ndview<std::complex<Real>, 2> zcoefs(&zcoefs_[0], n_order, n_order);
 
     const int npw_half = n_pw / 2;
+
     const std::complex<Real> alpha = {1.0, 0.0};
     const std::complex<Real> beta = {0.0, 0.0};
     for (int i = 0; i < n_charge_dim; ++i) {
@@ -54,7 +55,6 @@ void pw2proxypot_3d(const ndview<const std::complex<Real>, 4> &pw_expansion,
     const int n_charge_dim = proxy_coeffs.extent(3);
     const int n_pw = pw_expansion.extent(0);
     const int n_pw2 = pw_expansion.extent(2);
-    const int n_proxy_coeffs = n_order * n_order;
 
     sctl::Vector<std::complex<Real>> ff_(n_order * n_pw * n_pw2);
     sctl::Vector<std::complex<Real>> fft_(n_pw * n_pw2 * n_order);
@@ -213,3 +213,47 @@ template void dmk::calc_planewave_coeff_matrices<float>(float boxsize, float hpw
 template void dmk::calc_planewave_coeff_matrices<double>(double boxsize, double hpw, int n_pw, int n_order,
                                                          sctl::Vector<std::complex<double>> &prox2pw_vec,
                                                          sctl::Vector<std::complex<double>> &pw2poly_vec);
+
+TEST_CASE("[DMK] planewave_to_proxy_potential") {
+    const int n_pw = 10;
+    const int n_charge_dim = 1;
+    const int n_pw2 = (n_pw + 1) / 2;
+
+    for (int n_dim : {2, 3}) {
+        CAPTURE(n_dim);
+        for (int n_order : {10, 16, 24}) {
+            sctl::Vector<std::complex<double>> pw_expansion(int(pow(n_pw, (n_dim - 1))) * n_pw2);
+            sctl::Vector<std::complex<double>> pw_to_coefs_mat(n_order * n_pw);
+            Eigen::VectorX<double> proxy_coeffs(int(pow(n_order, n_dim))), proxy_coeffs_fort(int(pow(n_order, n_dim)));
+
+            proxy_coeffs.setZero();
+            proxy_coeffs_fort.setZero();
+
+            if (n_dim == 2) {
+                dmk::ndview<const std::complex<double>, 3> pw_expansion_view(&pw_expansion[0], n_pw, n_pw,
+                                                                             n_charge_dim);
+                dmk::ndview<const std::complex<double>, 2> pw_to_coefs_mat_view(&pw_to_coefs_mat[0], n_pw, n_order);
+                dmk::ndview<double, 3> proxy_coeffs_view(&proxy_coeffs[0], n_order, n_order, n_charge_dim);
+
+                dmk::planewave_to_proxy_potential<double, 2>(pw_expansion_view, pw_to_coefs_mat_view,
+                                                             proxy_coeffs_view);
+            }
+
+            if (n_dim == 3) {
+                dmk::ndview<const std::complex<double>, 4> pw_expansion_view(&pw_expansion[0], n_pw, n_pw, n_pw,
+                                                                             n_charge_dim);
+                dmk::ndview<const std::complex<double>, 2> pw_to_coefs_mat_view(&pw_to_coefs_mat[0], n_pw, n_order);
+                dmk::ndview<double, 4> proxy_coeffs_view(&proxy_coeffs[0], n_order, n_order, n_order, n_charge_dim);
+
+                dmk::planewave_to_proxy_potential<double, 3>(pw_expansion_view, pw_to_coefs_mat_view,
+                                                             proxy_coeffs_view);
+            }
+
+            dmk_pw2proxypot_(&n_dim, &n_charge_dim, &n_order, &n_pw, (double *)&pw_expansion[0],
+                             (double *)&pw_to_coefs_mat[0], &proxy_coeffs_fort[0]);
+
+            const double l2 = (proxy_coeffs - proxy_coeffs_fort).norm() / proxy_coeffs.size();
+            CHECK(l2 < std::numeric_limits<double>::epsilon());
+        }
+    }
+}
