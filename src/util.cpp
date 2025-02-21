@@ -249,7 +249,7 @@ TEST_CASE("[DMK] mesh_nd") {
     for (int dim : {2, 3}) {
         std::vector<double> in = {1.0, 2.0, 3.0};
         const int size = in.size();
-        const int nxyz = dim * pow(size, dim);
+        const int nxyz = dim * dmk::util::int_pow(size, dim);
         std::vector<double> out(nxyz);
         std::vector<double> out_fort(nxyz);
         mesh_nd(dim, in.data(), size, out.data());
@@ -260,7 +260,7 @@ TEST_CASE("[DMK] mesh_nd") {
             xval = 0.0;
 
         ndview<const double, 1> in_view(in.data(), size);
-        ndview<double, 2> out_view(out.data(), dim, pow(size, dim));
+        ndview<double, 2> out_view(out.data(), dim, dmk::util::int_pow(size, dim));
         mesh_nd(dim, in_view, out_view);
         CHECK(out == out_fort);
     }
@@ -274,7 +274,7 @@ template void mk_tensor_product_fourier_transform(int dim, int npw, const ndview
 TEST_CASE("[DMK] mk_tensor_product_fourier_transform") {
     for (int dim : {1, 2, 3}) {
         const int npw = 5;
-        const int nexp = static_cast<int>(pow(npw, dim - 1) + 0.5) * ((npw + 1) / 2);
+        const int nexp = dmk::util::int_pow(npw, dim - 1) * ((npw + 1) / 2);
         const int nfourier = dim * sctl::pow<2>(npw / 2);
         std::vector<double> fhat(nfourier + 1);
         for (int i = 0; i < fhat.size(); ++i)

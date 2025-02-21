@@ -354,11 +354,12 @@ TEST_CASE("[DMK] proxycharge2pw") {
     for (int n_dim : {2, 3}) {
         CAPTURE(n_dim);
         for (int n_order : {10, 16, 24}) {
-            const int n_pw_modes = int(std::pow(n_pw, n_dim - 1)) * (n_pw2);
+            const int n_pw_modes = dmk::util::int_pow(n_pw, n_dim - 1) * n_pw2;
             const int n_pw_coeffs = n_pw_modes * n_charge_dim;
+            const int n_proxy_coeffs = dmk::util::int_pow(n_order, n_dim) * n_charge_dim;
 
             CAPTURE(n_order);
-            sctl::Vector<double> proxy_coeffs(int(pow(n_order, n_dim)) * n_charge_dim);
+            sctl::Vector<double> proxy_coeffs(n_proxy_coeffs);
             sctl::Vector<std::complex<double>> poly2pw(n_order * n_pw), pw2poly(n_order * n_pw);
             Eigen::VectorX<std::complex<double>> pw_coeffs(n_pw_coeffs), pw_coeffs_fort(n_pw_coeffs);
 
@@ -405,10 +406,11 @@ TEST_CASE("[DMK] charge2proxycharge") {
         CAPTURE(n_dim);
         for (int n_order : {10, 16, 24}) {
             CAPTURE(n_order);
+            using dmk::util::int_pow;
             Eigen::VectorX<double> r_src(n_src * n_dim);
             Eigen::VectorX<double> charge(n_src * n_charge_dim);
-            Eigen::VectorX<double> coeffs(int(pow(n_order, n_dim)) * n_charge_dim);
-            Eigen::VectorX<double> coeffs_fort(int(pow(n_order, n_dim)) * n_charge_dim);
+            Eigen::VectorX<double> coeffs(int_pow(n_order, n_dim) * n_charge_dim);
+            Eigen::VectorX<double> coeffs_fort(int_pow(n_order, n_dim) * n_charge_dim);
             const double center[] = {0.5, 0.5, 0.5};
             const double scale_factor = 1.2;
 
@@ -453,8 +455,9 @@ TEST_CASE("[DMK] eval_targets_3d") {
 
     for (int n_order : {10, 16, 24}) {
         CAPTURE(n_order);
+        using dmk::util::int_pow;
         Eigen::VectorX<double> r_trg(n_trg * n_dim);
-        Eigen::VectorX<double> coeffs(int(pow(n_order, n_dim)) * n_charge_dim);
+        Eigen::VectorX<double> coeffs(int_pow(n_order, n_dim) * n_charge_dim);
         Eigen::VectorX<double> pot(n_charge_dim * n_trg);
         Eigen::VectorX<double> pot_fort(n_charge_dim * n_trg);
         const double center[] = {0.5, 0.5, 0.5};

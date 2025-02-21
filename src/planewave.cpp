@@ -222,9 +222,11 @@ TEST_CASE("[DMK] planewave_to_proxy_potential") {
     for (int n_dim : {2, 3}) {
         CAPTURE(n_dim);
         for (int n_order : {10, 16, 24}) {
-            sctl::Vector<std::complex<double>> pw_expansion(int(pow(n_pw, (n_dim - 1))) * n_pw2);
+            const int n_pw_terms = dmk::util::int_pow(n_pw, n_dim - 1) * n_pw2;
+            const int n_proxy_terms = dmk::util::int_pow(n_order, n_dim);
+            sctl::Vector<std::complex<double>> pw_expansion(n_pw_terms);
             sctl::Vector<std::complex<double>> pw_to_coefs_mat(n_order * n_pw);
-            Eigen::VectorX<double> proxy_coeffs(int(pow(n_order, n_dim))), proxy_coeffs_fort(int(pow(n_order, n_dim)));
+            Eigen::VectorX<double> proxy_coeffs(n_proxy_terms), proxy_coeffs_fort(n_proxy_terms);
 
             proxy_coeffs.setZero();
             proxy_coeffs_fort.setZero();
