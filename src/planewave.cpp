@@ -228,11 +228,16 @@ TEST_CASE("[DMK] planewave_to_proxy_potential") {
             sctl::Vector<std::complex<double>> pw_to_coefs_mat(n_order * n_pw);
             Eigen::VectorX<double> proxy_coeffs(n_proxy_terms), proxy_coeffs_fort(n_proxy_terms);
 
+            for (auto &elem : pw_expansion)
+                elem = std::complex<double>{rand() / double(RAND_MAX), rand() / double(RAND_MAX)};
+            for (auto &elem : pw_to_coefs_mat)
+                elem = std::complex<double>{rand() / double(RAND_MAX), rand() / double(RAND_MAX)};
+
             proxy_coeffs.setZero();
             proxy_coeffs_fort.setZero();
 
             if (n_dim == 2) {
-                dmk::ndview<const std::complex<double>, 3> pw_expansion_view(&pw_expansion[0], n_pw, n_pw,
+                dmk::ndview<const std::complex<double>, 3> pw_expansion_view(&pw_expansion[0], n_pw, n_pw2,
                                                                              n_charge_dim);
                 dmk::ndview<const std::complex<double>, 2> pw_to_coefs_mat_view(&pw_to_coefs_mat[0], n_pw, n_order);
                 dmk::ndview<double, 3> proxy_coeffs_view(&proxy_coeffs[0], n_order, n_order, n_charge_dim);
@@ -242,7 +247,7 @@ TEST_CASE("[DMK] planewave_to_proxy_potential") {
             }
 
             if (n_dim == 3) {
-                dmk::ndview<const std::complex<double>, 4> pw_expansion_view(&pw_expansion[0], n_pw, n_pw, n_pw,
+                dmk::ndview<const std::complex<double>, 4> pw_expansion_view(&pw_expansion[0], n_pw, n_pw, n_pw2,
                                                                              n_charge_dim);
                 dmk::ndview<const std::complex<double>, 2> pw_to_coefs_mat_view(&pw_to_coefs_mat[0], n_pw, n_order);
                 dmk::ndview<double, 4> proxy_coeffs_view(&proxy_coeffs[0], n_order, n_order, n_order, n_charge_dim);
