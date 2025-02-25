@@ -103,7 +103,7 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     fourier_data = FourierData<Real>(params.kernel, DIM, params.eps, n_digits, n_pw_max, params.fparam, boxsize);
     logger->debug("Planewave params at root box: n: {}, stepsize: {}, weight: {}, radius: {}", fourier_data.n_pw,
                   fourier_data.hpw[0], fourier_data.ws[0], fourier_data.rl[0]);
-    fourier_data.update_windowed_kernel_fourier_transform();
+    fourier_data.update_windowed_kernel_ft();
     logger->debug("Truncated fourier transform for kernel {} at root box generated", int(params.kernel));
     fourier_data.update_difference_kernels();
     logger->debug("Finished calculating difference kernels");
@@ -449,7 +449,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
     constexpr int dim = DIM;
     constexpr int nmax = 1;
     const int nd = params.n_mfm;
-    // FIXME: This should be assigned automatically at tree construction (fourier_data should be suboject)
+    // FIXME: This should be assigned automatically at tree construction (fourier_data should be subobject)
     n_pw = fourier_data.n_pw;
 
     const auto &node_lists = this->GetNodeLists();
@@ -493,6 +493,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
         fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
         dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw, ts, wpwshift);
 
+        // FIXME: Can exploit scale invariance of non-yukawa kernels
         get_difference_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta, n_digits, boxsize[i_level],
                                          fourier_data.prolate_funcs, kernel_ft);
 
@@ -576,14 +577,28 @@ void DMKPtTree<T, DIM>::downward_pass() {
             }
         }
 
-        double bsize = i_level == 0 ? 0.5 * boxsize[i_level] : boxsize[i_level];
+        const double bsize = i_level == 0 ? 0.5 * boxsize[i_level] : boxsize[i_level];
         const double rsc = 2.0 / bsize;
         const double cen = -1.0;
         const double d2max = bsize * bsize;
-        if (params.kernel != DMK_YUKAWA)
-            throw std::runtime_error("Only yukawa potential supported");
-        // FIXME: more than yukawa...
-        const T w0 = fourier_data.yukawa_windowed_kernel_value_at_zero(i_level);
+
+        auto get_windowed_kernel_at_zero = [&]() -> T {
+            if (params.kernel == DMK_YUKAWA)
+                return fourier_data.yukawa_windowed_kernel_value_at_zero(i_level);
+            else if (params.kernel == DMK_LAPLACE) {
+                const T psi0 = fourier_data.prolate_funcs.eval_val(0.0);
+                const auto c = fourier_data.prolate_funcs.intvals(fourier_data.beta);
+                if (DIM == 3)
+                    return psi0 / (c[0] * bsize);
+                else
+                    throw std::runtime_error("Unsupported kernel DMK_LAPLACE, DIM = " + std::to_string(DIM));
+            } else if (params.kernel == DMK_SQRT_LAPLACE) {
+                throw std::runtime_error("Unsupported kernel DMK_SQRT_LAPLACE, DIM = " + std::to_string(DIM));
+            } else
+                throw std::runtime_error("Unsupported kernel");
+        };
+
+        const T w0 = get_windowed_kernel_at_zero();
 
         const ndview<const T, 1> cheb_coeffs(&fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level],
                                              fourier_data.ncoeffs1[i_level]);
@@ -655,7 +670,7 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
     if (test_rank == 0)
         std::cout << omp_get_wtime() - st << std::endl;
 
-    if (true || test_rank == 0) {
+    if (test_rank == 0) {
         dmk::util::init_test_data(n_dim, n_charge_dim, n_src, n_trg, uniform, true, r_src, r_trg, r_src_norms, charges,
                                   dipoles, 0);
 

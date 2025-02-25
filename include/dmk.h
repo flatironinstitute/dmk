@@ -1,6 +1,8 @@
 #ifndef DMK_H
 #define DMK_H
 
+#include <mpi.h>
+
 typedef enum : int {
     DMK_YUKAWA = 0,
     DMK_LAPLACE = 1,
@@ -30,10 +32,10 @@ typedef struct pdmk_params {
 #ifdef __cplusplus
 extern "C" {
 #endif
-void pdmk(pdmk_params params, int n_src, const double *r_src, const double *charge, const double *normal,
+void pdmk(MPI_Comm comm, pdmk_params params, int n_src, const double *r_src, const double *charge, const double *normal,
           const double *dipole_str, int n_trg, const double *r_trg, double *pot_src, double *grad_src, double *hess_src,
           double *pot_trg, double *grad_trg, double *hess_trg);
-void pdmkf(pdmk_params params, int n_src, const float *r_src, const float *charge, const float *normal,
+void pdmkf(MPI_Comm comm, pdmk_params params, int n_src, const float *r_src, const float *charge, const float *normal,
            const float *dipole_str, int n_trg, const float *r_trg, float *pot_src, float *grad_src, float *hess_src,
            float *pot_trg, float *grad_trg, float *hess_trg);
 #ifdef __cplusplus

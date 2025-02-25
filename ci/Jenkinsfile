@@ -22,8 +22,7 @@ pipeline {
                 sh 'git submodule update --init --recursive'
                 sh 'CXX=mpicxx F90=mpif90 cmake -B build . -DCMAKE_BUILD_TYPE=Release'
                 sh 'cd build && make -j4'
-                sh 'mpirun -n 1 ./build/test/test_all -tc="*pdmk*"'
-                sh 'mpirun -n 2 ./build/test/test_all -tce="*pdmk*"'
+                sh 'mpirun -n 2 ./build/test/test_all'
             }
         }
     }

@@ -16,9 +16,11 @@ struct FourierData {
     FourierData(dmk_ikernel kernel_, int n_dim_, T eps, int n_digits_, int n_pw_max, T fparam_,
                 const std::vector<T> &boxsize_);
 
-    void yukawa_windowed_kernel_Fourier_transform();
-    void update_windowed_kernel_fourier_transform();
-    void yukawa_difference_kernel_fourier_transform(int i_level);
+    void laplace_windowed_kernel_ft();
+    void yukawa_windowed_kernel_ft();
+    void update_windowed_kernel_ft();
+    void yukawa_difference_kernel_ft(int i_level);
+    void laplace_difference_kernel(int i_level);
     T yukawa_windowed_kernel_value_at_zero(int i_level);
     void update_difference_kernel(int i_level);
     void update_difference_kernels();
@@ -32,7 +34,7 @@ struct FourierData {
     int n_pw;
     int n_fourier;
     T fparam;
-    std::vector<T> dkernelft;
+    std::vector<T> difference_kernel;
     std::vector<T> hpw;
     std::vector<T> ws;
     std::vector<T> rl;
