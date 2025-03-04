@@ -310,26 +310,26 @@ void get_difference_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta
 
 template <typename T>
 FourierData<T>::FourierData(dmk_ikernel kernel_, int n_dim_, T eps, int n_digits_, int n_pw_max, T fparam_,
-                            const std::vector<T> &boxsize_)
-    : kernel(kernel_), n_dim(n_dim_), n_digits(n_digits_), fparam(fparam_), boxsize(boxsize_),
-      n_levels(boxsize_.size()), n_fourier(n_dim_ * sctl::pow(n_pw_max / 2, 2)) {
+                            const sctl::Vector<T> &boxsize_)
+    : kernel(kernel_), n_dim(n_dim_), n_digits(n_digits_), fparam(fparam_), boxsize(boxsize_), n_levels(boxsize_.Dim()),
+      n_fourier(n_dim_ * sctl::pow(n_pw_max / 2, 2)) {
 
     beta = procl180_rescale(eps);
     prolate_funcs = ProlateFuncs(beta, 10000);
 
-    hpw.resize(n_levels + 1);
-    ws.resize(n_levels + 1);
-    rl.resize(n_levels + 1);
+    hpw.ReInit(n_levels + 1);
+    ws.ReInit(n_levels + 1);
+    rl.ReInit(n_levels + 1);
 
     if (n_dim == 2)
         std::tie(n_pw, hpw[0], ws[0], rl[0]) = get_PSWF_windowed_kernel_pwterms<2>(n_digits, boxsize[0]);
     else if (n_dim == 3)
         std::tie(n_pw, hpw[0], ws[0], rl[0]) = get_PSWF_windowed_kernel_pwterms<3>(n_digits, boxsize[0]);
 
-    difference_kernel.resize((n_fourier + 1) * (n_levels + 1));
+    difference_kernel.ReInit((n_fourier + 1) * (n_levels + 1));
 
     rl[1] = rl[0];
-    for (int i = 2; i < rl.size(); ++i)
+    for (int i = 2; i < rl.Dim(); ++i)
         rl[i] = 0.5 * rl[i - 1];
 }
 
@@ -497,10 +497,10 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
     // FIXME: This whole routine is a mess and only works with doubles anyway
     const int nr1 = n_coeffs_max, nr2 = n_coeffs_max;
 
-    coeffs1.resize(nr1 * (n_levels));
-    coeffs2.resize(nr2 * (n_levels));
-    ncoeffs1.resize(n_levels);
-    ncoeffs2.resize(n_levels);
+    coeffs1.ReInit(nr1 * (n_levels));
+    coeffs2.ReInit(nr2 * (n_levels));
+    ncoeffs1.ReInit(n_levels);
+    ncoeffs2.ReInit(n_levels);
 
     constexpr T two_over_pi = 2.0 / M_PI;
     const T &rlambda = fparam;
@@ -577,7 +577,7 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
             }
         }
 
-        Eigen::Map<Eigen::VectorX<T>> coeffs1_lvl(coeffs1.data() + nr1 * i_level, nr1);
+        Eigen::Map<Eigen::VectorX<T>> coeffs1_lvl(&coeffs1[0] + nr1 * i_level, nr1);
         coeffs1_lvl = vlu1.solve(fvals);
         T coefsmax = coeffs1_lvl.array().abs().maxCoeff();
         T releps = eps * coefsmax;
@@ -614,7 +614,7 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
             }
         }
 
-        Eigen::Map<Eigen::VectorX<T>> coeffs2_lvl(coeffs2.data() + nr2 * (i_level), nr2);
+        Eigen::Map<Eigen::VectorX<T>> coeffs2_lvl(&coeffs2[0] + nr2 * (i_level), nr2);
         coeffs2_lvl = vlu2.solve(fvals);
 
         coefsmax = coeffs2_lvl.array().abs().maxCoeff();

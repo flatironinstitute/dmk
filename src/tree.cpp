@@ -141,22 +141,22 @@ void DMKPtTree<T, DIM>::generate_metadata() {
         charge_offsets[i_node] = charge_offsets[i_node - 1] + params.n_mfm * charge_cnt[i_node - 1];
     }
 
-    level_indices.resize(SCTL_MAX_DEPTH);
+    level_indices.ReInit(SCTL_MAX_DEPTH);
     int8_t max_depth = 0;
     for (int i_node = 0; i_node < n_nodes; ++i_node) {
         auto &node = node_mid[i_node];
-        level_indices[node.Depth()].push_back(i_node);
+        level_indices[node.Depth()].PushBack(i_node);
         max_depth = std::max(node.Depth(), max_depth);
     }
     max_depth++;
-    level_indices.resize(max_depth);
-    boxsize.resize(max_depth + 1);
+    level_indices.ReInit(max_depth);
+    boxsize.ReInit(max_depth + 1);
     boxsize[0] = 1.0;
     for (int i = 1; i < max_depth + 1; ++i)
         boxsize[i] = 0.5 * boxsize[i - 1];
 
     T scale = 1.0;
-    centers.resize(n_nodes * DIM);
+    centers.ReInit(n_nodes * DIM);
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         for (auto i_node : level_indices[i_level]) {
             auto &node = node_mid[i_node];

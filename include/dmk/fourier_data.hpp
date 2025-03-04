@@ -5,7 +5,6 @@
 #include <dmk.h>
 #include <dmk/prolate_funcs.hpp>
 #include <sctl.hpp>
-#include <vector>
 
 namespace dmk {
 struct ProlateFuncs;
@@ -14,7 +13,7 @@ template <typename T>
 struct FourierData {
     FourierData() = default;
     FourierData(dmk_ikernel kernel_, int n_dim_, T eps, int n_digits_, int n_pw_max, T fparam_,
-                const std::vector<T> &boxsize_);
+                const sctl::Vector<T> &boxsize_);
 
     void laplace_windowed_kernel_ft();
     void yukawa_windowed_kernel_ft();
@@ -34,22 +33,23 @@ struct FourierData {
     int n_pw;
     int n_fourier;
     T fparam;
-    std::vector<T> difference_kernel;
-    std::vector<T> hpw;
-    std::vector<T> ws;
-    std::vector<T> rl;
+    sctl::Vector<T> difference_kernel;
+    sctl::Vector<T> windowed_kernel;
+    sctl::Vector<T> hpw;
+    sctl::Vector<T> ws;
+    sctl::Vector<T> rl;
 
     // Local chebyshev polynomial coefficients for yukawa potential
-    std::vector<T> coeffs1;
-    std::vector<T> coeffs2;
-    std::vector<int> ncoeffs1;
-    std::vector<int> ncoeffs2;
+    sctl::Vector<T> coeffs1;
+    sctl::Vector<T> coeffs2;
+    sctl::Vector<int> ncoeffs1;
+    sctl::Vector<int> ncoeffs2;
     int n_coeffs_max = 100;
 
     T beta;
     ProlateFuncs prolate_funcs;
 
-    std::vector<T> boxsize;
+    sctl::Vector<T> boxsize;
     void calc_planewave_coeff_matrices(int i_level, int n_order, sctl::Vector<std::complex<T>> &prox2pw,
                                        sctl::Vector<std::complex<T>> &pw2poly) const;
     void calc_planewave_translation_matrix(int dim, int i_level, T xmin,
