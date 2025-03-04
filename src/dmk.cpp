@@ -143,26 +143,45 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
     params.fparam = 6.0;
     params.log_level = SPDLOG_LEVEL_OFF;
 
-    std::function yukawa = [&n_dim, &charges, &params](double *r_a, double *r_b) {
-        double dr = 0.0;
-        for (int j = 0; j < n_dim; ++j)
-            dr += sctl::pow<2>(r_a[j] - r_b[j]);
-        dr = std::sqrt(dr);
-        if (!dr)
-            return 0.0;
+    auto get_pot_func = [&n_dim, &params](dmk_ikernel kernel) -> std::function<double(double *, double *)> {
+        switch (kernel) {
+        case DMK_YUKAWA:
+            return [&n_dim, &params](double *r_a, double *r_b) {
+                double dr = 0.0;
+                for (int j = 0; j < n_dim; ++j)
+                    dr += sctl::pow<2>(r_a[j] - r_b[j]);
 
-        return std::exp(-params.fparam * dr) / dr;
-    };
+                if (!dr)
+                    return 0.0;
 
-    std::function laplace = [&n_dim, &charges, &params](double *r_a, double *r_b) {
-        double dr = 0.0;
-        for (int j = 0; j < n_dim; ++j)
-            dr += sctl::pow<2>(r_a[j] - r_b[j]);
-        dr = std::sqrt(dr);
-        if (!dr)
-            return 0.0;
+                dr = std::sqrt(dr);
+                return std::exp(-params.fparam * dr) / dr;
+            };
+        case DMK_LAPLACE:
+            return [&n_dim](double *r_a, double *r_b) {
+                double dr2 = 0.0;
+                for (int j = 0; j < n_dim; ++j)
+                    dr2 += sctl::pow<2>(r_a[j] - r_b[j]);
 
-        return 1.0 / dr;
+                if (!dr2)
+                    return 0.0;
+
+                return 1.0 / std::sqrt(dr2);
+            };
+        case DMK_SQRT_LAPLACE:
+            return [&n_dim](double *r_a, double *r_b) {
+                double dr2 = 0.0;
+                for (int j = 0; j < n_dim; ++j)
+                    dr2 += sctl::pow<2>(r_a[j] - r_b[j]);
+
+                if (!dr2)
+                    return 0.0;
+
+                return 1.0 / dr2;
+            };
+        default:
+            throw std::runtime_error("Unknown kernel");
+        }
     };
 
     const auto test_kernels = {
@@ -172,7 +191,7 @@ MPI_TEST_CASE("[DMK] pdmk 3d", 1) {
     };
     for (auto kernel : test_kernels) {
         params.kernel = kernel;
-        auto potential = kernel == DMK_YUKAWA ? yukawa : laplace;
+        auto potential = get_pot_func(kernel);
 
         const int n_test_src = std::min(n_src, 100);
         const int n_test_trg = std::min(n_trg, 100);

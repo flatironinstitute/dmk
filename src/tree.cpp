@@ -486,6 +486,20 @@ void DMKPtTree<T, DIM>::downward_pass() {
     Eigen::MatrixX<T> r_trg_t = Eigen::Map<Eigen::MatrixX<T>>(r_trg_ptr(0), dim, trg_counts_local[0]).transpose();
 
     constexpr int n_children = 1u << DIM;
+
+    const T scale_factor_diff_ft = [](dmk_ikernel kernel) -> T {
+        switch (kernel) {
+        case DMK_YUKAWA:
+            return T(0.0);
+        case DMK_LAPLACE:
+            return DIM == 2 ? T(1.0) : T(2.0);
+        case DMK_SQRT_LAPLACE:
+            return DIM == 2 ? T(2.0) : T(4.0);
+        default:
+            throw std::runtime_error("Invalid kernel type: " + std::to_string(kernel));
+        }
+    }(params.kernel);
+
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         for (int i = 0; i < n_pw; ++i)
             ts[i] = fourier_data.hpw[i_level + 1] * (i - shift);
@@ -493,9 +507,14 @@ void DMKPtTree<T, DIM>::downward_pass() {
         fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
         dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw, ts, wpwshift);
 
-        // FIXME: Can exploit scale invariance of non-yukawa kernels
-        get_difference_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta, n_digits, boxsize[i_level],
-                                         fourier_data.prolate_funcs, kernel_ft);
+        // Calculate difference kernel fourier transform. Exploit scale invariance on lower levels, when applicable.
+        if (i_level == 0 || !scale_factor_diff_ft) {
+            get_difference_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta, n_digits,
+                                             boxsize[i_level], fourier_data.prolate_funcs, kernel_ft);
+        } else {
+            for (auto &val : kernel_ft)
+                val *= scale_factor_diff_ft;
+        }
 
         util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<const T, 1>(&kernel_ft[0], kernel_ft.Dim()),
                                                   ndview<T, 1>(&radialft[0], n_pw_modes));
