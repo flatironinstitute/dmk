@@ -312,7 +312,7 @@ template <typename T>
 FourierData<T>::FourierData(dmk_ikernel kernel_, int n_dim_, T eps, int n_digits_, int n_pw_max, T fparam_,
                             const sctl::Vector<T> &boxsize_)
     : kernel(kernel_), n_dim(n_dim_), n_digits(n_digits_), fparam(fparam_), boxsize(boxsize_), n_levels(boxsize_.Dim()),
-      n_fourier(n_dim_ * sctl::pow(n_pw_max / 2, 2)) {
+      n_fourier(n_dim_ * sctl::pow(n_pw_max / 2, 2) + 1) {
 
     beta = procl180_rescale(eps);
     prolate_funcs = ProlateFuncs(beta, 10000);
@@ -326,7 +326,7 @@ FourierData<T>::FourierData(dmk_ikernel kernel_, int n_dim_, T eps, int n_digits
     else if (n_dim == 3)
         std::tie(n_pw, hpw[0], ws[0], rl[0]) = get_PSWF_windowed_kernel_pwterms<3>(n_digits, boxsize[0]);
 
-    difference_kernel.ReInit((n_fourier + 1) * (n_levels + 1));
+    difference_kernel.ReInit(n_fourier * n_levels);
 
     rl[1] = rl[0];
     for (int i = 2; i < rl.Dim(); ++i)
@@ -339,7 +339,8 @@ void FourierData<T>::yukawa_windowed_kernel_ft() {
     // of the Yukawa kernel in two and three dimensions
     const T &rlambda = fparam;
     const T rlambda2 = rlambda * rlambda;
-    auto fhat = &difference_kernel[0];
+
+    windowed_kernel.ReInit(n_fourier);
 
     // determine whether one needs to smooth out the 1/(k^2+lambda^2) factor at the origin.
     // needed in the calculation of kernel-smoothing when there is low-frequency breakdown
@@ -357,13 +358,13 @@ void FourierData<T>::yukawa_windowed_kernel_ft() {
     T psi0 = prolate_funcs.eval_val(0);
 
     for (int i = 0; i < n_fourier; ++i) {
-        const T rk = sqrt((T)i) * hpw[0];
+        const T rk = sqrt(T(i)) * hpw[0];
         const T xi2 = rk * rk + rlambda2;
         const T xi = sqrt(xi2);
         const T xval = xi * boxsize[0] / beta;
         const T fval = (xval <= 1.0) ? prolate_funcs.eval_val(xval) : 0.0;
 
-        fhat[i] = ws[0] * fval / (psi0 * xi2);
+        windowed_kernel[i] = ws[0] * fval / (psi0 * xi2);
 
         if (near_correction) {
             T sker;
@@ -374,7 +375,7 @@ void FourierData<T>::yukawa_windowed_kernel_ft() {
                 T xsc = rl[0] * rk;
                 sker = 1 - delam * (cos(xsc) + rlambda / rk * sin(xsc));
             }
-            fhat[i] *= sker;
+            windowed_kernel[i] *= sker;
         }
     }
 }
@@ -403,7 +404,7 @@ void FourierData<Real>::yukawa_difference_kernel_ft(int i_level) {
     const Real rlambda = fparam;
     const Real rlambda2 = rlambda * rlambda;
     const Real psi0 = prolate_funcs.eval_val(0.0);
-    Real *fhat = &difference_kernel[(i_level + 1) * (n_fourier + 1)];
+    Real *fhat = &difference_kernel[(i_level)*n_fourier];
 
     for (int i = 0; i < n_fourier + 1; ++i) {
         Real rk = sqrt((Real)i) * hpw[i_level + 1];
@@ -467,7 +468,7 @@ void FourierData<T>::update_difference_kernels() {
         auto &hpw_i = hpw[i_level + 1];
         auto &ws_i = ws[i_level + 1];
         auto &rl_i = rl[i_level + 1];
-        auto dkernelft_i = &difference_kernel[(i_level + 1) * (n_fourier + 1)];
+        auto dkernelft_i = &difference_kernel[i_level * n_fourier];
 
         // FIXME: GIVES DIFFERENT NPW THAN OTHER CODE
         // FIXME: overwrites n_pw
@@ -486,8 +487,8 @@ void FourierData<T>::update_difference_kernels() {
         else
             scale_factor = 2.0;
 
-        const T *dkernelft_im1 = &difference_kernel[i_level * (n_fourier + 1)];
-        for (int i = 0; i < n_fourier + 1; ++i)
+        const T *dkernelft_im1 = &difference_kernel[(i_level - 1) * n_fourier];
+        for (int i = 0; i < n_fourier; ++i)
             dkernelft_i[i] = scale_factor * dkernelft_im1[i];
     }
 }
@@ -497,8 +498,8 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
     // FIXME: This whole routine is a mess and only works with doubles anyway
     const int nr1 = n_coeffs_max, nr2 = n_coeffs_max;
 
-    coeffs1.ReInit(nr1 * (n_levels));
-    coeffs2.ReInit(nr2 * (n_levels));
+    coeffs1.ReInit(nr1 * n_levels);
+    coeffs2.ReInit(nr2 * n_levels);
     ncoeffs1.ReInit(n_levels);
     ncoeffs2.ReInit(n_levels);
 
@@ -614,7 +615,7 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
             }
         }
 
-        Eigen::Map<Eigen::VectorX<T>> coeffs2_lvl(&coeffs2[0] + nr2 * (i_level), nr2);
+        Eigen::Map<Eigen::VectorX<T>> coeffs2_lvl(&coeffs2[0] + nr2 * i_level, nr2);
         coeffs2_lvl = vlu2.solve(fvals);
 
         coefsmax = coeffs2_lvl.array().abs().maxCoeff();
