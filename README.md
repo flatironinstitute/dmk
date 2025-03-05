@@ -70,6 +70,9 @@ vol_tree_mem and vol_tree_build in src/common/tree_vol_coeffs.f first to build t
 # Citing
 
 If you find DMK useful in your work, please star this repository and cite it and the following. 
+
+
+```
 @article{jianggreengard2024dmk,
 author = {Jiang, Shidong and Greengard, Leslie},
 title = {A dual-space multilevel kernel-splitting framework for discrete and continuous convolution},
@@ -81,7 +84,9 @@ doi = {https://doi.org/10.1002/cpa.22240},
 url = {https://onlinelibrary.wiley.com/doi/abs/10.1002/cpa.22240},
 eprint = {https://onlinelibrary.wiley.com/doi/pdf/10.1002/cpa.22240},
 }
+```
 or 
+```
 @misc{jianggreengard2023dmk,
       title={A Dual-space Multilevel Kernel-splitting Framework for Discrete and Continuous Convolution}, 
       author={Shidong Jiang and Leslie Greengard},
@@ -91,9 +96,9 @@ or
       primaryClass={math.NA},
       url={https://arxiv.org/abs/2308.00292}, 
 }
-
+```
 # Main developers
 
-* Shidong Jiang, Flatiron Institute, Simons Foundation
 * Leslie Greengard, Flatiron Institute, Simons Foundation
+* Shidong Jiang, Flatiron Institute, Simons Foundation
 * Robert Blackwell, Flatiron Institute, Simons Foundation
