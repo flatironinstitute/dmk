@@ -101,8 +101,9 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     logger->debug("Finished generating matrices");
 
     fourier_data = FourierData<Real>(params.kernel, DIM, params.eps, n_digits, n_pw_max, params.fparam, boxsize);
-    logger->debug("Planewave params at root box: n: {}, stepsize: {}, weight: {}, radius: {}", fourier_data.n_pw,
-                  fourier_data.windowed_kernel.hpw, fourier_data.windowed_kernel.ws, fourier_data.windowed_kernel.rl);
+    const auto &wk = fourier_data.windowed_kernel();
+    logger->debug("Planewave params at root box: n: {}, stepsize: {}, weight: {}, radius: {}", fourier_data.n_pw(),
+                  wk.hpw, wk.ws, wk.rl);
     fourier_data.update_windowed_kernel_ft();
     logger->debug("Truncated fourier transform for kernel {} at root box generated", int(params.kernel));
     fourier_data.update_difference_kernels();
@@ -450,7 +451,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
     constexpr int nmax = 1;
     const int nd = params.n_mfm;
     // FIXME: This should be assigned automatically at tree construction (fourier_data should be subobject)
-    n_pw = fourier_data.n_pw;
+    n_pw = fourier_data.n_pw();
 
     const auto &node_lists = this->GetNodeLists();
     const auto &node_attr = this->GetNodeAttr();
@@ -465,15 +466,15 @@ void DMKPtTree<T, DIM>::downward_pass() {
     sctl::Vector<T> ts(n_pw);
     sctl::Vector<T> radialft(n_pw_modes);
     sctl::Vector<T> kernel_ft;
-    get_windowed_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta, n_digits, boxsize[0],
+    get_windowed_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits, boxsize[0],
                                    fourier_data.prolate_funcs, kernel_ft);
     util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<const T, 1>(&kernel_ft[0], kernel_ft.Dim()),
                                               ndview<T, 1>(&radialft[0], n_pw_modes));
 
-    sctl::Vector<std::complex<T>> poly2pw(n_order * fourier_data.n_pw), pw2poly(n_order * fourier_data.n_pw);
+    sctl::Vector<std::complex<T>> poly2pw(n_order * n_pw), pw2poly(n_order * n_pw);
     fourier_data.calc_planewave_coeff_matrices(-1, n_order, poly2pw, pw2poly);
-    ndview<const std::complex<T>, 2> poly2pw_view(&poly2pw[0], fourier_data.n_pw, n_order);
-    ndview<const std::complex<T>, 2> pw2poly_view(&pw2poly[0], fourier_data.n_pw, n_order);
+    ndview<const std::complex<T>, 2> poly2pw_view(&poly2pw[0], n_pw, n_order);
+    ndview<const std::complex<T>, 2> pw2poly_view(&pw2poly[0], n_pw, n_order);
 
     dmk::proxy::proxycharge2pw<T, DIM>(proxy_view_upward(0), poly2pw_view, pw_out_view(0));
     multiply_kernelFT_cd2p<T, DIM>(pw_out_view(0), radialft);
@@ -502,14 +503,14 @@ void DMKPtTree<T, DIM>::downward_pass() {
 
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         for (int i = 0; i < n_pw; ++i)
-            ts[i] = fourier_data.difference_kernels[i_level].hpw * (i - shift);
+            ts[i] = fourier_data.difference_kernel(i_level).hpw * (i - shift);
 
         fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
         dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw, ts, wpwshift);
 
         // Calculate difference kernel fourier transform. Exploit scale invariance on lower levels, when applicable.
         if (i_level == 0 || !scale_factor_diff_ft) {
-            get_difference_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta, n_digits,
+            get_difference_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits,
                                              boxsize[i_level], fourier_data.prolate_funcs, kernel_ft);
         } else {
             for (auto &val : kernel_ft)
@@ -606,7 +607,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
                 return fourier_data.yukawa_windowed_kernel_value_at_zero(i_level);
             else if (params.kernel == DMK_LAPLACE) {
                 const T psi0 = fourier_data.prolate_funcs.eval_val(0.0);
-                const auto c = fourier_data.prolate_funcs.intvals(fourier_data.beta);
+                const auto c = fourier_data.prolate_funcs.intvals(fourier_data.beta());
                 if (DIM == 3)
                     return psi0 / (c[0] * bsize);
                 else
@@ -619,8 +620,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
 
         const T w0 = get_windowed_kernel_at_zero();
 
-        const ndview<const T, 1> cheb_coeffs(&fourier_data.coeffs1[fourier_data.n_coeffs_max * i_level],
-                                             fourier_data.ncoeffs1[i_level]);
+        const auto &cheb_coeffs = fourier_data.cheb_coeffs(i_level);
         for (auto box : level_indices[i_level]) {
             // Evaluate the direct interactions
             if (!r_src_cnt[box])

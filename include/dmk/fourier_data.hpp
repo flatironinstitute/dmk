@@ -4,6 +4,7 @@
 #include <complex>
 #include <dmk.h>
 #include <dmk/prolate_funcs.hpp>
+#include <dmk/types.hpp>
 #include <sctl.hpp>
 
 namespace dmk {
@@ -25,14 +26,17 @@ struct FourierData {
     void update_difference_kernels();
     void update_local_coeffs_yukawa(T eps);
     void update_local_coeffs(T eps);
+    void calc_planewave_coeff_matrices(int i_level, int n_order, sctl::Vector<std::complex<T>> &prox2pw,
+                                       sctl::Vector<std::complex<T>> &pw2poly) const;
+    void calc_planewave_translation_matrix(int dim, int i_level, T xmin,
+                                           sctl::Vector<std::complex<T>> &shift_vec) const;
 
-    dmk_ikernel kernel;
-    int n_dim;
-    int n_digits;
-    int n_levels;
-    int n_pw;
-    int n_fourier;
-    T fparam;
+    const ndview<const T, 1> cheb_coeffs(int i_level) const {
+        return ndview<const T, 1>(&coeffs1_[i_level * n_coeffs_max], ncoeffs1_[i_level]);
+    };
+
+    int n_pw() const { return n_pw_; };
+    T beta() const { return beta_; }
 
     struct kernel {
         T hpw;
@@ -41,24 +45,31 @@ struct FourierData {
         sctl::Vector<T> fhat;
     };
 
-    struct kernel windowed_kernel;
-    sctl::Vector<struct kernel> difference_kernels;
+    const struct kernel &windowed_kernel() const { return windowed_kernel_; }
+    const struct kernel &difference_kernel(int i_level) const { return difference_kernels_[i_level]; }
 
-    // Local chebyshev polynomial coefficients for yukawa potential
-    sctl::Vector<T> coeffs1;
-    sctl::Vector<T> coeffs2;
-    sctl::Vector<int> ncoeffs1;
-    sctl::Vector<int> ncoeffs2;
-    int n_coeffs_max = 100;
-
-    T beta;
     ProlateFuncs prolate_funcs;
 
-    sctl::Vector<T> boxsize;
-    void calc_planewave_coeff_matrices(int i_level, int n_order, sctl::Vector<std::complex<T>> &prox2pw,
-                                       sctl::Vector<std::complex<T>> &pw2poly) const;
-    void calc_planewave_translation_matrix(int dim, int i_level, T xmin,
-                                           sctl::Vector<std::complex<T>> &shift_vec) const;
+  private:
+    dmk_ikernel kernel_;
+    int n_dim_;
+    int n_digits_;
+    int n_levels_;
+    int n_pw_;
+    int n_fourier_;
+    T fparam_;
+    T beta_;
+
+    struct kernel windowed_kernel_;
+    sctl::Vector<struct kernel> difference_kernels_;
+    sctl::Vector<T> box_sizes_;
+
+    // Local chebyshev polynomial coefficients for yukawa potential
+    sctl::Vector<T> coeffs1_;
+    sctl::Vector<T> coeffs2_;
+    sctl::Vector<int> ncoeffs1_;
+    sctl::Vector<int> ncoeffs2_;
+    static constexpr int n_coeffs_max = 100;
 };
 
 template <int DIM, typename T>

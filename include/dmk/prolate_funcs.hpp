@@ -3,8 +3,8 @@
 
 #include "fortran.h"
 
+#include <array>
 #include <stdexcept>
-#include <tuple>
 #include <vector>
 
 namespace dmk {
