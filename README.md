@@ -36,24 +36,6 @@ using asymptotic methods.
 
 The tree is a level-restricted (i.e., 2:1 balanced) adaptive tree.
 
-# Installation Guide
-
-We use make utility to install static and/or dynamic libraries, and to run the tests. 
-Type "make" in the main directory to see the list of options for compiling the point code.
-The box code is compiled and tested using the makefile in test/bdmk.
-
-The box code uses BLAS and we suggest that the user use the Intel compiler ifort and the 
-Intel MKL library for optimal performance. Please do "ulimit -s unlimited" on the command 
-window to avoid segfault before carrying out high-accuracy calculations. The point code uses 
-SCTL from PVFMM by Dhairya Malhotra and VCL by Agner Fog for SIMD accelerated kernel evaluations. 
-
-# Main subroutines
-
-1. The point code is src/pdmk/pdmk.f
-
-2. The box code is src/bdmk/bdmk.f, which requires calling subroutines
-vol_tree_mem and vol_tree_build in src/common/tree_vol_coeffs.f first to build the tree.
-
 # Building the development MPI code on FI resources
 
 ```bash
@@ -67,3 +49,51 @@ cd build
 cmake .. -DCMAKE_BUILD_TYPE=relwithdebinfo -DBLA_VENDOR=FlexiBLAS
 make -j 10
 ```
+# Fortran code installation guide
+
+We use make utility to install static and/or dynamic libraries, and to run the tests. 
+Type "make" in the main directory to see the list of options for compiling the point code.
+The box code is compiled and tested using the makefile in test/bdmk.
+
+The box code uses BLAS and we suggest that the user use the Intel compiler ifort and the 
+Intel MKL library for optimal performance. Please do "ulimit -s unlimited" on the command 
+window to avoid segfault before carrying out high-accuracy calculations. The point code uses 
+SCTL from PVFMM by Dhairya Malhotra and VCL by Agner Fog for SIMD accelerated kernel evaluations. 
+
+# Fortran code main subroutines
+
+1. The point code is src/pdmk/pdmk.f
+
+2. The box code is src/bdmk/bdmk.f, which requires calling subroutines
+vol_tree_mem and vol_tree_build in src/common/tree_vol_coeffs.f first to build the tree.
+
+# Citing
+
+If you find DMK useful in your work, please star this repository and cite it and the following. 
+@article{jianggreengard2024dmk,
+author = {Jiang, Shidong and Greengard, Leslie},
+title = {A dual-space multilevel kernel-splitting framework for discrete and continuous convolution},
+journal = {Communications on Pure and Applied Mathematics},
+volume = {n/a},
+number = {n/a},
+pages = {},
+doi = {https://doi.org/10.1002/cpa.22240},
+url = {https://onlinelibrary.wiley.com/doi/abs/10.1002/cpa.22240},
+eprint = {https://onlinelibrary.wiley.com/doi/pdf/10.1002/cpa.22240},
+}
+or 
+@misc{jianggreengard2023dmk,
+      title={A Dual-space Multilevel Kernel-splitting Framework for Discrete and Continuous Convolution}, 
+      author={Shidong Jiang and Leslie Greengard},
+      year={2023},
+      eprint={2308.00292},
+      archivePrefix={arXiv},
+      primaryClass={math.NA},
+      url={https://arxiv.org/abs/2308.00292}, 
+}
+
+# Main developers
+
+* Shidong Jiang, Flatiron Institute, Simons Foundation
+* Leslie Greengard, Flatiron Institute, Simons Foundation
+* Robert Blackwell, Flatiron Institute, Simons Foundation
