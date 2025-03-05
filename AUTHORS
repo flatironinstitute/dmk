@@ -1,5 +1,6 @@
-Main developers: Fortran code: Shidong Jiang (sjiang@flatironinstitute.org), 2022
-                 C++ code: Robert Blackwell (rblackwell@flatironinstitute.org), 2024
+Main developers: Fortran code: Shidong Jiang (sjiang@flatironinstitute.org), 
+                               Leslie Greengard (lgreengard@flatironinstitute.org)
+                 C++ code: Robert Blackwell (rblackwell@flatironinstitute.org)
 Contributors:
 
 1. Libin Lu (llu@flatironinstitute.org) and Dhairya Malhotra (dmalhotra@flatironinstitute.org)
