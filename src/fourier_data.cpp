@@ -54,34 +54,6 @@ T procl180_rescale(T eps) {
 }
 
 template <int DIM>
-std::tuple<int, double, double, double> get_PSWF_truncated_kernel_pwterms(int ndigits, double boxsize) {
-    int npw;
-    double hpw, ws, rl;
-
-    if (ndigits <= 3) {
-        npw = 13;
-        hpw = M_PI * 0.34 / boxsize;
-    } else if (ndigits <= 6) {
-        npw = 25;
-        hpw = M_PI * 0.357 / boxsize;
-    } else if (ndigits <= 9) {
-        npw = 39;
-        hpw = M_PI * 0.357 / boxsize;
-    } else if (ndigits <= 12) {
-        npw = 53;
-        hpw = M_PI * 0.338 / boxsize;
-    }
-
-    constexpr double factor = 0.5 / sctl::pow<DIM - 1>(M_PI);
-    ws = sctl::pow<DIM>(hpw) * factor;
-
-    constexpr double two_sqrt_dim = DIM == 2 ? 2 * 1.4142135623730951 : 2 * 1.7320508075688772;
-    rl = boxsize * two_sqrt_dim;
-
-    return std::make_tuple(npw, hpw, ws, rl);
-}
-
-template <int DIM>
 std::tuple<int, double, double> get_PSWF_difference_kernel_pwterms(dmk_ikernel kernel, int ndigits, double boxsize) {
     int npw;
     double hpw, ws;
@@ -317,20 +289,22 @@ FourierData<T>::FourierData(dmk_ikernel kernel_, int n_dim_, T eps, int n_digits
     beta = procl180_rescale(eps);
     prolate_funcs = ProlateFuncs(beta, 10000);
 
-    hpw.ReInit(n_levels + 1);
-    ws.ReInit(n_levels + 1);
-    rl.ReInit(n_levels + 1);
+    windowed_kernel.fhat.ReInit(n_fourier);
+    difference_kernels.ReInit(n_levels);
 
     if (n_dim == 2)
-        std::tie(n_pw, hpw[0], ws[0], rl[0]) = get_PSWF_windowed_kernel_pwterms<2>(n_digits, boxsize[0]);
+        std::tie(n_pw, windowed_kernel.hpw, windowed_kernel.ws, windowed_kernel.rl) =
+            get_PSWF_windowed_kernel_pwterms<2>(n_digits, boxsize[0]);
     else if (n_dim == 3)
-        std::tie(n_pw, hpw[0], ws[0], rl[0]) = get_PSWF_windowed_kernel_pwterms<3>(n_digits, boxsize[0]);
+        std::tie(n_pw, windowed_kernel.hpw, windowed_kernel.ws, windowed_kernel.rl) =
+            get_PSWF_windowed_kernel_pwterms<3>(n_digits, boxsize[0]);
 
-    difference_kernel.ReInit(n_fourier * n_levels);
+    for (auto &el : difference_kernels)
+        el.fhat.ReInit(n_fourier);
 
-    rl[1] = rl[0];
-    for (int i = 2; i < rl.Dim(); ++i)
-        rl[i] = 0.5 * rl[i - 1];
+    difference_kernels[0].rl = windowed_kernel.rl;
+    for (int i = 1; i < n_levels; ++i)
+        difference_kernels[i].rl = 0.5 * difference_kernels[i - 1].rl;
 }
 
 template <typename T>
@@ -340,14 +314,14 @@ void FourierData<T>::yukawa_windowed_kernel_ft() {
     const T &rlambda = fparam;
     const T rlambda2 = rlambda * rlambda;
 
-    windowed_kernel.ReInit(n_fourier);
+    windowed_kernel.fhat.ReInit(n_fourier);
 
     // determine whether one needs to smooth out the 1/(k^2+lambda^2) factor at the origin.
     // needed in the calculation of kernel-smoothing when there is low-frequency breakdown
     const bool near_correction = (rlambda * boxsize[0] / beta < 1E-2);
     T dk0, dk1, delam;
     if (near_correction) {
-        T arg = rl[0] * rlambda;
+        T arg = windowed_kernel.rl * rlambda;
         if (n_dim == 2) {
             dk0 = std::cyl_bessel_j(0, arg);
             dk1 = std::cyl_bessel_j(1, arg);
@@ -358,24 +332,25 @@ void FourierData<T>::yukawa_windowed_kernel_ft() {
     T psi0 = prolate_funcs.eval_val(0);
 
     for (int i = 0; i < n_fourier; ++i) {
-        const T rk = sqrt(T(i)) * hpw[0];
+        const T rk = sqrt(T(i)) * windowed_kernel.hpw;
         const T xi2 = rk * rk + rlambda2;
         const T xi = sqrt(xi2);
         const T xval = xi * boxsize[0] / beta;
         const T fval = (xval <= 1.0) ? prolate_funcs.eval_val(xval) : 0.0;
 
-        windowed_kernel[i] = ws[0] * fval / (psi0 * xi2);
+        windowed_kernel.fhat[i] = windowed_kernel.ws * fval / (psi0 * xi2);
 
         if (near_correction) {
             T sker;
             if (n_dim == 2) {
-                T xsc = rl[0] * rk;
-                sker = -rl[0] * fparam * std::cyl_bessel_j(0, xsc) * dk1 + 1.0 + xsc * std::cyl_bessel_j(1, xsc) * dk0;
+                T xsc = windowed_kernel.rl * rk;
+                sker = -windowed_kernel.rl * fparam * std::cyl_bessel_j(0, xsc) * dk1 + 1.0 +
+                       xsc * std::cyl_bessel_j(1, xsc) * dk0;
             } else if (n_dim == 3) {
-                T xsc = rl[0] * rk;
+                T xsc = windowed_kernel.rl * rk;
                 sker = 1 - delam * (cos(xsc) + rlambda / rk * sin(xsc));
             }
-            windowed_kernel[i] *= sker;
+            windowed_kernel.fhat[i] *= sker;
         }
     }
 }
@@ -404,10 +379,10 @@ void FourierData<Real>::yukawa_difference_kernel_ft(int i_level) {
     const Real rlambda = fparam;
     const Real rlambda2 = rlambda * rlambda;
     const Real psi0 = prolate_funcs.eval_val(0.0);
-    Real *fhat = &difference_kernel[(i_level)*n_fourier];
+    auto &fhat = difference_kernels[i_level].fhat;
 
-    for (int i = 0; i < n_fourier + 1; ++i) {
-        Real rk = sqrt((Real)i) * hpw[i_level + 1];
+    for (int i = 0; i < n_fourier; ++i) {
+        Real rk = sqrt((Real)i) * difference_kernels[i_level].hpw;
         Real xi2 = rk * rk + rlambda2;
         Real xi = sqrt(xi2);
         Real xval = xi * bsizesmall / beta;
@@ -415,7 +390,7 @@ void FourierData<Real>::yukawa_difference_kernel_ft(int i_level) {
 
         xval = xi * bsizebig / beta;
         Real fval2 = (xval <= 1.0) ? prolate_funcs.eval_val(xval) : 0.0;
-        fhat[i] = ws[i_level + 1] * (fval1 - fval2) / (psi0 * xi2);
+        fhat[i] = difference_kernels[i_level].ws * (fval1 - fval2) / (psi0 * xi2);
     }
 
     // re-compute fhat[0] accurately when there is a low-frequency breakdown
@@ -424,8 +399,9 @@ void FourierData<Real>::yukawa_difference_kernel_ft(int i_level) {
         const double bsizesmall2 = bsizesmall * bsizesmall;
         const double bsizebig2 = bsizebig * bsizebig;
 
-        fhat[0] = ws[i_level + 1] * c[2] * (bsizebig2 - bsizesmall2) / 2 +
-                  ws[i_level + 1] * (bsizesmall2 * bsizesmall2 - bsizebig2 * bsizebig2) * rlambda2 * c[3] / (c[0] * 24);
+        fhat[0] = difference_kernels[i_level].ws * c[2] * (bsizebig2 - bsizesmall2) / 2 +
+                  difference_kernels[i_level].ws * (bsizesmall2 * bsizesmall2 - bsizebig2 * bsizebig2) * rlambda2 *
+                      c[3] / (c[0] * 24);
     }
 }
 
@@ -439,7 +415,7 @@ T FourierData<T>::yukawa_windowed_kernel_value_at_zero(int i_level) {
     double fval = 0.0;
     double bsize = (i_level == 0) ? 0.5 * boxsize[i_level] : boxsize[i_level];
     double beta_ = beta;
-    double rl_ = rl[i_level];
+    double rl_ = i_level ? difference_kernels[i_level - 1].rl : windowed_kernel.rl;
     double rpars = fparam;
     yukawa_windowed_kernel_value_at_zero_(&n_dim, &rpars, &beta_, &bsize, &rl_, prolate_funcs.workarray.data(), &fval);
     return fval;
@@ -465,10 +441,10 @@ void FourierData<T>::update_difference_kernels() {
     for (int i_level = 0; i_level < n_levels; ++i_level) {
         auto &bsize = boxsize[i_level];
         auto bsize_small = bsize * 0.5;
-        auto &hpw_i = hpw[i_level + 1];
-        auto &ws_i = ws[i_level + 1];
-        auto &rl_i = rl[i_level + 1];
-        auto dkernelft_i = &difference_kernel[i_level * n_fourier];
+        auto &hpw_i = difference_kernels[i_level].hpw;
+        auto &ws_i = difference_kernels[i_level].ws;
+        auto &rl_i = difference_kernels[i_level].rl;
+        auto dkernelft_i = &difference_kernels[i_level].fhat;
 
         // FIXME: GIVES DIFFERENT NPW THAN OTHER CODE
         // FIXME: overwrites n_pw
@@ -487,7 +463,7 @@ void FourierData<T>::update_difference_kernels() {
         else
             scale_factor = 2.0;
 
-        const T *dkernelft_im1 = &difference_kernel[(i_level - 1) * n_fourier];
+        const auto &dkernelft_im1 = difference_kernels[i_level - 1].fhat;
         for (int i = 0; i < n_fourier; ++i)
             dkernelft_i[i] = scale_factor * dkernelft_im1[i];
     }
@@ -531,8 +507,9 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
 
         const bool near_correction = rlambda * bsize / beta < 1E-2;
         T dk0, dk1, delam;
+        const T rl = i_level ? difference_kernels[i_level - 1].rl : windowed_kernel.rl;
         if (near_correction) {
-            T arg = rl[i_level] * rlambda;
+            T arg = rl * rlambda;
             if (n_dim == 2) {
                 dk0 = std::cyl_bessel_k(0, arg);
                 dk1 = std::cyl_bessel_k(1, arg);
@@ -552,10 +529,10 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
             fhat[i] *= (n_dim == 2) ? whts[i] * xs[i] : whts[i] * xs[i] * xs[i] * two_over_pi;
 
             if (near_correction) {
-                T xsc = rl[i_level] * xs[i];
+                T xsc = rl * xs[i];
                 if (n_dim == 2)
-                    fhat[i] *= -rl[i_level] + rlambda + std::cyl_bessel_j(0, xsc) * dk1 + 1 +
-                               xsc * std::cyl_bessel_j(1, xsc) * dk0;
+                    fhat[i] *=
+                        -rl + rlambda + std::cyl_bessel_j(0, xsc) * dk1 + 1 + xsc * std::cyl_bessel_j(1, xsc) * dk0;
                 else
                     fhat[i] *= 1 - delam * (std::cos(xsc) + rlambda / xs[i] * std::sin(xsc));
             }
@@ -647,8 +624,9 @@ void FourierData<T>::calc_planewave_translation_matrix(int dim, int i_level, T x
     constexpr int nmax = 1;
     sctl::Vector<T> ts(n_pw);
     int ts_shift = n_pw / 2;
+    const T hpw = i_level ? difference_kernels[i_level - 1].hpw : windowed_kernel.hpw;
     for (int i = 0; i < n_pw; ++i)
-        ts[i] = (i - ts_shift) * hpw[i_level];
+        ts[i] = (i - ts_shift) * hpw;
 
     if (dim == 2)
         dmk::calc_planewave_translation_matrix<2>(nmax, xmin, n_pw, ts, shift_vec);
@@ -661,8 +639,9 @@ void FourierData<T>::calc_planewave_translation_matrix(int dim, int i_level, T x
 template <typename T>
 void FourierData<T>::calc_planewave_coeff_matrices(int i_level, int n_order, sctl::Vector<std::complex<T>> &prox2pw_vec,
                                                    sctl::Vector<std::complex<T>> &pw2poly_vec) const {
-    dmk::calc_planewave_coeff_matrices(boxsize[std::max(i_level, 0)], hpw[i_level + 1], n_pw, n_order, prox2pw_vec,
-                                       pw2poly_vec);
+    auto hpw = (i_level + 1) ? difference_kernels[i_level].hpw : windowed_kernel.hpw;
+    auto bsize = boxsize[std::max(i_level, 0)];
+    dmk::calc_planewave_coeff_matrices(bsize, hpw, n_pw, n_order, prox2pw_vec, pw2poly_vec);
 }
 
 template struct FourierData<float>;

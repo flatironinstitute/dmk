@@ -33,11 +33,16 @@ struct FourierData {
     int n_pw;
     int n_fourier;
     T fparam;
-    sctl::Vector<T> difference_kernel;
-    sctl::Vector<T> windowed_kernel;
-    sctl::Vector<T> hpw;
-    sctl::Vector<T> ws;
-    sctl::Vector<T> rl;
+
+    struct kernel {
+        T hpw;
+        T ws;
+        T rl;
+        sctl::Vector<T> fhat;
+    };
+
+    struct kernel windowed_kernel;
+    sctl::Vector<struct kernel> difference_kernels;
 
     // Local chebyshev polynomial coefficients for yukawa potential
     sctl::Vector<T> coeffs1;

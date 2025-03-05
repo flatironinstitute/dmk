@@ -102,7 +102,7 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 
     fourier_data = FourierData<Real>(params.kernel, DIM, params.eps, n_digits, n_pw_max, params.fparam, boxsize);
     logger->debug("Planewave params at root box: n: {}, stepsize: {}, weight: {}, radius: {}", fourier_data.n_pw,
-                  fourier_data.hpw[0], fourier_data.ws[0], fourier_data.rl[0]);
+                  fourier_data.windowed_kernel.hpw, fourier_data.windowed_kernel.ws, fourier_data.windowed_kernel.rl);
     fourier_data.update_windowed_kernel_ft();
     logger->debug("Truncated fourier transform for kernel {} at root box generated", int(params.kernel));
     fourier_data.update_difference_kernels();
@@ -502,7 +502,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
 
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         for (int i = 0; i < n_pw; ++i)
-            ts[i] = fourier_data.hpw[i_level + 1] * (i - shift);
+            ts[i] = fourier_data.difference_kernels[i_level].hpw * (i - shift);
 
         fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
         dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw, ts, wpwshift);
