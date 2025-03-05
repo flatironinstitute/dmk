@@ -16,14 +16,7 @@ struct FourierData {
     FourierData(dmk_ikernel kernel_, int n_dim_, T eps, int n_digits_, int n_pw_max, T fparam_,
                 const sctl::Vector<T> &boxsize_);
 
-    void laplace_windowed_kernel_ft();
-    void yukawa_windowed_kernel_ft();
-    void update_windowed_kernel_ft();
-    void yukawa_difference_kernel_ft(int i_level);
-    void laplace_difference_kernel(int i_level);
     T yukawa_windowed_kernel_value_at_zero(int i_level);
-    void update_difference_kernel(int i_level);
-    void update_difference_kernels();
     void update_local_coeffs_yukawa(T eps);
     void update_local_coeffs(T eps);
     void calc_planewave_coeff_matrices(int i_level, int n_order, sctl::Vector<std::complex<T>> &prox2pw,
@@ -38,15 +31,14 @@ struct FourierData {
     int n_pw() const { return n_pw_; };
     T beta() const { return beta_; }
 
-    struct kernel {
+    struct kernel_params {
         T hpw;
         T ws;
         T rl;
-        sctl::Vector<T> fhat;
     };
 
-    const struct kernel &windowed_kernel() const { return windowed_kernel_; }
-    const struct kernel &difference_kernel(int i_level) const { return difference_kernels_[i_level]; }
+    const struct kernel_params &windowed_kernel() const { return windowed_kernel_; }
+    const struct kernel_params &difference_kernel(int i_level) const { return difference_kernels_[i_level]; }
 
     ProlateFuncs prolate_funcs;
 
@@ -60,8 +52,8 @@ struct FourierData {
     T fparam_;
     T beta_;
 
-    struct kernel windowed_kernel_;
-    sctl::Vector<struct kernel> difference_kernels_;
+    struct kernel_params windowed_kernel_;
+    sctl::Vector<struct kernel_params> difference_kernels_;
     sctl::Vector<T> box_sizes_;
 
     // Local chebyshev polynomial coefficients for yukawa potential

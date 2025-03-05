@@ -104,10 +104,6 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     const auto &wk = fourier_data.windowed_kernel();
     logger->debug("Planewave params at root box: n: {}, stepsize: {}, weight: {}, radius: {}", fourier_data.n_pw(),
                   wk.hpw, wk.ws, wk.rl);
-    fourier_data.update_windowed_kernel_ft();
-    logger->debug("Truncated fourier transform for kernel {} at root box generated", int(params.kernel));
-    fourier_data.update_difference_kernels();
-    logger->debug("Finished calculating difference kernels");
     fourier_data.update_local_coeffs(params.eps);
     logger->debug("Finished updating local potential expansion coefficients");
 }
