@@ -1,3 +1,4 @@
+#include <cmath>
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
 #include <dmk/fortran.h>
@@ -49,7 +50,7 @@ T procl180_rescale(T eps) {
     double d = -std::log10(scale * eps);
     int i = d * 10 + 0.1 - 1;
     assert(i >= 0);
-    assert(i < sizeof(cs) / sizeof(T));
+    assert(i < sizeof(cs) / sizeof(float));
     return cs[i];
 }
 
@@ -94,6 +95,15 @@ std::tuple<int, double, double> get_PSWF_difference_kernel_pwterms(dmk_ikernel k
     return std::make_tuple(npw, hpw, ws);
 }
 
+inline std::tuple<int, double, double> get_PSWF_difference_kernel_pwterms(dmk_ikernel kernel, int dim, int ndigits,
+                                                                          double boxsize) {
+    if (dim == 2)
+        return get_PSWF_difference_kernel_pwterms<2>(kernel, ndigits, boxsize);
+    if (dim == 3)
+        return get_PSWF_difference_kernel_pwterms<3>(kernel, ndigits, boxsize);
+    throw std::runtime_error("Invalid dimension " + std::to_string(dim) + " provided");
+}
+
 template <int DIM>
 std::tuple<int, double, double, double> get_PSWF_windowed_kernel_pwterms(int ndigits, double boxsize) {
     int npw;
@@ -120,6 +130,14 @@ std::tuple<int, double, double, double> get_PSWF_windowed_kernel_pwterms(int ndi
     rl = boxsize * two_sqrt_dim;
 
     return std::make_tuple(npw, hpw, ws, rl);
+}
+
+inline std::tuple<int, double, double, double> get_PSWF_windowed_kernel_pwterms(int dim, int ndigits, double boxsize) {
+    if (dim == 2)
+        return get_PSWF_windowed_kernel_pwterms<2>(ndigits, boxsize);
+    if (dim == 3)
+        return get_PSWF_windowed_kernel_pwterms<3>(ndigits, boxsize);
+    throw std::runtime_error("Invalid dimension " + std::to_string(dim) + " provided");
 }
 
 template <typename Real, int DIM>
@@ -156,16 +174,14 @@ void yukawa_windowed_kernel_ft(const double *rpars, Real beta, int ndigits, Real
         windowed_ft[i] = ws * fval / (psi0 * xi2);
 
         if (near_correction) {
-            Real sker;
+            const Real xsc = rl * rk;
             if constexpr (DIM == 2) {
-                Real xsc = rl * rk;
-                sker =
-                    -rl * rlambda * std::cyl_bessel_j(0, xsc) * dk1 + Real{1.0} + xsc * std::cyl_bessel_j(1, xsc) * dk0;
+                using std::cyl_bessel_j;
+                windowed_ft[i] *=
+                    -rl * rlambda * cyl_bessel_j(0, xsc) * dk1 + Real{1.0} + xsc * cyl_bessel_j(1, xsc) * dk0;
             } else if constexpr (DIM == 3) {
-                Real xsc = rl * rk;
-                sker = 1 - delam * (cos(xsc) + rlambda / rk * sin(xsc));
+                windowed_ft[i] *= 1 - delam * (cos(xsc) + rlambda / rk * sin(xsc));
             }
-            windowed_ft[i] *= sker;
         }
     }
 }
@@ -284,35 +300,29 @@ template <typename T>
 FourierData<T>::FourierData(dmk_ikernel kernel, int n_dim, T eps, int n_digits, int n_pw_max, T fparam,
                             const sctl::Vector<T> &boxsize_)
     : kernel_(kernel), n_dim_(n_dim), n_digits_(n_digits), fparam_(fparam), box_sizes_(boxsize_),
-      n_levels_(boxsize_.Dim()), n_fourier_(n_dim_ * sctl::pow(n_pw_max / 2, 2) + 1) {
+      n_levels_(boxsize_.Dim()) {
 
     beta_ = procl180_rescale(eps);
     prolate_funcs = ProlateFuncs(beta_, 10000);
     difference_kernels_.ReInit(n_levels_);
 
-    if (n_dim_ == 2)
-        std::tie(n_pw_, windowed_kernel_.hpw, windowed_kernel_.ws, windowed_kernel_.rl) =
-            get_PSWF_windowed_kernel_pwterms<2>(n_digits_, box_sizes_[0]);
-    else if (n_dim_ == 3)
-        std::tie(n_pw_, windowed_kernel_.hpw, windowed_kernel_.ws, windowed_kernel_.rl) =
-            get_PSWF_windowed_kernel_pwterms<3>(n_digits_, box_sizes_[0]);
+    auto n_pw_windowed = 0, n_pw_difference = 0;
+    std::tie(n_pw_windowed, windowed_kernel_.hpw, windowed_kernel_.ws, windowed_kernel_.rl) =
+        get_PSWF_windowed_kernel_pwterms(n_dim_, n_digits_, box_sizes_[0]);
 
     difference_kernels_[0].rl = windowed_kernel_.rl;
     for (int i = 1; i < n_levels_; ++i)
         difference_kernels_[i].rl = 0.5 * difference_kernels_[i - 1].rl;
 
-    auto PSWF_difference_kernel_pwterms =
-        (n_dim_ == 2) ? get_PSWF_difference_kernel_pwterms<2> : get_PSWF_difference_kernel_pwterms<3>;
+    for (int i_level = 0; i_level < n_levels_; ++i_level)
+        std::tie(n_pw_difference, difference_kernels_[i_level].hpw, difference_kernels_[i_level].ws) =
+            get_PSWF_difference_kernel_pwterms(kernel_, n_dim, n_digits_, box_sizes_[i_level]);
 
-    for (int i_level = 0; i_level < n_levels_; ++i_level) {
-        auto &bsize = box_sizes_[i_level];
-        auto &hpw_i = difference_kernels_[i_level].hpw;
-        auto &ws_i = difference_kernels_[i_level].ws;
+    n_pw_ = std::max(n_pw_windowed, n_pw_difference);
 
-        // FIXME: GIVES DIFFERENT NPW THAN OTHER CODE
-        // FIXME: overwrites n_pw
-        std::tie(n_pw_, hpw_i, ws_i) = PSWF_difference_kernel_pwterms(kernel_, n_digits_, bsize);
-    }
+    assert(n_pw_windowed);
+    assert(n_pw_difference);
+    assert(n_pw_);
 }
 
 template <typename T>
@@ -320,10 +330,15 @@ T FourierData<T>::yukawa_windowed_kernel_value_at_zero(int i_level) {
     double fval = 0.0;
     double bsize = (i_level == 0) ? 0.5 * box_sizes_[i_level] : box_sizes_[i_level];
     double beta = beta_;
-    double rl_ = i_level ? difference_kernels_[i_level - 1].rl : windowed_kernel_.rl;
+    double rl_ = difference_kernels_[std::max(i_level - 1, 0)].rl;
     double rpars = fparam_;
     yukawa_windowed_kernel_value_at_zero_(&n_dim_, &rpars, &beta, &bsize, &rl_, prolate_funcs.workarray.data(), &fval);
     return fval;
+}
+
+template <typename T>
+void FourierData<T>::update_local_coeffs_laplace(T eps) {
+    throw std::runtime_error("Laplace kernel not supported yet.");
 }
 
 template <typename T>
@@ -345,6 +360,7 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
     constexpr int n_quad = 100;
     std::vector<double> xs(n_quad), xs_base(n_quad), whts(n_quad), whts_base(n_quad), r1(n_quad), r2(n_quad),
         w1(n_quad), w2(n_quad), fhat(n_quad);
+
     double u, v; // dummy vars
     legeexps_(&i_type, &n_quad, xs_base.data(), &u, &v, whts_base.data());
     auto [v1, vlu1] = dmk::chebyshev::get_vandermonde_and_LU<T>(nr1);
@@ -364,7 +380,7 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
 
         const bool near_correction = rlambda * bsize / beta_ < 1E-2;
         T dk0, dk1, delam;
-        const T rl = i_level ? difference_kernels_[i_level - 1].rl : windowed_kernel_.rl;
+        const T rl = difference_kernels_[std::max(i_level - 1, 0)].rl;
         if (near_correction) {
             T arg = rl * rlambda;
             if (n_dim_ == 2) {
@@ -470,8 +486,12 @@ void FourierData<T>::update_local_coeffs(T eps) {
     switch (kernel_) {
     case dmk_ikernel::DMK_YUKAWA:
         return update_local_coeffs_yukawa(eps);
+    case dmk_ikernel::DMK_LAPLACE:
+        return update_local_coeffs_laplace(eps);
+    case dmk_ikernel::DMK_SQRT_LAPLACE:
+        throw std::runtime_error("Laplace SQRT kernel not supported yet.");
     default:
-        return;
+        throw std::runtime_error("Kernel not supported yet: " + std::to_string(kernel_));
     }
 }
 

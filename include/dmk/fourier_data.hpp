@@ -17,7 +17,6 @@ struct FourierData {
                 const sctl::Vector<T> &boxsize_);
 
     T yukawa_windowed_kernel_value_at_zero(int i_level);
-    void update_local_coeffs_yukawa(T eps);
     void update_local_coeffs(T eps);
     void calc_planewave_coeff_matrices(int i_level, int n_order, sctl::Vector<std::complex<T>> &prox2pw,
                                        sctl::Vector<std::complex<T>> &pw2poly) const;
@@ -32,9 +31,9 @@ struct FourierData {
     T beta() const { return beta_; }
 
     struct kernel_params {
-        T hpw;
-        T ws;
-        T rl;
+        T hpw{0};
+        T ws{0};
+        T rl{0};
     };
 
     const struct kernel_params &windowed_kernel() const { return windowed_kernel_; }
@@ -44,13 +43,12 @@ struct FourierData {
 
   private:
     dmk_ikernel kernel_;
-    int n_dim_;
-    int n_digits_;
-    int n_levels_;
-    int n_pw_;
-    int n_fourier_;
-    T fparam_;
-    T beta_;
+    int n_dim_{0};
+    int n_digits_{0};
+    int n_levels_{0};
+    int n_pw_{0};
+    T fparam_{0};
+    T beta_{0};
 
     struct kernel_params windowed_kernel_;
     sctl::Vector<struct kernel_params> difference_kernels_;
@@ -62,6 +60,9 @@ struct FourierData {
     sctl::Vector<int> ncoeffs1_;
     sctl::Vector<int> ncoeffs2_;
     static constexpr int n_coeffs_max = 100;
+
+    void update_local_coeffs_yukawa(T eps);
+    void update_local_coeffs_laplace(T eps);
 };
 
 template <int DIM, typename T>
