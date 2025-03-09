@@ -52,8 +52,9 @@ make -j 10
 # Fortran code installation guide
 
 We use make utility to install static and/or dynamic libraries, and to run the tests. 
-Type "make" in the main directory to see the list of options for compiling the point code.
-The box code is compiled and tested using the makefile in test/bdmk.
+Type "make" in the main directory to see the list of options for compiling the point code
+for discrete sources. The box code for continuous sources is compiled and tested using 
+the makefile in test/bdmk.
 
 The box code uses BLAS and we suggest that the user use the Intel compiler ifort and the 
 Intel MKL library for optimal performance. Please do "ulimit -s unlimited" on the command 
@@ -73,30 +74,20 @@ If you find DMK useful in your work, please star this repository and cite it and
 
 
 ```
-@article{jianggreengard2024dmk,
+@article{jianggreengard2025dmk,
 author = {Jiang, Shidong and Greengard, Leslie},
 title = {A dual-space multilevel kernel-splitting framework for discrete and continuous convolution},
 journal = {Communications on Pure and Applied Mathematics},
-volume = {n/a},
-number = {n/a},
-pages = {},
+volume = {78},
+number = {5},
+pages = {1086--1143},
+year = {2025},
 doi = {https://doi.org/10.1002/cpa.22240},
 url = {https://onlinelibrary.wiley.com/doi/abs/10.1002/cpa.22240},
 eprint = {https://onlinelibrary.wiley.com/doi/pdf/10.1002/cpa.22240},
 }
 ```
-or 
-```
-@misc{jianggreengard2023dmk,
-      title={A Dual-space Multilevel Kernel-splitting Framework for Discrete and Continuous Convolution}, 
-      author={Shidong Jiang and Leslie Greengard},
-      year={2023},
-      eprint={2308.00292},
-      archivePrefix={arXiv},
-      primaryClass={math.NA},
-      url={https://arxiv.org/abs/2308.00292}, 
-}
-```
+
 # Main developers
 
 * Leslie Greengard, Flatiron Institute, Simons Foundation
