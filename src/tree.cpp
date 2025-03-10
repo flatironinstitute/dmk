@@ -593,10 +593,18 @@ void DMKPtTree<T, DIM>::downward_pass() {
             }
         }
 
-        const double bsize = i_level == 0 ? 0.5 * boxsize[i_level] : boxsize[i_level];
-        const double rsc = 2.0 / bsize;
-        const double cen = -1.0;
-        const double d2max = bsize * bsize;
+        // FIXME: Clean up the logic for the direct interactions. Maybe make a small class/closure
+        const auto [bsize, rsc, cen, d2max] = [&]() -> std::tuple<T, T, T, T> {
+            const double bsize = i_level == 0 ? 0.5 * boxsize[i_level] : boxsize[i_level];
+            const double d2max = bsize * bsize;
+
+            if ((params.kernel == DMK_SQRT_LAPLACE && DIM == 3) || (params.kernel == DMK_LAPLACE && DIM == 2))
+                return {bsize, 2.0 / (bsize * bsize), -1.0, d2max};
+            if (params.kernel == DMK_YUKAWA)
+                return {bsize, 2.0 / bsize, -1.0, d2max};
+
+            return {bsize, 2.0 / bsize, -bsize / 2.0, d2max};
+        }();
 
         auto get_windowed_kernel_at_zero = [&]() -> T {
             if (params.kernel == DMK_YUKAWA)

@@ -221,7 +221,7 @@ void laplace_3d_windowed_kernel_ft(const double *rpars, Real beta, int ndigits, 
 
     for (int i = 0; i < n_quad; ++i) {
         auto [val, dval] = pf.eval_val_derivative(xs[i] / boxsize);
-        fvals[i] = fvals[i] * whts[i] / c1;
+        fvals[i] = val * whts[i] / c1;
     }
 
     for (int i = 0; i < n_fourier; ++i) {
@@ -262,14 +262,14 @@ void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, 
 }
 
 template <typename Real, int DIM>
-void get_difference_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, Real boxsize,
-                              ProlateFuncs &pf, sctl::Vector<Real> &diff_kernel_ft) {
+void yukawa_difference_kernel_ft(const double *rpars, Real beta, int ndigits, Real boxsize, ProlateFuncs &pf,
+                                 sctl::Vector<Real> &diff_kernel_ft) {
     const Real bsizesmall = boxsize * 0.5;
     const Real bsizebig = boxsize;
     const Real rlambda = *rpars;
     const Real rlambda2 = rlambda * rlambda;
     const Real psi0 = pf.eval_val(0.0);
-    const auto [npw, hpw, ws] = get_PSWF_difference_kernel_pwterms<DIM>(kernel, ndigits, boxsize);
+    const auto [npw, hpw, ws] = get_PSWF_difference_kernel_pwterms<DIM>(DMK_YUKAWA, ndigits, boxsize);
     const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
     diff_kernel_ft.ReInit(n_fourier);
 
@@ -293,6 +293,67 @@ void get_difference_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta
 
         diff_kernel_ft[0] = ws * c[2] * (bsizebig2 - bsizesmall2) / 2 +
                             ws * (bsizesmall2 * bsizesmall2 - bsizebig2 * bsizebig2) * rlambda2 * c[3] / (c[0] * 24);
+    }
+}
+
+template <typename Real, int DIM>
+void laplace_difference_kernel_ft(const double *rpars, Real beta, int ndigits, Real boxsize, ProlateFuncs &pf,
+                                  sctl::Vector<Real> &diff_kernel_ft) {
+    if constexpr (DIM == 2)
+        throw std::runtime_error("2D Laplace kernel not supported yet.");
+
+    const Real bsizesmall = boxsize * 0.5;
+    const Real bsizebig = boxsize;
+    const auto [npw, hpw, ws] = get_PSWF_difference_kernel_pwterms<DIM>(DMK_LAPLACE, ndigits, boxsize);
+    const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
+    diff_kernel_ft.ReInit(n_fourier);
+
+    auto [c0, c1, g0d2, c3] = pf.intvals(beta);
+    const int i_type = 1;
+    const int n_quad = 100;
+    std::array<double, n_quad> xs, whts;
+    double u, v;
+    legeexps_(&i_type, &n_quad, xs.data(), &u, &v, whts.data());
+
+    std::array<double, n_quad> x1, x2;
+    for (int i = 0; i < n_quad; ++i) {
+        x1[i] = 0.5 * (xs[i] + 1) * bsizesmall;
+        x2[i] = 0.5 * (xs[i] + 1) * bsizebig;
+    }
+
+    std::array<double, n_quad> fvals;
+    for (int i = 0; i < n_quad; ++i) {
+        const auto fval = pf.eval_val(0.5 * (xs[i] + 1));
+        fvals[i] = 0.5 * fval * whts[i] / c0;
+    }
+
+    const Real bsizesmall2 = bsizesmall * bsizesmall;
+    const Real bsizebig2 = bsizebig * bsizebig;
+    for (int i = 0; i < n_fourier; ++i) {
+        const double rk = std::sqrt(i) * hpw;
+
+        diff_kernel_ft[i] = 0.0;
+        for (int j = 0; j < n_quad; ++j)
+            diff_kernel_ft[i] += (cos(rk * x1[j]) - cos(rk * x2[j])) * fvals[j];
+
+        // for symmetric trapezoidal rule
+        if (i > 0)
+            diff_kernel_ft[i] *= ws / (rk * rk);
+        else
+            diff_kernel_ft[i] = 0.5 * ws * g0d2 * (bsizebig2 - bsizesmall2);
+    }
+}
+
+template <typename Real, int DIM>
+void get_difference_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, Real boxsize,
+                              ProlateFuncs &pf, sctl::Vector<Real> &diff_kernel_ft) {
+    switch (kernel) {
+    case dmk_ikernel::DMK_YUKAWA:
+        return yukawa_difference_kernel_ft<Real, DIM>(rpars, beta, ndigits, boxsize, pf, diff_kernel_ft);
+    case dmk_ikernel::DMK_LAPLACE:
+        return laplace_difference_kernel_ft<Real, DIM>(rpars, beta, ndigits, boxsize, pf, diff_kernel_ft);
+    default:
+        throw std::runtime_error("Unsupported kernel" + std::to_string(kernel));
     }
 }
 
@@ -338,7 +399,11 @@ T FourierData<T>::yukawa_windowed_kernel_value_at_zero(int i_level) {
 
 template <typename T>
 void FourierData<T>::update_local_coeffs_laplace(T eps) {
-    throw std::runtime_error("Laplace kernel not supported yet.");
+    if (n_dim_ != 2)
+        return; // Only coeffs in 2d
+
+    // FIXME: Laplace2D only should update if calculating dipoles
+    throw std::runtime_error("2D Laplace kernel not supported yet.");
 }
 
 template <typename T>
@@ -489,7 +554,7 @@ void FourierData<T>::update_local_coeffs(T eps) {
     case dmk_ikernel::DMK_LAPLACE:
         return update_local_coeffs_laplace(eps);
     case dmk_ikernel::DMK_SQRT_LAPLACE:
-        throw std::runtime_error("Laplace SQRT kernel not supported yet.");
+        return; // No coefficients for sqrt Laplace kernel
     default:
         throw std::runtime_error("Kernel not supported yet: " + std::to_string(kernel_));
     }

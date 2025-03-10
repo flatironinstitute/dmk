@@ -24,7 +24,10 @@ struct FourierData {
                                            sctl::Vector<std::complex<T>> &shift_vec) const;
 
     const ndview<const T, 1> cheb_coeffs(int i_level) const {
-        return ndview<const T, 1>(&coeffs1_[i_level * n_coeffs_max], ncoeffs1_[i_level]);
+        if (coeffs1_.Dim())
+            return ndview<const T, 1>(&coeffs1_[i_level * n_coeffs_max], ncoeffs1_[i_level]);
+        else
+            return ndview<const T, 1>(nullptr, 0);
     };
 
     int n_pw() const { return n_pw_; };

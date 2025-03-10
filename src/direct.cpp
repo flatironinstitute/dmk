@@ -1,6 +1,19 @@
 #include <dmk/chebychev.hpp>
 #include <dmk/direct.hpp>
 
+#define VECDIM 4
+
+#ifdef __AVX512F__
+#undef VECDIM
+#define VECDIM 8
+#endif
+
+template <class Real, sctl::Integer MaxVecLen = sctl::DefaultVecLen<Real>()>
+void l3d_local_kernel_directcp_vec_cpp(const int32_t *nd, const int32_t *ndim, const int32_t *digits, const Real *rsc,
+                                       const Real *cen, const Real *d2max, const Real *sources, const int32_t *ns,
+                                       const Real *charge, const Real *xtarg, const Real *ytarg, const Real *ztarg,
+                                       const int32_t *nt, Real *pot, const Real *thresh);
+
 namespace dmk {
 
 template <typename Real, int DIM>
@@ -53,16 +66,22 @@ void direct_eval(dmk_ikernel ikernel, const ndview<const Real, 2> &r_src,
         break;
     case dmk_ikernel::DMK_LAPLACE:
         if constexpr (DIM == 2) {
+            throw std::runtime_error("Laplace kernel not implemented in 2D");
         }
         if constexpr (DIM == 3) {
+            const int32_t nd = charges.extent(0);
+            const int32_t ndim = DIM;
+            const int32_t digits = 6; // FIXME
+            const int32_t nsrc = r_src.extent(1);
+            const int32_t ntrg = r_trg[0].size();
+            const Real thresh2 = 1E-30; // FIXME
+
+            return l3d_local_kernel_directcp_vec_cpp<Real, VECDIM>(
+                &nd, &ndim, &digits, &scale, &center, &d2max, r_src.data_handle(), &nsrc, charges.data_handle(),
+                r_trg[0].data(), r_trg[1].data(), r_trg[2].data(), &ntrg, u.data_handle(), &thresh2);
         }
-        break;
     case dmk_ikernel::DMK_SQRT_LAPLACE:
-        if constexpr (DIM == 2) {
-        }
-        if constexpr (DIM == 3) {
-        }
-        break;
+        throw std::runtime_error("SQRT Laplace kernel not implementedD");
     }
 }
 
