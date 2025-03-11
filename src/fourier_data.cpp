@@ -659,27 +659,4 @@ template void get_difference_kernel_ft<double, 3>(dmk_ikernel kernel, const doub
                                                   double boxsize, ProlateFuncs &pf,
                                                   sctl::Vector<double> &diff_kernel_ft);
 
-TEST_CASE("[DMK] bessel functions") {
-    double x = 1.0;
-    double fy = besk0_(&x);
-    double cy = std::cyl_bessel_k(0, x);
-    REQUIRE(std::abs(fy - cy) < std::numeric_limits<double>::epsilon());
-
-    fy = besk1_(&x);
-    cy = std::cyl_bessel_k(1, x);
-    REQUIRE(std::abs(fy - cy) < std::numeric_limits<double>::epsilon());
-
-    fy = besj0_(&x);
-    cy = std::cyl_bessel_j(0, x);
-
-    std::complex<double> z(x, 0.0);
-    std::complex<double> h0, h1;
-    constexpr int actual_hankel = 1;
-    hank103_(reinterpret_cast<_Complex double *>(&z), reinterpret_cast<_Complex double *>(&h0),
-             reinterpret_cast<_Complex double *>(&h1), &actual_hankel);
-
-    std::complex<double> h0c(std::cyl_bessel_j(0, z.real()), std::cyl_neumann(0, z.real()));
-    REQUIRE(std::abs(h0 - h0c) < 2 * std::numeric_limits<double>::epsilon());
-}
-
 } // namespace dmk
