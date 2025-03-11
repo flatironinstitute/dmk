@@ -640,14 +640,14 @@ void DMKPtTree<T, DIM>::downward_pass() {
                         r_trg[i] = std::span<const T>(&r_src_t(r_src_offsets[neighbor] / DIM, i), n_src_neighb);
 
                     direct_eval<T, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
-                                        &params.fparam, rsc, cen, d2max, pot_src_view(neighbor));
+                                        &params.fparam, rsc, cen, d2max, pot_src_view(neighbor), n_digits);
                 }
                 if (n_trg_neighb) {
                     for (int i = 0; i < DIM; ++i)
                         r_trg[i] = std::span<const T>(&r_trg_t(r_trg_offsets[neighbor] / DIM, i), n_trg_neighb);
 
                     direct_eval<T, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
-                                        &params.fparam, rsc, cen, d2max, pot_trg_view(neighbor));
+                                        &params.fparam, rsc, cen, d2max, pot_trg_view(neighbor), n_digits);
                 }
             }
 
