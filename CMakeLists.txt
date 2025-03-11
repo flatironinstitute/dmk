@@ -18,6 +18,9 @@ option(DMK_BUILD_EXAMPLES "Build examples" ON)
 
 if (NOT ${DMK_BUILD_TESTS})
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DDOCTEST_CONFIG_DISABLE")
+  set(DMK_TEST_SRC)
+else()
+  set(DMK_TEST_SRC src/doctest.cpp)
 endif()
 
 # FIXME: BLAS hack on SCTL to avoid header conflict. Eigen's BLAS define conflicts with SCTL's BLAS, so we don't include SCTL's BLAS header
@@ -58,7 +61,7 @@ add_library(dmk_ref_shared SHARED $<TARGET_OBJECTS:dmk_ref_common> $<TARGET_OBJE
 set_target_properties(dmk_ref_shared PROPERTIES OUTPUT_NAME dmk_ref)
 
 set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp
-            src/fourier_data.cpp src/tensorprod.cpp src/planewave.cpp src/direct.cpp src/doctest.cpp)
+  src/fourier_data.cpp src/tensorprod.cpp src/planewave.cpp src/direct.cpp ${DMK_TEST_SRC})
 add_library(DMKOBJS OBJECT ${DMK_SRC})
 set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES} ${MPI_CXX_INCLUDE_DIRS})
