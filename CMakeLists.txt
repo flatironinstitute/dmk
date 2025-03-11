@@ -14,6 +14,7 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
 endif()
 
 option(DMK_BUILD_TESTS "Build tests" ON)
+option(DMK_BUILD_EXAMPLES "Build examples" ON)
 
 if (NOT ${DMK_BUILD_TESTS})
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DDOCTEST_CONFIG_DISABLE")
@@ -71,4 +72,8 @@ target_link_libraries(${PROJECT_NAME}_shared DMKOBJS dmk_ref_common OpenMP::Open
 
 if(${DMK_BUILD_TESTS})
   add_subdirectory(test)
+endif()
+
+if(${DMK_BUILD_EXAMPLES})
+  add_subdirectory(examples)
 endif()

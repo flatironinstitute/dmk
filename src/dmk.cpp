@@ -49,7 +49,8 @@ void pdmk(MPI_Comm comm, const pdmk_params &params, int n_src, const T *r_src, c
     else
         MPI_Reduce(&N, &N, 1, MPI_INT, MPI_SUM, 0, comm);
 
-    logger->info("PDMK finished in {:.4f} seconds ({:.0f} pts/s)", dt, N / dt);
+    logger->info("PDMK finished in {:.4f} seconds ({:.0f} pts/s, {:.0f} pts/s/rank)", dt, N / dt,
+                 N / dt / sctl_comm.Size());
 }
 
 MPI_TEST_CASE("[DMK] pdmk 3d float", 1) {
