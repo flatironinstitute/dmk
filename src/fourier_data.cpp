@@ -386,15 +386,66 @@ FourierData<T>::FourierData(dmk_ikernel kernel, int n_dim, T eps, int n_digits, 
     assert(n_pw_);
 }
 
+template <typename Real>
+Real yukawa_windowed_kernel_value_at_zero(int n_dim, Real rlambda, Real beta, Real boxsize, Real rl,
+                                          const ProlateFuncs &pf) {
+    constexpr Real two_over_pi = 2.0 / M_PI;
+    const Real rlambda2 = rlambda * rlambda;
+
+    const bool near_correction = (rlambda * boxsize / beta) < 1.0E-2;
+    Real dk0, dk1, delam;
+    if (near_correction) {
+        if (n_dim == 2) {
+            dk0 = std::cyl_bessel_j(0, rl * rlambda);
+            dk1 = std::cyl_bessel_j(1, rl * rlambda);
+        } else if (n_dim == 3)
+            delam = std::exp(-rl * rlambda);
+    }
+
+    const Real psi0 = pf.eval_val(0.0);
+    const Real fone = pf.eval_val(1.0);
+
+    const int itype = 1;
+    const int n_quad = 100;
+    std::array<double, n_quad> xs, whts;
+    double u, v;
+    legeexps_(&itype, &n_quad, xs.data(), &u, &v, whts.data());
+    for (int i = 0; i < n_quad; ++i) {
+        xs[i] = Real(0.5) * (xs[i] + 1) * beta / boxsize;
+        whts[i] = Real(0.5) * whts[i] * beta / boxsize;
+    }
+
+    Real fval = 0.0;
+    for (int i = 0; i < n_quad; ++i) {
+        const Real xi2 = xs[i] * xs[i] + rlambda2;
+        const Real xval = std::sqrt(xi2) * boxsize / beta;
+
+        const Real fval0 = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
+
+        Real fhat = fval0 / psi0 / xi2;
+        if (near_correction) {
+            const Real xsc = rl * xs[i];
+            if (n_dim == 2)
+                fhat *= -rl * rlambda * std::cyl_bessel_j(0, xsc) * dk1 + 1 + xsc * std::cyl_bessel_j(1, xsc) * dk0;
+            else if (n_dim == 3)
+                fhat *= 1 - delam * (std::cos(xsc) + rlambda / xs[i] * std::sin(xsc));
+        }
+
+        if (n_dim == 2)
+            fval += fhat * whts[i] * xs[i];
+        else if (n_dim == 3)
+            fval += fhat * whts[i] * xs[i] * xs[i] * two_over_pi;
+    }
+
+    return fval;
+}
+
 template <typename T>
 T FourierData<T>::yukawa_windowed_kernel_value_at_zero(int i_level) {
-    double fval = 0.0;
-    double bsize = (i_level == 0) ? 0.5 * box_sizes_[i_level] : box_sizes_[i_level];
-    double beta = beta_;
-    double rl_ = difference_kernels_[std::max(i_level - 1, 0)].rl;
-    double rpars = fparam_;
-    yukawa_windowed_kernel_value_at_zero_(&n_dim_, &rpars, &beta, &bsize, &rl_, prolate_funcs.workarray.data(), &fval);
-    return fval;
+    const T bsize = (i_level == 0) ? 0.5 * box_sizes_[i_level] : box_sizes_[i_level];
+    const T rl = difference_kernels_[std::max(i_level - 1, 0)].rl;
+
+    return dmk::yukawa_windowed_kernel_value_at_zero(n_dim_, fparam_, beta_, bsize, rl, prolate_funcs);
 }
 
 template <typename T>
