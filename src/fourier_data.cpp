@@ -3,6 +3,7 @@
 #include <dmk/chebychev.hpp>
 #include <dmk/fortran.h>
 #include <dmk/fourier_data.hpp>
+#include <dmk/legeexps.hpp>
 #include <dmk/planewave.hpp>
 #include <dmk/prolate_funcs.hpp>
 #include <dmk/types.hpp>
@@ -209,10 +210,8 @@ void laplace_3d_windowed_kernel_ft(const double *rpars, Real beta, int ndigits, 
     c1 = c0 * boxsize;
 
     constexpr int n_quad = 100;
-    constexpr int itype = 1;
-    std::array<double, n_quad> xs, whts, fvals;
-    double u, v;
-    legeexps_(&itype, &n_quad, xs.data(), &u, &v, whts.data());
+    std::array<Real, n_quad> xs, whts, fvals;
+    legerts(1, n_quad, xs.data(), whts.data());
 
     for (int i = 0; i < n_quad; ++i) {
         xs[i] = 0.5 * (xs[i] + 1) * boxsize;
@@ -309,11 +308,10 @@ void laplace_difference_kernel_ft(const double *rpars, Real beta, int ndigits, R
     diff_kernel_ft.ReInit(n_fourier);
 
     auto [c0, c1, g0d2, c3] = pf.intvals(beta);
-    const int i_type = 1;
+
     const int n_quad = 100;
-    std::array<double, n_quad> xs, whts;
-    double u, v;
-    legeexps_(&i_type, &n_quad, xs.data(), &u, &v, whts.data());
+    std::array<Real, n_quad> xs, whts;
+    legerts(1, n_quad, xs.data(), whts.data());
 
     std::array<double, n_quad> x1, x2;
     for (int i = 0; i < n_quad; ++i) {
@@ -405,11 +403,10 @@ Real yukawa_windowed_kernel_value_at_zero(int n_dim, Real rlambda, Real beta, Re
     const Real psi0 = pf.eval_val(0.0);
     const Real fone = pf.eval_val(1.0);
 
-    const int itype = 1;
     const int n_quad = 100;
-    std::array<double, n_quad> xs, whts;
-    double u, v;
-    legeexps_(&itype, &n_quad, xs.data(), &u, &v, whts.data());
+    std::array<Real, n_quad> xs, whts;
+    legerts(1, n_quad, xs.data(), whts.data());
+
     for (int i = 0; i < n_quad; ++i) {
         xs[i] = Real(0.5) * (xs[i] + 1) * beta / boxsize;
         whts[i] = Real(0.5) * whts[i] * beta / boxsize;
@@ -457,8 +454,8 @@ void FourierData<T>::update_local_coeffs_laplace(T eps) {
     throw std::runtime_error("2D Laplace kernel not supported yet.");
 }
 
-template <typename T>
-void FourierData<T>::update_local_coeffs_yukawa(T eps) {
+template <typename Real>
+void FourierData<Real>::update_local_coeffs_yukawa(Real eps) {
     // FIXME: This whole routine is a mess and only works with doubles anyway
     const int nr1 = n_coeffs_max, nr2 = n_coeffs_max;
 
@@ -467,38 +464,36 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
     ncoeffs1_.ReInit(n_levels_);
     ncoeffs2_.ReInit(n_levels_);
 
-    constexpr T two_over_pi = 2.0 / M_PI;
-    const T &rlambda = fparam_;
-    const T rlambda2 = rlambda * rlambda;
-    double psi0 = prolate_funcs.eval_val(0.0);
+    constexpr Real two_over_pi = 2.0 / M_PI;
+    const Real &rlambda = fparam_;
+    const Real rlambda2 = rlambda * rlambda;
+    const Real psi0 = prolate_funcs.eval_val(0.0);
 
-    constexpr int i_type = 1;
     constexpr int n_quad = 100;
-    std::vector<double> xs(n_quad), xs_base(n_quad), whts(n_quad), whts_base(n_quad), r1(n_quad), r2(n_quad),
+    // FIXME: Ideally these would use the Real type, but we get slightly lower errors downstream with double
+    std::vector<double> xs(n_quad), whts(n_quad), xs_base(n_quad), whts_base(n_quad), r1(n_quad), r2(n_quad),
         w1(n_quad), w2(n_quad), fhat(n_quad);
-
-    double u, v; // dummy vars
-    legeexps_(&i_type, &n_quad, xs_base.data(), &u, &v, whts_base.data());
-    auto [v1, vlu1] = dmk::chebyshev::get_vandermonde_and_LU<T>(nr1);
-    auto [v2, vlu2] = dmk::chebyshev::get_vandermonde_and_LU<T>(nr2);
-    Eigen::VectorX<T> fvals(nr1);
+    legerts(1, n_quad, xs_base.data(), whts_base.data());
+    auto [v1, vlu1] = dmk::chebyshev::get_vandermonde_and_LU<Real>(nr1);
+    auto [v2, vlu2] = dmk::chebyshev::get_vandermonde_and_LU<Real>(nr2);
+    Eigen::VectorX<Real> fvals(nr1);
 
     for (int i_level = 0; i_level < n_levels_; ++i_level) {
         auto bsize = box_sizes_[i_level];
         if (i_level == 0)
             bsize *= 0.5;
 
-        T scale_factor = beta_ / (2.0 * bsize);
+        Real scale_factor = beta_ / (2.0 * bsize);
         for (int i = 0; i < n_quad; ++i) {
             xs[i] = scale_factor * (xs_base[i] + 1.0);
             whts[i] = scale_factor * whts_base[i];
         }
 
         const bool near_correction = rlambda * bsize / beta_ < 1E-2;
-        T dk0, dk1, delam;
-        const T rl = difference_kernels_[std::max(i_level - 1, 0)].rl;
+        Real dk0, dk1, delam;
+        const Real rl = difference_kernels_[std::max(i_level - 1, 0)].rl;
         if (near_correction) {
-            T arg = rl * rlambda;
+            Real arg = rl * rlambda;
             if (n_dim_ == 2) {
                 dk0 = std::cyl_bessel_k(0, arg);
                 dk1 = std::cyl_bessel_k(1, arg);
@@ -507,8 +502,8 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
         }
 
         for (int i = 0; i < n_quad; ++i) {
-            const T xi2 = xs[i] * xs[i] + rlambda2;
-            const T xval = sqrt(xi2) * bsize / beta_;
+            const Real xi2 = xs[i] * xs[i] + rlambda2;
+            const Real xval = sqrt(xi2) * bsize / beta_;
             if (xval <= 1.0) {
                 fhat[i] = prolate_funcs.eval_val(xval) / (psi0 * xi2);
             } else {
@@ -518,7 +513,7 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
             fhat[i] *= (n_dim_ == 2) ? whts[i] * xs[i] : whts[i] * xs[i] * xs[i] * two_over_pi;
 
             if (near_correction) {
-                T xsc = rl * xs[i];
+                Real xsc = rl * xs[i];
                 if (n_dim_ == 2)
                     fhat[i] *=
                         -rl + rlambda + std::cyl_bessel_j(0, xsc) * dk1 + 1 + xsc * std::cyl_bessel_j(1, xsc) * dk0;
@@ -527,7 +522,7 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
             }
         }
 
-        Eigen::VectorX<T> r1 = dmk::chebyshev::get_cheb_nodes(nr1, T{0.}, bsize);
+        Eigen::VectorX<Real> r1 = dmk::chebyshev::get_cheb_nodes(nr1, Real{0.}, bsize);
         if (n_dim_ == 2) {
             for (int i = 0; i < nr1; ++i) {
                 fvals(i) = 0.0;
@@ -538,16 +533,16 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
             for (int i = 0; i < nr1; ++i) {
                 fvals(i) = 0.0;
                 for (int j = 0; j < n_quad; ++j) {
-                    T dd = r1[i] * xs[j];
+                    Real dd = r1[i] * xs[j];
                     fvals(i) -= sin(dd) / dd * fhat[j];
                 }
             }
         }
 
-        Eigen::Map<Eigen::VectorX<T>> coeffs1_lvl(&coeffs1_[0] + nr1 * i_level, nr1);
+        Eigen::Map<Eigen::VectorX<Real>> coeffs1_lvl(&coeffs1_[0] + nr1 * i_level, nr1);
         coeffs1_lvl = vlu1.solve(fvals);
-        T coefsmax = coeffs1_lvl.array().abs().maxCoeff();
-        T releps = eps * coefsmax;
+        Real coefsmax = coeffs1_lvl.array().abs().maxCoeff();
+        Real releps = eps * coefsmax;
 
         ncoeffs1_[i_level] = 1;
         for (int i = 0; i < nr1 - 2; ++i) {
@@ -559,11 +554,11 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
         }
 
         // coeffs2
-        Eigen::VectorX<T> r2 = dmk::chebyshev::get_cheb_nodes(nr2, T{0.25} * bsize * bsize, bsize * bsize);
+        Eigen::VectorX<Real> r2 = dmk::chebyshev::get_cheb_nodes(nr2, Real{0.25} * bsize * bsize, bsize * bsize);
         if (n_dim_ == 2) {
             for (int i = 0; i < nr2; ++i) {
                 fvals(i) = 0.0;
-                const T r = sqrt(r2(i));
+                const Real r = sqrt(r2(i));
                 for (int j = 0; j < n_quad; ++j)
                     fvals(i) -= std::cyl_bessel_j(0, r * xs[j]) * fhat[j];
 
@@ -572,16 +567,16 @@ void FourierData<T>::update_local_coeffs_yukawa(T eps) {
         } else if (n_dim_ == 3) {
             for (int i = 0; i < nr2; ++i) {
                 fvals(i) = 0.0;
-                const T r = sqrt(r2(i));
+                const Real r = sqrt(r2(i));
                 for (int j = 0; j < n_quad; ++j) {
-                    T dd = r * xs[j];
+                    Real dd = r * xs[j];
                     fvals(i) -= std::sin(dd) / dd * fhat[j];
                 }
                 fvals(i) += std::exp(-rlambda * r) / r;
             }
         }
 
-        Eigen::Map<Eigen::VectorX<T>> coeffs2_lvl(&coeffs2_[0] + nr2 * i_level, nr2);
+        Eigen::Map<Eigen::VectorX<Real>> coeffs2_lvl(&coeffs2_[0] + nr2 * i_level, nr2);
         coeffs2_lvl = vlu2.solve(fvals);
 
         coefsmax = coeffs2_lvl.array().abs().maxCoeff();
