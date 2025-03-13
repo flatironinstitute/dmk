@@ -368,5 +368,9 @@ template void legeexps<float>(int itype, int n, float *x, std::vector<std::vecto
                               std::vector<std::vector<float>> &v, float *whts);
 template void legeexps<double>(int itype, int n, double *x, std::vector<std::vector<double>> &u,
                                std::vector<std::vector<double>> &v, double *whts);
+template void legeexev<float>(float x, float &val, const float *pexp, int n);
+template void legeexev<double>(double x, double &val, const double *pexp, int n);
+template void legeFDER<float>(float x, float &val, float &der, const float *pexp, int n);
+template void legeFDER<double>(double x, double &val, double &der, const double *pexp, int n);
 
 } // namespace dmk

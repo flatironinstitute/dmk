@@ -3,12 +3,11 @@
 
 #include <complex>
 #include <dmk.h>
-#include <dmk/prolate_funcs.hpp>
+#include <dmk/prolate0_fun.hpp>
 #include <dmk/types.hpp>
 #include <sctl.hpp>
 
 namespace dmk {
-struct ProlateFuncs;
 
 template <typename T>
 struct FourierData {
@@ -42,7 +41,7 @@ struct FourierData {
     const struct kernel_params &windowed_kernel() const { return windowed_kernel_; }
     const struct kernel_params &difference_kernel(int i_level) const { return difference_kernels_[i_level]; }
 
-    ProlateFuncs prolate_funcs;
+    Prolate0Fun prolate0_fun;
 
   private:
     dmk_ikernel kernel_;
@@ -74,10 +73,10 @@ void calc_planewave_translation_matrix(int nmax, T xmin, int npw, const sctl::Ve
 
 template <typename Real, int DIM>
 void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, Real boxsize,
-                            ProlateFuncs &pf, sctl::Vector<Real> &windowed_kernel);
+                            Prolate0Fun &pf, sctl::Vector<Real> &windowed_kernel);
 template <typename Real, int DIM>
 void get_difference_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, Real boxsize,
-                              ProlateFuncs &pf, sctl::Vector<Real> &windowed_kernel);
+                              Prolate0Fun &pf, sctl::Vector<Real> &windowed_kernel);
 } // namespace dmk
 
 #endif

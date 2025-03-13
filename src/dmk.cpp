@@ -4,7 +4,7 @@
 #include <dmk/fortran.h>
 #include <dmk/fourier_data.hpp>
 #include <dmk/logger.h>
-#include <dmk/prolate_funcs.hpp>
+#include <dmk/prolate0_fun.hpp>
 #include <dmk/proxy.hpp>
 #include <dmk/tensorprod.hpp>
 #include <dmk/tree.hpp>

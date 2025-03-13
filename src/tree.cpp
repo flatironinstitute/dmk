@@ -5,7 +5,7 @@
 #include <dmk/fourier_data.hpp>
 #include <dmk/logger.h>
 #include <dmk/planewave.hpp>
-#include <dmk/prolate_funcs.hpp>
+#include <dmk/prolate0_fun.hpp>
 #include <dmk/proxy.hpp>
 #include <dmk/tensorprod.hpp>
 #include <dmk/tree.hpp>
@@ -463,7 +463,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
     sctl::Vector<T> radialft(n_pw_modes);
     sctl::Vector<T> kernel_ft;
     get_windowed_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits, boxsize[0],
-                                   fourier_data.prolate_funcs, kernel_ft);
+                                   fourier_data.prolate0_fun, kernel_ft);
     util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<const T, 1>(&kernel_ft[0], kernel_ft.Dim()),
                                               ndview<T, 1>(&radialft[0], n_pw_modes));
 
@@ -507,7 +507,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
         // Calculate difference kernel fourier transform. Exploit scale invariance on lower levels, when applicable.
         if (i_level == 0 || !scale_factor_diff_ft) {
             get_difference_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits,
-                                             boxsize[i_level], fourier_data.prolate_funcs, kernel_ft);
+                                             boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
         } else {
             for (auto &val : kernel_ft)
                 val *= scale_factor_diff_ft;
@@ -610,8 +610,8 @@ void DMKPtTree<T, DIM>::downward_pass() {
             if (params.kernel == DMK_YUKAWA)
                 return fourier_data.yukawa_windowed_kernel_value_at_zero(i_level);
             else if (params.kernel == DMK_LAPLACE) {
-                const T psi0 = fourier_data.prolate_funcs.eval_val(0.0);
-                const auto c = fourier_data.prolate_funcs.intvals(fourier_data.beta());
+                const T psi0 = fourier_data.prolate0_fun.eval_val(0.0);
+                const auto c = fourier_data.prolate0_fun.intvals(fourier_data.beta());
                 if (DIM == 3)
                     return psi0 / (c[0] * bsize);
                 else

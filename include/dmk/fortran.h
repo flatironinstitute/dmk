@@ -2,12 +2,6 @@
 #define FORTRAN_H
 
 extern "C" {
-// Used in production
-void prol0ini_(int *ier, double *beta, double *wprolate, double *rlam20, double *rkhi, int *lenw, int *keep, int *ltot);
-void prol0eva_(const double *, const double *, double *, double *);
-void prolate_intvals_(const double *, const double *, double *, double *, double *, double *);
-void legeexps_(const int *, const int *, double *, double *, double *, double *);
-
 // Only used for tests
 void pdmk_charge2proxycharge_(const int *ndim, const int *nd, const int *norder, const int *ns, const double *sources,
                               const double *charge, const double *cen, const double *sc, double *coefs);
