@@ -173,8 +173,9 @@ MPI_TEST_CASE("[DMK] pdmk 3d all", 1) {
     int ndiv[3] = {80, 280, 280};
 
     const auto test_kernels = {
-        DMK_YUKAWA, DMK_LAPLACE,
-        // DMK_SQRT_LAPLACE,
+        DMK_YUKAWA,
+        DMK_LAPLACE,
+        DMK_SQRT_LAPLACE,
     };
     for (auto kernel : test_kernels) {
         const std::string kernel_str = [&kernel]() {

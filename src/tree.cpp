@@ -617,7 +617,13 @@ void DMKPtTree<T, DIM>::downward_pass() {
                 else
                     throw std::runtime_error("Unsupported kernel DMK_LAPLACE, DIM = " + std::to_string(DIM));
             } else if (params.kernel == DMK_SQRT_LAPLACE) {
-                throw std::runtime_error("Unsupported kernel DMK_SQRT_LAPLACE, DIM = " + std::to_string(DIM));
+                const T psi0 = fourier_data.prolate0_fun.eval_val(0.0);
+                const auto c = fourier_data.prolate0_fun.intvals(fourier_data.beta());
+                if constexpr (DIM == 2)
+                    return psi0 / (c[0] * bsize);
+                if constexpr (DIM == 3)
+                    return psi0 / (2 * c[1] * bsize * bsize);
+
             } else
                 throw std::runtime_error("Unsupported kernel");
         };

@@ -286,6 +286,29 @@ void legeFDER(Real x, Real &val, Real &der, const Real *pexp, int n) {
     }
 }
 
+template <typename Real>
+void legeinte(Real *polin, int n, Real *polout) {
+    for (int i = 0; i <= n + 1; ++i)
+        polout[i] = 0.0;
+
+    for (int k = 2; k <= n + 1; ++k) {
+        const int j = k - 1;
+        polout[k] = polin[k - 1] / (2 * j + 1);
+        polout[k - 2] -= polin[k - 1] / (2 * j + 1);
+    }
+
+    polout[1] += polin[0];
+
+    Real dd = 0;
+    Real sss = -1;
+    for (int k = 2; k <= n + 1; ++k) {
+        dd += polout[k - 1] * sss;
+        sss = -sss;
+    }
+
+    polout[0] = -dd;
+}
+
 // Function to compute the Legendre polynomial p_n(x) and its derivative p'_n(x)
 template <typename Real>
 static inline void legendre(int n, Real x, Real &pn, Real &pn_prime) {
@@ -372,5 +395,7 @@ template void legeexev<float>(float x, float &val, const float *pexp, int n);
 template void legeexev<double>(double x, double &val, const double *pexp, int n);
 template void legeFDER<float>(float x, float &val, float &der, const float *pexp, int n);
 template void legeFDER<double>(double x, double &val, double &der, const double *pexp, int n);
+template void legeinte<float>(float *polin, int n, float *polout);
+template void legeinte<double>(double *polin, int n, double *polout);
 
 } // namespace dmk

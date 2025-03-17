@@ -58,7 +58,7 @@ T procl180_rescale(T eps) {
 template <int DIM>
 std::tuple<int, double, double> get_PSWF_difference_kernel_pwterms(dmk_ikernel kernel, int ndigits, double boxsize) {
     int npw;
-    double hpw, ws;
+    double hpw;
 
     if (kernel == dmk_ikernel::DMK_SQRT_LAPLACE && DIM == 3) {
         if (ndigits <= 3) {
@@ -91,7 +91,7 @@ std::tuple<int, double, double> get_PSWF_difference_kernel_pwterms(dmk_ikernel k
     }
 
     constexpr double factor = 0.5 / sctl::pow<DIM - 1>(M_PI);
-    ws = sctl::pow<DIM>(hpw) * factor;
+    double ws = sctl::pow<DIM>(hpw) * factor;
 
     return std::make_tuple(npw, hpw, ws);
 }
@@ -114,7 +114,7 @@ std::tuple<int, double, double, double> get_PSWF_windowed_kernel_pwterms(int ndi
         npw = 13;
         hpw = M_PI * 0.34 / boxsize;
     } else if (ndigits <= 6) {
-        npw = 25;
+        npw = 27;
         hpw = M_PI * 0.357 / boxsize;
     } else if (ndigits <= 9) {
         npw = 39;
@@ -246,6 +246,98 @@ inline void laplace_windowed_kernel_ft(const double *rpars, Real beta, int ndigi
         return laplace_3d_windowed_kernel_ft<Real>(rpars, beta, ndigits, boxsize, pf, windowed_ft);
 }
 
+template <typename Real>
+inline void sqrt_laplace_3d_windowed_kernel_ft(const double *rpars, Real beta, int ndigits, Real boxsize,
+                                               Prolate0Fun &pf, sctl::Vector<Real> &windowed_ft) {
+    const auto [npw, hpw, ws, rl] = get_PSWF_windowed_kernel_pwterms<3>(ndigits, boxsize);
+    int n_fourier = 3 * sctl::pow<2>(npw / 2) + 1;
+    windowed_ft.ReInit(n_fourier);
+
+    // calculate Legendre expansion coefficients of x\psi_0^c(x)
+    int iw = pf.workarray[0] - 1;
+    int n_terms = pf.workarray[4];
+    std::array<Real, 1000> coeffs0, coeffs1, coeffs2, fvals;
+    for (int i = 0; i <= n_terms; ++i)
+        coeffs0[i] = 0.0;
+
+    for (int i = n_terms; i >= 2; --i) {
+        coeffs0[i] += pf.workarray[iw + i - 1] * i / (2 * i - 1.0);
+        coeffs0[i - 2] += pf.workarray[iw + i - 1] * (i - 1) / (2 * i - 1.0);
+    }
+    coeffs0[1] += pf.workarray[iw];
+
+    // FIXME: This wouldn't be necessary if Prolate0Fun had the proper value types
+    std::vector<Real> wprolate(n_terms + 3 + iw);
+    for (int i = 0; i < n_terms + 3 + iw; ++i)
+        wprolate[i] = pf.workarray[i];
+
+    // calculate Legendre expansion coefficients of \int_0^x t\psi_0^c(t)dt
+    legeinte(coeffs0.data(), n_terms, coeffs1.data());
+    Real fval;
+    legeexev(Real(0.0), fval, coeffs1.data(), n_terms + 1);
+    coeffs1[0] -= fval;
+    legeexev(Real(1.0), fval, coeffs1.data(), n_terms + 1);
+    Real c1 = fval;
+
+    // calculate Legendre expansion coefficients of \int_0^x \psi_0^c(t)dt
+    legeinte(&wprolate[iw], n_terms, coeffs2.data());
+    legeexev(Real(1.0), fval, coeffs2.data(), n_terms);
+    double c0 = fval;
+    legeexev(Real(-1.0), fval, coeffs2.data(), n_terms);
+
+    Real dl = 0.5 * rl;
+
+    int n_quad = 200;
+    std::array<Real, 200> xs, whts;
+    legerts(1, n_quad, xs.data(), whts.data());
+    for (int i = 0; i < n_quad; ++i) {
+        xs[i] = (xs[i] + 1) / 2 * dl * 3;
+        whts[i] = whts[i] / 2 * dl * 3;
+    }
+
+    for (int i = 0; i < n_quad; ++i) {
+        Real xval1 = xs[i] / boxsize;
+        Real fval1;
+        if (xval1 < 1.0)
+            legeexev(xval1, fval1, coeffs1.data(), n_terms);
+        else
+            fval1 = c1;
+
+        //  window function
+        Real xval0 = (xs[i] - dl - boxsize) / boxsize;
+        Real fval0;
+        if (std::abs(xval0) < 1.0)
+            legeexev(xval0, fval0, coeffs2.data(), n_terms);
+        else if (xval0 >= 1.0)
+            fval0 = c0;
+        else if (xval0 <= -1.0)
+            fval0 = 0;
+
+        fvals[i] = fval1 / c1 * (1 - fval0 / c0);
+    }
+
+    for (int i = 0; i < n_fourier; ++i) {
+        Real rk = std::sqrt(Real(i)) * hpw;
+        windowed_ft[i] = 0;
+        for (int j = 0; j < n_quad; ++j) {
+            if (i == 0)
+                windowed_ft[i] += fvals[j] * whts[j];
+            else
+                windowed_ft[i] += fvals[j] * whts[j] * sin(rk * xs[j]) / (rk * xs[j]);
+        }
+        windowed_ft[i] *= ws;
+    }
+}
+
+template <typename Real, int DIM>
+inline void sqrt_laplace_windowed_kernel_ft(const double *rpars, Real beta, int ndigits, Real boxsize, Prolate0Fun &pf,
+                                            sctl::Vector<Real> &windowed_ft) {
+    if constexpr (DIM == 2)
+        throw std::runtime_error("2D SQRT Laplace kernel not supported yet.");
+    if constexpr (DIM == 3)
+        return sqrt_laplace_3d_windowed_kernel_ft<Real>(rpars, beta, ndigits, boxsize, pf, windowed_ft);
+}
+
 template <typename Real, int DIM>
 void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, Real boxsize,
                             Prolate0Fun &pf, sctl::Vector<Real> &windowed_ft) {
@@ -255,8 +347,7 @@ void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, 
     case dmk_ikernel::DMK_LAPLACE:
         return laplace_windowed_kernel_ft<Real, DIM>(rpars, beta, ndigits, boxsize, pf, windowed_ft);
     case dmk_ikernel::DMK_SQRT_LAPLACE:
-        throw std::runtime_error("SQRT Laplace kernel not supported yet.");
-        break;
+        return sqrt_laplace_windowed_kernel_ft<Real, DIM>(rpars, beta, ndigits, boxsize, pf, windowed_ft);
     }
 }
 
@@ -341,6 +432,78 @@ void laplace_difference_kernel_ft(const double *rpars, Real beta, int ndigits, R
             diff_kernel_ft[i] = 0.5 * ws * g0d2 * (bsizebig2 - bsizesmall2);
     }
 }
+template <typename Real, int DIM>
+void sqrt_laplace_difference_kernel_ft(const double *rpars, Real beta, int ndigits, Real boxsize, Prolate0Fun &pf,
+                                       sctl::Vector<Real> &diff_kernel_ft) {
+    if constexpr (DIM == 2)
+        throw std::runtime_error("2D SQRT Laplace kernel not supported yet.");
+
+    const auto [npw, hpw, ws] = get_PSWF_difference_kernel_pwterms<3>(DMK_SQRT_LAPLACE, ndigits, boxsize);
+    int n_fourier = 3 * sctl::pow<2>(npw / 2) + 1;
+    diff_kernel_ft.ReInit(n_fourier);
+
+    // calculate Legendre expansion coefficients of x\psi_0^c(x)
+    int iw = pf.workarray[0];
+    int n_terms = pf.workarray[4];
+    std::array<Real, 1000> coeffs, coeffs0, fvals, fv1, fv2;
+    for (int i = 0; i < n_terms + 1; ++i)
+        coeffs0[i] = 0.0;
+
+    for (int i = n_terms - 1; i > 1; --i) {
+        coeffs0[i + 1] += pf.workarray[iw + i - 1] * (i + 1) / (2 * (i + 1) - 1.0);
+        coeffs0[i - 1] += pf.workarray[iw + i - 1] * i / (2 * (i + 1) - 1.0);
+    }
+    coeffs0[1] += pf.workarray[iw - 1];
+
+    // calculate Legendre expansion coefficients of \int_0^x t\psi_0^c(t)dt
+    legeinte(coeffs0.data(), n_terms, coeffs.data());
+    Real fval;
+    legeexev(Real(0.0), fval, coeffs.data(), n_terms + 1);
+    coeffs[0] -= fval;
+    legeexev(Real(1.0), fval, coeffs.data(), n_terms + 1);
+    Real c0 = fval;
+
+    const int n_quad = 100;
+    std::array<Real, n_quad> xs, whts, x1, x2;
+    legerts(1, n_quad, xs.data(), whts.data());
+    const Real bsizesmall = boxsize * 0.5;
+    const Real bsizebig = boxsize;
+    for (int i = 0; i < n_quad; ++i) {
+        x1[i] = (xs[i] + 1) / 2 * bsizesmall;
+        x2[i] = (xs[i] + 1) / 2 * bsizebig;
+        whts[i] = whts[i] / 2 * bsizebig;
+    }
+
+    for (int i = 0; i < n_quad; ++i) {
+        const Real xval = (xs[i] + 1) / 2;
+        legeexev(xval, fval, coeffs.data(), n_terms + 1);
+        Real xval2 = xval * 2;
+        Real fval2;
+        if (xval2 < 1.0)
+            legeexev(xval2, fval2, coeffs.data(), n_terms + 1);
+        else
+            fval2 = c0;
+
+        fv1[i] = fval;
+        fv2[i] = fval2;
+    }
+
+    for (int i = 0; i < n_fourier; ++i) {
+        Real rk = std::sqrt(Real(i)) * hpw;
+        Real rk2 = rk * rk;
+        diff_kernel_ft[i] = 0;
+        if (i > 0) {
+            for (int j = 0; j < n_quad; ++j)
+                diff_kernel_ft[i] += (fv2[j] - fv1[j]) * whts[j] * std::sin(rk * x2[j]) / (rk * x2[j]);
+
+        } else {
+            for (int j = 0; j < n_quad; ++j)
+                diff_kernel_ft[i] += (fv2[j] - fv1[j]) * whts[j];
+        }
+
+        diff_kernel_ft[i] *= ws / c0;
+    }
+}
 
 template <typename Real, int DIM>
 void get_difference_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, Real boxsize,
@@ -350,8 +513,10 @@ void get_difference_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta
         return yukawa_difference_kernel_ft<Real, DIM>(rpars, beta, ndigits, boxsize, pf, diff_kernel_ft);
     case dmk_ikernel::DMK_LAPLACE:
         return laplace_difference_kernel_ft<Real, DIM>(rpars, beta, ndigits, boxsize, pf, diff_kernel_ft);
+    case dmk_ikernel::DMK_SQRT_LAPLACE:
+        return sqrt_laplace_difference_kernel_ft<Real, DIM>(rpars, beta, ndigits, boxsize, pf, diff_kernel_ft);
     default:
-        throw std::runtime_error("Unsupported kernel" + std::to_string(kernel));
+        throw std::runtime_error("Unsupported kernel " + std::to_string(kernel));
     }
 }
 

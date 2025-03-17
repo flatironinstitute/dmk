@@ -1336,12 +1336,15 @@ void sl3d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rs
                                                const int32_t *nt, Real *pot, const Real *thresh) {
     static constexpr sctl::Integer COORD_DIM = ndim; // ndim[0];
     constexpr sctl::Long nd_ = 1;                    // nd[0];
+    static constexpr sctl::Integer VecLen = MaxVecLen;
+    using Vec = sctl::Vec<Real, VecLen>;
+
     sctl::Long Nsrc = ns[0];
     sctl::Long Ntrg = nt[0];
     sctl::Long Ntrg_ = ((Ntrg + MaxVecLen - 1) / MaxVecLen) * MaxVecLen;
 
-    sctl::StaticArray<Real, 400 * COORD_DIM> buff0;
-    sctl::StaticArray<Real, 400 * 1> buff1;
+    alignas(sizeof(Vec)) sctl::StaticArray<Real, 400 * COORD_DIM> buff0;
+    alignas(sizeof(Vec)) sctl::StaticArray<Real, 400 * 1> buff1;
     sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
     sctl::Matrix<Real> Vt(nd_, Ntrg_, buff1, false);
     if (Ntrg_ > 400) {
@@ -1357,8 +1360,6 @@ void sl3d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rs
         Vt = 0;
     }
 
-    static constexpr sctl::Integer VecLen = MaxVecLen;
-    using Vec = sctl::Vec<Real, VecLen>;
     Vec thresh2 = thresh[0];
     Vec d2max_vec = d2max[0];
     Vec rsc_vec = rsc[0];
