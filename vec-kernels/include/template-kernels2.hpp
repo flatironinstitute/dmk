@@ -2,6 +2,7 @@
 #define _VEC_KERNELS_HPP_
 
 #define NDEBUG
+#define NSRC_LIMIT 1000
 #include <sctl.hpp>
 #include <sctllog.h>
 
@@ -367,6 +368,7 @@ template <class Real, sctl::Integer VecLen, sctl::Integer chrg, sctl::Integer di
 
 
 /* local kernel for the 1/r kernel */
+#if !defined(__AVX512DQ__)
 template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl::Integer digits=-1, sctl::Integer ndim>void l3d_local_kernel_directcp_vec_cpp_helper(const int32_t* nd, const Real* rsc,const Real* cen, const Real* d2max, const Real* sources,const int32_t* ns, const Real* charge, const Real* xtarg,const Real* ytarg,const Real* ztarg, const int32_t* nt, Real* pot, const Real* thresh) {
   static constexpr sctl::Integer COORD_DIM = ndim; //ndim[0];
   constexpr sctl::Long nd_ = 1; //nd[0];
@@ -375,11 +377,11 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
 
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400*1> buff1;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*1> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_, Ntrg_, buff1, false);
-  if (Ntrg_ > 400) {
+  if (Ntrg_ > 100) {
     Xt.ReInit(COORD_DIM, Ntrg_);
     Vt.ReInit(nd_, Ntrg_);
   }
@@ -391,7 +393,6 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
 	}
     Vt = 0;
   }
-
   static constexpr sctl::Integer VecLen = MaxVecLen;
   using Vec = sctl::Vec<Real,VecLen>;
   Vec thresh2 = thresh[0];
@@ -406,49 +407,47 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   for (sctl::Long t = 0; t < Ntrg_; t += VecLen) {
     Vec Xtrg[COORD_DIM];
     for (sctl::Integer k = 0; k < COORD_DIM; k++) {
-      Xtrg[k] = Vec::LoadAligned(&Xt[k][t]);
+	  Xtrg[k] = Vec::LoadAligned(&Xt[k][t]);
     }
     // load potential
     Vec Vtrg[nd_];
     for (long i = 0; i < nd_; i++) {
-      Vtrg[i] = Vec::LoadAligned(&Vt[i][t]);
+	  Vtrg[i] = Vec::LoadAligned(&Vt[i][t]);
     }
     for (sctl::Long s = 0; s < Nsrc; s++) {
       Vec dX[COORD_DIM], R2 = Vec::Zero();
       for (sctl::Integer k = 0; k < COORD_DIM; k++) {
         dX[k] = Xtrg[k] - Vec::Load1(&Xs_[s][k]);
-		//		std::cout << Xtrg[k] <<"\n"<< Xs_[s][k]<<"\n" << dX[k]<< "\n";
         R2 += dX[k]*dX[k];
       }
 	  
 
       Vec Rinv = sctl::approx_rsqrt<digits>(R2, (R2 > thresh2) & (R2 < d2max_vec));
-	  // std::cout << Rinv <<"\n";
       // evaluate the PSWF kernel
       Vec xtmp = FMA(R2,Rinv,cen_vec)*rsc_vec;
       Vec ptmp;
       if (digits <= 3) {
-	constexpr Real coefs[7] = {1.627823522210361e-01, -4.553645597616490e-01, 4.171687104204163e-01, -7.073638602709915e-02, -8.957845614474928e-02, 2.617986644718201e-02, 9.633427876507601e-03};
+		constexpr Real coefs[7] = {1.627823522210361e-01, -4.553645597616490e-01, 4.171687104204163e-01, -7.073638602709915e-02, -8.957845614474928e-02, 2.617986644718201e-02, 9.633427876507601e-03};
 	ptmp = EvalPolynomial(xtmp.get(),coefs[0],coefs[1],coefs[2],coefs[3],coefs[4],coefs[5],coefs[6]);
       } else if (digits <= 6) {
-	constexpr Real coefs[13] = {5.482525801351582e-02, -2.616592110444692e-01, 4.862652666337138e-01, -3.894296348642919e-01, 1.638587821812791e-02, 1.870328434198821e-01, -8.714171086568978e-02, -3.927020727017803e-02, 3.728187607052319e-02, 3.153734425831139e-03, -8.651313377285847e-03, 1.725110090795567e-04, 1.034762385284044e-03};
+		constexpr Real coefs[13] = {5.482525801351582e-02, -2.616592110444692e-01, 4.862652666337138e-01, -3.894296348642919e-01, 1.638587821812791e-02, 1.870328434198821e-01, -8.714171086568978e-02, -3.927020727017803e-02, 3.728187607052319e-02, 3.153734425831139e-03, -8.651313377285847e-03, 1.725110090795567e-04, 1.034762385284044e-03};
 	ptmp = EvalPolynomial(xtmp.get(),coefs[0],coefs[1],coefs[2],coefs[3],coefs[4],coefs[5],coefs[6],coefs[7],coefs[8],coefs[9],coefs[10],coefs[11],coefs[12]);		
       }  else if (digits <= 9) {
-	constexpr Real coefs[19] = {1.835718730962269e-02, -1.258015846164503e-01, 3.609487248584408e-01, -5.314579651112283e-01, 3.447559412892380e-01, 9.664692318551721e-02, -3.124274531849053e-01, 1.322460720579388e-01, 9.773007866584822e-02, -1.021958831082768e-01, -3.812847450976566e-03, 3.858117355875043e-02, -8.728545924521301e-03, -9.401196355382909e-03, 4.024549377076924e-03, 1.512806105865091e-03, -9.576734877247042e-04, -1.303457547418901e-04, 1.100385844683190e-04};
+		constexpr Real coefs[19] = {1.835718730962269e-02, -1.258015846164503e-01, 3.609487248584408e-01, -5.314579651112283e-01, 3.447559412892380e-01, 9.664692318551721e-02, -3.124274531849053e-01, 1.322460720579388e-01, 9.773007866584822e-02, -1.021958831082768e-01, -3.812847450976566e-03, 3.858117355875043e-02, -8.728545924521301e-03, -9.401196355382909e-03, 4.024549377076924e-03, 1.512806105865091e-03, -9.576734877247042e-04, -1.303457547418901e-04, 1.100385844683190e-04};
 	ptmp = EvalPolynomial(xtmp.get(),coefs[0],coefs[1],coefs[2],coefs[3],coefs[4],coefs[5],coefs[6],coefs[7],coefs[8],coefs[9],coefs[10],coefs[11],coefs[12],coefs[13],coefs[14],coefs[15],coefs[16],coefs[17],coefs[18]);
       }  else if (digits <= 12) {
-	constexpr Real coefs[25] = {6.262472576363448e-03, -5.605742936112479e-02, 2.185890864792949e-01, -4.717350304955679e-01, 5.669680214206270e-01, -2.511606878849214e-01, -2.744523658778361e-01, 4.582527599363415e-01, -1.397724810121539e-01, -2.131762135835757e-01, 1.995489373508990e-01, 1.793390341864239e-02, -1.035055132403432e-01, 3.035606831075176e-02, 3.153931762550532e-02, -2.033178627450288e-02, -5.406682731236552e-03, 7.543645573618463e-03, 1.437788047407851e-05, -1.928370882351732e-03, 2.891658777328665e-04, 3.332996162099811e-04, -8.397699195938912e-05, -3.015837377517983e-05, 9.640642701924662e-06};
+		constexpr Real coefs[25] = {6.262472576363448e-03, -5.605742936112479e-02, 2.185890864792949e-01, -4.717350304955679e-01, 5.669680214206270e-01, -2.511606878849214e-01, -2.744523658778361e-01, 4.582527599363415e-01, -1.397724810121539e-01, -2.131762135835757e-01, 1.995489373508990e-01, 1.793390341864239e-02, -1.035055132403432e-01, 3.035606831075176e-02, 3.153931762550532e-02, -2.033178627450288e-02, -5.406682731236552e-03, 7.543645573618463e-03, 1.437788047407851e-05, -1.928370882351732e-03, 2.891658777328665e-04, 3.332996162099811e-04, -8.397699195938912e-05, -3.015837377517983e-05, 9.640642701924662e-06};
 	ptmp = EvalPolynomial(xtmp.get(),coefs[0],coefs[1],coefs[2],coefs[3],coefs[4],coefs[5],coefs[6],coefs[7],coefs[8],coefs[9],coefs[10],coefs[11],coefs[12],coefs[13],coefs[14],coefs[15],coefs[16],coefs[17],coefs[18],coefs[19],coefs[20],coefs[21],coefs[22],coefs[23],coefs[24]);
       }
 	  
       ptmp = ptmp*Rinv;
 
       for (long i = 0; i < nd_; i++) {
-	Vtrg[i] += Vec::Load1(&Vs_[s][i])*ptmp;
+		Vtrg[i] += Vec::Load1(&Vs_[s][i])*ptmp;
       }
     }
     for (long i = 0; i < nd_; i++) {
-      Vtrg[i].StoreAligned(&Vt[i][t]);
+	  Vtrg[i].StoreAligned(&Vt[i][t]);
     }
   }
 
@@ -458,7 +457,144 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
     }
   }
 }
+#endif
 
+
+
+
+#if defined(__AVX512DQ__)
+template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl::Integer digits=-1, sctl::Integer ndim>void l3d_local_kernel_directcp_vec_cpp_helper(const int32_t* nd, const Real* rsc,const Real* cen, const Real* d2max, const Real* sources,const int32_t* ns, const Real* charge, const Real* xtarg,const Real* ytarg,const Real* ztarg, const int32_t* nt, Real* pot, const Real* thresh) {
+  static constexpr sctl::Integer COORD_DIM = ndim; //ndim[0];
+  constexpr sctl::Long nd_ = 1; //nd[0];
+  sctl::Long Nsrc = ns[0];
+  sctl::Long Ntrg = nt[0];
+  sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
+
+
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*1> buff1;
+  sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
+  sctl::Matrix<Real> Vt(nd_, Ntrg_, buff1, false);
+  if (Ntrg_ > 100) {
+    Xt.ReInit(COORD_DIM, Ntrg_);
+    Vt.ReInit(nd_, Ntrg_);
+  }
+  { // Set Xs, Vs, Xt, Vt
+    std::memcpy(Xt[0], xtarg, sizeof(Real)*Ntrg);
+    std::memcpy(Xt[1], ytarg, sizeof(Real)*Ntrg);
+	if (COORD_DIM>2) {
+	  std::memcpy(Xt[2], ztarg, sizeof(Real)*Ntrg);
+	}
+    Vt = 0;
+  }
+  static constexpr sctl::Integer VecLen = MaxVecLen;
+  using Vec = sctl::Vec<Real,VecLen>;
+  Vec thresh2 = thresh[0];
+  Vec d2max_vec = d2max[0];
+  Vec rsc_vec = rsc[0];
+  Vec cen_vec = cen[0];
+  // load charge
+  sctl::Matrix<Real> Vs_(Nsrc, nd_,sctl::Ptr2Itr<Real>((Real*)charge, nd_*Nsrc),false);
+  // load source
+  sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real*)sources, COORD_DIM*Nsrc),false);
+
+  //#pragma omp parallel for schedule(static)
+  // TODO: reinit to sctl::Vector is over limit
+  // work array memory stores compressed R2
+  Real R2_work[NSRC_LIMIT*8];
+  //sctl::StaticArray<Real, NSRC_LIMIT*8> R2_work_buff;
+  // why converting to sctl::Vector is a bit slow...
+  //sctl::Vector<Real> R2_work(NSRC_LIMIT*8, R2_work_buff, false);
+  // work array memory stores compressed polynomial evals
+  Real Pval_work[NSRC_LIMIT*8];
+  // mask array
+  typename Vec::MaskType Mask_work[NSRC_LIMIT];
+  // sparse starting index of stored Pval
+  int start_ind[NSRC_LIMIT];
+  // sparse source point index
+  int source_ind[NSRC_LIMIT];
+  // zero vec
+  static Vec zero_tmp = Vec::Zero();
+  
+  #pragma omp parallel for schedule(static)
+  for (sctl::Long t = 0; t < Ntrg_; t += VecLen) {
+    Vec Xtrg[COORD_DIM];
+    for (sctl::Integer k = 0; k < COORD_DIM; k++) {
+	  Xtrg[k] = Vec::LoadAligned(&Xt[k][t]);
+    }
+    // load potential
+    Vec Vtrg[nd_];
+    for (long i = 0; i < nd_; i++) {
+	  Vtrg[i] = Vec::LoadAligned(&Vt[i][t]);
+    }
+
+	int valid_r = 0;
+    int source_cnt = 0;
+    // store compressed R2 to explore 4/3 pi over 27 sparsity
+	for (sctl::Long s = 0; s < Nsrc; s++) {
+      Vec dX[COORD_DIM], R2 = zero_tmp;
+      for (sctl::Integer k = 0; k < COORD_DIM; k++) {
+        dX[k] = Xtrg[k] - Vec::Load1(&Xs_[s][k]);
+        R2 += dX[k]*dX[k];
+      }
+	  // store sparse data
+      Mask_work[source_cnt] = R2 < d2max_vec;
+      int valid_cnt =  mask_popcnt(Mask_work[source_cnt]);
+      mask_compress_store(Mask_work[source_cnt], R2, &R2_work[0]+valid_r);
+      start_ind[source_cnt] = valid_r;
+      source_ind[source_cnt] = s;
+      source_cnt += (valid_cnt>0);
+      valid_r += valid_cnt;
+    }
+
+    // evaluate polynomial on compressed R2 and store in Pval
+    for (sctl::Long s = 0; s < valid_r; s += VecLen) {
+      Vec R2 = Vec::LoadAligned(&R2_work[0]+s);
+      // evaluate the PSWF local kernel
+      Vec rtmp;
+      Vec Rinv = sctl::approx_rsqrt<digits>(R2, R2 > thresh2);
+      // evaluate the PSWF kernel
+      Vec xtmp = FMA(R2,Rinv,cen_vec)*rsc_vec;
+      if (digits <= 3) {
+		constexpr Real coefs[7] = {1.627823522210361e-01, -4.553645597616490e-01, 4.171687104204163e-01, -7.073638602709915e-02, -8.957845614474928e-02, 2.617986644718201e-02, 9.633427876507601e-03};
+		rtmp = EvalPolynomial(xtmp.get(),coefs[0],coefs[1],coefs[2],coefs[3],coefs[4],coefs[5],coefs[6]);
+      } else if (digits <= 6) {
+		constexpr Real coefs[13] = {5.482525801351582e-02, -2.616592110444692e-01, 4.862652666337138e-01, -3.894296348642919e-01, 1.638587821812791e-02, 1.870328434198821e-01, -8.714171086568978e-02, -3.927020727017803e-02, 3.728187607052319e-02, 3.153734425831139e-03, -8.651313377285847e-03, 1.725110090795567e-04, 1.034762385284044e-03};
+		rtmp = EvalPolynomial(xtmp.get(),coefs[0],coefs[1],coefs[2],coefs[3],coefs[4],coefs[5],coefs[6],coefs[7],coefs[8],coefs[9],coefs[10],coefs[11],coefs[12]);		
+      }  else if (digits <= 9) {
+		constexpr Real coefs[19] = {1.835718730962269e-02, -1.258015846164503e-01, 3.609487248584408e-01, -5.314579651112283e-01, 3.447559412892380e-01, 9.664692318551721e-02, -3.124274531849053e-01, 1.322460720579388e-01, 9.773007866584822e-02, -1.021958831082768e-01, -3.812847450976566e-03, 3.858117355875043e-02, -8.728545924521301e-03, -9.401196355382909e-03, 4.024549377076924e-03, 1.512806105865091e-03, -9.576734877247042e-04, -1.303457547418901e-04, 1.100385844683190e-04};
+		rtmp = EvalPolynomial(xtmp.get(),coefs[0],coefs[1],coefs[2],coefs[3],coefs[4],coefs[5],coefs[6],coefs[7],coefs[8],coefs[9],coefs[10],coefs[11],coefs[12],coefs[13],coefs[14],coefs[15],coefs[16],coefs[17],coefs[18]);
+      }  else if (digits <= 12) {
+		constexpr Real coefs[25] = {6.262472576363448e-03, -5.605742936112479e-02, 2.185890864792949e-01, -4.717350304955679e-01, 5.669680214206270e-01, -2.511606878849214e-01, -2.744523658778361e-01, 4.582527599363415e-01, -1.397724810121539e-01, -2.131762135835757e-01, 1.995489373508990e-01, 1.793390341864239e-02, -1.035055132403432e-01, 3.035606831075176e-02, 3.153931762550532e-02, -2.033178627450288e-02, -5.406682731236552e-03, 7.543645573618463e-03, 1.437788047407851e-05, -1.928370882351732e-03, 2.891658777328665e-04, 3.332996162099811e-04, -8.397699195938912e-05, -3.015837377517983e-05, 9.640642701924662e-06};
+		rtmp = EvalPolynomial(xtmp.get(),coefs[0],coefs[1],coefs[2],coefs[3],coefs[4],coefs[5],coefs[6],coefs[7],coefs[8],coefs[9],coefs[10],coefs[11],coefs[12],coefs[13],coefs[14],coefs[15],coefs[16],coefs[17],coefs[18],coefs[19],coefs[20],coefs[21],coefs[22],coefs[23],coefs[24]);
+      }
+	  
+      Vec ptmp = rtmp*Rinv;
+      ptmp.StoreAligned(Pval_work+s);
+    }
+
+    // expand compressed Pval then multiply by charge to accumulate
+    for (sctl::Long s_ind = 0; s_ind < source_cnt; s_ind++) {
+      int s = source_ind[s_ind];
+      int start = start_ind[s_ind];
+      Vec ptmp = mask_expand_load(Mask_work[s_ind], zero_tmp, Pval_work+start);
+      for (long i = 0; i < nd_; i++) {
+		Vtrg[i] += Vec::Load1(&Vs_[s][i])*ptmp;
+      }
+    }
+    // store potential
+    for (long i = 0; i < nd_; i++) {
+	  Vtrg[i].StoreAligned(&Vt[i][t]);
+    }
+  }
+
+  for (long i = 0; i < Ntrg; i++) {
+    for (long j = 0; j < nd_; j++) {
+      pot[i*nd_+j] += Vt[j][i];
+    }
+  }
+}
+#endif
 
 
 
@@ -490,11 +626,11 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg = nt[0];
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400*1> buff1;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*1> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_, Ntrg_, buff1, false);
-  if (Ntrg_ > 400) {
+  if (Ntrg_ > 100) {
     Xt.ReInit(COORD_DIM, Ntrg_);
     Vt.ReInit(nd_, Ntrg_);
   }
@@ -581,11 +717,11 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg = nt[0];
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400*1> buff1;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*1> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_, Ntrg_, buff1, false);
-  if (Ntrg_ > 400) {
+  if (Ntrg_ > 100) {
     Xt.ReInit(COORD_DIM, Ntrg_);
     Vt.ReInit(nd_, Ntrg_);
   }
@@ -612,7 +748,7 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
 
   //#pragma omp parallel for schedule(static)
   // TODO: reinit to sctl::Vector is over limit
-  #define NSRC_LIMIT 1000
+  //  #define NSRC_LIMIT 400
   // work array memory stores compressed R2
   Real R2_work[NSRC_LIMIT*8];
   //sctl::StaticArray<Real, NSRC_LIMIT*8> R2_work_buff;
@@ -739,11 +875,11 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
 
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400*1> buff1;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*1> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_, Ntrg_, buff1, false);
-  if (Ntrg_ > 400) {
+  if (Ntrg_ > 100) {
     Xt.ReInit(COORD_DIM, Ntrg_);
     Vt.ReInit(nd_, Ntrg_);
   }
@@ -851,11 +987,11 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg = nt[0];
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400*1> buff1;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*1> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_, Ntrg_, buff1, false);
-  if (Ntrg_ > 400) {
+  if (Ntrg_ > 100) {
     Xt.ReInit(COORD_DIM, Ntrg_);
     Vt.ReInit(nd_, Ntrg_);
   }
@@ -962,11 +1098,11 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
 
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400*1> buff1;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*1> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_, Ntrg_, buff1, false);
-  if (Ntrg_ > 400) {
+  if (Ntrg_ > 100) {
     Xt.ReInit(COORD_DIM, Ntrg_);
     Vt.ReInit(nd_, Ntrg_);
   }
@@ -1076,11 +1212,11 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg = nt[0];
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400*1> buff1;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*1> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_, Ntrg_, buff1, false);
-  if (Ntrg_ > 400) {
+  if (Ntrg_ > 100) {
     Xt.ReInit(COORD_DIM, Ntrg_);
     Vt.ReInit(nd_, Ntrg_);
   }
@@ -1188,11 +1324,11 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
 
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400*1> buff1;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*1> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_, Ntrg_, buff1, false);
-  if (Ntrg_ > 400) {
+  if (Ntrg_ > 100) {
     Xt.ReInit(COORD_DIM, Ntrg_);
     Vt.ReInit(nd_, Ntrg_);
   }
@@ -1281,11 +1417,11 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg = nt[0];
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400*COORD_DIM> buff1;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_*COORD_DIM, Ntrg_, buff1, false);
-  if (Ntrg_ > 400) {
+  if (Ntrg_ > 100) {
     Xt.ReInit(COORD_DIM, Ntrg_);
     Vt.ReInit(nd_*COORD_DIM, Ntrg_);
   }
@@ -1408,11 +1544,11 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg = nt[0];
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400*COORD_DIM> buff1;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_*COORD_DIM, Ntrg_, buff1, false);
-  if (Ntrg_ > 400) {
+  if (Ntrg_ > 100) {
     Xt.ReInit(COORD_DIM, Ntrg_);
     Vt.ReInit(nd_*COORD_DIM, Ntrg_);
   }
@@ -1450,7 +1586,7 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
 
   //#pragma omp parallel for schedule(static)
   // TODO: reinit to sctl::Vector is over limit
-  #define NSRC_LIMIT 1000
+  //  #define NSRC_LIMIT 1000
   // work array memory stores compressed R2
   Real dX_work[COORD_DIM][NSRC_LIMIT*8];
   Real R2_work[NSRC_LIMIT*8];
@@ -1602,11 +1738,11 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg = nt[0];
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400*COORD_DIM> buff1;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_*COORD_DIM, Ntrg_, buff1, false);
-  if (Ntrg_ > 400) {
+  if (Ntrg_ > 100) {
     Xt.ReInit(COORD_DIM, Ntrg_);
     Vt.ReInit(nd_*COORD_DIM, Ntrg_);
   }
@@ -1729,11 +1865,11 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg = nt[0];
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400*COORD_DIM> buff1;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_*COORD_DIM, Ntrg_, buff1, false);
-  if (Ntrg_ > 400) {
+  if (Ntrg_ > 100) {
     Xt.ReInit(COORD_DIM, Ntrg_);
     Vt.ReInit(nd_*COORD_DIM, Ntrg_);
   }
@@ -1772,7 +1908,7 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
 
   //#pragma omp parallel for schedule(static)
   // TODO: reinit to sctl::Vector is over limit
-  #define NSRC_LIMIT 1000
+  //  #define NSRC_LIMIT 1000
   // work array memory stores compressed R2
   Real dX_work[COORD_DIM][NSRC_LIMIT*8];
   Real R2_work[NSRC_LIMIT*8];
@@ -1932,11 +2068,11 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg = nt[0];
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400*COORD_DIM> buff1;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_*COORD_DIM, Ntrg_, buff1, false);
-  if (Ntrg_ > 400) {
+  if (Ntrg_ > 100) {
     Xt.ReInit(COORD_DIM, Ntrg_);
     Vt.ReInit(nd_*COORD_DIM, Ntrg_);
   }
@@ -2054,11 +2190,11 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg = nt[0];
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400*COORD_DIM> buff1;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_*COORD_DIM, Ntrg_, buff1, false);
-  if (Ntrg_ > 400) {
+  if (Ntrg_ > 100) {
     Xt.ReInit(COORD_DIM, Ntrg_);
     Vt.ReInit(nd_*COORD_DIM, Ntrg_);
   }
@@ -2093,7 +2229,7 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
 
   //#pragma omp parallel for schedule(static)
   // TODO: reinit to sctl::Vector is over limit
-  #define NSRC_LIMIT 1000
+  // #define NSRC_LIMIT 1000
   // work array memory stores compressed R2
   Real dX_work[COORD_DIM][NSRC_LIMIT*8];
   Real R2_work[NSRC_LIMIT*8];
@@ -2247,11 +2383,11 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg = nt[0];
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400*COORD_DIM> buff1;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_*COORD_DIM, Ntrg_, buff1, false);
-  if (Ntrg_ > 400) {
+  if (Ntrg_ > 100) {
     Xt.ReInit(COORD_DIM, Ntrg_);
     Vt.ReInit(nd_*COORD_DIM, Ntrg_);
   }
@@ -2367,11 +2503,11 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg = nt[0];
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400*COORD_DIM> buff1;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_*COORD_DIM, Ntrg_, buff1, false);
-  if (Ntrg_ > 400) {
+  if (Ntrg_ > 100) {
     Xt.ReInit(COORD_DIM, Ntrg_);
     Vt.ReInit(nd_*COORD_DIM, Ntrg_);
   }
@@ -2406,7 +2542,7 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
 
   //#pragma omp parallel for schedule(static)
   // TODO: reinit to sctl::Vector is over limit
-  #define NSRC_LIMIT 1000
+  // #define NSRC_LIMIT 1000
   // work array memory stores compressed R2
   Real dX_work[COORD_DIM][NSRC_LIMIT*8];
   Real R2_work[NSRC_LIMIT*8];
@@ -2560,11 +2696,11 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg = nt[0];
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400> buff1;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_, Ntrg_, buff1, false);
-  if (Ntrg_ > 400) {
+  if (Ntrg_ > 100) {
     Xt.ReInit(COORD_DIM, Ntrg_);
     Vt.ReInit(nd_, Ntrg_);
   }
@@ -2662,11 +2798,11 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg = nt[0];
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400> buff1;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100*COORD_DIM> buff0;
+  alignas(sizeof(Real)*MaxVecLen) sctl::StaticArray<Real,100> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_, Ntrg_, buff1, false);
-  if (Ntrg_ > 400) {
+  if (Ntrg_ > 100) {
     Xt.ReInit(COORD_DIM, Ntrg_);
     Vt.ReInit(nd_, Ntrg_);
   }
@@ -2699,7 +2835,7 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
 
   //#pragma omp parallel for schedule(static)
   // TODO: reinit to sctl::Vector is over limit
-  #define NSRC_LIMIT 1000
+  // #define NSRC_LIMIT 1000
   // work array memory stores compressed R2
   Real dX_work[COORD_DIM][NSRC_LIMIT*8];
   Real R2_work[NSRC_LIMIT*8];
