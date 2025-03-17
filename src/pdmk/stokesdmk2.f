@@ -509,7 +509,7 @@ c     calculate and allocate memory for tensor product grid for all levels
       npbox = norder**dim
       
       allocate(lpaddr(2,nboxes))
-      call pdmk_coefspalloc(ndtot,dim,itree,lpaddr,
+      call pdmk_coefspalloc_stokes(ndtot,dim,itree,lpaddr,
      1    nlevels,ifleafbox,ifpwexpform,ifpwexpeval,lcoefsptot,norder)
       
       if(ifprint .eq. 1)
@@ -1117,7 +1117,7 @@ c     Multipole and local planewave expansions will be held in workspace
 c     in locations pointed to by array iaddr(2,nboxes).
       allocate(iaddr(2,nboxes))
 c     calculate memory needed for multipole and local planewave expansions
-      call pdmk_mpalloc(ndtot,dim,itree,iaddr,
+      call pdmk_mpalloc_stokes(ndtot,dim,itree,iaddr,
      1    nlevels,ncutoff,ifpwexpform,ifpwexpeval,lmptot,npw)
       if(ifprint .eq. 1) call prinf_long('lmptot is *',lmptot,1)
 
@@ -1793,7 +1793,7 @@ c
 c
 c
 c------------------------------------------------------------------    
-      subroutine pdmk_mpalloc(nd,dim,laddr,iaddr,
+      subroutine pdmk_mpalloc_stokes(nd,dim,laddr,iaddr,
      1    nlevels,npwlevel,ifpwexpform,ifpwexpeval,lmptot,npw)
 c     This subroutine determines the size of the array
 c     to be allocated for multipole/local expansions
@@ -1889,7 +1889,7 @@ c
 c
 c
 c------------------------------------------------------------------    
-      subroutine pdmk_coefspalloc(nd,dim,laddr,iaddr,
+      subroutine pdmk_coefspalloc_stokes(nd,dim,laddr,iaddr,
      1    nlevels,ifleafbox,ifpwexpform,ifpwexpeval,lmptot,norder)
 c     This subroutine determines the size of the array
 c     to be allocated for multipole/local expansions
