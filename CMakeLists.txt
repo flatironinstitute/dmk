@@ -48,7 +48,11 @@ set_target_properties(dmk_ref_common PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(dmk_ref_common PRIVATE "extern/VCL/version2" "vec-kernels/include")
 
 file(GLOB_RECURSE DMK_REF_PDMK_SRC "src/pdmk/*.f")
-list(REMOVE_ITEM DMK_REF_PDMK_SRC "${CMAKE_SOURCE_DIR}/src/pdmk/kernelevaluation/l3dkernels_fast.f" "${CMAKE_SOURCE_DIR}/src/pdmk/pdmk.f")
+list(REMOVE_ITEM DMK_REF_PDMK_SRC
+  "${CMAKE_SOURCE_DIR}/src/pdmk/kernelevaluation/l3dkernels_fast.f"
+  "${CMAKE_SOURCE_DIR}/src/pdmk/pdmk.f"
+  "${CMAKE_SOURCE_DIR}/src/pdmk/pdmk3.f"
+)
 add_library(dmk_ref_pdmk OBJECT ${DMK_REF_PDMK_SRC})
 set_target_properties(dmk_ref_pdmk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
