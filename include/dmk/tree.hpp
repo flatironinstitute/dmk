@@ -1,15 +1,12 @@
 #ifndef TREE_HPP
 #define TREE_HPP
 
-#include <algorithm>
 #include <complex>
 #include <dmk.h>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
-#include <numeric>
 #include <sctl.hpp>
 #include <span>
-#include <vector>
 
 namespace dmk {
 template <typename T>
@@ -17,9 +14,9 @@ struct FourierData;
 
 template <typename Real, int DIM>
 struct DMKPtTree : public sctl::PtTree<Real, DIM> {
-    std::vector<std::vector<int>> level_indices;
-    std::vector<Real> boxsize;
-    std::vector<Real> centers;
+    sctl::Vector<sctl::Vector<int>> level_indices;
+    sctl::Vector<Real> boxsize;
+    sctl::Vector<Real> centers;
 
     sctl::Vector<int> src_counts_local;
     sctl::Vector<int> trg_counts_local;
@@ -69,7 +66,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, const sctl::Vector<Real> &r_src,
               const sctl::Vector<Real> &r_trg, const sctl::Vector<Real> &charge);
 
-    int n_levels() const { return level_indices.size(); }
+    int n_levels() const { return level_indices.Dim(); }
     std::size_t n_boxes() const { return this->GetNodeMID().Dim(); }
     void generate_metadata();
     void init_planewave_data();

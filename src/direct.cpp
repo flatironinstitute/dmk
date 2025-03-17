@@ -1,5 +1,13 @@
 #include <dmk/chebychev.hpp>
 #include <dmk/direct.hpp>
+#include <dmk/vector_kernels.hpp>
+
+#define VECDIM 4
+
+#ifdef __AVX512F__
+#undef VECDIM
+#define VECDIM 8
+#endif
 
 namespace dmk {
 
@@ -46,23 +54,43 @@ template <typename Real, int DIM>
 void direct_eval(dmk_ikernel ikernel, const ndview<const Real, 2> &r_src,
                  const std::array<std::span<const Real>, DIM> &r_trg, const ndview<const Real, 2> &charges,
                  const ndview<const Real, 1> &coeffs, const double *kernel_params, Real scale, Real center, Real d2max,
-                 const ndview<Real, 2> &u) {
+                 const ndview<Real, 2> &u, int n_digits) {
+    constexpr int VECWIDTH = std::is_same_v<Real, float> ? 2 * VECDIM : VECDIM;
+
     switch (ikernel) {
     case dmk_ikernel::DMK_YUKAWA:
         yukawa_direct_eval<Real, DIM>(r_src, r_trg, charges, coeffs, *kernel_params, scale, center, d2max, u);
         break;
     case dmk_ikernel::DMK_LAPLACE:
         if constexpr (DIM == 2) {
+            throw std::runtime_error("Laplace kernel not implemented in 2D");
         }
         if constexpr (DIM == 3) {
+            const int nd = charges.extent(0);
+            const int ndim = DIM;
+            const int nsrc = r_src.extent(1);
+            const int ntrg = r_trg[0].size();
+            const Real thresh2 = 1E-30; // FIXME
+
+            return l3d_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
+                &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data_handle(), &nsrc, charges.data_handle(),
+                r_trg[0].data(), r_trg[1].data(), r_trg[2].data(), &ntrg, u.data_handle(), &thresh2);
         }
-        break;
     case dmk_ikernel::DMK_SQRT_LAPLACE:
         if constexpr (DIM == 2) {
+            throw std::runtime_error("SQRT Laplace kernel not implemented");
         }
         if constexpr (DIM == 3) {
+            const int nd = charges.extent(0);
+            const int ndim = DIM;
+            const int nsrc = r_src.extent(1);
+            const int ntrg = r_trg[0].size();
+            const Real thresh2 = 1E-30; // FIXME
+
+            return sl3d_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
+                &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data_handle(), &nsrc, charges.data_handle(),
+                r_trg[0].data(), r_trg[1].data(), r_trg[2].data(), &ntrg, u.data_handle(), &thresh2);
         }
-        break;
     }
 }
 
@@ -70,20 +98,20 @@ template void direct_eval<float, 2>(dmk_ikernel ikernel, const ndview<const floa
                                     const std::array<std::span<const float>, 2> &r_trg,
                                     const ndview<const float, 2> &charges, const ndview<const float, 1> &coeffs,
                                     const double *kernel_params, float scale, float center, float d2max,
-                                    const ndview<float, 2> &u);
+                                    const ndview<float, 2> &u, int n_digits);
 template void direct_eval<float, 3>(dmk_ikernel ikernel, const ndview<const float, 2> &r_src,
                                     const std::array<std::span<const float>, 3> &r_trg,
                                     const ndview<const float, 2> &charges, const ndview<const float, 1> &coeffs,
                                     const double *kernel_params, float scale, float center, float d2max,
-                                    const ndview<float, 2> &u);
+                                    const ndview<float, 2> &u, int n_digits);
 template void direct_eval<double, 2>(dmk_ikernel ikernel, const ndview<const double, 2> &r_src,
                                      const std::array<std::span<const double>, 2> &r_trg,
                                      const ndview<const double, 2> &charges, const ndview<const double, 1> &coeffs,
                                      const double *kernel_params, double scale, double center, double d2max,
-                                     const ndview<double, 2> &u);
+                                     const ndview<double, 2> &u, int n_digits);
 template void direct_eval<double, 3>(dmk_ikernel ikernel, const ndview<const double, 2> &r_src,
                                      const std::array<std::span<const double>, 3> &r_trg,
                                      const ndview<const double, 2> &charges, const ndview<const double, 1> &coeffs,
                                      const double *kernel_params, double scale, double center, double d2max,
-                                     const ndview<double, 2> &u);
+                                     const ndview<double, 2> &u, int n_digits);
 } // namespace dmk

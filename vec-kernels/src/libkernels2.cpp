@@ -8,13 +8,19 @@
 #endif
 
 #ifdef __cplusplus
+
+template void l3d_local_kernel_directcp_vec_cpp<float, VECDIM>(
+    const int32_t *nd, const int32_t *ndim, const int32_t *digits, const float *rsc, const float *cen,
+    const float *d2max, const float *sources, const int32_t *ns, const float *charge, const float *xtarg,
+    const float *ytarg, const float *ztarg, const int32_t *nt, float *pot, const float *thresh);
+
 extern "C" {
 #endif
 
 void l3d_local_kernel_directcp_cpp_(const int32_t* nd, const int32_t* ndim, const int32_t* digits,const double* rsc,const double* cen, const double* d2max, const double* sources,const int32_t* ns, const double* charge, const double* xtarg,const double* ytarg,const double* ztarg,const int32_t* nt, double* pot, const double* thresh){
   l3d_local_kernel_directcp_vec_cpp<double, VECDIM>(nd, ndim, digits,rsc, cen, d2max, sources, ns, charge,xtarg, ytarg, ztarg, nt, pot, thresh);
 }
-  
+
 void l3d_near_kernel_directcp_cpp_(const int32_t* nd, const int32_t* ndim, const int32_t* digits,const double* rsc,const double* cen, const double* bsizeinv, const double* d2max, const double* sources,const int32_t* ns, const double* charge, const double* xtarg,const double* ytarg,const double* ztarg,const int32_t* nt, double* pot){
   l3d_near_kernel_directcp_vec_cpp<double, VECDIM>(nd, ndim, digits,rsc, cen, bsizeinv, d2max, sources, ns, charge,xtarg, ytarg, ztarg, nt, pot);
 }

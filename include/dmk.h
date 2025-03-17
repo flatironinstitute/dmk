@@ -15,6 +15,16 @@ typedef enum : int {
     DMK_POTENTIAL_GRAD_HESSIAN = 3,
 } dmk_pgh;
 
+typedef enum : int {
+    DMK_LOG_TRACE = 0,
+    DMK_LOG_DEBUG = 1,
+    DMK_LOG_INFO = 2,
+    DMK_LOG_WARN = 3,
+    DMK_LOG_ERR = 4,
+    DMK_LOG_CRITICAL = 5,
+    DMK_LOG_OFF = 6,
+} dmk_log_level;
+
 typedef struct pdmk_params {
     int n_mfm = 1;                   // number of charge/dipole dimensions per source location
     int n_dim = 0;                   // dimension of system

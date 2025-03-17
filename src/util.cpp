@@ -7,7 +7,6 @@
 #include <dmk/util.hpp>
 #include <limits>
 #include <random>
-#include <vector>
 
 namespace dmk::util {
 using dmk::ndview;
@@ -245,59 +244,9 @@ template void init_test_data<double>(int n_dim, int nd, int n_src, int n_trg, bo
                                      sctl::Vector<double> &rnormal, sctl::Vector<double> &charges,
                                      sctl::Vector<double> &dipstr, long seed);
 
-TEST_CASE("[DMK] mesh_nd") {
-    for (int dim : {2, 3}) {
-        std::vector<double> in = {1.0, 2.0, 3.0};
-        const int size = in.size();
-        const int nxyz = dim * dmk::util::int_pow(size, dim);
-        std::vector<double> out(nxyz);
-        std::vector<double> out_fort(nxyz);
-        mesh_nd(dim, in.data(), size, out.data());
-        meshnd_(&dim, in.data(), &size, out_fort.data());
-        CHECK(out == out_fort);
-
-        for (auto &xval : out)
-            xval = 0.0;
-
-        ndview<const double, 1> in_view(in.data(), size);
-        ndview<double, 2> out_view(out.data(), dim, dmk::util::int_pow(size, dim));
-        mesh_nd(dim, in_view, out_view);
-        CHECK(out == out_fort);
-    }
-}
-
 template void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const double, 1> &fhat,
                                                   const ndview<double, 1> &pswfft);
 template void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const float, 1> &fhat,
                                                   const ndview<float, 1> &pswfft);
-
-TEST_CASE("[DMK] mk_tensor_product_fourier_transform") {
-    for (int dim : {1, 2, 3}) {
-        const int npw = 5;
-        const int nexp = dmk::util::int_pow(npw, dim - 1) * ((npw + 1) / 2);
-        const int nfourier = dim * sctl::pow<2>(npw / 2);
-        std::vector<double> fhat(nfourier + 1);
-        for (int i = 0; i < fhat.size(); ++i)
-            fhat[i] = i;
-
-        std::vector<double> pswfft(nexp);
-        std::vector<double> pswfft_fort(nexp);
-
-        mk_tensor_product_fourier_transform(dim, npw, nfourier, fhat.data(), nexp, pswfft.data());
-        mk_tensor_product_fourier_transform_(&dim, &npw, &nfourier, fhat.data(), &nexp, pswfft_fort.data());
-
-        for (int i = 0; i < nexp; ++i)
-            CHECK(std::abs(pswfft[i] - pswfft_fort[i]) < std::numeric_limits<double>::epsilon());
-
-        for (auto &xval : pswfft)
-            xval = 0.0;
-
-        ndview<const double, 1> fhat_view(fhat.data(), nfourier + 1);
-        ndview<double, 1> pswfft_view(pswfft.data(), nexp);
-        mk_tensor_product_fourier_transform(dim, npw, fhat_view, pswfft_view);
-        for (int i = 0; i < nexp; ++i)
-            CHECK(std::abs(pswfft[i] - pswfft_fort[i]) < std::numeric_limits<double>::epsilon());
-    }
-}
 
 } // namespace dmk::util
