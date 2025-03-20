@@ -559,8 +559,8 @@ Real yukawa_windowed_kernel_value_at_zero(int n_dim, Real rlambda, Real beta, Re
     Real dk0, dk1, delam;
     if (near_correction) {
         if (n_dim == 2) {
-            dk0 = std::cyl_bessel_j(0, rl * rlambda);
-            dk1 = std::cyl_bessel_j(1, rl * rlambda);
+            dk0 = std::cyl_bessel_k(0, rl * rlambda);
+            dk1 = std::cyl_bessel_k(1, rl * rlambda);
         } else if (n_dim == 3)
             delam = std::exp(-rl * rlambda);
     }
@@ -605,7 +605,7 @@ Real yukawa_windowed_kernel_value_at_zero(int n_dim, Real rlambda, Real beta, Re
 template <typename T>
 T FourierData<T>::yukawa_windowed_kernel_value_at_zero(int i_level) {
     const T bsize = (i_level == 0) ? 0.5 * box_sizes_[i_level] : box_sizes_[i_level];
-    const T rl = difference_kernels_[std::max(i_level - 1, 0)].rl;
+    const T rl = difference_kernels_[std::max(i_level, 0)].rl;
 
     return dmk::yukawa_windowed_kernel_value_at_zero(n_dim_, fparam_, beta_, bsize, rl, prolate0_fun);
 }
@@ -656,7 +656,7 @@ void FourierData<Real>::update_local_coeffs_yukawa(Real eps) {
 
         const bool near_correction = rlambda * bsize / beta_ < 1E-2;
         Real dk0, dk1, delam;
-        const Real rl = difference_kernels_[std::max(i_level - 1, 0)].rl;
+        const Real rl = difference_kernels_[std::max(i_level, 0)].rl;
         if (near_correction) {
             Real arg = rl * rlambda;
             if (n_dim_ == 2) {
@@ -681,7 +681,7 @@ void FourierData<Real>::update_local_coeffs_yukawa(Real eps) {
                 Real xsc = rl * xs[i];
                 if (n_dim_ == 2)
                     fhat[i] *=
-                        -rl + rlambda + std::cyl_bessel_j(0, xsc) * dk1 + 1 + xsc * std::cyl_bessel_j(1, xsc) * dk0;
+                        -rl * rlambda * std::cyl_bessel_j(0, xsc) * dk1 + 1 + xsc * std::cyl_bessel_j(1, xsc) * dk0;
                 else
                     fhat[i] *= 1 - delam * (std::cos(xsc) + rlambda / xs[i] * std::sin(xsc));
             }

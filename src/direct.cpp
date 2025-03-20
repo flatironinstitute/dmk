@@ -36,7 +36,7 @@ void yukawa_direct_eval(const ndview<const Real, 2> &r_src, const std::array<std
 
             const Real r = sqrt(dd);
             const Real xval = r * scale + center;
-            const Real fval = chebyshev::evaluate(xval, norder, coeffs.data_handle());
+            const Real fval = chebyshev::evaluate(xval, norder + 1, coeffs.data_handle());
             Real dkval;
             if constexpr (DIM == 2)
                 dkval = std::cyl_bessel_k(0, lambda * r);
