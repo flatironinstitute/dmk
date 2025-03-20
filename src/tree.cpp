@@ -543,7 +543,9 @@ void DMKPtTree<T, DIM>::downward_pass() {
 
                 // note: neighbors in SCTL are sorted in reverse order to wpwshift
                 // FIXME: check if valid for periodic boundary conditions
-                const int ind = sctl::pow<3>(dim) - 1 - (&neighbor - &node_lists[box].nbr[0]);
+                constexpr int n_neighbors = sctl::pow<dim>(3);
+                const int ind = n_neighbors - 1 - (&neighbor - &node_lists[box].nbr[0]);
+                assert(ind >= 0 && ind < n_neighbors);
 
                 ndview<const std::complex<T>, 1> wpwshift_view(&wpwshift[n_pw_per_box * ind], n_pw_per_box);
                 shift_planewave<T, DIM>(pw_out_view(neighbor), pw_in_view(box), wpwshift_view);
