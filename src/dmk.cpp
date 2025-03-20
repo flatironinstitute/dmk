@@ -15,6 +15,7 @@
 #include <omp.h>
 
 #include <doctest/extensions/doctest_mpi.h>
+#include <string>
 
 namespace dmk {
 
@@ -130,118 +131,166 @@ MPI_TEST_CASE("[DMK] pdmk 3d all", 1) {
     params.fparam = 6.0;
     params.log_level = SPDLOG_LEVEL_OFF;
 
-    auto get_pot_func = [&n_dim, &params](dmk_ikernel kernel) -> std::function<double(double *, double *)> {
+    auto get_pot_func = [&params](int n_dim, dmk_ikernel kernel) -> std::function<double(double *, double *)> {
+        auto distance2 = [](double *r_a, double *r_b, int n_dim) {
+            double dr2 = 0.0;
+            for (int j = 0; j < n_dim; ++j)
+                dr2 += sctl::pow<2>(r_a[j] - r_b[j]);
+
+            return dr2;
+        };
+
         switch (kernel) {
         case DMK_YUKAWA:
-            return [&n_dim, &params](double *r_a, double *r_b) {
-                double dr = 0.0;
-                for (int j = 0; j < n_dim; ++j)
-                    dr += sctl::pow<2>(r_a[j] - r_b[j]);
+            if (n_dim == 2)
+                return [distance2, &params](double *r_a, double *r_b) {
+                    double dr = distance2(r_a, r_b, 2);
+                    if (!dr)
+                        return 0.0;
 
-                if (!dr)
-                    return 0.0;
+                    dr = std::sqrt(dr);
+                    return std::cyl_bessel_k(0, params.fparam * dr);
+                };
+            if (n_dim == 3)
+                return [distance2, &params](double *r_a, double *r_b) {
+                    double dr = distance2(r_a, r_b, 3);
+                    if (!dr)
+                        return 0.0;
 
-                dr = std::sqrt(dr);
-                return std::exp(-params.fparam * dr) / dr;
-            };
+                    dr = std::sqrt(dr);
+                    return std::exp(-params.fparam * dr) / dr;
+                };
         case DMK_LAPLACE:
-            return [&n_dim](double *r_a, double *r_b) {
-                double dr2 = 0.0;
-                for (int j = 0; j < n_dim; ++j)
-                    dr2 += sctl::pow<2>(r_a[j] - r_b[j]);
+            if (n_dim == 2)
+                return [](double *r_a, double *r_b) {
+                    double dr2 = 0.0;
+                    for (int j = 0; j < 2; ++j)
+                        dr2 += sctl::pow<2>(r_a[j] - r_b[j]);
 
-                if (!dr2)
-                    return 0.0;
+                    if (!dr2)
+                        return 0.0;
 
-                return 1.0 / std::sqrt(dr2);
-            };
+                    return -std::log(dr2) / (4 * M_PI);
+                };
+            if (n_dim == 3)
+                return [](double *r_a, double *r_b) {
+                    double dr2 = 0.0;
+                    for (int j = 0; j < 3; ++j)
+                        dr2 += sctl::pow<2>(r_a[j] - r_b[j]);
+
+                    if (!dr2)
+                        return 0.0;
+
+                    return 1.0 / std::sqrt(dr2);
+                };
         case DMK_SQRT_LAPLACE:
-            return [&n_dim](double *r_a, double *r_b) {
-                double dr2 = 0.0;
-                for (int j = 0; j < n_dim; ++j)
-                    dr2 += sctl::pow<2>(r_a[j] - r_b[j]);
+            if (n_dim == 2)
+                return [](double *r_a, double *r_b) {
+                    double dr2 = 0.0;
+                    for (int j = 0; j < 2; ++j)
+                        dr2 += sctl::pow<2>(r_a[j] - r_b[j]);
 
-                if (!dr2)
-                    return 0.0;
+                    if (!dr2)
+                        return 0.0;
 
-                return 1.0 / dr2;
-            };
+                    return 1.0 / std::sqrt(dr2);
+                };
+            if (n_dim == 3) {
+                return [](double *r_a, double *r_b) {
+                    double dr2 = 0.0;
+                    for (int j = 0; j < 3; ++j)
+                        dr2 += sctl::pow<2>(r_a[j] - r_b[j]);
+
+                    if (!dr2)
+                        return 0.0;
+
+                    return 1.0 / dr2;
+                };
+            }
+
         default:
             throw std::runtime_error("Unknown kernel");
         }
     };
-    int ndiv[3] = {80, 280, 280};
+    int ndiv[3] = {30, 280, 280};
 
     const auto test_kernels = {
         DMK_YUKAWA,
         DMK_LAPLACE,
         DMK_SQRT_LAPLACE,
     };
-    for (auto kernel : test_kernels) {
-        const std::string kernel_str = [&kernel]() {
-            switch (kernel) {
-            case DMK_YUKAWA:
-                return "YUKAWA";
-            case DMK_LAPLACE:
-                return "LAPLACE";
-            case DMK_SQRT_LAPLACE:
-                return "SQRT_LAPLACE";
-            default:
-                throw std::runtime_error("Unknown kernel");
+
+    for (auto n_dim : {2, 3}) {
+        params.n_dim = n_dim;
+        for (auto kernel : test_kernels) {
+            const std::string kernel_str = [&kernel]() {
+                switch (kernel) {
+                case DMK_YUKAWA:
+                    return "YUKAWA";
+                case DMK_LAPLACE:
+                    return "LAPLACE";
+                case DMK_SQRT_LAPLACE:
+                    return "SQRT_LAPLACE";
+                default:
+                    throw std::runtime_error("Unknown kernel");
+                }
+            }();
+
+            if (n_dim == 2 && kernel != DMK_YUKAWA)
+                continue; // Only 2D kernel supported currently is yukawa
+
+            SUBCASE((kernel_str + "_" + std::to_string(n_dim)).c_str()) {
+                sctl::Vector<double> pot_src(n_src * nd), grad_src(n_src * nd * n_dim),
+                    hess_src(n_src * nd * n_dim * n_dim), pot_trg(n_src * nd), grad_trg(n_trg * nd * n_dim),
+                    hess_trg(n_trg * nd * n_dim * n_dim);
+                params.n_per_leaf = ndiv[int(kernel)];
+
+                auto pot_src_fort = pot_src;
+                auto grad_src_fort = grad_src;
+                auto hess_src_fort = hess_src;
+                auto pot_trg_fort = pot_trg;
+                auto grad_trg_fort = grad_trg;
+                auto hess_trg_fort = hess_trg;
+
+                params.kernel = kernel;
+                auto potential = get_pot_func(n_dim, kernel);
+
+                const int n_test_src = std::min(n_src, 100);
+                const int n_test_trg = std::min(n_trg, 100);
+                std::vector<double> test_src(n_test_src);
+                std::vector<double> test_trg(n_test_trg);
+
+                for (int i_src = 0; i_src < n_src; ++i_src) {
+                    for (int i_trg = 0; i_trg < n_test_src; ++i_trg)
+                        test_src[i_trg] += charges[i_src] * potential(&r_src[i_src * n_dim], &r_src[i_trg * n_dim]);
+                    for (int i_trg = 0; i_trg < n_test_trg; ++i_trg)
+                        test_trg[i_trg] += charges[i_src] * potential(&r_src[i_src * n_dim], &r_trg[i_trg * n_dim]);
+                }
+
+                pdmk(test_comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0],
+                     &pot_src[0], nullptr, nullptr, &pot_trg[0], nullptr, nullptr);
+
+                // double tottimeinfo[20];
+                // int use_dipole = 0;
+                // double st = omp_get_wtime();
+                // pdmk_(&nd, &n_dim, &params.eps, (int *)&params.kernel, &params.fparam, &params.use_periodic, &n_src,
+                //       &r_src[0], &params.use_charge, &charges[0], &use_dipole, nullptr, nullptr, (int *)&params.pgh_src,
+                //       &pot_src_fort[0], &grad_src_fort[0], &hess_src_fort[0], &n_trg, &r_trg[0], (int *)&params.pgh_trg,
+                //       &pot_trg_fort[0], &grad_trg_fort[0], &hess_trg_fort[0], tottimeinfo);
+                // std::cout << omp_get_wtime() - st << std::endl;
+
+                double l2_err_src = 0.0;
+                double l2_err_trg = 0.0;
+                for (int i = 0; i < n_test_src; ++i)
+                    l2_err_src += test_src[i] != 0.0 ? sctl::pow<2>(1.0 - pot_src[i] / test_src[i]) : 0.0;
+                for (int i = 0; i < n_test_trg; ++i)
+                    l2_err_trg += test_trg[i] != 0.0 ? sctl::pow<2>(1.0 - pot_trg[i] / test_trg[i]) : 0.0;
+
+                l2_err_src = std::sqrt(l2_err_src) / n_test_src;
+                l2_err_trg = std::sqrt(l2_err_trg) / n_test_trg;
+                CHECK(l2_err_src < 5 * params.eps);
+                CHECK(l2_err_trg < 5 * params.eps);
             }
-        }();
-
-        SUBCASE(kernel_str.c_str()) {
-            sctl::Vector<double> pot_src(n_src * nd), grad_src(n_src * nd * n_dim),
-                hess_src(n_src * nd * n_dim * n_dim), pot_trg(n_src * nd), grad_trg(n_trg * nd * n_dim),
-                hess_trg(n_trg * nd * n_dim * n_dim);
-            params.n_per_leaf = ndiv[int(kernel)];
-
-            auto pot_src_fort = pot_src;
-            auto grad_src_fort = grad_src;
-            auto hess_src_fort = hess_src;
-            auto pot_trg_fort = pot_trg;
-            auto grad_trg_fort = grad_trg;
-            auto hess_trg_fort = hess_trg;
-
-            params.kernel = kernel;
-            auto potential = get_pot_func(kernel);
-
-            const int n_test_src = std::min(n_src, 100);
-            const int n_test_trg = std::min(n_trg, 100);
-            std::vector<double> test_src(n_test_src);
-            std::vector<double> test_trg(n_test_trg);
-
-            for (int i_src = 0; i_src < n_src; ++i_src) {
-                for (int i_trg = 0; i_trg < n_test_src; ++i_trg)
-                    test_src[i_trg] += charges[i_src] * potential(&r_src[i_src * n_dim], &r_src[i_trg * n_dim]);
-                for (int i_trg = 0; i_trg < n_test_trg; ++i_trg)
-                    test_trg[i_trg] += charges[i_src] * potential(&r_src[i_src * n_dim], &r_trg[i_trg * n_dim]);
-            }
-
-            pdmk(test_comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0],
-                 &pot_src[0], nullptr, nullptr, &pot_trg[0], nullptr, nullptr);
-
-            // double tottimeinfo[20];
-            // int use_dipole = 0;
-            // double st = omp_get_wtime();
-            // pdmk_(&nd, &n_dim, &params.eps, (int *)&params.kernel, &params.fparam, &params.use_periodic, &n_src,
-            //       &r_src[0], &params.use_charge, &charges[0], &use_dipole, nullptr, nullptr, (int *)&params.pgh_src,
-            //       &pot_src_fort[0], &grad_src_fort[0], &hess_src_fort[0], &n_trg, &r_trg[0], (int *)&params.pgh_trg,
-            //       &pot_trg_fort[0], &grad_trg_fort[0], &hess_trg_fort[0], tottimeinfo);
-            // std::cout << omp_get_wtime() - st << std::endl;
-
-            double l2_err_src = 0.0;
-            double l2_err_trg = 0.0;
-            for (int i = 0; i < n_test_src; ++i)
-                l2_err_src += test_src[i] != 0.0 ? sctl::pow<2>(1.0 - pot_src[i] / test_src[i]) : 0.0;
-            for (int i = 0; i < n_test_trg; ++i)
-                l2_err_trg += test_trg[i] != 0.0 ? sctl::pow<2>(1.0 - pot_trg[i] / test_trg[i]) : 0.0;
-
-            l2_err_src = std::sqrt(l2_err_src) / n_test_src;
-            l2_err_trg = std::sqrt(l2_err_trg) / n_test_trg;
-            CHECK(l2_err_src < 5 * params.eps);
-            CHECK(l2_err_trg < 5 * params.eps);
         }
     }
 }
