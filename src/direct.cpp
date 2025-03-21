@@ -61,21 +61,24 @@ void direct_eval(dmk_ikernel ikernel, const ndview<const Real, 2> &r_src,
     case dmk_ikernel::DMK_YUKAWA:
         yukawa_direct_eval<Real, DIM>(r_src, r_trg, charges, coeffs, *kernel_params, scale, center, d2max, u);
         break;
-    case dmk_ikernel::DMK_LAPLACE:
+    case dmk_ikernel::DMK_LAPLACE: {
+        const int nd = charges.extent(0);
+        const int ndim = DIM;
+        const int nsrc = r_src.extent(1);
+        const int ntrg = r_trg[0].size();
+        const Real thresh2 = 1E-30; // FIXME
+
         if constexpr (DIM == 2) {
-            throw std::runtime_error("Laplace kernel not implemented in 2D");
+            return log_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
+                &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data_handle(), &nsrc, charges.data_handle(),
+                r_trg[0].data(), r_trg[1].data(), r_trg[2].data(), &ntrg, u.data_handle(), &thresh2);
         }
         if constexpr (DIM == 3) {
-            const int nd = charges.extent(0);
-            const int ndim = DIM;
-            const int nsrc = r_src.extent(1);
-            const int ntrg = r_trg[0].size();
-            const Real thresh2 = 1E-30; // FIXME
-
             return l3d_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
                 &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data_handle(), &nsrc, charges.data_handle(),
                 r_trg[0].data(), r_trg[1].data(), r_trg[2].data(), &ntrg, u.data_handle(), &thresh2);
         }
+    }
     case dmk_ikernel::DMK_SQRT_LAPLACE:
         if constexpr (DIM == 2) {
             throw std::runtime_error("SQRT Laplace kernel not implemented");

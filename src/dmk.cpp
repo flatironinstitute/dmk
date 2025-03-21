@@ -170,7 +170,7 @@ MPI_TEST_CASE("[DMK] pdmk 3d all", 1) {
                     if (!dr2)
                         return 0.0;
 
-                    return -std::log(dr2) / (4 * M_PI);
+                    return 0.5 * std::log(dr2);
                 };
             if (n_dim == 3)
                 return [](double *r_a, double *r_b) {
@@ -212,7 +212,7 @@ MPI_TEST_CASE("[DMK] pdmk 3d all", 1) {
             throw std::runtime_error("Unknown kernel");
         }
     };
-    int ndiv[3] = {30, 280, 280};
+    int ndiv[3] = {80, 280, 280};
 
     const auto test_kernels = {
         DMK_YUKAWA,
@@ -236,8 +236,8 @@ MPI_TEST_CASE("[DMK] pdmk 3d all", 1) {
                 }
             }();
 
-            if (n_dim == 2 && kernel != DMK_YUKAWA)
-                continue; // Only 2D kernel supported currently is yukawa
+            if (n_dim == 2 && kernel == DMK_SQRT_LAPLACE)
+                continue; // Only 2D kernels supported currently are yukawa/laplace
 
             SUBCASE((kernel_str + "_" + std::to_string(n_dim)).c_str()) {
                 sctl::Vector<double> pot_src(n_src * nd), grad_src(n_src * nd * n_dim),

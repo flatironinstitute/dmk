@@ -1654,14 +1654,16 @@ void log_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
                                               const Real *sources, const int32_t *ns, const Real *charge,
                                               const Real *xtarg, const Real *ytarg, const Real *ztarg,
                                               const int32_t *nt, Real *pot, const Real *thresh) {
+    static constexpr sctl::Integer VecLen = MaxVecLen;
+    using Vec = sctl::Vec<Real, VecLen>;
     static constexpr sctl::Integer COORD_DIM = ndim; // ndim[0];
     constexpr sctl::Long nd_ = 1;                    // nd[0];
     sctl::Long Nsrc = ns[0];
     sctl::Long Ntrg = nt[0];
     sctl::Long Ntrg_ = ((Ntrg + MaxVecLen - 1) / MaxVecLen) * MaxVecLen;
 
-    sctl::StaticArray<Real, 400 * COORD_DIM> buff0;
-    sctl::StaticArray<Real, 400 * 1> buff1;
+    alignas(sizeof(Vec)) sctl::StaticArray<Real, 400 * COORD_DIM> buff0;
+    alignas(sizeof(Vec)) sctl::StaticArray<Real, 400 * 1> buff1;
     sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
     sctl::Matrix<Real> Vt(nd_, Ntrg_, buff1, false);
     if (Ntrg_ > 400) {
@@ -1677,13 +1679,11 @@ void log_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
         Vt = 0;
     }
 
-    static constexpr sctl::Integer VecLen = MaxVecLen;
-    using Vec = sctl::Vec<Real, VecLen>;
     Vec thresh2 = thresh[0];
     Vec d2max_vec = d2max[0];
     Vec rsc_vec = rsc[0];
     Vec cen_vec = cen[0];
-    Vec bsizeinv2_vec = rsc[0] * 0.5e0;
+    Vec bsizeinv2_vec = rsc[0] * Real{0.5e0};
     // load charge
     sctl::Matrix<Real> Vs_(Nsrc, nd_, sctl::Ptr2Itr<Real>((Real *)charge, nd_ * Nsrc), false);
     // load source
@@ -1742,7 +1742,7 @@ void log_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
                                       coefs[14], coefs[15], coefs[16], coefs[17], coefs[18]);
             }
 
-            ptmp = select((R2 > thresh2) & (R2 < d2max_vec), 0.5e0 * sctl::log(R2sc) + ptmp, Vec::Zero());
+            ptmp = select((R2 > thresh2) & (R2 < d2max_vec), Real{0.5e0} * sctl::log(R2sc) + ptmp, Vec::Zero());
 
             for (long i = 0; i < nd_; i++) {
                 Vtrg[i] += Vec::Load1(&Vs_[s][i]) * ptmp;

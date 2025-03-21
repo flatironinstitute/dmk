@@ -1,8 +1,10 @@
+#include <cmath>
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
 #include <dmk/direct.hpp>
 #include <dmk/fortran.h>
 #include <dmk/fourier_data.hpp>
+#include <dmk/legeexps.hpp>
 #include <dmk/logger.h>
 #include <dmk/planewave.hpp>
 #include <dmk/prolate0_fun.hpp>
@@ -608,13 +610,46 @@ void DMKPtTree<T, DIM>::downward_pass() {
             return {bsize, 2.0 / bsize, -bsize / 2.0, d2max};
         }();
 
+        // FIXME: This is heavy. We really only want it once...
+        const auto log_windowed_kernel_at_zero = [&]() -> T {
+            const T psi0 = fourier_data.prolate0_fun.eval_val(0.0);
+            const T bsize = boxsize[0];
+            const T beta = fourier_data.beta();
+            constexpr int n_quad = 100;
+            T xs[1000], whts[1000];
+            legerts(1, n_quad, xs, whts);
+            for (int i = 0; i < n_quad; ++i) {
+                xs[i] = 0.5 * (xs[i] + T{1.0}) * beta / bsize;
+                whts[i] *= 0.5 * beta / bsize;
+            }
+
+            const T rl = bsize * sqrt(dim * 1.0) * 2;
+            const T dfac = rl * std::log(rl);
+
+            T fval = 0.0;
+            for (int i = 0; i < n_quad; ++i) {
+                const T xval = xs[i] * bsize / beta;
+                const T fval0 = fourier_data.prolate0_fun.eval_val(xval);
+                const T z = rl * xs[i];
+                const T dj0 = std::cyl_bessel_j(0, z);
+                const T dj1 = std::cyl_bessel_j(1, z);
+                const T tker = -(1 - dj0) / (xs[i] * xs[i]) + dfac * dj1 / xs[i];
+                const T fhat = tker * fval0 / psi0;
+                fval += fhat * whts[i] * xs[i];
+            }
+
+            return fval;
+        };
+
         auto get_windowed_kernel_at_zero = [&]() -> T {
             if (params.kernel == DMK_YUKAWA)
                 return fourier_data.yukawa_windowed_kernel_value_at_zero(i_level);
             else if (params.kernel == DMK_LAPLACE) {
                 const T psi0 = fourier_data.prolate0_fun.eval_val(0.0);
                 const auto c = fourier_data.prolate0_fun.intvals(fourier_data.beta());
-                if (DIM == 3)
+                if constexpr (DIM == 2)
+                    return log_windowed_kernel_at_zero() - i_level * std::log(2.0);
+                else if constexpr (DIM == 3)
                     return psi0 / (c[0] * bsize);
                 else
                     throw std::runtime_error("Unsupported kernel DMK_LAPLACE, DIM = " + std::to_string(DIM));
