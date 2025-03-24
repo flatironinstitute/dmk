@@ -65,8 +65,6 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     // 0: Initialization
     sctl::Vector<Real> pot_vec_src(n_src * params.n_mfm);
     sctl::Vector<Real> pot_vec_trg(n_trg * params.n_mfm);
-    pot_vec_src.SetZero();
-    pot_vec_trg.SetZero();
 
     logger->debug("Building tree and sorting points");
     constexpr bool balance21 = true; // Use "2-1" balancing for the tree, i.e. bordering boxes
@@ -286,9 +284,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
         counts[i] = form_pw_expansion[i] ? n_coeffs : 0;
 
     proxy_coeffs.ReInit(n_coeffs * n_proxy_boxes_upward);
-    proxy_coeffs.SetZero();
     this->AddData("proxy_coeffs", proxy_coeffs, counts);
-    this->template GetData<T>(proxy_coeffs, counts, "proxy_coeffs");
     proxy_coeffs_offsets.ReInit(n_boxes());
 
     long last_offset = 0;
@@ -322,8 +318,11 @@ template <typename T, int DIM>
 void DMKPtTree<T, DIM>::upward_pass() {
     auto &logger = dmk::get_logger(this->GetComm());
     auto &rank_logger = dmk::get_rank_logger(this->GetComm());
-
     const std::size_t n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
+
+    sctl::Vector<sctl::Long> counts;
+    this->GetData(proxy_coeffs, counts, "proxy_coeffs");
+    proxy_coeffs.SetZero();
 
     constexpr int n_children = 1u << DIM;
     const auto &node_lists = this->GetNodeLists();
@@ -331,7 +330,6 @@ void DMKPtTree<T, DIM>::upward_pass() {
     const auto &node_mid = this->GetNodeMID();
     const int dim = DIM;
 
-    int n_direct = 0;
     const int start_level = std::max(n_levels() - 2, 0);
     for (auto i_box : level_indices[start_level]) {
         if (!form_pw_expansion[i_box] || !src_counts_local[i_box] || node_attr[i_box].Ghost)
@@ -368,9 +366,8 @@ void DMKPtTree<T, DIM>::upward_pass() {
     }
 
     logger->debug("Finished building proxy charges");
-    sctl::Vector<sctl::Long> counts;
     this->template ReduceBroadcast<T>("proxy_coeffs");
-    this->template GetData<T>(proxy_coeffs, counts, "proxy_coeffs");
+    this->GetData(proxy_coeffs, counts, "proxy_coeffs");
     long last_offset = 0;
     for (int box = 0; box < n_boxes(); ++box) {
         if (counts[box]) {
@@ -445,6 +442,11 @@ template <typename T, int DIM>
 void DMKPtTree<T, DIM>::downward_pass() {
     auto &logger = dmk::get_logger(this->GetComm());
     auto &rank_logger = dmk::get_rank_logger(this->GetComm());
+    this->GetData(pot_src_sorted, pot_src_cnt, "pdmk_pot_src");
+    this->GetData(pot_trg_sorted, pot_trg_cnt, "pdmk_pot_trg");
+    pot_src_sorted.SetZero();
+    pot_trg_sorted.SetZero();
+
     constexpr int dim = DIM;
     constexpr int nmax = 1;
     const int nd = params.n_mfm;

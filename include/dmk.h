@@ -25,6 +25,8 @@ typedef enum : int {
     DMK_LOG_OFF = 6,
 } dmk_log_level;
 
+typedef void *pdmk_tree;
+
 typedef struct pdmk_params {
     int n_mfm = 1;                   // number of charge/dipole dimensions per source location
     int n_dim = 0;                   // dimension of system
@@ -42,6 +44,13 @@ typedef struct pdmk_params {
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+pdmk_tree pdmk_tree_create(MPI_Comm comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
+                           const double *normal, const double *dipole_str, int n_trg, const double *r_trg);
+void pdmk_tree_destroy(pdmk_tree tree);
+void pdmk_tree_eval(pdmk_tree tree, double *pot_src, double *grad_src, double *hess_src, double *pot_trg,
+                    double *grad_trg, double *hess_trg);
+
 void pdmk(MPI_Comm comm, pdmk_params params, int n_src, const double *r_src, const double *charge, const double *normal,
           const double *dipole_str, int n_trg, const double *r_trg, double *pot_src, double *grad_src, double *hess_src,
           double *pot_trg, double *grad_trg, double *hess_trg);

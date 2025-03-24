@@ -1,8 +1,11 @@
 #include <dmk.h>
 
+#include <iostream>
 #include <limits>
 #include <random>
 #include <vector>
+
+#include <omp.h>
 
 template <typename Real>
 void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
@@ -93,12 +96,13 @@ void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool 
 }
 
 int main(int argc, char *argv[]) {
-    int provided, rank;
+    int provided, rank, size;
     MPI_Init_thread(&argc, &argv, MPI_THREAD_FUNNELED, &provided);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
 
     const int n_dim = 3;
-    const int n_src = 1e6;
+    int n_src = 1e6;
     const int n_trg = 0;
     const bool uniform = false;
     const bool set_fixed_charges = true;
@@ -115,7 +119,9 @@ int main(int argc, char *argv[]) {
     params.log_level = DMK_LOG_TRACE;
 
     if (argc > 1)
-        params.n_per_leaf = std::atoi(argv[1]);
+        n_src = std::atoi(argv[1]);
+    if (argc > 2)
+        params.n_per_leaf = std::atoi(argv[2]);
 
     // Build random sources + 3 fixed charges
     std::vector<double> r_src, charges, rnormal, dipstr, r_trg;
@@ -124,6 +130,20 @@ int main(int argc, char *argv[]) {
     std::vector<double> pot_src(n_src * nd), pot_trg(n_src * nd);
     pdmk(MPI_COMM_WORLD, params, n_src, r_src.data(), charges.data(), rnormal.data(), dipstr.data(), n_trg,
          r_trg.data(), pot_src.data(), nullptr, nullptr, pot_trg.data(), nullptr, nullptr);
+
+    std::vector<double> pot_src_split(n_src * nd), pot_trg_split(n_src * nd);
+    params.log_level = DMK_LOG_OFF;
+    double st = omp_get_wtime();
+    pdmk_tree tree = pdmk_tree_create(MPI_COMM_WORLD, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0],
+                                      n_trg, &r_trg[0]);
+    auto tree_build = omp_get_wtime();
+    pdmk_tree_eval(tree, &pot_src_split[0], nullptr, nullptr, &pot_trg_split[0], nullptr, nullptr);
+    auto tree_eval = omp_get_wtime();
+    pdmk_tree_destroy(tree);
+
+    if (rank == 0)
+        std::cout << "Time: " << omp_get_wtime() - st << " " << tree_build - st << " " << tree_eval - tree_build
+                  << std::endl;
 
     MPI_Finalize();
     return 0;
