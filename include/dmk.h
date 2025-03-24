@@ -45,6 +45,11 @@ typedef struct pdmk_params {
 extern "C" {
 #endif
 
+pdmk_tree pdmk_tree_createf(MPI_Comm comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
+                           const float *normal, const float *dipole_str, int n_trg, const float *r_trg);
+void pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *grad_src, float *hess_src, float *pot_trg, float *grad_trg,
+                     float *hess_trg);
+
 pdmk_tree pdmk_tree_create(MPI_Comm comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
                            const double *normal, const double *dipole_str, int n_trg, const double *r_trg);
 void pdmk_tree_destroy(pdmk_tree tree);

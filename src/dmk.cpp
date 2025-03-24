@@ -299,24 +299,54 @@ MPI_TEST_CASE("[DMK] pdmk 3d all", 1) {
     }
 }
 
-} // namespace dmk
-
-extern "C" {
-
-pdmk_tree pdmk_tree_create(MPI_Comm comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
-                           const double *normal, const double *dipole_str, int n_trg, const double *r_trg) {
-    sctl::Vector<double> r_src_vec(n_src * params.n_dim, const_cast<double *>(r_src), false);
-    sctl::Vector<double> r_trg_vec(n_trg * params.n_dim, const_cast<double *>(r_trg), false);
-    sctl::Vector<double> charge_vec(n_src * params.n_mfm, const_cast<double *>(charge), false);
+template <typename Real>
+inline pdmk_tree pdmk_tree_create(MPI_Comm comm, pdmk_params params, int n_src, const Real *r_src, const Real *charge,
+                                  const Real *normal, const Real *dipole_str, int n_trg, const Real *r_trg) {
+    sctl::Vector<Real> r_src_vec(n_src * params.n_dim, const_cast<Real *>(r_src), false);
+    sctl::Vector<Real> r_trg_vec(n_trg * params.n_dim, const_cast<Real *>(r_trg), false);
+    sctl::Vector<Real> charge_vec(n_src * params.n_mfm, const_cast<Real *>(charge), false);
 
     if (params.n_dim != 2 && params.n_dim != 3)
         throw std::runtime_error("Invalid dimension: " + std::to_string(params.n_dim));
     if (params.n_dim == 2)
-        return new pdmk_tree_impl(
-            dmk::DMKPtTree<double, 2>(sctl::Comm(comm), params, r_src_vec, r_trg_vec, charge_vec));
+        return new pdmk_tree_impl(dmk::DMKPtTree<Real, 2>(sctl::Comm(comm), params, r_src_vec, r_trg_vec, charge_vec));
     else
-        return new pdmk_tree_impl(
-            dmk::DMKPtTree<double, 3>(sctl::Comm(comm), params, r_src_vec, r_trg_vec, charge_vec));
+        return new pdmk_tree_impl(dmk::DMKPtTree<Real, 3>(sctl::Comm(comm), params, r_src_vec, r_trg_vec, charge_vec));
+}
+
+template <typename Real>
+inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *grad_src, Real *hess_src, Real *pot_trg, Real *grad_trg,
+                           Real *hess_trg) {
+    std::visit(
+        [&](auto &t) {
+            using TreeType = std::decay_t<decltype(t)>;
+            if constexpr (std::is_same_v<TreeType, dmk::DMKPtTree<Real, 2>> ||
+                          std::is_same_v<TreeType, dmk::DMKPtTree<Real, 3>>) {
+                t.upward_pass();
+                t.downward_pass();
+
+                sctl::Vector<Real> res;
+                t.GetParticleData(res, "pdmk_pot_src");
+                sctl::Vector<Real>(res.Dim(), pot_src, false) = res;
+                t.GetParticleData(res, "pdmk_pot_trg");
+                sctl::Vector<Real>(res.Dim(), pot_trg, false) = res;
+            }
+        },
+        *static_cast<pdmk_tree_impl *>(tree));
+}
+
+} // namespace dmk
+
+extern "C" {
+
+pdmk_tree pdmk_tree_createf(MPI_Comm comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
+                            const float *normal, const float *dipole_str, int n_trg, const float *r_trg) {
+    return dmk::pdmk_tree_create(comm, params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg);
+}
+
+pdmk_tree pdmk_tree_create(MPI_Comm comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
+                           const double *normal, const double *dipole_str, int n_trg, const double *r_trg) {
+    return dmk::pdmk_tree_create(comm, params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg);
 }
 
 void pdmk_tree_destroy(pdmk_tree tree) {
@@ -324,24 +354,14 @@ void pdmk_tree_destroy(pdmk_tree tree) {
         delete static_cast<pdmk_tree_impl *>(tree);
 }
 
+void pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *grad_src, float *hess_src, float *pot_trg, float *grad_trg,
+                     float *hess_trg) {
+    dmk::pdmk_tree_eval(tree, pot_src, grad_src, hess_src, pot_trg, grad_trg, hess_trg);
+}
+
 void pdmk_tree_eval(pdmk_tree tree, double *pot_src, double *grad_src, double *hess_src, double *pot_trg,
                     double *grad_trg, double *hess_trg) {
-    std::visit(
-        [&](auto &t) {
-            using TreeType = std::decay_t<decltype(t)>;
-            if constexpr (std::is_same_v<TreeType, dmk::DMKPtTree<double, 2>> ||
-                          std::is_same_v<TreeType, dmk::DMKPtTree<double, 3>>) {
-                t.upward_pass();
-                t.downward_pass();
-
-                sctl::Vector<double> res;
-                t.GetParticleData(res, "pdmk_pot_src");
-                sctl::Vector<double>(res.Dim(), pot_src, false) = res;
-                t.GetParticleData(res, "pdmk_pot_trg");
-                sctl::Vector<double>(res.Dim(), pot_trg, false) = res;
-            }
-        },
-        *static_cast<pdmk_tree_impl *>(tree));
+    dmk::pdmk_tree_eval(tree, pot_src, grad_src, hess_src, pot_trg, grad_trg, hess_trg);
 }
 
 void pdmkf(MPI_Comm comm, pdmk_params params, int n_src, const float *r_src, const float *charge, const float *normal,
