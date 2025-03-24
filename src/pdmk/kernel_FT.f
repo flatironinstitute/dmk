@@ -228,7 +228,7 @@ c
          xval1=(rl+xs(i))/bsize
          if (abs(xval1).lt.1.0d0) then
             call legeexev(xval1,fval1,coefs,nterms)
-            fvals(i)=fval0
+            fvals(i)=fval1
          elseif (xval1.ge.1.0d0) then
             fval1=c0
          elseif (xval1.le.-1.0d0) then
