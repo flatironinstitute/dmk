@@ -56,44 +56,33 @@ void direct_eval(dmk_ikernel ikernel, const ndview<const Real, 2> &r_src,
                  const ndview<const Real, 1> &coeffs, const double *kernel_params, Real scale, Real center, Real d2max,
                  const ndview<Real, 2> &u, int n_digits) {
     constexpr int VECWIDTH = std::is_same_v<Real, float> ? 2 * VECDIM : VECDIM;
+    const int nd = charges.extent(0);
+    const int ndim = DIM;
+    const int nsrc = r_src.extent(1);
+    const int ntrg = r_trg[0].size();
+    const Real thresh2 = 1E-30; // FIXME
 
     switch (ikernel) {
     case dmk_ikernel::DMK_YUKAWA:
-        yukawa_direct_eval<Real, DIM>(r_src, r_trg, charges, coeffs, *kernel_params, scale, center, d2max, u);
-        break;
-    case dmk_ikernel::DMK_LAPLACE: {
-        const int nd = charges.extent(0);
-        const int ndim = DIM;
-        const int nsrc = r_src.extent(1);
-        const int ntrg = r_trg[0].size();
-        const Real thresh2 = 1E-30; // FIXME
-
-        if constexpr (DIM == 2) {
+        return yukawa_direct_eval<Real, DIM>(r_src, r_trg, charges, coeffs, *kernel_params, scale, center, d2max, u);
+    case dmk_ikernel::DMK_LAPLACE:
+        if constexpr (DIM == 2)
             return log_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
                 &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data_handle(), &nsrc, charges.data_handle(),
                 r_trg[0].data(), r_trg[1].data(), r_trg[2].data(), &ntrg, u.data_handle(), &thresh2);
-        }
-        if constexpr (DIM == 3) {
+        if constexpr (DIM == 3)
             return l3d_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
                 &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data_handle(), &nsrc, charges.data_handle(),
                 r_trg[0].data(), r_trg[1].data(), r_trg[2].data(), &ntrg, u.data_handle(), &thresh2);
-        }
-    }
     case dmk_ikernel::DMK_SQRT_LAPLACE:
-        if constexpr (DIM == 2) {
-            throw std::runtime_error("SQRT Laplace kernel not implemented");
-        }
-        if constexpr (DIM == 3) {
-            const int nd = charges.extent(0);
-            const int ndim = DIM;
-            const int nsrc = r_src.extent(1);
-            const int ntrg = r_trg[0].size();
-            const Real thresh2 = 1E-30; // FIXME
-
+        if constexpr (DIM == 2)
+            return l3d_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
+                &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data_handle(), &nsrc, charges.data_handle(),
+                r_trg[0].data(), r_trg[1].data(), r_trg[2].data(), &ntrg, u.data_handle(), &thresh2);
+        if constexpr (DIM == 3)
             return sl3d_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
                 &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data_handle(), &nsrc, charges.data_handle(),
                 r_trg[0].data(), r_trg[1].data(), r_trg[2].data(), &ntrg, u.data_handle(), &thresh2);
-        }
     }
 }
 

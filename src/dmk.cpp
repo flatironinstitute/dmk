@@ -236,9 +236,6 @@ MPI_TEST_CASE("[DMK] pdmk 3d all", 1) {
                 }
             }();
 
-            if (n_dim == 2 && kernel == DMK_SQRT_LAPLACE)
-                continue; // Only 2D kernels supported currently are yukawa/laplace
-
             SUBCASE((kernel_str + "_" + std::to_string(n_dim)).c_str()) {
                 sctl::Vector<double> pot_src(n_src * nd), grad_src(n_src * nd * n_dim),
                     hess_src(n_src * nd * n_dim * n_dim), pot_trg(n_src * nd), grad_trg(n_trg * nd * n_dim),
