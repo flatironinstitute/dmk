@@ -395,19 +395,22 @@ void multiply_kernelFT_cd2p(const ndview<std::complex<T>, DIM + 1> &pwexp, const
 }
 
 template <typename Complex, int DIM>
-void shift_planewave(const ndview<std::complex<Complex>, DIM + 1> &pwexp1_,
-                     const ndview<std::complex<Complex>, DIM + 1> &pwexp2_,
-                     const ndview<const std::complex<Complex>, 1> &wpwshift) {
-
+void shift_planewave(const ndview<Complex, DIM + 1> &pwexp1_, const ndview<Complex, DIM + 1> &pwexp2_,
+                     const ndview<const Complex, 1> &wpwshift) {
+    // Flatten our views
     const int nd = pwexp1_.extent(DIM);
     const int nexp = wpwshift.extent(0);
+    dmk::ndview<const Complex, 2> pwexp1(pwexp1_.data_handle(), nexp, nd);
+    dmk::ndview<Complex, 2> pwexp2(pwexp2_.data_handle(), nexp, nd);
 
-    dmk::ndview<const std::complex<Complex>, 2> pwexp1(pwexp1_.data_handle(), nexp, nd);
-    dmk::ndview<std::complex<Complex>, 2> pwexp2(pwexp2_.data_handle(), nexp, nd);
-
-    for (int ind = 0; ind < nd; ++ind)
-        for (int j = 0; j < nexp; ++j)
-            pwexp2(j, ind) += pwexp1(j, ind) * wpwshift(j);
+    using ArrayMap = Eigen::Map<Eigen::ArrayX<Complex>>;
+    using ConstArrayMap = Eigen::Map<const Eigen::ArrayX<Complex>>;
+    ConstArrayMap wpwshift_eigen(&wpwshift(0), nexp);
+    for (int ind = 0; ind < nd; ++ind) {
+        ConstArrayMap pw1_eigen(&pwexp1(0, ind), nexp);
+        ArrayMap pw2_eigen(&pwexp2(0, ind), nexp);
+        pw2_eigen += pw1_eigen * wpwshift_eigen;
+    }
 }
 
 template <typename T, int DIM>
@@ -557,7 +560,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
                 assert(ind >= 0 && ind < n_neighbors);
 
                 ndview<const std::complex<T>, 1> wpwshift_view(&wpwshift[n_pw_per_box * ind], n_pw_per_box);
-                shift_planewave<T, DIM>(pw_out_view(neighbor), pw_in_view(box), wpwshift_view);
+                shift_planewave<std::complex<T>, DIM>(pw_out_view(neighbor), pw_in_view(box), wpwshift_view);
             }
         }
 
