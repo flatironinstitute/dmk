@@ -116,7 +116,7 @@ int main(int argc, char *argv[]) {
     params.pgh_src = DMK_POTENTIAL;
     params.pgh_trg = DMK_POTENTIAL;
     params.kernel = DMK_LAPLACE;
-    params.log_level = DMK_LOG_TRACE;
+    params.log_level = DMK_LOG_INFO;
 
     if (argc > 1)
         n_src = std::atoi(argv[1]);

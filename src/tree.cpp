@@ -58,6 +58,7 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
       n_order(get_pwmax_and_poly_order(DIM, n_digits, params_.kernel).second) {
     auto &logger = dmk::get_logger(comm, params.log_level);
     auto &rank_logger = dmk::get_rank_logger(comm, params.log_level);
+    logger->info("tree build started");
 
     const int n_src = r_src.Dim() / DIM;
     const int n_trg = r_trg.Dim() / DIM;
@@ -87,25 +88,25 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     this->GetData(pot_src_sorted, pot_src_cnt, "pdmk_pot_src");
     this->GetData(pot_trg_sorted, pot_trg_cnt, "pdmk_pot_trg");
 
-    logger->debug("Tree build completed");
-
-    logger->debug("Generating tree traversal metadata");
+    logger->debug("base tree build completed");
+    logger->debug("generating tree traversal metadata");
     generate_metadata();
-    logger->debug("Done generating tree traversal metadata");
+    logger->debug("done generating tree traversal metadata");
 
-    rank_logger->trace("Local tree has {} levels {} boxes", n_levels(), n_boxes());
+    rank_logger->trace("local tree has {} levels {} boxes", n_levels(), n_boxes());
 
     // 1: Precomputation
-    logger->debug("Generating p2c and c2p matrices of order {}", n_order);
+    logger->debug("generating p2c and c2p matrices of order {}", n_order);
     std::tie(c2p, p2c) = dmk::chebyshev::get_c2p_p2c_matrices<Real>(DIM, n_order);
-    logger->debug("Finished generating matrices");
+    logger->debug("finished generating matrices");
 
     fourier_data = FourierData<Real>(params.kernel, DIM, params.eps, n_digits, n_pw_max, params.fparam, boxsize);
     const auto &wk = fourier_data.windowed_kernel();
-    logger->debug("Planewave params at root box: n: {}, stepsize: {}, weight: {}, radius: {}", fourier_data.n_pw(),
+    logger->debug("planewave params at root box: n: {}, stepsize: {}, weight: {}, radius: {}", fourier_data.n_pw(),
                   wk.hpw, wk.ws, wk.rl);
     fourier_data.update_local_coeffs(params.eps);
-    logger->debug("Finished updating local potential expansion coefficients");
+    logger->debug("finished updating local potential expansion coefficients");
+    logger->info("tree build completed");
 }
 
 /// @brief Build any bookkeeping data associated with the tree
@@ -319,6 +320,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
     auto &logger = dmk::get_logger(this->GetComm());
     auto &rank_logger = dmk::get_rank_logger(this->GetComm());
     const std::size_t n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
+    logger->info("upward pass started");
 
     sctl::Vector<sctl::Long> counts;
     this->GetData(proxy_coeffs, counts, "proxy_coeffs");
@@ -378,6 +380,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
     }
 
     logger->debug("proxy: finished broadcasting proxy charges");
+    logger->info("upward pass finished");
 }
 
 template <typename T, int DIM>
@@ -442,6 +445,8 @@ template <typename T, int DIM>
 void DMKPtTree<T, DIM>::downward_pass() {
     auto &logger = dmk::get_logger(this->GetComm());
     auto &rank_logger = dmk::get_rank_logger(this->GetComm());
+    logger->info("downward pass started");
+
     this->GetData(pot_src_sorted, pot_src_cnt, "pdmk_pot_src");
     this->GetData(pot_trg_sorted, pot_trg_cnt, "pdmk_pot_trg");
     pot_src_sorted.SetZero();
@@ -704,6 +709,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
                     pot(i, i_src) -= w0 * charge(i, i_src);
         }
     }
+    logger->info("downward pass completed");
 }
 
 MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
