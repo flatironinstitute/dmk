@@ -37,7 +37,7 @@ typedef struct pdmk_params {
     double fparam = 6.0;             // param for selected potential (FIXME: make more flexible)
     const int use_periodic = false;  // use PBC -- not implemented
     int use_charge = 1;              // use charges in charge array
-    int n_per_leaf = 2000;           // tuning: number of particles per leaf in N-tree
+    int n_per_leaf = 300;            // tuning: number of particles per leaf in N-tree
     int log_level = 6;               // 0: trace, 1: debug, 2: info, 3: warn, 4: err, 5: critical, 6: off
 } pdmk_params;
 
