@@ -72,6 +72,7 @@ set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp s
 add_library(DMKOBJS OBJECT ${DMK_SRC})
 set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES} ${MPI_CXX_INCLUDE_DIRS})
+target_link_libraries(DMKOBJS PUBLIC OpenMP::OpenMP_CXX)
 
 add_library(dmk STATIC)
 target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX DMKOBJS dmk_ref_common spdlog::spdlog)
