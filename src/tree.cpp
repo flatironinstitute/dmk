@@ -384,14 +384,16 @@ void DMKPtTree<T, DIM>::upward_pass() {
 }
 
 template <typename T, int DIM>
-void multiply_kernelFT_cd2p(const ndview<std::complex<T>, DIM + 1> &pwexp, const sctl::Vector<T> &radialft) {
+void multiply_kernelFT_cd2p(const sctl::Vector<T> &radialft, const ndview<std::complex<T>, DIM + 1> &pwexp) {
     const int nd = pwexp.extent(DIM);
     const int nexp = radialft.Dim();
     ndview<std::complex<T>, 2> pwexp_flat(pwexp.data_handle(), nexp, nd);
 
-    for (int ind = 0; ind < nd; ++ind)
-        for (int n = 0; n < nexp; ++n)
-            pwexp_flat(n, ind) *= radialft[n];
+    Eigen::Map<const Eigen::ArrayX<T>> radialft_eigen(&radialft[0], nexp);
+    for (int ind = 0; ind < nd; ++ind) {
+        Eigen::Map<Eigen::ArrayX<std::complex<T>>> pwexp_eigen(&pwexp_flat(0, ind), nexp);
+        pwexp_eigen *= radialft_eigen;
+    }
 }
 
 template <typename Complex, int DIM>
@@ -438,6 +440,218 @@ void DMKPtTree<T, DIM>::init_planewave_data() {
     pw_in.SetZero();
 }
 
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &boxes,
+                                                    const ndview<const std::complex<Real>, 2> &poly2pw_view,
+                                                    const sctl::Vector<Real> &radialft) {
+    const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
+    const int n_pw_per_box = n_pw_modes * params.n_mfm;
+
+    // Form the outgoing expansion Φl(box) for the difference kernel Dl from the proxy charge expansion
+    // coefficients using Tprox2pw
+    for (auto box : boxes) {
+        if (!form_pw_expansion[box])
+            continue;
+
+        dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(box), poly2pw_view, pw_out_view(box));
+        multiply_kernelFT_cd2p<Real, DIM>(radialft, pw_out_view(box));
+        memcpy(pw_in_ptr(box), pw_out_ptr(box), n_pw_per_box * sizeof(std::complex<Real>));
+    }
+}
+
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::form_incoming_expansions(const sctl::Vector<int> &boxes,
+                                                    const sctl::Vector<std::complex<Real>> &wpwshift) {
+    const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
+    const int n_pw_per_box = n_pw_modes * params.n_mfm;
+    const auto &node_lists = this->GetNodeLists();
+
+    for (auto box : boxes) {
+        if (src_counts_local[box] + trg_counts_local[box] == 0)
+            continue;
+
+        for (auto &neighbor : node_lists[box].nbr) {
+            if (neighbor < 0 || neighbor == box || !form_pw_expansion[neighbor])
+                continue;
+
+            // Translate the outgoing expansion Φl(colleague) to the center of box and add to the incoming plane
+            // wave expansion Ψl(box) using wpwshift.
+
+            // note: neighbors in SCTL are sorted in reverse order to wpwshift
+            // FIXME: check if valid for periodic boundary conditions
+            constexpr int n_neighbors = sctl::pow<DIM>(3);
+            const int ind = n_neighbors - 1 - (&neighbor - &node_lists[box].nbr[0]);
+            assert(ind >= 0 && ind < n_neighbors);
+
+            ndview<const std::complex<Real>, 1> wpwshift_view(&wpwshift[n_pw_per_box * ind], n_pw_per_box);
+            shift_planewave<std::complex<Real>, DIM>(pw_out_view(neighbor), pw_in_view(box), wpwshift_view);
+        }
+    }
+}
+
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::form_local_expansions(const sctl::Vector<int> &boxes, Real boxsize,
+                                                 const ndview<const std::complex<Real>, 2> &pw2poly_view,
+                                                 const sctl::Vector<Real> &p2c) {
+    const auto &node_lists = this->GetNodeLists();
+    const Real sc = 2.0 / boxsize;
+    const int nd = params.n_mfm;
+
+    for (auto box : boxes) {
+        const int n_trg = trg_counts_local[box];
+        const int n_src = src_counts_local[box];
+        const int n_pts = n_src + n_trg;
+
+        if (!eval_pw_expansion[box] || n_pts == 0)
+            continue;
+
+        // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
+        dmk::planewave_to_proxy_potential<Real, DIM>(pw_in_view(box), pw2poly_view, proxy_view_downward(box));
+
+        if (eval_tp_expansion[box]) {
+            if (n_src)
+                proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_src_view(box), center_view(box), sc,
+                                               pot_src_view(box));
+            if (n_trg)
+                proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_trg_view(box), center_view(box), sc,
+                                               pot_trg_view(box));
+        }
+
+        // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
+        constexpr int n_children = 1u << DIM;
+        for (int i_child = 0; i_child < n_children; ++i_child) {
+            const int child = node_lists[box].child[i_child];
+            if (child < 0)
+                continue;
+
+            if (eval_tp_expansion[child] && !eval_pw_expansion[child]) {
+                if (src_counts_local[child])
+                    proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_src_view(child), center_view(box), sc,
+                                                   pot_src_view(child));
+                if (trg_counts_local[child])
+                    proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_trg_view(child), center_view(box), sc,
+                                                   pot_trg_view(child));
+            } else if (eval_pw_expansion[child]) {
+                ndview<const Real, 2> p2c_view(&p2c[i_child * DIM * n_order * n_order], n_order, DIM);
+                dmk::tensorprod::transform<Real, DIM>(nd, true, proxy_view_downward(box), p2c_view,
+                                                      proxy_view_downward(child));
+            }
+        }
+    }
+}
+
+template <typename Real>
+Real calc_log_windowed_kernel_value_at_zero(int dim, const FourierData<Real> &fourier_data, Real boxsize) {
+    const Real psi0 = fourier_data.prolate0_fun.eval_val(0.0);
+    const Real beta = fourier_data.beta();
+    constexpr int n_quad = 100;
+    std::array<Real, n_quad> xs, whts;
+    legerts(1, n_quad, xs.data(), whts.data());
+    for (int i = 0; i < n_quad; ++i) {
+        xs[i] = 0.5 * (xs[i] + Real{1.0}) * beta / boxsize;
+        whts[i] *= 0.5 * beta / boxsize;
+    }
+
+    const Real rl = boxsize * sqrt(dim * 1.0) * 2;
+    const Real dfac = rl * std::log(rl);
+
+    Real fval = 0.0;
+    for (int i = 0; i < n_quad; ++i) {
+        const Real xval = xs[i] * boxsize / beta;
+        const Real fval0 = fourier_data.prolate0_fun.eval_val(xval);
+        const Real z = rl * xs[i];
+        const Real dj0 = std::cyl_bessel_j(0, z);
+        const Real dj1 = std::cyl_bessel_j(1, z);
+        const Real tker = -(1 - dj0) / (xs[i] * xs[i]) + dfac * dj1 / xs[i];
+        const Real fhat = tker * fval0 / psi0;
+        fval += fhat * whts[i] * xs[i];
+    }
+
+    return fval;
+}
+
+template <typename Real, int DIM>
+std::tuple<Real, Real, Real, Real, Real>
+get_direct_interaction_constants(FourierData<Real> &fourier_data, dmk_ikernel kernel, int i_level, Real boxsize) {
+    const double bsize = i_level == 0 ? 0.5 * boxsize : boxsize;
+    const double d2max = bsize * bsize;
+    const double w0 = [&]() -> Real {
+        if (kernel == DMK_YUKAWA)
+            return fourier_data.yukawa_windowed_kernel_value_at_zero(i_level);
+        else if (kernel == DMK_LAPLACE) {
+            const Real psi0 = fourier_data.prolate0_fun.eval_val(0.0);
+            const auto c = fourier_data.prolate0_fun.intvals(fourier_data.beta());
+            if constexpr (DIM == 2) {
+                const auto log_windowed_kernel_at_zero =
+                    calc_log_windowed_kernel_value_at_zero(DIM, fourier_data, Real{1.0});
+                return log_windowed_kernel_at_zero - i_level * std::log(2.0);
+            } else if constexpr (DIM == 3)
+                return psi0 / (c[0] * bsize);
+            else
+                throw std::runtime_error("Unsupported kernel DMK_LAPLACE, DIM = " + std::to_string(DIM));
+        } else if (kernel == DMK_SQRT_LAPLACE) {
+            const Real psi0 = fourier_data.prolate0_fun.eval_val(0.0);
+            const auto c = fourier_data.prolate0_fun.intvals(fourier_data.beta());
+            if constexpr (DIM == 2)
+                return psi0 / (c[0] * bsize);
+            if constexpr (DIM == 3)
+                return psi0 / (2 * c[1] * bsize * bsize);
+
+        } else
+            throw std::runtime_error("Unsupported kernel");
+    }();
+
+    if ((kernel == DMK_SQRT_LAPLACE && DIM == 3) || (kernel == DMK_LAPLACE && DIM == 2))
+        return {bsize, 2.0 / (bsize * bsize), -1.0, d2max, w0};
+    if (kernel == DMK_YUKAWA)
+        return {bsize, 2.0 / bsize, -1.0, d2max, w0};
+
+    return {bsize, 2.0 / bsize, -bsize / 2.0, d2max, w0};
+}
+
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::evaluate_direct_interactions(int i_level, const Real *r_src_t, const Real *r_trg_t) {
+    const auto [bsize, rsc, cen, d2max, w0] =
+        get_direct_interaction_constants<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
+
+    const auto &cheb_coeffs = fourier_data.cheb_coeffs(i_level);
+    for (auto box : level_indices[i_level]) {
+        // Evaluate the direct interactions
+        if (!r_src_cnt[box])
+            continue;
+
+        for (auto neighbor : direct_neighbs(box)) {
+            const int n_src_neighb = src_counts_local[neighbor];
+            const int n_trg_neighb = trg_counts_local[neighbor];
+
+            std::array<std::span<const Real>, DIM> r_trg;
+            if (n_src_neighb) {
+                for (int i = 0; i < DIM; ++i)
+                    r_trg[i] = std::span<const Real>(
+                        r_src_t + (r_src_offsets[neighbor] / DIM) + src_counts_local[0] * i, n_src_neighb);
+
+                direct_eval<Real, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
+                                       &params.fparam, rsc, cen, d2max, pot_src_view(neighbor), n_digits);
+            }
+            if (n_trg_neighb) {
+                for (int i = 0; i < DIM; ++i)
+                    r_trg[i] = std::span<const Real>(
+                        r_trg_t + (r_trg_offsets[neighbor] / DIM) + trg_counts_local[0] * i, n_trg_neighb);
+
+                direct_eval<Real, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
+                                       &params.fparam, rsc, cen, d2max, pot_trg_view(neighbor), n_digits);
+            }
+        }
+
+        // Correct for self-evaluations
+        auto pot = pot_src_view(box);
+        auto charge = charge_view(box);
+        for (int i_src = 0; i_src < r_src_cnt[box]; ++i_src)
+            for (int i = 0; i < params.n_mfm; ++i)
+                pot(i, i_src) -= w0 * charge(i, i_src);
+    }
+}
+
 /// @brief Perform the "downward pass"
 ///
 /// Updates: proxy_coeffs_downward, tree 'pdmk_pot' particle data
@@ -455,8 +669,6 @@ void DMKPtTree<T, DIM>::downward_pass() {
     pot_src_sorted.SetZero();
     pot_trg_sorted.SetZero();
 
-    constexpr int dim = DIM;
-    constexpr int nmax = 1;
     const int nd = params.n_mfm;
     // FIXME: This should be assigned automatically at tree construction (fourier_data should be subobject)
     n_pw = fourier_data.n_pw();
@@ -469,8 +681,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
     const std::size_t n_pw_per_box = n_pw_modes * nd;
     const std::size_t n_coeffs_per_box = params.n_mfm * sctl::pow<DIM>(n_order);
 
-    const int shift = n_pw / 2;
-    sctl::Vector<std::complex<T>> wpwshift(n_pw_modes * sctl::pow<DIM>(2 * nmax + 1));
+    sctl::Vector<std::complex<T>> wpwshift(n_pw_modes * sctl::pow<DIM>(3));
     sctl::Vector<T> radialft(n_pw_modes);
     sctl::Vector<T> kernel_ft;
     get_windowed_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits, boxsize[0],
@@ -484,229 +695,33 @@ void DMKPtTree<T, DIM>::downward_pass() {
     ndview<const std::complex<T>, 2> pw2poly_view(&pw2poly[0], n_pw, n_order);
 
     dmk::proxy::proxycharge2pw<T, DIM>(proxy_view_upward(0), poly2pw_view, pw_out_view(0));
-    multiply_kernelFT_cd2p<T, DIM>(pw_out_view(0), radialft);
+    multiply_kernelFT_cd2p<T, DIM>(radialft, pw_out_view(0));
     memcpy(pw_in_ptr(0), pw_out_ptr(0), n_pw_per_box * sizeof(std::complex<T>));
 
     proxy_coeffs_downward.SetZero();
     dmk::planewave_to_proxy_potential<T, DIM>(pw_in_view(0), pw2poly_view, proxy_view_downward(0));
 
-    Eigen::MatrixX<T> r_src_t = Eigen::Map<Eigen::MatrixX<T>>(r_src_ptr(0), dim, src_counts_local[0]).transpose();
-    Eigen::MatrixX<T> r_trg_t = Eigen::Map<Eigen::MatrixX<T>>(r_trg_ptr(0), dim, trg_counts_local[0]).transpose();
-
-    constexpr int n_children = 1u << DIM;
-
-    const T scale_factor_diff_ft = [](dmk_ikernel kernel) -> T {
-        switch (kernel) {
-        case DMK_YUKAWA:
-            return T(0.0);
-        case DMK_LAPLACE:
-            return DIM == 2 ? T(1.0) : T(2.0);
-        case DMK_SQRT_LAPLACE:
-            return DIM == 2 ? T(2.0) : T(4.0);
-        default:
-            throw std::runtime_error("Invalid kernel type: " + std::to_string(kernel));
-        }
-    }(params.kernel);
+    Eigen::MatrixX<T> r_src_t = Eigen::Map<Eigen::MatrixX<T>>(r_src_ptr(0), DIM, src_counts_local[0]).transpose();
+    Eigen::MatrixX<T> r_trg_t = Eigen::Map<Eigen::MatrixX<T>>(r_trg_ptr(0), DIM, trg_counts_local[0]).transpose();
 
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
-        // Calculate difference kernel fourier transform. Exploit scale invariance on lower levels, when applicable.
-        if (i_level == 0 || !scale_factor_diff_ft) {
-            get_difference_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits,
-                                             boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
-        } else {
-            for (auto &val : kernel_ft)
-                val *= scale_factor_diff_ft;
-        }
-
+        // Initialize everything for this level
+        // 1. Difference kernel
+        // 2. Radial fourier transform of the difference kernel
+        // 3. Planewave <-> polynomial coefficient conversion matrices
+        // 4. Planewave translation matrix
+        get_difference_kernel_ft<T, DIM>(i_level == 0, params.kernel, &params.fparam, fourier_data.beta(), n_digits,
+                                         boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
         util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<const T, 1>(&kernel_ft[0], kernel_ft.Dim()),
                                                   ndview<T, 1>(&radialft[0], n_pw_modes));
-
-        // Form outgoing expansions
         fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
-        for (auto box : level_indices[i_level]) {
-            if (!form_pw_expansion[box])
-                continue;
-
-            // Form the outgoing expansion Φl(box) for the difference kernel Dl from the proxy charge expansion
-            // coefficients using Tprox2pw.
-            dmk::proxy::proxycharge2pw<T, DIM>(proxy_view_upward(box), poly2pw_view, pw_out_view(box));
-
-            multiply_kernelFT_cd2p<T, DIM>(pw_out_view(box), radialft);
-            memcpy(pw_in_ptr(box), pw_out_ptr(box), n_pw_per_box * sizeof(std::complex<T>));
-        }
-
-        // Form incoming expansions
         dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw,
                                                     fourier_data.difference_kernel(i_level).hpw, wpwshift);
-        for (auto box : level_indices[i_level]) {
-            if (src_counts_local[box] + trg_counts_local[box] == 0)
-                continue;
 
-            for (auto &neighbor : node_lists[box].nbr) {
-                if (neighbor < 0 || neighbor == box || !form_pw_expansion[neighbor])
-                    continue;
-
-                // Translate the outgoing expansion Φl(colleague) to the center of box and add to the incoming plane
-                // wave expansion Ψl(box) using wpwshift.
-
-                // note: neighbors in SCTL are sorted in reverse order to wpwshift
-                // FIXME: check if valid for periodic boundary conditions
-                constexpr int n_neighbors = sctl::pow<dim>(3);
-                const int ind = n_neighbors - 1 - (&neighbor - &node_lists[box].nbr[0]);
-                assert(ind >= 0 && ind < n_neighbors);
-
-                ndview<const std::complex<T>, 1> wpwshift_view(&wpwshift[n_pw_per_box * ind], n_pw_per_box);
-                shift_planewave<std::complex<T>, DIM>(pw_out_view(neighbor), pw_in_view(box), wpwshift_view);
-            }
-        }
-
-        // Form local expansions
-        const T sc = 2.0 / boxsize[i_level];
-        for (auto box : level_indices[i_level]) {
-            const int n_trg = trg_counts_local[box];
-            const int n_src = src_counts_local[box];
-            const int n_pts = n_src + n_trg;
-
-            if (!eval_pw_expansion[box] || n_pts == 0)
-                continue;
-
-            // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
-            dmk::planewave_to_proxy_potential<T, DIM>(pw_in_view(box), pw2poly_view, proxy_view_downward(box));
-
-            if (eval_tp_expansion[box]) {
-                if (n_src)
-                    proxy::eval_targets<T, DIM>(proxy_view_downward(box), r_src_view(box), center_view(box), sc,
-                                                pot_src_view(box));
-                if (n_trg)
-                    proxy::eval_targets<T, DIM>(proxy_view_downward(box), r_trg_view(box), center_view(box), sc,
-                                                pot_trg_view(box));
-            }
-
-            // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
-            for (int i_child = 0; i_child < n_children; ++i_child) {
-                const int child = node_lists[box].child[i_child];
-                if (child < 0)
-                    continue;
-
-                if (eval_tp_expansion[child] && !eval_pw_expansion[child]) {
-                    if (src_counts_local[child])
-                        proxy::eval_targets<T, DIM>(proxy_view_downward(box), r_src_view(child), center_view(box), sc,
-                                                    pot_src_view(child));
-                    if (trg_counts_local[child])
-                        proxy::eval_targets<T, DIM>(proxy_view_downward(box), r_trg_view(child), center_view(box), sc,
-                                                    pot_trg_view(child));
-                } else if (eval_pw_expansion[child]) {
-                    ndview<const T, 2> p2c_view(&p2c[i_child * DIM * n_order * n_order], n_order, DIM);
-                    dmk::tensorprod::transform<T, DIM>(nd, true, proxy_view_downward(box), p2c_view,
-                                                       proxy_view_downward(child));
-                }
-            }
-        }
-
-        // FIXME: Clean up the logic for the direct interactions. Maybe make a small class/closure
-        const auto [bsize, rsc, cen, d2max] = [&]() -> std::tuple<T, T, T, T> {
-            const double bsize = i_level == 0 ? 0.5 * boxsize[i_level] : boxsize[i_level];
-            const double d2max = bsize * bsize;
-
-            if ((params.kernel == DMK_SQRT_LAPLACE && DIM == 3) || (params.kernel == DMK_LAPLACE && DIM == 2))
-                return {bsize, 2.0 / (bsize * bsize), -1.0, d2max};
-            if (params.kernel == DMK_YUKAWA)
-                return {bsize, 2.0 / bsize, -1.0, d2max};
-
-            return {bsize, 2.0 / bsize, -bsize / 2.0, d2max};
-        }();
-
-        // FIXME: This is heavy. We really only want it once...
-        const auto log_windowed_kernel_at_zero = [&]() -> T {
-            const T psi0 = fourier_data.prolate0_fun.eval_val(0.0);
-            const T bsize = boxsize[0];
-            const T beta = fourier_data.beta();
-            constexpr int n_quad = 100;
-            T xs[1000], whts[1000];
-            legerts(1, n_quad, xs, whts);
-            for (int i = 0; i < n_quad; ++i) {
-                xs[i] = 0.5 * (xs[i] + T{1.0}) * beta / bsize;
-                whts[i] *= 0.5 * beta / bsize;
-            }
-
-            const T rl = bsize * sqrt(dim * 1.0) * 2;
-            const T dfac = rl * std::log(rl);
-
-            T fval = 0.0;
-            for (int i = 0; i < n_quad; ++i) {
-                const T xval = xs[i] * bsize / beta;
-                const T fval0 = fourier_data.prolate0_fun.eval_val(xval);
-                const T z = rl * xs[i];
-                const T dj0 = std::cyl_bessel_j(0, z);
-                const T dj1 = std::cyl_bessel_j(1, z);
-                const T tker = -(1 - dj0) / (xs[i] * xs[i]) + dfac * dj1 / xs[i];
-                const T fhat = tker * fval0 / psi0;
-                fval += fhat * whts[i] * xs[i];
-            }
-
-            return fval;
-        };
-
-        auto get_windowed_kernel_at_zero = [&]() -> T {
-            if (params.kernel == DMK_YUKAWA)
-                return fourier_data.yukawa_windowed_kernel_value_at_zero(i_level);
-            else if (params.kernel == DMK_LAPLACE) {
-                const T psi0 = fourier_data.prolate0_fun.eval_val(0.0);
-                const auto c = fourier_data.prolate0_fun.intvals(fourier_data.beta());
-                if constexpr (DIM == 2)
-                    return log_windowed_kernel_at_zero() - i_level * std::log(2.0);
-                else if constexpr (DIM == 3)
-                    return psi0 / (c[0] * bsize);
-                else
-                    throw std::runtime_error("Unsupported kernel DMK_LAPLACE, DIM = " + std::to_string(DIM));
-            } else if (params.kernel == DMK_SQRT_LAPLACE) {
-                const T psi0 = fourier_data.prolate0_fun.eval_val(0.0);
-                const auto c = fourier_data.prolate0_fun.intvals(fourier_data.beta());
-                if constexpr (DIM == 2)
-                    return psi0 / (c[0] * bsize);
-                if constexpr (DIM == 3)
-                    return psi0 / (2 * c[1] * bsize * bsize);
-
-            } else
-                throw std::runtime_error("Unsupported kernel");
-        };
-
-        const T w0 = get_windowed_kernel_at_zero();
-
-        const auto &cheb_coeffs = fourier_data.cheb_coeffs(i_level);
-        for (auto box : level_indices[i_level]) {
-            // Evaluate the direct interactions
-            if (!r_src_cnt[box])
-                continue;
-
-            for (auto neighbor : direct_neighbs(box)) {
-                const int n_src_neighb = src_counts_local[neighbor];
-                const int n_trg_neighb = trg_counts_local[neighbor];
-
-                std::array<std::span<const T>, DIM> r_trg;
-                if (n_src_neighb) {
-                    for (int i = 0; i < DIM; ++i)
-                        r_trg[i] = std::span<const T>(&r_src_t(r_src_offsets[neighbor] / DIM, i), n_src_neighb);
-
-                    direct_eval<T, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
-                                        &params.fparam, rsc, cen, d2max, pot_src_view(neighbor), n_digits);
-                }
-                if (n_trg_neighb) {
-                    for (int i = 0; i < DIM; ++i)
-                        r_trg[i] = std::span<const T>(&r_trg_t(r_trg_offsets[neighbor] / DIM, i), n_trg_neighb);
-
-                    direct_eval<T, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
-                                        &params.fparam, rsc, cen, d2max, pot_trg_view(neighbor), n_digits);
-                }
-            }
-
-            // Correct for self-evaluations
-            auto pot = pot_src_view(box);
-            auto charge = charge_view(box);
-            for (int i_src = 0; i_src < r_src_cnt[box]; ++i_src)
-                for (int i = 0; i < nd; ++i)
-                    pot(i, i_src) -= w0 * charge(i, i_src);
-        }
+        form_outgoing_expansions(level_indices[i_level], poly2pw_view, radialft);
+        form_incoming_expansions(level_indices[i_level], wpwshift);
+        form_local_expansions(level_indices[i_level], boxsize[i_level], pw2poly_view, p2c);
+        evaluate_direct_interactions(i_level, r_src_t.data(), r_trg_t.data());
     }
     logger->info("downward pass completed");
 }

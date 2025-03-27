@@ -683,18 +683,33 @@ void sqrt_laplace_difference_kernel_ft(const double *rpars, Real beta, int ndigi
 }
 
 template <typename Real, int DIM>
-void get_difference_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, Real boxsize,
+void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, Real boxsize,
                               Prolate0Fun &pf, sctl::Vector<Real> &diff_kernel_ft) {
-    switch (kernel) {
-    case dmk_ikernel::DMK_YUKAWA:
-        return yukawa_difference_kernel_ft<Real, DIM>(rpars, beta, ndigits, boxsize, pf, diff_kernel_ft);
-    case dmk_ikernel::DMK_LAPLACE:
-        return laplace_difference_kernel_ft<Real, DIM>(rpars, beta, ndigits, boxsize, pf, diff_kernel_ft);
-    case dmk_ikernel::DMK_SQRT_LAPLACE:
-        return sqrt_laplace_difference_kernel_ft<Real, DIM>(rpars, beta, ndigits, boxsize, pf, diff_kernel_ft);
-    default:
-        throw std::runtime_error("Unsupported kernel " + std::to_string(kernel));
-    }
+    if (init || kernel == DMK_YUKAWA)
+        switch (kernel) {
+        case dmk_ikernel::DMK_YUKAWA:
+            return yukawa_difference_kernel_ft<Real, DIM>(rpars, beta, ndigits, boxsize, pf, diff_kernel_ft);
+        case dmk_ikernel::DMK_LAPLACE:
+            return laplace_difference_kernel_ft<Real, DIM>(rpars, beta, ndigits, boxsize, pf, diff_kernel_ft);
+        case dmk_ikernel::DMK_SQRT_LAPLACE:
+            return sqrt_laplace_difference_kernel_ft<Real, DIM>(rpars, beta, ndigits, boxsize, pf, diff_kernel_ft);
+        default:
+            throw std::runtime_error("Unsupported kernel " + std::to_string(kernel));
+        }
+
+    const Real scale_factor = [](dmk_ikernel kernel) -> Real {
+        switch (kernel) {
+        case DMK_LAPLACE:
+            return DIM == 2 ? Real(1.0) : Real(2.0);
+        case DMK_SQRT_LAPLACE:
+            return DIM == 2 ? Real(2.0) : Real(4.0);
+        default:
+            throw std::runtime_error("Invalid kernel type: " + std::to_string(kernel));
+        }
+    }(kernel);
+
+    for (int i = 0; i < diff_kernel_ft.Dim(); ++i)
+        diff_kernel_ft[i] *= scale_factor;
 }
 
 template <typename T>
@@ -964,15 +979,17 @@ template void get_windowed_kernel_ft<double, 2>(dmk_ikernel kernel, const double
                                                 double boxsize, Prolate0Fun &pf, sctl::Vector<double> &radialft);
 template void get_windowed_kernel_ft<double, 3>(dmk_ikernel kernel, const double *rpars, double beta, int ndigits,
                                                 double boxsize, Prolate0Fun &pf, sctl::Vector<double> &radialft);
-template void get_difference_kernel_ft<float, 2>(dmk_ikernel kernel, const double *rpars, float beta, int ndigits,
-                                                 float boxsize, Prolate0Fun &pf, sctl::Vector<float> &diff_kernel_ft);
-template void get_difference_kernel_ft<float, 3>(dmk_ikernel kernel, const double *rpars, float beta, int ndigits,
-                                                 float boxsize, Prolate0Fun &pf, sctl::Vector<float> &diff_kernel_ft);
-template void get_difference_kernel_ft<double, 2>(dmk_ikernel kernel, const double *rpars, double beta, int ndigits,
-                                                  double boxsize, Prolate0Fun &pf,
+template void get_difference_kernel_ft<float, 2>(bool init, dmk_ikernel kernel, const double *rpars, float beta,
+                                                 int ndigits, float boxsize, Prolate0Fun &pf,
+                                                 sctl::Vector<float> &diff_kernel_ft);
+template void get_difference_kernel_ft<float, 3>(bool init, dmk_ikernel kernel, const double *rpars, float beta,
+                                                 int ndigits, float boxsize, Prolate0Fun &pf,
+                                                 sctl::Vector<float> &diff_kernel_ft);
+template void get_difference_kernel_ft<double, 2>(bool init, dmk_ikernel kernel, const double *rpars, double beta,
+                                                  int ndigits, double boxsize, Prolate0Fun &pf,
                                                   sctl::Vector<double> &diff_kernel_ft);
-template void get_difference_kernel_ft<double, 3>(dmk_ikernel kernel, const double *rpars, double beta, int ndigits,
-                                                  double boxsize, Prolate0Fun &pf,
+template void get_difference_kernel_ft<double, 3>(bool init, dmk_ikernel kernel, const double *rpars, double beta,
+                                                  int ndigits, double boxsize, Prolate0Fun &pf,
                                                   sctl::Vector<double> &diff_kernel_ft);
 
 } // namespace dmk

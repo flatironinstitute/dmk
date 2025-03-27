@@ -73,7 +73,7 @@ template <typename Real, int DIM>
 void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, Real boxsize,
                             Prolate0Fun &pf, sctl::Vector<Real> &windowed_kernel);
 template <typename Real, int DIM>
-void get_difference_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, Real boxsize,
+void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, Real boxsize,
                               Prolate0Fun &pf, sctl::Vector<Real> &windowed_kernel);
 } // namespace dmk
 

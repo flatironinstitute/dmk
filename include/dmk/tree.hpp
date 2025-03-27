@@ -71,6 +71,19 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void generate_metadata();
     void init_planewave_data();
 
+    void form_outgoing_expansions(const sctl::Vector<int> &boxes,
+                                  const ndview<const std::complex<Real>, 2> &poly2pw_view,
+                                  const sctl::Vector<Real> &radialft);
+
+    void form_incoming_expansions(const sctl::Vector<int> &boxes,
+                                  const sctl::Vector<std::complex<Real>> &wpwshift);
+
+    void form_local_expansions(const sctl::Vector<int> &boxes, Real boxsize,
+                               const ndview<const std::complex<Real>, 2> &pw2poly_view,
+                               const sctl::Vector<Real> &p2c);
+
+    void evaluate_direct_interactions(int i_level, const Real *r_src_t, const Real *r_trg_t);
+
     std::span<const int> direct_neighbs(int i_box) const {
         return std::span<const int>(direct_neighbs_[i_box].data(), n_direct_neighbs_[i_box]);
     }
