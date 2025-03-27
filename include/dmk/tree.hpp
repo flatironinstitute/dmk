@@ -89,11 +89,13 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     }
 
     Real *r_trg_ptr(int i_node) {
-        assert(trg_counts_local[i_node]);
+        if (trg_counts_local[i_node] == 0)
+            return nullptr;
         return &r_trg_sorted[r_trg_offsets[i_node]];
     }
     const Real *r_trg_ptr(int i_node) const {
-        assert(trg_counts_local[i_node]);
+        if (trg_counts_local[i_node] == 0)
+            return nullptr;
         return &r_trg_sorted[r_trg_offsets[i_node]];
     }
     ndview<Real, 2> r_trg_view(int i_node) { return ndview<Real, 2>(r_trg_ptr(i_node), DIM, trg_counts_local[i_node]); }
