@@ -471,7 +471,6 @@ void DMKPtTree<T, DIM>::downward_pass() {
 
     const int shift = n_pw / 2;
     sctl::Vector<std::complex<T>> wpwshift(n_pw_modes * sctl::pow<DIM>(2 * nmax + 1));
-    sctl::Vector<T> ts(n_pw);
     sctl::Vector<T> radialft(n_pw_modes);
     sctl::Vector<T> kernel_ft;
     get_windowed_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits, boxsize[0],
@@ -510,12 +509,6 @@ void DMKPtTree<T, DIM>::downward_pass() {
     }(params.kernel);
 
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
-        for (int i = 0; i < n_pw; ++i)
-            ts[i] = fourier_data.difference_kernel(i_level).hpw * (i - shift);
-
-        fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
-        dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw, ts, wpwshift);
-
         // Calculate difference kernel fourier transform. Exploit scale invariance on lower levels, when applicable.
         if (i_level == 0 || !scale_factor_diff_ft) {
             get_difference_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits,
@@ -529,6 +522,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
                                                   ndview<T, 1>(&radialft[0], n_pw_modes));
 
         // Form outgoing expansions
+        fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
         for (auto box : level_indices[i_level]) {
             if (!form_pw_expansion[box])
                 continue;
@@ -542,6 +536,8 @@ void DMKPtTree<T, DIM>::downward_pass() {
         }
 
         // Form incoming expansions
+        dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw,
+                                                    fourier_data.difference_kernel(i_level).hpw, wpwshift);
         for (auto box : level_indices[i_level]) {
             if (src_counts_local[box] + trg_counts_local[box] == 0)
                 continue;

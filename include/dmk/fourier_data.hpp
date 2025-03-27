@@ -19,8 +19,6 @@ struct FourierData {
     void update_local_coeffs(T eps);
     void calc_planewave_coeff_matrices(int i_level, int n_order, sctl::Vector<std::complex<T>> &prox2pw,
                                        sctl::Vector<std::complex<T>> &pw2poly) const;
-    void calc_planewave_translation_matrix(int dim, int i_level, T xmin,
-                                           sctl::Vector<std::complex<T>> &shift_vec) const;
 
     const ndview<const T, 1> cheb_coeffs(int i_level) const {
         if (coeffs1_.Dim())

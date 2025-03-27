@@ -16,8 +16,7 @@ void calc_planewave_coeff_matrices(T boxsize, T hpw, int n_pw, int n_order, sctl
                                    sctl::Vector<std::complex<T>> &pw2poly_vec);
 
 template <int DIM, typename T>
-void calc_planewave_translation_matrix(int nmax, T xmin, int npw, const sctl::Vector<T> &ts,
-                                       sctl::Vector<std::complex<T>> &shift_vec);
+void calc_planewave_translation_matrix(int nmax, T xmin, int npw, T hpw, sctl::Vector<std::complex<T>> &shift_vec);
 } // namespace dmk
 
 #endif

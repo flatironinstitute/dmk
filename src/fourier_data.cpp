@@ -946,24 +946,6 @@ void FourierData<T>::update_local_coeffs(T eps) {
 }
 
 template <typename T>
-void FourierData<T>::calc_planewave_translation_matrix(int dim, int i_level, T xmin,
-                                                       sctl::Vector<std::complex<T>> &shift_vec) const {
-    constexpr int nmax = 1;
-    sctl::Vector<T> ts(n_pw_);
-    int ts_shift = n_pw_ / 2;
-    const T hpw = i_level ? difference_kernels_[i_level - 1].hpw : windowed_kernel_.hpw;
-    for (int i = 0; i < n_pw_; ++i)
-        ts[i] = (i - ts_shift) * hpw;
-
-    if (dim == 2)
-        dmk::calc_planewave_translation_matrix<2>(nmax, xmin, n_pw_, ts, shift_vec);
-    else if (dim == 3)
-        dmk::calc_planewave_translation_matrix<3>(nmax, xmin, n_pw_, ts, shift_vec);
-    else
-        throw std::runtime_error("Dimension " + std::to_string(dim) + "not supported");
-}
-
-template <typename T>
 void FourierData<T>::calc_planewave_coeff_matrices(int i_level, int n_order, sctl::Vector<std::complex<T>> &prox2pw_vec,
                                                    sctl::Vector<std::complex<T>> &pw2poly_vec) const {
     auto hpw = (i_level + 1) ? difference_kernels_[i_level].hpw : windowed_kernel_.hpw;
