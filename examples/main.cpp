@@ -105,11 +105,11 @@ int main(int argc, char *argv[]) {
     int n_src = 1e6;
     const int n_trg = 0;
     const bool uniform = false;
-    const bool set_fixed_charges = true;
+    const bool set_fixed_charges = rank == 0;
     const int nd = 1;
 
     pdmk_params params;
-    params.eps = 1e-6;
+    params.eps = 1e-5;
     params.n_dim = n_dim;
     params.n_per_leaf = 280;
     params.n_mfm = nd;
@@ -122,23 +122,39 @@ int main(int argc, char *argv[]) {
         n_src = std::atoi(argv[1]);
     if (argc > 2)
         params.n_per_leaf = std::atoi(argv[2]);
+    int n_src_per_rank = n_src / size;
+    n_src = n_src_per_rank * size;
 
     // Build random sources + 3 fixed charges
-    std::vector<double> r_src, charges, rnormal, dipstr, r_trg;
-    init_test_data(n_dim, 1, n_src, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, dipstr, rank);
+    std::vector<float> r_src, charges, rnormal, dipstr, r_trg;
+    init_test_data(n_dim, 1, n_src_per_rank, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, dipstr,
+                   rank);
 
-    std::vector<double> pot_src(n_src * nd), pot_trg(n_src * nd);
-    pdmk(MPI_COMM_WORLD, params, n_src, r_src.data(), charges.data(), rnormal.data(), dipstr.data(), n_trg,
-         r_trg.data(), pot_src.data(), nullptr, nullptr, pot_trg.data(), nullptr, nullptr);
+    std::vector<float> pot_src(n_src_per_rank * nd), pot_trg(n_src_per_rank * nd);
+    pdmkf(MPI_COMM_WORLD, params, n_src_per_rank, r_src.data(), charges.data(), rnormal.data(), dipstr.data(), n_trg,
+          r_trg.data(), pot_src.data(), nullptr, nullptr, pot_trg.data(), nullptr, nullptr);
 
-    std::vector<double> pot_src_split(n_src * nd), pot_trg_split(n_src * nd);
-    params.log_level = DMK_LOG_OFF;
-    double st = omp_get_wtime();
-    pdmk_tree tree = pdmk_tree_create(MPI_COMM_WORLD, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0],
-                                      n_trg, &r_trg[0]);
+    std::vector<float> pot_src_split(n_src_per_rank * nd), pot_trg_split(n_src_per_rank * nd);
+    params.log_level = DMK_LOG_INFO;
+    float st = omp_get_wtime();
+
+    pdmk_tree tree = pdmk_tree_createf(MPI_COMM_WORLD, params, n_src_per_rank, &r_src[0], &charges[0], &rnormal[0],
+                                       &dipstr[0], n_trg, &r_trg[0]);
     auto tree_build = omp_get_wtime();
-    pdmk_tree_eval(tree, &pot_src_split[0], nullptr, nullptr, &pot_trg_split[0], nullptr, nullptr);
+    pdmk_tree_evalf(tree, &pot_src_split[0], nullptr, nullptr, &pot_trg_split[0], nullptr, nullptr);
     auto tree_eval = omp_get_wtime();
+
+    const int n_runs = 100;
+    for (int i = 0; i < n_runs; ++i) {
+        const auto st = omp_get_wtime();
+        pdmk_tree_evalf(tree, &pot_src_split[0], nullptr, nullptr, &pot_trg_split[0], nullptr, nullptr);
+        auto points_per_sec_per_rank = n_src_per_rank / (omp_get_wtime() - st);
+        auto points_per_sec = n_src / (omp_get_wtime() - st);
+
+        if (rank == 0)
+            std::cout << omp_get_wtime() - st << " " << points_per_sec_per_rank << " " << points_per_sec << std::endl;
+    }
+
     pdmk_tree_destroy(tree);
 
     if (rank == 0)

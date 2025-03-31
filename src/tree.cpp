@@ -616,7 +616,6 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(int i_level, const Real 
 
     const auto &cheb_coeffs = fourier_data.cheb_coeffs(i_level);
     for (auto box : level_indices[i_level]) {
-        // Evaluate the direct interactions
         if (!r_src_cnt[box])
             continue;
 
@@ -669,18 +668,11 @@ void DMKPtTree<T, DIM>::downward_pass() {
     pot_src_sorted.SetZero();
     pot_trg_sorted.SetZero();
 
-    const int nd = params.n_mfm;
     // FIXME: This should be assigned automatically at tree construction (fourier_data should be subobject)
     n_pw = fourier_data.n_pw();
 
-    const auto &node_lists = this->GetNodeLists();
-    const auto &node_attr = this->GetNodeAttr();
-
     init_planewave_data();
     const std::size_t n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
-    const std::size_t n_pw_per_box = n_pw_modes * nd;
-    const std::size_t n_coeffs_per_box = params.n_mfm * sctl::pow<DIM>(n_order);
-
     sctl::Vector<std::complex<T>> wpwshift(n_pw_modes * sctl::pow<DIM>(3));
     sctl::Vector<T> radialft(n_pw_modes);
     sctl::Vector<T> kernel_ft;
@@ -696,7 +688,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
 
     dmk::proxy::proxycharge2pw<T, DIM>(proxy_view_upward(0), poly2pw_view, pw_out_view(0));
     multiply_kernelFT_cd2p<T, DIM>(radialft, pw_out_view(0));
-    memcpy(pw_in_ptr(0), pw_out_ptr(0), n_pw_per_box * sizeof(std::complex<T>));
+    memcpy(pw_in_ptr(0), pw_out_ptr(0), n_pw_modes * params.n_mfm * sizeof(std::complex<T>));
 
     proxy_coeffs_downward.SetZero();
     dmk::planewave_to_proxy_potential<T, DIM>(pw_in_view(0), pw2poly_view, proxy_view_downward(0));
@@ -710,7 +702,8 @@ void DMKPtTree<T, DIM>::downward_pass() {
         // 2. Radial fourier transform of the difference kernel
         // 3. Planewave <-> polynomial coefficient conversion matrices
         // 4. Planewave translation matrix
-        get_difference_kernel_ft<T, DIM>(i_level == 0, params.kernel, &params.fparam, fourier_data.beta(), n_digits,
+        const bool is_root = i_level == 0;
+        get_difference_kernel_ft<T, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_digits,
                                          boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
         util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<const T, 1>(&kernel_ft[0], kernel_ft.Dim()),
                                                   ndview<T, 1>(&radialft[0], n_pw_modes));
