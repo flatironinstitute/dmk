@@ -327,8 +327,8 @@ void DMKPtTree<T, DIM>::generate_metadata() {
 /// @tparam DIM Spatial dimension tree lives in
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::upward_pass() {
-    dmk::util::PAPICounter papi_counter;
     sctl::Profile::Scoped profile("upward_pass", &comm_);
+    dmk::util::PAPICounter papi_counter;
     sctl::Profile::Tic("upward_pass_init", &comm_);
     auto &logger = dmk::get_logger(comm_);
     auto &rank_logger = dmk::get_rank_logger(comm_);
@@ -691,7 +691,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(int i_level, const Real 
 /// @tparam DIM Spatial dimension tree lives in
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::downward_pass() {
-    auto prof = sctl::Profile::Scoped("downward_pass", &comm_);
+    sctl::Profile::Scoped prof("downward_pass", &comm_);
     dmk::util::PAPICounter papi_counter;
     sctl::Profile::Tic("downward_pass_init", &comm_);
     auto &logger = dmk::get_logger(comm_);
