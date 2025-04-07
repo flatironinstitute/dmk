@@ -3,6 +3,7 @@
 #include <dmk/gemm.hpp>
 #include <dmk/tensorprod.hpp>
 #include <dmk/types.hpp>
+#include <dmk/util.hpp>
 #include <sctl.hpp>
 
 namespace dmk::tensorprod {
@@ -76,6 +77,7 @@ void transform_3d(int add_flag, const ndview<const T, 3> &fin, const ndview<cons
 template <typename T, int DIM>
 void transform(int nvec, int add_flag, const ndview<const T, DIM + 1> &fin, const ndview<const T, 2> &umat,
                const ndview<T, DIM + 1> &fout) {
+    // dmk::util::PAPICounter papi_counter;
     const int nin = fin.extent(0);
     const int nout = fout.extent(0);
     if (DIM == 1) {

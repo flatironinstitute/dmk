@@ -5,6 +5,10 @@
 #include <sctl.hpp>
 #include <type_traits>
 
+#ifdef DMK_INSTRUMENT
+#include <papi.h>
+#endif
+
 namespace dmk::util {
 template <class...>
 constexpr std::false_type always_false{};
@@ -21,6 +25,25 @@ void mk_tensor_product_fourier_transform(int dim, int npw, int nfourier, Real *f
 template <typename Real>
 void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const Real, 1> &fhat,
                                          const ndview<Real, 1> &pswfft);
+
+class PAPICounter {
+#ifdef DMK_INSTRUMENT
+  public:
+    inline PAPICounter() { PAPI_flops_rate(PAPI_FP_OPS, &real_time, &proc_time, &flpops, &mflops); }
+    inline ~PAPICounter() {
+        PAPI_flops_rate(PAPI_FP_OPS, &real_time, &proc_time, &flpops, &mflops);
+        sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, flpops);
+    }
+
+  private:
+    float real_time, proc_time, mflops;
+    long long flpops;
+#else
+  public:
+    inline PAPICounter() {}
+    inline ~PAPICounter() {}
+#endif
+};
 
 template <typename T>
 inline T int_pow(T base, int exp) {

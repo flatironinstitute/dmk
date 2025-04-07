@@ -107,12 +107,11 @@ template <typename Real, int DIM>
 void planewave_to_proxy_potential(const ndview<const std::complex<Real>, DIM + 1> &pw_expansion,
                                   const ndview<const std::complex<Real>, 2> &pw_to_coefs_mat,
                                   const ndview<Real, DIM + 1> &proxy_coeffs) {
-    if constexpr (DIM == 2) {
+    // dmk::util::PAPICounter papi_counter;
+    if constexpr (DIM == 2)
         return pw2proxypot_2d(pw_expansion, pw_to_coefs_mat, proxy_coeffs);
-    }
-    if constexpr (DIM == 3) {
+    if constexpr (DIM == 3)
         return pw2proxypot_3d(pw_expansion, pw_to_coefs_mat, proxy_coeffs);
-    }
     throw std::runtime_error("Invalid dimension " + std::to_string(DIM) + " provided");
 }
 

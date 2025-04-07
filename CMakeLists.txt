@@ -17,6 +17,7 @@ endif()
 
 option(DMK_BUILD_TESTS "Build tests" ON)
 option(DMK_BUILD_EXAMPLES "Build examples" ON)
+option(DMK_INSTRUMENT "Instrument the code. Requires PAPI" OFF)
 
 if (NOT ${DMK_BUILD_TESTS})
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DDOCTEST_CONFIG_DISABLE")
@@ -27,6 +28,14 @@ endif()
 
 # FIXME: BLAS hack on SCTL to avoid header conflict. Eigen's BLAS define conflicts with SCTL's BLAS, so we don't include SCTL's BLAS header
 add_compile_options("-march=native;-DSCTL_HAVE_MPI;-DSCTL_MAX_DEPTH=62;-DEIGEN_USE_BLAS;-D_SCTL_BLAS_H_;-funroll-loops")
+if(${DMK_INSTRUMENT})
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(PAPI REQUIRED IMPORTED_TARGET papi)
+  set(PAPI_TARGET papi)
+  add_compile_options("-DSCTL_PROFILE=5;-DDMK_INSTRUMENT")
+else()
+  set(PAPI_TARGET "")
+endif()
 
 find_package(OpenMP REQUIRED)
 find_package(MPI REQUIRED)
@@ -71,15 +80,15 @@ set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp s
 )
 add_library(DMKOBJS OBJECT ${DMK_SRC})
 set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES} ${MPI_CXX_INCLUDE_DIRS})
-target_link_libraries(DMKOBJS PUBLIC OpenMP::OpenMP_CXX)
+target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES} ${MPI_CXX_INCLUDE_DIRS} ${PAPI_INCLUDEDIR})
+target_link_libraries(DMKOBJS PUBLIC OpenMP::OpenMP_CXX ${PAPI_TARGET})
 
 add_library(dmk STATIC)
 target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX DMKOBJS dmk_ref_common spdlog::spdlog)
 
 add_library(dmk_shared SHARED)
 set_target_properties(${PROJECT_NAME}_shared PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
-target_link_libraries(${PROJECT_NAME}_shared DMKOBJS dmk_ref_common OpenMP::OpenMP_CXX MPI::MPI_CXX BLAS::BLAS spdlog doctest)
+target_link_libraries(${PROJECT_NAME}_shared DMKOBJS dmk_ref_common OpenMP::OpenMP_CXX MPI::MPI_CXX BLAS::BLAS spdlog doctest ${PAPI_TARGET})
 
 if(${DMK_BUILD_TESTS})
   add_subdirectory(test)

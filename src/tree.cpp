@@ -16,6 +16,7 @@
 #include <doctest/extensions/doctest_mpi.h>
 #include <mpi.h>
 #include <omp.h>
+#include <sctl/profile.hpp>
 #include <stdexcept>
 #include <unistd.h>
 
@@ -58,6 +59,8 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
       n_order(get_pwmax_and_poly_order(DIM, n_digits, params_.kernel).second) {
     auto &logger = dmk::get_logger(comm, params.log_level);
     auto &rank_logger = dmk::get_rank_logger(comm, params.log_level);
+    sctl::Profile::Scoped profile("DMKPtTree::DMKPtTree", &comm_);
+
     logger->info("tree build started");
 
     const int n_src = r_src.Dim() / DIM;
@@ -93,7 +96,7 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     generate_metadata();
     logger->debug("done generating tree traversal metadata");
 
-    rank_logger->trace("local tree has {} levels {} boxes", n_levels(), n_boxes());
+    rank_logger->trace("local tree has {} levels and {} boxes", n_levels(), n_boxes());
 
     // 1: Precomputation
     logger->debug("generating p2c and c2p matrices of order {}", n_order);
@@ -117,6 +120,7 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 /// @tparam DIM Spatial dimension tree lives in
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::generate_metadata() {
+    sctl::Profile::Scoped profile("generate_metadata", &comm_);
     const int n_nodes = n_boxes();
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_mid = this->GetNodeMID();
@@ -147,6 +151,12 @@ void DMKPtTree<T, DIM>::generate_metadata() {
         max_depth = std::max(node.Depth(), max_depth);
     }
     max_depth++;
+
+#ifdef DMK_INSTRUMENT
+    int max_depth_int32 = max_depth;
+    MPI_Allreduce(&max_depth_int32, &n_levels_max_, 1, MPI_INT, MPI_MAX, comm_.GetMPI_Comm());
+#endif
+
     level_indices.ReInit(max_depth);
     boxsize.ReInit(max_depth + 1);
     boxsize[0] = 1.0;
@@ -317,8 +327,11 @@ void DMKPtTree<T, DIM>::generate_metadata() {
 /// @tparam DIM Spatial dimension tree lives in
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::upward_pass() {
-    auto &logger = dmk::get_logger(this->GetComm());
-    auto &rank_logger = dmk::get_rank_logger(this->GetComm());
+    dmk::util::PAPICounter papi_counter;
+    sctl::Profile::Scoped profile("upward_pass", &comm_);
+    sctl::Profile::Tic("upward_pass_init", &comm_);
+    auto &logger = dmk::get_logger(comm_);
+    auto &rank_logger = dmk::get_rank_logger(comm_);
     const std::size_t n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
     logger->info("upward pass started");
 
@@ -332,41 +345,51 @@ void DMKPtTree<T, DIM>::upward_pass() {
     const auto &node_mid = this->GetNodeMID();
     const int dim = DIM;
 
+    sctl::Profile::Toc();
     const int start_level = std::max(n_levels() - 2, 0);
-    for (auto i_box : level_indices[start_level]) {
-        if (!form_pw_expansion[i_box] || !src_counts_local[i_box] || node_attr[i_box].Ghost)
-            continue;
+    {
+        sctl::Profile::Scoped profile("charge2proxy_base", &comm_);
+        // dmk::util::PAPICounter papi_counter;
 
-        proxy::charge2proxycharge<T, DIM>(r_src_view(i_box), charge_view(i_box), center_view(i_box),
-                                          2.0 / boxsize[start_level], proxy_view_upward(i_box));
+        for (auto i_box : level_indices[start_level]) {
+            if (!form_pw_expansion[i_box] || !src_counts_local[i_box] || node_attr[i_box].Ghost)
+                continue;
+
+            proxy::charge2proxycharge<T, DIM>(r_src_view(i_box), charge_view(i_box), center_view(i_box),
+                                              2.0 / boxsize[start_level], proxy_view_upward(i_box));
+        }
     }
     logger->debug("proxy: finished building base proxy charges");
 
-    int n_merged = 0;
-    for (int i_level = start_level - 1; i_level >= 0; --i_level) {
-        for (auto parent_box : level_indices[i_level]) {
-            if (!form_pw_expansion[parent_box])
-                continue;
-
-            auto &children = node_lists[parent_box].child;
-            for (int i_child = 0; i_child < n_children; ++i_child) {
-                const int child_box = children[i_child];
-                if (child_box < 0 || !src_counts_local[child_box])
+    {
+        sctl::Profile::Scoped profile("charge2proxy_rest", &comm_);
+        // dmk::util::PAPICounter papi_counter;
+        for (int i_level = start_level - 1; i_level >= 0; --i_level) {
+            for (auto parent_box : level_indices[i_level]) {
+                if (!form_pw_expansion[parent_box])
                     continue;
 
-                if (form_pw_expansion[child_box]) {
-                    ndview<const T, 2> c2p_view(&c2p[i_child * DIM * n_order * n_order], n_order, DIM);
-                    tensorprod::transform<T, DIM>(params.n_mfm, true, proxy_view_upward(child_box), c2p_view,
-                                                  proxy_view_upward(parent_box));
-                } else if (!node_attr[child_box].Ghost) {
-                    proxy::charge2proxycharge<T, DIM>(r_src_view(child_box), charge_view(child_box),
-                                                      center_view(parent_box), 2.0 / boxsize[i_level],
+                auto &children = node_lists[parent_box].child;
+                for (int i_child = 0; i_child < n_children; ++i_child) {
+                    const int child_box = children[i_child];
+                    if (child_box < 0 || !src_counts_local[child_box])
+                        continue;
+
+                    if (form_pw_expansion[child_box]) {
+                        ndview<const T, 2> c2p_view(&c2p[i_child * DIM * n_order * n_order], n_order, DIM);
+                        tensorprod::transform<T, DIM>(params.n_mfm, true, proxy_view_upward(child_box), c2p_view,
                                                       proxy_view_upward(parent_box));
+                    } else if (!node_attr[child_box].Ghost) {
+                        proxy::charge2proxycharge<T, DIM>(r_src_view(child_box), charge_view(child_box),
+                                                          center_view(parent_box), 2.0 / boxsize[i_level],
+                                                          proxy_view_upward(parent_box));
+                    }
                 }
             }
         }
     }
 
+    sctl::Profile::Tic("broadcast_proxy_coeffs", &comm_);
     logger->debug("Finished building proxy charges");
     this->template ReduceBroadcast<T>("proxy_coeffs");
     this->GetData(proxy_coeffs, counts, "proxy_coeffs");
@@ -378,7 +401,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
         } else
             proxy_coeffs_offsets[box] = -1;
     }
-
+    sctl::Profile::Toc();
     logger->debug("proxy: finished broadcasting proxy charges");
     logger->info("upward pass finished");
 }
@@ -417,6 +440,7 @@ void shift_planewave(const ndview<Complex, DIM + 1> &pwexp1_, const ndview<Compl
 
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::init_planewave_data() {
+    sctl::Profile::Scoped profile("init_planewave_data", &comm_);
     const std::size_t n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const std::size_t n_pw_per_box = n_pw_modes * params.n_mfm;
 
@@ -444,6 +468,8 @@ template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &boxes,
                                                     const ndview<const std::complex<Real>, 2> &poly2pw_view,
                                                     const sctl::Vector<Real> &radialft) {
+    // sctl::Profile::Scoped profile("form_outgoing_expansions", &comm_);
+    // dmk::util::PAPICounter papi_counter;
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const int n_pw_per_box = n_pw_modes * params.n_mfm;
 
@@ -462,6 +488,8 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &box
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::form_incoming_expansions(const sctl::Vector<int> &boxes,
                                                     const sctl::Vector<std::complex<Real>> &wpwshift) {
+    // sctl::Profile::Scoped profile("form_incoming_expansions", &comm_);
+    // dmk::util::PAPICounter papi_counter;
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const int n_pw_per_box = n_pw_modes * params.n_mfm;
     const auto &node_lists = this->GetNodeLists();
@@ -493,6 +521,8 @@ template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::form_local_expansions(const sctl::Vector<int> &boxes, Real boxsize,
                                                  const ndview<const std::complex<Real>, 2> &pw2poly_view,
                                                  const sctl::Vector<Real> &p2c) {
+    // sctl::Profile::Scoped profile("form_local_expansions", &comm_);
+    // dmk::util::PAPICounter papi_counter;
     const auto &node_lists = this->GetNodeLists();
     const Real sc = 2.0 / boxsize;
     const int nd = params.n_mfm;
@@ -611,6 +641,8 @@ get_direct_interaction_constants(FourierData<Real> &fourier_data, dmk_ikernel ke
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::evaluate_direct_interactions(int i_level, const Real *r_src_t, const Real *r_trg_t) {
+    // sctl::Profile::Scoped profile("evaluate_direct_interactions", &comm_);
+    // dmk::util::PAPICounter papi_counter;
     const auto [bsize, rsc, cen, d2max, w0] =
         get_direct_interaction_constants<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
 
@@ -659,8 +691,11 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(int i_level, const Real 
 /// @tparam DIM Spatial dimension tree lives in
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::downward_pass() {
-    auto &logger = dmk::get_logger(this->GetComm());
-    auto &rank_logger = dmk::get_rank_logger(this->GetComm());
+    auto prof = sctl::Profile::Scoped("downward_pass", &comm_);
+    dmk::util::PAPICounter papi_counter;
+    sctl::Profile::Tic("downward_pass_init", &comm_);
+    auto &logger = dmk::get_logger(comm_);
+    auto &rank_logger = dmk::get_rank_logger(comm_);
     logger->info("downward pass started");
 
     this->GetData(pot_src_sorted, pot_src_cnt, "pdmk_pot_src");
@@ -696,26 +731,44 @@ void DMKPtTree<T, DIM>::downward_pass() {
     Eigen::MatrixX<T> r_src_t = Eigen::Map<Eigen::MatrixX<T>>(r_src_ptr(0), DIM, src_counts_local[0]).transpose();
     Eigen::MatrixX<T> r_trg_t = Eigen::Map<Eigen::MatrixX<T>>(r_trg_ptr(0), DIM, trg_counts_local[0]).transpose();
 
+    sctl::Profile::Toc();
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         // Initialize everything for this level
         // 1. Difference kernel
         // 2. Radial fourier transform of the difference kernel
         // 3. Planewave <-> polynomial coefficient conversion matrices
         // 4. Planewave translation matrix
-        const bool is_root = i_level == 0;
-        get_difference_kernel_ft<T, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_digits,
-                                         boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
-        util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<const T, 1>(&kernel_ft[0], kernel_ft.Dim()),
-                                                  ndview<T, 1>(&radialft[0], n_pw_modes));
-        fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
-        dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw,
-                                                    fourier_data.difference_kernel(i_level).hpw, wpwshift);
+        {
+            // sctl::Profile::Scoped profile("downward_pass_loop_init", &comm_);
+            // dmk::util::PAPICounter papi_counter;
 
+            const bool is_root = i_level == 0;
+            get_difference_kernel_ft<T, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_digits,
+                                             boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
+            util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<const T, 1>(&kernel_ft[0], kernel_ft.Dim()),
+                                                      ndview<T, 1>(&radialft[0], n_pw_modes));
+            fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
+            dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw,
+                                                        fourier_data.difference_kernel(i_level).hpw, wpwshift);
+        }
         form_outgoing_expansions(level_indices[i_level], poly2pw_view, radialft);
         form_incoming_expansions(level_indices[i_level], wpwshift);
         form_local_expansions(level_indices[i_level], boxsize[i_level], pw2poly_view, p2c);
         evaluate_direct_interactions(i_level, r_src_t.data(), r_trg_t.data());
     }
+
+#ifdef DMK_INSTRUMENT
+    // for (int i_level = n_levels(); i_level < n_levels_max_; ++i_level) {
+    //     // clang-format off
+    //     { sctl::Profile::Scoped("downward_pass_loop_init", &comm_); }
+    //     { sctl::Profile::Scoped("form_outgoing_expansions", &comm_); }
+    //     { sctl::Profile::Scoped("form_incoming_expansions", &comm_); }
+    //     { sctl::Profile::Scoped("form_local_expansions", &comm_); }
+    //     { sctl::Profile::Scoped("evaluate_direct_interactions", &comm_); }
+    //     // clang-format on
+    // }
+#endif
+
     logger->info("downward pass completed");
 }
 

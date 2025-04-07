@@ -19,8 +19,9 @@
 
 #include <doctest/extensions/doctest_mpi.h>
 
-using pdmk_tree_impl = std::variant<dmk::DMKPtTree<float, 2>, dmk::DMKPtTree<float, 3>, dmk::DMKPtTree<double, 2>,
-                                    dmk::DMKPtTree<double, 3>>;
+using pdmk_tree_impl =
+    std::variant<std::unique_ptr<dmk::DMKPtTree<float, 2>>, std::unique_ptr<dmk::DMKPtTree<float, 3>>,
+                 std::unique_ptr<dmk::DMKPtTree<double, 2>>, std::unique_ptr<dmk::DMKPtTree<double, 3>>>;
 
 namespace dmk {
 
@@ -302,16 +303,23 @@ MPI_TEST_CASE("[DMK] pdmk 3d all", 1) {
 template <typename Real>
 inline pdmk_tree pdmk_tree_create(MPI_Comm comm, pdmk_params params, int n_src, const Real *r_src, const Real *charge,
                                   const Real *normal, const Real *dipole_str, int n_trg, const Real *r_trg) {
+    sctl::Profile::reset();
+    sctl::Profile::Enable(true);
+    const sctl::Comm sctl_comm(comm);
+    sctl::Profile::Scoped profile("pdmk_tree_create", &sctl_comm);
+
     sctl::Vector<Real> r_src_vec(n_src * params.n_dim, const_cast<Real *>(r_src), false);
     sctl::Vector<Real> r_trg_vec(n_trg * params.n_dim, const_cast<Real *>(r_trg), false);
     sctl::Vector<Real> charge_vec(n_src * params.n_mfm, const_cast<Real *>(charge), false);
 
     if (params.n_dim != 2 && params.n_dim != 3)
         throw std::runtime_error("Invalid dimension: " + std::to_string(params.n_dim));
-    if (params.n_dim == 2)
-        return new pdmk_tree_impl(dmk::DMKPtTree<Real, 2>(sctl::Comm(comm), params, r_src_vec, r_trg_vec, charge_vec));
-    else
-        return new pdmk_tree_impl(dmk::DMKPtTree<Real, 3>(sctl::Comm(comm), params, r_src_vec, r_trg_vec, charge_vec));
+    if (params.n_dim == 2) {
+        return new pdmk_tree_impl(std::unique_ptr<dmk::DMKPtTree<Real, 2>>(
+            new dmk::DMKPtTree<Real, 2>(sctl_comm, params, r_src_vec, r_trg_vec, charge_vec)));
+    } else
+        return new pdmk_tree_impl(std::unique_ptr<dmk::DMKPtTree<Real, 3>>(
+            new dmk::DMKPtTree<Real, 3>(sctl_comm, params, r_src_vec, r_trg_vec, charge_vec)));
 }
 
 template <typename Real>
@@ -320,16 +328,27 @@ inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *grad_src, Real *
     std::visit(
         [&](auto &t) {
             using TreeType = std::decay_t<decltype(t)>;
-            if constexpr (std::is_same_v<TreeType, dmk::DMKPtTree<Real, 2>> ||
-                          std::is_same_v<TreeType, dmk::DMKPtTree<Real, 3>>) {
-                t.upward_pass();
-                t.downward_pass();
+            if constexpr (std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 2>>> ||
+                          std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 3>>>) {
+                const auto &comm = (*static_cast<TreeType *>(tree))->GetComm();
+                sctl::Profile::Tic("pdmk_tree_eval", &comm);
+                t->upward_pass();
+                t->downward_pass();
+                sctl::Profile::Toc();
 
+#ifdef DMK_INSTRUMENT
+                sctl::Profile::Tic("pdmk_tree_eval_sync_barrier", &comm);
+                comm.Barrier();
+                sctl::Profile::Toc();
+#endif
+
+                sctl::Profile::Tic("pdmk_tree_eval_sync", &comm);
                 sctl::Vector<Real> res;
-                t.GetParticleData(res, "pdmk_pot_src");
+                t->GetParticleData(res, "pdmk_pot_src");
                 sctl::Vector<Real>(res.Dim(), pot_src, false) = res;
-                t.GetParticleData(res, "pdmk_pot_trg");
+                t->GetParticleData(res, "pdmk_pot_trg");
                 sctl::Vector<Real>(res.Dim(), pot_trg, false) = res;
+                sctl::Profile::Toc();
             }
         },
         *static_cast<pdmk_tree_impl *>(tree));
@@ -338,6 +357,12 @@ inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *grad_src, Real *
 } // namespace dmk
 
 extern "C" {
+
+void pdmk_print_profile_data(MPI_Comm comm) {
+    sctl::Comm sctl_comm(comm);
+    sctl::Profile::print(&sctl_comm, {"t_avg", "t_max", "t_min", "f_avg", "f_max", "f_min", "f_total", "f/s_total"},
+                         {"%.5f", "%.5f", "%.5f", "%.5f", "%.5f", "%.5f", "%.5f", "%.5f"});
+}
 
 pdmk_tree pdmk_tree_createf(MPI_Comm comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
                             const float *normal, const float *dipole_str, int n_trg, const float *r_trg) {

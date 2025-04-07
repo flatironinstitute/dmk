@@ -49,12 +49,12 @@ pdmk_tree pdmk_tree_createf(MPI_Comm comm, pdmk_params params, int n_src, const 
                            const float *normal, const float *dipole_str, int n_trg, const float *r_trg);
 void pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *grad_src, float *hess_src, float *pot_trg, float *grad_trg,
                      float *hess_trg);
-
 pdmk_tree pdmk_tree_create(MPI_Comm comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
                            const double *normal, const double *dipole_str, int n_trg, const double *r_trg);
 void pdmk_tree_destroy(pdmk_tree tree);
 void pdmk_tree_eval(pdmk_tree tree, double *pot_src, double *grad_src, double *hess_src, double *pot_trg,
                     double *grad_trg, double *hess_trg);
+void pdmk_print_profile_data(MPI_Comm comm);
 
 void pdmk(MPI_Comm comm, pdmk_params params, int n_src, const double *r_src, const double *charge, const double *normal,
           const double *dipole_str, int n_trg, const double *r_trg, double *pot_src, double *grad_src, double *hess_src,

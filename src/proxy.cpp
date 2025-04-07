@@ -84,12 +84,10 @@ void proxycharge2pw_3d(const ndview<const T, 4> &proxy_coeffs, const ndview<cons
 template <typename T, int DIM>
 void proxycharge2pw(const ndview<const T, DIM + 1> &proxy_coeffs, const ndview<const std::complex<T>, 2> &poly2pw,
                     const ndview<std::complex<T>, DIM + 1> &pw_expansion) {
-    if constexpr (DIM == 2) {
+    if constexpr (DIM == 2)
         return proxycharge2pw_2d(proxy_coeffs, poly2pw, pw_expansion);
-    }
-    if constexpr (DIM == 3) {
+    if constexpr (DIM == 3)
         return proxycharge2pw_3d(proxy_coeffs, poly2pw, pw_expansion);
-    }
     throw std::runtime_error("Invalid dimension " + std::to_string(DIM) + "provided");
 }
 

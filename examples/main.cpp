@@ -131,23 +131,24 @@ int main(int argc, char *argv[]) {
                    rank);
 
     std::vector<float> pot_src(n_src_per_rank * nd), pot_trg(n_src_per_rank * nd);
-    pdmkf(MPI_COMM_WORLD, params, n_src_per_rank, r_src.data(), charges.data(), rnormal.data(), dipstr.data(), n_trg,
-          r_trg.data(), pot_src.data(), nullptr, nullptr, pot_trg.data(), nullptr, nullptr);
-
+    // float st = omp_get_wtime();
+    // pdmkf(MPI_COMM_WORLD, params, n_src_per_rank, r_src.data(), charges.data(), rnormal.data(), dipstr.data(), n_trg,
+    //       r_trg.data(), pot_src.data(), nullptr, nullptr, pot_trg.data(), nullptr, nullptr);
+    // std::cout << omp_get_wtime() - st << " " << points_per_sec_per_rank << " " << points_per_sec << std::endl;
+    // Split the evaluation into tree build and evaluation steps
+    // FIXME: No way to update charges so completely worthless API right now :)
     std::vector<float> pot_src_split(n_src_per_rank * nd), pot_trg_split(n_src_per_rank * nd);
-    params.log_level = DMK_LOG_INFO;
-    float st = omp_get_wtime();
+    params.log_level = DMK_LOG_OFF;
 
     pdmk_tree tree = pdmk_tree_createf(MPI_COMM_WORLD, params, n_src_per_rank, &r_src[0], &charges[0], &rnormal[0],
                                        &dipstr[0], n_trg, &r_trg[0]);
-    auto tree_build = omp_get_wtime();
-    pdmk_tree_evalf(tree, &pot_src_split[0], nullptr, nullptr, &pot_trg_split[0], nullptr, nullptr);
-    auto tree_eval = omp_get_wtime();
 
     const int n_runs = 100;
     for (int i = 0; i < n_runs; ++i) {
         const auto st = omp_get_wtime();
+
         pdmk_tree_evalf(tree, &pot_src_split[0], nullptr, nullptr, &pot_trg_split[0], nullptr, nullptr);
+        pdmk_print_profile_data(MPI_COMM_WORLD);
         auto points_per_sec_per_rank = n_src_per_rank / (omp_get_wtime() - st);
         auto points_per_sec = n_src / (omp_get_wtime() - st);
 
@@ -156,10 +157,6 @@ int main(int argc, char *argv[]) {
     }
 
     pdmk_tree_destroy(tree);
-
-    if (rank == 0)
-        std::cout << "Time: " << omp_get_wtime() - st << " " << tree_build - st << " " << tree_eval - tree_build
-                  << std::endl;
 
     MPI_Finalize();
     return 0;

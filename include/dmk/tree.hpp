@@ -262,6 +262,10 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
   private:
     sctl::Vector<std::array<int, sctl::pow<DIM>(3)>> direct_neighbs_;
     sctl::Vector<int> n_direct_neighbs_;
+#ifdef DMK_INSTRUMENT
+    int n_levels_max_;
+#endif
+    const sctl::Comm comm_;
 };
 
 } // namespace dmk
