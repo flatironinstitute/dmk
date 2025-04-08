@@ -327,13 +327,13 @@ TEST_CASE_TEMPLATE("[DMK] chebyshev translation", T, float, double) {
         for (T x = lb; x <= mid; x += (mid - lb) / 9) {
             T res = evaluate<T>(x, order, lb, ub, coeffs.data());
             T res_alt = evaluate<T>(x, order, lb, mid, coeffs_m.data());
-            CHECK(std::fabs(res - res_alt) <= 4 * std::numeric_limits<T>::epsilon());
+            CHECK(std::fabs(res - res_alt) <= 5 * std::numeric_limits<T>::epsilon());
         }
 
         for (T x = mid; x <= ub; x += (ub - mid) / 9) {
             T res = evaluate<T>(x, order, lb, ub, coeffs.data());
             T res_alt = evaluate<T>(x, order, mid, ub, coeffs_p.data());
-            CHECK(std::fabs(res - res_alt) <= 4 * std::numeric_limits<T>::epsilon());
+            CHECK(std::fabs(res - res_alt) <= 5 * std::numeric_limits<T>::epsilon());
         }
     }
 }

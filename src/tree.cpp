@@ -351,6 +351,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
         sctl::Profile::Scoped profile("charge2proxy_base", &comm_);
         // dmk::util::PAPICounter papi_counter;
 
+#pragma omp parallel for schedule(dynamic)
         for (auto i_box : level_indices[start_level]) {
             if (!form_pw_expansion[i_box] || !src_counts_local[i_box] || node_attr[i_box].Ghost)
                 continue;
@@ -365,6 +366,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
         sctl::Profile::Scoped profile("charge2proxy_rest", &comm_);
         // dmk::util::PAPICounter papi_counter;
         for (int i_level = start_level - 1; i_level >= 0; --i_level) {
+#pragma omp parallel for schedule(dynamic)
             for (auto parent_box : level_indices[i_level]) {
                 if (!form_pw_expansion[parent_box])
                     continue;
@@ -475,6 +477,7 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &box
 
     // Form the outgoing expansion Φl(box) for the difference kernel Dl from the proxy charge expansion
     // coefficients using Tprox2pw
+#pragma omp parallel for schedule(dynamic)
     for (auto box : boxes) {
         if (!form_pw_expansion[box])
             continue;
@@ -494,6 +497,7 @@ void DMKPtTree<Real, DIM>::form_incoming_expansions(const sctl::Vector<int> &box
     const int n_pw_per_box = n_pw_modes * params.n_mfm;
     const auto &node_lists = this->GetNodeLists();
 
+#pragma omp parallel for schedule(dynamic)
     for (auto box : boxes) {
         if (src_counts_local[box] + trg_counts_local[box] == 0)
             continue;
@@ -527,6 +531,7 @@ void DMKPtTree<Real, DIM>::form_local_expansions(const sctl::Vector<int> &boxes,
     const Real sc = 2.0 / boxsize;
     const int nd = params.n_mfm;
 
+#pragma omp parallel for schedule(dynamic)
     for (auto box : boxes) {
         const int n_trg = trg_counts_local[box];
         const int n_src = src_counts_local[box];

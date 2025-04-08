@@ -118,6 +118,10 @@ int main(int argc, char *argv[]) {
     params.kernel = DMK_LAPLACE;
     params.log_level = DMK_LOG_INFO;
 
+    int n_threads = 1;
+#pragma omp parallel
+    n_threads = omp_get_num_threads();
+
     if (argc > 1)
         n_src = std::atoi(argv[1]);
     if (argc > 2)
@@ -149,11 +153,14 @@ int main(int argc, char *argv[]) {
 
         pdmk_tree_evalf(tree, &pot_src_split[0], nullptr, nullptr, &pot_trg_split[0], nullptr, nullptr);
         pdmk_print_profile_data(MPI_COMM_WORLD);
+
         auto points_per_sec_per_rank = n_src_per_rank / (omp_get_wtime() - st);
+        auto point_per_sec_per_thread = points_per_sec_per_rank / n_threads;
         auto points_per_sec = n_src / (omp_get_wtime() - st);
 
         if (rank == 0)
-            std::cout << omp_get_wtime() - st << " " << points_per_sec_per_rank << " " << points_per_sec << std::endl;
+            std::cout << omp_get_wtime() - st << " " << points_per_sec_per_rank << " " << point_per_sec_per_thread
+                      << " " << points_per_sec << std::endl;
     }
 
     pdmk_tree_destroy(tree);
