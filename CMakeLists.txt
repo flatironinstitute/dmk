@@ -10,7 +10,7 @@ if (CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
 endif()
 if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
   add_compile_options("-DSCTL_HAVE_SVML")
-  add_link_options("-lstdc++")
+  add_link_options("-lstdc++;-ffast-math")
 else()
   add_compile_options("-DSCTL_HAVE_LIBMVEC")
 endif()
@@ -18,6 +18,7 @@ endif()
 option(DMK_BUILD_TESTS "Build tests" ON)
 option(DMK_BUILD_EXAMPLES "Build examples" ON)
 option(DMK_INSTRUMENT "Instrument the code. Requires PAPI" OFF)
+option(DMK_BUILD_PVFMM "Build PVFMM for comparison. Useless without DMK_BUILD_EXAMPLES" OFF)
 
 if (NOT ${DMK_BUILD_TESTS})
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DDOCTEST_CONFIG_DISABLE")
@@ -27,7 +28,7 @@ else()
 endif()
 
 # FIXME: BLAS hack on SCTL to avoid header conflict. Eigen's BLAS define conflicts with SCTL's BLAS, so we don't include SCTL's BLAS header
-add_compile_options("-march=native;-DSCTL_HAVE_MPI;-DSCTL_MAX_DEPTH=62;-DEIGEN_USE_BLAS;-D_SCTL_BLAS_H_;-funroll-loops")
+add_compile_options("-march=native")
 if(${DMK_INSTRUMENT})
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(PAPI REQUIRED IMPORTED_TARGET papi)
@@ -40,6 +41,16 @@ endif()
 find_package(OpenMP REQUIRED)
 find_package(MPI REQUIRED)
 find_package(BLAS REQUIRED)
+
+if(${DMK_BUILD_PVFMM})
+  include(FetchContent)
+  FetchContent_Declare(
+    pvfmm_lib
+    GIT_REPOSITORY https://github.com/dmalhotra/pvfmm.git
+    GIT_TAG develop
+  )
+  FetchContent_MakeAvailable(pvfmm_lib)
+endif()
 
 set(DMK_INCLUDES
   ${PROJECT_SOURCE_DIR}/include
@@ -82,6 +93,7 @@ add_library(DMKOBJS OBJECT ${DMK_SRC})
 set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES} ${MPI_CXX_INCLUDE_DIRS} ${PAPI_INCLUDEDIR})
 target_link_libraries(DMKOBJS PUBLIC OpenMP::OpenMP_CXX ${PAPI_TARGET})
+target_compile_options(DMKOBJS PUBLIC "-DSCTL_HAVE_MPI;-DSCTL_MAX_DEPTH=62;-funroll-loops")
 
 add_library(dmk STATIC)
 target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX DMKOBJS dmk_ref_common spdlog::spdlog)

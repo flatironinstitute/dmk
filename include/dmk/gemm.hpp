@@ -3,13 +3,25 @@
 
 #include <dmk/util.hpp>
 #include <complex>
-#include <type_traits>
-#include <Eigen/src/misc/blas.h>
 
+extern "C" {
+void sgemm_(const char *TRANSA, const char *TRANSB, const int *M, const int *N, const int *K, const float *ALPHA,
+            const float *A, const int *LDA, const float *B, const int *LDB, const float *BETA, float *C,
+            const int *LDC);
+void dgemm_(const char *TRANSA, const char *TRANSB, const int *M, const int *N, const int *K, const double *ALPHA,
+            const double *A, const int *LDA, const double *B, const int *LDB, const double *BETA, double *C,
+            const int *LDC);
+void cgemm_(const char *TRANSA, const char *TRANSB, const int *M, const int *N, const int *K, const float *ALPHA,
+            const float *A, const int *LDA, const float *B, const int *LDB, const float *BETA, float *C,
+            const int *LDC);
+void zgemm_(const char *TRANSA, const char *TRANSB, const int *M, const int *N, const int *K, const double *ALPHA,
+            const double *A, const int *LDA, const double *B, const int *LDB, const double *BETA, double *C,
+            const int *LDC);
+}
 namespace dmk::gemm {
 
 template <typename T>
-inline int gemm(char transa, char transb, int m, int n, int k, T alpha, const T *a, int lda, const T *b, int ldb,
+inline void gemm(char transa, char transb, int m, int n, int k, T alpha, const T *a, int lda, const T *b, int ldb,
                 T beta, T *c, int ldc) {
     if constexpr (std::is_same_v<T, float>)
         return sgemm_(&transa, &transb, &m, &n, &k, &alpha, a, &lda, b, &ldb, &beta, c, &ldc);
