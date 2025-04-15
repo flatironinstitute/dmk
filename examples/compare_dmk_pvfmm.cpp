@@ -186,9 +186,12 @@ void run_comparison(pdmk_params params, int n_src, int m, int n_per_leaf_pvfmm, 
     const int nd = 1;
     const int n_dim = 3;
 
-    int n_threads = 1;
+    const int n_threads = []() {
+        int n_threads;
 #pragma omp parallel
-    n_threads = omp_get_num_threads();
+        n_threads = omp_get_num_threads();
+        return n_threads;
+    }();
 
     int n_src_per_rank = n_src / size;
     n_src = n_src_per_rank * size;
@@ -230,8 +233,11 @@ void run_comparison(pdmk_params params, int n_src, int m, int n_per_leaf_pvfmm, 
         else
             pdmk_tree_eval(tree, &pot_src_split[0], nullptr, nullptr, &pot_trg_split[0], nullptr, nullptr);
         pdmk_print_profile_data(MPI_COMM_WORLD);
-
         auto ft = omp_get_wtime();
+
+        for (auto &el : pot_src_split)
+            el /= 4 * M_PI;
+
         auto points_per_sec_per_rank = n_src_per_rank / (ft - st);
         auto point_per_sec_per_thread = points_per_sec_per_rank / n_threads;
         auto points_per_sec = n_src / (ft - st);
@@ -240,36 +246,27 @@ void run_comparison(pdmk_params params, int n_src, int m, int n_per_leaf_pvfmm, 
         pot_src_pvfmm.resize(n_src_per_rank * nd);
         pvfmm::PtFMM_Evaluate(pvfmm_tree, pot_src_pvfmm, n_src_per_rank);
         const auto ft2 = omp_get_wtime();
+
         auto points_per_sec_per_rank_pvfmm = n_src_per_rank / (ft2 - st2);
         auto point_per_sec_per_thread_pvfmm = points_per_sec_per_rank_pvfmm / n_threads;
         auto points_per_sec_pvfmm = n_src / (ft2 - st2);
 
-        double max_rel_err_dmk = 0;
-        double avg_rel_err_dmk = 0.0;
-        double direct_sum = 0.0;
-        for (int i = 0; i < n_src_per_rank; ++i) {
-            avg_rel_err_dmk += sctl::pow<2>(pot_src_split[i] - 4 * M_PI * pot_direct[i]);
-            direct_sum += sctl::pow<2>(pot_direct[i]);
-            max_rel_err_dmk =
-                std::max((Real)max_rel_err_dmk, std::abs(pot_src_split[i] - 4 * Real(M_PI) * pot_direct[i]) /
-                                                    std::abs(4 * Real(M_PI) * pot_direct[i]));
-        }
-        avg_rel_err_dmk = std::sqrt(avg_rel_err_dmk / direct_sum) / (4 * M_PI);
-        MPI_Allreduce(&avg_rel_err_dmk, &avg_rel_err_dmk, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(&max_rel_err_dmk, &max_rel_err_dmk, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-        avg_rel_err_dmk /= size;
+        auto rel_err = [size](auto a, auto b) -> std::pair<double, double> {
+            double max_rel_err{0.0}, avg_rel_err{0.0}, direct_sum{0.0};
+            for (int i = 0; i < a.size(); ++i) {
+                avg_rel_err += sctl::pow<2>(a[i] - b[i]);
+                direct_sum += sctl::pow<2>(b[i]);
+                max_rel_err = std::max((Real)max_rel_err, std::abs(a[i] - b[i]) / std::abs(b[i]));
+            }
+            avg_rel_err = std::sqrt(avg_rel_err / direct_sum);
+            MPI_Allreduce(&avg_rel_err, &avg_rel_err, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce(&max_rel_err, &max_rel_err, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+            avg_rel_err /= size;
+            return {avg_rel_err, max_rel_err};
+        };
 
-        double max_rel_err_pvfmm = 0;
-        double avg_rel_err_pvfmm = 0.0;
-        for (int i = 0; i < n_src_per_rank; ++i) {
-            avg_rel_err_pvfmm += sctl::pow<2>(pot_src_pvfmm[i] - pot_direct[i]);
-            max_rel_err_pvfmm =
-                std::max((Real)max_rel_err_pvfmm, std::abs(pot_src_pvfmm[i] - pot_direct[i]) / std::abs(pot_direct[i]));
-        }
-        avg_rel_err_pvfmm = std::sqrt(avg_rel_err_pvfmm / direct_sum);
-        MPI_Allreduce(&avg_rel_err_pvfmm, &avg_rel_err_pvfmm, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(&max_rel_err_pvfmm, &max_rel_err_pvfmm, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-        avg_rel_err_pvfmm /= size;
+        auto [avg_rel_err_dmk, max_rel_err_dmk] = rel_err(pot_src_split, pot_direct);
+        auto [avg_rel_err_pvfmm, max_rel_err_pvfmm] = rel_err(pot_src_pvfmm, pot_direct);
 
         if (rank == 0) {
             std::cout << ft - st << " " << points_per_sec_per_rank << " " << point_per_sec_per_thread << " "
