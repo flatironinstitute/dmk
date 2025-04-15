@@ -22,6 +22,25 @@
 
 namespace dmk {
 
+inline auto ghostleaf_or_ghost_children(int box, auto &node_attr, auto &node_lists) {
+    bool skip = false;
+    if (node_attr[box].Leaf && node_attr[box].Ghost)
+        return true;
+
+    if (!node_attr[box].Leaf) {
+        for (auto child : node_lists[box].child) {
+            if (child < 0)
+                continue;
+            if (!node_attr[child].Ghost)
+                return false;
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
 std::pair<int, int> get_pwmax_and_poly_order(int dim, int ndigits, dmk_ikernel kernel) {
     // clang-format off
     if (kernel == DMK_SQRT_LAPLACE && dim == 3) {
@@ -263,7 +282,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
 
             int i_neighb = 0;
             for (auto neighb : node_lists[box].nbr)
-                if (neighb >= 0)
+                if (neighb >= 0 && !ghostleaf_or_ghost_children(neighb, node_attr, node_lists))
                     direct_neighbs_[box][i_neighb++] = neighb;
 
             if (i_level == 0) {
@@ -273,7 +292,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
 
             const double cutoff = 0.5 * 1.05 * (boxsize[i_level] + boxsize[i_level - 1]);
             for (auto neighb : node_lists[node_lists[box].parent].nbr) {
-                if (neighb < 0 || !node_attr[neighb].Leaf)
+                if (neighb < 0 || !node_attr[neighb].Leaf || node_attr[neighb].Ghost)
                     continue;
 
                 bool inrange = true;
@@ -528,6 +547,7 @@ void DMKPtTree<Real, DIM>::form_local_expansions(const sctl::Vector<int> &boxes,
     // sctl::Profile::Scoped profile("form_local_expansions", &comm_);
     // dmk::util::PAPICounter papi_counter;
     const auto &node_lists = this->GetNodeLists();
+    const auto &node_attr = this->GetNodeAttr();
     const Real sc = 2.0 / boxsize;
     const int nd = params.n_mfm;
 
@@ -544,6 +564,9 @@ void DMKPtTree<Real, DIM>::form_local_expansions(const sctl::Vector<int> &boxes,
         dmk::planewave_to_proxy_potential<Real, DIM>(pw_in_view(box), pw2poly_view, proxy_view_downward(box));
 
         if (eval_tp_expansion[box]) {
+            if (ghostleaf_or_ghost_children(box, node_attr, node_lists))
+                continue;
+
             if (n_src)
                 proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_src_view(box), center_view(box), sc,
                                                pot_src_view(box));
@@ -560,6 +583,9 @@ void DMKPtTree<Real, DIM>::form_local_expansions(const sctl::Vector<int> &boxes,
                 continue;
 
             if (eval_tp_expansion[child] && !eval_pw_expansion[child]) {
+                if (ghostleaf_or_ghost_children(child, node_attr, node_lists))
+                    continue;
+
                 if (src_counts_local[child])
                     proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_src_view(child), center_view(box), sc,
                                                    pot_src_view(child));
@@ -648,6 +674,8 @@ template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::evaluate_direct_interactions(int i_level, const Real *r_src_t, const Real *r_trg_t) {
     // sctl::Profile::Scoped profile("evaluate_direct_interactions", &comm_);
     // dmk::util::PAPICounter papi_counter;
+    const auto &node_attr = this->GetNodeAttr();
+    const auto &node_lists = this->GetNodeLists();
     const auto [bsize, rsc, cen, d2max, w0] =
         get_direct_interaction_constants<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
 
@@ -679,6 +707,8 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(int i_level, const Real 
             }
         }
 
+        if (node_attr[box].Ghost)
+            continue;
         // Correct for self-evaluations
         auto pot = pot_src_view(box);
         auto charge = charge_view(box);

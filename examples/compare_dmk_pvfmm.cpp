@@ -63,89 +63,117 @@ void direct_eval(std::vector<Real> &sl_coord, std::vector<Real> &sl_den, std::ve
 template <typename Real>
 void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
                     std::vector<Real> &r_src, std::vector<Real> &r_trg, std::vector<Real> &rnormal,
-                    std::vector<Real> &charges, std::vector<Real> &dipstr, long seed) {
-    r_src.resize(n_dim * n_src);
-    r_trg.resize(n_dim * n_trg);
-    charges.resize(nd * n_src);
-    rnormal.resize(n_dim * n_src);
-    dipstr.resize(nd * n_src);
+                    std::vector<Real> &charges, std::vector<Real> &dipstr, long int seed) {
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    double rin = 0.45;
-    double wrig = 0.12;
-    double rwig = 0;
-    int nwig = 6;
-    std::default_random_engine eng(seed);
-    std::uniform_real_distribution<double> rng;
+    if (n_src % size != 0) {
+        std::cerr << "Number of sources must be divisible by number of ranks" << std::endl;
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+    int n_src_per_rank = n_src / size;
 
-    for (int i = 0; i < n_src; ++i) {
-        if (!uniform) {
-            if (n_dim == 2) {
-                double phi = rng(eng) * 2 * M_PI;
-                r_src[i * 3 + 0] = cos(phi);
-                r_src[i * 3 + 1] = sin(phi);
+    if (rank == 0) {
+        r_src.resize(n_dim * n_src);
+        r_trg.resize(n_dim * n_trg);
+        charges.resize(nd * n_src);
+        rnormal.resize(n_dim * n_src);
+        dipstr.resize(nd * n_src);
+
+        double rin = 0.45;
+        double wrig = 0.12;
+        double rwig = 0;
+        int nwig = 6;
+        std::default_random_engine eng(seed);
+        std::uniform_real_distribution<double> rng;
+
+        for (int i = 0; i < n_src; ++i) {
+            if (!uniform) {
+                if (n_dim == 2) {
+                    double phi = rng(eng) * 2 * M_PI;
+                    r_src[i * 3 + 0] = cos(phi);
+                    r_src[i * 3 + 1] = sin(phi);
+                }
+                if (n_dim == 3) {
+                    double theta = rng(eng) * M_PI;
+                    double rr = rin + rwig * cos(nwig * theta);
+                    double ct = cos(theta);
+                    double st = sin(theta);
+                    double phi = rng(eng) * 2 * M_PI;
+                    double cp = cos(phi);
+                    double sp = sin(phi);
+
+                    r_src[i * 3 + 0] = rr * st * cp + 0.5;
+                    r_src[i * 3 + 1] = rr * st * sp + 0.5;
+                    r_src[i * 3 + 2] = rr * ct + 0.5;
+                }
+            } else {
+                for (int j = 0; j < n_dim; ++j)
+                    r_src[i * n_dim + j] = rng(eng);
             }
-            if (n_dim == 3) {
-                double theta = rng(eng) * M_PI;
-                double rr = rin + rwig * cos(nwig * theta);
-                double ct = cos(theta);
-                double st = sin(theta);
-                double phi = rng(eng) * 2 * M_PI;
-                double cp = cos(phi);
-                double sp = sin(phi);
 
-                r_src[i * 3 + 0] = rr * st * cp + 0.5;
-                r_src[i * 3 + 1] = rr * st * sp + 0.5;
-                r_src[i * 3 + 2] = rr * ct + 0.5;
-            }
-        } else {
             for (int j = 0; j < n_dim; ++j)
-                r_src[i * n_dim + j] = rng(eng);
+                rnormal[i * n_dim + j] = rng(eng);
+
+            for (int j = 0; j < nd; ++j) {
+                charges[i * nd + j] = rng(eng) - 0.5;
+                dipstr[i * nd + j] = rng(eng);
+            }
         }
 
-        for (int j = 0; j < n_dim; ++j)
-            rnormal[i * n_dim + j] = rng(eng);
+        for (int i_trg = 0; i_trg < n_trg; ++i_trg) {
+            if (!uniform) {
+                if (n_dim == 2) {
+                    double phi = rng(eng) * 2 * M_PI;
+                    r_trg[i_trg * 3 + 0] = cos(phi);
+                    r_trg[i_trg * 3 + 1] = sin(phi);
+                }
+                if (n_dim == 3) {
+                    double theta = rng(eng) * M_PI;
+                    double rr = rin + rwig * cos(nwig * theta);
+                    double ct = cos(theta);
+                    double st = sin(theta);
+                    double phi = rng(eng) * 2 * M_PI;
+                    double cp = cos(phi);
+                    double sp = sin(phi);
 
-        for (int j = 0; j < nd; ++j) {
-            charges[i * nd + j] = rng(eng) - 0.5;
-            dipstr[i * nd + j] = rng(eng);
+                    r_trg[i_trg * 3 + 0] = rr * st * cp + 0.5;
+                    r_trg[i_trg * 3 + 1] = rr * st * sp + 0.5;
+                    r_trg[i_trg * 3 + 2] = rr * ct + 0.5;
+                }
+            } else {
+                for (int j = 0; j < n_dim; ++j)
+                    r_trg[i_trg * n_dim + j] = rng(eng);
+            }
         }
+
+        if (set_fixed_charges && n_src > 0)
+            for (int i = 0; i < n_dim; ++i)
+                r_src[i] = 0.0;
+        if (set_fixed_charges && n_src > 1)
+            for (int i = n_dim; i < 2 * n_dim; ++i)
+                r_src[i] = 1 - std::numeric_limits<Real>::epsilon();
+        if (set_fixed_charges && n_src > 2)
+            for (int i = 2 * n_dim; i < 3 * n_dim; ++i)
+                r_src[i] = 0.05;
     }
 
-    for (int i_trg = 0; i_trg < n_trg; ++i_trg) {
-        if (!uniform) {
-            if (n_dim == 2) {
-                double phi = rng(eng) * 2 * M_PI;
-                r_trg[i_trg * 3 + 0] = cos(phi);
-                r_trg[i_trg * 3 + 1] = sin(phi);
-            }
-            if (n_dim == 3) {
-                double theta = rng(eng) * M_PI;
-                double rr = rin + rwig * cos(nwig * theta);
-                double ct = cos(theta);
-                double st = sin(theta);
-                double phi = rng(eng) * 2 * M_PI;
-                double cp = cos(phi);
-                double sp = sin(phi);
-
-                r_trg[i_trg * 3 + 0] = rr * st * cp + 0.5;
-                r_trg[i_trg * 3 + 1] = rr * st * sp + 0.5;
-                r_trg[i_trg * 3 + 2] = rr * ct + 0.5;
-            }
-        } else {
-            for (int j = 0; j < n_dim; ++j)
-                r_trg[i_trg * n_dim + j] = rng(eng);
-        }
+    if (rank != 0) {
+        r_src.resize(n_dim * n_src_per_rank);
+        charges.resize(nd * n_src_per_rank);
     }
 
-    if (set_fixed_charges && n_src > 0)
-        for (int i = 0; i < n_dim; ++i)
-            r_src[i] = 0.0;
-    if (set_fixed_charges && n_src > 1)
-        for (int i = n_dim; i < 2 * n_dim; ++i)
-            r_src[i] = 1 - std::numeric_limits<Real>::epsilon();
-    if (set_fixed_charges && n_src > 2)
-        for (int i = 2 * n_dim; i < 3 * n_dim; ++i)
-            r_src[i] = 0.05;
+    MPI_Datatype mpi_type = pvfmm::par::Mpi_datatype<Real>::value();
+    MPI_Scatter(&r_src[0], n_src_per_rank * n_dim, mpi_type, &r_src[0], n_src_per_rank * n_dim, mpi_type, 0,
+                MPI_COMM_WORLD);
+    MPI_Scatter(&charges[0], n_src_per_rank * nd, mpi_type, &charges[0], n_src_per_rank * nd, mpi_type, 0,
+                MPI_COMM_WORLD);
+
+    if (rank == 0) {
+        r_src.resize(n_dim * n_src_per_rank);
+        charges.resize(nd * n_src_per_rank);
+    }
 }
 
 template <typename Real>
@@ -167,8 +195,7 @@ void run_comparison(pdmk_params params, int n_src, int m, int n_per_leaf_pvfmm, 
 
     // Build random sources + 3 fixed charges
     std::vector<Real> r_src, charges, rnormal, dipstr, r_trg;
-    init_test_data(n_dim, 1, n_src_per_rank, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, dipstr,
-                   rank);
+    init_test_data(n_dim, 1, n_src, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, dipstr, 0);
 
     std::vector<Real> pot_src_split(n_src_per_rank * nd), pot_trg_split(n_src_per_rank * nd);
 
@@ -190,6 +217,7 @@ void run_comparison(pdmk_params params, int n_src, int m, int n_per_leaf_pvfmm, 
     std::vector<Real> pot_src_pvfmm(n_src_per_rank * nd);
 
     std::vector<Real> pot_direct;
+    pot_direct.resize(n_src_per_rank * nd);
     direct_eval(r_src, charges, r_dl, charges_dl, r_src, pot_direct, kernel_fn, MPI_COMM_WORLD);
 
     const int n_runs = 100;
@@ -209,6 +237,7 @@ void run_comparison(pdmk_params params, int n_src, int m, int n_per_leaf_pvfmm, 
         auto points_per_sec = n_src / (ft - st);
 
         const auto st2 = omp_get_wtime();
+        pot_src_pvfmm.resize(n_src_per_rank * nd);
         pvfmm::PtFMM_Evaluate(pvfmm_tree, pot_src_pvfmm, n_src_per_rank);
         const auto ft2 = omp_get_wtime();
         auto points_per_sec_per_rank_pvfmm = n_src_per_rank / (ft2 - st2);
@@ -330,6 +359,7 @@ int main(int argc, char *argv[]) {
         run_comparison<float>(params, n_src, m, n_per_leaf_pvfmm, uniform);
     else {
         std::cerr << "Unknown precision: " << prec << std::endl;
+        MPI_Finalize();
         return 1;
     }
 
