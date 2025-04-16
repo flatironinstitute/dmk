@@ -258,10 +258,10 @@ void run_comparison(pdmk_params params, int n_src, int m, int n_per_leaf_pvfmm, 
                 direct_sum += sctl::pow<2>(b[i]);
                 max_rel_err = std::max((Real)max_rel_err, std::abs(a[i] - b[i]) / std::abs(b[i]));
             }
-            avg_rel_err = std::sqrt(avg_rel_err / direct_sum);
             MPI_Allreduce(&avg_rel_err, &avg_rel_err, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
             MPI_Allreduce(&max_rel_err, &max_rel_err, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-            avg_rel_err /= size;
+            MPI_Allreduce(&direct_sum, &direct_sum, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            avg_rel_err = std::sqrt(avg_rel_err / direct_sum);
             return {avg_rel_err, max_rel_err};
         };
 
