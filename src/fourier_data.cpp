@@ -442,14 +442,15 @@ void yukawa_difference_kernel_ft(const double *rpars, Real beta, int ndigits, Re
     const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
     diff_kernel_ft.ReInit(n_fourier);
 
+    const Real inv_beta = 1.0 / beta;
     for (int i = 0; i < n_fourier; ++i) {
         Real rk = sqrt((Real)i) * hpw;
         Real xi2 = rk * rk + rlambda2;
         Real xi = sqrt(xi2);
-        Real xval = xi * bsizesmall / beta;
+        Real xval = xi * bsizesmall * inv_beta;
         Real fval1 = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
 
-        xval = xi * bsizebig / beta;
+        xval = xi * bsizebig * inv_beta;
         Real fval2 = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
         diff_kernel_ft[i] = ws * (fval1 - fval2) / (psi0 * xi2);
     }
@@ -463,6 +464,12 @@ void yukawa_difference_kernel_ft(const double *rpars, Real beta, int ndigits, Re
         diff_kernel_ft[0] = ws * c[2] * (bsizebig2 - bsizesmall2) / 2 +
                             ws * (bsizesmall2 * bsizesmall2 - bsizebig2 * bsizebig2) * rlambda2 * c[3] / (c[0] * 24);
     }
+
+    // Estimate of typical sqrt cost
+    const unsigned long n_flops_sqrt = std::is_same_v<Real, float> ? 3 : 5;
+    // Estimate of typical cost of the rest of the kernel
+    const unsigned long n_flops = n_fourier * (2 * n_flops_sqrt + 20 + 2 * 16);
+    sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, n_flops);
 }
 
 template <typename Real>
@@ -532,6 +539,11 @@ void laplace_3d_difference_kernel_ft(const double *rpars, Real beta, int ndigits
         else
             diff_kernel_ft[i] = 0.5 * ws * g0d2 * (bsizebig2 - bsizesmall2);
     }
+
+    const int n_flops_cos = 64;
+    const int n_flops_sqrt = std::is_same_v<Real, float> ? 3 : 5;
+    const int n_flops = n_fourier * (n_flops_sqrt + 2 * n_flops_cos + 10);
+    sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, n_flops);
 }
 
 template <typename Real, int DIM>
@@ -710,6 +722,8 @@ void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars
 
     for (int i = 0; i < diff_kernel_ft.Dim(); ++i)
         diff_kernel_ft[i] *= scale_factor;
+
+    sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, diff_kernel_ft.Dim());
 }
 
 template <typename T>

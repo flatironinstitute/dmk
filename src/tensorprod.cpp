@@ -72,6 +72,11 @@ void transform_3d(int add_flag, const ndview<const T, 3> &fin, const ndview<cons
     // transform in x
     dmk::gemm::gemm('n', 't', nout, nout2, nin, T{1.0}, umat.data_handle(), nout, &ff2[0], nout2, T(add_flag),
                     fout.data_handle(), nout);
+
+    auto flops_per_mm = [](int m, int n, int k) { return 2 * m * n * k; };
+    const unsigned long flops =
+        flops_per_mm(nin2, nout, nin) + flops_per_mm(nout, noutnin, nin) + flops_per_mm(nout, nout2, nin);
+    sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, flops);
 }
 
 template <typename T, int DIM>

@@ -7,6 +7,7 @@
 #include <dmk/planewave.hpp>
 #include <dmk/types.hpp>
 #include <limits>
+#include <sctl.hpp>
 #include <stdexcept>
 
 #include <omp.h>
@@ -79,6 +80,14 @@ void proxycharge2pw_3d(const ndview<const T, 4> &proxy_coeffs, const ndview<cons
         gemm('n', 't', n_pw, n_pw * n_pw2, n_order, {1.0, 0.0}, poly2pw.data_handle(), n_pw, &ff2[0], n_pw * n_pw2,
              {0.0, 0.0}, &pw_expansion(0, 0, 0, i_dim), n_pw);
     }
+
+    const auto n_flops_per_mm = [](int m, int n, int k) { return 8 * m * n * k; };
+    // clang-format off
+    const unsigned long n_flops = n_charge_dim * (n_flops_per_mm(n_order * n_order, n_pw2, n_order) +
+                                                  n_flops_per_mm(n_pw, n_pw2 * n_order, n_order) +
+                                                  n_flops_per_mm(n_pw, n_pw * n_pw2, n_order));
+    // clang-format on
+    sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, n_flops);
 }
 
 template <typename T, int DIM>
@@ -124,6 +133,7 @@ void charge2proxycharge_2d(const ndview<const T, 2> &r_src_, const ndview<const 
 
     Eigen::MatrixX<T> dy(order, n_src);
     Eigen::MatrixX<T> poly_x(order, n_src);
+    std::array<T, 128> poly_y;
 
     CMatrixMap r_src(r_src_.data_handle(), n_dim, n_src);
     CMatrixMap charge(charge_.data_handle(), n_charge_dim, n_src);
@@ -135,8 +145,7 @@ void charge2proxycharge_2d(const ndview<const T, 2> &r_src_, const ndview<const 
     for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
         for (int i_src = 0; i_src < n_src; ++i_src) {
             // we recalculate the polynomial rather than caching it because it's so cheap and more cache friendly
-            T poly_y[order];
-            dmk::chebyshev::calc_polynomial(order, scale_factor * (r_src(1, i_src) - center(1)), poly_y);
+            dmk::chebyshev::calc_polynomial(order, scale_factor * (r_src(1, i_src) - center(1)), poly_y.data());
             for (int i = 0; i < order; ++i)
                 dy(i, i_src) = charge(i_dim, i_src) * poly_y[i];
         }
@@ -185,6 +194,12 @@ void charge2proxycharge_3d(const ndview<const T, 2> &r_src_, const ndview<const 
         }
         MatrixMap(&coeffs(i_dim * order * order * order, 0, 0, 0), order, order * order) += poly_x * dyz;
     }
+
+    const int n_flops_per_poly = 3 * (order - 2);
+    const int n_flops_per_mm = 2 * order * n_src * order * order;
+    const int n_flops_tmp = order * n_src + order * order * n_src;
+    const int n_flops_per_nd = 3 * n_flops_per_poly + n_flops_per_mm + n_flops_tmp;
+    sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, n_charge_dim * n_flops_per_nd);
 }
 
 template <typename T, int DIM>
@@ -284,6 +299,13 @@ void eval_targets_3d(const ndview<const T, 4> &coeffs, const ndview<const T, 2> 
             pot(i_dim, k) += pp;
         }
     }
+
+    const int n_flops_poly = (3 * n_order + 2) * n_trg;
+    const int n_flops_mm = 2 * n_order * n_order * n_trg * n_order;
+    const int n_flops_tmp = 2 * n_trg * n_order * n_order;
+    const int n_flops_pot = 2 * n_trg * n_order;
+    const unsigned long n_flops = n_charge_dim * (n_flops_poly + n_flops_mm + n_flops_tmp + n_flops_pot);
+    sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, n_flops);
 }
 
 template <typename T, int DIM>

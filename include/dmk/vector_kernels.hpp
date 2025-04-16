@@ -952,6 +952,19 @@ void l3d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
             pot[i * nd_ + j] += Vt[j][i];
         }
     }
+    constexpr auto horner_flops = [](int n_coeffs) { return 3 * n_coeffs - 1; };
+    constexpr auto distance_flops = []() { return 3 * 3 + 3 + 3; };
+    constexpr auto inner_loop_flops = [horner_flops, distance_flops](int n_coeffs) {
+        return horner_flops(n_coeffs) + distance_flops() + 2;
+    };
+    if constexpr (digits <= 3)
+        sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, inner_loop_flops(7) * Nsrc * Ntrg + Ntrg);
+    else if constexpr (digits <= 6)
+        sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, inner_loop_flops(13) * Nsrc * Ntrg + Ntrg);
+    else if constexpr (digits <= 9)
+        sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, inner_loop_flops(19) * Nsrc * Ntrg + Ntrg);
+    else if constexpr (digits <= 12)
+        sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, inner_loop_flops(25) * Nsrc * Ntrg + Ntrg);
 }
 
 template <class Real, sctl::Integer MaxVecLen = sctl::DefaultVecLen<Real>()>

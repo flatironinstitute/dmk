@@ -101,6 +101,11 @@ void pw2proxypot_3d(const ndview<const std::complex<Real>, 4> &pw_expansion,
                 for (int k1 = 0; k1 < n_order; ++k1)
                     proxy_coeffs(k1, k2, k3, i) += zcoefs(k1, k2, k3).real() * Real{2.0};
     }
+    const auto n_flops_per_mm = [](int m, int n, int k) { return 8 * m * n * k; };
+    const auto n_flops =
+        n_charge_dim * (n_flops_per_mm(n_order, n_pw * n_pw2, n_pw) + n_flops_per_mm(n_order, n_pw2 * n_order, n_pw) +
+                        n_flops_per_mm(n_order * n_order, n_order, n_pw2) + 2 * n_order * n_order * n_order);
+    sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, n_flops);
 }
 
 template <typename Real, int DIM>
@@ -183,6 +188,9 @@ void calc_planewave_translation_matrix(int nmax, T xmin, int npw, T hpw, sctl::V
                         for (int j2 = 0; j2 < npw; ++j2)
                             for (int j3 = 0; j3 < npw; ++j3)
                                 shift_vec[i++] = ww[j1 + npw * k1] * ww[j2 + npw * k2] * ww[j3 + npw * k3];
+
+    // Estimate exp(complex) ~ 1 cos + 1 sin, which are ~64 flops in stl
+    sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, npw * 128 + (DIM - 1) * shift_vec.Dim());
 }
 } // namespace dmk
 
@@ -260,3 +268,4 @@ TEST_CASE("[DMK] planewave_to_proxy_potential") {
         }
     }
 }
+

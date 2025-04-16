@@ -117,15 +117,12 @@ void mk_tensor_product_fourier_transform_3d(int npw, const ndview<const Real, 1>
 template <typename Real>
 void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const Real, 1> &fhat,
                                          const ndview<Real, 1> &pswfft) {
-    if (dim == 1) {
+    if (dim == 1)
         return mk_tensor_product_fourier_transform_1d(npw, fhat, pswfft);
-    }
-    if (dim == 2) {
+    if (dim == 2)
         return mk_tensor_product_fourier_transform_2d(npw, fhat, pswfft);
-    }
-    if (dim == 3) {
+    if (dim == 3)
         return mk_tensor_product_fourier_transform_3d(npw, fhat, pswfft);
-    }
     throw std::runtime_error("Invalid dimension: " + std::to_string(dim));
 }
 
