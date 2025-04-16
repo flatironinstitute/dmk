@@ -877,26 +877,29 @@ void l3d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
 #pragma omp parallel for schedule(static)
     for (sctl::Long t = 0; t < Ntrg_; t += VecLen) {
         Vec Xtrg[COORD_DIM];
-        for (sctl::Integer k = 0; k < COORD_DIM; k++) {
+        for (sctl::Integer k = 0; k < COORD_DIM; k++)
             Xtrg[k] = Vec::LoadAligned(&Xt[k][t]);
-        }
+
         // load potential
         Vec Vtrg[nd_];
-        for (long i = 0; i < nd_; i++) {
+        for (long i = 0; i < nd_; i++)
             Vtrg[i] = Vec::LoadAligned(&Vt[i][t]);
-        }
+
         for (sctl::Long s = 0; s < Nsrc; s++) {
             Vec dX[COORD_DIM], R2 = Vec::Zero();
             for (sctl::Integer k = 0; k < COORD_DIM; k++) {
                 dX[k] = Xtrg[k] - Vec::Load1(&Xs_[s][k]);
-                //		std::cout << Xtrg[k] <<"\n"<< Xs_[s][k]<<"\n" << dX[k]<< "\n";
                 R2 += dX[k] * dX[k];
             }
 
-            Vec Rinv = sctl::approx_rsqrt<digits>(R2, (R2 > thresh2) & (R2 < d2max_vec));
-            // std::cout << Rinv <<"\n";
+            const auto mask = (R2 > thresh2) & (R2 < d2max_vec);
+            if (mask_popcnt_intrin(mask) == 0)
+                continue;
+
+            const Vec Rinv = sctl::approx_rsqrt<digits>(R2, mask);
+
             // evaluate the PSWF kernel
-            Vec xtmp = FMA(R2, Rinv, cen_vec) * rsc_vec;
+            const Vec xtmp = FMA(R2, Rinv, cen_vec) * rsc_vec;
             Vec ptmp;
             if (digits <= 3) {
                 constexpr Real coefs[7] = {1.627823522210361e-01,  -4.553645597616490e-01, 4.171687104204163e-01,
@@ -938,20 +941,18 @@ void l3d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
 
             ptmp = ptmp * Rinv;
 
-            for (long i = 0; i < nd_; i++) {
+            for (long i = 0; i < nd_; i++)
                 Vtrg[i] += Vec::Load1(&Vs_[s][i]) * ptmp;
-            }
         }
-        for (long i = 0; i < nd_; i++) {
+
+        for (long i = 0; i < nd_; i++)
             Vtrg[i].StoreAligned(&Vt[i][t]);
-        }
     }
 
-    for (long i = 0; i < Ntrg; i++) {
-        for (long j = 0; j < nd_; j++) {
+    for (long i = 0; i < Ntrg; i++)
+        for (long j = 0; j < nd_; j++)
             pot[i * nd_ + j] += Vt[j][i];
-        }
-    }
+
     constexpr auto horner_flops = [](int n_coeffs) { return 3 * n_coeffs - 1; };
     constexpr auto distance_flops = []() { return 3 * 3 + 3 + 3; };
     constexpr auto inner_loop_flops = [horner_flops, distance_flops](int n_coeffs) {
@@ -1052,9 +1053,9 @@ void l3d_near_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc,
 #pragma omp parallel for schedule(static)
     for (sctl::Long t = 0; t < Ntrg_; t += VecLen) {
         Vec Xtrg[COORD_DIM];
-        for (sctl::Integer k = 0; k < COORD_DIM; k++) {
+        for (sctl::Integer k = 0; k < COORD_DIM; k++)
             Xtrg[k] = Vec::LoadAligned(&Xt[k][t]);
-        }
+
         // load potential
         Vec Vtrg[nd_];
         for (long i = 0; i < nd_; i++) {
