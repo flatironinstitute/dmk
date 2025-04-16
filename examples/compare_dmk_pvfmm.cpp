@@ -225,6 +225,7 @@ void run_comparison(pdmk_params params, int n_src, int m, int n_per_leaf_pvfmm, 
 
     const int n_runs = 100;
     for (int i = 0; i < n_runs; ++i) {
+        sctl::Profile::reset();
         pvfmm_tree->ClearFMMData();
         const auto st = omp_get_wtime();
 
