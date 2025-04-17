@@ -80,10 +80,10 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void form_local_expansions(const sctl::Vector<int> &boxes, Real boxsize,
                                const ndview<const std::complex<Real>, 2> &pw2poly_view, const sctl::Vector<Real> &p2c);
 
-    void evaluate_direct_interactions(int i_level, const Real *r_src_t, const Real *r_trg_t);
+    void evaluate_direct_interactions(const Real *r_src_t, const Real *r_trg_t);
 
-    std::span<const int> direct_neighbs(int i_box) const {
-        return std::span<const int>(direct_neighbs_[i_box].data(), n_direct_neighbs_[i_box]);
+    std::span<const int> direct_neighbs_flipped(int i_box) const {
+        return std::span<const int>(direct_neighbs_flipped_[i_box].data(), n_direct_neighbs_flipped_[i_box]);
     }
 
     Real *r_src_ptr(int i_node) {
@@ -258,8 +258,9 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void downward_pass();
 
   private:
-    sctl::Vector<std::array<int, sctl::pow<DIM>(3)>> direct_neighbs_;
-    sctl::Vector<int> n_direct_neighbs_;
+    // FIXME: is 2x enough? probably not. Might just want to do dynamic vectors :(
+    sctl::Vector<std::array<int, 2 * sctl::pow<DIM>(3)>> direct_neighbs_flipped_;
+    sctl::Vector<int> n_direct_neighbs_flipped_;
     const sctl::Comm comm_;
 };
 

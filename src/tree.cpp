@@ -265,24 +265,30 @@ void DMKPtTree<T, DIM>::generate_metadata() {
         }
     }
 
-    direct_neighbs_.ReInit(n_nodes);
-    n_direct_neighbs_.ReInit(n_nodes);
+    direct_neighbs_flipped_.ReInit(n_nodes);
+    n_direct_neighbs_flipped_.ReInit(n_nodes);
+    n_direct_neighbs_flipped_.SetZero();
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         for (int box : level_indices[i_level]) {
-            if (!r_src_cnt[box]) {
-                n_direct_neighbs_[box] = 0;
+            if (!r_src_cnt[box])
                 continue;
-            }
 
             int i_neighb = 0;
             for (auto neighb : node_lists[box].nbr)
-                if (neighb >= 0 && !ghostleaf_or_ghost_children(neighb, node_attr, node_lists))
-                    direct_neighbs_[box][i_neighb++] = neighb;
+                if (neighb >= 0) {
+                    if (node_attr[neighb].Leaf && !node_attr[neighb].Ghost)
+                        direct_neighbs_flipped_[neighb][n_direct_neighbs_flipped_[neighb]++] = box;
+                    else {
+                        for (auto child : node_lists[neighb].child) {
+                            if (child < 0 || node_attr[child].Ghost)
+                                continue;
+                            direct_neighbs_flipped_[child][n_direct_neighbs_flipped_[child]++] = box;
+                        }
+                    }
+                }
 
-            if (i_level == 0) {
-                n_direct_neighbs_[box] = i_neighb;
+            if (i_level == 0)
                 continue;
-            }
 
             const double cutoff = 0.5 * 1.05 * (boxsize[i_level] + boxsize[i_level - 1]);
             for (auto neighb : node_lists[node_lists[box].parent].nbr) {
@@ -296,9 +302,8 @@ void DMKPtTree<T, DIM>::generate_metadata() {
                         inrange = false;
                 }
                 if (inrange)
-                    direct_neighbs_[box][i_neighb++] = neighb;
+                    direct_neighbs_flipped_[neighb][n_direct_neighbs_flipped_[neighb]++] = box;
             }
-            n_direct_neighbs_[box] = i_neighb;
         }
     }
 
@@ -685,58 +690,56 @@ get_direct_interaction_constants(FourierData<Real> &fourier_data, dmk_ikernel ke
 }
 
 template <typename Real, int DIM>
-void DMKPtTree<Real, DIM>::evaluate_direct_interactions(int i_level, const Real *r_src_t, const Real *r_trg_t) {
-#ifdef DMK_INSTRUMENT
-    double dt = -omp_get_wtime();
-#endif
+void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, const Real *r_trg_t) {
+    sctl::Profile::Scoped profile("evaluate_direct_interactions", &comm_);
     const auto &node_attr = this->GetNodeAttr();
+    const auto &node_mid = this->GetNodeMID();
     const auto &node_lists = this->GetNodeLists();
-    Real bsize, rsc, cen, d2max, w0;
-    std::tie(bsize, rsc, cen, d2max, w0) =
-        get_direct_interaction_constants<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
-
-    const auto &cheb_coeffs = fourier_data.cheb_coeffs(i_level);
-    for (auto box : level_indices[i_level]) {
-        if (!r_src_cnt[box])
-            continue;
+    Real bsize[SCTL_MAX_DEPTH], rsc[SCTL_MAX_DEPTH], cen[SCTL_MAX_DEPTH], d2max[SCTL_MAX_DEPTH], w0[SCTL_MAX_DEPTH];
+    for (int i_level = 0; i_level < n_levels(); ++i_level)
+        std::tie(bsize[i_level], rsc[i_level], cen[i_level], d2max[i_level], w0[i_level]) =
+            get_direct_interaction_constants<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
 
 #pragma omp parallel for schedule(dynamic)
-        for (auto neighbor : direct_neighbs(box)) {
-            const int n_src_neighb = src_counts_local[neighbor];
-            const int n_trg_neighb = trg_counts_local[neighbor];
+    for (int neighb = 0; neighb < n_boxes(); ++neighb) {
+        const int n_src_neighb = src_counts_local[neighb];
+        const int n_trg_neighb = trg_counts_local[neighb];
+
+        for (auto box : direct_neighbs_flipped(neighb)) {
+            const int i_level = node_mid[box].Depth();
+            const auto &cheb_coeffs = fourier_data.cheb_coeffs(i_level);
 
             std::array<std::span<const Real>, DIM> r_trg;
             if (n_src_neighb) {
                 for (int i = 0; i < DIM; ++i)
                     r_trg[i] = std::span<const Real>(
-                        r_src_t + (r_src_offsets[neighbor] / DIM) + src_counts_local[0] * i, n_src_neighb);
+                        r_src_t + (r_src_offsets[neighb] / DIM) + src_counts_local[0] * i, n_src_neighb);
 
                 direct_eval<Real, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
-                                       &params.fparam, rsc, cen, d2max, pot_src_view(neighbor), n_digits);
+                                       &params.fparam, rsc[i_level], cen[i_level], d2max[i_level], pot_src_view(neighb),
+                                       n_digits);
             }
             if (n_trg_neighb) {
                 for (int i = 0; i < DIM; ++i)
                     r_trg[i] = std::span<const Real>(
-                        r_trg_t + (r_trg_offsets[neighbor] / DIM) + trg_counts_local[0] * i, n_trg_neighb);
+                        r_trg_t + (r_trg_offsets[neighb] / DIM) + trg_counts_local[0] * i, n_trg_neighb);
 
                 direct_eval<Real, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
-                                       &params.fparam, rsc, cen, d2max, pot_trg_view(neighbor), n_digits);
+                                       &params.fparam, rsc[i_level], cen[i_level], d2max[i_level], pot_trg_view(neighb),
+                                       n_digits);
             }
         }
 
-        if (node_attr[box].Ghost)
+        if (node_attr[neighb].Ghost)
             continue;
         // Correct for self-evaluations
-        auto pot = pot_src_view(box);
-        auto charge = charge_view(box);
-        for (int i_src = 0; i_src < r_src_cnt[box]; ++i_src)
+        auto pot = pot_src_view(neighb);
+        auto charge = charge_view(neighb);
+        const auto neighb_depth = node_mid[neighb].Depth();
+        for (int i_src = 0; i_src < r_src_cnt[neighb]; ++i_src)
             for (int i = 0; i < params.n_mfm; ++i)
-                pot(i, i_src) -= w0 * charge(i, i_src);
+                pot(i, i_src) -= w0[neighb_depth] * charge(i, i_src);
     }
-#ifdef DMK_INSTRUMENT
-    dt += omp_get_wtime();
-    sctl::Profile::IncrementCounter(sctl::ProfileCounter::CUSTOM4, (unsigned long)(1e9 * dt));
-#endif
 }
 
 /// @brief Perform the "downward pass"
@@ -787,6 +790,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
     Eigen::MatrixX<T> r_trg_t = Eigen::Map<Eigen::MatrixX<T>>(r_trg_ptr(0), DIM, trg_counts_local[0]).transpose();
 
     sctl::Profile::Toc();
+    sctl::Profile::Tic("expansion_propagation_and_eval", &comm_);
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         // Initialize everything for this level
         // 1. Difference kernel
@@ -807,8 +811,10 @@ void DMKPtTree<T, DIM>::downward_pass() {
         form_outgoing_expansions(level_indices[i_level], poly2pw_view, radialft);
         form_incoming_expansions(level_indices[i_level], wpwshift);
         form_local_expansions(level_indices[i_level], boxsize[i_level], pw2poly_view, p2c);
-        evaluate_direct_interactions(i_level, r_src_t.data(), r_trg_t.data());
     }
+    sctl::Profile::Toc();
+
+    evaluate_direct_interactions(r_src_t.data(), r_trg_t.data());
 
     logger->info("downward pass completed");
 }
