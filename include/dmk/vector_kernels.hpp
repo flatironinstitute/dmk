@@ -860,9 +860,8 @@ void l3d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
     { // Set Xs, Vs, Xt, Vt
         std::memcpy(Xt[0], xtarg, sizeof(Real) * Ntrg);
         std::memcpy(Xt[1], ytarg, sizeof(Real) * Ntrg);
-        if (COORD_DIM > 2) {
+        if constexpr (COORD_DIM > 2)
             std::memcpy(Xt[2], ztarg, sizeof(Real) * Ntrg);
-        }
         Vt = 0;
     }
 
@@ -874,7 +873,6 @@ void l3d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
     sctl::Matrix<Real> Vs_(Nsrc, nd_, sctl::Ptr2Itr<Real>((Real *)charge, nd_ * Nsrc), false);
     // load source
     sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real *)sources, COORD_DIM * Nsrc), false);
-#pragma omp parallel for schedule(static)
     for (sctl::Long t = 0; t < Ntrg_; t += VecLen) {
         Vec Xtrg[COORD_DIM];
         for (sctl::Integer k = 0; k < COORD_DIM; k++)
@@ -901,12 +899,12 @@ void l3d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
             // evaluate the PSWF kernel
             const Vec xtmp = FMA(R2, Rinv, cen_vec) * rsc_vec;
             Vec ptmp;
-            if (digits <= 3) {
+            if constexpr (digits <= 3) {
                 constexpr Real coefs[7] = {1.627823522210361e-01,  -4.553645597616490e-01, 4.171687104204163e-01,
                                            -7.073638602709915e-02, -8.957845614474928e-02, 2.617986644718201e-02,
                                            9.633427876507601e-03};
                 ptmp = EvalPolynomial(xtmp.get(), coefs[0], coefs[1], coefs[2], coefs[3], coefs[4], coefs[5], coefs[6]);
-            } else if (digits <= 6) {
+            } else if constexpr (digits <= 6) {
                 constexpr Real coefs[13] = {5.482525801351582e-02,  -2.616592110444692e-01, 4.862652666337138e-01,
                                             -3.894296348642919e-01, 1.638587821812791e-02,  1.870328434198821e-01,
                                             -8.714171086568978e-02, -3.927020727017803e-02, 3.728187607052319e-02,
@@ -914,7 +912,7 @@ void l3d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
                                             1.034762385284044e-03};
                 ptmp = EvalPolynomial(xtmp.get(), coefs[0], coefs[1], coefs[2], coefs[3], coefs[4], coefs[5], coefs[6],
                                       coefs[7], coefs[8], coefs[9], coefs[10], coefs[11], coefs[12]);
-            } else if (digits <= 9) {
+            } else if constexpr (digits <= 9) {
                 constexpr Real coefs[19] = {
                     1.835718730962269e-02,  -1.258015846164503e-01, 3.609487248584408e-01,  -5.314579651112283e-01,
                     3.447559412892380e-01,  9.664692318551721e-02,  -3.124274531849053e-01, 1.322460720579388e-01,
@@ -924,7 +922,7 @@ void l3d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
                 ptmp = EvalPolynomial(xtmp.get(), coefs[0], coefs[1], coefs[2], coefs[3], coefs[4], coefs[5], coefs[6],
                                       coefs[7], coefs[8], coefs[9], coefs[10], coefs[11], coefs[12], coefs[13],
                                       coefs[14], coefs[15], coefs[16], coefs[17], coefs[18]);
-            } else if (digits <= 12) {
+            } else if constexpr (digits <= 12) {
                 constexpr Real coefs[25] = {
                     6.262472576363448e-03,  -5.605742936112479e-02, 2.185890864792949e-01,  -4.717350304955679e-01,
                     5.669680214206270e-01,  -2.511606878849214e-01, -2.744523658778361e-01, 4.582527599363415e-01,
@@ -1050,7 +1048,6 @@ void l3d_near_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc,
     sctl::Matrix<Real> Vs_(Nsrc, nd_, sctl::Ptr2Itr<Real>((Real *)charge, nd_ * Nsrc), false);
     // load source
     sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real *)sources, COORD_DIM * Nsrc), false);
-#pragma omp parallel for schedule(static)
     for (sctl::Long t = 0; t < Ntrg_; t += VecLen) {
         Vec Xtrg[COORD_DIM];
         for (sctl::Integer k = 0; k < COORD_DIM; k++)
@@ -1174,7 +1171,6 @@ void l3d_near_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc,
     // load source
     sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real *)sources, COORD_DIM * Nsrc), false);
 
-// #pragma omp parallel for schedule(static)
 //  TODO: reinit to sctl::Vector is over limit
 #define NSRC_LIMIT 1000
     // work array memory stores compressed R2
@@ -1382,7 +1378,6 @@ void sl3d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rs
     sctl::Matrix<Real> Vs_(Nsrc, nd_, sctl::Ptr2Itr<Real>((Real *)charge, nd_ * Nsrc), false);
     // load source
     sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real *)sources, COORD_DIM * Nsrc), false);
-#pragma omp parallel for schedule(static)
     for (sctl::Long t = 0; t < Ntrg_; t += VecLen) {
         Vec Xtrg[COORD_DIM];
         for (sctl::Integer k = 0; k < COORD_DIM; k++) {
@@ -1539,7 +1534,6 @@ void sl3d_near_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
     sctl::Matrix<Real> Vs_(Nsrc, nd_, sctl::Ptr2Itr<Real>((Real *)charge, nd_ * Nsrc), false);
     // load source
     sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real *)sources, COORD_DIM * Nsrc), false);
-#pragma omp parallel for schedule(static)
     for (sctl::Long t = 0; t < Ntrg_; t += VecLen) {
         Vec Xtrg[COORD_DIM];
         for (sctl::Integer k = 0; k < COORD_DIM; k++) {
@@ -1702,7 +1696,6 @@ void log_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
     sctl::Matrix<Real> Vs_(Nsrc, nd_, sctl::Ptr2Itr<Real>((Real *)charge, nd_ * Nsrc), false);
     // load source
     sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real *)sources, COORD_DIM * Nsrc), false);
-#pragma omp parallel for schedule(static)
     for (sctl::Long t = 0; t < Ntrg_; t += VecLen) {
         Vec Xtrg[COORD_DIM];
         for (sctl::Integer k = 0; k < COORD_DIM; k++) {
@@ -1856,7 +1849,6 @@ void log_near_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc,
     sctl::Matrix<Real> Vs_(Nsrc, nd_, sctl::Ptr2Itr<Real>((Real *)charge, nd_ * Nsrc), false);
     // load source
     sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real *)sources, COORD_DIM * Nsrc), false);
-#pragma omp parallel for schedule(static)
     for (sctl::Long t = 0; t < Ntrg_; t += VecLen) {
         Vec Xtrg[COORD_DIM];
         for (sctl::Integer k = 0; k < COORD_DIM; k++) {
@@ -2013,7 +2005,6 @@ void y3ddirectcp_vec_cpp_helper(const int32_t *nd, const Real *rlambda, const Re
     sctl::Matrix<Real> Vs_(Nsrc, nd_, sctl::Ptr2Itr<Real>((Real *)charge, nd_ * Nsrc), false);
     // load source
     sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real *)sources, COORD_DIM * Nsrc), false);
-#pragma omp parallel for schedule(static)
     for (sctl::Long t = 0; t < Ntrg_; t += VecLen) {
         Vec Xtrg[COORD_DIM];
         for (sctl::Integer k = 0; k < COORD_DIM; k++) {
@@ -2129,7 +2120,6 @@ void st3d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rs
 
     // load source
     sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real *)sources, COORD_DIM * Nsrc), false);
-#pragma omp parallel for schedule(static)
     for (sctl::Long t = 0; t < Ntrg_; t += VecLen) {
         Vec Xtrg[COORD_DIM];
         for (sctl::Integer k = 0; k < COORD_DIM; k++) {
@@ -2324,7 +2314,6 @@ void st3d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rs
     // load source
     sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real *)sources, COORD_DIM * Nsrc), false);
 
-// #pragma omp parallel for schedule(static)
 //  TODO: reinit to sctl::Vector is over limit
 #define NSRC_LIMIT 1000
     // work array memory stores compressed R2
@@ -2597,7 +2586,6 @@ void st3d_near_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
 
     // load source
     sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real *)sources, COORD_DIM * Nsrc), false);
-#pragma omp parallel for schedule(static)
     for (sctl::Long t = 0; t < Ntrg_; t += VecLen) {
         Vec Xtrg[COORD_DIM];
         for (sctl::Integer k = 0; k < COORD_DIM; k++) {
@@ -2793,7 +2781,6 @@ void st3d_near_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
     // load source
     sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real *)sources, COORD_DIM * Nsrc), false);
 
-// #pragma omp parallel for schedule(static)
 //  TODO: reinit to sctl::Vector is over limit
 #define NSRC_LIMIT 1000
     // work array memory stores compressed R2
@@ -3063,7 +3050,6 @@ void st2d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rs
 
     // load source
     sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real *)sources, COORD_DIM * Nsrc), false);
-#pragma omp parallel for schedule(static)
     for (sctl::Long t = 0; t < Ntrg_; t += VecLen) {
         Vec Xtrg[COORD_DIM];
         for (sctl::Integer k = 0; k < COORD_DIM; k++) {
@@ -3240,7 +3226,6 @@ void st2d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rs
     // load source
     sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real *)sources, COORD_DIM * Nsrc), false);
 
-// #pragma omp parallel for schedule(static)
 //  TODO: reinit to sctl::Vector is over limit
 #define NSRC_LIMIT 1000
     // work array memory stores compressed R2
@@ -3491,7 +3476,6 @@ void st2d_near_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
 
     // load source
     sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real *)sources, COORD_DIM * Nsrc), false);
-#pragma omp parallel for schedule(static)
     for (sctl::Long t = 0; t < Ntrg_; t += VecLen) {
         Vec Xtrg[COORD_DIM];
         for (sctl::Integer k = 0; k < COORD_DIM; k++) {
@@ -3678,7 +3662,6 @@ void st2d_near_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
     // load source
     sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real *)sources, COORD_DIM * Nsrc), false);
 
-// #pragma omp parallel for schedule(static)
 //  TODO: reinit to sctl::Vector is over limit
 #define NSRC_LIMIT 1000
     // work array memory stores compressed R2
@@ -3938,7 +3921,6 @@ void log_local_kernel_directdp_vec_cpp_helper(const int32_t *nd, const Real *rsc
 
     // load source
     sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real *)sources, COORD_DIM * Nsrc), false);
-#pragma omp parallel for schedule(static)
     for (sctl::Long t = 0; t < Ntrg_; t += VecLen) {
         Vec Xtrg[COORD_DIM];
         for (sctl::Integer k = 0; k < COORD_DIM; k++) {
@@ -4066,7 +4048,6 @@ void log_local_kernel_directdp_vec_cpp_helper(const int32_t *nd, const Real *rsc
     // load source
     sctl::Matrix<Real> Xs_(Nsrc, COORD_DIM, sctl::Ptr2Itr<Real>((Real *)sources, COORD_DIM * Nsrc), false);
 
-// #pragma omp parallel for schedule(static)
 //  TODO: reinit to sctl::Vector is over limit
 #define NSRC_LIMIT 1000
     // work array memory stores compressed R2

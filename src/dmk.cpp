@@ -360,8 +360,11 @@ extern "C" {
 
 void pdmk_print_profile_data(MPI_Comm comm) {
     sctl::Comm sctl_comm(comm);
-    sctl::Profile::print(&sctl_comm, {"t_avg", "t_max", "t_min", "f_avg", "f_max", "f_min", "f_total", "f/s_total"},
-                         {"%.5f", "%.5f", "%.5f", "%.5f", "%.5f", "%.5f", "%.5f", "%.5f"});
+    sctl::Profile::print(
+        &sctl_comm,
+        {"t_avg", "t_max", "t_min", "f_avg", "f_max", "f_min", "f_total", "f/s_total", "custom1", "custom2", "custom3",
+         "custom4"},
+        {"%.5f", "%.5f", "%.5f", "%.5f", "%.5f", "%.5f", "%.5f", "%.5f", "%.3g", "%.3g", "%.3g", "%.3g"});
 }
 
 pdmk_tree pdmk_tree_createf(MPI_Comm comm, pdmk_params params, int n_src, const float *r_src, const float *charge,

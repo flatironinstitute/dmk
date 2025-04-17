@@ -75,12 +75,10 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
                                   const ndview<const std::complex<Real>, 2> &poly2pw_view,
                                   const sctl::Vector<Real> &radialft);
 
-    void form_incoming_expansions(const sctl::Vector<int> &boxes,
-                                  const sctl::Vector<std::complex<Real>> &wpwshift);
+    void form_incoming_expansions(const sctl::Vector<int> &boxes, const sctl::Vector<std::complex<Real>> &wpwshift);
 
     void form_local_expansions(const sctl::Vector<int> &boxes, Real boxsize,
-                               const ndview<const std::complex<Real>, 2> &pw2poly_view,
-                               const sctl::Vector<Real> &p2c);
+                               const ndview<const std::complex<Real>, 2> &pw2poly_view, const sctl::Vector<Real> &p2c);
 
     void evaluate_direct_interactions(int i_level, const Real *r_src_t, const Real *r_trg_t);
 
@@ -262,9 +260,6 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
   private:
     sctl::Vector<std::array<int, sctl::pow<DIM>(3)>> direct_neighbs_;
     sctl::Vector<int> n_direct_neighbs_;
-#ifdef DMK_INSTRUMENT
-    int n_levels_max_;
-#endif
     const sctl::Comm comm_;
 };
 

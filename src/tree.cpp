@@ -23,7 +23,6 @@
 namespace dmk {
 
 inline auto ghostleaf_or_ghost_children(int box, auto &node_attr, auto &node_lists) {
-    bool skip = false;
     if (node_attr[box].Leaf && node_attr[box].Ghost)
         return true;
 
@@ -170,11 +169,6 @@ void DMKPtTree<T, DIM>::generate_metadata() {
         max_depth = std::max(node.Depth(), max_depth);
     }
     max_depth++;
-
-#ifdef DMK_INSTRUMENT
-    int max_depth_int32 = max_depth;
-    MPI_Allreduce(&max_depth_int32, &n_levels_max_, 1, MPI_INT, MPI_MAX, comm_.GetMPI_Comm());
-#endif
 
     level_indices.ReInit(max_depth);
     boxsize.ReInit(max_depth + 1);
@@ -489,7 +483,9 @@ template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &boxes,
                                                     const ndview<const std::complex<Real>, 2> &poly2pw_view,
                                                     const sctl::Vector<Real> &radialft) {
-    // sctl::Profile::Scoped profile("form_outgoing_expansions", &comm_);
+#ifdef DMK_INSTRUMENT
+    double dt = -omp_get_wtime();
+#endif
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const int n_pw_per_box = n_pw_modes * params.n_mfm;
 
@@ -504,12 +500,18 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &box
         multiply_kernelFT_cd2p<Real, DIM>(radialft, pw_out_view(box));
         memcpy(pw_in_ptr(box), pw_out_ptr(box), n_pw_per_box * sizeof(std::complex<Real>));
     }
+#ifdef DMK_INSTRUMENT
+    dt += omp_get_wtime();
+    sctl::Profile::IncrementCounter(sctl::ProfileCounter::CUSTOM1, (unsigned long)(1e9 * dt));
+#endif
 }
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::form_incoming_expansions(const sctl::Vector<int> &boxes,
                                                     const sctl::Vector<std::complex<Real>> &wpwshift) {
-    // sctl::Profile::Scoped profile("form_incoming_expansions", &comm_);
+#ifdef DMK_INSTRUMENT
+    double dt = -omp_get_wtime();
+#endif
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const int n_pw_per_box = n_pw_modes * params.n_mfm;
     const auto &node_lists = this->GetNodeLists();
@@ -541,13 +543,19 @@ void DMKPtTree<Real, DIM>::form_incoming_expansions(const sctl::Vector<int> &box
     // 1 complex multiply (4 multiplies and 2 adds) and 1 complex add (2 adds) per plane wave component
     constexpr int flops_per_pw = 8;
     sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, n_shifts * flops_per_pw * n_pw_per_box);
+#ifdef DMK_INSTRUMENT
+    dt += omp_get_wtime();
+    sctl::Profile::IncrementCounter(sctl::ProfileCounter::CUSTOM2, (unsigned long)(1e9 * dt));
+#endif
 }
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::form_local_expansions(const sctl::Vector<int> &boxes, Real boxsize,
                                                  const ndview<const std::complex<Real>, 2> &pw2poly_view,
                                                  const sctl::Vector<Real> &p2c) {
-    // sctl::Profile::Scoped profile("form_local_expansions", &comm_);
+#ifdef DMK_INSTRUMENT
+    double dt = -omp_get_wtime();
+#endif
     const auto &node_lists = this->GetNodeLists();
     const auto &node_attr = this->GetNodeAttr();
     const Real sc = 2.0 / boxsize;
@@ -601,6 +609,10 @@ void DMKPtTree<Real, DIM>::form_local_expansions(const sctl::Vector<int> &boxes,
             }
         }
     }
+#ifdef DMK_INSTRUMENT
+    dt += omp_get_wtime();
+    sctl::Profile::IncrementCounter(sctl::ProfileCounter::CUSTOM3, (unsigned long)(1e9 * dt));
+#endif
 }
 
 template <typename Real>
@@ -674,10 +686,13 @@ get_direct_interaction_constants(FourierData<Real> &fourier_data, dmk_ikernel ke
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::evaluate_direct_interactions(int i_level, const Real *r_src_t, const Real *r_trg_t) {
-    // sctl::Profile::Scoped profile("evaluate_direct_interactions", &comm_);
+#ifdef DMK_INSTRUMENT
+    double dt = -omp_get_wtime();
+#endif
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_lists = this->GetNodeLists();
-    const auto [bsize, rsc, cen, d2max, w0] =
+    Real bsize, rsc, cen, d2max, w0;
+    std::tie(bsize, rsc, cen, d2max, w0) =
         get_direct_interaction_constants<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
 
     const auto &cheb_coeffs = fourier_data.cheb_coeffs(i_level);
@@ -685,6 +700,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(int i_level, const Real 
         if (!r_src_cnt[box])
             continue;
 
+#pragma omp parallel for schedule(dynamic)
         for (auto neighbor : direct_neighbs(box)) {
             const int n_src_neighb = src_counts_local[neighbor];
             const int n_trg_neighb = trg_counts_local[neighbor];
@@ -717,6 +733,10 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(int i_level, const Real 
             for (int i = 0; i < params.n_mfm; ++i)
                 pot(i, i_src) -= w0 * charge(i, i_src);
     }
+#ifdef DMK_INSTRUMENT
+    dt += omp_get_wtime();
+    sctl::Profile::IncrementCounter(sctl::ProfileCounter::CUSTOM4, (unsigned long)(1e9 * dt));
+#endif
 }
 
 /// @brief Perform the "downward pass"
@@ -789,18 +809,6 @@ void DMKPtTree<T, DIM>::downward_pass() {
         form_local_expansions(level_indices[i_level], boxsize[i_level], pw2poly_view, p2c);
         evaluate_direct_interactions(i_level, r_src_t.data(), r_trg_t.data());
     }
-
-#ifdef DMK_INSTRUMENT
-    // for (int i_level = n_levels(); i_level < n_levels_max_; ++i_level) {
-    //     // clang-format off
-    //     { sctl::Profile::Scoped("downward_pass_loop_init", &comm_); }
-    //     { sctl::Profile::Scoped("form_outgoing_expansions", &comm_); }
-    //     { sctl::Profile::Scoped("form_incoming_expansions", &comm_); }
-    //     { sctl::Profile::Scoped("form_local_expansions", &comm_); }
-    //     { sctl::Profile::Scoped("evaluate_direct_interactions", &comm_); }
-    //     // clang-format on
-    // }
-#endif
 
     logger->info("downward pass completed");
 }
