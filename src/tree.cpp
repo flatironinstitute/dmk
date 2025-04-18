@@ -352,6 +352,10 @@ void DMKPtTree<T, DIM>::upward_pass() {
     const std::size_t n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
     logger->info("upward pass started");
 
+#pragma omp parallel
+#pragma omp single
+    workspaces_.ReInit(omp_get_num_threads());
+
     sctl::Vector<sctl::Long> counts;
     this->GetData(proxy_coeffs, counts, "proxy_coeffs");
     proxy_coeffs.SetZero();
@@ -367,39 +371,49 @@ void DMKPtTree<T, DIM>::upward_pass() {
     {
         sctl::Profile::Scoped profile("charge2proxy_base", &comm_);
 
-#pragma omp parallel for schedule(dynamic)
-        for (auto i_box : level_indices[start_level]) {
-            if (!form_pw_expansion[i_box] || !src_counts_local[i_box] || node_attr[i_box].Ghost)
-                continue;
+#pragma omp parallel
+        {
+            sctl::Vector<T> &workspace = workspaces_[omp_get_thread_num()];
 
-            proxy::charge2proxycharge<T, DIM>(r_src_view(i_box), charge_view(i_box), center_view(i_box),
-                                              2.0 / boxsize[start_level], proxy_view_upward(i_box));
+#pragma omp for schedule(dynamic)
+            for (auto i_box : level_indices[start_level]) {
+                if (!form_pw_expansion[i_box] || !src_counts_local[i_box] || node_attr[i_box].Ghost)
+                    continue;
+
+                proxy::charge2proxycharge<T, DIM>(r_src_view(i_box), charge_view(i_box), center_view(i_box),
+                                                  2.0 / boxsize[start_level], proxy_view_upward(i_box), workspace);
+            }
         }
+        logger->debug("proxy: finished building base proxy charges");
     }
-    logger->debug("proxy: finished building base proxy charges");
 
     {
         sctl::Profile::Scoped profile("charge2proxy_rest", &comm_);
-        for (int i_level = start_level - 1; i_level >= 0; --i_level) {
-#pragma omp parallel for schedule(dynamic)
-            for (auto parent_box : level_indices[i_level]) {
-                if (!form_pw_expansion[parent_box])
-                    continue;
+#pragma omp parallel
+        {
+            sctl::Vector<T> &workspace = workspaces_[omp_get_thread_num()];
 
-                auto &children = node_lists[parent_box].child;
-                for (int i_child = 0; i_child < n_children; ++i_child) {
-                    const int child_box = children[i_child];
-                    if (child_box < 0 || !src_counts_local[child_box])
+            for (int i_level = start_level - 1; i_level >= 0; --i_level) {
+#pragma omp for schedule(dynamic)
+                for (auto parent_box : level_indices[i_level]) {
+                    if (!form_pw_expansion[parent_box])
                         continue;
 
-                    if (form_pw_expansion[child_box]) {
-                        ndview<const T, 2> c2p_view(&c2p[i_child * DIM * n_order * n_order], n_order, DIM);
-                        tensorprod::transform<T, DIM>(params.n_mfm, true, proxy_view_upward(child_box), c2p_view,
-                                                      proxy_view_upward(parent_box));
-                    } else if (!node_attr[child_box].Ghost) {
-                        proxy::charge2proxycharge<T, DIM>(r_src_view(child_box), charge_view(child_box),
-                                                          center_view(parent_box), 2.0 / boxsize[i_level],
+                    auto &children = node_lists[parent_box].child;
+                    for (int i_child = 0; i_child < n_children; ++i_child) {
+                        const int child_box = children[i_child];
+                        if (child_box < 0 || !src_counts_local[child_box])
+                            continue;
+
+                        if (form_pw_expansion[child_box]) {
+                            ndview<const T, 2> c2p_view(&c2p[i_child * DIM * n_order * n_order], n_order, DIM);
+                            tensorprod::transform<T, DIM>(params.n_mfm, true, proxy_view_upward(child_box), c2p_view,
                                                           proxy_view_upward(parent_box));
+                        } else if (!node_attr[child_box].Ghost) {
+                            proxy::charge2proxycharge<T, DIM>(r_src_view(child_box), charge_view(child_box),
+                                                              center_view(parent_box), 2.0 / boxsize[i_level],
+                                                              proxy_view_upward(parent_box), workspace);
+                        }
                     }
                 }
             }
@@ -496,14 +510,19 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &box
 
     // Form the outgoing expansion Φl(box) for the difference kernel Dl from the proxy charge expansion
     // coefficients using Tprox2pw
-#pragma omp parallel for schedule(dynamic)
-    for (auto box : boxes) {
-        if (!form_pw_expansion[box])
-            continue;
+#pragma omp parallel
+    {
+        sctl::Vector<Real> &workspace = workspaces_[omp_get_thread_num()];
 
-        dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(box), poly2pw_view, pw_out_view(box));
-        multiply_kernelFT_cd2p<Real, DIM>(radialft, pw_out_view(box));
-        memcpy(pw_in_ptr(box), pw_out_ptr(box), n_pw_per_box * sizeof(std::complex<Real>));
+#pragma omp for schedule(dynamic)
+        for (auto box : boxes) {
+            if (!form_pw_expansion[box])
+                continue;
+
+            dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(box), poly2pw_view, pw_out_view(box), workspace);
+            multiply_kernelFT_cd2p<Real, DIM>(radialft, pw_out_view(box));
+            memcpy(pw_in_ptr(box), pw_out_ptr(box), n_pw_per_box * sizeof(std::complex<Real>));
+        }
     }
 #ifdef DMK_INSTRUMENT
     dt += omp_get_wtime();
@@ -566,54 +585,60 @@ void DMKPtTree<Real, DIM>::form_local_expansions(const sctl::Vector<int> &boxes,
     const Real sc = 2.0 / boxsize;
     const int nd = params.n_mfm;
 
-#pragma omp parallel for schedule(dynamic)
-    for (auto box : boxes) {
-        const int n_trg = trg_counts_local[box];
-        const int n_src = src_counts_local[box];
-        const int n_pts = n_src + n_trg;
+#pragma omp parallel
+    {
+        sctl::Vector<Real> &workspace = workspaces_[omp_get_thread_num()];
 
-        if (!eval_pw_expansion[box] || n_pts == 0)
-            continue;
+#pragma omp for schedule(dynamic)
+        for (auto box : boxes) {
+            const int n_trg = trg_counts_local[box];
+            const int n_src = src_counts_local[box];
+            const int n_pts = n_src + n_trg;
 
-        // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
-        dmk::planewave_to_proxy_potential<Real, DIM>(pw_in_view(box), pw2poly_view, proxy_view_downward(box));
-
-        if (eval_tp_expansion[box]) {
-            if (ghostleaf_or_ghost_children(box, node_attr, node_lists))
+            if (!eval_pw_expansion[box] || n_pts == 0)
                 continue;
 
-            if (n_src)
-                proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_src_view(box), center_view(box), sc,
-                                               pot_src_view(box));
-            if (n_trg)
-                proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_trg_view(box), center_view(box), sc,
-                                               pot_trg_view(box));
-        }
+            // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
+            dmk::planewave_to_proxy_potential<Real, DIM>(pw_in_view(box), pw2poly_view, proxy_view_downward(box));
 
-        // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
-        constexpr int n_children = 1u << DIM;
-        for (int i_child = 0; i_child < n_children; ++i_child) {
-            const int child = node_lists[box].child[i_child];
-            if (child < 0)
-                continue;
-
-            if (eval_tp_expansion[child] && !eval_pw_expansion[child]) {
-                if (ghostleaf_or_ghost_children(child, node_attr, node_lists))
+            if (eval_tp_expansion[box]) {
+                if (ghostleaf_or_ghost_children(box, node_attr, node_lists))
                     continue;
 
-                if (src_counts_local[child])
-                    proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_src_view(child), center_view(box), sc,
-                                                   pot_src_view(child));
-                if (trg_counts_local[child])
-                    proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_trg_view(child), center_view(box), sc,
-                                                   pot_trg_view(child));
-            } else if (eval_pw_expansion[child]) {
-                ndview<const Real, 2> p2c_view(&p2c[i_child * DIM * n_order * n_order], n_order, DIM);
-                dmk::tensorprod::transform<Real, DIM>(nd, true, proxy_view_downward(box), p2c_view,
-                                                      proxy_view_downward(child));
+                if (n_src)
+                    proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_src_view(box), center_view(box), sc,
+                                                   pot_src_view(box), workspace);
+                if (n_trg)
+                    proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_trg_view(box), center_view(box), sc,
+                                                   pot_trg_view(box), workspace);
+            }
+
+            // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
+            constexpr int n_children = 1u << DIM;
+            for (int i_child = 0; i_child < n_children; ++i_child) {
+                const int child = node_lists[box].child[i_child];
+                if (child < 0)
+                    continue;
+
+                if (eval_tp_expansion[child] && !eval_pw_expansion[child]) {
+                    if (ghostleaf_or_ghost_children(child, node_attr, node_lists))
+                        continue;
+
+                    if (src_counts_local[child])
+                        proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_src_view(child), center_view(box),
+                                                       sc, pot_src_view(child), workspace);
+                    if (trg_counts_local[child])
+                        proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_trg_view(child), center_view(box),
+                                                       sc, pot_trg_view(child), workspace);
+                } else if (eval_pw_expansion[child]) {
+                    ndview<const Real, 2> p2c_view(&p2c[i_child * DIM * n_order * n_order], n_order, DIM);
+                    dmk::tensorprod::transform<Real, DIM>(nd, true, proxy_view_downward(box), p2c_view,
+                                                          proxy_view_downward(child));
+                }
             }
         }
     }
+
 #ifdef DMK_INSTRUMENT
     dt += omp_get_wtime();
     sctl::Profile::IncrementCounter(sctl::ProfileCounter::CUSTOM3, (unsigned long)(1e9 * dt));
@@ -712,8 +737,8 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
             std::array<std::span<const Real>, DIM> r_trg;
             if (n_src_neighb) {
                 for (int i = 0; i < DIM; ++i)
-                    r_trg[i] = std::span<const Real>(
-                        r_src_t + (r_src_offsets[neighb] / DIM) + src_counts_local[0] * i, n_src_neighb);
+                    r_trg[i] = std::span<const Real>(r_src_t + (r_src_offsets[neighb] / DIM) + src_counts_local[0] * i,
+                                                     n_src_neighb);
 
                 direct_eval<Real, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
                                        &params.fparam, rsc[i_level], cen[i_level], d2max[i_level], pot_src_view(neighb),
@@ -721,8 +746,8 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
             }
             if (n_trg_neighb) {
                 for (int i = 0; i < DIM; ++i)
-                    r_trg[i] = std::span<const Real>(
-                        r_trg_t + (r_trg_offsets[neighb] / DIM) + trg_counts_local[0] * i, n_trg_neighb);
+                    r_trg[i] = std::span<const Real>(r_trg_t + (r_trg_offsets[neighb] / DIM) + trg_counts_local[0] * i,
+                                                     n_trg_neighb);
 
                 direct_eval<Real, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
                                        &params.fparam, rsc[i_level], cen[i_level], d2max[i_level], pot_trg_view(neighb),
@@ -779,7 +804,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
     ndview<const std::complex<T>, 2> poly2pw_view(&poly2pw[0], n_pw, n_order);
     ndview<const std::complex<T>, 2> pw2poly_view(&pw2poly[0], n_pw, n_order);
 
-    dmk::proxy::proxycharge2pw<T, DIM>(proxy_view_upward(0), poly2pw_view, pw_out_view(0));
+    dmk::proxy::proxycharge2pw<T, DIM>(proxy_view_upward(0), poly2pw_view, pw_out_view(0), workspaces_[0]);
     multiply_kernelFT_cd2p<T, DIM>(radialft, pw_out_view(0));
     memcpy(pw_in_ptr(0), pw_out_ptr(0), n_pw_modes * params.n_mfm * sizeof(std::complex<T>));
 

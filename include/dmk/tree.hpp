@@ -261,6 +261,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     // FIXME: is 2x enough? probably not. Might just want to do dynamic vectors :(
     sctl::Vector<std::array<int, 2 * sctl::pow<DIM>(3)>> direct_neighbs_flipped_;
     sctl::Vector<int> n_direct_neighbs_flipped_;
+    sctl::Vector<sctl::Vector<Real>> workspaces_;
     const sctl::Comm comm_;
 };
 

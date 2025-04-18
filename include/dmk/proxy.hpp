@@ -15,7 +15,8 @@ void calc_planewave_coeff_matrices(double boxsize, T hpw, int n_pw, int n_order,
 
 template <typename T, int DIM>
 void charge2proxycharge(const ndview<const T, 2> &r_src, const ndview<const T, 2> &charge,
-                        const ndview<const T, 1> &center, T scale_factor, const ndview<T, DIM + 1> &coeffs);
+                        const ndview<const T, 1> &center, T scale_factor, const ndview<T, DIM + 1> &coeffs,
+                        sctl::Vector<T> &workspace);
 
 template <typename T>
 void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const T *proxy_coeffs,
@@ -23,11 +24,11 @@ void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const T 
 
 template <typename T, int DIM>
 void proxycharge2pw(const ndview<const T, DIM + 1> &proxy_coeffs, const ndview<const std::complex<T>, 2> &poly2pw,
-                    const ndview<std::complex<T>, DIM + 1> &pw_expansion);
+                    const ndview<std::complex<T>, DIM + 1> &pw_expansion, sctl::Vector<T> &workspace);
 
 template <typename T, int DIM>
 void eval_targets(const ndview<const T, DIM + 1> &coefs, const ndview<const T, 2> &r_trg, const ndview<const T, 1> &cen,
-                  T sc, const ndview<T, 2> &pot);
+                  T sc, const ndview<T, 2> &pot, sctl::Vector<T> &workspace);
 
 } // namespace dmk::proxy
 #endif
