@@ -478,24 +478,16 @@ void DMKPtTree<T, DIM>::init_planewave_data() {
     const std::size_t n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const std::size_t n_pw_per_box = n_pw_modes * params.n_mfm;
 
-    pw_in_offsets.ReInit(n_boxes());
     pw_out_offsets.ReInit(n_boxes());
-    pw_in_offsets[0] = pw_out_offsets[0] = 0;
     int n_pw_boxes_out = 1;
     int n_pw_boxes_in = 1;
     for (int i_box = 1; i_box < n_boxes(); ++i_box) {
         pw_out_offsets[i_box] = pw_out_offsets[i_box - 1] + form_pw_expansion[i_box] * n_pw_per_box;
         n_pw_boxes_out += form_pw_expansion[i_box];
-
-        bool need_in = ((src_counts_local[i_box] + trg_counts_local[i_box]) > 0) || eval_pw_expansion[i_box];
-        pw_in_offsets[i_box] = pw_in_offsets[i_box - 1] + need_in * n_pw_per_box;
-        n_pw_boxes_in += need_in;
     }
 
     pw_out.ReInit(n_pw_per_box * n_pw_boxes_out);
-    pw_in.ReInit(n_pw_per_box * n_pw_boxes_in);
     pw_out.SetZero();
-    pw_in.SetZero();
 }
 
 template <typename Real, int DIM>
@@ -521,7 +513,6 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &box
 
             dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(box), poly2pw_view, pw_out_view(box), workspace);
             multiply_kernelFT_cd2p<Real, DIM>(radialft, pw_out_view(box));
-            memcpy(pw_in_ptr(box), pw_out_ptr(box), n_pw_per_box * sizeof(std::complex<Real>));
         }
     }
 #ifdef DMK_INSTRUMENT
@@ -531,75 +522,67 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &box
 }
 
 template <typename Real, int DIM>
-void DMKPtTree<Real, DIM>::form_incoming_expansions(const sctl::Vector<int> &boxes,
-                                                    const sctl::Vector<std::complex<Real>> &wpwshift) {
+void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
+                                                const sctl::Vector<std::complex<Real>> &wpwshift, Real boxsize,
+                                                const ndview<const std::complex<Real>, 2> &pw2poly_view,
+                                                const sctl::Vector<Real> &p2c) {
 #ifdef DMK_INSTRUMENT
     double dt = -omp_get_wtime();
 #endif
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const int n_pw_per_box = n_pw_modes * params.n_mfm;
     const auto &node_lists = this->GetNodeLists();
-
-    unsigned long n_shifts{0};
-#pragma omp parallel for schedule(dynamic) reduction(+ : n_shifts)
-    for (auto box : boxes) {
-        if (src_counts_local[box] + trg_counts_local[box] == 0)
-            continue;
-
-        for (auto &neighbor : node_lists[box].nbr) {
-            if (neighbor < 0 || neighbor == box || !form_pw_expansion[neighbor])
-                continue;
-
-            // Translate the outgoing expansion Φl(colleague) to the center of box and add to the incoming plane
-            // wave expansion Ψl(box) using wpwshift.
-
-            // note: neighbors in SCTL are sorted in reverse order to wpwshift
-            // FIXME: check if valid for periodic boundary conditions
-            constexpr int n_neighbors = sctl::pow<DIM>(3);
-            const int ind = n_neighbors - 1 - (&neighbor - &node_lists[box].nbr[0]);
-            assert(ind >= 0 && ind < n_neighbors);
-
-            ndview<const std::complex<Real>, 1> wpwshift_view(&wpwshift[n_pw_per_box * ind], n_pw_per_box);
-            shift_planewave<std::complex<Real>, DIM>(pw_out_view(neighbor), pw_in_view(box), wpwshift_view);
-            n_shifts++;
-        }
-    }
-    // 1 complex multiply (4 multiplies and 2 adds) and 1 complex add (2 adds) per plane wave component
-    constexpr int flops_per_pw = 8;
-    sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, n_shifts * flops_per_pw * n_pw_per_box);
-#ifdef DMK_INSTRUMENT
-    dt += omp_get_wtime();
-    sctl::Profile::IncrementCounter(sctl::ProfileCounter::CUSTOM2, (unsigned long)(1e9 * dt));
-#endif
-}
-
-template <typename Real, int DIM>
-void DMKPtTree<Real, DIM>::form_local_expansions(const sctl::Vector<int> &boxes, Real boxsize,
-                                                 const ndview<const std::complex<Real>, 2> &pw2poly_view,
-                                                 const sctl::Vector<Real> &p2c) {
-#ifdef DMK_INSTRUMENT
-    double dt = -omp_get_wtime();
-#endif
-    const auto &node_lists = this->GetNodeLists();
     const auto &node_attr = this->GetNodeAttr();
     const Real sc = 2.0 / boxsize;
     const int nd = params.n_mfm;
 
+    unsigned long n_shifts{0};
 #pragma omp parallel
     {
         sctl::Vector<Real> &workspace = workspaces_[omp_get_thread_num()];
+        sctl::Vector<std::complex<Real>> pw_in(n_pw_per_box);
 
-#pragma omp for schedule(dynamic)
+        auto pw_in_view = [this, &pw_in]() {
+            if constexpr (DIM == 2)
+                return ndview<std::complex<Real>, DIM + 1>(&pw_in[0], n_pw, (n_pw + 1) / 2, params.n_mfm);
+            else if constexpr (DIM == 3)
+                return ndview<std::complex<Real>, DIM + 1>(&pw_in[0], n_pw, n_pw, (n_pw + 1) / 2, params.n_mfm);
+        }();
+
+#pragma omp for schedule(dynamic) reduction(+ : n_shifts)
         for (auto box : boxes) {
             const int n_trg = trg_counts_local[box];
             const int n_src = src_counts_local[box];
             const int n_pts = n_src + n_trg;
 
-            if (!eval_pw_expansion[box] || n_pts == 0)
+            if (!n_pts || !eval_pw_expansion[box])
                 continue;
 
+            if (form_pw_expansion[box])
+                memcpy(&pw_in[0], pw_out_ptr(box), n_pw_per_box * sizeof(std::complex<Real>));
+            else
+                pw_in.SetZero();
+
+            for (auto &neighbor : node_lists[box].nbr) {
+                if (neighbor < 0 || neighbor == box || !form_pw_expansion[neighbor])
+                    continue;
+
+                // Translate the outgoing expansion Φl(colleague) to the center of box and add to the incoming plane
+                // wave expansion Ψl(box) using wpwshift.
+
+                // note: neighbors in SCTL are sorted in reverse order to wpwshift
+                // FIXME: check if valid for periodic boundary conditions
+                constexpr int n_neighbors = sctl::pow<DIM>(3);
+                const int ind = n_neighbors - 1 - (&neighbor - &node_lists[box].nbr[0]);
+                assert(ind >= 0 && ind < n_neighbors);
+
+                ndview<const std::complex<Real>, 1> wpwshift_view(&wpwshift[n_pw_per_box * ind], n_pw_per_box);
+                shift_planewave<std::complex<Real>, DIM>(pw_out_view(neighbor), pw_in_view, wpwshift_view);
+                n_shifts++;
+            }
+
             // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
-            dmk::planewave_to_proxy_potential<Real, DIM>(pw_in_view(box), pw2poly_view, proxy_view_downward(box));
+            dmk::planewave_to_proxy_potential<Real, DIM>(pw_in_view, pw2poly_view, proxy_view_downward(box));
 
             if (eval_tp_expansion[box]) {
                 if (ghostleaf_or_ghost_children(box, node_attr, node_lists))
@@ -639,9 +622,12 @@ void DMKPtTree<Real, DIM>::form_local_expansions(const sctl::Vector<int> &boxes,
         }
     }
 
+    // 1 complex multiply (4 multiplies and 2 adds) and 1 complex add (2 adds) per plane wave component
+    constexpr int flops_per_pw = 8;
+    sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, n_shifts * flops_per_pw * n_pw_per_box);
 #ifdef DMK_INSTRUMENT
     dt += omp_get_wtime();
-    sctl::Profile::IncrementCounter(sctl::ProfileCounter::CUSTOM3, (unsigned long)(1e9 * dt));
+    sctl::Profile::IncrementCounter(sctl::ProfileCounter::CUSTOM2, (unsigned long)(1e9 * dt));
 #endif
 }
 
@@ -806,10 +792,8 @@ void DMKPtTree<T, DIM>::downward_pass() {
 
     dmk::proxy::proxycharge2pw<T, DIM>(proxy_view_upward(0), poly2pw_view, pw_out_view(0), workspaces_[0]);
     multiply_kernelFT_cd2p<T, DIM>(radialft, pw_out_view(0));
-    memcpy(pw_in_ptr(0), pw_out_ptr(0), n_pw_modes * params.n_mfm * sizeof(std::complex<T>));
-
     proxy_coeffs_downward.SetZero();
-    dmk::planewave_to_proxy_potential<T, DIM>(pw_in_view(0), pw2poly_view, proxy_view_downward(0));
+    dmk::planewave_to_proxy_potential<T, DIM>(pw_out_view(0), pw2poly_view, proxy_view_downward(0));
 
     Eigen::MatrixX<T> r_src_t = Eigen::Map<Eigen::MatrixX<T>>(r_src_ptr(0), DIM, src_counts_local[0]).transpose();
     Eigen::MatrixX<T> r_trg_t = Eigen::Map<Eigen::MatrixX<T>>(r_trg_ptr(0), DIM, trg_counts_local[0]).transpose();
@@ -834,8 +818,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
                                                         fourier_data.difference_kernel(i_level).hpw, wpwshift);
         }
         form_outgoing_expansions(level_indices[i_level], poly2pw_view, radialft);
-        form_incoming_expansions(level_indices[i_level], wpwshift);
-        form_local_expansions(level_indices[i_level], boxsize[i_level], pw2poly_view, p2c);
+        form_eval_expansions(level_indices[i_level], wpwshift, boxsize[i_level], pw2poly_view, p2c);
     }
     sctl::Profile::Toc();
 

@@ -46,8 +46,6 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<Real> proxy_coeffs_downward;
     sctl::Vector<sctl::Long> proxy_coeffs_offsets_downward;
 
-    sctl::Vector<std::complex<Real>> pw_in;
-    sctl::Vector<sctl::Long> pw_in_offsets;
     sctl::Vector<std::complex<Real>> pw_out;
     sctl::Vector<sctl::Long> pw_out_offsets;
 
@@ -79,6 +77,10 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     void form_local_expansions(const sctl::Vector<int> &boxes, Real boxsize,
                                const ndview<const std::complex<Real>, 2> &pw2poly_view, const sctl::Vector<Real> &p2c);
+
+    void form_eval_expansions(const sctl::Vector<int> &boxes, const sctl::Vector<std::complex<Real>> &wpwshift,
+                              Real boxsize, const ndview<const std::complex<Real>, 2> &pw2poly_view,
+                              const sctl::Vector<Real> &p2c);
 
     void evaluate_direct_interactions(const Real *r_src_t, const Real *r_trg_t);
 
@@ -212,26 +214,6 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
             return ndview<const Real, DIM + 1>(proxy_ptr_downward(i_box), n_order, n_order, n_order, params.n_mfm);
         else
             static_assert(dmk::util::always_false<Real>, "Invalid DIM supplied");
-    }
-
-    std::complex<Real> *pw_in_ptr(int i_box) { return &pw_in[pw_in_offsets[i_box]]; }
-    const std::complex<Real> *pw_in_ptr(int i_box) const { return &pw_in[pw_in_offsets[i_box]]; }
-    ndview<std::complex<Real>, DIM + 1> pw_in_view(int i_box) {
-        if constexpr (DIM == 2)
-            return ndview<std::complex<Real>, DIM + 1>(pw_in_ptr(i_box), n_pw, (n_pw + 1) / 2, params.n_mfm);
-        else if constexpr (DIM == 3)
-            return ndview<std::complex<Real>, DIM + 1>(pw_in_ptr(i_box), n_pw, n_pw, (n_pw + 1) / 2, params.n_mfm);
-        else
-            static_assert(dmk::util::always_false<std::complex<Real>>, "Invalid DIM supplied");
-    }
-    ndview<const std::complex<Real>, DIM + 1> pw_in_view(int i_box) const {
-        if constexpr (DIM == 2)
-            return ndview<const std::complex<Real>, DIM + 1>(pw_in_ptr(i_box), n_pw, (n_pw + 1) / 2, params.n_mfm);
-        else if constexpr (DIM == 3)
-            return ndview<const std::complex<Real>, DIM + 1>(pw_in_ptr(i_box), n_pw, n_pw, (n_pw + 1) / 2,
-                                                             params.n_mfm);
-        else
-            static_assert(dmk::util::always_false<std::complex<Real>>, "Invalid DIM supplied");
     }
 
     std::complex<Real> *pw_out_ptr(int i_box) { return &pw_out[pw_out_offsets[i_box]]; }
