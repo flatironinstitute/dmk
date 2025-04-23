@@ -61,6 +61,7 @@ void direct_eval(dmk_ikernel ikernel, const ndview<const Real, 2> &r_src,
     const int nsrc = r_src.extent(1);
     const int ntrg = r_trg[0].size();
     const Real thresh2 = 1E-30; // FIXME
+    const Real *trg_ptrs[3] = {r_trg[0].data(), r_trg[1].data(), DIM == 3 ? r_trg[2].data() : nullptr};
 
     switch (ikernel) {
     case dmk_ikernel::DMK_YUKAWA:
@@ -69,20 +70,20 @@ void direct_eval(dmk_ikernel ikernel, const ndview<const Real, 2> &r_src,
         if constexpr (DIM == 2)
             return log_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
                 &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data_handle(), &nsrc, charges.data_handle(),
-                r_trg[0].data(), r_trg[1].data(), r_trg[2].data(), &ntrg, u.data_handle(), &thresh2);
+                trg_ptrs[0], trg_ptrs[1], trg_ptrs[2], &ntrg, u.data_handle(), &thresh2);
         if constexpr (DIM == 3)
             return l3d_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
                 &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data_handle(), &nsrc, charges.data_handle(),
-                r_trg[0].data(), r_trg[1].data(), r_trg[2].data(), &ntrg, u.data_handle(), &thresh2);
+                trg_ptrs[0], trg_ptrs[1], trg_ptrs[2], &ntrg, u.data_handle(), &thresh2);
     case dmk_ikernel::DMK_SQRT_LAPLACE:
         if constexpr (DIM == 2)
             return l3d_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
                 &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data_handle(), &nsrc, charges.data_handle(),
-                r_trg[0].data(), r_trg[1].data(), r_trg[2].data(), &ntrg, u.data_handle(), &thresh2);
+                trg_ptrs[0], trg_ptrs[1], trg_ptrs[2], &ntrg, u.data_handle(), &thresh2);
         if constexpr (DIM == 3)
             return sl3d_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
                 &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data_handle(), &nsrc, charges.data_handle(),
-                r_trg[0].data(), r_trg[1].data(), r_trg[2].data(), &ntrg, u.data_handle(), &thresh2);
+                trg_ptrs[0], trg_ptrs[1], trg_ptrs[2], &ntrg, u.data_handle(), &thresh2);
     }
 }
 
