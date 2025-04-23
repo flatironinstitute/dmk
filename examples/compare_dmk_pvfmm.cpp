@@ -214,7 +214,9 @@ void run_comparison(pdmk_params params, int n_src, int m, int n_per_leaf_pvfmm, 
     std::vector<Real> r_dl, charges_dl;
     auto *pvfmm_tree = pvfmm::PtFMM_CreateTree(r_src, charges, r_dl, charges_dl, r_src, MPI_COMM_WORLD,
                                                n_per_leaf_pvfmm, pvfmm::FreeSpace);
-    pvfmm::PtFMM<Real> matrices;
+
+    pvfmm::mem::MemoryManager mem_mgr(10000000);
+    pvfmm::PtFMM<Real> matrices(&mem_mgr);
     matrices.Initialize(m, MPI_COMM_WORLD, &kernel_fn);
     pvfmm_tree->SetupFMM(&matrices);
     std::vector<Real> pot_src_pvfmm(n_src_per_rank * nd);

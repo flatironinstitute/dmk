@@ -479,6 +479,7 @@ void DMKPtTree<T, DIM>::init_planewave_data() {
     const std::size_t n_pw_per_box = n_pw_modes * params.n_mfm;
 
     pw_out_offsets.ReInit(n_boxes());
+    pw_out_offsets[0] = 0;
     int n_pw_boxes_out = 1;
     int n_pw_boxes_in = 1;
     for (int i_box = 1; i_box < n_boxes(); ++i_box) {
@@ -715,6 +716,8 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
     for (int neighb = 0; neighb < n_boxes(); ++neighb) {
         const int n_src_neighb = src_counts_local[neighb];
         const int n_trg_neighb = trg_counts_local[neighb];
+        if (!n_src_neighb && !n_trg_neighb)
+            continue;
 
         for (auto box : direct_neighbs_flipped(neighb)) {
             const int i_level = node_mid[box].Depth();
@@ -741,7 +744,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
             }
         }
 
-        if (node_attr[neighb].Ghost)
+        if (node_attr[neighb].Ghost || !n_src_neighb)
             continue;
         // Correct for self-evaluations
         auto pot = pot_src_view(neighb);
