@@ -422,7 +422,7 @@ TEST_CASE("[DMK] charge2proxycharge") {
 
     for (int n_dim : {2, 3}) {
         CAPTURE(n_dim);
-        for (int n_order : {10, 16, 24}) {
+        for (int n_order : {9, 18, 28, 38}) {
             CAPTURE(n_order);
             using dmk::util::int_pow;
             Eigen::VectorX<double> r_src(n_src * n_dim);
