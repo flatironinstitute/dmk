@@ -22,6 +22,7 @@ CFLAGS= -fPIC -O3 -march=native -funroll-loops -std=c99
 CXXFLAGS= -std=c++17 -DSCTL_PROFILE=-1 -fPIC -O3 -march=native -funroll-loops
 #-fsanitize=address -g -rdynamic
 
+FAST_KER = ON
 ifeq ($(FAST_KER),ON)
   CXXFLAGS= -std=c++17 -DSCTL_PROFILE=-1 -DSCTL_HAVE_SVML -fPIC -O3 -march=native -funroll-loops
 # gcc flags
@@ -158,7 +159,7 @@ PDMKOBJS = $(PDMK)/lndiv.o \
 	$(PDMK)/kernel_FT.o \
 	$(PDMK)/stokes_kernel_FT.o \
 	$(PDMK)/pdmk_pwrouts.o \
-	$(PDMK)/pdmk3.o 
+	$(PDMK)/pdmk4.o 
 
 # Test objects
 OBJS = $(COMOBJS) $(PDMKOBJS)

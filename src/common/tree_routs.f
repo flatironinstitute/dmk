@@ -826,8 +826,185 @@ c
 c
 c      
 c      
+c
+c
+c      
+c      
 c----------------------------------------------------------------
 c      
+c      
+      subroutine bdmk_compute_all_modified_list1(ndim,
+     1    nboxes,nlevels,ltree,itree,iptr,centers,boxsize,iperiod,
+     2    mnlist1,nlist1,list1)
+c
+c
+c     This subroutine computes the modified list1 of a given tree
+c     structure for the box DMK code.
+c
+c     INPUT arguments
+c     ndim        in: integer
+c                 dimension of the space
+c
+c     nlevels     in: integer
+c                 Number of levels
+c
+c     nboxes      in: integer
+c                 Total number of boxes
+c
+c     itree       in: integer(ltree)
+c                   array containing tree info - see start of file
+c                   for documentation
+c     ltree       in: integer
+c                   length of itree array
+c 
+c     iptr        in: integer(8)
+c                   pointer for various arrays in itree
+c
+c     centers     in: real *8(ndim,nboxes)
+c                 xy coordinates of centers of boxes
+c   
+c     boxsize     in: real *8(0:nlevels)
+c                 Array of boxsizes
+c   
+c     iperiod     in: integer
+c                 0: free space; 1: periodic
+c 
+c     mnlist1     in: integer
+c                 max number of boxes in list 1 of a box
+c
+c--------------------------------------------------------------
+c     OUTPUT arguments:
+c     nlist1      out: integer(nboxes)
+c                 nlist1(i) is the number of boxes in list 1 
+c                 of box i
+c
+c     list1       out: integer(mnlist1,nboxes)
+c                 list1(j,i) is the box id of the jth box in 
+c                 list1 of box i.
+c                  
+c      
+c---------------------------------------------------------------
+      implicit real *8 (a-h,o-z)
+      integer nlevels,nboxes,ndim
+      integer iptr(8),ltree
+      integer iperiod,itree(ltree)
+      real *8 boxsize(0:nlevels)
+      real *8 centers(ndim,nboxes)
+      integer mnlist1
+      integer nlist1(nboxes), list1(mnlist1,nboxes)
+
+c     Temp variables
+      integer ilev,ibox,jbox,dad,mnbors,mc,ichild,jchild
+      integer i,ifirstbox,ilastbox,iflist1,k
+      real *8 distest,dis,bs0,dp1
+
+      bs0=boxsize(0)
+
+      mnbors=3**ndim
+      mc=2**ndim
+      
+C$OMP PARALLEL DO DEFAULT(SHARED) PRIVATE(i)
+      do i=1,nboxes
+        nlist1(i) = 0
+      enddo
+C$OMP END PARALLEL DO      
+
+
+c     Setting parameters for level = 0
+      if(itree(iptr(4)).eq.0) then
+         nlist1(1) = 1 
+         list1(1,1) = 1
+         return
+      else
+         nlist1(1) = 0
+      endif
+
+      do ilev = 0,nlevels
+         ifirstbox = itree(2*ilev+1)
+         ilastbox = itree(2*ilev+2)
+C$OMP PARALLEL DO DEFAULT(SHARED)
+C$OMP$PRIVATE(i,j,k,ibox,jbox,kbox,ichild,jchild)
+C$OMP$PRIVATE(iflist1,dp1,dad,dis,distest)
+         do ibox = ifirstbox,ilastbox
+            dad = itree(iptr(3)+ibox-1)
+            ichild = itree(iptr(4)+ibox-1)
+            if (ichild.eq.0) then
+               do i=1,itree(iptr(6)+ibox-1)
+                  jbox = itree(iptr(7)+mnbors*(ibox-1)+i-1)
+c                 boxes in list 1 at the same level
+                  if (itree(iptr(4)+jbox-1).eq.0) then
+                     nlist1(ibox) = nlist1(ibox) + 1
+                     list1(nlist1(ibox),ibox) = jbox
+                  else
+c
+cc                     boxes in list1 at level ilev+1
+c
+                     distest = 1.05d0*(boxsize(ilev)+boxsize(ilev+1))
+     1                   /2.0d0
+                     do j=1,mc
+                        kbox = itree(iptr(5)+mc*(jbox-1)+j-1)
+                        if(itree(iptr(4)+kbox-1).eq.0) then
+                           iflist1=1
+                           do k=1,ndim
+                              dis = dabs(centers(k,kbox)
+     1                            -centers(k,ibox))
+                              if (iperiod .eq. 1) then
+                                 dp1 = bs0-dis
+                                 if (dp1.lt.dis) dis=dp1
+                              endif
+                                 
+                              if (dis.ge.distest) then
+                                 iflist1=0
+                                 exit
+                              endif
+                           enddo
+                           if(iflist1.eq.1) then
+                              nlist1(ibox) = nlist1(ibox)+1
+                              list1(nlist1(ibox),ibox) = kbox
+                           endif
+                        endif
+                     enddo
+                  endif
+               enddo
+
+               
+cc             compute list1 at level ilev-1
+               do i=1,itree(iptr(6)+dad-1)
+                  jbox = itree(iptr(7)+mnbors*(dad-1)+i-1)
+                  jchild = itree(iptr(4)+jbox-1)
+                  if(jchild.eq.0) then
+                     distest = 1.05d0*(boxsize(ilev)+boxsize(ilev-1))/
+     1                   2.0d0
+                     iflist1=1
+                     do k=1,ndim
+                        dis = dabs(centers(k,jbox)-centers(k,ibox))
+                        if (iperiod .eq. 1) then
+                           dp1 = bs0-dis
+                           if (dp1.lt.dis) dis=dp1
+                        endif
+                        if (dis.ge.distest) then
+                           iflist1=0
+                           exit
+                        endif
+                     enddo
+                     if(iflist1.eq.1) then
+                        nlist1(ibox) = nlist1(ibox)+1
+                        list1(nlist1(ibox),ibox) = jbox
+                     endif
+                  endif
+               enddo
+            endif
+         enddo
+C$OMP END PARALLEL DO         
+      enddo
+
+      return
+      end
+c      
+c
+c
+c      
+c----------------------------------------------------------------
 c      
       subroutine pdmk_compute_modified_list1(ndim,
      1    nboxes,nlevels,ltree,itree,iptr,centers,boxsize,iperiod,
@@ -1161,7 +1338,7 @@ c
 c
 c
 c     Determine whether a box needs plane wave expansions
-c     in the box fgt.
+c     in the box dmk.
 c
 c     1. all boxes below npwlevel need plane wave expansions
 c     2. at the cutoff level, i.e., npwlevel, a box needs
@@ -1253,7 +1430,198 @@ c                     if (nchild .gt. 0 .and. jlev.eq.ilev) then
 
       return
       end
+c
 c      
+c
+c
+c      
+c----------------------------------------------------------------
+c      
+      subroutine bdmk_find_all_pwexp_boxes(ndim,nboxes,
+     1    nlevels,ltree,itree,iptr,iper,ifpwexp)
+c
+c
+c     Determine whether a box needs plane wave expansions
+c     in the box dmk.
+c
+c     1. all boxes below npwlevel need plane wave expansions
+c     2. at the cutoff level, i.e., npwlevel, a box needs
+c     plane wave expansion if one of its colleagues is a nonleaf 
+c     box. 
+c                  
+c     Thus, a leaf box at the cutoff level may or may not 
+c     have plane wave expansion.
+c     But if it has plane wave expansion, then the self interaction
+c     is handled by the plane wave expansion instead of 
+c     direct evaluation. 
+c      
+c      
+c     INPUT arguments
+c     nboxes      in: integer
+c                 Total number of boxes
+c
+c     nlevels     in: integer
+c                 Number of levels
+c
+c     itree       in: integer(ltree)
+c                   array containing tree info - see start of file
+c                   for documentation
+c     ltree       in: integer
+c                   length of itree array
+c 
+c     iptr        in: integer(8)
+c                   pointer for various arrays in itree
+c
+c     iper        in: integer
+c                 0: free space; 1: periodic
+c 
+c--------------------------------------------------------------
+c     OUTPUT arguments:
+c     ifpwexp     out: integer(nboxes)
+c                 ifpwexp(ibox)=1, ibox needs plane wave expansion
+c                 ifpwexp(ibox)=0, ibox does not need pwexp
+c      
+c---------------------------------------------------------------
+      implicit real *8 (a-h,o-z)
+      integer nlevels,npwlevel,nboxes,ndim
+      integer iptr(8),ltree
+      integer iper
+      integer itree(ltree)
+      integer ifpwexp(nboxes)
+
+      mnbors=3**ndim
+
+      ifpwexp(1)=1
+      do i=2,nboxes
+         ifpwexp(i)=0
+      enddo
+
+c     At the cutoff level, a box will have plane wave expansion if 1. it's a nonleaf
+c     box; or 2. it's a leaf box but has a nonleaf colleague.
+c     Note that we also use plane wave expansion to compute the self interaction of 
+c     this box as well
+      do ilev=1,nlevels
+         do 1000 ibox=itree(2*ilev+1),itree(2*ilev+2)
+            nchild = itree(iptr(4)+ibox-1)
+            if (nchild .eq. 0) then
+               ncoll = itree(iptr(6)+ibox-1)
+               do j=1,ncoll
+                  jbox = itree(iptr(7) + (ibox-1)*mnbors+j-1)
+                  nchild = itree(iptr(4)+jbox-1)
+c                     jlev = itree(iptr(2)+jbox-1)
+c                     if (nchild .gt. 0 .and. jlev.eq.ilev) then
+                  if (nchild .gt. 0) then
+                     ifpwexp(ibox)=1
+                     exit
+                  endif
+               enddo
+            else
+               ifpwexp(ibox)=1
+            endif
+ 1000    continue
+      enddo
+
+      return
+      end
+c            
+c
+c
+c
+c
+c      
+c
+c
+c      
+c----------------------------------------------------------------
+c      
+      subroutine bdmk_find_all_pwexp_boxes3(ndim,nboxes,
+     1    nlevels,ltree,itree,iptr,iper,
+     2    ifpwexpform,ifpwexpeval)
+c
+c
+c     Determine whether a box needs plane wave expansions
+c     in the box dmk.
+c
+c     1. all boxes below npwlevel need plane wave expansions
+c     2. at the cutoff level, i.e., npwlevel, a box needs
+c     plane wave expansion if one of its colleagues is a nonleaf 
+c     box. 
+c                  
+c     Thus, a leaf box at the cutoff level may or may not 
+c     have plane wave expansion.
+c     But if it has plane wave expansion, then the self interaction
+c     is handled by the plane wave expansion instead of 
+c     direct evaluation. 
+c      
+c      
+c     INPUT arguments
+c     nboxes      in: integer
+c                 Total number of boxes
+c
+c     nlevels     in: integer
+c                 Number of levels
+c
+c     itree       in: integer(ltree)
+c                   array containing tree info - see start of file
+c                   for documentation
+c     ltree       in: integer
+c                   length of itree array
+c 
+c     iptr        in: integer(8)
+c                   pointer for various arrays in itree
+c
+c     iper        in: integer
+c                 0: free space; 1: periodic
+c 
+c--------------------------------------------------------------
+c     OUTPUT arguments:
+c     ifpwexp     out: integer(nboxes)
+c                 ifpwexp(ibox)=1, ibox needs plane wave expansion
+c                 ifpwexp(ibox)=0, ibox does not need pwexp
+c      
+c---------------------------------------------------------------
+      implicit real *8 (a-h,o-z)
+      integer nlevels,npwlevel,nboxes,ndim
+      integer iptr(8),ltree
+      integer iper
+      integer itree(ltree)
+      integer ifpwexpform(nboxes),ifpwexpeval(nboxes)
+
+      mnbors=3**ndim
+
+      do i=1,nboxes
+         ifpwexpform(i)=0
+      enddo
+      
+      do i=1,nboxes
+         ifpwexpeval(i)=0
+      enddo
+
+      do ilev=0,nlevels
+         do ibox=itree(2*ilev+1),itree(2*ilev+2)
+            nchild = itree(iptr(4)+ibox-1)
+            if (nchild .gt. 0) ifpwexpform(ibox)=1
+         enddo
+      enddo
+
+      do ilev=0,nlevels
+         do ibox=itree(2*ilev+1),itree(2*ilev+2)         
+            ncoll = itree(iptr(6)+ibox-1)
+            do j=1,ncoll
+               jbox = itree(iptr(7) + (ibox-1)*mnbors+j-1)
+               if (ifpwexpform(jbox).eq.1) then
+                  ifpwexpeval(ibox)=1
+                  goto 1000
+               endif
+            enddo
+               
+ 1000       continue
+         enddo
+      enddo
+
+      return
+      end
+c            
 c
 c
 c
@@ -1515,8 +1883,6 @@ c             If both of them are leaf boxes, their
 c             interaction will be computed directly. Self interaction
 c             is always directly copied from mp exp to the loc exp and
 c             thus is not in the pw list.
-c                    nlistpw(ibox)=nlistpw(ibox)+1
-c                    listpw(nlistpw(ibox),ibox) = jbox
 
 c     jbox is the target box, ibox is the source box
 c     switched for openmp efficiency reasons
@@ -1530,6 +1896,11 @@ c     end of ilev do loop
 
       return
       end
+c
+c
+c
+c
+c
 c
 c
 c
@@ -1598,11 +1969,83 @@ c             thus is not in the pw list.
               endif
            enddo
         enddo
-c     end of ilev do loop
       enddo
 
       return
       end
+c
+c
+c
+c
+c
+c
+c
+c
+c
+      subroutine bdmk_compute_all_listpw(ndim,nboxes,nlevels,
+     1    ltree,itree,iptr,centers,boxsize,laddr,ifpwexp,
+     2    mnlistpw,nlistpw,listpw)
+c     this subroutine returns lists of pw interaction boxes for point DMK
+c
+c     input parameters:
+c
+c     nlevels = number of levels
+c     nboxes = total number of boxes in the tree
+c     itree - laddr: tree stuff
+c
+c     mnlistpw = maximum number of PW interaction boxes at the cutoff level
+c      
+c     output parameters:
+c
+c     nlistpw (nboxes) = contains the number of boxes for the PW interaction
+c                            for each box
+c     listpw (mnlistpw,nboxes) = contains the box ID for the PW interaction
+c                            for each box
+c      
+      implicit real *8 (a-h,o-z)
+      integer nlevels,nboxes
+      integer iptr(8),ltree,ifpwexp(nboxes)
+      integer itree(ltree),laddr(2,0:nlevels)
+      real *8 centers(ndim,nboxes),boxsize(0:nlevels)
+      integer mnlistpw
+      integer nlistpw(nboxes), listpw(mnlistpw,nboxes)
+
+      integer ibox
+
+      mnbors=3**ndim
+      
+      do ibox=1,nboxes
+         nlistpw(ibox)=0
+      enddo
+
+      do ilev=0,nlevels
+C$OMP PARALLEL DO DEFAULT(SHARED)
+C$OMP$PRIVATE(ibox,ncoll,i,jbox)
+        do ibox = laddr(1,ilev),laddr(2,ilev)
+           ncoll = itree(iptr(6)+ibox-1)
+           do i=1,ncoll
+              jbox = itree(iptr(7) + (ibox-1)*mnbors+i-1)
+              if (jbox.ne.ibox .and. 
+     1            (itree(iptr(4)+jbox-1).gt.0
+     2            .or. itree(iptr(4)+ibox-1).gt.0)) then
+c             The pw list of ibox at the cutoff level contains its
+c             nonleaf colleagues jbox at the cutoff level.
+c             If both of them are leaf boxes, their
+c             interaction will be computed directly. Self interaction
+c             is always directly copied from mp exp to the loc exp and
+c             thus is not in the pw list.
+                 nlistpw(ibox)=nlistpw(ibox)+1
+                 listpw(nlistpw(ibox),ibox) = jbox
+              endif
+           enddo
+        enddo
+C$OMP END PARALLEL DO         
+      enddo
+
+      return
+      end
+c
+c
 c
 c
 c
@@ -1830,7 +2273,7 @@ c        squared distance separating list1 and list2 boxes
          distest2 = 1.05d0*boxsize(ilev)**2*isep
          
 C$OMP PARALLEL DO DEFAULT(SHARED)
-C$OMP$PRIVATE(ibox,dad,i,jbox,j,kbox,dis,distest,k)
+C$OMP$PRIVATE(ibox,dad,i,jbox,jchild,jboxchild,j,d2,dis,k)
          do ibox = itree(2*ilev+1),itree(2*ilev+2)
 c           ibox is the source box
             dad = itree(iptr(3)+ibox-1)
@@ -2308,6 +2751,3 @@ c
 c
 c      
 c      
-c
-c
-c

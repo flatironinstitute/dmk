@@ -28,7 +28,7 @@ c
 c     nd - number of different densities
       nd=1
 c     dim - dimension of the problem
-      dim=2
+      dim=3
 c     ikernel - 0: Yukawa kernel; 1: Laplace kernel; 2: square root Laplace kernel
       ikernel = 1
 c     rlambda - the parameter in the Yukawa kernel or the exponent of the
@@ -43,9 +43,10 @@ c     ntarg: number of extra targets
 c     nsrc: number of source points
 
 c     whether to have monopole sources -> 1: yes; 0: no
-      ifcharge=0
+      ifcharge=1
 c     whether to have dipole sources -> 1: yes; 0: no
-      ifdipole=1
+c     only works for ikernel=1 dim=2 for now
+      ifdipole=0
 c     evaluation flag for sources -> 1: pot; 2: pot+grad; 3: pot+grad+hess
       ifpgh=1
 c     evaluation flag for targets -> 1: pot; 2: pot+grad; 3: pot+grad+hess
@@ -58,7 +59,7 @@ c
       iw = 70
       iw2 = 80
 
-      ifuniform=1
+      ifuniform=0
 
       if (ikernel.eq.0.and.dim.eq.2.and.ifuniform.eq.1) then
          open(iw, file='y2dptsu.txt', position='append')
