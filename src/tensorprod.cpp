@@ -42,19 +42,18 @@ void transform_2d(int add_flag, const ndview<const T, 2> &fin_, const ndview<con
 
 template <typename T>
 void transform_3d(int add_flag, const ndview<const T, 3> &fin, const ndview<const T, 2> &umat_,
-                  const ndview<T, 3> &fout) {
+                  const ndview<T, 3> &fout, sctl::Vector<T> &workspace) {
     const int nin = fin.extent(0);
     const int nout = fout.extent(0);
     const int nin2 = nin * nin;
     const int noutnin = nout * nin;
     const int nout2 = nout * nout;
 
-    sctl::Vector<T> ff_(nin * nin * nout);
-    sctl::Vector<T> fft_(nin * nout * nin);
-    sctl::Vector<T> ff2(nout * nout * nin);
     dmk::ndview<const T, 2> umat(umat_.data_handle(), nout * nin, 3);
-    dmk::ndview<T, 3> ff(&ff_[0], nout, nout, nout);
-    dmk::ndview<T, 3> fft(&fft_[0], nout, nout, nin);
+    workspace.ReInit(2 * nin * nin * nout + nout * nout * nin);
+    dmk::ndview<T, 3> ff(&workspace[0], nin, nin, nout);
+    dmk::ndview<T, 3> fft(ff.data_handle() + ff.size(), nout, nout, nin);
+    dmk::ndview<T, 3> ff2(fft.data_handle() + fft.size(), nout, nout, nin);
 
     // transform in z
     dmk::gemm::gemm('n', 't', nin2, nout, nin, T{1.0}, fin.data_handle(), nin2, umat.data_handle() + 2 * nout * nin,
@@ -67,10 +66,10 @@ void transform_3d(int add_flag, const ndview<const T, 3> &fin, const ndview<cons
 
     // transform in y
     dmk::gemm::gemm('n', 'n', nout, noutnin, nin, T{1.0}, umat.data_handle() + nout * nin, nout, fft.data_handle(), nin,
-                    T{0.0}, &ff2[0], nout);
+                    T{0.0}, ff2.data_handle(), nout);
 
     // transform in x
-    dmk::gemm::gemm('n', 't', nout, nout2, nin, T{1.0}, umat.data_handle(), nout, &ff2[0], nout2, T(add_flag),
+    dmk::gemm::gemm('n', 't', nout, nout2, nin, T{1.0}, umat.data_handle(), nout, ff2.data_handle(), nout2, T(add_flag),
                     fout.data_handle(), nout);
 
     auto flops_per_mm = [](int m, int n, int k) { return 2 * m * n * k; };
@@ -81,7 +80,7 @@ void transform_3d(int add_flag, const ndview<const T, 3> &fin, const ndview<cons
 
 template <typename T, int DIM>
 void transform(int nvec, int add_flag, const ndview<const T, DIM + 1> &fin, const ndview<const T, 2> &umat,
-               const ndview<T, DIM + 1> &fout) {
+               const ndview<T, DIM + 1> &fout, sctl::Vector<T> &workspace) {
     // dmk::util::PAPICounter papi_counter;
     const int nin = fin.extent(0);
     const int nout = fout.extent(0);
@@ -108,22 +107,28 @@ void transform(int nvec, int add_flag, const ndview<const T, DIM + 1> &fin, cons
             dmk::ndview<const T, 3> fin_view(fin.data_handle() + i * block_in, nin, nin, nin);
             dmk::ndview<T, 3> fout_view(fout.data_handle() + i * block_out, nout, nout, nout);
 
-            transform_3d(add_flag, fin_view, umat, fout_view);
+            transform_3d(add_flag, fin_view, umat, fout_view, workspace);
         }
         return;
     }
 }
 
 template void transform<float, 1>(int nvec, int add_flag, const dmk::ndview<const float, 2> &fin,
-                                  const dmk::ndview<const float, 2> &umat, const ndview<float, 2> &fout);
+                                  const dmk::ndview<const float, 2> &umat, const ndview<float, 2> &fout,
+                                  sctl::Vector<float> &workspace);
 template void transform<float, 2>(int nvec, int add_flag, const dmk::ndview<const float, 3> &fin,
-                                  const dmk::ndview<const float, 2> &umat, const ndview<float, 3> &fout);
+                                  const dmk::ndview<const float, 2> &umat, const ndview<float, 3> &fout,
+                                  sctl::Vector<float> &workspace);
 template void transform<float, 3>(int nvec, int add_flag, const dmk::ndview<const float, 4> &fin,
-                                  const dmk::ndview<const float, 2> &umat, const ndview<float, 4> &fout);
+                                  const dmk::ndview<const float, 2> &umat, const ndview<float, 4> &fout,
+                                  sctl::Vector<float> &workspace);
 template void transform<double, 1>(int nvec, int add_flag, const dmk::ndview<const double, 2> &fin,
-                                   const dmk::ndview<const double, 2> &umat, const ndview<double, 2> &fout);
+                                   const dmk::ndview<const double, 2> &umat, const ndview<double, 2> &fout,
+                                   sctl::Vector<double> &workspace);
 template void transform<double, 2>(int nvec, int add_flag, const dmk::ndview<const double, 3> &fin,
-                                   const dmk::ndview<const double, 2> &umat, const ndview<double, 3> &fout);
+                                   const dmk::ndview<const double, 2> &umat, const ndview<double, 3> &fout,
+                                   sctl::Vector<double> &workspace);
 template void transform<double, 3>(int nvec, int add_flag, const dmk::ndview<const double, 4> &fin,
-                                   const dmk::ndview<const double, 2> &umat, const ndview<double, 4> &fout);
+                                   const dmk::ndview<const double, 2> &umat, const ndview<double, 4> &fout,
+                                   sctl::Vector<double> &workspace);
 } // namespace dmk::tensorprod

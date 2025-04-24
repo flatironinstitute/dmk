@@ -417,7 +417,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
                         if (form_pw_expansion[child_box]) {
                             ndview<const T, 2> c2p_view(&c2p[i_child * DIM * n_order * n_order], n_order, DIM);
                             tensorprod::transform<T, DIM>(params.n_mfm, true, proxy_view_upward(child_box), c2p_view,
-                                                          proxy_view_upward(parent_box));
+                                                          proxy_view_upward(parent_box), workspace);
                         } else if (!node_attr[child_box].Ghost) {
                             proxy::charge2proxycharge<T, DIM>(r_src_view(child_box), charge_view(child_box),
                                                               center_view(parent_box), 2.0 / boxsize[i_level],
@@ -613,7 +613,7 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
                 } else if (eval_pw_expansion[child]) {
                     ndview<const Real, 2> p2c_view(&p2c[i_child * DIM * n_order * n_order], n_order, DIM);
                     dmk::tensorprod::transform<Real, DIM>(nd, true, proxy_view_downward(box), p2c_view,
-                                                          proxy_view_downward(child));
+                                                          proxy_view_downward(child), workspace);
                 }
             }
         }
