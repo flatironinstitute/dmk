@@ -6,6 +6,8 @@
 #include <dmk/gemm.hpp>
 #include <dmk/planewave.hpp>
 #include <dmk/types.hpp>
+#include <dmk/util.hpp>
+
 #include <limits>
 #include <sctl.hpp>
 #include <stdexcept>
@@ -239,17 +241,14 @@ void eval_targets_2d(const ndview<const T, 3> &coeffs, const ndview<const T, 2> 
         dmk::chebyshev::calc_polynomial(n_order, y, &poly_y(0, i));
     }
 
+    auto opt_dot = dmk::util::get_opt_dot<T>(n_order);
     for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
         // Transform in y
         gemm::gemm('n', 'n', n_order, n_trg, n_order, T{1.0}, &coeffs(0, 0, i_dim), n_order, poly_y.data_handle(),
                    n_order, T{0.0}, tmp.data_handle(), n_order);
 
-        for (int k = 0; k < n_trg; ++k) {
-            T pp{0.0};
-            for (int i = 0; i < n_order; ++i)
-                pp += tmp(i, k) * poly_x(i, k);
-            pot(i_dim, k) += pp;
-        }
+        for (int k = 0; k < n_trg; ++k)
+            pot(i_dim, k) += opt_dot(&tmp(0, k), &poly_x(0, k));
     }
 }
 
@@ -261,13 +260,12 @@ void eval_targets_3d(const ndview<const T, 4> &coeffs, const ndview<const T, 2> 
     const int n_charge_dim = coeffs.extent(3);
     const int n_trg = r_trg.extent(1);
 
-    workspace.ReInit(4 * n_order * n_trg + n_order * n_order * n_trg);
+    workspace.ReInit(3 * n_order * n_trg + n_order * n_order * n_trg);
     ndview<T, 2> poly_views[] = {ndview<T, 2>(&workspace[0], n_order, n_trg),
                                  ndview<T, 2>(&workspace[n_order * n_trg], n_order, n_trg),
                                  ndview<T, 2>(&workspace[2 * n_order * n_trg], n_order, n_trg)};
 
     ndview<T, 3> tmp(&workspace[3 * n_order * n_trg], n_order, n_order, n_trg);
-    ndview<T, 2> tmp2(&workspace[3 * n_order * n_trg + n_order * n_order * n_trg], n_order, n_trg);
 
     for (int i_dim = 0; i_dim < n_dim; ++i_dim) {
         for (int i = 0; i < n_trg; ++i) {
@@ -276,30 +274,15 @@ void eval_targets_3d(const ndview<const T, 4> &coeffs, const ndview<const T, 2> 
         }
     }
 
-    auto dot_product = [](int dim, T * a, T * b) {
-        using vector_map = Eigen::Map<Eigen::VectorX<T>>;
-        return vector_map(a, dim).dot(vector_map(b, dim));
-    };
-
+    auto opt_dot = dmk::util::get_opt_dot<T>(n_order);
     for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
         // Transform in z
         gemm::gemm('n', 'n', n_order * n_order, n_trg, n_order, T{1.0}, &coeffs(0, 0, 0, i_dim), n_order * n_order,
                    poly_views[2].data_handle(), n_order, T{0.0}, tmp.data_handle(), n_order * n_order);
 
-        for (int k = 0; k < n_trg; ++k) {
-            for (int i = 0; i < n_order; ++i) {
-                T pp{0.0};
-                for (int j = 0; j < n_order; ++j)
-                    pp += tmp(j, i, k) * poly_views[0](j, k);
-                tmp2(i, k) = pp;
-            }
-        }
-        for (int k = 0; k < n_trg; ++k) {
-            T pp{0.0};
+        for (int k = 0; k < n_trg; ++k)
             for (int i = 0; i < n_order; ++i)
-                pp += tmp2(i, k) * poly_views[1](i, k);
-            pot(i_dim, k) += pp;
-        }
+                pot(i_dim, k) += poly_views[1](i, k) * opt_dot(&tmp(0, i, k), &poly_views[0](0, k));
     }
 
     const int n_flops_poly = (3 * n_order + 2) * n_trg;

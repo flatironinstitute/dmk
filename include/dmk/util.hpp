@@ -26,6 +26,30 @@ template <typename Real>
 void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const Real, 1> &fhat,
                                          const ndview<Real, 1> &pswfft);
 
+template <typename Real, int ORDER>
+inline Real dot_product(Real *a, Real *b) {
+    // LOL I KNOW BUT IT'S FASTER
+    Real res{0.0};
+    for (int i = 0; i < ORDER; ++i)
+        res += a[i] * b[i];
+
+    return res;
+}
+
+template <typename T>
+inline auto get_opt_dot(int n_order) {
+    if (n_order == 9)
+        return dmk::util::dot_product<T, 9>;
+    else if (n_order == 18)
+        return dmk::util::dot_product<T, 18>;
+    else if (n_order == 28)
+        return dmk::util::dot_product<T, 28>;
+    else if (n_order == 38)
+        return dmk::util::dot_product<T, 38>;
+    else
+        throw std::runtime_error("Invalid order " + std::to_string(n_order) + " provided");
+}
+
 class PAPICounter {
 #ifdef DMK_INSTRUMENT
   public:
