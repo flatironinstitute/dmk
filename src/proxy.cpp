@@ -145,13 +145,14 @@ void charge2proxycharge_2d(const ndview<const T, 2> &r_src_, const ndview<const 
     CMatrixMap r_src(r_src_.data_handle(), n_dim, n_src);
     CMatrixMap charge(charge_.data_handle(), n_charge_dim, n_src);
 
+    auto calc_polynomial = dmk::chebyshev::get_polynomial_calculator<T>(order);
     for (int i_src = 0; i_src < n_src; ++i_src)
-        dmk::chebyshev::calc_polynomial(order, scale_factor * (r_src(0, i_src) - center(0)), &poly_x(0, i_src));
+        calc_polynomial(scale_factor * (r_src(0, i_src) - center(0)), &poly_x(0, i_src));
 
     for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
         for (int i_src = 0; i_src < n_src; ++i_src) {
             // we recalculate the polynomial rather than caching it because it's so cheap and more cache friendly
-            dmk::chebyshev::calc_polynomial(order, scale_factor * (r_src(1, i_src) - center(1)), poly_y.data());
+            calc_polynomial(scale_factor * (r_src(1, i_src) - center(1)), poly_y.data());
             for (int i = 0; i < order; ++i)
                 dy(i, i_src) = charge(i_dim, i_src) * poly_y[i];
         }
@@ -182,10 +183,11 @@ void charge2proxycharge_3d(const ndview<const T, 2> &r_src_, const ndview<const 
     CMatrixMap r_src(r_src_.data_handle(), n_dim, n_src);
     CMatrixMap charge(charge_.data_handle(), n_charge_dim, n_src);
 
+    auto calc_polynomial = dmk::chebyshev::get_polynomial_calculator<T>(order);
     for (int i_src = 0; i_src < n_src; ++i_src) {
-        dmk::chebyshev::calc_polynomial(order, scale_factor * (r_src(0, i_src) - center(0)), &poly_x(0, i_src));
-        dmk::chebyshev::calc_polynomial(order, scale_factor * (r_src(1, i_src) - center(1)), &poly_y(0, i_src));
-        dmk::chebyshev::calc_polynomial(order, scale_factor * (r_src(2, i_src) - center(2)), &poly_z(0, i_src));
+        calc_polynomial(scale_factor * (r_src(0, i_src) - center(0)), &poly_x(0, i_src));
+        calc_polynomial(scale_factor * (r_src(1, i_src) - center(1)), &poly_y(0, i_src));
+        calc_polynomial(scale_factor * (r_src(2, i_src) - center(2)), &poly_z(0, i_src));
     }
 
     for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
@@ -232,13 +234,14 @@ void eval_targets_2d(const ndview<const T, 3> &coeffs, const ndview<const T, 2> 
     ndview<T, 2> poly_y(&workspace[n_order * n_trg], n_order, n_trg);
     ndview<T, 2> tmp(&workspace[2 * n_order * n_trg], n_order, n_trg);
 
+    auto calc_polynomial = dmk::chebyshev::get_polynomial_calculator<T>(n_order);
     for (int i = 0; i < n_trg; ++i) {
         T x = (r_trg(0, i) - cen(0)) * sc;
-        dmk::chebyshev::calc_polynomial(n_order, x, &poly_x(0, i));
+        calc_polynomial(x, &poly_x(0, i));
     }
     for (int i = 0; i < n_trg; ++i) {
         T y = (r_trg(1, i) - cen(1)) * sc;
-        dmk::chebyshev::calc_polynomial(n_order, y, &poly_y(0, i));
+        calc_polynomial(y, &poly_y(0, i));
     }
 
     auto opt_dot = dmk::util::get_opt_dot<T>(n_order);
@@ -267,10 +270,11 @@ void eval_targets_3d(const ndview<const T, 4> &coeffs, const ndview<const T, 2> 
 
     ndview<T, 3> tmp(&workspace[3 * n_order * n_trg], n_order, n_order, n_trg);
 
+    auto calc_polynomial = dmk::chebyshev::get_polynomial_calculator<T>(n_order);
     for (int i_dim = 0; i_dim < n_dim; ++i_dim) {
         for (int i = 0; i < n_trg; ++i) {
             T x = (r_trg(i_dim, i) - cen(i_dim)) * sc;
-            dmk::chebyshev::calc_polynomial(n_order, x, &poly_views[i_dim](0, i));
+            calc_polynomial(x, &poly_views[i_dim](0, i));
         }
     }
 
@@ -468,7 +472,7 @@ TEST_CASE("[DMK] eval_targets_3d") {
     const int n_charge_dim = 1;
     const int n_dim = 3;
 
-    for (int n_order : {10, 16, 24}) {
+    for (int n_order : {9, 18, 28, 38}) {
         CAPTURE(n_order);
         using dmk::util::int_pow;
         Eigen::VectorX<double> r_trg(n_trg * n_dim);

@@ -74,6 +74,28 @@ inline void calc_polynomial(int order, T x, T *poly_) {
     calc_polynomial<T>(order, x, poly);
 }
 
+template <typename T, int order>
+inline void calc_polynomial(T x, T *poly) {
+    poly[0] = 1.0;
+    poly[1] = x;
+
+    for (int i = 2; i < order; ++i)
+        poly[i] = T{2} * x * poly[i - 1] - poly[i - 2];
+}
+
+template <typename T>
+inline auto get_polynomial_calculator(int order) {
+    if (order == 9)
+        return calc_polynomial<T, 9>;
+    if (order == 18)
+        return calc_polynomial<T, 18>;
+    if (order == 28)
+        return calc_polynomial<T, 28>;
+    if (order == 38)
+        return calc_polynomial<T, 38>;
+    throw std::runtime_error("Unsupported order: " + std::to_string(order));
+}
+
 template <typename T>
 inline Vector<T> calc_polynomial(int order, T x) {
     Vector<T> poly(order);
