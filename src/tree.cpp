@@ -236,8 +236,17 @@ void DMKPtTree<T, DIM>::generate_metadata() {
         }
     }
 
-    for (const auto &level_boxes : level_indices) {
+    level_indices_outgoing.ReInit(n_levels());
+    level_indices_incoming.ReInit(n_levels());
+    for (int i_level = 0; i_level < n_levels(); ++i_level) {
+        const auto &level_boxes = level_indices[i_level];
         for (auto box : level_boxes) {
+            if (form_pw_expansion[box])
+                level_indices_outgoing[i_level].PushBack(box);
+
+            if (eval_pw_expansion[box] && (src_counts_local[box] + trg_counts_local[box]))
+                level_indices_incoming[i_level].PushBack(box);
+
             if (!eval_pw_expansion[box])
                 continue;
             int tpeval = 1;
@@ -507,15 +516,13 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &box
     {
         sctl::Vector<Real> &workspace = workspaces_[omp_get_thread_num()];
 
-#pragma omp for schedule(dynamic)
+#pragma omp for schedule(static)
         for (auto box : boxes) {
-            if (!form_pw_expansion[box])
-                continue;
-
             dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(box), poly2pw_view, pw_out_view(box), workspace);
             multiply_kernelFT_cd2p<Real, DIM>(radialft, pw_out_view(box));
         }
     }
+
 #ifdef DMK_INSTRUMENT
     dt += omp_get_wtime();
     sctl::Profile::IncrementCounter(sctl::ProfileCounter::CUSTOM1, (unsigned long)(1e9 * dt));
@@ -552,13 +559,6 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
 
 #pragma omp for schedule(dynamic) reduction(+ : n_shifts)
         for (auto box : boxes) {
-            const int n_trg = trg_counts_local[box];
-            const int n_src = src_counts_local[box];
-            const int n_pts = n_src + n_trg;
-
-            if (!n_pts || !eval_pw_expansion[box])
-                continue;
-
             if (form_pw_expansion[box])
                 memcpy(&pw_in[0], pw_out_ptr(box), n_pw_per_box * sizeof(std::complex<Real>));
             else
@@ -585,16 +585,14 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
             // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
             dmk::planewave_to_proxy_potential<Real, DIM>(pw_in_view, pw2poly_view, proxy_view_downward(box));
 
-            if (eval_tp_expansion[box]) {
-                if (ghostleaf_or_ghost_children(box, node_attr, node_lists))
-                    continue;
-
-                if (n_src)
+            if (eval_tp_expansion[box] && !ghostleaf_or_ghost_children(box, node_attr, node_lists)) {
+                if (src_counts_local[box])
                     proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_src_view(box), center_view(box), sc,
                                                    pot_src_view(box), workspace);
-                if (n_trg)
+                if (trg_counts_local[box])
                     proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_trg_view(box), center_view(box), sc,
                                                    pot_trg_view(box), workspace);
+                continue;
             }
 
             // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
@@ -604,10 +602,8 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
                 if (child < 0)
                     continue;
 
-                if (eval_tp_expansion[child] && !eval_pw_expansion[child]) {
-                    if (ghostleaf_or_ghost_children(child, node_attr, node_lists))
-                        continue;
-
+                if (eval_tp_expansion[child] && !eval_pw_expansion[child] &&
+                    !ghostleaf_or_ghost_children(child, node_attr, node_lists)) {
                     if (src_counts_local[child])
                         proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_src_view(child), center_view(box),
                                                        sc, pot_src_view(child), workspace);
@@ -820,8 +816,8 @@ void DMKPtTree<T, DIM>::downward_pass() {
             dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw,
                                                         fourier_data.difference_kernel(i_level).hpw, wpwshift);
         }
-        form_outgoing_expansions(level_indices[i_level], poly2pw_view, radialft);
-        form_eval_expansions(level_indices[i_level], wpwshift, boxsize[i_level], pw2poly_view, p2c);
+        form_outgoing_expansions(level_indices_outgoing[i_level], poly2pw_view, radialft);
+        form_eval_expansions(level_indices_incoming[i_level], wpwshift, boxsize[i_level], pw2poly_view, p2c);
     }
     sctl::Profile::Toc();
 

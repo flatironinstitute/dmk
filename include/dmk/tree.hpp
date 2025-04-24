@@ -15,6 +15,8 @@ struct FourierData;
 template <typename Real, int DIM>
 struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Vector<int>> level_indices;
+    sctl::Vector<sctl::Vector<int>> level_indices_outgoing;
+    sctl::Vector<sctl::Vector<int>> level_indices_incoming;
     sctl::Vector<Real> boxsize;
     sctl::Vector<Real> centers;
 
