@@ -70,11 +70,15 @@ file(GLOB_RECURSE DMK_REF_PDMK_SRC "src/pdmk/*.f")
 list(REMOVE_ITEM DMK_REF_PDMK_SRC
   "${CMAKE_SOURCE_DIR}/src/pdmk/kernelevaluation/l3dkernels_fast.f"
   "${CMAKE_SOURCE_DIR}/src/pdmk/pdmk.f"
+  "${CMAKE_SOURCE_DIR}/src/pdmk/pdmk4.f"
 )
 add_library(dmk_ref_pdmk OBJECT ${DMK_REF_PDMK_SRC})
 set_target_properties(dmk_ref_pdmk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 file(GLOB_RECURSE DMK_REF_BDMK_SRC "src/bdmk/*.f")
+list(REMOVE_ITEM DMK_REF_BDMK_SRC
+  "${CMAKE_SOURCE_DIR}/src/bdmk/bdmk4.f"
+)
 add_library(dmk_ref_bdmk OBJECT ${DMK_REF_BDMK_SRC})
 set_target_properties(dmk_ref_bdmk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
