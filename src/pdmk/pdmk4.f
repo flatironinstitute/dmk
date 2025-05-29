@@ -14,6 +14,10 @@ c
 c     The list subroutines are identical to that used in bdmk4.f, thus uniting
 c     the point code and the box code.
 c
+c     modified on 05/29/2025 by Shidong Jiang
+c     reduce memory allocation and speed up, same code structure 
+c     stokesdmk4 in the dev branch of the personal repo.
+c
       subroutine pdmk(nd,dim,eps,ikernel,rpars,
      1    iperiod,ns,sources,
      2    ifcharge,charge,ifdipole,rnormal,dipstr,
@@ -514,6 +518,7 @@ c     number of sources and targets in each box
 c     flags for each box
       integer, allocatable :: ifpwexp(:)
       integer, allocatable :: iftensprodform(:)
+      integer, allocatable :: iftensprodeval(:)      
 
 c     list of boxes for plane-wave interactions
       integer, allocatable :: nlistpw(:), listpw(:,:)
@@ -560,7 +565,7 @@ c     residual kernel poly expansion coefficients
       real *8 timeinfo(*),time1,time2
 
       integer ndform,ndeval,npw0
-      integer ifprint,itype,nchild,ncoll,nnbors
+      integer ifprint,itype,nchild,ncoll,nnbors,iftpform,iftpeval
       integer mnlistpw,npts,nptssrc,nptstarg,nptsj
       integer mnbors,mnlist1,nmax,nhess,mc,nexp,n1,nb
       integer ntot,ns2tp,nlevstart
@@ -688,7 +693,6 @@ c     nboxtargpts contains the number of source points in each box
 c     check whether we need to form and/or evaluate planewave expansions 
 c     for boxes
       allocate(ifpwexp(nboxes))
-      allocate(iftensprodform(nboxes))
       call bdmk_find_all_pwexp_boxes(dim,nboxes,
      1    nlevels,ltree,itree,iptr,iperiod,ifpwexp)
 c
@@ -752,7 +756,6 @@ c     calculate memory needed for multipole and local planewave expansions
      1    ifpwexp,iaddr,lmptot)
       if(ifprint .eq. 1)
      1  call prinf_long('memory for planewave expansions=*',lmptot,1)
-      if(ifprint .eq. 1) call prinf_long('lmptot is *',lmptot,1)
       allocate(rmlexp(lmptot),stat=ier)
       if(ier.ne.0) then
          print *, "Cannot allocate workspace for plane wave expansions"
@@ -770,13 +773,50 @@ c     initialization of the work array
      1          call dmk_pwzero(nd,nexp,rmlexp(iaddr(2,ibox)))
          enddo
       enddo
-      
+
 c     calculate and allocate memory for tensor product grid for all levels
+      allocate(iftensprodform(nboxes))
+      allocate(iftensprodeval(nboxes))
+      do ibox=1,nboxes
+         iftensprodform(ibox)=0
+      enddo
+
+      do ibox=1,nboxes
+         iftensprodeval(ibox)=0
+      enddo
+
+      do ilev = 0,nlevels
+         do ibox = itree(2*ilev+1),itree(2*ilev+2)
+            if (ifpwexp(ibox).eq.1 .and. nboxpts(ibox).gt.0) then
+c     determine whether we need to evaluate proxypotential at ibox
+               iftpeval = 1
+               nchild = itree(iptr(4)+ibox-1)
+               do j=1,nchild
+                  jbox = itree(iptr(5) + (ibox-1)*mc+j-1)
+                  if (ifpwexp(jbox).eq.1) then
+                     iftpeval = 0
+                  endif
+               enddo
+               iftensprodeval(ibox) = iftpeval
+               if (iftpeval .eq. 0) then
+                  do j=1,nchild
+                     jbox = itree(iptr(5) + (ibox-1)*mc+j-1)
+                     if (nboxpts(jbox).gt.0) then
+                        if (ifpwexp(jbox).eq.0) then
+                           iftensprodeval(jbox) = 1
+                        endif
+                     endif
+                  enddo
+               endif
+            endif
+         enddo
+      enddo
+
       npbox = norder**dim
       
       allocate(lpaddr(2,nboxes))
       call pdmk_coefspalloc(ndform,ndeval,dim,norder,nlevels,itree,
-     1    nboxpts,lpaddr,lcoefsptot)
+     1    ifpwexp,iftensprodeval,lpaddr,lcoefsptot)
       
       if(ifprint .eq. 1)
      1    call prinf_long('memory for tens_prod grid=*',lcoefsptot,1)
@@ -791,16 +831,17 @@ c     calculate and allocate memory for tensor product grid for all levels
 c     initialization of the work array
       do ilev = 0,nlevels
       do ibox=itree(2*ilev+1),itree(2*ilev+2)
-c         if (ifpwexp(ibox).eq.1) then
+         if (ifpwexp(ibox).eq.1) then
             call pdmk_coefsp_zero(ndform,npbox,coefsp(lpaddr(1,ibox)))
-c         endif
+         endif
       enddo
       enddo
       do ilev = 0,nlevels
       do ibox=itree(2*ilev+1),itree(2*ilev+2)
-c         if (ifpwexp(ibox).eq.1) then
+         if ((ifpwexp(ibox).eq.1) .or.
+     1       (iftensprodeval(ibox).eq.1)) then
             call pdmk_coefsp_zero(ndeval,npbox,coefsp(lpaddr(2,ibox)))
-c         endif
+         endif
       enddo
       enddo
 
@@ -826,9 +867,6 @@ c     Maybe prolates are better for bandlimited functions?
       call dmk_get_coefs_translation_matrices(dim,ipoly,
      1    norder,isgn,p2ctransmat,c2ptransmat)
 
-      do ibox=1,nboxes
-         iftensprodform(ibox)=0
-      enddo
 
 
 
@@ -1034,36 +1072,44 @@ C$    time1=omp_get_wtime()
             iend = isrcse(2,ibox)
             npts = iend-istart+1
             nchild = itree(iptr(4)+ibox-1)
-            if (nchild.eq.0 .and. npts.gt.0) then
-               call pdmk_charge2proxycharge(dim,ndform,norder,
-     1             npts,sourcesort(1,istart),densitysort(1,istart),
-     2             centers(1,ibox),sc,coefsp(lpaddr(1,ibox)))
-               ntot=ntot+npts
-               ns2tp=ns2tp+1
-               iftensprodform(ibox) = 1
-            else
+            if (npts.gt.0 .and. ifpwexp(ibox).eq.1) then
+               iftpform = 0
                do j=1,nchild
                   jbox = itree(iptr(5)+mc*(ibox-1)+j-1)
-                  nptsj = nboxsrcpts(jbox)
                   if (iftensprodform(jbox).eq.1) then
-c                    translate equivalent charges from child to parent
-                     call tens_prod_trans_add(dim,ndform,norder,
-     1                   coefsp(lpaddr(1,jbox)),norder,
-     2                   coefsp(lpaddr(1,ibox)),
-     3                   c2ptransmat(1,1,1,j))
-                     iftensprodform(ibox)=1
-                  elseif (nptsj .gt. 0) then
-                     jstart = isrcse(1,jbox)
-c                    form equivalent charges directly form sources
-                     call pdmk_charge2proxycharge(dim,ndform,
-     1                   norder,nptsj,sourcesort(1,jstart),
-     2                   densitysort(1,jstart),centers(1,ibox),
-     3                   sc,coefsp(lpaddr(1,ibox)))
-                     ntot=ntot+npts
-                     ns2tp=ns2tp+1
-                     iftensprodform(ibox)=1
+                     iftpform=1
+                     exit
                   endif
                enddo
+               if (iftpform .eq. 1) then
+                  do j=1,nchild
+                     jbox = itree(iptr(5)+mc*(ibox-1)+j-1)
+                     nptsj = nboxsrcpts(jbox)
+                     if (iftensprodform(jbox).eq.1) then
+c                    translate equivalent charges from child to parent
+                        call tens_prod_trans_add(dim,ndform,norder,
+     1                      coefsp(lpaddr(1,jbox)),norder,
+     2                      coefsp(lpaddr(1,ibox)),
+     3                      c2ptransmat(1,1,1,j))
+                     elseif (nptsj .gt. 0) then
+                        jstart = isrcse(1,jbox)
+c                    form equivalent charges directly form sources
+                        call pdmk_charge2proxycharge(dim,ndform,
+     1                      norder,nptsj,sourcesort(1,jstart),
+     2                      densitysort(1,jstart),centers(1,ibox),
+     3                      sc,coefsp(lpaddr(1,ibox)))
+                        ntot=ntot+nptsj
+                        ns2tp=ns2tp+1
+                     endif
+                  enddo
+               else
+                  call pdmk_charge2proxycharge(dim,ndform,norder,
+     1                npts,sourcesort(1,istart),densitysort(1,istart),
+     2                centers(1,ibox),sc,coefsp(lpaddr(1,ibox)))
+                  ntot=ntot+npts
+                  ns2tp=ns2tp+1
+               endif
+               iftensprodform(ibox) = 1
             endif
          enddo
       enddo
@@ -1222,16 +1268,18 @@ C$OMP$SCHEDULE(DYNAMIC)
      2            coefsp(lpaddr(2,ibox)))
 
                nchild = itree(iptr(4)+ibox-1)
-               do j=1,nchild
-                  jbox = itree(iptr(5) + (ibox-1)*mc+j-1)
-                  if (nboxpts(jbox).gt.0) then
+               if (iftensprodeval(ibox) .eq. 0) then
+                  do j=1,nchild
+                     jbox = itree(iptr(5) + (ibox-1)*mc+j-1)
+                     if (nboxpts(jbox).gt.0) then
 c                    translate tensor product polynomial from parent to child
-                     call tens_prod_trans_add(dim,ndeval,norder,
-     1                   coefsp(lpaddr(2,ibox)),norder,
-     2                   coefsp(lpaddr(2,jbox)),
-     3                   p2ctransmat(1,1,1,j))
-                  endif
-               enddo
+                        call tens_prod_trans_add(dim,ndeval,norder,
+     1                      coefsp(lpaddr(2,ibox)),norder,
+     2                      coefsp(lpaddr(2,jbox)),
+     3                      p2ctransmat(1,1,1,j))
+                     endif
+                  enddo
+               endif
             endif
          enddo
 C$OMP END PARALLEL DO        
@@ -1260,7 +1308,7 @@ C$OMP$PRIVATE(istartt,iendt,nptstarg)
 C$OMP$SCHEDULE(DYNAMIC)  
          do ibox = itree(2*ilev+1),itree(2*ilev+2)
             nchild = itree(iptr(4)+ibox-1)
-            if (nchild.eq.0) then
+            if (iftensprodeval(ibox).eq.1) then
                istarts = isrcse(1,ibox)
                iends = isrcse(2,ibox)
                nptssrc = iends-istarts+1
@@ -1841,7 +1889,7 @@ c------------------------------------------------------------------
       integer dim
       integer nlevels,npw,ndform,ndeval
       integer laddr(2,0:nlevels),ifpwexp(*)
-      integer *8 iaddr(2,*),ilmptot(0:nlevels)
+      integer *8 iaddr(2,*)
       integer *8 lmptot,istart,nn,nn1,nn2,itmp,itmp2
       integer ibox,i,istarts,iends,npts
 c
@@ -1861,8 +1909,8 @@ c          Allocate memory for the multipole PW expansions
               itmp = itmp+1
            endif
          enddo
-         istart = istart + itmp*nn1
       enddo
+      istart = istart + itmp*nn1
 c
       itmp2=0
       do i = 0,nlevels
@@ -1873,8 +1921,8 @@ c          Allocate memory for the local PW expansions
               itmp2 = itmp2+1
            endif
          enddo
-         istart = istart + itmp2*nn2
       enddo
+      istart = istart + itmp2*nn2
 
       lmptot = istart
       return
@@ -1889,7 +1937,7 @@ c
 c
 c------------------------------------------------------------------    
       subroutine pdmk_coefspalloc(ndform,ndeval,dim,norder,nlevels,
-     1    laddr,nboxpts,iaddr,lmptot)
+     1    laddr,ifpwexp,iftensprodeval,iaddr,lmptot)
 c     This subroutine determines the size of the array
 c     to be allocated for multipole/local expansions
 c
@@ -1936,7 +1984,7 @@ c------------------------------------------------------------------
       integer dim
       integer nlevels,npw,ndform,ndeval,norder
       integer *8 iaddr(2,*)
-      integer laddr(2,0:nlevels), nboxpts(*)
+      integer laddr(2,0:nlevels), ifpwexp(*), iftensprodeval(*)
       integer *8 lmptot,istart,nn,itmp,itmp2,nn1,nn2
       integer ibox,i,istarts,iends,npts
 c
@@ -1945,31 +1993,33 @@ c
       nn = norder**dim
       nn1 = nn*ndform
       nn2 = nn*ndeval      
+
       itmp=0
       do i = 0,nlevels
          do ibox = laddr(1,i),laddr(2,i)
-c     Allocate memory for the multipole PW expansion         
+c     Allocate memory for proxy charges
 c
-c           if (nboxpts(ibox).gt.0) then
+           if (ifpwexp(ibox).gt.0) then
               iaddr(1,ibox) = istart + itmp*nn1
               itmp = itmp+1
-c           endif
+           endif
          enddo
-         istart = istart + itmp*nn1
       enddo
+      istart = istart + itmp*nn1
 c
       itmp2=0
       do i = 0,nlevels
          do ibox = laddr(1,i),laddr(2,i)
-c     Allocate memory for the local PW expansion         
+c     Allocate memory for proxy potentials
 c
-c           if (nboxpts(ibox).gt.0) then
+            if ((ifpwexp(ibox).eq.1) .or.
+     1          (iftensprodeval(ibox).eq.1)) then
               iaddr(2,ibox) = istart + itmp2*nn2
               itmp2 = itmp2+1
-c           endif
+           endif
          enddo
-         istart = istart + itmp2*nn2
       enddo
+      istart = istart + itmp2*nn2
 
       lmptot = istart
 
