@@ -1307,7 +1307,6 @@ C$OMP$PRIVATE(ibox,nchild,istarts,iends,nptssrc)
 C$OMP$PRIVATE(istartt,iendt,nptstarg)
 C$OMP$SCHEDULE(DYNAMIC)  
          do ibox = itree(2*ilev+1),itree(2*ilev+2)
-            nchild = itree(iptr(4)+ibox-1)
             if (iftensprodeval(ibox).eq.1) then
                istarts = isrcse(1,ibox)
                iends = isrcse(2,ibox)
@@ -1335,8 +1334,6 @@ C$OMP END PARALLEL DO
       call cpu_time(time2)
 C$    time2 = omp_get_wtime()      
       timeinfo(6) = time2 - time1
-      
-      
       
  1800 continue
       if(ifprint .ge. 1)
@@ -1381,21 +1378,19 @@ cccc              jbox is the source box
                   jend = isrcse(2,jbox)
 
                   jlev = itree(iptr(2)+jbox-1)
+                  bsize = boxsize(jlev)
 
 c     now find the interaction range of the residual kernel
                   if (ifpwexp(jbox).eq.1 .and. jbox.eq.ibox) then
 c     when ifpwexp(jbox)=1, self interaction at its own
 c     level is taken care of by plane-wave expansion
-                     jlev = jlev+1
+                     bsize = bsize/2
                   elseif (jlev.lt.ilev) then
 c     when the source box is bigger than the target box, residual interaction
 c     starts from the target box level
-                     jlev = ilev
-                  else
-                     jlev = jlev
+                     bsize = boxsize(ilev)
                   endif 
 
-                  bsize = boxsize(jlev)
 c     kernel truncated at bsize, i.e., K(x,y)=0 for |x-y|^2 > d2max
                   d2max = bsize**2
                   bsizeinv = 1.0d0/bsize

@@ -95,7 +95,7 @@ cccc         do j=4,4
          do j=1,1
             nsrc=nsrcs(j)
 cccc            nsrc=3
-            nsrc=1*10**5
+            nsrc=1*10**2
             ntarg=nsrc
             if (ifpghtarg.eq.0) ntarg=1
 c
