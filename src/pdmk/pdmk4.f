@@ -159,7 +159,7 @@ c
       if (ifprint.eq.1) call prinf('nlevels=*',nlevels,1)
 c     memory allocation for the tree
       allocate(itree(ltree))
-      allocate(boxsize(0:nlevels))
+      allocate(boxsize(0:nlevels+1))
       allocate(centers(dim,nboxes))
 c
 c     build the actual tree
@@ -167,6 +167,7 @@ c
       call pts_tree_build(dim,sources,ns,targ,nt,
      1    idivflag,ndiv,nlmin,nlmax,ifunif,iperiod,nlevels,nboxes,
      2    ltree,itree,iptr,centers,boxsize)
+      boxsize(nlevels+1)=boxsize(nlevels)/2
       call cpu_time(time2)
 C$    time2=omp_get_wtime()
       dttree = time2-time1
@@ -491,7 +492,7 @@ c------------------------------------------------------------------
       real *8 dipstrsort(nd,*)
 
       real *8 centers(dim,*)
-      real *8 boxsize(0:nlevels)
+      real *8 boxsize(0:nlevels+1)
 c
       integer iptr(8)
       integer nboxes,nlevels,ltree
@@ -942,13 +943,13 @@ c           1/r kernel in 2d and 3d
 c     residual kernels at all levels for the Yukawa kernel
       
       ncoefsmax=200
-      allocate(coefs1(ncoefsmax,0:nlevels))
-      allocate(ncoefs1(0:nlevels))
-      allocate(coefs2(ncoefsmax,0:nlevels))
-      allocate(ncoefs2(0:nlevels))
+      allocate(coefs1(ncoefsmax,0:nlevels+1))
+      allocate(ncoefs1(0:nlevels+1))
+      allocate(coefs2(ncoefsmax,0:nlevels+1))
+      allocate(ncoefs2(0:nlevels+1))
 
       if (ikernel.eq.0) then
-         do ilev=0,nlevels
+         do ilev=0,nlevels+1
             bsize=boxsize(ilev)
 cccc            if (ilev .eq. 0) bsize=bsize*0.5d0
             call yukawa_residual_kernel_coefs(eps,dim,rpars,beta,
@@ -956,9 +957,9 @@ cccc            if (ilev .eq. 0) bsize=bsize*0.5d0
      2          ncoefs2(ilev),coefs2(1,ilev))
          enddo
       elseif (ikernel.eq.1.and.dim.eq.2.and.ifdipole.eq.1) then
-         do ilev=0,nlevels
+         do ilev=0,nlevels+1
             bsize=boxsize(ilev)
-            if (ilev .eq. 0) bsize=bsize*0.5d0
+cccc            if (ilev .eq. 0) bsize=bsize*0.5d0
             call log_residual_kernel_coefs(eps,dim,beta,
      1          bsize,rl(ilev),wprolate,ncoefs1(ilev),coefs1(1,ilev))
          enddo
@@ -1385,10 +1386,12 @@ c     now find the interaction range of the residual kernel
 c     when ifpwexp(jbox)=1, self interaction at its own
 c     level is taken care of by plane-wave expansion
                      bsize = bsize/2
+                     jlev = jlev+1
                   elseif (jlev.lt.ilev) then
 c     when the source box is bigger than the target box, residual interaction
 c     starts from the target box level
                      bsize = boxsize(ilev)
+                     jlev = ilev
                   endif 
 
 c     kernel truncated at bsize, i.e., K(x,y)=0 for |x-y|^2 > d2max

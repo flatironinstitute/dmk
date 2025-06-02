@@ -28,9 +28,9 @@ c
 c     nd - number of different densities
       nd=1
 c     dim - dimension of the problem
-      dim=3
+      dim=2
 c     ikernel - 0: Yukawa kernel; 1: Laplace kernel; 2: square root Laplace kernel
-      ikernel = 1
+      ikernel = 0
 c     rlambda - the parameter in the Yukawa kernel or the exponent of the
 c     power function kernel
       rlambda=6.0d0
@@ -95,7 +95,7 @@ cccc         do j=4,4
          do j=1,1
             nsrc=nsrcs(j)
 cccc            nsrc=3
-            nsrc=1*10**2
+            nsrc=1*10**4
             ntarg=nsrc
             if (ifpghtarg.eq.0) ntarg=1
 c
