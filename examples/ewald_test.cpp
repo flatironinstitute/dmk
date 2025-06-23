@@ -108,7 +108,8 @@ void computeShortRange(const std::vector<double> &r_src, const std::vector<doubl
             if (i==j){ continue; } // ensure no division by zero
 
             for (int k = 0; k < n_dim; ++k){
-                diff_nonPBC = std::abs(r_src[j*n_dim + k] - r_trg[i*n_dim + k]);
+                // diff_nonPBC = std::abs(r_src[j*n_dim + k] - r_trg[i*n_dim + k]);
+                diff_nonPBC = std::abs(r_src[k * n_src + j] - r_trg[k * n_src + i]);
                 diff[k] = std::min(diff_nonPBC, 1.0 - diff_nonPBC);
             }
             
@@ -117,12 +118,10 @@ void computeShortRange(const std::vector<double> &r_src, const std::vector<doubl
             // compute the contribution only if it falls within a cutoff distance
             if (rij_mag_sq < r_cut_sq){
                 rij_mag = std::sqrt(rij_mag_sq);
-                // std::cout << rij_mag << " ";
                 pot[i] += charges[j] * std::erfc(rij_mag * alpha) / rij_mag;
             }
         }
     }
-    // std::cout << std::endl;
 
     auto end = omp_get_wtime();
 
@@ -189,10 +188,14 @@ void assignCharge(const std::vector<double> &r_src, const std::vector<double> &c
     // iterate through charges and their coordinates
     for (size_t ind = 0; ind < n_charges; ++ind){
         q = charges[ind];
-        x = r_src[ind*3];
-        y = r_src[ind*3 + 1];
-        z = r_src[ind*3 + 2];
-
+        // x = r_src[ind*3];
+        // y = r_src[ind*3 + 1];
+        // z = r_src[ind*3 + 2];
+        // column-major
+        x = r_src[ind];
+        y = r_src[n_charges + ind];
+        z = r_src[n_charges * 2 + ind];
+        
         // identify the middle point
         // round to the nearest integer
         // TODO: generalize for odd p
@@ -233,9 +236,13 @@ void backInterpolate(std::vector<double> &r_trg, std::vector<double> &pot, std::
     // iterate through targets and their coordinates
     for (size_t ind = 0; ind < n_trg; ++ind){
         // coordinates of the target point
-        x = r_trg[ind*3];
-        y = r_trg[ind*3 + 1];
-        z = r_trg[ind*3 + 2];
+        // x = r_trg[ind*3];
+        // y = r_trg[ind*3 + 1];
+        // z = r_trg[ind*3 + 2];
+        // column-major
+        x = r_trg[ind];
+        y = r_trg[n_trg + ind];
+        z = r_trg[n_trg * 2 + ind];
 
         // identify the middle point
         // round to the nearest integer
@@ -342,10 +349,10 @@ int main(int argc, char *argv[]) {
         r_src[i] = distribution(generator);
     }
 
-    std::cout << "Particle coordinates:" << std::endl;
-    //printVector(r_src);
+    // std::cout << "Particle coordinates:" << std::endl;
+    // printVector(r_src);
     
-    // r_src = {0.3, 0.3, 0.3, 0.49, 0.3, 0.3};
+    // r_src = {0.3, 0.3, 0.3, 0.31, 0.3, 0.3};
     // r_src = {0.5, 0.01, 0.5, 0.5, 0.96, 0.5};
 
     for (int i=0; i < n_trg * n_dim; ++i) {
@@ -368,7 +375,7 @@ int main(int argc, char *argv[]) {
     }
 
     std::cout << "Charges:" << std::endl;
-    //printVector(charges);
+    printVector(charges);
     // test_total_charge(charges);
 
     // --------------------------------------------------------------------- //
@@ -471,7 +478,7 @@ int main(int argc, char *argv[]) {
     std::vector<double> trg_pot(n_trg, 0.0);
     backInterpolate(r_src, inv_ft_density, trg_pot, N, h, p);
     std::cout << "Long-range interaction -- computed with FFT:" << std::endl;
-    //printVector(trg_pot);
+    printVector(trg_pot);
 
     // TODO: compute self interaction term only for r_src=r_trg
     std::vector<double> self_interaction(n_src, 0.0);
@@ -479,7 +486,7 @@ int main(int argc, char *argv[]) {
         self_interaction[i] = 2 * alpha / std::sqrt(M_PI) * charges[i];
     }
     std::cout << "Self-interaction term:" << std::endl;
-    //printVector(self_interaction);
+    printVector(self_interaction);
 
     // add short-range terms
     // subtract self interaction terms -- useful when r_src = r_trg
@@ -488,7 +495,7 @@ int main(int argc, char *argv[]) {
         trg_pot[i] += pot_trg_short[i];
     }
     std::cout << "Final Potential - computed with PME:" << std::endl;
-    //printVector(trg_pot);
+    printVector(trg_pot);
 
     return 0;
 }

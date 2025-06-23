@@ -38,7 +38,10 @@ void printVector(const std::vector<T> &v){
     std::cout << "\n\n";
 }
 
-int findStartIndex(const std::vector<int> &indices, const int index){
+// TODO: Optimize this (?)
+// input: vector with the begin index of each box, particle in question index
+// returns: the index of the interval (in 1D) in which the particle belongs
+int findIntervalIndex(const std::vector<int> &indices, const int index){
     int length = indices.size();
 
     int i = 0;
@@ -64,20 +67,21 @@ int main(int argc, char *argv[]) {
 
     // generate uniform random source & target coordinates and charges
     std::default_random_engine generator;
-    std::uniform_real_distribution<double> distribution(0.0,1.0);
+    std::uniform_real_distribution<double> distribution(0.0, 1.0);
 
     for (int i=0; i < n_src*n_dim; ++i) {
         r_src[i] = distribution(generator);
     }
 
-    std::cout << "Particle coordinates:" << std::endl;
-    //printVector(r_src);
+    // std::cout << "Particle coordinates:" << std::endl;
+    // printVector(r_src);
     
+    // custom coordinates for small tests
     // r_src = {0.3, 0.3, 0.3, 0.49, 0.3, 0.3};
     // r_src = {0.5, 0.01, 0.5, 0.5, 0.96, 0.5};
 
+    // target coordinates are the same as source coordinates
     for (int i=0; i < n_trg*n_dim; ++i) {
-        // r_trg[i] = distribution(generator);
         r_trg[i] = r_src[i];
     }
 
@@ -95,8 +99,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    std::cout << "Charges:" << std::endl;
-    //printVector(charges);
+    // std::cout << "Charges:" << std::endl;
+    // printVector(charges);
     // test_total_charge(charges);
 
     // ---------------------------------------------------------------------- //
@@ -112,60 +116,83 @@ int main(int argc, char *argv[]) {
 
     // short-range interactions
 
-    // TODO: optimize the calculation; still O(N^2)
-    std::vector<double> pot_trg_short(n_trg, 0.0);
-    //computeShortRange(r_src, r_trg, pot_trg_short, charges, n_dim, r_cut, n_src, n_trg, alpha);
+    std::vector<double> pot_short(n_trg, 0.0);          // final potential vector
+    std::vector<double> pot_short_sorted(n_trg, 0.0);     // sorted potential vector
     
     // use r_cut to decompose each dimension in boxes
-    // TODO: edge cases (?)
+    // TODO: edge cases (?), memory optimization (?)
     int n_boxes = 0;
     int new_ind;
     double pos;
-    std::vector<int> start_index = {0};
+    // vector to save the starting grid point index where the box begins
+    // box_index_grid[i] determines the 1D index where the i-th box begins
+    std::vector<int> box_index_grid = {0};
     while (1){
-        pos = start_index[n_boxes] * h + r_cut;
+        pos = box_index_grid[n_boxes] * h + r_cut;
         new_ind = (int(pos * N) + 1) % N;
-        start_index.push_back(new_ind);
+        box_index_grid.push_back(new_ind);
         ++n_boxes;
         if (pos >= 1.0 || new_ind == 0){ 
-            start_index.pop_back();
+            box_index_grid.pop_back();
             break;
         }
     }
 
     // initialize box and neighbor lists
-    std::vector<std::vector<int>> boxes(n_boxes * n_boxes * n_boxes);
-
-    std::vector<int> nb_list(n_dim * n_dim * n_dim, 0);
-    std::vector<std::vector<int>> neighbors(n_boxes * n_boxes * n_boxes, nb_list);
-    
+    // box_particles[i] contains a vector with the particle indices of the i-th box
+    std::vector<std::vector<int>> box_particles(n_boxes * n_boxes * n_boxes);
+    std::vector<int> nb_list(3 * 3 * 3, 0);
+    std::vector<std::vector<int>> box_neighbors(n_boxes * n_boxes * n_boxes, nb_list);
     std::vector<int> box_corner(n_dim, 0);
     std::vector<std::vector<int>> box_corners(n_boxes * n_boxes * n_boxes, box_corner);
+    std::vector<int> box_lengths(n_boxes * n_boxes * n_boxes, 0);
+    std::vector<int> box_begin(n_boxes * n_boxes * n_boxes, 0);
+
+    // sorted particle indices, coordinates, and charges
+    std::vector<int> particles_sorted(n_src);
+    std::vector<double> r_src_sorted(n_src * n_dim);
+    std::vector<double> charges_sorted(n_src);
 
     double x, y, z;
     int i_x, i_y, i_z;
 
     for (size_t ind = 0; ind < n_src; ++ind){
         // particle coordinates
-        x = r_src[ind * 3];
-        y = r_src[ind * 3 + 1];
-        z = r_src[ind * 3 + 2];
+        x = r_src[ind];
+        y = r_src[n_src + ind];
+        z = r_src[n_src * 2 + ind];
 
-        i_x = findStartIndex(start_index, int(x * N));
-        i_y = findStartIndex(start_index, int(y * N));
-        i_z = findStartIndex(start_index, int(z * N));
+        i_x = findIntervalIndex(box_index_grid, int(x * N));
+        i_y = findIntervalIndex(box_index_grid, int(y * N));
+        i_z = findIntervalIndex(box_index_grid, int(z * N));
 
-        boxes[i_x + i_y * n_boxes + i_z * n_boxes * n_boxes].push_back(ind);
+        box_particles[i_x + i_y * n_boxes + i_z * n_boxes * n_boxes].push_back(ind);
     }
 
-    // print the content of non-empty boxes
-    // for (int i = 0; i < n_boxes * n_boxes * n_boxes; ++i){
-    //     if (!boxes[i].empty()){ 
-    //         std::cout << i / (n_boxes * n_boxes) << " " << (i % (n_boxes * n_boxes)) / n_boxes << " " << (i % (n_boxes * n_boxes)) % n_boxes << std::endl;
-    //         printVector(boxes[i]); }
-    // }
+    // get the particle order
+    int fast_count = 0, prev_fast_count = 0;
+    for (size_t box = 0; box < n_boxes * n_boxes * n_boxes; ++box){
+        box_begin[box] = fast_count;
+        for (int particle : box_particles[box]){
+            particles_sorted[fast_count] = particle;
+            ++fast_count;
+        }
+        box_lengths[box] = fast_count - prev_fast_count;
+        prev_fast_count = fast_count; 
+    }
 
-    int box_x, box_y, box_z, curr_box, count;
+    // printVector(box_lengths);
+    // printVector(box_begin);
+
+    // sort the position and charge vectors
+    for (size_t i = 0; i < n_src; ++i){
+        r_src_sorted[i] = r_src[particles_sorted[i]];
+        r_src_sorted[i + n_src] = r_src[particles_sorted[i] + n_src];
+        r_src_sorted[i + n_src * 2] = r_src[particles_sorted[i] + n_src * 2];
+        charges_sorted[i] = charges[particles_sorted[i]];
+    }
+
+    int box_x, box_y, box_z, new_i, new_j, new_k, curr_box, nb_count; // count is declared above
 
     // store the neighbors
     for (size_t box = 0; box < n_boxes * n_boxes * n_boxes; ++box){
@@ -175,27 +202,24 @@ int main(int argc, char *argv[]) {
         box_z = box / (n_boxes * n_boxes);
 
         box_corners[box] = {box_x, box_y, box_z};
-
-        // std::cout << "Box " << box << " " << box_x << " " << box_y << " " << box_z << ": ";
         
-        count = 0;
+        nb_count = 0;
         // go through the neighbors
         for (int i = box_x - 1; i <= box_x + 1; ++i){
         for (int j = box_y - 1; j <= box_y + 1; ++j){
         for (int k = box_z - 1; k <= box_z + 1; ++k){
+            // account for periodic boundaries
+            new_i = (i + n_boxes) % n_boxes;
+            new_j = (j + n_boxes) % n_boxes;
+            new_k = (k + n_boxes) % n_boxes;
             // for each neighbor compute all the pairwise interactions
-            curr_box = (i + j * n_boxes + k * n_boxes * n_boxes + n_boxes * n_boxes * n_boxes) % (n_boxes * n_boxes * n_boxes);
-            // std::cout << curr_box << " ";
-            neighbors[box][count] = curr_box;
-            ++count;
+            curr_box = new_i + new_j * n_boxes + new_k * n_boxes * n_boxes;
+            box_neighbors[box][nb_count] = curr_box;
+            ++nb_count;
         }
         }
         }
     }
-
-    // for (int i = 0; i < n_boxes * n_boxes * n_boxes; ++i){
-    //     printVector(neighbors[i]);
-    // }
     
     double dx, dy, dz; // x, y, z have been declared above
     double rij_mag, rij_mag_sq;
@@ -203,24 +227,28 @@ int main(int argc, char *argv[]) {
     double x_other, y_other, z_other;
     std::vector<double> r0_other(3, 0.0);
 
+    // BEGIN CALCULATIONS // 
+    // ----------------------------------------------------------------------------- //
+
     auto start = omp_get_wtime();
 
     // iterate through all boxes
+    int particle_count = 0; // count the particle index
     for (size_t box = 0; box < n_boxes * n_boxes * n_boxes; ++box){
         
         // iterate through all particles in a box
-        for (int particle : boxes[box]){
+        for (int i = 0; i < box_lengths[box]; ++i){
             // coordinates of the target particle
-            x = r_src[particle * n_dim];
-            y = r_src[particle * n_dim + 1];
-            z = r_src[particle * n_dim + 2];
-
-            // std::cout << "Box " << box << " " << box_x << " " << box_y << " " << box_z << ": ";
+            // column-major
+            x = r_src_sorted[particle_count];
+            y = r_src_sorted[n_src + particle_count];
+            z = r_src_sorted[n_src * 2 + particle_count];
             
             // go through the neighbors
-            for (int nb : neighbors[box]){
+            for (int nb : box_neighbors[box]){
 
                 // check periodic boundary conditions
+                // TODO: Optimize this calculation?
                 for (int a = 0; a < 3; ++a){
                     if (box_corners[box][a] - box_corners[nb][a] > 1){
                         r0_other[a] = 1.0;
@@ -234,26 +262,16 @@ int main(int argc, char *argv[]) {
                 }
 
                 // for each neighbor compute all the pairwise interactions
-                for (int other : boxes[nb]){
+                for (int other = box_begin[nb]; other < box_begin[nb] + box_lengths[nb]; ++other){
                     // other coordinates
-                    x_other = r0_other[0] + r_src[other * n_dim];
-                    y_other = r0_other[1] + r_src[other * n_dim + 1];
-                    z_other = r0_other[2] + r_src[other * n_dim + 2];
+                    x_other = r0_other[0] + r_src_sorted[other];
+                    y_other = r0_other[1] + r_src_sorted[n_src + other];
+                    z_other = r0_other[2] + r_src_sorted[n_src * 2 + other];
 
                     // store the displacement
                     dx = x - x_other;
                     dy = y - y_other;
                     dz = z - z_other;
-
-                    // // store the displacement
-                    // dx = std::abs(x - x_other);
-                    // dy = std::abs(y - y_other);
-                    // dz = std::abs(z - z_other);
-
-                    // // account for periodic boundary conditions
-                    // dx = std::min(dx, 1.0 - dx);
-                    // dy = std::min(dy, 1.0 - dy);
-                    // dz = std::min(dz, 1.0 - dz);
 
                     rij_mag_sq = dx * dx + dy * dy + dz * dz;
                     
@@ -261,29 +279,26 @@ int main(int argc, char *argv[]) {
                     if (rij_mag_sq == 0 || rij_mag_sq >= r_cut_sq){ continue; }
 
                     rij_mag = std::sqrt(rij_mag_sq);
-                    // std::cout << rij_mag << " ";
-                    pot_trg_short[particle] += charges[other] * std::erfc(rij_mag * alpha) / rij_mag;
+                    pot_short_sorted[particle_count] += charges_sorted[other] * std::erfc(rij_mag * alpha) / rij_mag;
                 }
             }
+            ++particle_count;
         }
     }
-    // std::cout << "\n";
+
+    // de-sort the calculated potential values
+    for (size_t i = 0; i < n_trg; ++i){
+        pot_short[particles_sorted[i]] = pot_short_sorted[i];
+    }
 
     auto end = omp_get_wtime();
+
+    // ----------------------------------------------------------------------------- //
 
     std::cout << "Elapsed time: " << (end - start) * 1000.0 << " miliseconds" << std::endl;
 
     std::cout << "Short-range interaction:" << std::endl;
-    printVector(pot_trg_short);
-
-    std::vector<int> indices = {45, 47, 61, 62, 68};
-    for (int ind : indices){
-        std::cout << r_src[ind * 3] << " " << r_src[ind * 3 + 1] << " " << r_src[ind * 3 + 2] << std::endl;
-    }
-    indices = {23, 31, 24, 49};
-    for (int ind : indices){
-        printVector(neighbors[ind]);
-    }
+    printVector(pot_short);
 
     return 0;
 }
