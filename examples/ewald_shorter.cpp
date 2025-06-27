@@ -6,7 +6,7 @@
 
 #define EPS 0.0001
 
-void test_total_charge(const std::vector<double> &ch){
+void test_total_charge(const std::vector<double> &ch) {
     int size = ch.size();
     std::cout << "Size: " << size << std::endl;
 
@@ -30,7 +30,7 @@ void dump(const std::string &name, const T &data) {
 }
 
 template<typename T>
-void printVector(const std::vector<T> &v){
+void print_vector(const std::vector<T> &v) {
     int size = v.size();
     for (int i=0; i < size; ++i) {            
         std::cout << v[i] << " ";
@@ -38,7 +38,7 @@ void printVector(const std::vector<T> &v){
     std::cout << "\n\n";
 }
 
-void printArray(const int v[], const int length){
+void print_array(const int v[], const int length) {
     for (int i=0; i < length; ++i) {            
         std::cout << v[i] << " ";
     }
@@ -67,7 +67,7 @@ int main(int argc, char *argv[]) {
     }
 
     // std::cout << "Particle coordinates:" << std::endl;
-    // printVector(r_src);
+    // print_vector(r_src);
     
     // custom coordinates for small tests
     // r_src = {0.3, 0.3, 0.3, 0.49, 0.3, 0.3};
@@ -93,7 +93,7 @@ int main(int argc, char *argv[]) {
     }
 
     // std::cout << "Charges:" << std::endl;
-    // printVector(charges);
+    // print_vector(charges);
     // test_total_charge(charges);
 
     // ---------------------------------------------------------------------- //
@@ -137,26 +137,22 @@ int main(int argc, char *argv[]) {
     std::vector<double> r_src_sorted(n_src * n_dim);
     std::vector<double> charges_sorted(n_src);
 
-    double x, y, z;
-    int i_x, i_y, i_z;
-
-    for (size_t ind = 0; ind < n_src; ++ind){
+    for (size_t ind = 0; ind < n_src; ++ind) {
         // particle coordinates
-        x = r_src[ind];
-        y = r_src[n_src + ind];
-        z = r_src[n_src * 2 + ind];
+        const double x = r_src[ind];
+        const double y = r_src[n_src + ind];
+        const double z = r_src[n_src * 2 + ind];
 
-        i_x = int(x * N) / bin_size_x;
-        i_y = int(y * N) / bin_size_x;
-        i_z = int(z * N) / bin_size_x;
+        const int i_x = int(x * N) / bin_size_x;
+        const int i_y = int(y * N) / bin_size_x;
+        const int i_z = int(z * N) / bin_size_x;
 
         ++box_lengths[i_x + nbins_x * (i_y + nbins_x * i_z)];
     }
 
-    int tmp;
     int current_offset = 0;
     for (size_t i = 0; i < n_boxes; ++i) {
-        tmp = box_lengths[i];
+        const int tmp = box_lengths[i];
         box_begin[i] = current_offset;
         box_offset[i] = current_offset;
         current_offset += tmp;
@@ -167,48 +163,46 @@ int main(int argc, char *argv[]) {
         box_corners[i * n_dim + 2] = i / (nbins_x * nbins_x);
     }
 
-    for (size_t ind = 0; ind < n_src; ++ind){
+    for (size_t ind = 0; ind < n_src; ++ind) {
         // particle coordinates
-        x = r_src[ind];
-        y = r_src[n_src + ind];
-        z = r_src[n_src * 2 + ind];
+        const double x = r_src[ind];
+        const double y = r_src[n_src + ind];
+        const double z = r_src[n_src * 2 + ind];
 
-        i_x = int(x * N) / bin_size_x;
-        i_y = int(y * N) / bin_size_x;
-        i_z = int(z * N) / bin_size_x;
+        const int i_x = int(x * N) / bin_size_x;
+        const int i_y = int(y * N) / bin_size_x;
+        const int i_z = int(z * N) / bin_size_x;
 
         particles_sorted[box_offset[i_x + nbins_x * (i_y + nbins_x * i_z)]] = ind;
         ++box_offset[i_x + nbins_x * (i_y + nbins_x * i_z)];
     }
 
     // sort the position and charge vectors
-    for (size_t i = 0; i < n_src; ++i){
+    for (size_t i = 0; i < n_src; ++i) {
         r_src_sorted[i] = r_src[particles_sorted[i]];
         r_src_sorted[i + n_src] = r_src[particles_sorted[i] + n_src];
         r_src_sorted[i + n_src * 2] = r_src[particles_sorted[i] + n_src * 2];
         charges_sorted[i] = charges[particles_sorted[i]];
     }
 
-    int box_x, box_y, box_z, new_i, new_j, new_k, curr_box, nb_count;
-
     // store the neighbors
-    for (size_t box = 0; box < n_boxes; ++box){
+    for (size_t box = 0; box < n_boxes; ++box) {
 
-        box_x = box_corners[box * n_dim];
-        box_y = box_corners[box * n_dim + 1];
-        box_z = box_corners[box * n_dim + 2];
+        const int box_x = box_corners[box * n_dim];
+        const int box_y = box_corners[box * n_dim + 1];
+        const int box_z = box_corners[box * n_dim + 2];
         
-        nb_count = 0;
+        int nb_count = 0;
         // go through the neighbors
-        for (int i = box_x - 1; i <= box_x + 1; ++i){
-        for (int j = box_y - 1; j <= box_y + 1; ++j){
-        for (int k = box_z - 1; k <= box_z + 1; ++k){
+        for (int i = box_x - 1; i <= box_x + 1; ++i) {
+        for (int j = box_y - 1; j <= box_y + 1; ++j) {
+        for (int k = box_z - 1; k <= box_z + 1; ++k) {
             // account for periodic boundaries
-            new_i = (i + n_boxes) % nbins_x;
-            new_j = (j + n_boxes) % nbins_x;
-            new_k = (k + n_boxes) % nbins_x;
+            const int new_i = (i + n_boxes) % nbins_x;
+            const int new_j = (j + n_boxes) % nbins_x;
+            const int new_k = (k + n_boxes) % nbins_x;
             // for each neighbor compute all the pairwise interactions
-            curr_box = new_i + nbins_x * (new_j + nbins_x * new_k);
+            const int curr_box = new_i + nbins_x * (new_j + nbins_x * new_k);
             box_neighbors[box * 3 * 3 * 3 + nb_count] = curr_box;
             ++nb_count;
         }
@@ -216,10 +210,6 @@ int main(int argc, char *argv[]) {
         }
     }
     
-    double dx, dy, dz; // x, y, z have been declared above
-    double rij_mag, rij_mag_sq;
-    
-    double x_other, y_other, z_other;
     std::vector<double> r0_other(3, 0.0);
 
     // BEGIN CALCULATIONS // 
@@ -228,62 +218,59 @@ int main(int argc, char *argv[]) {
     auto start = omp_get_wtime();
 
     // iterate through all boxes
-    int particle_count = 0; // particle index
-    int nb; // neighbor index
     for (size_t box = 0; box < n_boxes; ++box) {
-        // iterate through all particles in a box
-        for (int i = 0; i < box_lengths[box]; ++i){
-            // coordinates of the target particle
-            // column-major
-            x = r_src_sorted[particle_count];
-            y = r_src_sorted[n_src + particle_count];
-            z = r_src_sorted[n_src * 2 + particle_count];
+        // go through the neighbors
+        for (int neighbor_count = 0; neighbor_count < 27; ++neighbor_count) {
+            const int nb = box_neighbors[box * 3 * 3 * 3 + neighbor_count];
             
-            // go through the neighbors
-            for (int neighbor_count = 0; neighbor_count < 27; ++neighbor_count) {
-                nb = box_neighbors[box * 3 * 3 * 3 + neighbor_count];
-                
-                // check periodic boundary conditions
-                // TODO: Optimize this calculation?
-                for (int a = 0; a < 3; ++a){
-                    if (box_corners[box * n_dim + a] - box_corners[nb * n_dim + a] > 1){
-                        r0_other[a] = 1.0;
-                    }
-                    else if (box_corners[box * n_dim + a] - box_corners[nb * n_dim + a] < -1){
-                        r0_other[a] = -1.0;
-                    }
-                    else{
-                        r0_other[a] = 0.0;
-                    }
+            // check periodic boundary conditions
+            // TODO: Optimize this calculation?
+            for (int a = 0; a < 3; ++a) {
+                if (box_corners[box * n_dim + a] - box_corners[nb * n_dim + a] > 1) {
+                    r0_other[a] = 1.0;
                 }
+                else if (box_corners[box * n_dim + a] - box_corners[nb * n_dim + a] < -1) {
+                    r0_other[a] = -1.0;
+                }
+                else{
+                    r0_other[a] = 0.0;
+                }
+                }
+            
+            // iterate through all particles in a box
+            for (int particle = box_begin[box]; particle < box_begin[box] + box_lengths[box]; ++particle) {
+                // coordinates of the target particle
+                // column-major
+                const double x = r_src_sorted[particle];
+                const double y = r_src_sorted[n_src + particle];
+                const double z = r_src_sorted[n_src * 2 + particle];
 
                 // for each neighbor compute all the pairwise interactions
-                for (int other = box_begin[nb]; other < box_begin[nb] + box_lengths[nb]; ++other){
+                for (int other = box_begin[nb]; other < box_begin[nb] + box_lengths[nb]; ++other) {
                     // other coordinates
-                    x_other = r0_other[0] + r_src_sorted[other];
-                    y_other = r0_other[1] + r_src_sorted[n_src + other];
-                    z_other = r0_other[2] + r_src_sorted[n_src * 2 + other];
+                    const double x_other = r0_other[0] + r_src_sorted[other];
+                    const double y_other = r0_other[1] + r_src_sorted[n_src + other];
+                    const double z_other = r0_other[2] + r_src_sorted[n_src * 2 + other];
 
                     // store the displacement
-                    dx = x - x_other;
-                    dy = y - y_other;
-                    dz = z - z_other;
+                    const double dx = x - x_other;
+                    const double dy = y - y_other;
+                    const double dz = z - z_other;
 
-                    rij_mag_sq = dx * dx + dy * dy + dz * dz;
+                    const double rij_mag_sq = dx * dx + dy * dy + dz * dz;
                     
                     // avoid division by zero
-                    if (rij_mag_sq == 0 || rij_mag_sq >= r_cut_sq){ continue; }
+                    if (rij_mag_sq == 0 || rij_mag_sq >= r_cut_sq) { continue; }
 
-                    rij_mag = std::sqrt(rij_mag_sq);
-                    pot_short_sorted[particle_count] += charges_sorted[other] * std::erfc(rij_mag * alpha) / rij_mag;
+                    const double rij_mag = std::sqrt(rij_mag_sq);
+                    pot_short_sorted[particle] += charges_sorted[other] * std::erfc(rij_mag * alpha) / rij_mag;
                 }
             }
-            ++particle_count;
         }
     }
 
     // de-sort the calculated potential values
-    for (size_t i = 0; i < n_trg; ++i){
+    for (size_t i = 0; i < n_trg; ++i) {
         pot_short[particles_sorted[i]] = pot_short_sorted[i];
     }
 
@@ -294,7 +281,7 @@ int main(int argc, char *argv[]) {
     std::cout << "Elapsed time: " << (end - start) * 1000.0 << " miliseconds" << std::endl;
 
     std::cout << "Short-range interaction:" << std::endl;
-    printVector(pot_short);
+    print_vector(pot_short);
 
     return 0;
 }
