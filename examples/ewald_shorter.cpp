@@ -2,6 +2,8 @@
 #include <random>
 #include <vector>
 #include <fstream>
+#include <span>
+#include <string>
 #include <omp.h>
 
 #define EPS 0.0001
@@ -45,6 +47,39 @@ void print_array(const int v[], const int length) {
     std::cout << "\n\n";
 }
 
+// typical 3D potential for Poisson Eq; scaling constant = 1
+double compute_pairwise_potential(const double r, const double q, const double alpha, const std::string pot) {
+    if (pot == "POISSON-3D") {
+        return q * std::erfc(alpha * r) / r;
+    }
+    return 0;
+}
+
+void compute_potential(double *pot, const double* x, const double* y, const double* z, 
+            const double* charges, const int n_particles, const double* x_other, const double* y_other, 
+            const double* z_other, const int n_other, const double* offset, const std::string POT_TYPE, 
+            const double r_cut_sq, const double alpha) {
+    
+    // iterate through all source particles
+    for (int i = 0; i < n_particles; ++i) {
+        // iterate through all other particles
+        for (int j = 0; j < n_other; ++j) {
+            // store the displacement
+            const double dx = x[i] - x_other[j] - offset[0];
+            const double dy = y[i] - y_other[j] - offset[1];
+            const double dz = z[i] - z_other[j] - offset[2];
+
+            const double rij_mag_sq = dx * dx + dy * dy + dz * dz;
+            
+            // avoid division by zero
+            if (rij_mag_sq == 0 || rij_mag_sq >= r_cut_sq) { continue; }
+
+            const double rij_mag = std::sqrt(rij_mag_sq);
+            pot[i] += compute_pairwise_potential(rij_mag, charges[j], alpha, POT_TYPE);  
+        }
+    }
+}
+
 int main(int argc, char *argv[]) {
     // useful quantities
     const double twopi = 2 * M_PI;
@@ -52,6 +87,8 @@ int main(int argc, char *argv[]) {
     const int n_src = 100; // number of sources
     const int n_trg = 100; // number of targets
     const int n_dim = 3;   // number of dimensions
+
+    const std::string POT_TYPE = "POISSON-3D";
 
     // initialize the vectors: empty for now
     std::vector<double> r_src(n_src * n_dim, 0.0); // source coordinates
@@ -134,8 +171,10 @@ int main(int argc, char *argv[]) {
 
     // sorted particle indices, coordinates, and charges
     std::vector<int> particles_sorted(n_src);
-    std::vector<double> r_src_sorted(n_src * n_dim);
-    std::vector<double> charges_sorted(n_src);
+    // std::vector<double> r_src_sorted(n_src * n_dim); // vector
+    double r_src_sorted[n_src * n_dim]; // array
+    // std::vector<double> charges_sorted(n_src); // vector
+    double charges_sorted[n_src]; // array
 
     for (size_t ind = 0; ind < n_src; ++ind) {
         // particle coordinates
@@ -210,19 +249,18 @@ int main(int argc, char *argv[]) {
         }
     }
     
-    std::vector<double> r0_other(3, 0.0);
+    double r0_other[n_dim];
 
     // BEGIN CALCULATIONS // 
     // ----------------------------------------------------------------------------- //
-
+    
     auto start = omp_get_wtime();
-
+    
     // iterate through all boxes
     for (size_t box = 0; box < n_boxes; ++box) {
         // go through the neighbors
-        for (int neighbor_count = 0; neighbor_count < 27; ++neighbor_count) {
-            const int nb = box_neighbors[box * 3 * 3 * 3 + neighbor_count];
-            
+        std::span<const int> neighbors(box_neighbors + box * 27, 27);
+        for (int nb : neighbors) {
             // check periodic boundary conditions
             // TODO: Optimize this calculation?
             for (int a = 0; a < 3; ++a) {
@@ -235,37 +273,26 @@ int main(int argc, char *argv[]) {
                 else{
                     r0_other[a] = 0.0;
                 }
-                }
-            
-            // iterate through all particles in a box
-            for (int particle = box_begin[box]; particle < box_begin[box] + box_lengths[box]; ++particle) {
-                // coordinates of the target particle
-                // column-major
-                const double x = r_src_sorted[particle];
-                const double y = r_src_sorted[n_src + particle];
-                const double z = r_src_sorted[n_src * 2 + particle];
-
-                // for each neighbor compute all the pairwise interactions
-                for (int other = box_begin[nb]; other < box_begin[nb] + box_lengths[nb]; ++other) {
-                    // other coordinates
-                    const double x_other = r0_other[0] + r_src_sorted[other];
-                    const double y_other = r0_other[1] + r_src_sorted[n_src + other];
-                    const double z_other = r0_other[2] + r_src_sorted[n_src * 2 + other];
-
-                    // store the displacement
-                    const double dx = x - x_other;
-                    const double dy = y - y_other;
-                    const double dz = z - z_other;
-
-                    const double rij_mag_sq = dx * dx + dy * dy + dz * dz;
-                    
-                    // avoid division by zero
-                    if (rij_mag_sq == 0 || rij_mag_sq >= r_cut_sq) { continue; }
-
-                    const double rij_mag = std::sqrt(rij_mag_sq);
-                    pot_short_sorted[particle] += charges_sorted[other] * std::erfc(rij_mag * alpha) / rij_mag;
-                }
             }
+
+            // TODO: Generalize to more dimensions (?)
+
+            const double* x = r_src_sorted + box_begin[box];
+            const double* y = r_src_sorted + n_src + box_begin[box];
+            const double* z = r_src_sorted + n_src * 2 + box_begin[box];
+
+            const double* x_other = r_src_sorted + box_begin[nb];
+            const double* y_other = r_src_sorted + n_src + box_begin[nb];
+            const double* z_other = r_src_sorted + n_src * 2 + box_begin[nb];
+
+            const double* ch = charges_sorted + box_begin[nb];
+
+            double* pot = &(pot_short_sorted[0]) + box_begin[box];
+
+            // TODO: Pass a pointer to the potential function
+            compute_potential(pot, x, y, z, ch, box_lengths[box], 
+                                x_other, y_other, z_other, box_lengths[nb], r0_other, 
+                                POT_TYPE, r_cut_sq, alpha);
         }
     }
 
@@ -274,14 +301,74 @@ int main(int argc, char *argv[]) {
         pot_short[particles_sorted[i]] = pot_short_sorted[i];
     }
 
-    auto end = omp_get_wtime();
-
     // ----------------------------------------------------------------------------- //
+
+    // pot_short_sorted.assign(n_src, 0.0);
+
+    // // iterate through all boxes
+    // for (size_t box = 0; box < n_boxes; ++box) {
+    //     // go through the neighbors
+    //     std::span<const int> neighbors(box_neighbors + box * 27, 27);
+    //     for (int nb : neighbors) {
+    //         // check periodic boundary conditions
+    //         // TODO: Optimize this calculation?
+    //         for (int a = 0; a < 3; ++a) {
+    //             if (box_corners[box * n_dim + a] - box_corners[nb * n_dim + a] > 1) {
+    //                 r0_other[a] = 1.0;
+    //             }
+    //             else if (box_corners[box * n_dim + a] - box_corners[nb * n_dim + a] < -1) {
+    //                 r0_other[a] = -1.0;
+    //             }
+    //             else{
+    //                 r0_other[a] = 0.0;
+    //             }
+    //         }
+            
+    //         // iterate through all particles in a box
+    //         for (int particle = box_begin[box]; particle < box_begin[box] + box_lengths[box]; ++particle) {
+    //             // coordinates of the target particle
+    //             // column-major
+    //             const double x = r_src_sorted[particle];
+    //             const double y = r_src_sorted[n_src + particle];
+    //             const double z = r_src_sorted[n_src * 2 + particle];
+
+    //             // for each neighbor compute all the pairwise interactions
+    //             for (int other = box_begin[nb]; other < box_begin[nb] + box_lengths[nb]; ++other) {
+    //                 // other coordinates
+    //                 const double x_other = r0_other[0] + r_src_sorted[other];
+    //                 const double y_other = r0_other[1] + r_src_sorted[n_src + other];
+    //                 const double z_other = r0_other[2] + r_src_sorted[n_src * 2 + other];
+
+    //                 // store the displacement
+    //                 const double dx = x - x_other;
+    //                 const double dy = y - y_other;
+    //                 const double dz = z - z_other;
+
+    //                 const double rij_mag_sq = dx * dx + dy * dy + dz * dz;
+                    
+    //                 // avoid division by zero
+    //                 if (rij_mag_sq == 0 || rij_mag_sq >= r_cut_sq) { continue; }
+
+    //                 const double rij_mag = std::sqrt(rij_mag_sq);
+    //                 pot_short_sorted[particle] += compute_pairwise_potential(rij_mag, charges_sorted[other], alpha, POT_TYPE);
+    //             }
+    //         }
+    //     }
+    // }
+
+    // // de-sort the calculated potential values
+    // for (size_t i = 0; i < n_trg; ++i) {
+    //     pot_short[particles_sorted[i]] = pot_short_sorted[i];
+    // }
+
+    auto end = omp_get_wtime();
 
     std::cout << "Elapsed time: " << (end - start) * 1000.0 << " miliseconds" << std::endl;
 
     std::cout << "Short-range interaction:" << std::endl;
     print_vector(pot_short);
+
+    // ----------------------------------------------------------------------------- //
 
     return 0;
 }
