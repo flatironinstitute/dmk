@@ -81,9 +81,6 @@ void compute_potential(double *pot, const double* x, const double* y, const doub
 }
 
 int main(int argc, char *argv[]) {
-    // useful quantities
-    const double twopi = 2 * M_PI;
-
     const int n_src = 100; // number of sources
     const int n_trg = 100; // number of targets
     const int n_dim = 3;   // number of dimensions
@@ -129,8 +126,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // std::cout << "Charges:" << std::endl;
-    // print_vector(charges);
+    std::cout << "Charges:" << std::endl;
+    print_vector(charges);
     // test_total_charge(charges);
 
     // ---------------------------------------------------------------------- //
@@ -150,31 +147,22 @@ int main(int argc, char *argv[]) {
     std::vector<double> pot_short_sorted(n_trg, 0.0);     // sorted potential vector
     
     // use r_cut to decompose each dimension in boxes
-    // TODO: edge cases (?), memory optimization (?)
-    // box_index_grid[i] determines the 1D index where the i-th box begins
-    int nbins_x = 0;
+    // TODO: edge cases (?)
     const int bin_size_x = int(r_cut * N + 1);
-    std::vector<int> box_index_grid;
-    for (size_t i = 0; i < N; i += bin_size_x) {
-        box_index_grid.push_back(i);
-        ++nbins_x;
-    }
-
+    const int nbins_x = N / bin_size_x + (N % bin_size_x > 0) * 1;
     const int n_boxes = nbins_x * nbins_x * nbins_x;
 
     // initialize box and neighbor lists
     int box_neighbors[n_boxes * n_boxes * n_boxes * 3 * 3 * 3];
     int box_corners[n_boxes * n_dim];
-    std::vector<int> box_lengths(n_boxes, 0);
-    std::vector<int> box_begin(n_boxes, 0);
-    std::vector<int> box_offset(n_boxes, 0);
+    std::vector<int> box_lengths(n_boxes, 0); // initialize to 0
+    int box_begin[n_boxes];
+    int box_offset[n_boxes];
 
     // sorted particle indices, coordinates, and charges
-    std::vector<int> particles_sorted(n_src);
-    // std::vector<double> r_src_sorted(n_src * n_dim); // vector
-    double r_src_sorted[n_src * n_dim]; // array
-    // std::vector<double> charges_sorted(n_src); // vector
-    double charges_sorted[n_src]; // array
+    int particles_sorted[n_src];
+    double r_src_sorted[n_src * n_dim];
+    double charges_sorted[n_src];
 
     for (size_t ind = 0; ind < n_src; ++ind) {
         // particle coordinates
@@ -250,7 +238,7 @@ int main(int argc, char *argv[]) {
     }
     
     double r0_other[n_dim];
-
+    
     // BEGIN CALCULATIONS // 
     // ----------------------------------------------------------------------------- //
     
@@ -296,70 +284,12 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // ----------------------------------------------------------------------------- //
+
     // de-sort the calculated potential values
     for (size_t i = 0; i < n_trg; ++i) {
         pot_short[particles_sorted[i]] = pot_short_sorted[i];
     }
-
-    // ----------------------------------------------------------------------------- //
-
-    // pot_short_sorted.assign(n_src, 0.0);
-
-    // // iterate through all boxes
-    // for (size_t box = 0; box < n_boxes; ++box) {
-    //     // go through the neighbors
-    //     std::span<const int> neighbors(box_neighbors + box * 27, 27);
-    //     for (int nb : neighbors) {
-    //         // check periodic boundary conditions
-    //         // TODO: Optimize this calculation?
-    //         for (int a = 0; a < 3; ++a) {
-    //             if (box_corners[box * n_dim + a] - box_corners[nb * n_dim + a] > 1) {
-    //                 r0_other[a] = 1.0;
-    //             }
-    //             else if (box_corners[box * n_dim + a] - box_corners[nb * n_dim + a] < -1) {
-    //                 r0_other[a] = -1.0;
-    //             }
-    //             else{
-    //                 r0_other[a] = 0.0;
-    //             }
-    //         }
-            
-    //         // iterate through all particles in a box
-    //         for (int particle = box_begin[box]; particle < box_begin[box] + box_lengths[box]; ++particle) {
-    //             // coordinates of the target particle
-    //             // column-major
-    //             const double x = r_src_sorted[particle];
-    //             const double y = r_src_sorted[n_src + particle];
-    //             const double z = r_src_sorted[n_src * 2 + particle];
-
-    //             // for each neighbor compute all the pairwise interactions
-    //             for (int other = box_begin[nb]; other < box_begin[nb] + box_lengths[nb]; ++other) {
-    //                 // other coordinates
-    //                 const double x_other = r0_other[0] + r_src_sorted[other];
-    //                 const double y_other = r0_other[1] + r_src_sorted[n_src + other];
-    //                 const double z_other = r0_other[2] + r_src_sorted[n_src * 2 + other];
-
-    //                 // store the displacement
-    //                 const double dx = x - x_other;
-    //                 const double dy = y - y_other;
-    //                 const double dz = z - z_other;
-
-    //                 const double rij_mag_sq = dx * dx + dy * dy + dz * dz;
-                    
-    //                 // avoid division by zero
-    //                 if (rij_mag_sq == 0 || rij_mag_sq >= r_cut_sq) { continue; }
-
-    //                 const double rij_mag = std::sqrt(rij_mag_sq);
-    //                 pot_short_sorted[particle] += compute_pairwise_potential(rij_mag, charges_sorted[other], alpha, POT_TYPE);
-    //             }
-    //         }
-    //     }
-    // }
-
-    // // de-sort the calculated potential values
-    // for (size_t i = 0; i < n_trg; ++i) {
-    //     pot_short[particles_sorted[i]] = pot_short_sorted[i];
-    // }
 
     auto end = omp_get_wtime();
 
@@ -367,8 +297,6 @@ int main(int argc, char *argv[]) {
 
     std::cout << "Short-range interaction:" << std::endl;
     print_vector(pot_short);
-
-    // ----------------------------------------------------------------------------- //
 
     return 0;
 }

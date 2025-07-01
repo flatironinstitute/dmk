@@ -66,7 +66,8 @@ int main(int argc, char *argv[]) {
     std::vector<double> charges(n_src, 0.0);      // source charges
 
     // generate uniform random source & target coordinates and charges
-    std::default_random_engine generator;
+    // std::default_random_engine generator;
+    std::mt19937 generator;
     std::uniform_real_distribution<double> distribution(0.0, 1.0);
 
     for (int i=0; i < n_src*n_dim; ++i) {
@@ -99,8 +100,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // std::cout << "Charges:" << std::endl;
-    // print_vector(charges);
+    std::cout << "Charges:" << std::endl;
+    print_vector(charges);
     // test_total_charge(charges);
 
     // ---------------------------------------------------------------------- //
