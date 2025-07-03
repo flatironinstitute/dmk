@@ -652,7 +652,7 @@ void run_test_case_01() {
 
     const double alpha = 10.0; // the extent of short-range and long-range interactions
     const double r_cut = 0.20; // cutoff distance for short-range interactions
-    const int N = 16; // 2^4 points
+    const int N = 32; // 2^4 points
     const int p = 4; // order of accuracy for interpolation
     
     // short-range interactions
@@ -738,7 +738,7 @@ void run_test_case_03() {
     
     Test_Case_System<double> System_02(n_src, n_trg, n_dim, r_src, r_src, charges);
 
-    const double alpha = 6.5;
+    const double alpha = 10.0;
     const double r_cut = 0.20;
     const int N = 32;
     const int p = 4;
@@ -791,9 +791,9 @@ void run_test_case_03() {
 // ------------------------------------------------------------------------------------------ //
 
 int main(int argc, char *argv[]) {
-    // run_test_case_01();
+    run_test_case_01();
     // run_test_case_02();
-    run_test_case_03();
+    // run_test_case_03();
 
     return 0;
 }
