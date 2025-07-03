@@ -1,11 +1,12 @@
+#include <algorithm>
+#include <complex>
+#include <ducc0/fft/fft.h>
+#include <ducc0/fft/fftnd_impl.h>
+#include <fstream>
 #include <iostream>
+#include <omp.h>
 #include <random>
 #include <vector>
-#include <complex>
-#include <algorithm>
-#include <fstream>
-#include <omp.h>
-#include <fftw/fftw3_mkl.h>
 
 #define EPS 0.0001
 
@@ -14,7 +15,7 @@ void test_total_charge(const std::vector<double> &ch) {
     std::cout << "Size: " << size << std::endl;
 
     double total_charge = 0.0;
-    for (int i=0; i < size; ++i) {
+    for (int i = 0; i < size; ++i) {
         total_charge += ch[i];
         if (ch[i] < -1.0 || ch[i] > 1.0) {
             std::cout << "Charge out of bounds: " << ch[i] << " at index " << i << std::endl;
@@ -23,7 +24,7 @@ void test_total_charge(const std::vector<double> &ch) {
     std::cout << "Total charge: " << total_charge << std::endl;
 }
 
-template<typename T>
+template <typename T>
 void dump(const std::string &name, const T &data) {
     std::ofstream file(name, std::ios::binary);
     if (!data.size())
@@ -34,7 +35,7 @@ void dump(const std::string &name, const T &data) {
 
 void print_vector(const std::vector<double> &v) {
     int size = v.size();
-    for (int i=0; i < size; ++i) {            
+    for (int i = 0; i < size; ++i) {
         std::cout << v[i] << " ";
     }
     std::cout << "\n\n";
@@ -42,11 +43,10 @@ void print_vector(const std::vector<double> &v) {
 
 void print_vector_comp(const std::vector<std::complex<double>> &v) {
     int size = v.size();
-    for (int i=0; i < size; ++i) {            
+    for (int i = 0; i < size; ++i) {
         std::cout << "(" << v[i].real() << ", " << v[i].imag() << ") ";
     }
     std::cout << "\n\n";
-
 }
 
 double vector_norm_sq(const std::vector<double> &v) {
@@ -54,7 +54,7 @@ double vector_norm_sq(const std::vector<double> &v) {
     double normsq = 0.0;
 
     for (int i = 0; i < size; ++i) {
-        normsq += v[i]*v[i];
+        normsq += v[i] * v[i];
     }
     return normsq;
 }
@@ -71,13 +71,15 @@ void compute_green_func(std::vector<double> &G, const int N, const double h, con
                 const auto i_new = (i > (N / 2)) ? i - N : i;
                 const auto j_new = (j > (N / 2)) ? j - N : j;
                 const auto w_new = (w > (N / 2)) ? w - N : w;
-                
+
                 const auto k_x = TWOPI * i_new;
                 const auto k_y = TWOPI * j_new;
                 const auto k_z = TWOPI * w_new;
 
                 const auto mode_sq = k_x * k_x + k_y * k_y + k_z * k_z;
-                if (mode_sq==0) { continue; }
+                if (mode_sq == 0) {
+                    continue;
+                }
 
                 // update G_hat
                 G[i + N * (j + N * w)] = 4 * M_PI / mode_sq * std::exp(-mode_sq / (4 * alpha * alpha));
@@ -86,24 +88,27 @@ void compute_green_func(std::vector<double> &G, const int N, const double h, con
     }
 }
 
-void compute_short_range(const std::vector<double> &r_src, const std::vector<double> &r_trg, std::vector<double> &pot, const std::vector<double> &charges, 
-                        const int n_dim, const double r_cut, const int n_src, const int n_trg, const double alpha) {
-    
+void compute_short_range(const std::vector<double> &r_src, const std::vector<double> &r_trg, std::vector<double> &pot,
+                         const std::vector<double> &charges, const int n_dim, const double r_cut, const int n_src,
+                         const int n_trg, const double alpha) {
+
     const double r_cut_sq = r_cut * r_cut;
 
     std::vector<double> diff(n_dim, 0.0); // vector to calculate displacements
-    
+
     auto start = omp_get_wtime();
 
     for (size_t i = 0; i < n_trg; ++i) {
         for (size_t j = 0; j < n_src; ++j) {
-            if (i==j) { continue; } // ensure no division by zero
+            if (i == j) {
+                continue;
+            } // ensure no division by zero
 
             for (int k = 0; k < n_dim; ++k) {
                 double diff_nonPBC = std::abs(r_src[k * n_src + j] - r_trg[k * n_src + i]);
                 diff[k] = std::min(diff_nonPBC, 1.0 - diff_nonPBC);
             }
-            
+
             const double rij_mag_sq = vector_norm_sq(diff);
 
             // compute the contribution only if it falls within a cutoff distance
@@ -122,54 +127,57 @@ void compute_short_range(const std::vector<double> &r_src, const std::vector<dou
 // Lagrange polynomials
 void evaluate_polynomials_04(std::vector<double> &W, const double x, const double h) {
     // Pre-compute powers that are reused many times
-    const double h2 = h * h;          
-    const double h3 = h2 * h;         
-    const double h4 = h2 * h2;        
+    const double h2 = h * h;
+    const double h3 = h2 * h;
+    const double h4 = h2 * h2;
 
-    const double x2 = x * x;          
-    const double x3 = x2 * x;         
+    const double x2 = x * x;
+    const double x3 = x2 * x;
     const double x4 = x2 * x2;
 
-    const double denom = 24.0 * h4;   
+    const double denom = 24.0 * h4;
 
-    W[0] = (x4 - 2.0*h*x3 - h2*x2 + 2.0*h3*x) / denom;
+    W[0] = (x4 - 2.0 * h * x3 - h2 * x2 + 2.0 * h3 * x) / denom;
 
-    W[1] = (-4.0*x4 + 4.0*h*x3 + 16.0*h2*x2 - 16.0*h3*x) / denom;
+    W[1] = (-4.0 * x4 + 4.0 * h * x3 + 16.0 * h2 * x2 - 16.0 * h3 * x) / denom;
 
-    W[2] = (6.0*x4 - 30.0*h2*x2 + 24.0*h4) / denom;
+    W[2] = (6.0 * x4 - 30.0 * h2 * x2 + 24.0 * h4) / denom;
 
-    W[3] = (-4.0*x4 - 4.0*h*x3 + 16.0*h2*x2 + 16.0*h3*x) / denom;
+    W[3] = (-4.0 * x4 - 4.0 * h * x3 + 16.0 * h2 * x2 + 16.0 * h3 * x) / denom;
 
-    W[4] = (x4 + 2.0*h*x3 - h2*x2 - 2.0*h3*x) / denom;
+    W[4] = (x4 + 2.0 * h * x3 - h2 * x2 - 2.0 * h3 * x) / denom;
 }
-
 
 // // cardinal B-splines
 // void evaluate_polynomials_04(std::vector<double> &W, const double x, const double h) {
 //     // TODO: optimize polynomial evaluation -- Horner scheme (?)
 //     double denominator = 96 * h * h * h * h;
-//     W[0] = (16 * x * x * x * x - 32 * h * x * x * x + 24 * h * h * x * x - 8 * h * h * h * x + h * h * h * h) / (4 * denominator);
-//     W[1] = (-16 * x * x * x * x + 16 * h * x * x * x + 24 * h * h * x * x - 44 * h * h * h * x + 19 * h * h * h * h) / denominator;
-//     W[2] = (48 * x * x * x * x - 120 * h * h * x * x + 115 * h * h * h * h) / (2 * denominator);
-//     W[3] = (-16 * x * x * x * x - 16 * h * x * x * x + 24 * h * h * x * x + 44 * h * h * h * x + 19 * h * h * h * h) / denominator;
-//     W[4] = (16 * x * x * x * x + 32 * h * x * x * x + 24 * h * h * x * x + 8 * h * h * h * x + h * h * h * h) / (4 * denominator);
+//     W[0] = (16 * x * x * x * x - 32 * h * x * x * x + 24 * h * h * x * x - 8 * h * h * h * x + h * h * h * h) / (4 *
+//     denominator); W[1] = (-16 * x * x * x * x + 16 * h * x * x * x + 24 * h * h * x * x - 44 * h * h * h * x + 19 * h
+//     * h * h * h) / denominator; W[2] = (48 * x * x * x * x - 120 * h * h * x * x + 115 * h * h * h * h) / (2 *
+//     denominator); W[3] = (-16 * x * x * x * x - 16 * h * x * x * x + 24 * h * h * x * x + 44 * h * h * h * x + 19 * h
+//     * h * h * h) / denominator; W[4] = (16 * x * x * x * x + 32 * h * x * x * x + 24 * h * h * x * x + 8 * h * h * h
+//     * x + h * h * h * h) / (4 * denominator);
 // }
 
 std::vector<double> compute_contribution(const double r, const int middle, const int N, const double h, const int p) {
-    std::vector<double> W(p+1, 0.0); // initialize the vector of polynomials
+    std::vector<double> W(p + 1, 0.0); // initialize the vector of polynomials
     double dr = r - middle * h;
     double dr_abs = std::abs(dr);
     dr = (dr_abs >= h / 2) ? dr - 1 : dr; // correction for periodic boundaries
     // TODO: generalize to more box lengths L (here it is 1.0)
 
-    if (p==4) { evaluate_polynomials_04(W, dr, h); }
+    if (p == 4) {
+        evaluate_polynomials_04(W, dr, h);
+    }
     return W;
 }
 
-void assign_charge(const std::vector<double> &r_src, const std::vector<double> &charges, std::vector<double> &grid, const int N, const double h, const int p) {
+void assign_charge(const std::vector<double> &r_src, const std::vector<double> &charges, std::vector<double> &grid,
+                   const int N, const double h, const int p) {
     int n_charges = charges.size();
     const int N3 = N * N * N;
-    
+
     // iterate through charges and their coordinates
     for (size_t ind = 0; ind < n_charges; ++ind) {
         const double q = charges[ind];
@@ -177,7 +185,7 @@ void assign_charge(const std::vector<double> &r_src, const std::vector<double> &
         const double x = r_src[ind];
         const double y = r_src[n_charges + ind];
         const double z = r_src[n_charges * 2 + ind];
-        
+
         // identify the middle point
         // round to the nearest integer
         // TODO: generalize for odd p
@@ -208,9 +216,10 @@ void assign_charge(const std::vector<double> &r_src, const std::vector<double> &
     }
 }
 
-void back_interpolate(std::vector<double> &r_trg, std::vector<double> &pot, std::vector<double> &trg_pot, const int N, const double h, const int p) {
+void back_interpolate(std::vector<double> &r_trg, std::vector<double> &pot, std::vector<double> &trg_pot, const int N,
+                      const double h, const int p) {
     int n_trg = r_trg.size() / 3;
-    
+
     // iterate through targets and their coordinates
     for (size_t ind = 0; ind < n_trg; ++ind) {
         // coordinates of the target point
@@ -253,53 +262,24 @@ void back_interpolate(std::vector<double> &r_trg, std::vector<double> &pot, std:
     }
 }
 
-// USING REAL INPUT/OUTPUT
-std::vector<std::complex<double>> run_rfft(std::vector<double> &in, const int n_dim, const int N) {
-    // TODO: Generalize to more/less dimensions
-    std::vector<std::complex<double>> out(N * N * (N / 2 + 1), (0.0, 0.0));
-    int n[] = {N, N, N};
-
-    fftw_plan p = fftw_plan_dft_r2c(n_dim, n, in.data(), (fftw_complex *)out.data(), FFTW_MEASURE);
-    
-    fftw_execute(p);
-    fftw_destroy_plan(p);
-    return out;
-}
-
-std::vector<double> run_irfft(std::vector<std::complex<double>> &in, const int n_dim, const int N) {
-    // TODO: Generalize to more/less dimensions
-    std::vector<double> out(N * N * N, 0.0);
-    int n[] = {N, N, N};
-
-    fftw_plan p = fftw_plan_dft_c2r(n_dim, n, (fftw_complex *)in.data(), out.data(), FFTW_MEASURE);
-    
-    fftw_execute(p);
-    fftw_destroy_plan(p);
-    return out;
-}
-
 // USING COMPLEX INPUT/OUTPUT
-std::vector<std::complex<double>> run_fft(std::vector<std::complex<double>> &in, const int n_dim, const int N) {
-    // TODO: Generalize to more/less dimensions
-    std::vector<std::complex<double>> out(N * N * N, (0.0, 0.0));
-    int n[] = {N, N, N};
+template <typename Real>
+std::vector<std::complex<Real>> run_fft(const std::vector<std::complex<Real>> &in, int n_dim, int N, bool is_forward) {
+    std::vector<size_t> shape, axes;
+    size_t N_tot = 1;
+    for (auto i = 0; i < n_dim; ++i) {
+        shape.push_back(N);
+        axes.push_back(i);
+        N_tot *= N;
+    }
 
-    fftw_plan p = fftw_plan_dft(n_dim, n, (fftw_complex *)in.data(), (fftw_complex *)out.data(), FFTW_FORWARD, FFTW_MEASURE);
-    
-    fftw_execute(p);
-    fftw_destroy_plan(p);
-    return out;
-}
+    std::vector<std::complex<Real>> out(N_tot);
+    ducc0::cfmav<std::complex<Real>> ducc_in(in.data(), shape);
+    ducc0::vfmav<std::complex<Real>> ducc_out(out.data(), shape);
 
-std::vector<std::complex<double>> run_ifft(std::vector<std::complex<double>> &in, const int n_dim, const int N) {
-    // TODO: Generalize to more/less dimensions
-    std::vector<std::complex<double>> out(N * N * N, 0.0);
-    int n[] = {N, N, N};
+    size_t n_threads = omp_get_num_threads();
+    ducc0::c2c(ducc_in, ducc_out, axes, is_forward, Real{1}, n_threads);
 
-    fftw_plan p = fftw_plan_dft(n_dim, n, (fftw_complex *)in.data(), (fftw_complex *)out.data(), FFTW_BACKWARD, FFTW_MEASURE);
-    
-    fftw_execute(p);
-    fftw_destroy_plan(p);
     return out;
 }
 
@@ -314,37 +294,37 @@ int main(int argc, char *argv[]) {
     // initialize the vectors: empty for now
     std::vector<double> r_src(n_src * n_dim, 0.0); // source coordinates
     std::vector<double> r_trg(n_trg * n_dim, 0.0); // target coordinates
-    std::vector<double> charges(n_src, 0.0);      // source charges
+    std::vector<double> charges(n_src, 0.0);       // source charges
 
     // generate uniform random source & target coordinates and charges
     std::default_random_engine generator;
-    std::uniform_real_distribution<double> distribution(0.0,1.0);
+    std::uniform_real_distribution<double> distribution(0.0, 1.0);
 
-    for (int i=0; i < n_src*n_dim; ++i) {
+    for (int i = 0; i < n_src * n_dim; ++i) {
         r_src[i] = distribution(generator);
     }
 
     // std::cout << "Particle coordinates:" << std::endl;
     // print_vector(r_src);
-    
+
     // r_src = {0.3, 0.3, 0.3, 0.31, 0.3, 0.3};
     // r_src = {0.5, 0.01, 0.5, 0.5, 0.96, 0.5};
 
-    for (int i=0; i < n_trg * n_dim; ++i) {
+    for (int i = 0; i < n_trg * n_dim; ++i) {
         // r_trg[i] = distribution(generator);
         r_trg[i] = r_src[i];
     }
 
     // initialize charges with random values in the range [-1, 1]
     double total_charge = 0.0;
-    for (int i=0; i < n_src; ++i) {
-        charges[i] = (distribution(generator))*2-1;
+    for (int i = 0; i < n_src; ++i) {
+        charges[i] = (distribution(generator)) * 2 - 1;
         total_charge += charges[i];
     }
 
     // normalize charges to ensure total charge is zero
     if (std::abs(total_charge) > 1e-5) {
-        for (int i=0; i < n_src; ++i) {
+        for (int i = 0; i < n_src; ++i) {
             charges[i] = charges[i] - (total_charge / n_src);
         }
     }
@@ -357,9 +337,9 @@ int main(int argc, char *argv[]) {
 
     // // brute force calculation of the potential at the target points
     // std::vector<double> pot_trg(n_trg, 0.0); // initialize potential at targets
-    
+
     // // TODO: Generalize to different box lengths
-    
+
     // for (int n_i = -2; n_i < 3; ++n_i) {
     //     for (int n_j = -2; n_j < 3; ++n_j) {
     //         for (int n_k = -2; n_k < 3; ++n_k) {
@@ -371,9 +351,9 @@ int main(int argc, char *argv[]) {
     //                     diff[0] = r_src[j] - r_trg[i] + m[0];
     //                     diff[1] = r_src[j + n_src] - r_trg[i + n_src] + m[1];
     //                     diff[2] = r_src[j + 2 * n_src] - r_trg[i + 2 * n_src] + m[2];
-                        
+
     //                     const double rij_mag_sq = vector_norm_sq(diff);
-                    
+
     //                     if (rij_mag_sq == 0) { continue; } // ensure no division by zero
     //                     const double rij_mag = std::sqrt(rij_mag_sq);
     //                     pot_trg[i] += charges[j] / rij_mag;
@@ -393,10 +373,10 @@ int main(int argc, char *argv[]) {
 
     const double alpha = 10.0; // parameter to determine the extent of short-range and long-range interactions
     const double r_cut = 0.20; // cutoff distance for short-range interactions in 1D -- take a look at the graph
-    const int N = 16; // 2^4 points
-    const int p = 4; // order of accuracy for interpolation
-    const double h = 1.0 / N; // width; N intervals due to periodic boundary conditions
-    
+    const int N = 16;          // 2^4 points
+    const int p = 4;           // order of accuracy for interpolation
+    const double h = 1.0 / N;  // width; N intervals due to periodic boundary conditions
+
     // precompute Green's function in Fourier space
     std::vector<double> G_hat(N * N * N, 0.0);
     compute_green_func(G_hat, N, h, alpha);
@@ -412,7 +392,7 @@ int main(int argc, char *argv[]) {
 
     // ---------------------------------------------------------------------- //
     // long-range interactions - Fourier space
-    
+
     // charge assignment - Lagrange-based (PME)
     std::vector<double> grid(N * N * N, 0.0); // N^3 grid with the kernel spread charged values
     assign_charge(r_src, charges, grid, N, h, p);
@@ -425,7 +405,7 @@ int main(int argc, char *argv[]) {
     }
 
     // take the FT (complex input)
-    std::vector<std::complex<double>> ft_density = run_fft(grid_comp, n_dim, N);
+    std::vector<std::complex<double>> ft_density = run_fft<double>(grid_comp, n_dim, N, true);
 
     // element-wise multiplication (convolution)
     for (size_t i = 0; i < N * N * N; ++i) {
@@ -433,7 +413,7 @@ int main(int argc, char *argv[]) {
     }
 
     // take the inverse FT (complex output)
-    std::vector<std::complex<double>> inv_ft_density_comp = run_ifft(ft_density, n_dim, N);
+    std::vector<std::complex<double>> inv_ft_density_comp = run_fft(ft_density, n_dim, N, false);
 
     // turn the inverse FT from complex to real
     std::vector<double> inv_ft_density(N * N * N, 0.0);
@@ -441,8 +421,8 @@ int main(int argc, char *argv[]) {
         inv_ft_density[i] = inv_ft_density_comp[i].real();
     }
 
-    //TODO: optimize this scaling process (?)
-    // scale the inverse transform
+    // TODO: optimize this scaling process (?)
+    //  scale the inverse transform
     for (size_t i = 0; i < N * N * N; ++i) {
         inv_ft_density[i] = inv_ft_density[i] / (N * N * N);
     }

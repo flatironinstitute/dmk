@@ -39,6 +39,28 @@ find_package(OpenMP REQUIRED)
 find_package(MPI REQUIRED)
 find_package(BLAS REQUIRED)
 
+add_library(
+  ducc0
+  STATIC
+  ${PROJECT_SOURCE_DIR}/extern/ducc0/src/ducc0/infra/string_utils.cc
+  ${PROJECT_SOURCE_DIR}/extern/ducc0/src/ducc0/infra/threading.cc
+  ${PROJECT_SOURCE_DIR}/extern/ducc0/src/ducc0/infra/mav.cc
+  ${PROJECT_SOURCE_DIR}/extern/ducc0/src/ducc0/math/gridding_kernel.cc
+  ${PROJECT_SOURCE_DIR}/extern/ducc0/src/ducc0/math/gl_integrator.cc
+)
+target_include_directories(ducc0 PUBLIC ${PROJECT_SOURCE_DIR}/extern/ducc0/src)
+target_compile_features(ducc0 PRIVATE cxx_std_17)
+
+# private because we do not want to propagate this requirement
+set_target_properties(
+  ducc0
+  PROPERTIES
+  POSITION_INDEPENDENT_CODE ON
+)
+
+target_compile_options(ducc0 PRIVATE -ffast-math)
+
+
 if(${DMK_BUILD_PVFMM})
   include(FetchContent)
   FetchContent_Declare(
@@ -55,6 +77,7 @@ set(DMK_INCLUDES
   ${PROJECT_SOURCE_DIR}/extern/SCTL/include
   ${PROJECT_SOURCE_DIR}/extern/spdlog/include
   ${PROJECT_SOURCE_DIR}/extern/doctest
+  ${PROJECT_SOURCE_DIR}/extern/ducc0/include
 )
 
 add_subdirectory(extern/spdlog EXCLUDE_FROM_ALL)

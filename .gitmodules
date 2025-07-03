@@ -13,3 +13,6 @@
 [submodule "extern/doctest"]
 	path = extern/doctest
 	url = https://github.com/doctest/doctest
+[submodule "extern/ducc0"]
+	path = extern/ducc0
+	url = https://gitlab.mpcdf.mpg.de/mtr/ducc.git
