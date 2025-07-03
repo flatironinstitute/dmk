@@ -8,14 +8,10 @@
 #include <fftw/fftw3_mkl.h>
 #include <omp.h>
 
-class Test_case_system {
+template <typename Real>
+class Test_Case_System {
 public:
-    int n_src, n_trg, n_dim;
-    bool unif;
-    std::vector<double> r_src, r_trg, charges;
-
-    Test_case_system(const int n_sources, const int n_targets, 
-                    const int n_dimensions, const bool uniform) : 
+    Test_Case_System(int n_sources, int n_targets, int n_dimensions, bool uniform) : 
                     n_src(n_sources), n_trg(n_targets), n_dim(n_dimensions), unif(uniform), 
                     r_src(n_sources * n_dimensions), r_trg(n_targets * n_dimensions), 
                     charges(n_sources) 
@@ -23,19 +19,19 @@ public:
         if (unif) {
             // generate uniform random source & target coordinates and charges
             std::default_random_engine generator;
-            std::uniform_real_distribution<double> distribution(0.0, 1.0);
+            std::uniform_real_distribution<Real> distribution(0.0, 1.0);
 
-            for (int i=0; i < n_src*n_dim; ++i) {
+            for (int i=0; i < n_src * n_dim; ++i) {
                 r_src[i] = distribution(generator);
             }
 
             // target coordinates are the same as source coordinates
-            for (int i=0; i < n_trg*n_dim; ++i) {
+            for (int i=0; i < n_trg * n_dim; ++i) {
                 r_trg[i] = r_src[i];
             }
 
             // initialize charges with random values in the range [-1, 1]
-            double total_charge = 0.0;
+            Real total_charge = 0.0;
             for (int i=0; i < n_src; ++i) {
                 charges[i] = (distribution(generator))*2-1;
                 total_charge += charges[i];
@@ -51,69 +47,66 @@ public:
     }
 
     // alternative constructor if you have pre-defined coordinates and charges
-    Test_case_system(const int n_sources, const int n_targets, const int n_dimensions, 
-                    const std::vector<double> r_sources, std::vector<double> r_targets) :
+    Test_Case_System(int n_sources, int n_targets, int n_dimensions, std::vector<Real> &r_sources, 
+                    std::vector<Real> &r_targets, std::vector<Real> &charge) :
                     n_src(n_sources), n_trg(n_targets), n_dim(n_dimensions), 
                     r_src(n_sources * n_dimensions), r_trg(n_targets * n_dimensions), 
                     charges(n_sources)
     {
-        for (size_t i = 0; i < n_src * n_dim; ++i){
+        for (size_t i = 0; i < n_src * n_dim; ++i) {
             r_src[i] = r_sources[i];
         }
 
-        for (size_t i = 0; i < n_trg * n_dim; ++i){
+        for (size_t i = 0; i < n_trg * n_dim; ++i) {
             r_trg[i] = r_targets[i];
         }
 
-        // generate uniform random source & target coordinates and charges
-        std::default_random_engine generator;
-        std::uniform_real_distribution<double> distribution(0.0, 1.0);
-
-        // initialize charges with random values in the range [-1, 1]
-        double total_charge = 0.0;
-        for (int i=0; i < n_src; ++i) {
-            charges[i] = (distribution(generator))*2-1;
-            total_charge += charges[i];
-        }
-
-        // normalize charges to ensure total charge is zero
-        if (std::abs(total_charge) > 1e-5) {
-            for (int i=0; i < n_src; ++i) {
-                charges[i] = charges[i] - (total_charge / n_src);
-            }
+        for (size_t i = 0; i < n_src; ++i) {
+            charges[i] = charge[i];
         }
     }
+
+    const int n_src;
+    const int n_trg;
+    const int n_dim;
+    bool unif;
+    std::vector<Real> r_src;
+    std::vector<Real> r_trg; 
+    std::vector<Real> charges;
 };
 
 // ------------------------------------------------------------------------------------------ //
 
-class Short_range_system {
+template <typename Real>
+class Short_Range_System {
 public:
-    int n_boxes;
-    std::vector<int> box_begin, box_lengths, box_corners, particles_sorted;
-    std::vector<std::array<int, 27>> box_neighbors;
-    std::vector<double> r_src_sorted, charges_sorted;
-    
     // constructor
-    Short_range_system(const int n_boxes, const int n_dimensions, const int n_sources) : 
+    Short_Range_System(const int n_boxes, const int n_dimensions, const int n_sources) : 
                         n_boxes(n_boxes), box_begin(n_boxes), box_lengths(n_boxes), 
                         box_corners(n_boxes * n_dimensions), box_neighbors(n_boxes), 
                         particles_sorted(n_sources), r_src_sorted(n_sources * n_dimensions),
-                        charges_sorted(n_sources) 
-    {
-        box_lengths.assign(n_boxes, 0);
-    }
+                        charges_sorted(n_sources) {}
 
     // TODO: generalize for cases when target != source
+
+    const int n_boxes;
+    std::vector<int> box_begin;
+    std::vector<int> box_lengths;
+    std::vector<int> box_corners;
+    std::vector<int> particles_sorted;
+    std::vector<std::array<int, 27>> box_neighbors;
+    std::vector<Real> r_src_sorted;
+    std::vector<Real> charges_sorted;
 };
 
 // ------------------------------------------------------------------------------------------ //
 
-void test_total_charge(const std::vector<double> &ch) {
+template <typename Real>
+void test_total_charge(const std::vector<Real> &ch) {
     int size = ch.size();
     std::cout << "Size: " << size << std::endl;
 
-    double total_charge = 0.0;
+    Real total_charge = 0.0;
     for (int i=0; i < size; ++i) {
         total_charge += ch[i];
         if (ch[i] < -1.0 || ch[i] > 1.0) {
@@ -141,23 +134,18 @@ void print_vector(const std::vector<T> &v) {
     std::cout << "\n\n";
 }
 
-void print_array(const int v[], const int length) {
-    for (int i=0; i < length; ++i) {            
-        std::cout << v[i] << " ";
-    }
-    std::cout << "\n\n";
-}
-
 // ------------------------------------------------------------------------------------------ //
 
-Short_range_system initialize_short_range(Test_case_system System, const double alpha, const double r_cut, 
-                            const int N, const int n_dim) {
-    const std::vector<double> r_src = System.r_src;
-    const std::vector<double> charges = System.charges;
+template <typename Real>
+Short_Range_System<Real> initialize_short_range(const Test_Case_System<Real> &System, Real alpha, Real r_cut, 
+                                        int N, int n_dim) {
+    // shortcuts
+    const std::vector<Real> &r_src = System.r_src;
+    const std::vector<Real> &charges = System.charges;
     const int n_src = System.n_src;
     
-    const double h = 1.0 / N; // width; N intervals due to periodic boundary conditions
-    const double r_cut_sq = r_cut * r_cut;
+    const Real h = 1.0 / N;
+    const Real r_cut_sq = r_cut * r_cut;
 
     // use r_cut to decompose each dimension in boxes
     // TODO: edge cases (?)
@@ -165,16 +153,16 @@ Short_range_system initialize_short_range(Test_case_system System, const double 
     const int nbins_x = N / bin_size_x + (N % bin_size_x > 0) * 1;
     const int n_boxes = nbins_x * nbins_x * nbins_x;
 
-    Short_range_system Short_setup(n_boxes, System.n_dim, System.n_src);
+    Short_Range_System<Real> Short_setup(n_boxes, n_dim, n_src);
 
     // initialize box and neighbor lists
-    int box_offset[Short_setup.n_boxes];
+    int box_offset[n_boxes];
 
     for (size_t ind = 0; ind < n_src; ++ind) {
         // particle coordinates
-        const double x = System.r_src[ind];
-        const double y = System.r_src[System.n_src + ind];
-        const double z = System.r_src[System.n_src * 2 + ind];
+        const Real x = r_src[ind];
+        const Real y = r_src[n_src + ind];
+        const Real z = r_src[n_src * 2 + ind];
 
         const int i_x = int(x * N) / bin_size_x;
         const int i_y = int(y * N) / bin_size_x;
@@ -191,16 +179,16 @@ Short_range_system initialize_short_range(Test_case_system System, const double 
         current_offset += tmp;
 
         // box corners
-        Short_setup.box_corners[i * System.n_dim] = (i % (nbins_x * nbins_x)) % nbins_x;
-        Short_setup.box_corners[i * System.n_dim + 1] = (i % (nbins_x * nbins_x)) / nbins_x;
-        Short_setup.box_corners[i * System.n_dim + 2] = i / (nbins_x * nbins_x);
+        Short_setup.box_corners[i * n_dim] = (i % (nbins_x * nbins_x)) % nbins_x;
+        Short_setup.box_corners[i * n_dim + 1] = (i % (nbins_x * nbins_x)) / nbins_x;
+        Short_setup.box_corners[i * n_dim + 2] = i / (nbins_x * nbins_x);
     }
 
     for (size_t ind = 0; ind < n_src; ++ind) {
         // particle coordinates
-        const double x = System.r_src[ind];
-        const double y = System.r_src[n_src + ind];
-        const double z = System.r_src[n_src * 2 + ind];
+        const Real x = r_src[ind];
+        const Real y = r_src[n_src + ind];
+        const Real z = r_src[n_src * 2 + ind];
 
         const int i_x = int(x * N) / bin_size_x;
         const int i_y = int(y * N) / bin_size_x;
@@ -213,8 +201,8 @@ Short_range_system initialize_short_range(Test_case_system System, const double 
     // sort the position and charge vectors
     for (size_t i = 0; i < n_src; ++i) {
         Short_setup.r_src_sorted[i] = System.r_src[Short_setup.particles_sorted[i]];
-        Short_setup.r_src_sorted[i + n_src] = System.r_src[Short_setup.particles_sorted[i] + System.n_src];
-        Short_setup.r_src_sorted[i + n_src * 2] = System.r_src[Short_setup.particles_sorted[i] + System.n_src * 2];
+        Short_setup.r_src_sorted[i + n_src] = System.r_src[Short_setup.particles_sorted[i] + n_src];
+        Short_setup.r_src_sorted[i + n_src * 2] = System.r_src[Short_setup.particles_sorted[i] + n_src * 2];
         Short_setup.charges_sorted[i] = System.charges[Short_setup.particles_sorted[i]];
     }
 
@@ -248,26 +236,26 @@ Short_range_system initialize_short_range(Test_case_system System, const double 
 
 // ------------------------------------------------------------------------------------------ //
 
-void compute_potential(double* pot, const double* x, const double* y, const double* z, 
-            const double* charges, const int n_particles, const double* x_other, const double* y_other, 
-            const double* z_other, const int n_other, const double* offset,
-            const double r_cut_sq, const double alpha) {
+template <typename Real>
+void compute_potential(Real* pot, const Real* x, const Real* y, const Real* z, 
+            const Real* charges, int n_particles, const Real* x_other, const Real* y_other, 
+            const Real* z_other, int n_other, const Real* offset, Real r_cut_sq, Real alpha) {
     
     // iterate through all source particles
     for (int i = 0; i < n_particles; ++i) {
         // iterate through all other particles
         for (int j = 0; j < n_other; ++j) {
             // store the displacement
-            const double dx = x[i] - x_other[j] - offset[0];
-            const double dy = y[i] - y_other[j] - offset[1];
-            const double dz = z[i] - z_other[j] - offset[2];
+            const Real dx = x[i] - x_other[j] - offset[0];
+            const Real dy = y[i] - y_other[j] - offset[1];
+            const Real dz = z[i] - z_other[j] - offset[2];
 
-            const double rij_mag_sq = dx * dx + dy * dy + dz * dz;
+            const Real rij_mag_sq = dx * dx + dy * dy + dz * dz;
             
             // avoid division by zero
             if (rij_mag_sq == 0 || rij_mag_sq >= r_cut_sq) { continue; }
 
-            const double rij_mag = std::sqrt(rij_mag_sq);
+            const Real rij_mag = std::sqrt(rij_mag_sq);
             pot[i] += charges[j] * std::erfc(rij_mag * alpha) / rij_mag;  
         }
     }
@@ -275,28 +263,35 @@ void compute_potential(double* pot, const double* x, const double* y, const doub
 
 // ------------------------------------------------------------------------------------------ //
 
-std::vector<double> evaluate_short_range(Test_case_system System, Short_range_system Short, 
-                                        const double r_cut, const double alpha) {
+template <typename Real>
+std::vector<Real> evaluate_short_range(const Test_Case_System<Real> &System, Short_Range_System<Real> &Short, 
+                                         Real r_cut, Real alpha) {
     
-    const double r_cut_sq = r_cut * r_cut;
-    std::vector<double> pot(System.n_trg, 0.0);
-    std::vector<double> pot_sorted(System.n_trg, 0.0);     // sorted potential vector
+    // shortcuts
+    const int n_boxes = Short.n_boxes;
+    const int n_dim = System.n_dim;
+    const int n_trg = System.n_trg;
+    const int n_src = System.n_src;
+
+    const Real r_cut_sq = r_cut * r_cut;
+    std::vector<Real> pot(n_trg, 0.0);
+    std::vector<Real> pot_sorted(n_trg, 0.0);     // sorted potential vector
     
-    double offset[System.n_dim];
+    Real offset[n_dim];
     
     auto start = omp_get_wtime();
     
     // iterate through all boxes
-    for (size_t box = 0; box < Short.n_boxes; ++box) {
+    for (size_t box = 0; box < n_boxes; ++box) {
         // go through the neighbors
         for (int nb : Short.box_neighbors[box]) {
             // check periodic boundary conditions
             // TODO: Optimize this calculation?
             for (int a = 0; a < 3; ++a) {
-                if (Short.box_corners[box * System.n_dim + a] - Short.box_corners[nb * System.n_dim + a] > 1) {
+                if (Short.box_corners[box * n_dim + a] - Short.box_corners[nb * n_dim + a] > 1) {
                     offset[a] = 1.0;
                 }
-                else if (Short.box_corners[box * System.n_dim + a] - Short.box_corners[nb * System.n_dim + a] < -1) {
+                else if (Short.box_corners[box * n_dim + a] - Short.box_corners[nb * n_dim + a] < -1) {
                     offset[a] = -1.0;
                 }
                 else{
@@ -306,22 +301,21 @@ std::vector<double> evaluate_short_range(Test_case_system System, Short_range_sy
 
             // TODO: Generalize to more dimensions (?)
 
-            const double* x = &(Short.r_src_sorted[Short.box_begin[box]]);
-            const double* y = &(Short.r_src_sorted[System.n_src + Short.box_begin[box]]);
-            const double* z = &(Short.r_src_sorted[System.n_src * 2 + Short.box_begin[box]]);
+            const Real* x = &(Short.r_src_sorted[Short.box_begin[box]]);
+            const Real* y = &(Short.r_src_sorted[n_src + Short.box_begin[box]]);
+            const Real* z = &(Short.r_src_sorted[n_src * 2 + Short.box_begin[box]]);
 
-            const double* x_other = &(Short.r_src_sorted[Short.box_begin[nb]]);
-            const double* y_other = &(Short.r_src_sorted[System.n_src + Short.box_begin[nb]]);
-            const double* z_other = &(Short.r_src_sorted[System.n_src * 2 + Short.box_begin[nb]]);
+            const Real* x_other = &(Short.r_src_sorted[Short.box_begin[nb]]);
+            const Real* y_other = &(Short.r_src_sorted[n_src + Short.box_begin[nb]]);
+            const Real* z_other = &(Short.r_src_sorted[n_src * 2 + Short.box_begin[nb]]);
 
-            const double* ch = &(Short.charges_sorted[0]) + Short.box_begin[nb];
+            const Real* ch = &(Short.charges_sorted[0]) + Short.box_begin[nb];
 
-            double* pot_part = &(pot_sorted[0]) + Short.box_begin[box];
+            Real* pot_part = &(pot_sorted[0]) + Short.box_begin[box];
 
             // TODO: Pass a pointer to the potential function
-            compute_potential(pot_part, x, y, z, ch, Short.box_lengths[box], 
-                                x_other, y_other, z_other, Short.box_lengths[nb], offset, 
-                                r_cut_sq, alpha);
+            compute_potential(pot_part, x, y, z, ch, Short.box_lengths[box], x_other, y_other, z_other, 
+                                Short.box_lengths[nb], offset, r_cut_sq, alpha);
         }
     }
 
@@ -343,13 +337,14 @@ std::vector<double> evaluate_short_range(Test_case_system System, Short_range_sy
 // ------------------------------------------------------------------------------------------ //
 // ------------------------------------------------------------------------------------------ //
 
-std::vector<double> compute_green_func(const int N, const double alpha) {
+template <typename Real>
+std::vector<Real> compute_green_func(int N, Real alpha) {
     // TODO: generalize to different box lengths
-    const double h = 1.0 / N;
-    const double TWOPI = 2 * M_PI;
-    const double TWOPI_H = TWOPI / h;
+    const Real h = 1.0 / N;
+    const Real TWOPI = 2 * M_PI;
+    const Real TWOPI_H = TWOPI / h;
 
-    std::vector<double> G(N * N * N, 0.0);
+    std::vector<Real> G(N * N * N, 0.0);
 
     for (size_t w = 0; w < N; ++w) {
         for (size_t j = 0; j < N; ++j) {
@@ -379,17 +374,18 @@ std::vector<double> compute_green_func(const int N, const double alpha) {
 // ------------------------------------------------------------------------------------------ //
 
 // Lagrange polynomials
-void evaluate_polynomials_04(std::vector<double> &W, const double x, const double h) {
+template <typename Real>
+void evaluate_polynomials_04(std::vector<Real> &W, Real x, Real h) {
     // Pre-compute powers that are reused many times
-    const double h2 = h * h;          
-    const double h3 = h2 * h;         
-    const double h4 = h2 * h2;        
+    const Real h2 = h * h;          
+    const Real h3 = h2 * h;         
+    const Real h4 = h2 * h2;        
 
-    const double x2 = x * x;          
-    const double x3 = x2 * x;         
-    const double x4 = x2 * x2;
+    const Real x2 = x * x;          
+    const Real x3 = x2 * x;         
+    const Real x4 = x2 * x2;
 
-    const double denom = 24.0 * h4;   
+    const Real denom = 24.0 * h4;   
 
     W[0] = (x4 - 2.0*h*x3 - h2*x2 + 2.0*h3*x) / denom;
 
@@ -402,22 +398,37 @@ void evaluate_polynomials_04(std::vector<double> &W, const double x, const doubl
     W[4] = (x4 + 2.0*h*x3 - h2*x2 - 2.0*h3*x) / denom;
 }
 
+// //  Cardinal B–spline, order-4 (?)
+// void evaluate_polynomials_04(std::vector<Real>& W, const Real x, const Real h) {
+//     // reusable powers
+//     const Real x2 = x * x;         
+//     const Real x3 = x2 * x;           
+//     const Real x4 = x2 * x2;          
 
-// // cardinal B-splines
-// void evaluate_polynomials_04(std::vector<double> &W, const double x, const double h) {
-//     // TODO: optimize polynomial evaluation -- Horner scheme (?)
-//     double denominator = 96 * h * h * h * h;
-//     W[0] = (16 * x * x * x * x - 32 * h * x * x * x + 24 * h * h * x * x - 8 * h * h * h * x + h * h * h * h) / (4 * denominator);
-//     W[1] = (-16 * x * x * x * x + 16 * h * x * x * x + 24 * h * h * x * x - 44 * h * h * h * x + 19 * h * h * h * h) / denominator;
-//     W[2] = (48 * x * x * x * x - 120 * h * h * x * x + 115 * h * h * h * h) / (2 * denominator);
-//     W[3] = (-16 * x * x * x * x - 16 * h * x * x * x + 24 * h * h * x * x + 44 * h * h * h * x + 19 * h * h * h * h) / denominator;
-//     W[4] = (16 * x * x * x * x + 32 * h * x * x * x + 24 * h * h * x * x + 8 * h * h * h * x + h * h * h * h) / (4 * denominator);
+//     const Real h2 = h * h;            
+//     const Real h3 = h2 * h;           
+//     const Real h4 = h2 * h2;          
+
+//     // common denominator and its inverse (one divide)
+//     const Real denom_inv = 1.0 / (96.0 * h4);
+
+//     W[0] = ( 16.0 * x4 - 32.0 * h * x3 + 24.0 * h2 * x2 -  8.0 * h3 * x +  h4) * ( 0.25 * denom_inv);
+
+//     W[1] = (-16.0 * x4 + 16.0 * h * x3 + 24.0 * h2 * x2 - 44.0 * h3 * x + 19.0 * h4) * denom_inv;
+
+//     W[2] = (48.0 * x4 - 120.0 * h2 * x2 + 115.0 * h4) * (0.5 * denom_inv);
+
+//     W[3] = (-16.0 * x4 - 16.0 * h * x3 + 24.0 * h2 * x2 + 44.0 * h3 * x + 19.0 * h4) * denom_inv;
+
+//     W[4] = (16.0 * x4 + 32.0 * h * x3 + 24.0 * h2 * x2 + 8.0 * h3 * x + h4) * (0.25 * denom_inv);
 // }
 
-std::vector<double> compute_contribution(const double r, const int middle, const int N, const double h, const int p) {
-    std::vector<double> W(p+1, 0.0); // initialize the vector of polynomials
-    double dr = r - middle * h;
-    double dr_abs = std::abs(dr);
+
+template <typename Real>
+std::vector<Real> compute_contribution(Real r, int middle, int N, Real h, int p) {
+    std::vector<Real> W(p+1, 0.0); // initialize the vector of polynomials
+    Real dr = r - middle * h;
+    Real dr_abs = std::abs(dr);
     dr = (dr_abs >= h / 2) ? dr - 1 : dr; // correction for periodic boundaries
     // TODO: generalize to more box lengths L (here it is 1.0)
 
@@ -427,17 +438,19 @@ std::vector<double> compute_contribution(const double r, const int middle, const
 
 // ------------------------------------------------------------------------------------------ //
 
-void assign_charge(const std::vector<double> &r_src, const std::vector<double> &charges, std::vector<double> &grid, const int N, const double h, const int p) {
+template <typename Real>
+void assign_charge(const std::vector<Real> &r_src, const std::vector<Real> &charges, 
+                        std::vector<Real> &grid, int N, Real h, int p) {
     int n_charges = charges.size();
     const int N3 = N * N * N;
     
     // iterate through charges and their coordinates
     for (size_t ind = 0; ind < n_charges; ++ind) {
-        const double q = charges[ind];
+        const Real q = charges[ind];
         // column-major
-        const double x = r_src[ind];
-        const double y = r_src[n_charges + ind];
-        const double z = r_src[n_charges * 2 + ind];
+        const Real x = r_src[ind];
+        const Real y = r_src[n_charges + ind];
+        const Real z = r_src[n_charges * 2 + ind];
         
         // identify the middle point
         // round to the nearest integer
@@ -447,9 +460,9 @@ void assign_charge(const std::vector<double> &r_src, const std::vector<double> &
         const int middle_z = int(z * N + 0.50) % N;
 
         // compute W_x, W_y, W_z
-        std::vector<double> W_x = compute_contribution(x, middle_x, N, h, p);
-        std::vector<double> W_y = compute_contribution(y, middle_y, N, h, p);
-        std::vector<double> W_z = compute_contribution(z, middle_z, N, h, p);
+        std::vector<Real> W_x = compute_contribution(x, middle_x, N, h, p);
+        std::vector<Real> W_y = compute_contribution(y, middle_y, N, h, p);
+        std::vector<Real> W_z = compute_contribution(z, middle_z, N, h, p);
 
         // update the grid values
         int count_x, count_y, count_z; // grid point indices
@@ -471,16 +484,18 @@ void assign_charge(const std::vector<double> &r_src, const std::vector<double> &
 
 // ------------------------------------------------------------------------------------------ //
 
-void back_interpolate(std::vector<double> &r_trg, std::vector<double> &pot, std::vector<double> &trg_pot, const int N, const double h, const int p) {
+template <typename Real>
+void back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vector<Real> &trg_pot, 
+                        int N, Real h, int p) {
     int n_trg = r_trg.size() / 3;
     
     // iterate through targets and their coordinates
     for (size_t ind = 0; ind < n_trg; ++ind) {
         // coordinates of the target point
         // column-major
-        const double x = r_trg[ind];
-        const double y = r_trg[n_trg + ind];
-        const double z = r_trg[n_trg * 2 + ind];
+        const Real x = r_trg[ind];
+        const Real y = r_trg[n_trg + ind];
+        const Real z = r_trg[n_trg * 2 + ind];
 
         // identify the middle point
         // round to the nearest integer
@@ -494,9 +509,9 @@ void back_interpolate(std::vector<double> &r_trg, std::vector<double> &pot, std:
         }
 
         // compute W_x, W_y, W_z
-        std::vector<double> W_x = compute_contribution(x, middle_x, N, h, p);
-        std::vector<double> W_y = compute_contribution(y, middle_y, N, h, p);
-        std::vector<double> W_z = compute_contribution(z, middle_z, N, h, p);
+        std::vector<Real> W_x = compute_contribution(x, middle_x, N, h, p);
+        std::vector<Real> W_y = compute_contribution(y, middle_y, N, h, p);
+        std::vector<Real> W_z = compute_contribution(z, middle_z, N, h, p);
 
         // update the grid values
         int count_x, count_y, count_z; // grid point indices
@@ -519,9 +534,10 @@ void back_interpolate(std::vector<double> &r_trg, std::vector<double> &pot, std:
 // ------------------------------------------------------------------------------------------ //
 
 // USING REAL INPUT/OUTPUT
-std::vector<std::complex<double>> run_rfft(std::vector<double> &in, const int n_dim, const int N) {
+template <typename Real>
+std::vector<std::complex<Real>> run_rfft(std::vector<Real> &in, const int n_dim, const int N) {
     // TODO: Generalize to more/less dimensions
-    std::vector<std::complex<double>> out(N * N * (N / 2 + 1), (0.0, 0.0));
+    std::vector<std::complex<Real>> out(N * N * (N / 2 + 1), (0.0, 0.0));
     int n[] = {N, N, N};
 
     fftw_plan p = fftw_plan_dft_r2c(n_dim, n, in.data(), (fftw_complex *)out.data(), FFTW_MEASURE);
@@ -531,9 +547,10 @@ std::vector<std::complex<double>> run_rfft(std::vector<double> &in, const int n_
     return out;
 }
 
-std::vector<double> run_irfft(std::vector<std::complex<double>> &in, const int n_dim, const int N) {
+template <typename Real>
+std::vector<Real> run_irfft(std::vector<std::complex<Real>> &in, const int n_dim, const int N) {
     // TODO: Generalize to more/less dimensions
-    std::vector<double> out(N * N * N, 0.0);
+    std::vector<Real> out(N * N * N, 0.0);
     int n[] = {N, N, N};
 
     fftw_plan p = fftw_plan_dft_c2r(n_dim, n, (fftw_complex *)in.data(), out.data(), FFTW_MEASURE);
@@ -544,9 +561,10 @@ std::vector<double> run_irfft(std::vector<std::complex<double>> &in, const int n
 }
 
 // USING COMPLEX INPUT/OUTPUT
-std::vector<std::complex<double>> run_fft(std::vector<std::complex<double>> &in, const int n_dim, const int N) {
+template <typename Real>
+std::vector<std::complex<Real>> run_fft(std::vector<std::complex<Real>> &in, const int n_dim, const int N) {
     // TODO: Generalize to more/less dimensions
-    std::vector<std::complex<double>> out(N * N * N, (0.0, 0.0));
+    std::vector<std::complex<Real>> out(N * N * N, (0.0, 0.0));
     int n[] = {N, N, N};
 
     fftw_plan p = fftw_plan_dft(n_dim, n, (fftw_complex *)in.data(), (fftw_complex *)out.data(), FFTW_FORWARD, FFTW_MEASURE);
@@ -556,9 +574,10 @@ std::vector<std::complex<double>> run_fft(std::vector<std::complex<double>> &in,
     return out;
 }
 
-std::vector<std::complex<double>> run_ifft(std::vector<std::complex<double>> &in, const int n_dim, const int N) {
+template <typename Real>
+std::vector<std::complex<Real>> run_ifft(std::vector<std::complex<Real>> &in, const int n_dim, const int N) {
     // TODO: Generalize to more/less dimensions
-    std::vector<std::complex<double>> out(N * N * N, 0.0);
+    std::vector<std::complex<Real>> out(N * N * N, 0.0);
     int n[] = {N, N, N};
 
     fftw_plan p = fftw_plan_dft(n_dim, n, (fftw_complex *)in.data(), (fftw_complex *)out.data(), FFTW_BACKWARD, FFTW_MEASURE);
@@ -570,26 +589,27 @@ std::vector<std::complex<double>> run_ifft(std::vector<std::complex<double>> &in
 
 // ------------------------------------------------------------------------------------------ //
 
-std::vector<double> evaluate_long_range(std::vector<double> G, Test_case_system System, 
+template <typename Real>
+std::vector<Real> evaluate_long_range(const std::vector<Real> &G, Test_Case_System<Real> System, 
                                         const int N, const int p) {
-    const double h = 1.0 / N;
+    const Real h = 1.0 / N;
     const int n_dim = System.n_dim;
     const int n_trg = System.n_trg;
-    std::vector<double> charges = System.charges;
-    std::vector<double> r_src = System.r_src;
+    std::vector<Real> charges = System.charges;
+    std::vector<Real> r_src = System.r_src;
 
-    std::vector<double> grid(N * N * N, 0.0); // N^3 grid with the kernel spread charged values
+    std::vector<Real> grid(N * N * N, 0.0); // N^3 grid with the kernel spread charged values
     assign_charge(r_src, charges, grid, N, h, p);
 
     // turn grid into a complex vector
-    std::vector<std::complex<double>> grid_comp(N * N * N, std::complex<double>(0.0, 0.0));
+    std::vector<std::complex<Real>> grid_comp(N * N * N, std::complex<Real>(0.0, 0.0));
 
     for (size_t i = 0; i < N * N * N; ++i) {
         grid_comp[i].real(grid[i]);
     }
 
     // take the FT (complex input)
-    std::vector<std::complex<double>> ft_density = run_fft(grid_comp, n_dim, N);
+    std::vector<std::complex<Real>> ft_density = run_fft(grid_comp, n_dim, N);
 
     // element-wise multiplication (convolution)
     for (size_t i = 0; i < N * N * N; ++i) {
@@ -597,10 +617,10 @@ std::vector<double> evaluate_long_range(std::vector<double> G, Test_case_system 
     }
 
     // take the inverse FT (complex output)
-    std::vector<std::complex<double>> inv_ft_density_comp = run_ifft(ft_density, n_dim, N);
+    std::vector<std::complex<Real>> inv_ft_density_comp = run_ifft(ft_density, n_dim, N);
 
     // turn the inverse FT from complex to real
-    std::vector<double> inv_ft_density(N * N * N, 0.0);
+    std::vector<Real> inv_ft_density(N * N * N, 0.0);
     for (size_t i = 0; i < N * N * N; ++i) {
         inv_ft_density[i] = inv_ft_density_comp[i].real();
     }
@@ -613,7 +633,7 @@ std::vector<double> evaluate_long_range(std::vector<double> G, Test_case_system 
     }
 
     // back-interpolate to infer the potential at the target points
-    std::vector<double> trg_pot(n_trg, 0.0);
+    std::vector<Real> trg_pot(n_trg, 0.0);
     back_interpolate(r_src, inv_ft_density, trg_pot, N, h, p);
     
     return trg_pot;
@@ -628,7 +648,7 @@ void run_test_case_01() {
     const int n_trg = 100; // number of targets
     const int n_dim = 3; // number of dimensions
     
-    Test_case_system System_01(n_src, n_trg, n_dim, true);
+    Test_Case_System<double> System_01(n_src, n_trg, n_dim, true);
 
     const double alpha = 10.0; // the extent of short-range and long-range interactions
     const double r_cut = 0.20; // cutoff distance for short-range interactions
@@ -636,7 +656,7 @@ void run_test_case_01() {
     const int p = 4; // order of accuracy for interpolation
     
     // short-range interactions
-    Short_range_system Short_01 = initialize_short_range(System_01, alpha, r_cut, N, n_dim);
+    Short_Range_System<double> Short_01 = initialize_short_range(System_01, alpha, r_cut, N, n_dim);
     std::vector<double> pot_short = evaluate_short_range(System_01, Short_01, r_cut, alpha);
 
     // long-range interactions
@@ -665,31 +685,32 @@ void run_test_case_02() {
     const int n_dim = 3;
 
     // custom coordinates for small tests
-    std::vector<double> r_src = {0.3, 0.3, 0.3, 0.49, 0.3, 0.3};
-    // std::vector<double> r_src = {0.5, 0.01, 0.5, 0.5, 0.96, 0.5};
+    std::vector<float> r_src = {0.3, 0.3, 0.3, 0.49, 0.3, 0.3};
+    // std::vector<Real> r_src = {0.5, 0.01, 0.5, 0.5, 0.96, 0.5};
+    std::vector<float> charges = {0.5, -0.5};
     
-    Test_case_system System_02(n_src, n_trg, n_dim, r_src, r_src);
+    Test_Case_System<float> System_02(n_src, n_trg, n_dim, r_src, r_src, charges);
 
-    const double alpha = 10.0;
-    const double r_cut = 0.20;
+    const float alpha = 10.0f;
+    const float r_cut = 0.20f;
     const int N = 16;
     const int p = 4;
     
     // short-range interactions
-    Short_range_system Short_02 = initialize_short_range(System_02, alpha, r_cut, N, n_dim);
-    std::vector<double> pot_short = evaluate_short_range(System_02, Short_02, r_cut, alpha);
+    Short_Range_System<float> Short_02 = initialize_short_range(System_02, alpha, r_cut, N, n_dim);
+    std::vector<float> pot_short = evaluate_short_range(System_02, Short_02, r_cut, alpha);
 
     // long-range interactions
-    std::vector<double> G_hat = compute_green_func(N, alpha);
-    std::vector<double> pot_long = evaluate_long_range(G_hat, System_02, N, p);
+    std::vector<float> G_hat = compute_green_func(N, alpha);
+    std::vector<float> pot_long = evaluate_long_range(G_hat, System_02, N, p);
     
     // self-interaction term
-    std::vector<double> self_interaction(n_src, 0.0);
+    std::vector<float> self_interaction(n_src, 0.0);
     for (size_t i = 0; i < n_src; ++i) {
         self_interaction[i] = 2 * alpha / std::sqrt(M_PI) * System_02.charges[i];
     }
 
-    std::vector<double> pot(n_trg, 0.0);
+    std::vector<float> pot(n_trg, 0.0);
     // add all terms
     for (size_t i = 0; i < n_trg; ++i) {
         pot[i] = pot_short[i] + pot_long[i] - self_interaction[i];
@@ -699,14 +720,80 @@ void run_test_case_02() {
     print_vector(pot);
 }
 
+void run_test_case_03() {
+    // Madelung constant verification
+    const int n_src = 16;
+    const int n_trg = 16;
+    const int n_dim = 3;
+
+    // custom coordinates for small tests
+    std::vector<double> r_src = {0.0, 0.0, 0.5, 0.5, 0.25, 0.25, 0.75, 0.75,
+                                0.5, 0.5, 0.0, 0.0, 0.25, 0.25, 0.75, 0.75,
+                                0.0, 0.5, 0.0, 0.5, 0.25, 0.75, 0.25, 0.75,
+                                0.5, 0.0, 0.5, 0.0, 0.25, 0.75, 0.25, 0.75,
+                                0.0, 0.5, 0.5, 0.0, 0.25, 0.75, 0.75, 0.25,
+                                0.5, 0.0, 0.0, 0.5, 0.75, 0.25, 0.25, 0.75};
+    std::vector<double> charges = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 
+                                    -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0};
+    
+    Test_Case_System<double> System_02(n_src, n_trg, n_dim, r_src, r_src, charges);
+
+    const double alpha = 6.5;
+    const double r_cut = 0.20;
+    const int N = 32;
+    const int p = 4;
+    
+    // short-range interactions
+    Short_Range_System<double> Short_02 = initialize_short_range(System_02, alpha, r_cut, N, n_dim);
+    std::vector<double> pot_short = evaluate_short_range(System_02, Short_02, r_cut, alpha);
+
+    std::cout << "Short-range interaction:" << std::endl;
+    print_vector(pot_short);
+
+    // long-range interactions
+    std::vector<double> G_hat = compute_green_func(N, alpha);
+    std::vector<double> pot_long = evaluate_long_range(G_hat, System_02, N, p);
+    
+    std::cout << "Long-range interaction:" << std::endl;
+    print_vector(pot_long);
+
+    // self-interaction term
+    std::vector<double> self_interaction(n_src, 0.0);
+    for (size_t i = 0; i < n_src; ++i) {
+        self_interaction[i] = 2 * alpha / std::sqrt(M_PI) * charges[i];
+    }
+
+    std::cout << "Self-interaction potential:" << std::endl;
+    print_vector(self_interaction);
+
+    std::vector<double> pot(n_trg, 0.0);
+    // add all terms
+    for (size_t i = 0; i < n_trg; ++i) {
+        pot[i] = pot_short[i] + pot_long[i] - self_interaction[i];
+    }
+
+    std::cout << "Final Potential:" << std::endl;
+    print_vector(pot);
+
+    // compute the total electrostatic energy
+    double energy = 0.0;
+    for (size_t i = 0; i < n_src; ++i) {
+        energy += pot[i] * charges[i];
+    }
+    energy *= 0.5;
+    double madelung = energy * 0.5 / n_src;
+    std::cout << "Madelung constant for NaCl latice: " << madelung << std::endl; 
+}
+
 
 // ------------------------------------------------------------------------------------------ //
 // ------------------------------------------------------------------------------------------ //
 // ------------------------------------------------------------------------------------------ //
 
 int main(int argc, char *argv[]) {
-    run_test_case_01();
+    // run_test_case_01();
     // run_test_case_02();
+    run_test_case_03();
 
     return 0;
 }
