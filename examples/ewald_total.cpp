@@ -6,9 +6,12 @@
 #include <fstream>
 #include <getopt.h>
 #include <iostream>
+#include <nanobench.h>
 #include <omp.h>
 #include <random>
 #include <vector>
+
+#define ANKERL_NANOBENCH_IMPLEMENT
 
 std::string get_or(const std::unordered_map<std::string, std::string> &m, const std::string &key,
                    const std::string &default_value) {
@@ -24,6 +27,7 @@ struct TestOptions {
     int n_src;
     int n_trg;
     int test_num;
+    int N;
     double r_cut;
     double alpha;
 
@@ -41,6 +45,7 @@ struct TestOptions {
                 {"test_num", required_argument, 0, 0},
                 {"r_cut", required_argument, 0, 0},
                 {"alpha", required_argument, 0, 0},
+                {"N", required_argument, 0, 0},
                 {0, 0, 0, 0},
             };
             // clang-format on
@@ -61,10 +66,11 @@ struct TestOptions {
 
         prec = get_or(options_map, "prec", "f")[0];
         n_src = std::stof(get_or(options_map, "n_src", "100"));
-        n_trg = std::stof(get_or(options_map, "n_trg", "0"));
+        n_trg = std::stof(get_or(options_map, "n_trg", "100"));
         test_num = std::stoi(get_or(options_map, "test_num", "0"));
         r_cut = std::stof(get_or(options_map, "r_cut", "0.20"));
         alpha = std::stof(get_or(options_map, "alpha", "10.0"));
+        N = std::stof(get_or(options_map, "N", "16"));
     }
 
     static void print_help() {
@@ -83,16 +89,20 @@ struct TestOptions {
             "           default: " << default_opts.n_trg << "\n" <<
             "    --test_num <int>\n"
             "           Which test to run\n"
-            "           0: ???\n"
-            "           1: ???\n"
-            "           2: Madelung\n"
+            "           0: Uniformly distributed random particles\n"
+            "           1: Two particles very near each other\n"
+            "           2: Madelung constant estimation; few particles\n"
+            "           3: Madelung constant estimation; many particles\n"
             "           default: " << default_opts.test_num << "\n" <<
             "    --r_cut <int>\n"
             "           Short-long range cutoff\n"
             "           default: " << default_opts.r_cut << "\n" <<
             "    --alpha <int>\n"
             "           'Alpha' Ewald mollifying parameter\n"
-            "           default: " << default_opts.alpha << "\n";
+            "           default: " << default_opts.alpha << "\n" <<
+            "    --N <int>\n"
+            "           'N' grid size per dimension\n"
+            "           default: " << default_opts.N << "\n";
         // clang-format on
     }
 
@@ -102,7 +112,8 @@ struct TestOptions {
                     << "# n_trg = " << opts.n_trg << "\n"
                     << "# test_num = " << opts.test_num << "\n"
                     << "# r_cut = " << opts.r_cut << "\n"
-                    << "# alpha = " << opts.alpha << "\n";
+                    << "# alpha = " << opts.alpha << "\n"
+                    << "# N = " << opts.N << "\n";
     }
 };
 
@@ -222,7 +233,17 @@ template <typename T>
 void print_vector(const std::vector<T> &v) {
     int size = v.size();
     for (int i = 0; i < size; ++i) {
-        std::cout << v[i] << " ";
+        if (std::abs(v[i]) < 0.0000000000001) { std::cout << 0 << " "; } else { std::cout << v[i] << " "; }
+        // std::cout << v[i] << " ";
+    }
+    std::cout << "\n\n";
+}
+
+template <typename T>
+void print_vector_comp(const std::vector<std::complex<T>> &v) {
+    int size = v.size();
+    for (int i = 0; i < size; ++i) {
+        std::cout << "(" << v[i].real() << ", " << v[i].imag() << ") ";
     }
     std::cout << "\n\n";
 }
@@ -351,7 +372,8 @@ void compute_potential(Real *pot, const Real *x, const Real *y, const Real *z, c
             }
 
             const Real rij_mag = std::sqrt(rij_mag_sq);
-            pot[i] += charges[j] * std::erfc(rij_mag * alpha) / rij_mag;
+            // pot[i] += charges[j] * std::erfc(rij_mag * alpha) / rij_mag;
+            pot[i] += charges[j] / rij_mag;
         }
     }
 }
@@ -420,7 +442,7 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
 
     auto end = omp_get_wtime();
 
-    std::cout << "Elapsed time: " << (end - start) * 1000.0 << " miliseconds" << std::endl;
+    // std::cout << "Elapsed time: " << (end - start) * 1000.0 << " miliseconds" << std::endl;
 
     return pot;
 }
@@ -434,7 +456,6 @@ std::vector<Real> compute_green_func(int N, Real alpha) {
     // TODO: generalize to different box lengths
     const Real h = 1.0 / N;
     const Real TWOPI = 2 * M_PI;
-    const Real TWOPI_H = TWOPI / h;
 
     std::vector<Real> G(N * N * N, 0.0);
 
@@ -443,13 +464,13 @@ std::vector<Real> compute_green_func(int N, Real alpha) {
             for (size_t i = 0; i < N; ++i) {
                 // TODO: optimize this step; structure the loop accordingly
                 // conditionals are expensive (?)
-                const auto i_new = (i > (N / 2)) ? i - N : i;
-                const auto j_new = (j > (N / 2)) ? j - N : j;
-                const auto w_new = (w > (N / 2)) ? w - N : w;
+                const int i_new = (i > (N / 2)) ? i - N : i;
+                const int j_new = (j > (N / 2)) ? j - N : j;
+                const int w_new = (w > (N / 2)) ? w - N : w;
 
-                const auto k_x = TWOPI * i_new;
-                const auto k_y = TWOPI * j_new;
-                const auto k_z = TWOPI * w_new;
+                const int k_x = TWOPI * i_new;
+                const int k_y = TWOPI * j_new;
+                const int k_z = TWOPI * w_new;
 
                 const auto mode_sq = k_x * k_x + k_y * k_y + k_z * k_z;
                 if (mode_sq == 0) {
@@ -713,51 +734,66 @@ void run_test_case_00(const TestOptions &opts) {
 
     TestCaseSystem<Real> System_01(n_src, n_trg, n_dim, true);
 
+    // print_vector(System_01.r_src);
+    // print_vector(System_01.charges);
+
     const Real alpha = 10.0; // the extent of short-range and long-range interactions
     const Real r_cut = 0.20; // cutoff distance for short-range interactions
-    const int N = 32;        // 2^4 points
+    const int N = opts.N;    // 2^4 points
     const int p = 4;         // order of accuracy for interpolation
 
     // short-range interactions
     ShortRangeSystem<Real> Short_01 = initialize_short_range(System_01, alpha, r_cut, N, n_dim);
-    std::vector<Real> pot_short = evaluate_short_range(System_01, Short_01, r_cut, alpha);
 
-    // long-range interactions
-    std::vector<Real> G_hat = compute_green_func(N, alpha);
-    std::vector<Real> pot_long = evaluate_long_range(G_hat, System_01, N, p);
+    // use nanobench to benchmark the process
+    ankerl::nanobench::Bench()
+        .title("Short-range potential computation")
+        .warmup(100) // run 10 iterations before timing -- QUESTION: Is it enough?
+        .minEpochIterations(100) // time at least 100 iterations
+        .run("not-vectorized", [&] {
+            // QUESTION: does the allocation time matter?
+            std::vector<Real> pot_short = evaluate_short_range(System_01, Short_01, r_cut, alpha);
+            ankerl::nanobench::doNotOptimizeAway(pot_short);
+        });
 
-    // self-interaction term
-    std::vector<Real> self_interaction(n_src, 0.0);
-    for (size_t i = 0; i < n_src; ++i) {
-        self_interaction[i] = 2 * alpha / std::sqrt(M_PI) * System_01.charges[i];
-    }
+    // // long-range interactions
+    // std::vector<Real> G_hat = compute_green_func(N, alpha);
+    // std::vector<Real> pot_long = evaluate_long_range(G_hat, System_01, N, p);
 
-    std::vector<Real> pot(n_trg, 0.0);
-    // add all terms
-    for (size_t i = 0; i < n_trg; ++i) {
-        pot[i] = pot_short[i] + pot_long[i] - self_interaction[i];
-    }
+    // // self-interaction term
+    // std::vector<Real> self_interaction(n_src, 0.0);
+    // for (size_t i = 0; i < n_src; ++i) {
+    //     self_interaction[i] = 2 * alpha / std::sqrt(M_PI) * System_01.charges[i];
+    // }
 
-    std::cout << "Final Potential:" << std::endl;
-    print_vector(pot);
+    // std::vector<Real> pot(n_trg, 0.0);
+    // // add all terms
+    // for (size_t i = 0; i < n_trg; ++i) {
+    //     pot[i] = pot_short[i] + pot_long[i] - self_interaction[i];
+    // }
+
+    // std::cout << "Final Potential:" << std::endl;
+    // print_vector(pot);
 }
 
 template <typename Real>
 void run_test_case_01(const TestOptions &opts) {
-    const int n_src = 2;
-    const int n_trg = 2;
+    const int n_src = 1;
+    const int n_trg = 1;
     const int n_dim = 3;
 
     // custom coordinates for small tests
-    std::vector<Real> r_src = {0.3, 0.3, 0.3, 0.49, 0.3, 0.3};
+    // std::vector<Real> r_src = {0.3, 0.3, 0.3, 0.49, 0.3, 0.3};
     // std::vector<Real> r_src = {0.5, 0.01, 0.5, 0.5, 0.96, 0.5};
-    std::vector<Real> charges = {0.5, -0.5};
+    // std::vector<Real> charges = {0.5, -0.5};
+    std::vector<Real> r_src = {0.2, 0.2, 0.2};
+    std::vector<Real> charges = {0.5};
 
     TestCaseSystem<Real> System_02(n_src, n_trg, n_dim, r_src, r_src, charges);
 
     const Real alpha = opts.alpha;
     const Real r_cut = opts.r_cut;
-    const int N = 16;
+    const int N = opts.N;
     const int p = 4;
 
     // short-range interactions
@@ -802,7 +838,7 @@ void run_test_case_02(const TestOptions &opts) {
 
     const Real alpha = opts.alpha;
     const Real r_cut = opts.r_cut;
-    const int N = 32;
+    const int N = opts.N;
     const int p = 4;
 
     // short-range interactions
@@ -815,7 +851,7 @@ void run_test_case_02(const TestOptions &opts) {
     // long-range interactions
     std::vector<Real> G_hat = compute_green_func(N, alpha);
     std::vector<Real> pot_long = evaluate_long_range(G_hat, System_02, N, p);
-
+    
     std::cout << "Long-range interaction:" << std::endl;
     print_vector(pot_long);
 
@@ -844,7 +880,136 @@ void run_test_case_02(const TestOptions &opts) {
     }
     energy *= 0.5;
     Real madelung = energy * 0.5 / n_src;
+    std::cout << "Madelung constant for NaCl latice: " << madelung << std::endl; 
+}
+
+template <typename Real>
+void run_test_case_03(const TestOptions &opts) {
+    // Madelung constant verification
+    const Real alpha = opts.alpha;
+    const Real r_cut = opts.r_cut;
+    const int N = opts.N;
+    const int p = 4;
+
+    const Real h = 1.0 / N;
+
+    const int n_src = N * N * N;
+    const int n_trg = N * N * N;
+    const int n_dim = 3;
+
+    // custom coordinates for small tests
+    std::vector<Real> r_src(n_src * n_dim, 0.0);
+    std::vector<Real> charges(n_src, 0.0);
+
+    // generate the coordinates for the Madelung system with 4,096 particles
+    int count = 0;
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            for (int k = 0; k < N; ++k) {
+                r_src[count] = i * h;
+                r_src[n_src + count] = j * h;
+                r_src[2 * n_src + count] = k * h;
+                charges[count] = ((i + j + k ) % 2 == 0) ? 1.0 : -1.0;
+                ++count;
+            }
+        }
+    }
+    
+    TestCaseSystem<Real> System_04(n_src, n_trg, n_dim, r_src, r_src, charges);
+    
+    // short-range interactions
+    ShortRangeSystem<Real> Short_04 = initialize_short_range(System_04, alpha, r_cut, N, n_dim);
+    std::vector<Real> pot_short = evaluate_short_range(System_04, Short_04, r_cut, alpha);
+
+    // std::cout << "Short-range interaction:" << std::endl;
+    // print_vector(pot_short);
+
+    // long-range interactions
+    std::vector<Real> G_hat = compute_green_func(N, alpha);
+    std::vector<Real> pot_long = evaluate_long_range(G_hat, System_04, N, p);
+    
+    // std::cout << "Long-range interaction:" << std::endl;
+    // print_vector(pot_long);
+
+    // self-interaction term
+    std::vector<Real> self_interaction(n_src, 0.0);
+    for (size_t i = 0; i < n_src; ++i) {
+        self_interaction[i] = 2 * alpha / std::sqrt(M_PI) * charges[i];
+    }
+
+    // std::cout << "Self-interaction potential:" << std::endl;
+    // print_vector(self_interaction);
+
+    std::vector<Real> pot(n_trg, 0.0);
+    // add all terms
+    for (size_t i = 0; i < n_trg; ++i) {
+        pot[i] = pot_short[i] + pot_long[i] - self_interaction[i];
+    }
+
+    // std::cout << "Final Potential:" << std::endl;
+    // print_vector(pot);
+
+    std::cout << pot_short[0] << " " << pot_long[0] << " " << self_interaction[0] << " " << pot[0] << std::endl;
+
+    // compute the total electrostatic energy
+    Real energy = 0.0;
+    for (size_t i = 0; i < n_src; ++i) {
+        energy += pot[i] * charges[i];
+    }
+    energy *= 0.5;
+    Real madelung = energy * 2 * h / n_src;
     std::cout << "Madelung constant for NaCl latice: " << madelung << std::endl;
+}
+
+template <typename Real>
+void run_test_case_04(const TestOptions &opts) {
+    // Madelung constant verification
+    const int n_src = 10;
+    const int n_trg = 10;
+    const int n_dim = 3;
+
+    // custom coordinates for small tests
+    std::vector<Real> r_src = {0.131538, 0.45865, 0.218959, 0.678865, 0.934693, 0.519416, 0.0345721, 0.5297, 0.00769819, 0.0668422, 0.686773, 0.930436, 0.526929, 0.653919, 0.701191, 0.762198, 0.0474645, 0.328234, 0.75641, 0.365339, 0.98255, 0.753356, 0.0726859, 0.884707, 0.436411, 0.477732, 0.274907, 0.166507, 0.897656, 0.0605643};
+    std::vector<Real> charges = {0.196104 , -0.174876 ,  0.175012 , -0.631476 , -0.665444 , -0.0446574,  1.01469  ,  0.11595  , -0.712774 ,  0.727467};
+
+    TestCaseSystem<Real> System_04(n_src, n_trg, n_dim, r_src, r_src, charges);
+
+    const Real alpha = opts.alpha;
+    const Real r_cut = opts.r_cut;
+    const int N = opts.N;
+    const int p = 4;
+
+    // short-range interactions
+    ShortRangeSystem<Real> Short_04 = initialize_short_range(System_04, alpha, r_cut, N, n_dim);
+    std::vector<Real> pot_short = evaluate_short_range(System_04, Short_04, r_cut, alpha);
+
+    std::cout << "Short-range interaction:" << std::endl;
+    print_vector(pot_short);
+
+    // long-range interactions
+    std::vector<Real> G_hat = compute_green_func(N, alpha);
+    std::vector<Real> pot_long = evaluate_long_range(G_hat, System_04, N, p);
+    
+    std::cout << "Long-range interaction:" << std::endl;
+    print_vector(pot_long);
+
+    // self-interaction term
+    std::vector<Real> self_interaction(n_src, 0.0);
+    for (size_t i = 0; i < n_src; ++i) {
+        self_interaction[i] = 2 * alpha / std::sqrt(M_PI) * charges[i];
+    }
+
+    std::cout << "Self-interaction potential:" << std::endl;
+    print_vector(self_interaction);
+
+    std::vector<Real> pot(n_trg, 0.0);
+    // add all terms
+    for (size_t i = 0; i < n_trg; ++i) {
+        pot[i] = pot_short[i] + pot_long[i] - self_interaction[i];
+    }
+
+    std::cout << "Final Potential:" << std::endl;
+    print_vector(pot);
 }
 
 // ------------------------------------------------------------------------------------------ //
@@ -875,6 +1040,16 @@ int main(int argc, char *argv[]) {
             run_test_case_02<float>(options);
         else
             run_test_case_02<double>(options);
+    } else if (options.test_num == 3) {
+        if (options.prec == 'f')
+            run_test_case_03<float>(options);
+        else
+            run_test_case_03<double>(options);
+    } else if (options.test_num == 4) {
+        if (options.prec == 'f')
+            run_test_case_04<float>(options);
+        else
+            run_test_case_04<double>(options);
     } else {
         std::cerr << "Invalid test number: " << options.test_num << std::endl;
         return EXIT_FAILURE;
