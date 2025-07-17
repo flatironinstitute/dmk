@@ -1,6 +1,8 @@
 #include <array>
+#include <cmath>
 #include <complex>
 #include <cstdlib>
+#include <dmk/vector_kernels_pme.hpp>
 #include <ducc0/fft/fft.h>
 #include <ducc0/fft/fftnd_impl.h>
 #include <fstream>
@@ -28,6 +30,7 @@ struct TestOptions {
     int n_trg;
     int test_num;
     int N;
+    bool time;
     double r_cut;
     double alpha;
 
@@ -46,6 +49,7 @@ struct TestOptions {
                 {"r_cut", required_argument, 0, 0},
                 {"alpha", required_argument, 0, 0},
                 {"N", required_argument, 0, 0},
+                {"time", required_argument, 0, 0},
                 {0, 0, 0, 0},
             };
             // clang-format on
@@ -71,6 +75,7 @@ struct TestOptions {
         r_cut = std::stof(get_or(options_map, "r_cut", "0.20"));
         alpha = std::stof(get_or(options_map, "alpha", "10.0"));
         N = std::stof(get_or(options_map, "N", "16"));
+        time = std::stof(get_or(options_map, "time", "0"));
     }
 
     static void print_help() {
@@ -102,7 +107,10 @@ struct TestOptions {
             "           default: " << default_opts.alpha << "\n" <<
             "    --N <int>\n"
             "           'N' grid size per dimension\n"
-            "           default: " << default_opts.N << "\n";
+            "           default: " << default_opts.N << "\n" <<
+            "    --time <bool>\n"
+            "           time processes using nanobench\n"
+            "           default: " << default_opts.time << "\n";
         // clang-format on
     }
 
@@ -113,7 +121,8 @@ struct TestOptions {
                     << "# test_num = " << opts.test_num << "\n"
                     << "# r_cut = " << opts.r_cut << "\n"
                     << "# alpha = " << opts.alpha << "\n"
-                    << "# N = " << opts.N << "\n";
+                    << "# N = " << opts.N << "\n"
+                    << "# time = " << opts.time << "\n";
     }
 };
 
@@ -189,6 +198,7 @@ class ShortRangeSystem {
     ShortRangeSystem(const int n_boxes, const int n_dimensions, const int n_sources)
         : n_boxes(n_boxes), box_begin(n_boxes), box_lengths(n_boxes), box_corners(n_boxes * n_dimensions),
           box_neighbors(n_boxes), particles_sorted(n_sources), r_src_sorted(n_sources * n_dimensions),
+          r_src_row(n_sources * n_dimensions), r_src_row_sorted(n_sources * n_dimensions), 
           charges_sorted(n_sources) {}
 
     // TODO: generalize for cases when target != source
@@ -200,6 +210,8 @@ class ShortRangeSystem {
     std::vector<int> particles_sorted;
     std::vector<std::array<int, 27>> box_neighbors;
     std::vector<Real> r_src_sorted;
+    std::vector<Real> r_src_row; // row-major coordinates (useful in vectorization)
+    std::vector<Real> r_src_row_sorted; // row-major + sorted
     std::vector<Real> charges_sorted;
 };
 
@@ -318,6 +330,16 @@ ShortRangeSystem<Real> initialize_short_range(const TestCaseSystem<Real> &System
         Short_setup.r_src_sorted[i + n_src] = System.r_src[Short_setup.particles_sorted[i] + n_src];
         Short_setup.r_src_sorted[i + n_src * 2] = System.r_src[Short_setup.particles_sorted[i] + n_src * 2];
         Short_setup.charges_sorted[i] = System.charges[Short_setup.particles_sorted[i]];
+        
+        // transpose r_src to get r_src_row (row-major)
+        Short_setup.r_src_row[i * n_dim] = System.r_src[i];
+        Short_setup.r_src_row[i * n_dim + 1] = System.r_src[i + n_src];
+        Short_setup.r_src_row[i * n_dim + 2] = System.r_src[i + n_src * 2];
+
+        // transpose r_src_sorted to get r_src_row_sorted (row-major)
+        Short_setup.r_src_row_sorted[i * n_dim] = Short_setup.r_src_sorted[i];
+        Short_setup.r_src_row_sorted[i * n_dim + 1] = Short_setup.r_src_sorted[i + n_src];
+        Short_setup.r_src_row_sorted[i * n_dim + 2] = Short_setup.r_src_sorted[i + n_src * 2];
     }
 
     // store the neighbors
@@ -351,9 +373,42 @@ ShortRangeSystem<Real> initialize_short_range(const TestCaseSystem<Real> &System
 // ------------------------------------------------------------------------------------------ //
 
 template <typename Real>
+void compute_short_range_raw(const std::vector<Real> &r_src, 
+                            const std::vector<Real> &r_trg, 
+                            std::vector<Real> &pot,
+                            const std::vector<Real> &charges, 
+                            const int n_dim, 
+                            const Real r_cut, 
+                            const int n_src,
+                            const int n_trg, 
+                            const Real alpha) {
+
+    const Real r_cut_sq = r_cut * r_cut;
+
+    for (size_t i = 0; i < n_trg; ++i) {
+        for (size_t j = 0; j < n_src; ++j) {
+            Real rij_mag_sq = 0;
+            for (int k = 0; k < n_dim; ++k) {
+                Real diff_nonPBC = std::abs(r_src[k * n_src + j] - r_trg[k * n_src + i]);
+                Real diff_PBC = std::min(diff_nonPBC, 1 - diff_nonPBC);
+                rij_mag_sq += diff_PBC * diff_PBC;
+            }
+
+            // compute the contribution only if it falls within a cutoff distance
+            if (rij_mag_sq > 0 && rij_mag_sq < r_cut_sq) {
+                const Real rij_mag = std::sqrt(rij_mag_sq);
+                pot[i] += charges[j] * std::erfc(rij_mag * alpha) / rij_mag;
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------------------------------ //
+
+template <typename Real>
 void compute_potential(Real *pot, const Real *x, const Real *y, const Real *z, const Real *charges, int n_particles,
-                       const Real *x_other, const Real *y_other, const Real *z_other, int n_other, const Real *offset,
-                       Real r_cut_sq, Real alpha) {
+                       const Real *x_other, const Real *y_other, const Real *z_other, int n_other, 
+                       const Real *offset, Real r_cut_sq, Real alpha) {
 
     // iterate through all source particles
     for (int i = 0; i < n_particles; ++i) {
@@ -372,8 +427,7 @@ void compute_potential(Real *pot, const Real *x, const Real *y, const Real *z, c
             }
 
             const Real rij_mag = std::sqrt(rij_mag_sq);
-            // pot[i] += charges[j] * std::erfc(rij_mag * alpha) / rij_mag;
-            pot[i] += charges[j] / rij_mag;
+            pot[i] += charges[j] * std::erfc(rij_mag * alpha) / rij_mag;
         }
     }
 }
@@ -382,7 +436,7 @@ void compute_potential(Real *pot, const Real *x, const Real *y, const Real *z, c
 
 template <typename Real>
 std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, ShortRangeSystem<Real> &Short, Real r_cut,
-                                       Real alpha) {
+                                       Real alpha, bool vectorized = false) {
 
     // shortcuts
     const int n_boxes = Short.n_boxes;
@@ -393,8 +447,6 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
     const Real r_cut_sq = r_cut * r_cut;
     std::vector<Real> pot(n_trg, 0.0);
     std::vector<Real> pot_sorted(n_trg, 0.0); // sorted potential vector
-
-    auto start = omp_get_wtime();
 
     // iterate through all boxes
     for (size_t box = 0; box < n_boxes; ++box) {
@@ -423,13 +475,30 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
             const Real *y_other = &(Short.r_src_sorted[n_src + Short.box_begin[nb]]);
             const Real *z_other = &(Short.r_src_sorted[n_src * 2 + Short.box_begin[nb]]);
 
+            const Real *r_other = &(Short.r_src_row_sorted[Short.box_begin[nb] * n_dim]);
+
             const Real *ch = &(Short.charges_sorted[0]) + Short.box_begin[nb];
 
             Real *pot_part = &(pot_sorted[0]) + Short.box_begin[box];
-
-            // TODO: Pass a pointer to the potential function
-            compute_potential(pot_part, x, y, z, ch, Short.box_lengths[box], x_other, y_other, z_other,
-                              Short.box_lengths[nb], offset, r_cut_sq, alpha);
+            
+            if (!vectorized) {
+                // TODO: Pass a pointer to the potential function
+                compute_potential(pot_part, x, y, z, ch, Short.box_lengths[box], x_other, y_other, z_other,
+                                Short.box_lengths[nb], offset, r_cut_sq, alpha);
+                }
+            else {
+                l3d_local_kernel_directcp_vec_cpp__rinv_helper<Real, 3>(r_cut_sq,
+                                                                        r_other, 
+                                                                        Short.box_lengths[nb], 
+                                                                        ch,
+                                                                        x, 
+                                                                        y, 
+                                                                        z,
+                                                                        Short.box_lengths[box],
+                                                                        alpha,
+                                                                        offset,
+                                                                        pot_part);
+            }
         }
     }
 
@@ -439,10 +508,6 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
     for (size_t i = 0; i < System.n_trg; ++i) {
         pot[Short.particles_sorted[i]] = pot_sorted[i];
     }
-
-    auto end = omp_get_wtime();
-
-    // std::cout << "Elapsed time: " << (end - start) * 1000.0 << " miliseconds" << std::endl;
 
     return pot;
 }
@@ -731,11 +796,12 @@ void run_test_case_00(const TestOptions &opts) {
     const int n_src = opts.n_src; // number of sources
     const int n_trg = opts.n_trg; // number of targets
     const int n_dim = 3;          // number of dimensions
+    const bool time = opts.time; // whether to time processes using nanobench
 
-    TestCaseSystem<Real> System_01(n_src, n_trg, n_dim, true);
+    TestCaseSystem<Real> System_00(n_src, n_trg, n_dim, true);
 
-    // print_vector(System_01.r_src);
-    // print_vector(System_01.charges);
+    // print_vector(System_00.r_src);
+    // print_vector(System_00.charges);
 
     const Real alpha = 10.0; // the extent of short-range and long-range interactions
     const Real r_cut = 0.20; // cutoff distance for short-range interactions
@@ -743,71 +809,46 @@ void run_test_case_00(const TestOptions &opts) {
     const int p = 4;         // order of accuracy for interpolation
 
     // short-range interactions
-    ShortRangeSystem<Real> Short_01 = initialize_short_range(System_01, alpha, r_cut, N, n_dim);
+    ShortRangeSystem<Real> Short_00 = initialize_short_range(System_00, alpha, r_cut, N, n_dim);
 
-    // use nanobench to benchmark the process
-    ankerl::nanobench::Bench()
-        .title("Short-range potential computation")
-        .warmup(100) // run 10 iterations before timing -- QUESTION: Is it enough?
-        .minEpochIterations(100) // time at least 100 iterations
-        .run("not-vectorized", [&] {
-            // QUESTION: does the allocation time matter?
-            std::vector<Real> pot_short = evaluate_short_range(System_01, Short_01, r_cut, alpha);
-            ankerl::nanobench::doNotOptimizeAway(pot_short);
-        });
+    /* ----------------------------------------------------------------------------------------------- */
+    if (time) {
+        // use nanobench to benchmark the process
+        ankerl::nanobench::Bench()
+            .title("Short-range potential computation")
+            .warmup(10) // run 100 iterations before timing
+            .minEpochIterations(40) // time at least 100 iterations
+            .run("not-vectorized", [&] {
+                std::vector<Real> pot_short = evaluate_short_range(System_00, Short_00, r_cut, alpha);
+                ankerl::nanobench::doNotOptimizeAway(pot_short);
+            });
 
-    // // long-range interactions
-    // std::vector<Real> G_hat = compute_green_func(N, alpha);
-    // std::vector<Real> pot_long = evaluate_long_range(G_hat, System_01, N, p);
+        ankerl::nanobench::Bench()
+            .title("Short-range potential computation")
+            // .warmup(100) // run 100 iterations before timing
+            .minEpochIterations(40) // time at least 100 iterations
+            .run("vectorized", [&] {
+                std::vector<Real> pot_short = evaluate_short_range(System_00, Short_00, r_cut, alpha, true);
+                ankerl::nanobench::doNotOptimizeAway(pot_short);
+            });
+        }
 
-    // // self-interaction term
-    // std::vector<Real> self_interaction(n_src, 0.0);
-    // for (size_t i = 0; i < n_src; ++i) {
-    //     self_interaction[i] = 2 * alpha / std::sqrt(M_PI) * System_01.charges[i];
-    // }
-
-    // std::vector<Real> pot(n_trg, 0.0);
-    // // add all terms
-    // for (size_t i = 0; i < n_trg; ++i) {
-    //     pot[i] = pot_short[i] + pot_long[i] - self_interaction[i];
-    // }
-
-    // std::cout << "Final Potential:" << std::endl;
-    // print_vector(pot);
-}
-
-template <typename Real>
-void run_test_case_01(const TestOptions &opts) {
-    const int n_src = 1;
-    const int n_trg = 1;
-    const int n_dim = 3;
-
-    // custom coordinates for small tests
-    // std::vector<Real> r_src = {0.3, 0.3, 0.3, 0.49, 0.3, 0.3};
-    // std::vector<Real> r_src = {0.5, 0.01, 0.5, 0.5, 0.96, 0.5};
-    // std::vector<Real> charges = {0.5, -0.5};
-    std::vector<Real> r_src = {0.2, 0.2, 0.2};
-    std::vector<Real> charges = {0.5};
-
-    TestCaseSystem<Real> System_02(n_src, n_trg, n_dim, r_src, r_src, charges);
-
-    const Real alpha = opts.alpha;
-    const Real r_cut = opts.r_cut;
-    const int N = opts.N;
-    const int p = 4;
-
-    // short-range interactions
-    ShortRangeSystem<Real> Short_02 = initialize_short_range(System_02, alpha, r_cut, N, n_dim);
-    std::vector<Real> pot_short = evaluate_short_range(System_02, Short_02, r_cut, alpha);
+    /* ----------------------------------------------------------------------------------------------- */
+    
+    std::vector<Real> pot_short = evaluate_short_range(System_00, Short_00, r_cut, alpha);
+    // print_vector(pot_short);
+    std::vector<Real> pot_short_vec = evaluate_short_range(System_00, Short_00, r_cut, alpha, true);
+    // print_vector(pot_short_vec);
 
     // long-range interactions
     std::vector<Real> G_hat = compute_green_func(N, alpha);
-    std::vector<Real> pot_long = evaluate_long_range(G_hat, System_02, N, p);
+    std::vector<Real> pot_long = evaluate_long_range(G_hat, System_00, N, p);
 
     // self-interaction term
+    const Real inv_sqrt_pi = 1 / std::sqrt(M_PI);
     std::vector<Real> self_interaction(n_src, 0.0);
     for (size_t i = 0; i < n_src; ++i) {
-        self_interaction[i] = 2 * alpha / std::sqrt(M_PI) * System_02.charges[i];
+        self_interaction[i] = 2 * alpha * inv_sqrt_pi * System_00.charges[i];
     }
 
     std::vector<Real> pot(n_trg, 0.0);
@@ -820,21 +861,22 @@ void run_test_case_01(const TestOptions &opts) {
     print_vector(pot);
 }
 
+// test case with two opposite charges very close to each other
+// we expect the long-range effect to be approx 0, while the short-range interaction huge
 template <typename Real>
-void run_test_case_02(const TestOptions &opts) {
-    // Madelung constant verification
-    const int n_src = 16;
-    const int n_trg = 16;
+void run_test_case_01(const TestOptions &opts) {
+    const int n_src = 2;
+    const int n_trg = 2;
     const int n_dim = 3;
 
     // custom coordinates for small tests
-    std::vector<Real> r_src = {0.0, 0.0, 0.5, 0.5, 0.25, 0.25, 0.75, 0.75, 0.5, 0.5, 0.0, 0.0, 0.25, 0.25, 0.75, 0.75,
-                               0.0, 0.5, 0.0, 0.5, 0.25, 0.75, 0.25, 0.75, 0.5, 0.0, 0.5, 0.0, 0.25, 0.75, 0.25, 0.75,
-                               0.0, 0.5, 0.5, 0.0, 0.25, 0.75, 0.75, 0.25, 0.5, 0.0, 0.0, 0.5, 0.75, 0.25, 0.25, 0.75};
-    std::vector<Real> charges = {1.0,  1.0,  1.0,  1.0,  1.0,  1.0,  1.0,  1.0,
-                                 -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0};
+    std::vector<Real> r_src = {0.3, 0.3, 0.3, 0.29, 0.3, 0.3};
+    // std::vector<Real> r_src = {0.5, 0.01, 0.5, 0.5, 0.96, 0.5};
+    std::vector<Real> charges = {0.5, -0.5};
+    // std::vector<Real> r_src = {0.2, 0.2, 0.2};
+    // std::vector<Real> charges = {0.5};
 
-    TestCaseSystem<Real> System_02(n_src, n_trg, n_dim, r_src, r_src, charges);
+    TestCaseSystem<Real> System_01(n_src, n_trg, n_dim, r_src, r_src, charges);
 
     const Real alpha = opts.alpha;
     const Real r_cut = opts.r_cut;
@@ -842,23 +884,24 @@ void run_test_case_02(const TestOptions &opts) {
     const int p = 4;
 
     // short-range interactions
-    ShortRangeSystem<Real> Short_02 = initialize_short_range(System_02, alpha, r_cut, N, n_dim);
-    std::vector<Real> pot_short = evaluate_short_range(System_02, Short_02, r_cut, alpha);
+    ShortRangeSystem<Real> Short_01 = initialize_short_range(System_01, alpha, r_cut, N, n_dim);
+    std::vector<Real> pot_short = evaluate_short_range(System_01, Short_01, r_cut, alpha, true);
 
     std::cout << "Short-range interaction:" << std::endl;
     print_vector(pot_short);
 
     // long-range interactions
     std::vector<Real> G_hat = compute_green_func(N, alpha);
-    std::vector<Real> pot_long = evaluate_long_range(G_hat, System_02, N, p);
-    
+    std::vector<Real> pot_long = evaluate_long_range(G_hat, System_01, N, p);
+
     std::cout << "Long-range interaction:" << std::endl;
     print_vector(pot_long);
 
     // self-interaction term
+    const Real inv_sqrt_pi = 1 / std::sqrt(M_PI);
     std::vector<Real> self_interaction(n_src, 0.0);
     for (size_t i = 0; i < n_src; ++i) {
-        self_interaction[i] = 2 * alpha / std::sqrt(M_PI) * charges[i];
+        self_interaction[i] = 2 * alpha * inv_sqrt_pi * System_01.charges[i];
     }
 
     std::cout << "Self-interaction potential:" << std::endl;
@@ -872,20 +915,14 @@ void run_test_case_02(const TestOptions &opts) {
 
     std::cout << "Final Potential:" << std::endl;
     print_vector(pot);
-
-    // compute the total electrostatic energy
-    Real energy = 0.0;
-    for (size_t i = 0; i < n_src; ++i) {
-        energy += pot[i] * charges[i];
-    }
-    energy *= 0.5;
-    Real madelung = energy * 0.5 / n_src;
-    std::cout << "Madelung constant for NaCl latice: " << madelung << std::endl; 
 }
 
+
+// test case: Madelung constant verification
+// NaCl rock salt
+// some things don't work too well here yet
 template <typename Real>
-void run_test_case_03(const TestOptions &opts) {
-    // Madelung constant verification
+void run_test_case_02(const TestOptions &opts) {
     const Real alpha = opts.alpha;
     const Real r_cut = opts.r_cut;
     const int N = opts.N;
@@ -915,26 +952,27 @@ void run_test_case_03(const TestOptions &opts) {
         }
     }
     
-    TestCaseSystem<Real> System_04(n_src, n_trg, n_dim, r_src, r_src, charges);
+    TestCaseSystem<Real> System_02(n_src, n_trg, n_dim, r_src, r_src, charges);
     
     // short-range interactions
-    ShortRangeSystem<Real> Short_04 = initialize_short_range(System_04, alpha, r_cut, N, n_dim);
-    std::vector<Real> pot_short = evaluate_short_range(System_04, Short_04, r_cut, alpha);
+    ShortRangeSystem<Real> Short_02 = initialize_short_range(System_02, alpha, r_cut, N, n_dim);
+    std::vector<Real> pot_short = evaluate_short_range(System_02, Short_02, r_cut, alpha, true);
 
     // std::cout << "Short-range interaction:" << std::endl;
     // print_vector(pot_short);
 
     // long-range interactions
     std::vector<Real> G_hat = compute_green_func(N, alpha);
-    std::vector<Real> pot_long = evaluate_long_range(G_hat, System_04, N, p);
+    std::vector<Real> pot_long = evaluate_long_range(G_hat, System_02, N, p);
     
     // std::cout << "Long-range interaction:" << std::endl;
     // print_vector(pot_long);
 
     // self-interaction term
     std::vector<Real> self_interaction(n_src, 0.0);
+    const Real inv_sqrt_pi = 1 / std::sqrt(M_PI);
     for (size_t i = 0; i < n_src; ++i) {
-        self_interaction[i] = 2 * alpha / std::sqrt(M_PI) * charges[i];
+        self_interaction[i] = 2 * alpha * inv_sqrt_pi * charges[i];
     }
 
     // std::cout << "Self-interaction potential:" << std::endl;
@@ -961,8 +999,10 @@ void run_test_case_03(const TestOptions &opts) {
     std::cout << "Madelung constant for NaCl latice: " << madelung << std::endl;
 }
 
+// test case to investigate whether the long-range interaction part was computed correctly
+// it was confirmed with classical Ewald: DFT calculation -- not on the grid.
 template <typename Real>
-void run_test_case_04(const TestOptions &opts) {
+void run_test_case_03(const TestOptions &opts) {
     // Madelung constant verification
     const int n_src = 10;
     const int n_trg = 10;
@@ -972,7 +1012,7 @@ void run_test_case_04(const TestOptions &opts) {
     std::vector<Real> r_src = {0.131538, 0.45865, 0.218959, 0.678865, 0.934693, 0.519416, 0.0345721, 0.5297, 0.00769819, 0.0668422, 0.686773, 0.930436, 0.526929, 0.653919, 0.701191, 0.762198, 0.0474645, 0.328234, 0.75641, 0.365339, 0.98255, 0.753356, 0.0726859, 0.884707, 0.436411, 0.477732, 0.274907, 0.166507, 0.897656, 0.0605643};
     std::vector<Real> charges = {0.196104 , -0.174876 ,  0.175012 , -0.631476 , -0.665444 , -0.0446574,  1.01469  ,  0.11595  , -0.712774 ,  0.727467};
 
-    TestCaseSystem<Real> System_04(n_src, n_trg, n_dim, r_src, r_src, charges);
+    TestCaseSystem<Real> System_03(n_src, n_trg, n_dim, r_src, r_src, charges);
 
     const Real alpha = opts.alpha;
     const Real r_cut = opts.r_cut;
@@ -980,23 +1020,24 @@ void run_test_case_04(const TestOptions &opts) {
     const int p = 4;
 
     // short-range interactions
-    ShortRangeSystem<Real> Short_04 = initialize_short_range(System_04, alpha, r_cut, N, n_dim);
-    std::vector<Real> pot_short = evaluate_short_range(System_04, Short_04, r_cut, alpha);
+    ShortRangeSystem<Real> Short_03 = initialize_short_range(System_03, alpha, r_cut, N, n_dim);
+    std::vector<Real> pot_short = evaluate_short_range(System_03, Short_03, r_cut, alpha, true);
 
     std::cout << "Short-range interaction:" << std::endl;
     print_vector(pot_short);
 
     // long-range interactions
     std::vector<Real> G_hat = compute_green_func(N, alpha);
-    std::vector<Real> pot_long = evaluate_long_range(G_hat, System_04, N, p);
+    std::vector<Real> pot_long = evaluate_long_range(G_hat, System_03, N, p);
     
     std::cout << "Long-range interaction:" << std::endl;
     print_vector(pot_long);
 
     // self-interaction term
+    const Real inv_sqrt_pi = 1 / std::sqrt(M_PI);
     std::vector<Real> self_interaction(n_src, 0.0);
     for (size_t i = 0; i < n_src; ++i) {
-        self_interaction[i] = 2 * alpha / std::sqrt(M_PI) * charges[i];
+        self_interaction[i] = 2 * alpha * inv_sqrt_pi * charges[i];
     }
 
     std::cout << "Self-interaction potential:" << std::endl;
@@ -1010,6 +1051,102 @@ void run_test_case_04(const TestOptions &opts) {
 
     std::cout << "Final Potential:" << std::endl;
     print_vector(pot);
+}
+
+// single cell -- test case to investigate the effects of vectorization
+template <typename Real>
+void run_test_case_04(const TestOptions &opts) {
+    std::cout << "Test case to investigate the effects of vectorization on a single cell calculation." << std::endl; 
+    const int n_src = opts.n_src; // number of sources
+    const int n_trg = opts.n_trg; // number of targets
+    const int n_dim = 3;          // number of dimensions
+
+    TestCaseSystem<Real> System_04(n_src, n_trg, n_dim, true);
+
+    // divide coordinates by 2 -- isolate everything on a smaller box near the origin
+    for (size_t i = 0; i < n_src * 3; ++i) {
+        System_04.r_src[i] *= 0.50;
+        System_04.r_trg[i] *= 0.50;
+    }
+
+    const Real alpha = opts.alpha; // the extent of short-range and long-range interactions
+    const Real r_cut = 0.20; // cutoff distance for short-range interactions
+    const int N = opts.N;    // 2^4 points
+    const int p = 4;         // order of accuracy for interpolation
+
+    // short-range interactions
+    ShortRangeSystem<Real> Short_04 = initialize_short_range(System_04, alpha, r_cut, N, n_dim);
+
+    /* ----------------------------------------------------------------------------------------------- */
+
+    std::vector<Real> pot_short(n_src, 0.0);
+    // use nanobench to benchmark the process
+    ankerl::nanobench::Bench()
+        .title("Short-range potential computation")
+        .warmup(10) // run 10 iterations before timing
+        .minEpochIterations(40) // time at least 100 iterations
+        .run("not-vectorized", [&] {
+            compute_short_range_raw(System_04.r_src, 
+                                    System_04.r_trg, 
+                                    pot_short,
+                                    System_04.charges, 
+                                    n_dim, 
+                                    r_cut, 
+                                    n_src,
+                                    n_trg, 
+                                    alpha);
+        });
+    
+    pot_short.assign(n_trg, 0.0);
+    compute_short_range_raw(System_04.r_src, 
+                                    System_04.r_trg, 
+                                    pot_short,
+                                    System_04.charges, 
+                                    n_dim, 
+                                    r_cut, 
+                                    n_src,
+                                    n_trg, 
+                                    alpha);
+    // print_vector(pot_short);
+
+    Real offset[3] = {0.0, 0.0, 0.0};
+    std::vector<Real> pot_short_vec(n_src, 0.0); 
+    const Real r_cut_sq = r_cut * r_cut;
+
+    ankerl::nanobench::Bench()
+        .title("Short-range potential computation")
+        // .warmup(100) // run 100 iterations before timing
+        .minEpochIterations(40) // time at least 100 iterations
+        .run("vectorized", [&] {
+            l3d_local_kernel_directcp_vec_cpp__rinv_helper<Real,3,3>(r_cut_sq,
+                                                                    &(Short_04.r_src_row[0]),
+                                                                    n_trg,
+                                                                    &(System_04.charges[0]),
+                                                                    &(System_04.r_src[0]),
+                                                                    &(System_04.r_src[0 + n_src]),
+                                                                    &(System_04.r_src[0 + n_src * 2]),
+                                                                    n_src,
+                                                                    alpha,
+                                                                    offset,
+                                                                    &(pot_short_vec[0]));
+        });
+
+        pot_short_vec.assign(n_src, 0.0);
+        l3d_local_kernel_directcp_vec_cpp__rinv_helper<Real,3,3>(r_cut_sq,
+                                                                    &(Short_04.r_src_row[0]),
+                                                                    n_trg,
+                                                                    &(System_04.charges[0]),
+                                                                    &(System_04.r_src[0]),
+                                                                    &(System_04.r_src[0 + n_src]),
+                                                                    &(System_04.r_src[0 + n_src * 2]),
+                                                                    n_src,
+                                                                    alpha,
+                                                                    offset,
+                                                                    &(pot_short_vec[0]));
+        // print_vector(pot_short_vec);
+
+    /* ----------------------------------------------------------------------------------------------- */
+
 }
 
 // ------------------------------------------------------------------------------------------ //
