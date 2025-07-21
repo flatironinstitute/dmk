@@ -1,11 +1,11 @@
 #ifndef DMK_TYPES_HPP
 #define DMK_TYPES_HPP
 
-#include <mdspan.hpp>
+#include <nda/nda.hpp>
 
 namespace dmk {
 template <typename T, int DIM>
-using ndview = std::experimental::mdspan<T, std::experimental::dextents<size_t, DIM>, std::experimental::layout_left>;
+using ndview = nda::basic_array_view<T, DIM, nda::F_layout>;
 } // namespace dmk
 
 #endif

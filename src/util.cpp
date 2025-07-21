@@ -74,7 +74,7 @@ void mesh_nd(int dim, Real *in, int size, Real *out) {
 }
 
 template <typename Real>
-void mk_tensor_product_fourier_transform_1d(int npw, const ndview<const Real, 1> &fhat, const ndview<Real, 1> &pswfft) {
+void mk_tensor_product_fourier_transform_1d(int npw, const ndview<Real, 1> &fhat, ndview<Real, 1> &pswfft) {
     int npw2 = npw / 2;
     int ind = 0;
     for (int j1 = -npw2; j1 <= 0; ++j1) {
@@ -84,7 +84,7 @@ void mk_tensor_product_fourier_transform_1d(int npw, const ndview<const Real, 1>
 }
 
 template <typename Real>
-void mk_tensor_product_fourier_transform_2d(int npw, const ndview<const Real, 1> &fhat, const ndview<Real, 1> &pswfft) {
+void mk_tensor_product_fourier_transform_2d(int npw, const ndview<Real, 1> &fhat, ndview<Real, 1> &pswfft) {
     int npw2 = npw / 2;
     int npw3 = (npw - 1) / 2;
     int ind = 0;
@@ -98,7 +98,7 @@ void mk_tensor_product_fourier_transform_2d(int npw, const ndview<const Real, 1>
 }
 
 template <typename Real>
-void mk_tensor_product_fourier_transform_3d(int npw, const ndview<const Real, 1> &fhat, const ndview<Real, 1> &pswfft) {
+void mk_tensor_product_fourier_transform_3d(int npw, const ndview<Real, 1> &fhat, ndview<Real, 1> &pswfft) {
     int npw2 = npw / 2;
     int npw3 = (npw - 1) / 2;
     int ind = 0;
@@ -115,8 +115,7 @@ void mk_tensor_product_fourier_transform_3d(int npw, const ndview<const Real, 1>
 }
 
 template <typename Real>
-void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const Real, 1> &fhat,
-                                         const ndview<Real, 1> &pswfft) {
+void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<Real, 1> &fhat, ndview<Real, 1> pswfft) {
     if (dim == 1)
         return mk_tensor_product_fourier_transform_1d(npw, fhat, pswfft);
     if (dim == 2)
@@ -241,9 +240,9 @@ template void init_test_data<double>(int n_dim, int nd, int n_src, int n_trg, bo
                                      sctl::Vector<double> &rnormal, sctl::Vector<double> &charges,
                                      sctl::Vector<double> &dipstr, long seed);
 
-template void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const double, 1> &fhat,
-                                                  const ndview<double, 1> &pswfft);
-template void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const float, 1> &fhat,
-                                                  const ndview<float, 1> &pswfft);
+template void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<float, 1> &fhat,
+                                                  ndview<float, 1> pswfft);
+template void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<double, 1> &fhat,
+                                                  ndview<double, 1> pswfft);
 
 } // namespace dmk::util

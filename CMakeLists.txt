@@ -18,6 +18,9 @@ option(DMK_BUILD_EXAMPLES "Build examples" ON)
 option(DMK_INSTRUMENT "Instrument the code. Requires PAPI" OFF)
 option(DMK_BUILD_PVFMM "Build PVFMM for comparison. Useless without DMK_BUILD_EXAMPLES" OFF)
 
+# Disable google tests for NDA
+set(Build_Tests OFF CACHE BOOL "" FORCE)
+
 if (NOT ${DMK_BUILD_TESTS})
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DDOCTEST_CONFIG_DISABLE")
   set(DMK_TEST_SRC)
@@ -60,6 +63,7 @@ set(DMK_INCLUDES
 add_subdirectory(extern/spdlog EXCLUDE_FROM_ALL)
 add_subdirectory(extern/nanobench EXCLUDE_FROM_ALL)
 add_subdirectory(extern/doctest)
+add_subdirectory(extern/nda)
 
 file(GLOB_RECURSE DMK_REF_COMMON_SRC "src/common/*.f*" "vec-kernels/src/libkernels2.cpp")
 add_library(dmk_ref_common OBJECT ${DMK_REF_COMMON_SRC})
@@ -93,7 +97,7 @@ set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp s
 add_library(DMKOBJS OBJECT ${DMK_SRC})
 set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES} ${MPI_CXX_INCLUDE_DIRS} ${PAPI_INCLUDEDIR})
-target_link_libraries(DMKOBJS PUBLIC OpenMP::OpenMP_CXX ${PAPI_TARGET})
+target_link_libraries(DMKOBJS PUBLIC OpenMP::OpenMP_CXX ${PAPI_TARGET} nda::nda_c)
 target_compile_options(DMKOBJS PUBLIC "-DSCTL_HAVE_MPI;-DSCTL_MAX_DEPTH=62;-funroll-loops")
 
 add_library(dmk STATIC)

@@ -20,11 +20,11 @@ struct FourierData {
     void calc_planewave_coeff_matrices(int i_level, int n_order, sctl::Vector<std::complex<T>> &prox2pw,
                                        sctl::Vector<std::complex<T>> &pw2poly) const;
 
-    const ndview<const T, 1> cheb_coeffs(int i_level) const {
+    ndview<T, 1> cheb_coeffs(int i_level) {
         if (coeffs1_.Dim())
-            return ndview<const T, 1>(&coeffs1_[i_level * n_coeffs_max], ncoeffs1_[i_level]);
+            return ndview<T, 1>({ncoeffs1_[i_level]}, &coeffs1_[i_level * n_coeffs_max]);
         else
-            return ndview<const T, 1>(nullptr, 0);
+            return ndview<T, 1>({0}, nullptr);
     };
 
     int n_pw() const { return n_pw_; };

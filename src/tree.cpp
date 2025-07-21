@@ -415,7 +415,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
                             continue;
 
                         if (form_pw_expansion[child_box]) {
-                            ndview<const T, 2> c2p_view(&c2p[i_child * DIM * n_order * n_order], n_order, DIM);
+                            const ndview<T, 2> c2p_view({n_order, DIM}, &c2p[i_child * DIM * n_order * n_order]);
                             tensorprod::transform<T, DIM>(params.n_mfm, true, proxy_view_upward(child_box), c2p_view,
                                                           proxy_view_upward(parent_box), workspace);
                         } else if (!node_attr[child_box].Ghost) {
@@ -447,10 +447,10 @@ void DMKPtTree<T, DIM>::upward_pass() {
 }
 
 template <typename T, int DIM>
-void multiply_kernelFT_cd2p(const sctl::Vector<T> &radialft, const ndview<std::complex<T>, DIM + 1> &pwexp) {
+void multiply_kernelFT_cd2p(const sctl::Vector<T> &radialft, auto &&pwexp) {
     const int nd = pwexp.extent(DIM);
     const int nexp = radialft.Dim();
-    ndview<std::complex<T>, 2> pwexp_flat(pwexp.data_handle(), nexp, nd);
+    ndview<std::complex<T>, 2> pwexp_flat({nexp, nd}, pwexp.data());
 
     Eigen::Map<const Eigen::ArrayX<T>> radialft_eigen(&radialft[0], nexp);
     for (int ind = 0; ind < nd; ++ind) {
@@ -463,13 +463,13 @@ void multiply_kernelFT_cd2p(const sctl::Vector<T> &radialft, const ndview<std::c
 }
 
 template <typename Complex, int DIM>
-void shift_planewave(const ndview<Complex, DIM + 1> &pwexp1_, const ndview<Complex, DIM + 1> &pwexp2_,
+void shift_planewave(const ndview<Complex, DIM + 1> &pwexp1_, ndview<Complex, DIM + 1> &pwexp2_,
                      const ndview<const Complex, 1> &wpwshift) {
     // Flatten our views
     const int nd = pwexp1_.extent(DIM);
     const int nexp = wpwshift.extent(0);
-    dmk::ndview<const Complex, 2> pwexp1(pwexp1_.data_handle(), nexp, nd);
-    dmk::ndview<Complex, 2> pwexp2(pwexp2_.data_handle(), nexp, nd);
+    dmk::ndview<const Complex, 2> pwexp1({nexp, nd}, pwexp1_.data());
+    dmk::ndview<Complex, 2> pwexp2({nexp, nd}, pwexp2_.data());
 
     using ArrayMap = Eigen::Map<Eigen::ArrayX<Complex>>;
     using ConstArrayMap = Eigen::Map<const Eigen::ArrayX<Complex>>;
@@ -484,8 +484,8 @@ void shift_planewave(const ndview<Complex, DIM + 1> &pwexp1_, const ndview<Compl
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::init_planewave_data() {
     sctl::Profile::Scoped profile("init_planewave_data", &comm_);
-    const std::size_t n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
-    const std::size_t n_pw_per_box = n_pw_modes * params.n_mfm;
+    const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
+    const int n_pw_per_box = n_pw_modes * params.n_mfm;
 
     pw_out_offsets.ReInit(n_boxes());
     pw_out_offsets[0] = 0;
@@ -502,7 +502,7 @@ void DMKPtTree<T, DIM>::init_planewave_data() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &boxes,
-                                                    const ndview<const std::complex<Real>, 2> &poly2pw_view,
+                                                    const ndview<std::complex<Real>, 2> &poly2pw_view,
                                                     const sctl::Vector<Real> &radialft) {
 #ifdef DMK_INSTRUMENT
     double dt = -omp_get_wtime();
@@ -532,7 +532,7 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &box
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
                                                 const sctl::Vector<std::complex<Real>> &wpwshift, Real boxsize,
-                                                const ndview<const std::complex<Real>, 2> &pw2poly_view,
+                                                const ndview<std::complex<Real>, 2> &pw2poly_view,
                                                 const sctl::Vector<Real> &p2c) {
 #ifdef DMK_INSTRUMENT
     double dt = -omp_get_wtime();
@@ -552,9 +552,9 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
 
         auto pw_in_view = [this, &pw_in]() {
             if constexpr (DIM == 2)
-                return ndview<std::complex<Real>, DIM + 1>(&pw_in[0], n_pw, (n_pw + 1) / 2, params.n_mfm);
+                return ndview<std::complex<Real>, DIM + 1>({n_pw, (n_pw + 1) / 2, params.n_mfm}, &pw_in[0]);
             else if constexpr (DIM == 3)
-                return ndview<std::complex<Real>, DIM + 1>(&pw_in[0], n_pw, n_pw, (n_pw + 1) / 2, params.n_mfm);
+                return ndview<std::complex<Real>, DIM + 1>({n_pw, n_pw, (n_pw + 1) / 2, params.n_mfm}, &pw_in[0]);
         }();
 
 #pragma omp for schedule(dynamic) reduction(+ : n_shifts)
@@ -577,7 +577,7 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
                 const int ind = n_neighbors - 1 - (&neighbor - &node_lists[box].nbr[0]);
                 assert(ind >= 0 && ind < n_neighbors);
 
-                ndview<const std::complex<Real>, 1> wpwshift_view(&wpwshift[n_pw_per_box * ind], n_pw_per_box);
+                ndview<const std::complex<Real>, 1> wpwshift_view({n_pw_per_box}, &wpwshift[n_pw_per_box * ind]);
                 shift_planewave<std::complex<Real>, DIM>(pw_out_view(neighbor), pw_in_view, wpwshift_view);
                 n_shifts++;
             }
@@ -611,9 +611,10 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
                         proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_trg_view(child), center_view(box),
                                                        sc, pot_trg_view(child), workspace);
                 } else if (eval_pw_expansion[child]) {
-                    ndview<const Real, 2> p2c_view(&p2c[i_child * DIM * n_order * n_order], n_order, DIM);
-                    dmk::tensorprod::transform<Real, DIM>(nd, true, proxy_view_downward(box), p2c_view,
-                                                          proxy_view_downward(child), workspace);
+                    const ndview<Real, 2> p2c_view({n_order, DIM},
+                                                   const_cast<Real *>(&p2c[i_child * DIM * n_order * n_order]));
+                    tensorprod::transform<Real, DIM>(nd, true, proxy_view_downward(box), p2c_view,
+                                                     proxy_view_downward(child), workspace);
                 }
             }
         }
@@ -775,19 +776,19 @@ void DMKPtTree<T, DIM>::downward_pass() {
     n_pw = fourier_data.n_pw();
 
     init_planewave_data();
-    const std::size_t n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
+    const long n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     sctl::Vector<std::complex<T>> wpwshift(n_pw_modes * sctl::pow<DIM>(3));
     sctl::Vector<T> radialft(n_pw_modes);
     sctl::Vector<T> kernel_ft;
     get_windowed_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits, boxsize[0],
                                    fourier_data.prolate0_fun, kernel_ft);
-    util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<const T, 1>(&kernel_ft[0], kernel_ft.Dim()),
-                                              ndview<T, 1>(&radialft[0], n_pw_modes));
+    util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<T, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
+                                              ndview<T, 1>({n_pw_modes}, &radialft[0]));
 
     sctl::Vector<std::complex<T>> poly2pw(n_order * n_pw), pw2poly(n_order * n_pw);
     fourier_data.calc_planewave_coeff_matrices(-1, n_order, poly2pw, pw2poly);
-    ndview<const std::complex<T>, 2> poly2pw_view(&poly2pw[0], n_pw, n_order);
-    ndview<const std::complex<T>, 2> pw2poly_view(&pw2poly[0], n_pw, n_order);
+    const ndview<std::complex<T>, 2> poly2pw_view({n_pw, n_order}, &poly2pw[0]);
+    const ndview<std::complex<T>, 2> pw2poly_view({n_pw, n_order}, &pw2poly[0]);
 
     dmk::proxy::proxycharge2pw<T, DIM>(proxy_view_upward(0), poly2pw_view, pw_out_view(0), workspaces_[0]);
     multiply_kernelFT_cd2p<T, DIM>(radialft, pw_out_view(0));
@@ -810,8 +811,8 @@ void DMKPtTree<T, DIM>::downward_pass() {
             const bool is_root = i_level == 0;
             get_difference_kernel_ft<T, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_digits,
                                              boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
-            util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<const T, 1>(&kernel_ft[0], kernel_ft.Dim()),
-                                                      ndview<T, 1>(&radialft[0], n_pw_modes));
+            util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<T, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
+                                                      ndview<T, 1>({n_pw_modes}, &radialft[0]));
             fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
             dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw,
                                                         fourier_data.difference_kernel(i_level).hpw, wpwshift);

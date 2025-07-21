@@ -17,14 +17,13 @@ template <typename Real>
 void mesh_nd(int dim, Real *in, int size, Real *out);
 
 template <typename Real>
-void mesh_nd(int dim, const ndview<const Real, 1> &in, const ndview<Real, 2> &out);
+void mesh_nd(int dim, const ndview<const Real, 1> &in, ndview<Real, 2> out);
 
 template <typename Real>
 void mk_tensor_product_fourier_transform(int dim, int npw, int nfourier, Real *fhat, int nexp, Real *pswfft);
 
 template <typename Real>
-void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const Real, 1> &fhat,
-                                         const ndview<Real, 1> &pswfft);
+void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<Real, 1> &fhat, ndview<Real, 1> pswfft);
 
 template <typename Real, int ORDER>
 inline Real dot_product(Real *a, Real *b) {
