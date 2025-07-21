@@ -195,7 +195,7 @@ class TestCaseSystem {
     const int n_trg;
     const int n_dim;
     const Real L;
-    bool unif;
+    bool unif;                      // true, to generate uniform random points; only option, for now
     std::vector<Real> r_src;
     std::vector<Real> r_trg;
     std::vector<Real> charges;
@@ -216,14 +216,14 @@ class ShortRangeSystem {
     // TODO: generalize for cases when target != source
 
     const int n_boxes;
-    std::vector<int> box_begin;
-    std::vector<int> box_lengths;
-    std::vector<int> box_corners;
+    std::vector<int> box_begin;             // particle index in the sorted particle array
+    std::vector<int> box_lengths;           // number of particles per box
+    std::vector<int> box_corners;           // leftmost mesh grid index in each dimension
     std::vector<int> particles_sorted;
     std::vector<std::array<int, 27>> box_neighbors;
     std::vector<Real> r_src_sorted;
-    std::vector<Real> r_src_row; // row-major coordinates (useful in vectorization)
-    std::vector<Real> r_src_row_sorted; // row-major + sorted
+    std::vector<Real> r_src_row;           // row-major coordinates (useful in vectorization)
+    std::vector<Real> r_src_row_sorted;    // row-major + sorted
     std::vector<Real> charges_sorted;
 };
 
@@ -385,6 +385,8 @@ ShortRangeSystem<Real> initialize_short_range(const TestCaseSystem<Real> &System
 
 // ------------------------------------------------------------------------------------------ //
 
+// for the simplest calculation -- no cell list decomposition
+// used only for verification of the vectorized operations, in one of the test cases
 template <typename Real>
 void compute_short_range_raw(const std::vector<Real> &r_src, 
                             const std::vector<Real> &r_trg, 
@@ -418,6 +420,8 @@ void compute_short_range_raw(const std::vector<Real> &r_src,
 
 // ------------------------------------------------------------------------------------------ //
 
+// used in the non-vectorized version WITH cell decomposition
+// the vectorized version is in ../include/dmk/vector_kernels_pme.hpp
 template <typename Real>
 void compute_potential(Real *pot, const Real *x, const Real *y, const Real *z, const Real *charges, int n_particles,
                        const Real *x_other, const Real *y_other, const Real *z_other, int n_other, 
@@ -428,7 +432,7 @@ void compute_potential(Real *pot, const Real *x, const Real *y, const Real *z, c
         // iterate through all other particles
         for (int j = 0; j < n_other; ++j) {
             // store the displacement
-            const Real dx = x[i] - x_other[j] - offset[0];
+            const Real dx = x[i] - x_other[j] - offset[0]; // accounting for PBC
             const Real dy = y[i] - y_other[j] - offset[1];
             const Real dz = z[i] - z_other[j] - offset[2];
 
@@ -456,6 +460,7 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
     const int n_dim = System.n_dim;
     const int n_trg = System.n_trg;
     const int n_src = System.n_src;
+    const Real L = System.L;
 
     const Real r_cut_sq = r_cut * r_cut;
     std::vector<Real> pot(n_trg, 0.0);
@@ -467,18 +472,18 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
         for (int nb : Short.box_neighbors[box]) {
             // check periodic boundary conditions
             // TODO: Optimize this calculation?
-            Real offset[3];
-            for (int a = 0; a < 3; ++a) {
+            std::vector<Real> offset(n_dim, 0.0);
+            for (int a = 0; a < n_dim; ++a) {
                 if (Short.box_corners[box * n_dim + a] - Short.box_corners[nb * n_dim + a] > 1) {
-                    offset[a] = 1.0;
+                    offset[a] = L;
                 } else if (Short.box_corners[box * n_dim + a] - Short.box_corners[nb * n_dim + a] < -1) {
-                    offset[a] = -1.0;
+                    offset[a] = -L;
                 } else {
                     offset[a] = 0.0;
                 }
             }
 
-            // TODO: Generalize to more dimensions (?)
+            // TODO: Generalize to more dimensions (?) -- make vector of pointers (?)
 
             const Real *x = &(Short.r_src_sorted[Short.box_begin[box]]);
             const Real *y = &(Short.r_src_sorted[n_src + Short.box_begin[box]]);
@@ -488,6 +493,7 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
             const Real *y_other = &(Short.r_src_sorted[n_src + Short.box_begin[nb]]);
             const Real *z_other = &(Short.r_src_sorted[n_src * 2 + Short.box_begin[nb]]);
 
+            // row-major + sorted -- for vectorized operations
             const Real *r_other = &(Short.r_src_row_sorted[Short.box_begin[nb] * n_dim]);
 
             const Real *ch = &(Short.charges_sorted[0]) + Short.box_begin[nb];
@@ -497,7 +503,7 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
             if (!vectorized) {
                 // TODO: Pass a pointer to the potential function
                 compute_potential(pot_part, x, y, z, ch, Short.box_lengths[box], x_other, y_other, z_other,
-                                Short.box_lengths[nb], offset, r_cut_sq, alpha);
+                                Short.box_lengths[nb], &(offset[0]), r_cut_sq, alpha);
                 }
             else {
                 l3d_local_kernel_directcp_vec_cpp__rinv_helper<Real, 3>(r_cut_sq,
@@ -509,7 +515,7 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
                                                                         z,
                                                                         Short.box_lengths[box],
                                                                         alpha,
-                                                                        offset,
+                                                                        &(offset[0]),
                                                                         pot_part);
             }
         }
@@ -529,6 +535,7 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
 // ------------------------------------------------------------------------------------------ //
 // ------------------------------------------------------------------------------------------ //
 
+/* adapted from https://doi.org/10.1063/1.477414 (page 6) */
 template <typename Real>
 std::vector<Real> compute_green_func(int N, Real alpha, Real L) {
     // TODO: generalize to different box lengths
@@ -566,7 +573,8 @@ std::vector<Real> compute_green_func(int N, Real alpha, Real L) {
 
 // ------------------------------------------------------------------------------------------ //
 
-// Lagrange polynomials
+// Lagrange polynomials -- order 4 (5 points)
+// taken from https://doi.org/10.1063/1.470043 (appendix)
 template <typename Real>
 void evaluate_polynomials_04(std::vector<Real> &W, Real x, Real h) {
     // Pre-compute powers that are reused many times
@@ -591,7 +599,8 @@ void evaluate_polynomials_04(std::vector<Real> &W, Real x, Real h) {
     W[4] = (x4 + 2.0 * h * x3 - h2 * x2 - 2.0 * h3 * x) / denom;
 }
 
-// //  Cardinal B–spline, order-4 (?)
+// //  Cardinal B–spline, order-4 (5 points)
+// //  taken from https://doi.org/10.1063/1.477414 (appendix)
 // void evaluate_polynomials_04(std::vector<Real>& W, const Real x, const Real h) {
 //     // reusable powers
 //     const Real x2 = x * x;
@@ -617,15 +626,20 @@ void evaluate_polynomials_04(std::vector<Real> &W, Real x, Real h) {
 // }
 
 template <typename Real>
-std::vector<Real> compute_contribution(Real r, int middle, int N, Real h, int p) {
+std::vector<Real> compute_contribution(Real r, int middle, int N, Real h, int p, Real L) {
     std::vector<Real> W(p + 1, 0.0); // initialize the vector of polynomials
     Real dr = r - middle * h;
     Real dr_abs = std::abs(dr);
-    dr = (dr_abs >= h / 2) ? dr - 1 : dr; // correction for periodic boundaries
-    // TODO: generalize to more box lengths L (here it is 1.0)
+    dr = (dr_abs >= h / 2) ? dr - L : dr; // correction for periodic boundaries
 
+    // TODO: generalize to higher order polynomials 
+    // // we use 5 points, the default for LAMMPS & GROMACS
     if (p == 4) {
         evaluate_polynomials_04(W, dr, h);
+    }
+    else {
+        std::cerr << "p=4 is currently the only option!" << std::endl;
+        exit(EXIT_FAILURE);
     }
     return W;
 }
@@ -646,17 +660,17 @@ void assign_charge(const std::vector<Real> &r_src, const std::vector<Real> &char
         const Real y = r_src[n_charges + ind];
         const Real z = r_src[n_charges * 2 + ind];
 
-        // identify the middle point
+        // identify the middle point (only works for odd number of points)
         // round to the nearest integer
-        // TODO: generalize for odd p
+        // TODO: generalize for even number of points
         const int middle_x = int(x / L * N + 0.50) % N; // e.g., if x=0.99, middle_x=0
         const int middle_y = int(y / L * N + 0.50) % N;
         const int middle_z = int(z / L * N + 0.50) % N;
 
         // compute W_x, W_y, W_z
-        std::vector<Real> W_x = compute_contribution(x, middle_x, N, h, p);
-        std::vector<Real> W_y = compute_contribution(y, middle_y, N, h, p);
-        std::vector<Real> W_z = compute_contribution(z, middle_z, N, h, p);
+        std::vector<Real> W_x = compute_contribution(x, middle_x, N, h, p, L);
+        std::vector<Real> W_y = compute_contribution(y, middle_y, N, h, p, L);
+        std::vector<Real> W_z = compute_contribution(z, middle_z, N, h, p, L);
 
         // update the grid values
         int count_x, count_y, count_z; // grid point indices
@@ -703,9 +717,9 @@ void back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vec
         }
 
         // compute W_x, W_y, W_z
-        std::vector<Real> W_x = compute_contribution(x, middle_x, N, h, p);
-        std::vector<Real> W_y = compute_contribution(y, middle_y, N, h, p);
-        std::vector<Real> W_z = compute_contribution(z, middle_z, N, h, p);
+        std::vector<Real> W_x = compute_contribution(x, middle_x, N, h, p, L);
+        std::vector<Real> W_y = compute_contribution(y, middle_y, N, h, p, L);
+        std::vector<Real> W_z = compute_contribution(z, middle_z, N, h, p, L);
 
         // update the grid values
         int count_x, count_y, count_z; // grid point indices
@@ -819,6 +833,8 @@ void run_test_case_00(const TestOptions &opts) {
     const Real r_cut = opts.r_cut;      // cutoff distance for short-range interactions
     const int N = opts.N;               // mesh grid points per dimension
     const int p = 4;                    // order of accuracy for interpolation
+    // in some papers, this is equivalent to p=5
+    // in our case, p=w cooresponds to a (w+1)-point assignment
 
     // short-range interactions
     ShortRangeSystem<Real> Short_00 = initialize_short_range(System_00, alpha, r_cut, N, n_dim);
@@ -933,7 +949,6 @@ void run_test_case_01(const TestOptions &opts) {
 
 // test case: Madelung constant verification
 // NaCl rock salt
-// some things don't work too well here yet
 template <typename Real>
 void run_test_case_02(const TestOptions &opts) {
     const Real alpha = opts.alpha;
@@ -952,7 +967,7 @@ void run_test_case_02(const TestOptions &opts) {
     std::vector<Real> r_src(n_src * n_dim, 0.0);
     std::vector<Real> charges(n_src, 0.0);
 
-    // generate the coordinates for the Madelung system with 4,096 particles
+    // generate the coordinates for the NaCl system with N^3 particles
     int count = 0;
     for (int i = 0; i < N; ++i) {
         for (int j = 0; j < N; ++j) {
@@ -1004,12 +1019,14 @@ void run_test_case_02(const TestOptions &opts) {
     std::cout << pot_short[0] << " " << pot_long[0] << " " << self_interaction[0] << " " << pot[0] << std::endl;
 
     // compute the total electrostatic energy
-    Real energy = 0.0;
-    for (size_t i = 0; i < n_src; ++i) {
-        energy += pot[i] * charges[i];
-    }
-    energy *= 0.5;
-    Real madelung = energy * 2 * h / n_src;
+    // Real energy = 0.0;
+    // for (size_t i = 0; i < n_src; ++i) {
+    //     energy += pot[i] * charges[i];
+    // }
+    // energy *= 0.5;
+    Real energy = pot[0] * 0.5;
+    // Real madelung = energy * 2 * h / n_src;
+    Real madelung = energy * 2 * h;
     std::cout << "Madelung constant for NaCl latice: " << madelung << std::endl;
 }
 
