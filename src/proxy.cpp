@@ -1,5 +1,3 @@
-#include <Eigen/Core>
-
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
 #include <dmk/fortran.h>
@@ -126,24 +124,18 @@ void proxycharge2pw(int n_dim, int n_charge_dim, int n_order, int n_pw, const T 
 }
 
 template <typename T>
-void charge2proxycharge_2d(const ndview<const T, 2> &r_src_, const ndview<const T, 2> &charge_,
+void charge2proxycharge_2d(const ndview<const T, 2> &r_src, const ndview<const T, 2> &charge,
                            const ndview<const T, 1> &center, T scale_factor, ndview<T, 3> &coeffs,
                            sctl::Vector<T> &workspace) {
-    using MatrixMap = Eigen::Map<Eigen::MatrixX<T>>;
-    using CMatrixMap = Eigen::Map<const Eigen::MatrixX<T>>;
-
     constexpr int n_dim = 2;
     const int order = coeffs.extent(0);
     const int n_charge_dim = coeffs.extent(2);
-    const int n_src = r_src_.extent(1);
+    const int n_src = r_src.extent(1);
 
     workspace.ReInit(2 * order * n_src + order);
-    MatrixMap dy(&workspace[0], order, n_src);
-    MatrixMap poly_x(&workspace[order * n_src], order, n_src);
-    Eigen::Map<Eigen::VectorX<T>> poly_y(&workspace[2 * order * n_src], order);
-
-    CMatrixMap r_src(r_src_.data(), n_dim, n_src);
-    CMatrixMap charge(charge_.data(), n_charge_dim, n_src);
+    matrixview<T> dy({order, n_src}, &workspace[0]);
+    matrixview<T> poly_x({order, n_src}, &workspace[order * n_src]);
+    ndview<T, 1> poly_y({order}, &workspace[2 * order * n_src]);
 
     auto calc_polynomial = dmk::chebyshev::get_polynomial_calculator<T>(order);
     for (int i_src = 0; i_src < n_src; ++i_src)
@@ -157,31 +149,25 @@ void charge2proxycharge_2d(const ndview<const T, 2> &r_src_, const ndview<const 
                 dy(i, i_src) = charge(i_dim, i_src) * poly_y[i];
         }
 
-        MatrixMap(&coeffs(i_dim * order * order, 0, 0), order, order) += poly_x * dy.transpose();
+        matrixview<T>({order, order}, &coeffs(i_dim * order * order, 0, 0)) += poly_x * nda::transposed_view<1, 0>(dy);
     }
 }
 
 template <typename T>
-void charge2proxycharge_3d(const ndview<const T, 2> &r_src_, const ndview<const T, 2> &charge_,
+void charge2proxycharge_3d(const ndview<const T, 2> &r_src, const ndview<const T, 2> &charge,
                            const ndview<const T, 1> &center, T scale_factor, ndview<T, 4> &coeffs,
                            sctl::Vector<T> &workspace) {
-    using MatrixMap = Eigen::Map<Eigen::MatrixX<T>>;
-    using CMatrixMap = Eigen::Map<const Eigen::MatrixX<T>>;
-
     const int n_dim = 3;
     const int order = coeffs.extent(0);
     const int n_charge_dim = coeffs.extent(3);
-    const int n_src = r_src_.extent(1);
+    const int n_src = r_src.extent(1);
 
     workspace.ReInit(4 * n_src * order + n_src * order * order);
-    MatrixMap dz(&workspace[0], n_src, order);
-    MatrixMap dyz(&workspace[n_src * order], n_src, order * order);
-    MatrixMap poly_x(&workspace[n_src * order + n_src * order * order], order, n_src);
-    MatrixMap poly_y(&workspace[2 * n_src * order + n_src * order * order], order, n_src);
-    MatrixMap poly_z(&workspace[3 * n_src * order + n_src * order * order], order, n_src);
-
-    CMatrixMap r_src(r_src_.data(), n_dim, n_src);
-    CMatrixMap charge(charge_.data(), n_charge_dim, n_src);
+    matrixview<T> dz({n_src, order}, &workspace[0]);
+    matrixview<T> dyz({n_src, order * order}, &workspace[n_src * order]);
+    matrixview<T> poly_x({order, n_src}, &workspace[n_src * order + n_src * order * order]);
+    matrixview<T> poly_y({order, n_src}, &workspace[2 * n_src * order + n_src * order * order]);
+    matrixview<T> poly_z({order, n_src}, &workspace[3 * n_src * order + n_src * order * order]);
 
     auto calc_polynomial = dmk::chebyshev::get_polynomial_calculator<T>(order);
     for (int i_src = 0; i_src < n_src; ++i_src) {
@@ -200,7 +186,7 @@ void charge2proxycharge_3d(const ndview<const T, 2> &r_src_, const ndview<const 
                 for (int m = 0; m < n_src; ++m)
                     dyz(m, j + k * order) = poly_y(j, m) * dz(m, k);
 
-        MatrixMap(&coeffs(i_dim * order * order * order, 0, 0, 0), order, order * order) += poly_x * dyz;
+        matrixview<T>({order, order * order}, &coeffs(i_dim * order * order * order, 0, 0, 0)) += poly_x * dyz;
     }
 
     const int n_flops_per_poly = 3 * (order - 2);
@@ -374,21 +360,21 @@ TEST_CASE("[DMK] proxycharge2pw") {
             CAPTURE(n_order);
             sctl::Vector<double> proxy_coeffs(n_proxy_coeffs);
             sctl::Vector<std::complex<double>> poly2pw(n_order * n_pw), pw2poly(n_order * n_pw);
-            Eigen::VectorX<std::complex<double>> pw_coeffs(n_pw_coeffs), pw_coeffs_fort(n_pw_coeffs);
+            nda::vector<std::complex<double>> pw_coeffs(n_pw_coeffs), pw_coeffs_fort(n_pw_coeffs);
 
             dmk::calc_planewave_coeff_matrices(1.0, 1.0, n_pw, n_order, poly2pw, pw2poly);
 
             for (auto &c : proxy_coeffs)
                 c = drand48();
 
-            pw_coeffs.array() = 0.0;
+            pw_coeffs = 0.0;
             proxycharge2pw(n_dim, n_charge_dim, n_order, n_pw, &proxy_coeffs[0], &poly2pw[0], &pw_coeffs[0]);
 
-            pw_coeffs_fort.array() = 0.0;
+            pw_coeffs_fort = 0.0;
             dmk_proxycharge2pw_(&n_dim, &n_charge_dim, &n_order, &proxy_coeffs[0], &n_pw, (double *)&poly2pw[0],
                                 (double *)&pw_coeffs_fort[0]);
 
-            const double l2 = (pw_coeffs - pw_coeffs_fort).norm() / pw_coeffs.size();
+            const double l2 = nda::linalg::norm(pw_coeffs - pw_coeffs_fort) / pw_coeffs.size();
             CHECK(l2 < std::numeric_limits<double>::epsilon());
 
             sctl::Vector<double> workspace;
@@ -406,7 +392,7 @@ TEST_CASE("[DMK] proxycharge2pw") {
                 proxycharge2pw<double, 3>(proxy_coeffs_view, poly2pw_view, pw_expansion_view, workspace);
             }
 
-            const double rel_err = (pw_coeffs - pw_coeffs_fort).norm() / pw_coeffs.size();
+            const double rel_err = nda::linalg::norm(pw_coeffs - pw_coeffs_fort) / pw_coeffs.size();
             CHECK(rel_err < std::numeric_limits<double>::epsilon());
         }
     }
@@ -421,10 +407,10 @@ TEST_CASE("[DMK] charge2proxycharge") {
         for (int n_order : {9, 18, 28, 38}) {
             CAPTURE(n_order);
             using dmk::util::int_pow;
-            Eigen::VectorX<double> r_src(n_src * n_dim);
-            Eigen::VectorX<double> charge(n_src * n_charge_dim);
-            Eigen::VectorX<double> coeffs(int_pow(n_order, n_dim) * n_charge_dim);
-            Eigen::VectorX<double> coeffs_fort(int_pow(n_order, n_dim) * n_charge_dim);
+            nda::vector<double> r_src(n_src * n_dim);
+            nda::vector<double> charge(n_src * n_charge_dim);
+            nda::vector<double> coeffs(int_pow(n_order, n_dim) * n_charge_dim);
+            nda::vector<double> coeffs_fort(int_pow(n_order, n_dim) * n_charge_dim);
             const double center[] = {0.5, 0.5, 0.5};
             const double scale_factor = 1.2;
 
@@ -434,7 +420,7 @@ TEST_CASE("[DMK] charge2proxycharge") {
             for (int i = 0; i < n_src * n_charge_dim; ++i)
                 charge[i] = drand48() - 0.5;
 
-            coeffs.array() = 0.0;
+            coeffs = 0.0;
             sctl::Vector<double> workspace;
 
             if (n_dim == 2) {
@@ -453,11 +439,11 @@ TEST_CASE("[DMK] charge2proxycharge") {
                 dmk::proxy::charge2proxycharge<double, 3>(src_view, charge_view, center_view, scale_factor, coeffs_view,
                                                           workspace);
             }
-            coeffs_fort.array() = 0.0;
+            coeffs_fort = 0.0;
             pdmk_charge2proxycharge_(&n_dim, &n_charge_dim, &n_order, &n_src, r_src.data(), charge.data(), center,
                                      &scale_factor, coeffs_fort.data());
 
-            const double l2 = (coeffs - coeffs_fort).norm() / coeffs.size();
+            const double l2 = nda::linalg::norm(coeffs - coeffs_fort) / coeffs.size();
             CHECK(l2 < std::numeric_limits<double>::epsilon());
         }
     }
@@ -471,10 +457,10 @@ TEST_CASE("[DMK] eval_targets_3d") {
     for (int n_order : {9, 18, 28, 38}) {
         CAPTURE(n_order);
         using dmk::util::int_pow;
-        Eigen::VectorX<double> r_trg(n_trg * n_dim);
-        Eigen::VectorX<double> coeffs(int_pow(n_order, n_dim) * n_charge_dim);
-        Eigen::VectorX<double> pot(n_charge_dim * n_trg);
-        Eigen::VectorX<double> pot_fort(n_charge_dim * n_trg);
+        nda::vector<double> r_trg(n_trg * n_dim);
+        nda::vector<double> coeffs(int_pow(n_order, n_dim) * n_charge_dim);
+        nda::vector<double> pot(n_charge_dim * n_trg);
+        nda::vector<double> pot_fort(n_charge_dim * n_trg);
         const double center[] = {0.5, 0.5, 0.5};
         const double scale_factor = 1.2;
 
@@ -484,8 +470,8 @@ TEST_CASE("[DMK] eval_targets_3d") {
         for (auto &coeff : coeffs)
             coeff = (drand48() - 0.5);
 
-        pot.setZero();
-        pot_fort.setZero();
+        pot = 0.0;
+        pot_fort = 0.0;
 
         ndview<double, 4> coeffs_view({n_order, n_order, n_order, n_charge_dim}, coeffs.data());
         ndview<double, 2> trg_view({3, n_trg}, r_trg.data());
@@ -497,7 +483,7 @@ TEST_CASE("[DMK] eval_targets_3d") {
         pdmk_ortho_evalt_nd_(&n_dim, &n_charge_dim, &n_order, coeffs.data(), &n_trg, r_trg.data(), center,
                              &scale_factor, pot_fort.data());
 
-        const double l2 = (pot - pot_fort).norm() / coeffs.size();
+        const double l2 = nda::linalg::norm(pot - pot_fort) / coeffs.size();
         CHECK(l2 < std::numeric_limits<double>::epsilon());
     }
 }
