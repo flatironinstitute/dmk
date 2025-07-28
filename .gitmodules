@@ -1,9 +1,6 @@
 [submodule "extern/SCTL"]
 	path = extern/SCTL
 	url = https://github.com/blackwer/SCTL
-[submodule "extern/eigen"]
-	path = extern/eigen
-	url = https://gitlab.com/libeigen/eigen
 [submodule "extern/spdlog"]
 	path = extern/spdlog
 	url = https://github.com/gabime/spdlog

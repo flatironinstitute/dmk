@@ -1,5 +1,3 @@
-#include <Eigen/Core>
-
 #include <dmk/gemm.hpp>
 #include <dmk/tensorprod.hpp>
 #include <dmk/types.hpp>
@@ -12,7 +10,7 @@ template <typename T>
 void transform_1d(int add_flag, const ndview<T, 1> &fin, const ndview<T, 2> &umat, ndview<T, 1> &fout) {
     const int nin = fin.extent(0);
     const int nout = fout.extent(0);
-    Eigen::Map<const Eigen::MatrixX<T>> u(umat.data(), nout, nin);
+    nda::matrix_view<const T> u({nout, nin}, umat.data());
 
     for (int j = 0; j < nout; ++j) {
         double res = add_flag ? fout(j) : 0.0;
@@ -27,15 +25,15 @@ template <typename T>
 void transform_2d(int add_flag, const ndview<T, 2> &fin_, const ndview<T, 2> &umat, ndview<T, 2> &fout) {
     const int nin = fin_.extent(0);
     const int nout = fout.extent(0);
-    Eigen::Map<const Eigen::MatrixX<T>> u1(umat.data(), nout, nin);
-    Eigen::Map<const Eigen::MatrixX<T>> u2(umat.data() + nout * nin, nout, nin);
-    Eigen::Map<const Eigen::MatrixX<T>> fin(fin_.data(), nin, nin);
-    Eigen::Map<Eigen::MatrixX<T>> res(fout.data(), nout, nout);
+    matrixview<const T> u1({nout, nin}, umat.data());
+    matrixview<const T> u2({nout, nin}, umat.data() + nout * nin);
+    matrixview<const T> fin({nin, nin}, fin_.data());
+    matrixview<T> res({nout, nout}, fout.data());
 
     if (add_flag)
-        res += u1 * (fin * u2.transpose());
+        res += u1 * (fin * nda::transpose(u2));
     else
-        res = u1 * (fin * u2.transpose());
+        res = u1 * (fin * nda::transpose(u2));
 }
 
 template <typename T>

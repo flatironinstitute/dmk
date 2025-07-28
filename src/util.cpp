@@ -1,5 +1,3 @@
-#include <Eigen/Core>
-
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
 #include <dmk/fortran.h>

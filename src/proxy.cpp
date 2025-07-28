@@ -149,7 +149,7 @@ void charge2proxycharge_2d(const ndview<const T, 2> &r_src, const ndview<const T
                 dy(i, i_src) = charge(i_dim, i_src) * poly_y[i];
         }
 
-        matrixview<T>({order, order}, &coeffs(i_dim * order * order, 0, 0)) += poly_x * nda::transposed_view<1, 0>(dy);
+        matrixview<T>({order, order}, &coeffs(0, 0, i_dim)) += poly_x * nda::transposed_view<1, 0>(dy);
     }
 }
 
@@ -186,7 +186,7 @@ void charge2proxycharge_3d(const ndview<const T, 2> &r_src, const ndview<const T
                 for (int m = 0; m < n_src; ++m)
                     dyz(m, j + k * order) = poly_y(j, m) * dz(m, k);
 
-        matrixview<T>({order, order * order}, &coeffs(i_dim * order * order * order, 0, 0, 0)) += poly_x * dyz;
+        matrixview<T>({order, order * order}, &coeffs(0, 0, 0, i_dim)) += poly_x * dyz;
     }
 
     const int n_flops_per_poly = 3 * (order - 2);

@@ -79,7 +79,9 @@ std::tuple<int, double, double> get_PSWF_difference_kernel_pwterms(dmk_ikernel k
             npw = 13;
             hpw = M_PI * 0.662 / boxsize;
         } else if (ndigits <= 6) {
-            npw = 25;
+            // FIXME: was 25, but currently the code requires it be the same as the windowed kernel
+            // Breaks with mk_tensor_product_fourier_transform due to inconsistent number of modes
+            npw = 27;
             hpw = M_PI * 0.6686 / boxsize;
         } else if (ndigits <= 9) {
             npw = 39;
@@ -844,7 +846,7 @@ void FourierData<Real>::update_local_coeffs_yukawa(Real eps) {
     legerts(1, n_quad, xs_base.data(), whts_base.data());
     auto [v1, vlu1] = dmk::chebyshev::get_vandermonde_and_LU<Real>(nr1);
     auto [v2, vlu2] = dmk::chebyshev::get_vandermonde_and_LU<Real>(nr2);
-    Eigen::VectorX<Real> fvals(nr1);
+    nda::vector<Real> fvals(nr1);
 
     for (int i_level = 0; i_level < n_levels_; ++i_level) {
         auto bsize = box_sizes_[i_level];
@@ -890,7 +892,7 @@ void FourierData<Real>::update_local_coeffs_yukawa(Real eps) {
             }
         }
 
-        Eigen::VectorX<Real> r1 = dmk::chebyshev::get_cheb_nodes(nr1, Real{0.}, bsize);
+        auto r1 = dmk::chebyshev::get_cheb_nodes(nr1, Real{0.}, bsize);
         if (n_dim_ == 2) {
             for (int i = 0; i < nr1; ++i) {
                 fvals(i) = 0.0;
@@ -907,9 +909,9 @@ void FourierData<Real>::update_local_coeffs_yukawa(Real eps) {
             }
         }
 
-        Eigen::Map<Eigen::VectorX<Real>> coeffs1_lvl(&coeffs1_[0] + nr1 * i_level, nr1);
+        nda::vector_view<Real> coeffs1_lvl({nr1}, &coeffs1_[0] + nr1 * i_level);
         coeffs1_lvl = vlu1.solve(fvals);
-        Real coefsmax = coeffs1_lvl.array().abs().maxCoeff();
+        Real coefsmax = nda::max_element(nda::abs(coeffs1_lvl));
         Real releps = eps * coefsmax;
 
         ncoeffs1_[i_level] = 1;
@@ -922,7 +924,7 @@ void FourierData<Real>::update_local_coeffs_yukawa(Real eps) {
         }
 
         // coeffs2
-        Eigen::VectorX<Real> r2 = dmk::chebyshev::get_cheb_nodes(nr2, Real{0.25} * bsize * bsize, bsize * bsize);
+        nda::vector<Real> r2 = dmk::chebyshev::get_cheb_nodes(nr2, Real{0.25} * bsize * bsize, bsize * bsize);
         if (n_dim_ == 2) {
             for (int i = 0; i < nr2; ++i) {
                 fvals(i) = 0.0;
@@ -944,10 +946,10 @@ void FourierData<Real>::update_local_coeffs_yukawa(Real eps) {
             }
         }
 
-        Eigen::Map<Eigen::VectorX<Real>> coeffs2_lvl(&coeffs2_[0] + nr2 * i_level, nr2);
+        nda::vector_view<Real> coeffs2_lvl({nr2}, &coeffs2_[0] + nr2 * i_level);
         coeffs2_lvl = vlu2.solve(fvals);
 
-        coefsmax = coeffs2_lvl.array().abs().maxCoeff();
+        coefsmax = nda::max_element(nda::abs(coeffs2_lvl));
         releps = eps * coefsmax;
         ncoeffs2_[i_level] = 1;
         for (int i = 0; i < nr2 - 2; ++i) {

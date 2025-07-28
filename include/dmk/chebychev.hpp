@@ -5,31 +5,35 @@
 #include <sctl.hpp>
 #include <tuple>
 
-#include <Eigen/Core>
-#include <Eigen/LU>
+#include <nda/nda.hpp>
 
 namespace dmk::chebyshev {
 
 template <typename T>
-using Matrix = Eigen::MatrixX<T>;
+using Matrix = nda::matrix<T, nda::F_layout>;
 
 template <typename T>
-using Vector = Eigen::VectorX<T>;
+using Vector = nda::vector<T>;
 
 template <typename T>
-using VectorRef = Eigen::Ref<Vector<T>>;
+struct LU {
+    Matrix<T> lu;
+    Vector<int> pivots;
 
-template <typename T>
-using CVectorRef = Eigen::Ref<const Vector<T>>;
+    LU() = default;
 
-template <typename T>
-using MatrixRef = Eigen::Ref<Matrix<T>>;
+    LU(auto &&A) {
+        // Perform LU decomposition
+        lu = A;
+        nda::lapack::getrf(lu, pivots);
+    }
 
-template <typename T>
-using CMatrixRef = Eigen::Ref<const Matrix<T>>;
-
-template <typename T>
-using LU = Eigen::PartialPivLU<Matrix<T>>;
+    auto solve(const auto &b) const {
+        auto res = b;
+        nda::lapack::getrs(lu, res, pivots);
+        return res;
+    }
+};
 
 template <typename T>
 inline Vector<T> get_cheb_nodes(int order, T lb, T ub) {
@@ -43,7 +47,7 @@ inline Vector<T> get_cheb_nodes(int order, T lb, T ub) {
 }
 
 template <typename T>
-inline Matrix<T> calc_vandermonde(const CVectorRef<T> &nodes) {
+inline Matrix<T> calc_vandermonde(const auto &nodes) {
     const int order = nodes.size();
     Matrix<T> V(order, order);
 
@@ -60,7 +64,7 @@ inline Matrix<T> calc_vandermonde(const CVectorRef<T> &nodes) {
 }
 
 template <typename T>
-inline void calc_polynomial(int order, T x, VectorRef<T> poly) {
+inline void calc_polynomial(int order, T x, auto &&poly) {
     poly[0] = 1.0;
     poly[1] = x;
 
@@ -70,8 +74,7 @@ inline void calc_polynomial(int order, T x, VectorRef<T> poly) {
 
 template <typename T>
 inline void calc_polynomial(int order, T x, T *poly_) {
-    Eigen::Map<Vector<T>> poly(poly_, order);
-    calc_polynomial<T>(order, x, poly);
+    calc_polynomial<T>(order, x, nda::vector_view<T>({order}, poly_));
 }
 
 template <typename T, int order>
@@ -104,7 +107,7 @@ inline Vector<T> calc_polynomial(int order, T x) {
 }
 
 template <typename T>
-inline void calc_polynomial(int order, const CVectorRef<T> &x, MatrixRef<T> poly) {
+inline void calc_polynomial(int order, const auto &x, auto &&poly) {
     // Memory bottlenecked. Not really worth optimizing
     const int ns = x.rows();
     for (int i = 0; i < ns; ++i) {
@@ -117,8 +120,8 @@ inline void calc_polynomial(int order, const CVectorRef<T> &x, MatrixRef<T> poly
 
 template <typename T>
 inline void calc_polynomial(int order, int n_poly, const T *x, T *poly) {
-    Eigen::Map<const Vector<T>> x_(x, n_poly);
-    Eigen::Map<Matrix<T>> poly_(poly, order, n_poly);
+    nda::vector_const_view<T> x_({n_poly}, x);
+    nda::matrix_view<T, nda::F_layout> poly_({order, n_poly}, poly);
     calc_polynomial<T>(order, x_, poly_);
 }
 
@@ -210,8 +213,8 @@ inline std::pair<Matrix<T>, Matrix<T>> parent_to_child_matrices(int order) {
     Vector<T> x = get_cheb_nodes<T>(order, -1.0, 1.0);
 
     // Shifted box positions. vec.array() allows element-wise/broadcasting ops
-    Vector<T> xm = 0.5 * x.array() - 0.5;
-    Vector<T> xp = 0.5 * x.array() + 0.5;
+    Vector<T> xm = 0.5 * x - 0.5;
+    Vector<T> xp = 0.5 * x + 0.5;
 
     // minus and plus "vandermonde" matrices
     Matrix<T> vm = calc_vandermonde<T>(xm);
@@ -235,18 +238,18 @@ inline Vector<T> fit(int order, T (*func)(T), T lb, T ub) {
 
 template <typename T>
 inline void fit(int order, T (*func)(T), T lb, T ub, T *coeffs) {
-    Eigen::Map<Vector<T>> res(coeffs, order);
+    nda::basic_array_view<T, 1, nda::F_layout> res({order}, coeffs);
     res = fit(order, func, lb, ub);
 }
 
 template <typename T>
 std::pair<sctl::Vector<T>, sctl::Vector<T>> get_c2p_p2c_matrices(int dim, int order) {
-    std::array<Eigen::MatrixX<T>, 2> c2p_mp;
-    std::array<Eigen::MatrixX<T>, 2> p2c_mp;
+    std::array<nda::matrix<T, nda::F_layout, nda::heap<>>, 2> c2p_mp;
+    std::array<nda::matrix<T, nda::F_layout, nda::heap<>>, 2> p2c_mp;
 
     std::tie(p2c_mp[0], p2c_mp[1]) = dmk::chebyshev::parent_to_child_matrices<T>(order);
-    c2p_mp[0] = p2c_mp[0].transpose().eval();
-    c2p_mp[1] = p2c_mp[1].transpose().eval();
+    c2p_mp[0] = nda::transpose(p2c_mp[0]);
+    c2p_mp[1] = nda::transpose(p2c_mp[1]);
 
     const int mc = std::pow(2, dim);
 
@@ -303,9 +306,9 @@ TEST_CASE_TEMPLATE("[DMK] chebyshev fit", T, float, double) {
     for (const int order : {5, 9, 16, 24}) {
         CAPTURE(order);
         // return by value
-        Eigen::VectorX<T> coeffs_rbv = fit<T>(order, testfunc, lb, ub);
+        Vector<T> coeffs_rbv = fit<T>(order, testfunc, lb, ub);
         // pass by reference
-        Eigen::VectorX<T> coeffs_pbr(order);
+        Vector<T> coeffs_pbr(order);
         fit<T>(order, testfunc, lb, ub, coeffs_pbr.data());
 
         CHECK(coeffs_rbv == coeffs_pbr);
@@ -318,7 +321,7 @@ TEST_CASE_TEMPLATE("[DMK] chebyshev interpolation", T, float, double) {
     auto testfunc = [](T x) -> T { return std::sin(x * x * x) + 0.5; };
 
     for (const int order : {5, 9, 16, 24}) {
-        Eigen::VectorX<T> coeffs = fit<T>(order, testfunc, lb, ub);
+        Vector<T> coeffs = fit<T>(order, testfunc, lb, ub);
         CAPTURE(order);
 
         for (T x = lb; x <= ub; x += (ub - lb) / 9) {
@@ -340,11 +343,11 @@ TEST_CASE_TEMPLATE("[DMK] chebyshev translation", T, float, double) {
     for (const int order : {5, 9, 16, 24}) {
         CAPTURE(order);
 
-        Eigen::MatrixX<T> tm, tp;
+        Matrix<T> tm, tp;
         std::tie(tm, tp) = parent_to_child_matrices<T>(order);
-        Eigen::VectorX<T> coeffs = fit<T>(order, testfunc, lb, ub);
-        Eigen::VectorX<T> coeffs_m = tm * coeffs;
-        Eigen::VectorX<T> coeffs_p = tp * coeffs;
+        Vector<T> coeffs = fit<T>(order, testfunc, lb, ub);
+        Vector<T> coeffs_m = tm * coeffs;
+        Vector<T> coeffs_p = tp * coeffs;
 
         for (T x = lb; x <= mid; x += (mid - lb) / 9) {
             T res = evaluate<T>(x, order, lb, ub, coeffs.data());

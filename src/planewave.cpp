@@ -1,4 +1,3 @@
-#include <Eigen/Core>
 #include <dmk/chebychev.hpp>
 #include <dmk/fortran.h>
 #include <dmk/gemm.hpp>
@@ -123,12 +122,12 @@ void calc_planewave_coeff_matrices(T boxsize, T hpw, int n_pw, int n_order, sctl
     assert(n_pw * n_order == prox2pw_vec.Dim());
     assert(n_pw * n_order == pw2poly_vec.Dim());
 
-    using matrix_t = Eigen::MatrixX<std::complex<T>>;
+    using matrix_t = ndamatrix<std::complex<T>>;
     const T dsq = 0.5 * boxsize;
     const auto xs = dmk::chebyshev::get_cheb_nodes(n_order, -1.0, 1.0);
 
-    Eigen::Map<matrix_t> prox2pw(&prox2pw_vec[0], n_pw, n_order);
-    Eigen::Map<matrix_t> pw2poly(&pw2poly_vec[0], n_pw, n_order);
+    matrixview<std::complex<T>> prox2pw({n_pw, n_order}, &prox2pw_vec[0]);
+    matrixview<std::complex<T>> pw2poly({n_pw, n_order}, &pw2poly_vec[0]);
 
     matrix_t tmp(n_pw, n_order);
     const int shift = n_pw / 2;
@@ -139,12 +138,12 @@ void calc_planewave_coeff_matrices(T boxsize, T hpw, int n_pw, int n_order, sctl
     }
 
     const auto &[vmat, umat_lu] = chebyshev::get_vandermonde_and_LU<T>(n_order);
-    // Can't use umat_lu.solve() because eigen doesn't support LU with mixed complex/real types
-    const Eigen::MatrixX<T> umat = umat_lu.inverse();
-    pw2poly = tmp * umat.transpose();
+    // FIXME: see if we can just use the LU decomposition directly with mixed complex/real types
+    matrix_t umat = umat_lu.lu;
+    nda::lapack::getri(umat, umat_lu.pivots);
+    pw2poly = tmp * nda::transpose(umat);
 
-    for (int i = 0; i < n_order * n_pw; ++i)
-        prox2pw(i) = std::conj(pw2poly(i));
+    prox2pw = nda::conj(pw2poly);
 }
 
 template <int DIM, typename T>
@@ -231,15 +230,15 @@ TEST_CASE("[DMK] planewave_to_proxy_potential") {
             const int n_proxy_terms = dmk::util::int_pow(n_order, n_dim);
             sctl::Vector<std::complex<double>> pw_expansion(n_pw_terms);
             sctl::Vector<std::complex<double>> pw_to_coefs_mat(n_order * n_pw);
-            Eigen::VectorX<double> proxy_coeffs(n_proxy_terms), proxy_coeffs_fort(n_proxy_terms);
+            nda::vector<double> proxy_coeffs(n_proxy_terms), proxy_coeffs_fort(n_proxy_terms);
 
             for (auto &elem : pw_expansion)
                 elem = std::complex<double>{rand() / double(RAND_MAX), rand() / double(RAND_MAX)};
             for (auto &elem : pw_to_coefs_mat)
                 elem = std::complex<double>{rand() / double(RAND_MAX), rand() / double(RAND_MAX)};
 
-            proxy_coeffs.setZero();
-            proxy_coeffs_fort.setZero();
+            proxy_coeffs = 0;
+            proxy_coeffs_fort = 0;
             sctl::Vector<double> workspace;
 
             if (n_dim == 2) {
@@ -264,7 +263,7 @@ TEST_CASE("[DMK] planewave_to_proxy_potential") {
             dmk_pw2proxypot_(&n_dim, &n_charge_dim, &n_order, &n_pw, (double *)&pw_expansion[0],
                              (double *)&pw_to_coefs_mat[0], &proxy_coeffs_fort[0]);
 
-            const double l2 = (proxy_coeffs - proxy_coeffs_fort).norm() / proxy_coeffs.size();
+            const double l2 = nda::linalg::norm(proxy_coeffs - proxy_coeffs_fort) / proxy_coeffs.size();
             CHECK(l2 < std::numeric_limits<double>::epsilon());
         }
     }

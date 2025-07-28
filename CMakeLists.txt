@@ -54,7 +54,6 @@ endif()
 
 set(DMK_INCLUDES
   ${PROJECT_SOURCE_DIR}/include
-  ${PROJECT_SOURCE_DIR}/extern/eigen
   ${PROJECT_SOURCE_DIR}/extern/SCTL/include
   ${PROJECT_SOURCE_DIR}/extern/spdlog/include
   ${PROJECT_SOURCE_DIR}/extern/doctest

@@ -452,10 +452,10 @@ void multiply_kernelFT_cd2p(const sctl::Vector<T> &radialft, auto &&pwexp) {
     const int nexp = radialft.Dim();
     ndview<std::complex<T>, 2> pwexp_flat({nexp, nd}, pwexp.data());
 
-    Eigen::Map<const Eigen::ArrayX<T>> radialft_eigen(&radialft[0], nexp);
+    ndview<const T, 1> radialft_view({nexp}, &radialft[0]);
     for (int ind = 0; ind < nd; ++ind) {
-        Eigen::Map<Eigen::ArrayX<std::complex<T>>> pwexp_eigen(&pwexp_flat(0, ind), nexp);
-        pwexp_eigen *= radialft_eigen;
+        ndview<std::complex<T>, 1> pwexp_view({nexp}, &pwexp_flat(0, ind));
+        pwexp_view *= radialft_view;
     }
     // Real * complex is two multiplies and two adds
     const unsigned long n_flops = 4 * nd * nexp;
@@ -471,13 +471,13 @@ void shift_planewave(const ndview<Complex, DIM + 1> &pwexp1_, ndview<Complex, DI
     dmk::ndview<const Complex, 2> pwexp1({nexp, nd}, pwexp1_.data());
     dmk::ndview<Complex, 2> pwexp2({nexp, nd}, pwexp2_.data());
 
-    using ArrayMap = Eigen::Map<Eigen::ArrayX<Complex>>;
-    using ConstArrayMap = Eigen::Map<const Eigen::ArrayX<Complex>>;
-    ConstArrayMap wpwshift_eigen(&wpwshift(0), nexp);
+    using ArrayMap = ndview<Complex, 1>;
+    using ConstArrayMap = ndview<const Complex, 1>;
+    ConstArrayMap wpwshift_view({nexp}, &wpwshift(0));
     for (int ind = 0; ind < nd; ++ind) {
-        ConstArrayMap pw1_eigen(&pwexp1(0, ind), nexp);
-        ArrayMap pw2_eigen(&pwexp2(0, ind), nexp);
-        pw2_eigen += pw1_eigen * wpwshift_eigen;
+        ConstArrayMap pw1_view({nexp}, &pwexp1(0, ind));
+        ArrayMap pw2_view({nexp}, &pwexp2(0, ind));
+        pw2_view += pw1_view * wpwshift_view;
     }
 }
 
@@ -795,8 +795,8 @@ void DMKPtTree<T, DIM>::downward_pass() {
     proxy_coeffs_downward.SetZero();
     dmk::planewave_to_proxy_potential<T, DIM>(pw_out_view(0), pw2poly_view, proxy_view_downward(0), workspaces_[0]);
 
-    Eigen::MatrixX<T> r_src_t = Eigen::Map<Eigen::MatrixX<T>>(r_src_ptr(0), DIM, src_counts_local[0]).transpose();
-    Eigen::MatrixX<T> r_trg_t = Eigen::Map<Eigen::MatrixX<T>>(r_trg_ptr(0), DIM, trg_counts_local[0]).transpose();
+    ndamatrix<T> r_src_t = nda::transpose(matrixview<T>({DIM, src_counts_local[0]}, r_src_ptr(0)));
+    ndamatrix<T> r_trg_t = nda::transpose(matrixview<T>({DIM, trg_counts_local[0]}, r_trg_ptr(0)));
 
     sctl::Profile::Toc();
     sctl::Profile::Tic("expansion_propagation_and_eval", &comm_);
