@@ -20,7 +20,7 @@ pipeline {
             steps {
                 sh 'which mpicxx'
                 sh 'git submodule update --init --recursive'
-                sh 'CXX=mpicxx F90=mpif90 cmake -B build . -DCMAKE_BUILD_TYPE=Release'
+                sh 'CXX=mpicxx F90=mpif90 cmake -B build . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/build/install'
                 sh 'cd build && make -j4'
                 sh 'mpirun -n 2 ./build/test/test_all'
             }
