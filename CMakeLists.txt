@@ -18,8 +18,9 @@ option(DMK_BUILD_EXAMPLES "Build examples" ON)
 option(DMK_INSTRUMENT "Instrument the code. Requires PAPI" OFF)
 option(DMK_BUILD_PVFMM "Build PVFMM for comparison. Useless without DMK_BUILD_EXAMPLES" OFF)
 
-# Disable google tests for NDA
+# Disable google tests and HDF5 for NDA
 set(Build_Tests OFF CACHE BOOL "" FORCE)
+set(HDF5Support OFF CACHE BOOL "" FORCE)
 
 if (NOT ${DMK_BUILD_TESTS})
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DDOCTEST_CONFIG_DISABLE")
