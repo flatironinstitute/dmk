@@ -1,3 +1,7 @@
+/* First implementation of short-range potential calculation with cell lists.
+Slower version, inefficient memory allocation and no factoring out.
+It has been upgraded by ewald_shorter.cpp and ewald_total.cpp */
+
 #include <iostream>
 #include <random>
 #include <vector>

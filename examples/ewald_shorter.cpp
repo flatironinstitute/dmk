@@ -1,3 +1,7 @@
+/* Second implementation of short-range potential calculation with cell lists.
+Better memory allocation, factoring out of the final potential calculation only.
+It has been upgraded by ewald_total.cpp */
+
 #include <iostream>
 #include <random>
 #include <vector>

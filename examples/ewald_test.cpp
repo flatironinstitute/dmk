@@ -1,3 +1,6 @@
+/* One of the first implementations; no cell list implementation.
+It has been upgraded by ewald_short.cpp, ewald_shorter.cpp and ewald_total.cpp */
+
 #include <algorithm>
 #include <complex>
 #include <ducc0/fft/fft.h>
@@ -68,9 +71,9 @@ void compute_green_func(std::vector<double> &G, const int N, const double h, con
             for (size_t i = 0; i < N; ++i) {
                 // TODO: optimize this step; structure the loop accordingly
                 // conditionals are expensive (?)
-                const auto i_new = (i > (N / 2)) ? i - N : i;
-                const auto j_new = (j > (N / 2)) ? j - N : j;
-                const auto w_new = (w > (N / 2)) ? w - N : w;
+                const int i_new = (i > (N / 2)) ? i - N : i;
+                const int j_new = (j > (N / 2)) ? j - N : j;
+                const int w_new = (w > (N / 2)) ? w - N : w;
 
                 const auto k_x = TWOPI * i_new;
                 const auto k_y = TWOPI * j_new;
@@ -287,8 +290,8 @@ int main(int argc, char *argv[]) {
     // useful quantities
     const double twopi = 2 * M_PI;
 
-    const int n_src = 100; // number of sources
-    const int n_trg = 100; // number of targets
+    const int n_src = 10; // number of sources
+    const int n_trg = 10; // number of targets
     const int n_dim = 3;   // number of dimensions
 
     // initialize the vectors: empty for now
@@ -304,8 +307,8 @@ int main(int argc, char *argv[]) {
         r_src[i] = distribution(generator);
     }
 
-    // std::cout << "Particle coordinates:" << std::endl;
-    // print_vector(r_src);
+    std::cout << "Particle coordinates:" << std::endl;
+    print_vector(r_src);
 
     // r_src = {0.3, 0.3, 0.3, 0.31, 0.3, 0.3};
     // r_src = {0.5, 0.01, 0.5, 0.5, 0.96, 0.5};

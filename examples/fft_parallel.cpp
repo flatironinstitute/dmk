@@ -1,5 +1,7 @@
+/* Parallel implementation of a 2D FFT using Scatter and Gather. Inefficient and slow. 
+Upgraded by fft_parallel_v.cpp, fft_parallel_2D.cpp, and fft_parallel_2D_factored.cpp*/
+
 #include <complex>
-// #include <cstdlib>
 #include <ducc0/fft/fft.h>
 #include <ducc0/fft/fftnd_impl.h>
 #include <iostream>
@@ -113,19 +115,20 @@ int main(int argc, char *argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
     N = std::stoi(argv[1]);
+    // I use the word "rows" in my variables because I started with 2D; for 3D I mean slabs/planes
     int rows_per_rank = N / size;
     int entries_per_rank = rows_per_rank * N;
 
     // declare vector (2D, for now)
-    std::vector<std::complex<double>> x_comp(N * N, std::complex<double>(0.0, 0.0));
+    std::vector<std::complex<float>> x_comp(N * N, std::complex<float>(0.0, 0.0));
     // declare ft_x vector (FT in one core, no split, using ducc) -- used for comparison
     // it is not necessary in the final implementation!
-    std::vector<std::complex<double>> ft_x(N * N);
+    std::vector<std::complex<float>> ft_x(N * N);
 
     // initialize the vector on rank 0 with uniform [0, 1] random values
     if (rank == 0) {
         std::default_random_engine generator;
-        std::uniform_real_distribution<double> distribution(0.0, 1.0);
+        std::uniform_real_distribution<float> distribution(0.0, 1.0);
 
         for (size_t i = 0; i < N * N; ++i) {
             x_comp[i].real(distribution(generator));
@@ -136,7 +139,7 @@ int main(int argc, char *argv[]) {
         auto start1 = omp_get_wtime();
 
         // compute the complete FT serially, on rank 0, for reference
-        std::vector<std::complex<double>> ft_x = run_fft(x_comp, 2, N, true);
+        std::vector<std::complex<float>> ft_x = run_fft(x_comp, 2, N, true);
         
         auto end1 = omp_get_wtime();
         std::cout << "Option 1 (Direct Computation). Time: " << (end1 - start1) * 1000.0 << " miliseconds." << std::endl;
@@ -146,15 +149,15 @@ int main(int argc, char *argv[]) {
         auto start2 = omp_get_wtime();
 
         // Step 1: compute the FT of each row
-        std::vector<std::vector<std::complex<double>>> ft_x_step1(N);
+        std::vector<std::vector<std::complex<float>>> ft_x_step1(N);
         for (size_t j = 0; j < N; ++j) {
-            std::span<const std::complex<double>> x_comp_part(&(x_comp[j * N]), N);
+            std::span<const std::complex<float>> x_comp_part(&(x_comp[j * N]), N);
             ft_x_step1[j] = run_fft(x_comp_part, 1, N, true);
         }
 
         // Step 1.5: transpose
-        std::vector<std::complex<double>> ft_x_step1_row(N);
-        std::vector<std::vector<std::complex<double>>> ft_x_step1_T(N, ft_x_step1_row);
+        std::vector<std::complex<float>> ft_x_step1_row(N);
+        std::vector<std::vector<std::complex<float>>> ft_x_step1_T(N, ft_x_step1_row);
         for (size_t j = 0; j < N; ++j) {
             for (size_t i = 0; i < N; ++i) {
                 ft_x_step1_T[i][j] = ft_x_step1[j][i];
@@ -162,14 +165,14 @@ int main(int argc, char *argv[]) {
         }
 
         // Step 2: compute the FT of each column
-        std::vector<std::vector<std::complex<double>>> ft_x_step2(N);
+        std::vector<std::vector<std::complex<float>>> ft_x_step2(N);
         for (size_t j = 0; j < N; ++j) {
-            std::span<const std::complex<double>> ft_x_step1_T_part(&(ft_x_step1_T[j][0]), N);
+            std::span<const std::complex<float>> ft_x_step1_T_part(&(ft_x_step1_T[j][0]), N);
             ft_x_step2[j] = run_fft(ft_x_step1_T_part, 1, N, true);
         }
 
         // Step 2.5: transpose
-        std::vector<std::complex<double>> ft_x_step2_T(N * N);
+        std::vector<std::complex<float>> ft_x_step2_T(N * N);
         for (size_t j = 0; j < N; ++j) {
             for (size_t i = 0; i < N; ++i) {
                 ft_x_step2_T[i + N * j] = ft_x_step2[i][j];
@@ -189,25 +192,19 @@ int main(int argc, char *argv[]) {
 
     // scatter the input to other ranks
     // QUESTION: What if P doesn't divide N?
-    std::vector<std::complex<double>> x_comp_small(entries_per_rank);
-
-    if (rank==0) {
-        MPI_Scatter(x_comp.data(), 2 * entries_per_rank, MPI_COMPLEX, x_comp_small.data(), 2 * entries_per_rank, MPI_COMPLEX, 0, MPI_COMM_WORLD);
-    }
-    else {
-        MPI_Scatter(NULL, 2 * entries_per_rank, MPI_COMPLEX, x_comp_small.data(), 2 * entries_per_rank, MPI_COMPLEX, 0, MPI_COMM_WORLD);
-    }
-
+    std::vector<std::complex<float>> x_comp_small(entries_per_rank);
+    MPI_Scatter(x_comp.data(), entries_per_rank, MPI_COMPLEX, x_comp_small.data(), entries_per_rank, MPI_COMPLEX, 0, MPI_COMM_WORLD);
+    
     // take the FT (1)
     // QUESTION: Should I use a for-loop for each slab?
-    std::vector<std::vector<std::complex<double>>> ft_x_step1_small(rows_per_rank);
+    std::vector<std::vector<std::complex<float>>> ft_x_step1_small(rows_per_rank);
     for (size_t i = 0; i < rows_per_rank; ++i) {
-        std::span<const std::complex<double>> x_comp_row(&(x_comp_small[i * N]), N);
+        std::span<const std::complex<float>> x_comp_row(&(x_comp_small[i * N]), N);
         ft_x_step1_small[i] = run_fft(x_comp_row, 1, N, true);
     }
 
     // flatten the computed FT
-    std::vector<std::complex<double>> ft_x_step1_small_flat(entries_per_rank);
+    std::vector<std::complex<float>> ft_x_step1_small_flat(entries_per_rank);
     for (size_t i = 0; i < rows_per_rank; ++i) {
         for (size_t j = 0; j < N; ++j) {
             ft_x_step1_small_flat[i * N + j] = ft_x_step1_small[i][j];
@@ -215,15 +212,15 @@ int main(int argc, char *argv[]) {
     }
 
     // declare ft_x_step1_T_small (we need it later for scattering the transpose of the FT)
-    std::vector<std::complex<double>> ft_x_step1_T_small(entries_per_rank);
+    std::vector<std::complex<float>> ft_x_step1_T_small(entries_per_rank);
 
     // gather all ft_x_step1_small_flat
     if (rank==0) {
-        std::vector<std::complex<double>> ft_x_step1(N * N);
-        MPI_Gather(ft_x_step1_small_flat.data(), 2 * entries_per_rank, MPI_COMPLEX, ft_x_step1.data(), 2 * entries_per_rank, MPI_COMPLEX, 0, MPI_COMM_WORLD);
+        std::vector<std::complex<float>> ft_x_step1(N * N);
+        MPI_Gather(ft_x_step1_small_flat.data(), entries_per_rank, MPI_COMPLEX, ft_x_step1.data(), entries_per_rank, MPI_COMPLEX, 0, MPI_COMM_WORLD);
 
         // transpose ft_x_step1
-        std::vector<std::complex<double>> ft_x_step1_T(N * N);
+        std::vector<std::complex<float>> ft_x_step1_T(N * N);
         for (size_t i = 0; i < N; ++i) {
             for (size_t j = 0; j < N; ++j) {
                 ft_x_step1_T[i + N * j] = ft_x_step1[j + N * i];
@@ -231,22 +228,22 @@ int main(int argc, char *argv[]) {
         }
 
         // scatter ft_x_step1 to other cores
-        MPI_Scatter(ft_x_step1_T.data(), 2 * entries_per_rank, MPI_COMPLEX, ft_x_step1_T_small.data(), 2 * entries_per_rank, MPI_COMPLEX, 0, MPI_COMM_WORLD);
+        MPI_Scatter(ft_x_step1_T.data(), entries_per_rank, MPI_COMPLEX, ft_x_step1_T_small.data(), entries_per_rank, MPI_COMPLEX, 0, MPI_COMM_WORLD);
     }
     else {
-        MPI_Gather(ft_x_step1_small_flat.data(), 2 * entries_per_rank, MPI_COMPLEX, NULL, 0, MPI_COMPLEX, 0, MPI_COMM_WORLD);
-        MPI_Scatter(NULL, 2 * entries_per_rank, MPI_COMPLEX, ft_x_step1_T_small.data(), 2 * entries_per_rank, MPI_COMPLEX, 0, MPI_COMM_WORLD);
+        MPI_Gather(ft_x_step1_small_flat.data(), entries_per_rank, MPI_COMPLEX, NULL, 0, MPI_COMPLEX, 0, MPI_COMM_WORLD);
+        MPI_Scatter(NULL, entries_per_rank, MPI_COMPLEX, ft_x_step1_T_small.data(), entries_per_rank, MPI_COMPLEX, 0, MPI_COMM_WORLD);
     }
 
     // take the FT (2)
-    std::vector<std::vector<std::complex<double>>> ft_x_step2_small(rows_per_rank);
+    std::vector<std::vector<std::complex<float>>> ft_x_step2_small(rows_per_rank);
     for (size_t i = 0; i < rows_per_rank; ++i) {
-        std::span<const std::complex<double>> ft_x_step1_T_small_row(&(ft_x_step1_T_small[i * N]), N);
+        std::span<const std::complex<float>> ft_x_step1_T_small_row(&(ft_x_step1_T_small[i * N]), N);
         ft_x_step2_small[i] = run_fft(ft_x_step1_T_small_row, 1, N, true);
     }
 
     // flatten the computed FT
-    std::vector<std::complex<double>> ft_x_step2_small_flat(entries_per_rank);
+    std::vector<std::complex<float>> ft_x_step2_small_flat(entries_per_rank);
     for (size_t i = 0; i < rows_per_rank; ++i) {
         for (size_t j = 0; j < N; ++j) {
             ft_x_step2_small_flat[i * N + j] = ft_x_step2_small[i][j];
@@ -255,15 +252,15 @@ int main(int argc, char *argv[]) {
 
     // declare ft_x_step2 here, just for the comparison with single shot FT
     // this is not necessary in the final implementation
-    std::vector<std::complex<double>> ft_x_step2_T(N * N);
+    std::vector<std::complex<float>> ft_x_step2_T(N * N);
 
     // gather all ft_x_step2_small_flat into ft_x_step2
     if (rank==0) {
-        std::vector<std::complex<double>> ft_x_step2(N * N);
-        MPI_Gather(ft_x_step2_small_flat.data(), 2 * entries_per_rank, MPI_COMPLEX, ft_x_step2.data(), 2 * entries_per_rank, MPI_COMPLEX, 0, MPI_COMM_WORLD);
+        std::vector<std::complex<float>> ft_x_step2(N * N);
+        MPI_Gather(ft_x_step2_small_flat.data(), entries_per_rank, MPI_COMPLEX, ft_x_step2.data(), entries_per_rank, MPI_COMPLEX, 0, MPI_COMM_WORLD);
 
         // transpose ft_x_step2
-        // std::vector<std::complex<double>> ft_x_step2_T(N * N);
+        // std::vector<std::complex<float>> ft_x_step2_T(N * N);
         for (size_t i = 0; i < N; ++i) {
             for (size_t j = 0; j < N; ++j) {
                 ft_x_step2_T[i + N * j] = ft_x_step2[j + N * i];
@@ -271,7 +268,7 @@ int main(int argc, char *argv[]) {
         }
     }
     else {
-        MPI_Gather(ft_x_step2_small_flat.data(), 2 * entries_per_rank, MPI_COMPLEX, NULL, 0, MPI_COMPLEX, 0, MPI_COMM_WORLD);
+        MPI_Gather(ft_x_step2_small_flat.data(), entries_per_rank, MPI_COMPLEX, NULL, 0, MPI_COMPLEX, 0, MPI_COMM_WORLD);
     }
 
     // Wait for all cores to synchronize
@@ -282,8 +279,8 @@ int main(int argc, char *argv[]) {
         std::cout << "Option 3 (Split Computation, Multiple Cores). Time: " << (end3 - start3) * 1000.0 << " miliseconds." << std::endl;
         
         // COMPARE (run Option 1 again because the value isn't saved from earlier)
-        std::vector<std::complex<double>> ft_x = run_fft(x_comp, 2, N, true);
-        double l2norm = compute_L2norm_diff(ft_x, ft_x_step2_T);
+        std::vector<std::complex<float>> ft_x = run_fft(x_comp, 2, N, true);
+        float l2norm = compute_L2norm_diff(ft_x, ft_x_step2_T);
         std::cout << "The L2 norm of the two vectors is: " << l2norm <<std::endl;
     }
 
