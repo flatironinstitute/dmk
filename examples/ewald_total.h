@@ -17,7 +17,13 @@ void pme_poisson3d_lagrange(
         int           uniform,        /* pass 0 or 1 from C */
         int           vectorized,     /* pass 0 or 1 from C */
         double *r_sources,
-        double *charges);
+        double *charges
+);
+
+int test_pme_poisson3d_lagrange(
+        int argc, 
+        char *argv[]
+);
 
 #ifdef __cplusplus
 }

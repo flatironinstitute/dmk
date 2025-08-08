@@ -10,7 +10,7 @@ Otherwise, there is the option of creating a library. */
 #include <dmk/vector_kernels_pme.hpp>
 #include <ducc0/fft/fft.h>
 #include <ducc0/fft/fftnd_impl.h>
-//#include <ewald_total.h>
+#include <ewald_total.h>
 #include <fstream>
 #include <getopt.h>
 #include <iostream>
@@ -946,7 +946,7 @@ void run_test_case_00(const TestOptions &opts) {
     }
 
     std::cout << "Final Potential:" << std::endl;
-    // print_vector(pot);
+    print_vector(pot);
 }
 
 // test case with two opposite charges very close to each other
@@ -1162,7 +1162,25 @@ void run_test_case_05(const TestOptions &opts) {
 // ------------------------------------------------------------------------------------------ //
 // ------------------------------------------------------------------------------------------ //
 
-int main(int argc, char *argv[]) {
+extern "C" {
+void pme_poisson3d_lagrange(
+        double *pot,
+        int n_sources, 
+        int n_dim, 
+        double length, 
+        double alpha, 
+        double r_cut, 
+        int N, 
+        int P,
+        int uniform,
+        int vectorized,
+        double *r_sources,
+        double *charges
+    ) {   
+    pme_poisson3d_lagrange<double>(pot, n_sources, n_dim, length, alpha, r_cut, N, P, uniform, vectorized, r_sources, charges);
+}
+
+int test_pme_poisson3d_lagrange(int argc, char *argv[]) {
     if (argc == 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h")) {
         TestOptions::print_help();
         return EXIT_FAILURE;
@@ -1209,21 +1227,4 @@ int main(int argc, char *argv[]) {
     return EXIT_SUCCESS;
 }
 
-extern "C"
-void pme_poisson3d_lagrange(
-        double *pot,
-        int n_sources, 
-        int n_dim, 
-        double length, 
-        double alpha, 
-        double r_cut, 
-        int N, 
-        int P,
-        int uniform,
-        int vectorized,
-        double *r_sources,
-        double *charges
-    ) {
-    
-    pme_poisson3d_lagrange<double>(pot, n_sources, n_dim, length, alpha, r_cut, N, P, uniform, vectorized, r_sources, charges);
 }
