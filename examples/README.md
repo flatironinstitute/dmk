@@ -9,6 +9,23 @@ Date: August 7, 2025.
 - intel-oneapi-mkl 
 - intel-oneapi-compilers
 
+### Build instructions
+```
+git checkout ewald
+git submodule init
+git submodule update
+
+module load python gcc openmpi intel-api-mkl intel-oneapi-compilers
+mkdir build
+cd build
+
+# you may need to run this twice if it fails. there's an nda cmake bug...
+cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBLA_VENDOR=Intel10_64lp_seq
+
+# this builds only the ewald_final_test object
+make ewald_final_test -j10
+```
+
 ### The final version of the different files I created are the following:
 
 - `ewald_total.cpp`
