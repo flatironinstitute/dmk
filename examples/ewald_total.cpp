@@ -18,6 +18,7 @@ Otherwise, there is the option of creating a library. */
 #include <omp.h>
 #include <random>
 #include <vector>
+#include <Eigen/Dense>
 
 #define ANKERL_NANOBENCH_IMPLEMENT
 
@@ -444,14 +445,46 @@ void compute_potential(Real *pot, const Real *x, const Real *y, const Real *z, c
                        const Real *x_other, const Real *y_other, const Real *z_other, int n_other, 
                        const Real *offset, Real r_cut_sq, Real alpha) {
 
+    // // iterate through all source particles
+    // for (int i = 0; i < n_particles; ++i) {
+    //     // iterate through all other particles
+    //     for (int j = 0; j < n_other; ++j) {
+    //         // store the displacement
+    //         const Real dx = x[i] - x_other[j] - offset[0]; // accounting for PBC
+    //         const Real dy = y[i] - y_other[j] - offset[1];
+    //         const Real dz = z[i] - z_other[j] - offset[2];
+
+    //         const Real rij_mag_sq = dx * dx + dy * dy + dz * dz;
+
+    //         // avoid division by zero
+    //         if (rij_mag_sq == 0 || rij_mag_sq >= r_cut_sq) {
+    //             continue;
+    //         }
+
+    //         const Real rij_mag = std::sqrt(rij_mag_sq);
+    //         pot[i] += charges[j] * std::erfc(rij_mag * alpha) / rij_mag;
+    //     }
+    // }
+
+    
+
+    
+    
+    
+    
     // iterate through all source particles
     for (int i = 0; i < n_particles; ++i) {
+        const Real xi = x[i] - offset[0];
+        const Real yi = y[i] - offset[1];
+        const Real zi = z[i] - offset[2];
+
+        Real pot_acc = pot[i];
         // iterate through all other particles
         for (int j = 0; j < n_other; ++j) {
             // store the displacement
-            const Real dx = x[i] - x_other[j] - offset[0]; // accounting for PBC
-            const Real dy = y[i] - y_other[j] - offset[1];
-            const Real dz = z[i] - z_other[j] - offset[2];
+            const Real dx = xi - x_other[j];
+            const Real dy = yi - y_other[j];
+            const Real dz = zi - z_other[j];
 
             const Real rij_mag_sq = dx * dx + dy * dy + dz * dz;
 
@@ -461,9 +494,14 @@ void compute_potential(Real *pot, const Real *x, const Real *y, const Real *z, c
             }
 
             const Real rij_mag = std::sqrt(rij_mag_sq);
-            pot[i] += charges[j] * std::erfc(rij_mag * alpha) / rij_mag;
+            const Real t = rij_mag * alpha;
+
+            pot_acc += charges[j] * std::erfc(t) / rij_mag;
+
         }
+        pot[i] = pot_acc;
     }
+
 }
 
 // ------------------------------------------------------------------------------------------ //
@@ -472,6 +510,74 @@ template <typename Real>
 std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, ShortRangeSystem<Real> &Short, Real r_cut,
                                        Real alpha, bool vectorized = false) {
 
+    
+    // shortcuts
+    // const int n_boxes = Short.n_boxes;
+    // const int n_dim = System.n_dim;
+    // const int n_trg = System.n_trg;
+    // const int n_src = System.n_src;
+    // const Real L = System.L;
+
+    // const Real r_cut_sq = r_cut * r_cut;
+    // std::vector<Real> pot(n_trg, 0.0);
+    // std::vector<Real> pot_sorted(n_trg, 0.0); // sorted potential vector
+
+    // // iterate through all boxes
+    // for (size_t box = 0; box < n_boxes; ++box) {
+    //     // go through the neighbors
+    //     for (int nb : Short.box_neighbors[box]) {
+    //         // check periodic boundary conditions
+    //         // TODO: Optimize this calculation?
+    //         std::vector<Real> offset(n_dim, 0.0);
+    //         for (int a = 0; a < n_dim; ++a) {
+    //             if (Short.box_corners[box * n_dim + a] - Short.box_corners[nb * n_dim + a] > 1) {
+    //                 offset[a] = L;
+    //             } else if (Short.box_corners[box * n_dim + a] - Short.box_corners[nb * n_dim + a] < -1) {
+    //                 offset[a] = -L;
+    //             } else {
+    //                 offset[a] = 0.0;
+    //             }
+    //         }
+
+    //         // TODO: Generalize to more dimensions (?) -- make vector of pointers (?)
+
+    //         const Real *x = &(Short.r_src_sorted[Short.box_begin[box]]);
+    //         const Real *y = &(Short.r_src_sorted[n_src + Short.box_begin[box]]);
+    //         const Real *z = &(Short.r_src_sorted[n_src * 2 + Short.box_begin[box]]);
+
+    //         const Real *x_other = &(Short.r_src_sorted[Short.box_begin[nb]]);
+    //         const Real *y_other = &(Short.r_src_sorted[n_src + Short.box_begin[nb]]);
+    //         const Real *z_other = &(Short.r_src_sorted[n_src * 2 + Short.box_begin[nb]]);
+
+    //         // row-major + sorted -- for vectorized operations
+    //         const Real *r_other = &(Short.r_src_row_sorted[Short.box_begin[nb] * n_dim]);
+
+    //         const Real *ch = &(Short.charges_sorted[0]) + Short.box_begin[nb];
+
+    //         Real *pot_part = &(pot_sorted[0]) + Short.box_begin[box];
+            
+    //         if (!vectorized) {
+    //             // TODO: Pass a pointer to the potential function
+    //             compute_potential(pot_part, x, y, z, ch, Short.box_lengths[box], x_other, y_other, z_other,
+    //                             Short.box_lengths[nb], &(offset[0]), r_cut_sq, alpha);
+    //             }
+    //         else {
+    //             l3d_local_kernel_directcp_vec_cpp__rinv_helper<Real, 3>(r_cut_sq,
+    //                                                                     r_other, 
+    //                                                                     Short.box_lengths[nb], 
+    //                                                                     ch,
+    //                                                                     x, 
+    //                                                                     y, 
+    //                                                                     z,
+    //                                                                     Short.box_lengths[box],
+    //                                                                     alpha,
+    //                                                                     &(offset[0]),
+    //                                                                     pot_part);
+    //         }
+    //     }
+    // }
+   
+
     // shortcuts
     const int n_boxes = Short.n_boxes;
     const int n_dim = System.n_dim;
@@ -479,33 +585,34 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
     const int n_src = System.n_src;
     const Real L = System.L;
 
+    // std::cout << "num boxes = " << n_boxes << " num dims = " << n_dim << " num neighbors = " << Short.box_neighbors.size() << "num box corners = " << Short.box_corners.size() << std::endl;
     const Real r_cut_sq = r_cut * r_cut;
     std::vector<Real> pot(n_trg, 0.0);
     std::vector<Real> pot_sorted(n_trg, 0.0); // sorted potential vector
+    std::vector<Real> offset(n_dim, 0.0);
 
     // iterate through all boxes
     for (size_t box = 0; box < n_boxes; ++box) {
         // go through the neighbors
+        const Real *x = &(Short.r_src_sorted[Short.box_begin[box]]);
+        const Real *y = &(Short.r_src_sorted[n_src + Short.box_begin[box]]);
+        const Real *z = &(Short.r_src_sorted[n_src * 2 + Short.box_begin[box]]);
+
+        Real *pot_part = &(pot_sorted[0]) + Short.box_begin[box];
+        const int* box_corner = &Short.box_corners[box * n_dim];
+
         for (int nb : Short.box_neighbors[box]) {
             // check periodic boundary conditions
             // TODO: Optimize this calculation?
-            std::vector<Real> offset(n_dim, 0.0);
+            const int* nb_corner = &Short.box_corners[nb * n_dim];
             for (int a = 0; a < n_dim; ++a) {
-                if (Short.box_corners[box * n_dim + a] - Short.box_corners[nb * n_dim + a] > 1) {
-                    offset[a] = L;
-                } else if (Short.box_corners[box * n_dim + a] - Short.box_corners[nb * n_dim + a] < -1) {
-                    offset[a] = -L;
-                } else {
-                    offset[a] = 0.0;
-                }
+                int diff = box_corner[a] - nb_corner[a];
+                if (diff > 1)      offset[a] = L;
+                else if (diff < -1) offset[a] = -L;
+                else                offset[a] = 0.0;
             }
 
             // TODO: Generalize to more dimensions (?) -- make vector of pointers (?)
-
-            const Real *x = &(Short.r_src_sorted[Short.box_begin[box]]);
-            const Real *y = &(Short.r_src_sorted[n_src + Short.box_begin[box]]);
-            const Real *z = &(Short.r_src_sorted[n_src * 2 + Short.box_begin[box]]);
-
             const Real *x_other = &(Short.r_src_sorted[Short.box_begin[nb]]);
             const Real *y_other = &(Short.r_src_sorted[n_src + Short.box_begin[nb]]);
             const Real *z_other = &(Short.r_src_sorted[n_src * 2 + Short.box_begin[nb]]);
@@ -515,7 +622,6 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
 
             const Real *ch = &(Short.charges_sorted[0]) + Short.box_begin[nb];
 
-            Real *pot_part = &(pot_sorted[0]) + Short.box_begin[box];
             
             if (!vectorized) {
                 // TODO: Pass a pointer to the potential function
@@ -555,24 +661,62 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
 /* adapted from https://doi.org/10.1063/1.477414 (page 6) */
 template <typename Real>
 std::vector<Real> compute_green_func(int N, Real alpha, Real L) {
+
     // TODO: generalize to different box lengths
+    // const Real h = L / N;
+    // const Real TWOPI_L = 2 * M_PI / L;
+
+    // std::vector<Real> G(N * N * N, 0.0);
+
+    // for (size_t w = 0; w < N; ++w) {
+    //     for (size_t j = 0; j < N; ++j) {
+    //         for (size_t i = 0; i < N; ++i) {
+    //             // TODO: optimize this step; structure the loop accordingly
+    //             // conditionals are expensive (?)
+    //             const int i_new = (i > (N / 2)) ? i - N : i;
+    //             const int j_new = (j > (N / 2)) ? j - N : j;
+    //             const int w_new = (w > (N / 2)) ? w - N : w;
+
+    //             const int k_x = TWOPI_L * i_new;
+    //             const int k_y = TWOPI_L * j_new;
+    //             const int k_z = TWOPI_L * w_new;
+
+    //             const auto mode_sq = k_x * k_x + k_y * k_y + k_z * k_z;
+    //             if (mode_sq == 0) {
+    //                 continue;
+    //             }
+
+    //             // update G_hat
+    //             G[i + N * (j + N * w)] = 4 * M_PI / mode_sq * std::exp(-mode_sq / (4 * alpha * alpha));
+    //         }
+    //     }
+    // }
+
+    
     const Real h = L / N;
     const Real TWOPI_L = 2 * M_PI / L;
+    const Real FOUR_PI = 4 * M_PI;
+    const Real DENOM = 4 * alpha * alpha; 
+
 
     std::vector<Real> G(N * N * N, 0.0);
+    std::vector<int> k(N);
+    std::vector<int> ksq(N);
+
+    for (size_t i = 0; i < N; ++i) {
+        const int i_new = (i > (N / 2)) ? i - N : i;
+        k[i] = TWOPI_L * i_new;
+        // ksq[i] = k[i] * k[i];
+    }
 
     for (size_t w = 0; w < N; ++w) {
         for (size_t j = 0; j < N; ++j) {
             for (size_t i = 0; i < N; ++i) {
                 // TODO: optimize this step; structure the loop accordingly
                 // conditionals are expensive (?)
-                const int i_new = (i > (N / 2)) ? i - N : i;
-                const int j_new = (j > (N / 2)) ? j - N : j;
-                const int w_new = (w > (N / 2)) ? w - N : w;
-
-                const int k_x = TWOPI_L * i_new;
-                const int k_y = TWOPI_L * j_new;
-                const int k_z = TWOPI_L * w_new;
+                const int k_x = k[i];
+                const int k_y = k[j];
+                const int k_z = k[w];
 
                 const auto mode_sq = k_x * k_x + k_y * k_y + k_z * k_z;
                 if (mode_sq == 0) {
@@ -580,13 +724,62 @@ std::vector<Real> compute_green_func(int N, Real alpha, Real L) {
                 }
 
                 // update G_hat
-                G[i + N * (j + N * w)] = 4 * M_PI / mode_sq * std::exp(-mode_sq / (4 * alpha * alpha));
+                G[i + N * (j + N * w)] = FOUR_PI / mode_sq * std::exp(-mode_sq / DENOM);
             }
         }
     }
 
     return G;
 }
+
+
+// /* adapted from https://doi.org/10.1063/1.477414 (page 6) */
+// template <typename Real>
+// std::vector<Real> compute_green_func(int N, Real alpha, Real L) {
+
+//     using ArrayXi  = Eigen::Array<int, Eigen::Dynamic, 1>;
+//     using ArrayXr  = Eigen::Array<Real, Eigen::Dynamic, 1>;
+//     using Index    = Eigen::Index;
+
+//     const Real TWOPI_L = Real(2.0) * M_PI / L;
+//     const Real fourpi   = Real(4.0) * M_PI;
+//     const Real denomFac = Real(4.0) * alpha * alpha;
+
+//     // 1) Precompute wrapped *integer* indices in [-N/2, N/2]
+//     ArrayXi k_int(N);
+//     int half = int(N / 2);
+//     for (int i = 0; i < N; ++i) {
+//         const int i_new = (i > half) ? i - N : i;
+//         k_int(i) = TWOPI_L * i_new;
+//     }
+
+//     // 2) Allocate output
+//     std::vector<Real> G(N * N * N, 0.0);
+
+//     // 3) Loops with integer mode_sq
+//     for (int w = 0; w < N; ++w) {
+//         int wz = k_int(w);
+//         for (int j = 0; j < N; ++j) {
+//             int jy = k_int(j);
+
+//             // mode_sq for all i, integer-based
+//             ArrayXi mode_sq = k_int.square()
+//                               + jy * jy
+//                               + wz * wz;
+
+//             // // Convert to Real only when applying formula
+//             // ArrayXr mode_sq_r = mode_sq.cast<Real>() * (TWOPI_L * TWOPI_L);
+//             ArrayXr mode_sq_r = mode_sq.cast<Real>();
+//             ArrayXr inv_mode_sq = (mode_sq != 0).select(mode_sq_r.inverse(), Real(0));
+//             ArrayXr val = fourpi * inv_mode_sq * (-mode_sq_r / denomFac).exp();
+
+//             std::size_t base = N * (j + N * w);
+//             Eigen::Map<ArrayXr>(&G[base], N) = val;
+//         }
+//     }
+
+//     return G;
+// }
 
 // ------------------------------------------------------------------------------------------ //
 
@@ -643,6 +836,25 @@ void evaluate_polynomials_04(std::vector<Real> &W, Real x, Real h) {
 // }
 
 template <typename Real>
+void compute_contribution(std::vector<Real> &W, Real r, int middle, int N, Real h, int p, Real L) {
+    // std::vector<Real> W(p + 1, 0.0); // initialize the vector of polynomials
+    Real dr = r - middle * h;
+    Real dr_abs = std::abs(dr);
+    dr = (dr_abs >= h / 2) ? dr - L : dr; // correction for periodic boundaries
+
+    // TODO: generalize to higher order polynomials 
+    // // we use 5 points, the default for LAMMPS & GROMACS
+    if (p == 4) {
+        evaluate_polynomials_04(W, dr, h);
+    }
+    else {
+        std::cerr << "p=4 is currently the only option!" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+    // return W;
+}
+
+template <typename Real>
 std::vector<Real> compute_contribution(Real r, int middle, int N, Real h, int p, Real L) {
     std::vector<Real> W(p + 1, 0.0); // initialize the vector of polynomials
     Real dr = r - middle * h;
@@ -664,14 +876,61 @@ std::vector<Real> compute_contribution(Real r, int middle, int N, Real h, int p,
 // ------------------------------------------------------------------------------------------ //
 
 template <typename Real>
-void assign_charge(const std::vector<Real> &r_src, const std::vector<Real> &charges, std::vector<Real> &grid, int N,
+int assign_charge(const std::vector<Real> &r_src, const std::vector<Real> &charges, std::vector<Real> &grid, int N,
                    Real h, int p, Real L) {
+    
+    // int n_charges = charges.size();
+    // const int N3 = N * N * N;
+
+    // // iterate through charges and their coordinates
+    // for (size_t ind = 0; ind < n_charges; ++ind) {
+    //     const Real q = charges[ind];
+    //     // column-major
+    //     const Real x = r_src[ind];
+    //     const Real y = r_src[n_charges + ind];
+    //     const Real z = r_src[n_charges * 2 + ind];
+
+    //     // identify the middle point (only works for odd number of points)
+    //     // round to the nearest integer
+    //     // TODO: generalize for even number of points
+    //     const int middle_x = int(x / L * N + 0.50) % N; // e.g., if x=0.99, middle_x=0
+    //     const int middle_y = int(y / L * N + 0.50) % N;
+    //     const int middle_z = int(z / L * N + 0.50) % N;
+
+    //     // compute W_x, W_y, W_z
+    //     std::vector<Real> W_x = compute_contribution(x, middle_x, N, h, p, L);
+    //     std::vector<Real> W_y = compute_contribution(y, middle_y, N, h, p, L);
+    //     std::vector<Real> W_z = compute_contribution(z, middle_z, N, h, p, L);
+
+    //     // update the grid values
+    //     int count_x, count_y, count_z; // grid point indices
+    //     count_x = 0;
+    //     for (int i = (middle_x - (p / 2) + N) % N; i != (middle_x + (p / 2) + 1) % N; i = (i + 1) % N) {
+    //         count_y = 0;
+    //         for (int j = (middle_y - (p / 2) + N) % N; j != (middle_y + (p / 2) + 1) % N; j = (j + 1) % N) {
+    //             count_z = 0;
+    //             for (int k = (middle_z - (p / 2) + N) % N; k != (middle_z + (p / 2) + 1) % N; k = (k + 1) % N) {
+    //                 grid[i + N * (j + N * k)] += q * W_x[count_x] * W_y[count_y] * W_z[count_z] * N3;
+    //                 ++count_z;
+    //             }
+    //             ++count_y;
+    //         }
+    //         ++count_x;
+    //     }
+    // }
+    
+
     int n_charges = charges.size();
     const int N3 = N * N * N;
+    const size_t j_fac = N;
+    const size_t k_fac = N * N;
+
+    Real wz, wyz;
 
     // iterate through charges and their coordinates
     for (size_t ind = 0; ind < n_charges; ++ind) {
         const Real q = charges[ind];
+        const Real fac = q * N3;
         // column-major
         const Real x = r_src[ind];
         const Real y = r_src[n_charges + ind];
@@ -690,31 +949,85 @@ void assign_charge(const std::vector<Real> &r_src, const std::vector<Real> &char
         std::vector<Real> W_z = compute_contribution(z, middle_z, N, h, p, L);
 
         // update the grid values
-        int count_x, count_y, count_z; // grid point indices
-        count_x = 0;
-        for (int i = (middle_x - (p / 2) + N) % N; i != (middle_x + (p / 2) + 1) % N; i = (i + 1) % N) {
-            count_y = 0;
-            for (int j = (middle_y - (p / 2) + N) % N; j != (middle_y + (p / 2) + 1) % N; j = (j + 1) % N) {
-                count_z = 0;
-                for (int k = (middle_z - (p / 2) + N) % N; k != (middle_z + (p / 2) + 1) % N; k = (k + 1) % N) {
-                    grid[i + N * (j + N * k)] += q * W_x[count_x] * W_y[count_y] * W_z[count_z] * N3;
-                    ++count_z;
+        for (int count_z = 0, k = middle_z - p/2; count_z < p+1; ++count_z, ++k) {
+            int kk = (k + N) % N;
+            const size_t base_k = kk * k_fac;
+            wz = W_z[count_z] * fac;
+
+            for (int count_y = 0, j = middle_y - p/2; count_y < p+1; ++count_y, ++j) {
+                int jj = (j + N) % N;
+                const size_t base_j = jj * j_fac + base_k;
+                wyz = wz * W_y[count_y];
+
+                for (int count_x = 0, i = middle_x - p/2; count_x < p+1; ++count_x, ++i) {
+                    int ii = (i + N) % N;
+                    grid[ii + base_j] += W_x[count_x] * wyz;
                 }
-                ++count_y;
             }
-            ++count_x;
         }
     }
+    
+    return 0;
 }
+
 
 // ------------------------------------------------------------------------------------------ //
 
 template <typename Real>
-void back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vector<Real> &trg_pot, int N, Real h,
+int back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vector<Real> &trg_pot, int N, Real h,
                       int p, Real L) {
-    int n_trg = r_trg.size() / 3;
 
-    // iterate through targets and their coordinates
+    // int n_trg = r_trg.size() / 3;
+
+    // // iterate through targets and their coordinates
+    // for (size_t ind = 0; ind < n_trg; ++ind) {
+    //     // coordinates of the target point
+    //     // column-major
+    //     const Real x = r_trg[ind];
+    //     const Real y = r_trg[n_trg + ind];
+    //     const Real z = r_trg[n_trg * 2 + ind];
+
+    //     // identify the middle point
+    //     // round to the nearest integer
+    //     // TODO: generalize for odd p / polynomial order
+    //     const int middle_x = int(x / L * N + 0.50) % N; // e.g., if x=0.99, middle_x=0
+    //     const int middle_y = int(y / L * N + 0.50) % N;
+    //     const int middle_z = int(z / L * N + 0.50) % N;
+
+    //     if (middle_x > N - 1 || middle_y > N - 1 || middle_z > N - 1) {
+    //         std::cout << "ERROR!" << std::endl;
+    //     }
+
+    //     // compute W_x, W_y, W_z
+    //     std::vector<Real> W_x = compute_contribution(x, middle_x, N, h, p, L);
+    //     std::vector<Real> W_y = compute_contribution(y, middle_y, N, h, p, L);
+    //     std::vector<Real> W_z = compute_contribution(z, middle_z, N, h, p, L);
+
+    //     // update the grid values
+    //     int count_x, count_y, count_z; // grid point indices
+    //     count_x = 0;
+    //     for (int i = (middle_x - (p / 2) + N) % N; i != (middle_x + (p / 2) + 1) % N; i = (i + 1) % N) {
+    //         count_y = 0;
+    //         for (int j = (middle_y - (p / 2) + N) % N; j != (middle_y + (p / 2) + 1) % N; j = (j + 1) % N) {
+    //             count_z = 0;
+    //             for (int k = (middle_z - (p / 2) + N) % N; k != (middle_z + (p / 2) + 1) % N; k = (k + 1) % N) {
+    //                 trg_pot[ind] += pot[i + N * (j + N * k)] * W_x[count_x] * W_y[count_y] * W_z[count_z];
+    //                 ++count_z;
+    //             }
+    //             ++count_y;
+    //         }
+    //         ++count_x;
+    //     }
+    // }
+
+    int n_trg = r_trg.size() / 3;
+    std::vector<Real> W_x(p+1, 0.0);
+    std::vector<Real> W_y(p+1, 0.0);
+    std::vector<Real> W_z(p+1, 0.0);
+
+    const size_t j_fac = N;
+    const size_t k_fac = N * N;
+    Real wz, wyz;
     for (size_t ind = 0; ind < n_trg; ++ind) {
         // coordinates of the target point
         // column-major
@@ -734,27 +1047,32 @@ void back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vec
         }
 
         // compute W_x, W_y, W_z
-        std::vector<Real> W_x = compute_contribution(x, middle_x, N, h, p, L);
-        std::vector<Real> W_y = compute_contribution(y, middle_y, N, h, p, L);
-        std::vector<Real> W_z = compute_contribution(z, middle_z, N, h, p, L);
+        compute_contribution(W_x, x, middle_x, N, h, p, L);
+        compute_contribution(W_y, y, middle_y, N, h, p, L);
+        compute_contribution(W_z, z, middle_z, N, h, p, L);
+        
+        for (int count_z = 0, k = middle_z - p/2; count_z < p+1; ++count_z, ++k) {
+            int kk = (k + N) % N;
+            const size_t base_k = kk * k_fac;
+            wz = W_z[count_z];
 
-        // update the grid values
-        int count_x, count_y, count_z; // grid point indices
-        count_x = 0;
-        for (int i = (middle_x - (p / 2) + N) % N; i != (middle_x + (p / 2) + 1) % N; i = (i + 1) % N) {
-            count_y = 0;
-            for (int j = (middle_y - (p / 2) + N) % N; j != (middle_y + (p / 2) + 1) % N; j = (j + 1) % N) {
-                count_z = 0;
-                for (int k = (middle_z - (p / 2) + N) % N; k != (middle_z + (p / 2) + 1) % N; k = (k + 1) % N) {
-                    trg_pot[ind] += pot[i + N * (j + N * k)] * W_x[count_x] * W_y[count_y] * W_z[count_z];
-                    ++count_z;
+            for (int count_y = 0, j = middle_y - p/2; count_y < p+1; ++count_y, ++j) {
+                int jj = (j + N) % N;
+                const size_t base_j = jj * j_fac + base_k;
+                wyz = wz * W_y[count_y];
+
+                for (int count_x = 0, i = middle_x - p/2; count_x < p+1; ++count_x, ++i) {
+                    int ii = (i + N) % N;
+                    trg_pot[ind] += pot[ii + base_j] * W_x[count_x] * wyz;
                 }
-                ++count_y;
             }
-            ++count_x;
         }
     }
+
+
+    return 0;
 }
+
 
 // ------------------------------------------------------------------------------------------ //
 
@@ -791,6 +1109,17 @@ std::vector<Real> evaluate_long_range(const std::vector<Real> &G, TestCaseSystem
     std::vector<Real> r_src = System.r_src;
 
     std::vector<Real> grid(N * N * N, 0.0); // N^3 grid with the kernel spread charged values
+    // if (time) {
+    //     // use nanobench to benchmark the process
+    //     ankerl::nanobench::Bench()
+    //         .title("Back interpolate")
+    //         .warmup(1000) // run 10 iterations before timing
+    //         .minEpochIterations(100) // time at least 100 iterations
+    //         .run("not-vectorized", [&] {
+    //             int temp_val = assign_charge(r_src, charges, grid, N, h, p, System.L);
+    //             ankerl::nanobench::doNotOptimizeAway(temp_val);
+    //         });
+    // }
     assign_charge(r_src, charges, grid, N, h, p, System.L);
 
     // turn grid into a complex vector
@@ -826,7 +1155,18 @@ std::vector<Real> evaluate_long_range(const std::vector<Real> &G, TestCaseSystem
 
     // back-interpolate to infer the potential at the target points
     std::vector<Real> trg_pot(n_trg, 0.0);
-    back_interpolate(r_src, inv_ft_density, trg_pot, N, h, p, System.L);
+    // if (time) {
+    //     // use nanobench to benchmark the process
+    //     ankerl::nanobench::Bench()
+    //         .title("Back interpolate")
+    //         .warmup(1000) // run 10 iterations before timing
+    //         .minEpochIterations(100) // time at least 100 iterations
+    //         .run("not-vectorized", [&] {
+    //             int temp_val = back_interpolate(r_src, inv_ft_density, trg_pot, N, h, p, System.L);
+    //             ankerl::nanobench::doNotOptimizeAway(temp_val);
+    //         });
+    // }
+    int temp_val = back_interpolate(r_src, inv_ft_density, trg_pot, N, h, p, System.L);
 
     return trg_pot;
 }
@@ -905,7 +1245,7 @@ void run_test_case_00(const TestOptions &opts) {
         ankerl::nanobench::Bench()
             .title("Short-range potential computation")
             .warmup(10) // run 10 iterations before timing
-            .minEpochIterations(40) // time at least 100 iterations
+            .minEpochIterations(10) // time at least 100 iterations
             .run("not-vectorized", [&] {
                 std::vector<Real> pot_short = evaluate_short_range(System_00, Short_00, r_cut, alpha);
                 ankerl::nanobench::doNotOptimizeAway(pot_short);
@@ -913,8 +1253,8 @@ void run_test_case_00(const TestOptions &opts) {
 
         ankerl::nanobench::Bench()
             .title("Short-range potential computation")
-            // .warmup(100) // run 100 iterations before timing
-            .minEpochIterations(40) // time at least 100 iterations
+            .warmup(10) // run 100 iterations before timing
+            .minEpochIterations(10) // time at least 100 iterations
             .run("vectorized", [&] {
                 std::vector<Real> pot_short = evaluate_short_range(System_00, Short_00, r_cut, alpha, true);
                 ankerl::nanobench::doNotOptimizeAway(pot_short);
@@ -926,12 +1266,33 @@ void run_test_case_00(const TestOptions &opts) {
     std::vector<Real> pot_short = evaluate_short_range(System_00, Short_00, r_cut, alpha);
     std::vector<Real> pot_short_vec = evaluate_short_range(System_00, Short_00, r_cut, alpha, true);
     
-    // long-range interactions
+    if (time){
+                ankerl::nanobench::Bench()
+                .title("Green Func Computation")
+                .warmup(10) // run 10 iterations before timing
+                .minEpochIterations(10) // time at least 100 iterations
+                .run("Vectorized", [&] {
+                    std::vector<Real> G_hat = compute_green_func(N, alpha, L);
+                    ankerl::nanobench::doNotOptimizeAway(G_hat);
+                });
+        }
+
     std::vector<Real> G_hat = compute_green_func(N, alpha, L);
-    std::vector<Real> pot_long = evaluate_long_range(G_hat, System_00, N, p);
-
+    
     // print_vector(pot_long);
+    if (time){
+                    ankerl::nanobench::Bench()
+                    .title("Long range Computation")
+                    .warmup(10) // run 10 iterations before timing
+                    .minEpochIterations(10) // time at least 100 iterations
+                    .run("Not Vectorized", [&] {
+                        std::vector<Real> pot_long = evaluate_long_range(G_hat, System_00, N, p);
+                        ankerl::nanobench::doNotOptimizeAway(pot_long);
+                    });
+            }
 
+    // long-range interactions
+    std::vector<Real> pot_long = evaluate_long_range(G_hat, System_00, N, p);
     // self-interaction term
     const Real inv_sqrt_pi = 1 / std::sqrt(M_PI);
     std::vector<Real> self_interaction(n_src, 0.0);
@@ -939,14 +1300,14 @@ void run_test_case_00(const TestOptions &opts) {
         self_interaction[i] = 2 * alpha * inv_sqrt_pi * System_00.charges[i];
     }
 
-    std::vector<Real> pot(n_trg, 0.0);
+    std::vector<Real> pot(n_trg, 0.0); 
     // add all terms
     for (size_t i = 0; i < n_trg; ++i) {
         pot[i] = pot_short[i] + pot_long[i] - self_interaction[i];
     }
 
     std::cout << "Final Potential:" << std::endl;
-    print_vector(pot);
+    // print_vector(pot);
 }
 
 // test case with two opposite charges very close to each other
@@ -1072,7 +1433,7 @@ void run_test_case_04(const TestOptions &opts) {
     ankerl::nanobench::Bench()
         .title("Short-range potential computation")
         .warmup(10) // run 10 iterations before timing
-        .minEpochIterations(40) // time at least 100 iterations
+        .minEpochIterations(10) // time at least 100 iterations
         .run("not-vectorized", [&] {
             compute_short_range_raw(System_04.r_src, 
                                     System_04.r_trg, 
@@ -1103,8 +1464,8 @@ void run_test_case_04(const TestOptions &opts) {
 
     ankerl::nanobench::Bench()
         .title("Short-range potential computation")
-        // .warmup(100) // run 100 iterations before timing
-        .minEpochIterations(40) // time at least 100 iterations
+        .warmup(10) // run 100 iterations before timing
+        .minEpochIterations(10) // time at least 100 iterations
         .run("vectorized", [&] {
             l3d_local_kernel_directcp_vec_cpp__rinv_helper<Real,3,3>(r_cut_sq,
                                                                     &(Short_04.r_src_row[0]),
