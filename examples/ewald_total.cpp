@@ -1,8 +1,9 @@
 /* Final implementation combining short-range, long-range, and self-interaction.
-Functions to factor out implementation of steps. Creation and execution of test 
+Functions to factor out implementation of steps. Creation and execution of test
 cases -- if you choose to create an executable and run the main() function.
 Otherwise, there is the option of creating a library. */
 
+#include <Eigen/Dense>
 #include <array>
 #include <cmath>
 #include <complex>
@@ -18,7 +19,6 @@ Otherwise, there is the option of creating a library. */
 #include <omp.h>
 #include <random>
 #include <vector>
-#include <Eigen/Dense>
 
 #define ANKERL_NANOBENCH_IMPLEMENT
 
@@ -179,8 +179,8 @@ class TestCaseSystem {
     }
 
     // alternative constructor if you have pre-defined coordinates and charges
-    TestCaseSystem(int n_sources, int n_targets, int n_dimensions, Real *r_sources,
-                   Real *r_targets, Real *charge, Real length)
+    TestCaseSystem(int n_sources, int n_targets, int n_dimensions, Real *r_sources, Real *r_targets, Real *charge,
+                   Real length)
         : n_src(n_sources), n_trg(n_targets), n_dim(n_dimensions), r_src(n_sources * n_dimensions),
           r_trg(n_targets * n_dimensions), charges(n_sources), L(length) {
         for (size_t i = 0; i < n_src * n_dim; ++i) {
@@ -213,8 +213,8 @@ class TestCaseSystem {
     const int n_trg;
     const int n_dim;
     const Real L;
-    bool unif;                      // true, to generate uniform random points; only option, for now
-    std::vector<Real> r_src;        // not constant, because they might be generated randomly during construction
+    bool unif;               // true, to generate uniform random points; only option, for now
+    std::vector<Real> r_src; // not constant, because they might be generated randomly during construction
     std::vector<Real> r_trg;
     std::vector<Real> charges;
 };
@@ -228,20 +228,19 @@ class ShortRangeSystem {
     ShortRangeSystem(const int n_boxes, const int n_dimensions, const int n_sources)
         : n_boxes(n_boxes), box_begin(n_boxes), box_lengths(n_boxes), box_corners(n_boxes * n_dimensions),
           box_neighbors(n_boxes), particles_sorted(n_sources), r_src_sorted(n_sources * n_dimensions),
-          r_src_row(n_sources * n_dimensions), r_src_row_sorted(n_sources * n_dimensions), 
-          charges_sorted(n_sources) {}
+          r_src_row(n_sources * n_dimensions), r_src_row_sorted(n_sources * n_dimensions), charges_sorted(n_sources) {}
 
     // TODO: generalize for cases when target != source
 
     const int n_boxes;
-    std::vector<int> box_begin;             // particle index in the sorted particle array
-    std::vector<int> box_lengths;           // number of particles per box
-    std::vector<int> box_corners;           // leftmost mesh grid index in each dimension
+    std::vector<int> box_begin;   // particle index in the sorted particle array
+    std::vector<int> box_lengths; // number of particles per box
+    std::vector<int> box_corners; // leftmost mesh grid index in each dimension
     std::vector<int> particles_sorted;
     std::vector<std::array<int, 27>> box_neighbors;
     std::vector<Real> r_src_sorted;
-    std::vector<Real> r_src_row;           // row-major coordinates (useful in vectorization)
-    std::vector<Real> r_src_row_sorted;    // row-major + sorted
+    std::vector<Real> r_src_row;        // row-major coordinates (useful in vectorization)
+    std::vector<Real> r_src_row_sorted; // row-major + sorted
     std::vector<Real> charges_sorted;
 };
 
@@ -275,7 +274,11 @@ template <typename T>
 void print_vector(const std::vector<T> &v) {
     int size = v.size();
     for (int i = 0; i < size; ++i) {
-        if (std::abs(v[i]) < 0.0000000000001) { std::cout << 0 << " "; } else { std::cout << v[i] << " "; }
+        if (std::abs(v[i]) < 0.0000000000001) {
+            std::cout << 0 << " ";
+        } else {
+            std::cout << v[i] << " ";
+        }
         // std::cout << v[i] << " ";
     }
     std::cout << "\n\n";
@@ -361,7 +364,7 @@ ShortRangeSystem<Real> initialize_short_range(const TestCaseSystem<Real> &System
         Short_setup.r_src_sorted[i + n_src] = System.r_src[Short_setup.particles_sorted[i] + n_src];
         Short_setup.r_src_sorted[i + n_src * 2] = System.r_src[Short_setup.particles_sorted[i] + n_src * 2];
         Short_setup.charges_sorted[i] = System.charges[Short_setup.particles_sorted[i]];
-        
+
         // transpose r_src to get r_src_row (row-major)
         Short_setup.r_src_row[i * n_dim] = System.r_src[i];
         Short_setup.r_src_row[i * n_dim + 1] = System.r_src[i + n_src];
@@ -406,15 +409,9 @@ ShortRangeSystem<Real> initialize_short_range(const TestCaseSystem<Real> &System
 // for the simplest calculation -- no cell list decomposition
 // used only for verification of the vectorized operations, in one of the test cases
 template <typename Real>
-void compute_short_range_raw(const std::vector<Real> &r_src, 
-                            const std::vector<Real> &r_trg, 
-                            std::vector<Real> &pot,
-                            const std::vector<Real> &charges, 
-                            const int n_dim, 
-                            const Real r_cut, 
-                            const int n_src,
-                            const int n_trg, 
-                            const Real alpha) {
+void compute_short_range_raw(const std::vector<Real> &r_src, const std::vector<Real> &r_trg, std::vector<Real> &pot,
+                             const std::vector<Real> &charges, const int n_dim, const Real r_cut, const int n_src,
+                             const int n_trg, const Real alpha) {
 
     const Real r_cut_sq = r_cut * r_cut;
 
@@ -442,38 +439,12 @@ void compute_short_range_raw(const std::vector<Real> &r_src,
 // the vectorized version is in ../include/dmk/vector_kernels_pme.hpp
 template <typename Real>
 void compute_potential(Real *pot, const Real *x, const Real *y, const Real *z, const Real *charges, int n_particles,
-                       const Real *x_other, const Real *y_other, const Real *z_other, int n_other, 
-                       const Real *offset, Real r_cut_sq, Real alpha) {
+                       const Real *x_other, const Real *y_other, const Real *z_other, int n_other, const Real *offset,
+                       Real r_cut_sq, Real alpha) {
 
-    // // iterate through all source particles
-    // for (int i = 0; i < n_particles; ++i) {
-    //     // iterate through all other particles
-    //     for (int j = 0; j < n_other; ++j) {
-    //         // store the displacement
-    //         const Real dx = x[i] - x_other[j] - offset[0]; // accounting for PBC
-    //         const Real dy = y[i] - y_other[j] - offset[1];
-    //         const Real dz = z[i] - z_other[j] - offset[2];
-
-    //         const Real rij_mag_sq = dx * dx + dy * dy + dz * dz;
-
-    //         // avoid division by zero
-    //         if (rij_mag_sq == 0 || rij_mag_sq >= r_cut_sq) {
-    //             continue;
-    //         }
-
-    //         const Real rij_mag = std::sqrt(rij_mag_sq);
-    //         pot[i] += charges[j] * std::erfc(rij_mag * alpha) / rij_mag;
-    //     }
-    // }
-
-    
-
-    
-    
-    
-    
     // iterate through all source particles
     for (int i = 0; i < n_particles; ++i) {
+        // Moved repetitive comps out of inner loop
         const Real xi = x[i] - offset[0];
         const Real yi = y[i] - offset[1];
         const Real zi = z[i] - offset[2];
@@ -497,11 +468,10 @@ void compute_potential(Real *pot, const Real *x, const Real *y, const Real *z, c
             const Real t = rij_mag * alpha;
 
             pot_acc += charges[j] * std::erfc(t) / rij_mag;
-
         }
+        // Update pot vector once in outer loop
         pot[i] = pot_acc;
     }
-
 }
 
 // ------------------------------------------------------------------------------------------ //
@@ -510,74 +480,6 @@ template <typename Real>
 std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, ShortRangeSystem<Real> &Short, Real r_cut,
                                        Real alpha, bool vectorized = false) {
 
-    
-    // shortcuts
-    // const int n_boxes = Short.n_boxes;
-    // const int n_dim = System.n_dim;
-    // const int n_trg = System.n_trg;
-    // const int n_src = System.n_src;
-    // const Real L = System.L;
-
-    // const Real r_cut_sq = r_cut * r_cut;
-    // std::vector<Real> pot(n_trg, 0.0);
-    // std::vector<Real> pot_sorted(n_trg, 0.0); // sorted potential vector
-
-    // // iterate through all boxes
-    // for (size_t box = 0; box < n_boxes; ++box) {
-    //     // go through the neighbors
-    //     for (int nb : Short.box_neighbors[box]) {
-    //         // check periodic boundary conditions
-    //         // TODO: Optimize this calculation?
-    //         std::vector<Real> offset(n_dim, 0.0);
-    //         for (int a = 0; a < n_dim; ++a) {
-    //             if (Short.box_corners[box * n_dim + a] - Short.box_corners[nb * n_dim + a] > 1) {
-    //                 offset[a] = L;
-    //             } else if (Short.box_corners[box * n_dim + a] - Short.box_corners[nb * n_dim + a] < -1) {
-    //                 offset[a] = -L;
-    //             } else {
-    //                 offset[a] = 0.0;
-    //             }
-    //         }
-
-    //         // TODO: Generalize to more dimensions (?) -- make vector of pointers (?)
-
-    //         const Real *x = &(Short.r_src_sorted[Short.box_begin[box]]);
-    //         const Real *y = &(Short.r_src_sorted[n_src + Short.box_begin[box]]);
-    //         const Real *z = &(Short.r_src_sorted[n_src * 2 + Short.box_begin[box]]);
-
-    //         const Real *x_other = &(Short.r_src_sorted[Short.box_begin[nb]]);
-    //         const Real *y_other = &(Short.r_src_sorted[n_src + Short.box_begin[nb]]);
-    //         const Real *z_other = &(Short.r_src_sorted[n_src * 2 + Short.box_begin[nb]]);
-
-    //         // row-major + sorted -- for vectorized operations
-    //         const Real *r_other = &(Short.r_src_row_sorted[Short.box_begin[nb] * n_dim]);
-
-    //         const Real *ch = &(Short.charges_sorted[0]) + Short.box_begin[nb];
-
-    //         Real *pot_part = &(pot_sorted[0]) + Short.box_begin[box];
-            
-    //         if (!vectorized) {
-    //             // TODO: Pass a pointer to the potential function
-    //             compute_potential(pot_part, x, y, z, ch, Short.box_lengths[box], x_other, y_other, z_other,
-    //                             Short.box_lengths[nb], &(offset[0]), r_cut_sq, alpha);
-    //             }
-    //         else {
-    //             l3d_local_kernel_directcp_vec_cpp__rinv_helper<Real, 3>(r_cut_sq,
-    //                                                                     r_other, 
-    //                                                                     Short.box_lengths[nb], 
-    //                                                                     ch,
-    //                                                                     x, 
-    //                                                                     y, 
-    //                                                                     z,
-    //                                                                     Short.box_lengths[box],
-    //                                                                     alpha,
-    //                                                                     &(offset[0]),
-    //                                                                     pot_part);
-    //         }
-    //     }
-    // }
-   
-
     // shortcuts
     const int n_boxes = Short.n_boxes;
     const int n_dim = System.n_dim;
@@ -585,7 +487,8 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
     const int n_src = System.n_src;
     const Real L = System.L;
 
-    // std::cout << "num boxes = " << n_boxes << " num dims = " << n_dim << " num neighbors = " << Short.box_neighbors.size() << "num box corners = " << Short.box_corners.size() << std::endl;
+    // std::cout << "num boxes = " << n_boxes << " num dims = " << n_dim << " num neighbors = " <<
+    // Short.box_neighbors.size() << "num box corners = " << Short.box_corners.size() << std::endl;
     const Real r_cut_sq = r_cut * r_cut;
     std::vector<Real> pot(n_trg, 0.0);
     std::vector<Real> pot_sorted(n_trg, 0.0); // sorted potential vector
@@ -599,17 +502,19 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
         const Real *z = &(Short.r_src_sorted[n_src * 2 + Short.box_begin[box]]);
 
         Real *pot_part = &(pot_sorted[0]) + Short.box_begin[box];
-        const int* box_corner = &Short.box_corners[box * n_dim];
+        const int *box_corner = &Short.box_corners[box * n_dim];
 
         for (int nb : Short.box_neighbors[box]) {
             // check periodic boundary conditions
-            // TODO: Optimize this calculation?
-            const int* nb_corner = &Short.box_corners[nb * n_dim];
+            const int *nb_corner = &Short.box_corners[nb * n_dim];
             for (int a = 0; a < n_dim; ++a) {
                 int diff = box_corner[a] - nb_corner[a];
-                if (diff > 1)      offset[a] = L;
-                else if (diff < -1) offset[a] = -L;
-                else                offset[a] = 0.0;
+                if (diff > 1)
+                    offset[a] = L;
+                else if (diff < -1)
+                    offset[a] = -L;
+                else
+                    offset[a] = 0.0;
             }
 
             // TODO: Generalize to more dimensions (?) -- make vector of pointers (?)
@@ -619,27 +524,16 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
 
             // row-major + sorted -- for vectorized operations
             const Real *r_other = &(Short.r_src_row_sorted[Short.box_begin[nb] * n_dim]);
-
             const Real *ch = &(Short.charges_sorted[0]) + Short.box_begin[nb];
 
-            
             if (!vectorized) {
                 // TODO: Pass a pointer to the potential function
                 compute_potential(pot_part, x, y, z, ch, Short.box_lengths[box], x_other, y_other, z_other,
-                                Short.box_lengths[nb], &(offset[0]), r_cut_sq, alpha);
-                }
-            else {
-                l3d_local_kernel_directcp_vec_cpp__rinv_helper<Real, 3>(r_cut_sq,
-                                                                        r_other, 
-                                                                        Short.box_lengths[nb], 
-                                                                        ch,
-                                                                        x, 
-                                                                        y, 
-                                                                        z,
-                                                                        Short.box_lengths[box],
-                                                                        alpha,
-                                                                        &(offset[0]),
-                                                                        pot_part);
+                                  Short.box_lengths[nb], &(offset[0]), r_cut_sq, alpha);
+            } else {
+                l3d_local_kernel_directcp_vec_cpp__rinv_helper<Real, 3>(r_cut_sq, r_other, Short.box_lengths[nb], ch, x,
+                                                                        y, z, Short.box_lengths[box], alpha,
+                                                                        &(offset[0]), pot_part);
             }
         }
     }
@@ -662,42 +556,10 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
 template <typename Real>
 std::vector<Real> compute_green_func(int N, Real alpha, Real L) {
 
-    // TODO: generalize to different box lengths
-    // const Real h = L / N;
-    // const Real TWOPI_L = 2 * M_PI / L;
-
-    // std::vector<Real> G(N * N * N, 0.0);
-
-    // for (size_t w = 0; w < N; ++w) {
-    //     for (size_t j = 0; j < N; ++j) {
-    //         for (size_t i = 0; i < N; ++i) {
-    //             // TODO: optimize this step; structure the loop accordingly
-    //             // conditionals are expensive (?)
-    //             const int i_new = (i > (N / 2)) ? i - N : i;
-    //             const int j_new = (j > (N / 2)) ? j - N : j;
-    //             const int w_new = (w > (N / 2)) ? w - N : w;
-
-    //             const int k_x = TWOPI_L * i_new;
-    //             const int k_y = TWOPI_L * j_new;
-    //             const int k_z = TWOPI_L * w_new;
-
-    //             const auto mode_sq = k_x * k_x + k_y * k_y + k_z * k_z;
-    //             if (mode_sq == 0) {
-    //                 continue;
-    //             }
-
-    //             // update G_hat
-    //             G[i + N * (j + N * w)] = 4 * M_PI / mode_sq * std::exp(-mode_sq / (4 * alpha * alpha));
-    //         }
-    //     }
-    // }
-
-    
     const Real h = L / N;
     const Real TWOPI_L = 2 * M_PI / L;
     const Real FOUR_PI = 4 * M_PI;
-    const Real DENOM = 4 * alpha * alpha; 
-
+    const Real DENOM = 4 * alpha * alpha;
 
     std::vector<Real> G(N * N * N, 0.0);
     std::vector<int> k(N);
@@ -731,55 +593,6 @@ std::vector<Real> compute_green_func(int N, Real alpha, Real L) {
 
     return G;
 }
-
-
-// /* adapted from https://doi.org/10.1063/1.477414 (page 6) */
-// template <typename Real>
-// std::vector<Real> compute_green_func(int N, Real alpha, Real L) {
-
-//     using ArrayXi  = Eigen::Array<int, Eigen::Dynamic, 1>;
-//     using ArrayXr  = Eigen::Array<Real, Eigen::Dynamic, 1>;
-//     using Index    = Eigen::Index;
-
-//     const Real TWOPI_L = Real(2.0) * M_PI / L;
-//     const Real fourpi   = Real(4.0) * M_PI;
-//     const Real denomFac = Real(4.0) * alpha * alpha;
-
-//     // 1) Precompute wrapped *integer* indices in [-N/2, N/2]
-//     ArrayXi k_int(N);
-//     int half = int(N / 2);
-//     for (int i = 0; i < N; ++i) {
-//         const int i_new = (i > half) ? i - N : i;
-//         k_int(i) = TWOPI_L * i_new;
-//     }
-
-//     // 2) Allocate output
-//     std::vector<Real> G(N * N * N, 0.0);
-
-//     // 3) Loops with integer mode_sq
-//     for (int w = 0; w < N; ++w) {
-//         int wz = k_int(w);
-//         for (int j = 0; j < N; ++j) {
-//             int jy = k_int(j);
-
-//             // mode_sq for all i, integer-based
-//             ArrayXi mode_sq = k_int.square()
-//                               + jy * jy
-//                               + wz * wz;
-
-//             // // Convert to Real only when applying formula
-//             // ArrayXr mode_sq_r = mode_sq.cast<Real>() * (TWOPI_L * TWOPI_L);
-//             ArrayXr mode_sq_r = mode_sq.cast<Real>();
-//             ArrayXr inv_mode_sq = (mode_sq != 0).select(mode_sq_r.inverse(), Real(0));
-//             ArrayXr val = fourpi * inv_mode_sq * (-mode_sq_r / denomFac).exp();
-
-//             std::size_t base = N * (j + N * w);
-//             Eigen::Map<ArrayXr>(&G[base], N) = val;
-//         }
-//     }
-
-//     return G;
-// }
 
 // ------------------------------------------------------------------------------------------ //
 
@@ -842,12 +655,11 @@ void compute_contribution(std::vector<Real> &W, Real r, int middle, int N, Real 
     Real dr_abs = std::abs(dr);
     dr = (dr_abs >= h / 2) ? dr - L : dr; // correction for periodic boundaries
 
-    // TODO: generalize to higher order polynomials 
+    // TODO: generalize to higher order polynomials
     // // we use 5 points, the default for LAMMPS & GROMACS
     if (p == 4) {
         evaluate_polynomials_04(W, dr, h);
-    }
-    else {
+    } else {
         std::cerr << "p=4 is currently the only option!" << std::endl;
         exit(EXIT_FAILURE);
     }
@@ -861,12 +673,11 @@ std::vector<Real> compute_contribution(Real r, int middle, int N, Real h, int p,
     Real dr_abs = std::abs(dr);
     dr = (dr_abs >= h / 2) ? dr - L : dr; // correction for periodic boundaries
 
-    // TODO: generalize to higher order polynomials 
+    // TODO: generalize to higher order polynomials
     // // we use 5 points, the default for LAMMPS & GROMACS
     if (p == 4) {
         evaluate_polynomials_04(W, dr, h);
-    }
-    else {
+    } else {
         std::cerr << "p=4 is currently the only option!" << std::endl;
         exit(EXIT_FAILURE);
     }
@@ -877,48 +688,7 @@ std::vector<Real> compute_contribution(Real r, int middle, int N, Real h, int p,
 
 template <typename Real>
 int assign_charge(const std::vector<Real> &r_src, const std::vector<Real> &charges, std::vector<Real> &grid, int N,
-                   Real h, int p, Real L) {
-    
-    // int n_charges = charges.size();
-    // const int N3 = N * N * N;
-
-    // // iterate through charges and their coordinates
-    // for (size_t ind = 0; ind < n_charges; ++ind) {
-    //     const Real q = charges[ind];
-    //     // column-major
-    //     const Real x = r_src[ind];
-    //     const Real y = r_src[n_charges + ind];
-    //     const Real z = r_src[n_charges * 2 + ind];
-
-    //     // identify the middle point (only works for odd number of points)
-    //     // round to the nearest integer
-    //     // TODO: generalize for even number of points
-    //     const int middle_x = int(x / L * N + 0.50) % N; // e.g., if x=0.99, middle_x=0
-    //     const int middle_y = int(y / L * N + 0.50) % N;
-    //     const int middle_z = int(z / L * N + 0.50) % N;
-
-    //     // compute W_x, W_y, W_z
-    //     std::vector<Real> W_x = compute_contribution(x, middle_x, N, h, p, L);
-    //     std::vector<Real> W_y = compute_contribution(y, middle_y, N, h, p, L);
-    //     std::vector<Real> W_z = compute_contribution(z, middle_z, N, h, p, L);
-
-    //     // update the grid values
-    //     int count_x, count_y, count_z; // grid point indices
-    //     count_x = 0;
-    //     for (int i = (middle_x - (p / 2) + N) % N; i != (middle_x + (p / 2) + 1) % N; i = (i + 1) % N) {
-    //         count_y = 0;
-    //         for (int j = (middle_y - (p / 2) + N) % N; j != (middle_y + (p / 2) + 1) % N; j = (j + 1) % N) {
-    //             count_z = 0;
-    //             for (int k = (middle_z - (p / 2) + N) % N; k != (middle_z + (p / 2) + 1) % N; k = (k + 1) % N) {
-    //                 grid[i + N * (j + N * k)] += q * W_x[count_x] * W_y[count_y] * W_z[count_z] * N3;
-    //                 ++count_z;
-    //             }
-    //             ++count_y;
-    //         }
-    //         ++count_x;
-    //     }
-    // }
-    
+                  Real h, int p, Real L) {
 
     int n_charges = charges.size();
     const int N3 = N * N * N;
@@ -949,81 +719,37 @@ int assign_charge(const std::vector<Real> &r_src, const std::vector<Real> &charg
         std::vector<Real> W_z = compute_contribution(z, middle_z, N, h, p, L);
 
         // update the grid values
-        for (int count_z = 0, k = middle_z - p/2; count_z < p+1; ++count_z, ++k) {
+        for (int count_z = 0, k = middle_z - p / 2; count_z < p + 1; ++count_z, ++k) {
             int kk = (k + N) % N;
             const size_t base_k = kk * k_fac;
             wz = W_z[count_z] * fac;
 
-            for (int count_y = 0, j = middle_y - p/2; count_y < p+1; ++count_y, ++j) {
+            for (int count_y = 0, j = middle_y - p / 2; count_y < p + 1; ++count_y, ++j) {
                 int jj = (j + N) % N;
                 const size_t base_j = jj * j_fac + base_k;
                 wyz = wz * W_y[count_y];
 
-                for (int count_x = 0, i = middle_x - p/2; count_x < p+1; ++count_x, ++i) {
+                for (int count_x = 0, i = middle_x - p / 2; count_x < p + 1; ++count_x, ++i) {
                     int ii = (i + N) % N;
                     grid[ii + base_j] += W_x[count_x] * wyz;
                 }
             }
         }
     }
-    
+
     return 0;
 }
-
 
 // ------------------------------------------------------------------------------------------ //
 
 template <typename Real>
-int back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vector<Real> &trg_pot, int N, Real h,
-                      int p, Real L) {
-
-    // int n_trg = r_trg.size() / 3;
-
-    // // iterate through targets and their coordinates
-    // for (size_t ind = 0; ind < n_trg; ++ind) {
-    //     // coordinates of the target point
-    //     // column-major
-    //     const Real x = r_trg[ind];
-    //     const Real y = r_trg[n_trg + ind];
-    //     const Real z = r_trg[n_trg * 2 + ind];
-
-    //     // identify the middle point
-    //     // round to the nearest integer
-    //     // TODO: generalize for odd p / polynomial order
-    //     const int middle_x = int(x / L * N + 0.50) % N; // e.g., if x=0.99, middle_x=0
-    //     const int middle_y = int(y / L * N + 0.50) % N;
-    //     const int middle_z = int(z / L * N + 0.50) % N;
-
-    //     if (middle_x > N - 1 || middle_y > N - 1 || middle_z > N - 1) {
-    //         std::cout << "ERROR!" << std::endl;
-    //     }
-
-    //     // compute W_x, W_y, W_z
-    //     std::vector<Real> W_x = compute_contribution(x, middle_x, N, h, p, L);
-    //     std::vector<Real> W_y = compute_contribution(y, middle_y, N, h, p, L);
-    //     std::vector<Real> W_z = compute_contribution(z, middle_z, N, h, p, L);
-
-    //     // update the grid values
-    //     int count_x, count_y, count_z; // grid point indices
-    //     count_x = 0;
-    //     for (int i = (middle_x - (p / 2) + N) % N; i != (middle_x + (p / 2) + 1) % N; i = (i + 1) % N) {
-    //         count_y = 0;
-    //         for (int j = (middle_y - (p / 2) + N) % N; j != (middle_y + (p / 2) + 1) % N; j = (j + 1) % N) {
-    //             count_z = 0;
-    //             for (int k = (middle_z - (p / 2) + N) % N; k != (middle_z + (p / 2) + 1) % N; k = (k + 1) % N) {
-    //                 trg_pot[ind] += pot[i + N * (j + N * k)] * W_x[count_x] * W_y[count_y] * W_z[count_z];
-    //                 ++count_z;
-    //             }
-    //             ++count_y;
-    //         }
-    //         ++count_x;
-    //     }
-    // }
+int back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vector<Real> &trg_pot, int N, Real h, int p,
+                     Real L) {
 
     int n_trg = r_trg.size() / 3;
-    std::vector<Real> W_x(p+1, 0.0);
-    std::vector<Real> W_y(p+1, 0.0);
-    std::vector<Real> W_z(p+1, 0.0);
+    std::vector<Real> W_x(p + 1, 0.0);
+    std::vector<Real> W_y(p + 1, 0.0);
+    std::vector<Real> W_z(p + 1, 0.0);
 
     const size_t j_fac = N;
     const size_t k_fac = N * N;
@@ -1050,18 +776,18 @@ int back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vect
         compute_contribution(W_x, x, middle_x, N, h, p, L);
         compute_contribution(W_y, y, middle_y, N, h, p, L);
         compute_contribution(W_z, z, middle_z, N, h, p, L);
-        
-        for (int count_z = 0, k = middle_z - p/2; count_z < p+1; ++count_z, ++k) {
+
+        for (int count_z = 0, k = middle_z - p / 2; count_z < p + 1; ++count_z, ++k) {
             int kk = (k + N) % N;
             const size_t base_k = kk * k_fac;
             wz = W_z[count_z];
 
-            for (int count_y = 0, j = middle_y - p/2; count_y < p+1; ++count_y, ++j) {
+            for (int count_y = 0, j = middle_y - p / 2; count_y < p + 1; ++count_y, ++j) {
                 int jj = (j + N) % N;
                 const size_t base_j = jj * j_fac + base_k;
                 wyz = wz * W_y[count_y];
 
-                for (int count_x = 0, i = middle_x - p/2; count_x < p+1; ++count_x, ++i) {
+                for (int count_x = 0, i = middle_x - p / 2; count_x < p + 1; ++count_x, ++i) {
                     int ii = (i + N) % N;
                     trg_pot[ind] += pot[ii + base_j] * W_x[count_x] * wyz;
                 }
@@ -1069,10 +795,8 @@ int back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vect
         }
     }
 
-
     return 0;
 }
-
 
 // ------------------------------------------------------------------------------------------ //
 
@@ -1109,17 +833,6 @@ std::vector<Real> evaluate_long_range(const std::vector<Real> &G, TestCaseSystem
     std::vector<Real> r_src = System.r_src;
 
     std::vector<Real> grid(N * N * N, 0.0); // N^3 grid with the kernel spread charged values
-    // if (time) {
-    //     // use nanobench to benchmark the process
-    //     ankerl::nanobench::Bench()
-    //         .title("Back interpolate")
-    //         .warmup(1000) // run 10 iterations before timing
-    //         .minEpochIterations(100) // time at least 100 iterations
-    //         .run("not-vectorized", [&] {
-    //             int temp_val = assign_charge(r_src, charges, grid, N, h, p, System.L);
-    //             ankerl::nanobench::doNotOptimizeAway(temp_val);
-    //         });
-    // }
     assign_charge(r_src, charges, grid, N, h, p, System.L);
 
     // turn grid into a complex vector
@@ -1155,38 +868,16 @@ std::vector<Real> evaluate_long_range(const std::vector<Real> &G, TestCaseSystem
 
     // back-interpolate to infer the potential at the target points
     std::vector<Real> trg_pot(n_trg, 0.0);
-    // if (time) {
-    //     // use nanobench to benchmark the process
-    //     ankerl::nanobench::Bench()
-    //         .title("Back interpolate")
-    //         .warmup(1000) // run 10 iterations before timing
-    //         .minEpochIterations(100) // time at least 100 iterations
-    //         .run("not-vectorized", [&] {
-    //             int temp_val = back_interpolate(r_src, inv_ft_density, trg_pot, N, h, p, System.L);
-    //             ankerl::nanobench::doNotOptimizeAway(temp_val);
-    //         });
-    // }
     int temp_val = back_interpolate(r_src, inv_ft_density, trg_pot, N, h, p, System.L);
 
     return trg_pot;
 }
 
 template <typename Real>
-void pme_poisson3d_lagrange(
-        Real *pot,
-        int n_sources, 
-        int n_dim, 
-        Real length, 
-        Real alpha, 
-        Real r_cut, 
-        int N, 
-        int P,
-        int uniform = true,
-        int vectorized = false,
-        Real *r_sources = nullptr,
-        Real *charges = nullptr
-    ) {
-    
+void pme_poisson3d_lagrange(Real *pot, int n_sources, int n_dim, Real length, Real alpha, Real r_cut, int N, int P,
+                            int uniform = true, int vectorized = false, Real *r_sources = nullptr,
+                            Real *charges = nullptr) {
+
     TestCaseSystem<Real> System(n_sources, n_sources, n_dim, uniform, length);
     if (r_sources) {
         System.add_positions_and_charges(r_sources, charges);
@@ -1219,19 +910,19 @@ void pme_poisson3d_lagrange(
 
 template <typename Real>
 void run_test_case_00(const TestOptions &opts) {
-    const int n_src = opts.n_src;               // number of sources
-    const int n_trg = opts.n_trg;               // number of targets
-    const int n_dim = 3;                        // number of dimensions
-    const bool time = opts.time;                // whether to time processes using nanobench
-    const Real L = opts.L;                      // length of the cubic box
+    const int n_src = opts.n_src; // number of sources
+    const int n_trg = opts.n_trg; // number of targets
+    const int n_dim = 3;          // number of dimensions
+    const bool time = opts.time;  // whether to time processes using nanobench
+    const Real L = opts.L;        // length of the cubic box
 
     TestCaseSystem<Real> System_00(n_src, n_trg, n_dim, true, L);
 
     // TODO: Choose alpha from a given r_cut
-    const Real alpha = opts.alpha;      // the extent of short-range and long-range interactions
-    const Real r_cut = opts.r_cut;      // cutoff distance for short-range interactions
-    const int N = opts.N;               // mesh grid points per dimension
-    const int p = 4;                    // order of accuracy for interpolation
+    const Real alpha = opts.alpha; // the extent of short-range and long-range interactions
+    const Real r_cut = opts.r_cut; // cutoff distance for short-range interactions
+    const int N = opts.N;          // mesh grid points per dimension
+    const int p = 4;               // order of accuracy for interpolation
     // p convention consistent with https://doi.org/10.1063/1.470043
     // others may use a different definition, and our p=4 would be equivalent to their p=5
     // in our case, p=w cooresponds to a (w+1)-point assignment
@@ -1244,7 +935,7 @@ void run_test_case_00(const TestOptions &opts) {
         // use nanobench to benchmark the process
         ankerl::nanobench::Bench()
             .title("Short-range potential computation")
-            .warmup(10) // run 10 iterations before timing
+            .warmup(10)             // run 10 iterations before timing
             .minEpochIterations(10) // time at least 100 iterations
             .run("not-vectorized", [&] {
                 std::vector<Real> pot_short = evaluate_short_range(System_00, Short_00, r_cut, alpha);
@@ -1253,43 +944,43 @@ void run_test_case_00(const TestOptions &opts) {
 
         ankerl::nanobench::Bench()
             .title("Short-range potential computation")
-            .warmup(10) // run 100 iterations before timing
+            .warmup(10)             // run 100 iterations before timing
             .minEpochIterations(10) // time at least 100 iterations
             .run("vectorized", [&] {
                 std::vector<Real> pot_short = evaluate_short_range(System_00, Short_00, r_cut, alpha, true);
                 ankerl::nanobench::doNotOptimizeAway(pot_short);
             });
-        }
+    }
 
     /* ----------------------------------------------------------------------------------------------- */
-    
+
     std::vector<Real> pot_short = evaluate_short_range(System_00, Short_00, r_cut, alpha);
     std::vector<Real> pot_short_vec = evaluate_short_range(System_00, Short_00, r_cut, alpha, true);
-    
-    if (time){
-                ankerl::nanobench::Bench()
-                .title("Green Func Computation")
-                .warmup(10) // run 10 iterations before timing
-                .minEpochIterations(10) // time at least 100 iterations
-                .run("Vectorized", [&] {
-                    std::vector<Real> G_hat = compute_green_func(N, alpha, L);
-                    ankerl::nanobench::doNotOptimizeAway(G_hat);
-                });
-        }
+
+    if (time) {
+        ankerl::nanobench::Bench()
+            .title("Green Func Computation")
+            .warmup(10)             // run 10 iterations before timing
+            .minEpochIterations(10) // time at least 100 iterations
+            .run("Vectorized", [&] {
+                std::vector<Real> G_hat = compute_green_func(N, alpha, L);
+                ankerl::nanobench::doNotOptimizeAway(G_hat);
+            });
+    }
 
     std::vector<Real> G_hat = compute_green_func(N, alpha, L);
-    
+
     // print_vector(pot_long);
-    if (time){
-                    ankerl::nanobench::Bench()
-                    .title("Long range Computation")
-                    .warmup(10) // run 10 iterations before timing
-                    .minEpochIterations(10) // time at least 100 iterations
-                    .run("Not Vectorized", [&] {
-                        std::vector<Real> pot_long = evaluate_long_range(G_hat, System_00, N, p);
-                        ankerl::nanobench::doNotOptimizeAway(pot_long);
-                    });
-            }
+    if (time) {
+        ankerl::nanobench::Bench()
+            .title("Long range Computation")
+            .warmup(10)             // run 10 iterations before timing
+            .minEpochIterations(10) // time at least 100 iterations
+            .run("Not Vectorized", [&] {
+                std::vector<Real> pot_long = evaluate_long_range(G_hat, System_00, N, p);
+                ankerl::nanobench::doNotOptimizeAway(pot_long);
+            });
+    }
 
     // long-range interactions
     std::vector<Real> pot_long = evaluate_long_range(G_hat, System_00, N, p);
@@ -1300,7 +991,7 @@ void run_test_case_00(const TestOptions &opts) {
         self_interaction[i] = 2 * alpha * inv_sqrt_pi * System_00.charges[i];
     }
 
-    std::vector<Real> pot(n_trg, 0.0); 
+    std::vector<Real> pot(n_trg, 0.0);
     // add all terms
     for (size_t i = 0; i < n_trg; ++i) {
         pot[i] = pot_short[i] + pot_long[i] - self_interaction[i];
@@ -1335,7 +1026,6 @@ void run_test_case_01(const TestOptions &opts) {
     print_vector(pot);
 }
 
-
 // test case: Madelung constant verification
 // NaCl rock salt
 template <typename Real>
@@ -1364,7 +1054,7 @@ void run_test_case_02(const TestOptions &opts) {
                 r_src[count] = i * h;
                 r_src[n_src + count] = j * h;
                 r_src[2 * n_src + count] = k * h;
-                charges[count] = ((i + j + k ) % 2 == 0) ? 1.0 : -1.0;
+                charges[count] = ((i + j + k) % 2 == 0) ? 1.0 : -1.0;
                 ++count;
             }
         }
@@ -1391,17 +1081,21 @@ void run_test_case_03(const TestOptions &opts) {
     const Real L = 1.0;
 
     // custom coordinates for small tests
-    std::vector<Real> r_src = {0.131538, 0.45865, 0.218959, 0.678865, 0.934693, 0.519416, 0.0345721, 0.5297, 0.00769819, 0.0668422, 0.686773, 0.930436, 0.526929, 0.653919, 0.701191, 0.762198, 0.0474645, 0.328234, 0.75641, 0.365339, 0.98255, 0.753356, 0.0726859, 0.884707, 0.436411, 0.477732, 0.274907, 0.166507, 0.897656, 0.0605643};
-    std::vector<Real> charges = {0.196104 , -0.174876 ,  0.175012 , -0.631476 , -0.665444 , -0.0446574,  1.01469  ,  0.11595  , -0.712774 ,  0.727467};
+    std::vector<Real> r_src = {0.131538,   0.45865,   0.218959, 0.678865, 0.934693, 0.519416, 0.0345721, 0.5297,
+                               0.00769819, 0.0668422, 0.686773, 0.930436, 0.526929, 0.653919, 0.701191,  0.762198,
+                               0.0474645,  0.328234,  0.75641,  0.365339, 0.98255,  0.753356, 0.0726859, 0.884707,
+                               0.436411,   0.477732,  0.274907, 0.166507, 0.897656, 0.0605643};
+    std::vector<Real> charges = {0.196104,   -0.174876, 0.175012, -0.631476, -0.665444,
+                                 -0.0446574, 1.01469,   0.11595,  -0.712774, 0.727467};
 
     const Real alpha = opts.alpha;
     const Real r_cut = opts.r_cut;
     const int N = opts.N;
     const int p = 4;
-    
+
     std::vector<Real> pot(n_src);
     pme_poisson3d_lagrange(pot.data(), n_src, n_dim, L, alpha, r_cut, N, p, true, false, r_src.data(), charges.data());
-    
+
     std::cout << "Final Potential:" << std::endl;
     print_vector(pot);
 }
@@ -1410,7 +1104,7 @@ void run_test_case_03(const TestOptions &opts) {
 // we only test short-range interactions in a single cell
 template <typename Real>
 void run_test_case_04(const TestOptions &opts) {
-    std::cout << "Test case to investigate the effects of vectorization on a single cell calculation." << std::endl; 
+    std::cout << "Test case to investigate the effects of vectorization on a single cell calculation." << std::endl;
     const int n_src = opts.n_src; // number of sources
     const int n_trg = opts.n_trg; // number of targets
     const int n_dim = 3;          // number of dimensions
@@ -1419,9 +1113,9 @@ void run_test_case_04(const TestOptions &opts) {
     TestCaseSystem<Real> System_04(n_src, n_trg, n_dim, true, L);
 
     const Real alpha = opts.alpha; // the extent of short-range and long-range interactions
-    const Real r_cut = 0.20; // cutoff distance for short-range interactions
-    const int N = opts.N;    // 2^4 points
-    const int p = 4;         // order of accuracy for interpolation
+    const Real r_cut = 0.20;       // cutoff distance for short-range interactions
+    const int N = opts.N;          // 2^4 points
+    const int p = 4;               // order of accuracy for interpolation
 
     // short-range interactions
     ShortRangeSystem<Real> Short_04 = initialize_short_range(System_04, alpha, r_cut, N, n_dim);
@@ -1432,85 +1126,55 @@ void run_test_case_04(const TestOptions &opts) {
     // use nanobench to benchmark the process
     ankerl::nanobench::Bench()
         .title("Short-range potential computation")
-        .warmup(10) // run 10 iterations before timing
+        .warmup(10)             // run 10 iterations before timing
         .minEpochIterations(10) // time at least 100 iterations
         .run("not-vectorized", [&] {
-            compute_short_range_raw(System_04.r_src, 
-                                    System_04.r_trg, 
-                                    pot_short,
-                                    System_04.charges, 
-                                    n_dim, 
-                                    r_cut, 
-                                    n_src,
-                                    n_trg, 
-                                    alpha);
+            compute_short_range_raw(System_04.r_src, System_04.r_trg, pot_short, System_04.charges, n_dim, r_cut, n_src,
+                                    n_trg, alpha);
         });
-    
+
     pot_short.assign(n_trg, 0.0);
-    compute_short_range_raw(System_04.r_src, 
-                                    System_04.r_trg, 
-                                    pot_short,
-                                    System_04.charges, 
-                                    n_dim, 
-                                    r_cut, 
-                                    n_src,
-                                    n_trg, 
-                                    alpha);
+    compute_short_range_raw(System_04.r_src, System_04.r_trg, pot_short, System_04.charges, n_dim, r_cut, n_src, n_trg,
+                            alpha);
     // print_vector(pot_short);
 
     Real offset[3] = {0.0, 0.0, 0.0};
-    std::vector<Real> pot_short_vec(n_src, 0.0); 
+    std::vector<Real> pot_short_vec(n_src, 0.0);
     const Real r_cut_sq = r_cut * r_cut;
 
     ankerl::nanobench::Bench()
         .title("Short-range potential computation")
-        .warmup(10) // run 100 iterations before timing
+        .warmup(10)             // run 100 iterations before timing
         .minEpochIterations(10) // time at least 100 iterations
         .run("vectorized", [&] {
-            l3d_local_kernel_directcp_vec_cpp__rinv_helper<Real,3,3>(r_cut_sq,
-                                                                    &(Short_04.r_src_row[0]),
-                                                                    n_trg,
-                                                                    &(System_04.charges[0]),
-                                                                    &(System_04.r_src[0]),
-                                                                    &(System_04.r_src[0 + n_src]),
-                                                                    &(System_04.r_src[0 + n_src * 2]),
-                                                                    n_src,
-                                                                    alpha,
-                                                                    offset,
-                                                                    &(pot_short_vec[0]));
+            l3d_local_kernel_directcp_vec_cpp__rinv_helper<Real, 3, 3>(
+                r_cut_sq, &(Short_04.r_src_row[0]), n_trg, &(System_04.charges[0]), &(System_04.r_src[0]),
+                &(System_04.r_src[0 + n_src]), &(System_04.r_src[0 + n_src * 2]), n_src, alpha, offset,
+                &(pot_short_vec[0]));
         });
 
     pot_short_vec.assign(n_src, 0.0);
-    l3d_local_kernel_directcp_vec_cpp__rinv_helper<Real,3,3>(r_cut_sq,
-                                                                &(Short_04.r_src_row[0]),
-                                                                n_trg,
-                                                                &(System_04.charges[0]),
-                                                                &(System_04.r_src[0]),
-                                                                &(System_04.r_src[0 + n_src]),
-                                                                &(System_04.r_src[0 + n_src * 2]),
-                                                                n_src,
-                                                                alpha,
-                                                                offset,
-                                                                &(pot_short_vec[0]));
+    l3d_local_kernel_directcp_vec_cpp__rinv_helper<Real, 3, 3>(
+        r_cut_sq, &(Short_04.r_src_row[0]), n_trg, &(System_04.charges[0]), &(System_04.r_src[0]),
+        &(System_04.r_src[0 + n_src]), &(System_04.r_src[0 + n_src * 2]), n_src, alpha, offset, &(pot_short_vec[0]));
     // print_vector(pot_short_vec);
 
     /* --------------------------------------------------------------------------------------- */
-
 }
 
 template <typename Real>
 void run_test_case_05(const TestOptions &opts) {
-    const int n_src = opts.n_src;               // number of sources
-    const int n_trg = opts.n_trg;               // number of targets
-    const int n_dim = 3;                        // number of dimensions
-    const bool time = opts.time;                // whether to time processes using nanobench
-    const Real L = opts.L;                      // length of the cubic box
+    const int n_src = opts.n_src; // number of sources
+    const int n_trg = opts.n_trg; // number of targets
+    const int n_dim = 3;          // number of dimensions
+    const bool time = opts.time;  // whether to time processes using nanobench
+    const Real L = opts.L;        // length of the cubic box
 
     // TODO: Choose alpha from a given r_cut
-    const Real alpha = opts.alpha;      // the extent of short-range and long-range interactions
-    const Real r_cut = opts.r_cut;      // cutoff distance for short-range interactions
-    const int N = opts.N;               // mesh grid points per dimension
-    const int p = 4;                    // order of accuracy for interpolation
+    const Real alpha = opts.alpha; // the extent of short-range and long-range interactions
+    const Real r_cut = opts.r_cut; // cutoff distance for short-range interactions
+    const int N = opts.N;          // mesh grid points per dimension
+    const int p = 4;               // order of accuracy for interpolation
 
     std::vector<Real> pot(n_src);
     pme_poisson3d_lagrange(pot.data(), n_src, n_dim, L, alpha, r_cut, N, p, true, false);
@@ -1524,21 +1188,10 @@ void run_test_case_05(const TestOptions &opts) {
 // ------------------------------------------------------------------------------------------ //
 
 extern "C" {
-void pme_poisson3d_lagrange(
-        double *pot,
-        int n_sources, 
-        int n_dim, 
-        double length, 
-        double alpha, 
-        double r_cut, 
-        int N, 
-        int P,
-        int uniform,
-        int vectorized,
-        double *r_sources,
-        double *charges
-    ) {   
-    pme_poisson3d_lagrange<double>(pot, n_sources, n_dim, length, alpha, r_cut, N, P, uniform, vectorized, r_sources, charges);
+void pme_poisson3d_lagrange(double *pot, int n_sources, int n_dim, double length, double alpha, double r_cut, int N,
+                            int P, int uniform, int vectorized, double *r_sources, double *charges) {
+    pme_poisson3d_lagrange<double>(pot, n_sources, n_dim, length, alpha, r_cut, N, P, uniform, vectorized, r_sources,
+                                   charges);
 }
 
 int test_pme_poisson3d_lagrange(int argc, char *argv[]) {
@@ -1587,5 +1240,4 @@ int test_pme_poisson3d_lagrange(int argc, char *argv[]) {
 
     return EXIT_SUCCESS;
 }
-
 }
