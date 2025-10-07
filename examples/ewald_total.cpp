@@ -694,45 +694,58 @@ int assign_charge(const std::vector<Real> &r_src, const std::vector<Real> &charg
     const int N3 = N * N * N;
     const size_t j_fac = N;
     const size_t k_fac = N * N;
+    
+    #pragma omp parallel
+    {
+        std::vector<Real> local_grid(N3, 0.0);
+        
+        // iterate through charges and their coordinates
+        #pragma omp for nowait
+        for (size_t ind = 0; ind < n_charges; ++ind) {
+            const Real q = charges[ind];
+            const Real fac = q * N3;
+            Real wz, wyz;
 
-    Real wz, wyz;
+            // column-major
+            const Real x = r_src[ind];
+            const Real y = r_src[n_charges + ind];
+            const Real z = r_src[n_charges * 2 + ind];
 
-    // iterate through charges and their coordinates
-    for (size_t ind = 0; ind < n_charges; ++ind) {
-        const Real q = charges[ind];
-        const Real fac = q * N3;
-        // column-major
-        const Real x = r_src[ind];
-        const Real y = r_src[n_charges + ind];
-        const Real z = r_src[n_charges * 2 + ind];
+            // identify the middle point (only works for odd number of points)
+            // round to the nearest integer
+            // TODO: generalize for even number of points
+            const int middle_x = int(x / L * N + 0.50) % N; // e.g., if x=0.99, middle_x=0
+            const int middle_y = int(y / L * N + 0.50) % N;
+            const int middle_z = int(z / L * N + 0.50) % N;
 
-        // identify the middle point (only works for odd number of points)
-        // round to the nearest integer
-        // TODO: generalize for even number of points
-        const int middle_x = int(x / L * N + 0.50) % N; // e.g., if x=0.99, middle_x=0
-        const int middle_y = int(y / L * N + 0.50) % N;
-        const int middle_z = int(z / L * N + 0.50) % N;
+            // compute W_x, W_y, W_z
+            std::vector<Real> W_x = compute_contribution(x, middle_x, N, h, p, L);
+            std::vector<Real> W_y = compute_contribution(y, middle_y, N, h, p, L);
+            std::vector<Real> W_z = compute_contribution(z, middle_z, N, h, p, L);
 
-        // compute W_x, W_y, W_z
-        std::vector<Real> W_x = compute_contribution(x, middle_x, N, h, p, L);
-        std::vector<Real> W_y = compute_contribution(y, middle_y, N, h, p, L);
-        std::vector<Real> W_z = compute_contribution(z, middle_z, N, h, p, L);
+            // update the grid values
+            for (int count_z = 0, k = middle_z - p / 2; count_z < p + 1; ++count_z, ++k) {
+                int kk = (k + N) % N;
+                const size_t base_k = kk * k_fac;
+                wz = W_z[count_z] * fac;
 
-        // update the grid values
-        for (int count_z = 0, k = middle_z - p / 2; count_z < p + 1; ++count_z, ++k) {
-            int kk = (k + N) % N;
-            const size_t base_k = kk * k_fac;
-            wz = W_z[count_z] * fac;
+                for (int count_y = 0, j = middle_y - p / 2; count_y < p + 1; ++count_y, ++j) {
+                    int jj = (j + N) % N;
+                    const size_t base_j = jj * j_fac + base_k;
+                    wyz = wz * W_y[count_y];
 
-            for (int count_y = 0, j = middle_y - p / 2; count_y < p + 1; ++count_y, ++j) {
-                int jj = (j + N) % N;
-                const size_t base_j = jj * j_fac + base_k;
-                wyz = wz * W_y[count_y];
-
-                for (int count_x = 0, i = middle_x - p / 2; count_x < p + 1; ++count_x, ++i) {
-                    int ii = (i + N) % N;
-                    grid[ii + base_j] += W_x[count_x] * wyz;
+                    for (int count_x = 0, i = middle_x - p / 2; count_x < p + 1; ++count_x, ++i) {
+                        int ii = (i + N) % N;
+                        // grid[ii + base_j] += W_x[count_x] * wyz;
+                        local_grid[ii + base_j] += W_x[count_x] * wyz;
+                    }
                 }
+            }
+        }
+        #pragma omp critical
+        {
+            for (int i = 0; i < N3; i++){
+                grid[i] += local_grid[i]; 
             }
         }
     }
@@ -747,13 +760,14 @@ int back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vect
                      Real L) {
 
     int n_trg = r_trg.size() / 3;
-    std::vector<Real> W_x(p + 1, 0.0);
-    std::vector<Real> W_y(p + 1, 0.0);
-    std::vector<Real> W_z(p + 1, 0.0);
-
+    // std::vector<Real> W_x(p + 1, 0.0);
+    // std::vector<Real> W_y(p + 1, 0.0);
+    // std::vector<Real> W_z(p + 1, 0.0);
+    // Real wz, wyz;
     const size_t j_fac = N;
     const size_t k_fac = N * N;
-    Real wz, wyz;
+
+    #pragma omp parallel for default(none) shared(r_trg, pot, trg_pot, N, h, p, L, n_trg, j_fac, k_fac) 
     for (size_t ind = 0; ind < n_trg; ++ind) {
         // coordinates of the target point
         // column-major
@@ -768,14 +782,21 @@ int back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vect
         const int middle_y = int(y / L * N + 0.50) % N;
         const int middle_z = int(z / L * N + 0.50) % N;
 
-        if (middle_x > N - 1 || middle_y > N - 1 || middle_z > N - 1) {
-            std::cout << "ERROR!" << std::endl;
-        }
+        // if (middle_x > N - 1 || middle_y > N - 1 || middle_z > N - 1) {
+        //     #pragma omp critical
+        //     std::cout << "ERROR!" << std::endl;
+        // }
 
         // compute W_x, W_y, W_z
+        std::vector<Real> W_x = compute_contribution(x, middle_x, N, h, p, L);
+        std::vector<Real> W_y = compute_contribution(y, middle_y, N, h, p, L);
+        std::vector<Real> W_z = compute_contribution(z, middle_z, N, h, p, L);
+        Real wz, wyz;
+        Real accum = 0.0;
         compute_contribution(W_x, x, middle_x, N, h, p, L);
         compute_contribution(W_y, y, middle_y, N, h, p, L);
         compute_contribution(W_z, z, middle_z, N, h, p, L);
+        
 
         for (int count_z = 0, k = middle_z - p / 2; count_z < p + 1; ++count_z, ++k) {
             int kk = (k + N) % N;
@@ -789,10 +810,12 @@ int back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vect
 
                 for (int count_x = 0, i = middle_x - p / 2; count_x < p + 1; ++count_x, ++i) {
                     int ii = (i + N) % N;
-                    trg_pot[ind] += pot[ii + base_j] * W_x[count_x] * wyz;
+                    accum += pot[ii + base_j] * W_x[count_x] * wyz;
+                    // trg_pot[ind] += pot[ii + base_j] * W_x[count_x] * wyz;
                 }
             }
         }
+        trg_pot[ind] += accum;
     }
 
     return 0;
@@ -975,7 +998,7 @@ void run_test_case_00(const TestOptions &opts) {
         ankerl::nanobench::Bench()
             .title("Long range Computation")
             .warmup(10)             // run 10 iterations before timing
-            .minEpochIterations(10) // time at least 100 iterations
+            .minEpochIterations(111) // time at least 100 iterations
             .run("Not Vectorized", [&] {
                 std::vector<Real> pot_long = evaluate_long_range(G_hat, System_00, N, p);
                 ankerl::nanobench::doNotOptimizeAway(pot_long);
