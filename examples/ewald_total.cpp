@@ -442,7 +442,9 @@ void compute_potential(Real *pot, const Real *x, const Real *y, const Real *z, c
                        const Real *x_other, const Real *y_other, const Real *z_other, int n_other, const Real *offset,
                        Real r_cut_sq, Real alpha) {
 
-    // iterate through all source particles
+// iterate through all source particles
+#pragma omp parallel for default(none)                                                                                 \
+    shared(pot, x, y, z, charges, x_other, y_other, z_other, offset, n_other, r_cut_sq, alpha, n_particles)
     for (int i = 0; i < n_particles; ++i) {
         // Moved repetitive comps out of inner loop
         const Real xi = x[i] - offset[0];
@@ -482,27 +484,28 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
 
     // shortcuts
     const int n_boxes = Short.n_boxes;
-    const int n_dim = System.n_dim;
     const int n_trg = System.n_trg;
-    const int n_src = System.n_src;
-    const Real L = System.L;
-
     // std::cout << "num boxes = " << n_boxes << " num dims = " << n_dim << " num neighbors = " <<
     // Short.box_neighbors.size() << "num box corners = " << Short.box_corners.size() << std::endl;
-    const Real r_cut_sq = r_cut * r_cut;
     std::vector<Real> pot(n_trg, 0.0);
     std::vector<Real> pot_sorted(n_trg, 0.0); // sorted potential vector
-    std::vector<Real> offset(n_dim, 0.0);
 
-    // iterate through all boxes
+// iterate through all boxes
+#pragma omp parallel for default(none) shared(n_boxes, pot_sorted, System, r_cut, Short, alpha, vectorized, n_trg)
     for (size_t box = 0; box < n_boxes; ++box) {
         // go through the neighbors
+        const Real r_cut_sq = r_cut * r_cut;
+        const int n_dim = System.n_dim;
+        const int n_src = System.n_src;
+        const Real L = System.L;
+
         const Real *x = &(Short.r_src_sorted[Short.box_begin[box]]);
         const Real *y = &(Short.r_src_sorted[n_src + Short.box_begin[box]]);
         const Real *z = &(Short.r_src_sorted[n_src * 2 + Short.box_begin[box]]);
 
         Real *pot_part = &(pot_sorted[0]) + Short.box_begin[box];
         const int *box_corner = &Short.box_corners[box * n_dim];
+        std::vector<Real> offset(n_dim, 0.0);
 
         for (int nb : Short.box_neighbors[box]) {
             // check periodic boundary conditions
@@ -556,29 +559,24 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
 template <typename Real>
 std::vector<Real> compute_green_func(int N, Real alpha, Real L) {
 
+    // TODO: generalize to different box lengths
     const Real h = L / N;
     const Real TWOPI_L = 2 * M_PI / L;
-    const Real FOUR_PI = 4 * M_PI;
-    const Real DENOM = 4 * alpha * alpha;
 
     std::vector<Real> G(N * N * N, 0.0);
-    std::vector<int> k(N);
-    std::vector<int> ksq(N);
-
-    for (size_t i = 0; i < N; ++i) {
-        const int i_new = (i > (N / 2)) ? i - N : i;
-        k[i] = TWOPI_L * i_new;
-        // ksq[i] = k[i] * k[i];
-    }
-
+#pragma omp parallel for default(none) shared(h, TWOPI_L, N, alpha, G)
     for (size_t w = 0; w < N; ++w) {
         for (size_t j = 0; j < N; ++j) {
             for (size_t i = 0; i < N; ++i) {
                 // TODO: optimize this step; structure the loop accordingly
                 // conditionals are expensive (?)
-                const int k_x = k[i];
-                const int k_y = k[j];
-                const int k_z = k[w];
+                const int i_new = (i > (N / 2)) ? i - N : i;
+                const int j_new = (j > (N / 2)) ? j - N : j;
+                const int w_new = (w > (N / 2)) ? w - N : w;
+
+                const int k_x = TWOPI_L * i_new;
+                const int k_y = TWOPI_L * j_new;
+                const int k_z = TWOPI_L * w_new;
 
                 const auto mode_sq = k_x * k_x + k_y * k_y + k_z * k_z;
                 if (mode_sq == 0) {
@@ -586,7 +584,7 @@ std::vector<Real> compute_green_func(int N, Real alpha, Real L) {
                 }
 
                 // update G_hat
-                G[i + N * (j + N * w)] = FOUR_PI / mode_sq * std::exp(-mode_sq / DENOM);
+                G[i + N * (j + N * w)] = 4 * M_PI / mode_sq * std::exp(-mode_sq / (4 * alpha * alpha));
             }
         }
     }
@@ -694,13 +692,13 @@ int assign_charge(const std::vector<Real> &r_src, const std::vector<Real> &charg
     const int N3 = N * N * N;
     const size_t j_fac = N;
     const size_t k_fac = N * N;
-    
-    #pragma omp parallel
+
+#pragma omp parallel
     {
         std::vector<Real> local_grid(N3, 0.0);
-        
-        // iterate through charges and their coordinates
-        #pragma omp for nowait
+
+// iterate through charges and their coordinates
+#pragma omp for nowait
         for (size_t ind = 0; ind < n_charges; ++ind) {
             const Real q = charges[ind];
             const Real fac = q * N3;
@@ -742,10 +740,10 @@ int assign_charge(const std::vector<Real> &r_src, const std::vector<Real> &charg
                 }
             }
         }
-        #pragma omp critical
+#pragma omp critical
         {
-            for (int i = 0; i < N3; i++){
-                grid[i] += local_grid[i]; 
+            for (int i = 0; i < N3; i++) {
+                grid[i] += local_grid[i];
             }
         }
     }
@@ -767,7 +765,7 @@ int back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vect
     const size_t j_fac = N;
     const size_t k_fac = N * N;
 
-    #pragma omp parallel for default(none) shared(r_trg, pot, trg_pot, N, h, p, L, n_trg, j_fac, k_fac) 
+#pragma omp parallel for default(none) shared(r_trg, pot, trg_pot, N, h, p, L, n_trg, j_fac, k_fac)
     for (size_t ind = 0; ind < n_trg; ++ind) {
         // coordinates of the target point
         // column-major
@@ -782,11 +780,6 @@ int back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vect
         const int middle_y = int(y / L * N + 0.50) % N;
         const int middle_z = int(z / L * N + 0.50) % N;
 
-        // if (middle_x > N - 1 || middle_y > N - 1 || middle_z > N - 1) {
-        //     #pragma omp critical
-        //     std::cout << "ERROR!" << std::endl;
-        // }
-
         // compute W_x, W_y, W_z
         std::vector<Real> W_x = compute_contribution(x, middle_x, N, h, p, L);
         std::vector<Real> W_y = compute_contribution(y, middle_y, N, h, p, L);
@@ -796,7 +789,6 @@ int back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vect
         compute_contribution(W_x, x, middle_x, N, h, p, L);
         compute_contribution(W_y, y, middle_y, N, h, p, L);
         compute_contribution(W_z, z, middle_z, N, h, p, L);
-        
 
         for (int count_z = 0, k = middle_z - p / 2; count_z < p + 1; ++count_z, ++k) {
             int kk = (k + N) % N;
@@ -958,8 +950,8 @@ void run_test_case_00(const TestOptions &opts) {
         // use nanobench to benchmark the process
         ankerl::nanobench::Bench()
             .title("Short-range potential computation")
-            .warmup(10)             // run 10 iterations before timing
-            .minEpochIterations(10) // time at least 100 iterations
+            .warmup(10)              // run 10 iterations before timing
+            .minEpochIterations(111) // time at least 100 iterations
             .run("not-vectorized", [&] {
                 std::vector<Real> pot_short = evaluate_short_range(System_00, Short_00, r_cut, alpha);
                 ankerl::nanobench::doNotOptimizeAway(pot_short);
@@ -967,8 +959,8 @@ void run_test_case_00(const TestOptions &opts) {
 
         ankerl::nanobench::Bench()
             .title("Short-range potential computation")
-            .warmup(10)             // run 100 iterations before timing
-            .minEpochIterations(10) // time at least 100 iterations
+            .warmup(10)              // run 100 iterations before timing
+            .minEpochIterations(111) // time at least 100 iterations
             .run("vectorized", [&] {
                 std::vector<Real> pot_short = evaluate_short_range(System_00, Short_00, r_cut, alpha, true);
                 ankerl::nanobench::doNotOptimizeAway(pot_short);
@@ -997,7 +989,7 @@ void run_test_case_00(const TestOptions &opts) {
     if (time) {
         ankerl::nanobench::Bench()
             .title("Long range Computation")
-            .warmup(10)             // run 10 iterations before timing
+            .warmup(10)              // run 10 iterations before timing
             .minEpochIterations(111) // time at least 100 iterations
             .run("Not Vectorized", [&] {
                 std::vector<Real> pot_long = evaluate_long_range(G_hat, System_00, N, p);
