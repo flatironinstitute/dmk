@@ -114,3 +114,5 @@ endif()
 if(${DMK_BUILD_EXAMPLES})
   add_subdirectory(examples)
 endif()
+
+add_subdirectory(perf)
