@@ -6,225 +6,6 @@
 #endif
 #include <sctl.hpp>
 
-template <class Real, class VecType, sctl::Integer DIM, sctl::Integer KDIM0, sctl::Integer KDIM1, sctl::Integer SCDIM,
-          class uKernel, sctl::Integer digits>
-struct uKerHelper {
-    template <class CtxType>
-    static inline void Eval(VecType *vt, const VecType (&dX)[DIM], const Real *vs, const sctl::Integer nd,
-                            const CtxType &ctx) {
-        VecType M[KDIM0][KDIM1][SCDIM];
-        uKernel::template uKerMatrix<digits>(M, dX, ctx);
-        for (sctl::Integer i = 0; i < nd; i++) {
-            const Real *vs_ = vs + i * SCDIM;
-            for (sctl::Integer k1 = 0; k1 < KDIM1; k1++) {
-                VecType *vt_ = vt + (k1 * nd + i) * SCDIM;
-                for (sctl::Integer k0 = 0; k0 < KDIM0; k0++) {
-                    const VecType vs0(vs_[(k0 * nd) * SCDIM + 0]);
-                    vt_[0] = FMA(M[k0][k1][0], vs0, vt_[0]);
-                    if (SCDIM == 2) {
-                        const VecType vs1(vs_[(k0 * nd) * SCDIM + 1]);
-                        vt_[0] = FMA(M[k0][k1][1], -vs1, vt_[0]);
-                        vt_[1] = FMA(M[k0][k1][1], vs0, vt_[1]);
-                        vt_[1] = FMA(M[k0][k1][0], vs1, vt_[1]);
-                    }
-                }
-            }
-        }
-    }
-    template <sctl::Integer nd, class CtxType>
-    static inline void EvalND(VecType *vt, const VecType (&dX)[DIM], const Real *vs, const CtxType &ctx) {
-        VecType M[KDIM0][KDIM1][SCDIM];
-        uKernel::template uKerMatrix<digits>(M, dX, ctx);
-        for (sctl::Integer i = 0; i < nd; i++) {
-            const Real *vs_ = vs + i * SCDIM;
-            for (sctl::Integer k1 = 0; k1 < KDIM1; k1++) {
-                VecType *vt_ = vt + (k1 * nd + i) * SCDIM;
-                for (sctl::Integer k0 = 0; k0 < KDIM0; k0++) {
-                    const VecType vs0(vs_[(k0 * nd) * SCDIM + 0]);
-                    vt_[0] = FMA(M[k0][k1][0], vs0, vt_[0]);
-                    if (SCDIM == 2) {
-                        const VecType vs1(vs_[(k0 * nd) * SCDIM + 1]);
-                        vt_[0] = FMA(M[k0][k1][1], -vs1, vt_[0]);
-                        vt_[1] = FMA(M[k0][k1][1], vs0, vt_[1]);
-                        vt_[1] = FMA(M[k0][k1][0], vs1, vt_[1]);
-                    }
-                }
-            }
-        }
-    }
-};
-
-template <class uKernel>
-class GenericKernel : public uKernel {
-    static constexpr sctl::Integer VecLen = uKernel::VecLen;
-    using VecType = typename uKernel::VecType;
-    using Real = typename uKernel::RealType;
-
-    template <sctl::Integer K0, sctl::Integer K1, sctl::Integer Q, sctl::Integer D, class... T>
-    static constexpr sctl::Integer get_DIM(void (*uKer)(VecType (&M)[K0][K1][Q], const VecType (&r)[D], T... args)) {
-        return D;
-    }
-    template <sctl::Integer K0, sctl::Integer K1, sctl::Integer Q, sctl::Integer D, class... T>
-    static constexpr sctl::Integer get_SCDIM(void (*uKer)(VecType (&M)[K0][K1][Q], const VecType (&r)[D], T... args)) {
-        return Q;
-    }
-    template <sctl::Integer K0, sctl::Integer K1, sctl::Integer Q, sctl::Integer D, class... T>
-    static constexpr sctl::Integer get_KDIM0(void (*uKer)(VecType (&M)[K0][K1][Q], const VecType (&r)[D], T... args)) {
-        return K0;
-    }
-    template <sctl::Integer K0, sctl::Integer K1, sctl::Integer Q, sctl::Integer D, class... T>
-    static constexpr sctl::Integer get_KDIM1(void (*uKer)(VecType (&M)[K0][K1][Q], const VecType (&r)[D], T... args)) {
-        return K1;
-    }
-
-    static constexpr sctl::Integer DIM = get_DIM(uKernel::template uKerMatrix<0, GenericKernel>);
-    static constexpr sctl::Integer SCDIM = get_SCDIM(uKernel::template uKerMatrix<0, GenericKernel>);
-    static constexpr sctl::Integer KDIM0 = get_KDIM0(uKernel::template uKerMatrix<0, GenericKernel>);
-    static constexpr sctl::Integer KDIM1 = get_KDIM1(uKernel::template uKerMatrix<0, GenericKernel>);
-
-  public:
-    GenericKernel() : ctx_ptr(this) {}
-
-    static constexpr sctl::Integer CoordDim() { return DIM; }
-    static constexpr sctl::Integer SrcDim() { return KDIM0 * SCDIM; }
-    static constexpr sctl::Integer TrgDim() { return KDIM1 * SCDIM; }
-
-    template <bool enable_openmp = false, sctl::Integer digits = -1>
-    void Eval(sctl::Vector<sctl::Vector<Real>> &v_trg_, const sctl::Vector<Real> &r_trg,
-              const sctl::Vector<Real> &r_src, const sctl::Vector<sctl::Vector<Real>> &v_src_,
-              const sctl::Integer nd) const {
-        if (nd == 1)
-            EvalHelper<enable_openmp, digits, 1>(v_trg_, r_trg, r_src, v_src_, nd);
-        else if (nd == 2)
-            EvalHelper<enable_openmp, digits, 2>(v_trg_, r_trg, r_src, v_src_, nd);
-        else if (nd == 3)
-            EvalHelper<enable_openmp, digits, 3>(v_trg_, r_trg, r_src, v_src_, nd);
-        else if (nd == 4)
-            EvalHelper<enable_openmp, digits, 4>(v_trg_, r_trg, r_src, v_src_, nd);
-        else if (nd == 5)
-            EvalHelper<enable_openmp, digits, 5>(v_trg_, r_trg, r_src, v_src_, nd);
-        else if (nd == 6)
-            EvalHelper<enable_openmp, digits, 6>(v_trg_, r_trg, r_src, v_src_, nd);
-        else if (nd == 7)
-            EvalHelper<enable_openmp, digits, 7>(v_trg_, r_trg, r_src, v_src_, nd);
-        else if (nd == 8)
-            EvalHelper<enable_openmp, digits, 8>(v_trg_, r_trg, r_src, v_src_, nd);
-        else
-            EvalHelper<enable_openmp, digits, 0>(v_trg_, r_trg, r_src, v_src_, nd);
-    }
-
-  private:
-    template <bool enable_openmp = false, sctl::Integer digits = -1, sctl::Integer ND = 0>
-    void EvalHelper(sctl::Vector<sctl::Vector<Real>> &v_trg_, const sctl::Vector<Real> &r_trg,
-                    const sctl::Vector<Real> &r_src, const sctl::Vector<sctl::Vector<Real>> &v_src_,
-                    const sctl::Integer nd) const {
-        static constexpr sctl::Integer digits_ =
-            (digits == -1 ? (sctl::Integer)(sctl::TypeTraits<Real>::SigBits * 0.3010299957) : digits);
-        auto uKerEval = [this](VecType *vt, const VecType(&dX)[DIM], const Real *vs, const sctl::Integer nd) {
-            if (ND > 0)
-                uKerHelper<Real, VecType, DIM, KDIM0, KDIM1, SCDIM, uKernel, digits_>::template EvalND<ND>(vt, dX, vs,
-                                                                                                           *this);
-            else
-                uKerHelper<Real, VecType, DIM, KDIM0, KDIM1, SCDIM, uKernel, digits_>::Eval(vt, dX, vs, nd, *this);
-        };
-
-        const sctl::Long Ns = r_src.Dim() / DIM;
-        const sctl::Long Nt = r_trg.Dim() / DIM;
-        SCTL_ASSERT(r_trg.Dim() == Nt * DIM);
-        SCTL_ASSERT(r_src.Dim() == Ns * DIM);
-
-        sctl::Vector<sctl::Long> src_cnt(v_src_.Dim()), src_dsp(v_src_.Dim());
-        src_dsp = 0;
-        sctl::Vector<sctl::Long> trg_cnt(v_trg_.Dim()), trg_dsp(v_trg_.Dim());
-        trg_dsp = 0;
-        for (sctl::Integer i = 0; i < trg_cnt.Dim(); i++) {
-            trg_cnt[i] = v_trg_[i].Dim() / Nt;
-            trg_dsp[i] = (i ? trg_dsp[i - 1] + trg_cnt[i - 1] : 0);
-        }
-        for (sctl::Integer i = 0; i < src_cnt.Dim(); i++) {
-            src_cnt[i] = v_src_[i].Dim() / Ns;
-            src_dsp[i] = (i ? src_dsp[i - 1] + src_cnt[i - 1] : 0);
-        }
-        SCTL_ASSERT(src_cnt[src_cnt.Dim() - 1] + src_dsp[src_dsp.Dim() - 1] == SrcDim() * nd);
-        SCTL_ASSERT(trg_cnt[trg_cnt.Dim() - 1] + trg_dsp[trg_dsp.Dim() - 1] == TrgDim() * nd);
-
-        sctl::Vector<Real> v_src(Ns * SrcDim() * nd);
-        for (sctl::Integer j = 0; j < src_cnt.Dim(); j++) {
-            const sctl::Integer src_cnt_ = src_cnt[j];
-            const sctl::Integer src_dsp_ = src_dsp[j];
-            for (sctl::Integer k = 0; k < src_cnt_; k++) {
-                for (sctl::Long i = 0; i < Ns; i++) {
-                    v_src[i * SrcDim() * nd + src_dsp_ + k] = v_src_[j][i * src_cnt_ + k];
-                }
-            }
-        }
-
-        const sctl::Long NNt = ((Nt + VecLen - 1) / VecLen) * VecLen;
-        {
-            const sctl::Matrix<Real> Xs_(Ns, DIM, (sctl::Iterator<Real>)r_src.begin(), false);
-            const sctl::Matrix<Real> Vs_(Ns, SrcDim() * nd, (sctl::Iterator<Real>)v_src.begin(), false);
-
-            sctl::Matrix<Real> Xt_(DIM, NNt), Vt_(TrgDim() * nd, NNt);
-            for (sctl::Long k = 0; k < DIM; k++) { // Set Xt_
-                for (sctl::Long i = 0; i < Nt; i++) {
-                    Xt_[k][i] = r_trg[i * DIM + k];
-                }
-                for (sctl::Long i = Nt; i < NNt; i++) {
-                    Xt_[k][i] = 0;
-                }
-            }
-            if (enable_openmp) { // Compute Vt_
-#pragma omp parallel for schedule(static)
-                for (sctl::Long t = 0; t < NNt; t += VecLen) {
-                    VecType xt[DIM], vt[TrgDim() * nd];
-                    for (sctl::Integer k = 0; k < TrgDim() * nd; k++)
-                        vt[k] = VecType::Zero();
-                    for (sctl::Integer k = 0; k < DIM; k++)
-                        xt[k] = VecType::LoadAligned(&Xt_[k][t]);
-
-                    for (sctl::Long s = 0; s < Ns; s++) {
-                        VecType dX[DIM];
-                        for (sctl::Integer k = 0; k < DIM; k++)
-                            dX[k] = xt[k] - Xs_[s][k];
-                        uKerEval(vt, dX, &Vs_[s][0], nd);
-                    }
-                    for (sctl::Integer k = 0; k < TrgDim() * nd; k++)
-                        vt[k].StoreAligned(&Vt_[k][t]);
-                }
-            } else {
-                for (sctl::Long t = 0; t < NNt; t += VecLen) {
-                    VecType xt[DIM], vt[TrgDim() * nd];
-                    for (sctl::Integer k = 0; k < TrgDim() * nd; k++)
-                        vt[k] = VecType::Zero();
-                    for (sctl::Integer k = 0; k < DIM; k++)
-                        xt[k] = VecType::LoadAligned(&Xt_[k][t]);
-
-                    for (sctl::Long s = 0; s < Ns; s++) {
-                        VecType dX[DIM];
-                        for (sctl::Integer k = 0; k < DIM; k++)
-                            dX[k] = xt[k] - Xs_[s][k];
-                        uKerEval(vt, dX, &Vs_[s][0], nd);
-                    }
-                    for (sctl::Integer k = 0; k < TrgDim() * nd; k++)
-                        vt[k].StoreAligned(&Vt_[k][t]);
-                }
-            }
-
-            for (sctl::Integer j = 0; j < trg_cnt.Dim(); j++) {
-                const sctl::Integer trg_cnt_ = trg_cnt[j];
-                const sctl::Integer trg_dsp_ = trg_dsp[j];
-                for (sctl::Long i = 0; i < Nt; i++) {
-                    for (sctl::Integer k = 0; k < trg_cnt_; k++) {
-                        v_trg_[j][i * trg_cnt_ + k] += Vt_[trg_dsp_ + k][i] * uKernel::uKerScaleFactor();
-                    }
-                }
-            }
-        }
-    }
-
-    void *ctx_ptr;
-};
-
 template <class Real, sctl::Integer VecLen_, sctl::Integer chrg, sctl::Integer dipo, sctl::Integer poten,
           sctl::Integer grad>
 struct Helmholtz3D {
@@ -306,7 +87,7 @@ template <class Real, sctl::Integer VecLen, sctl::Integer chrg, sctl::Integer di
 static void EvalHelmholtz(sctl::Vector<sctl::Vector<Real>> &v_trg, const sctl::Vector<Real> &r_trg,
                           const sctl::Vector<Real> &r_src, const sctl::Vector<sctl::Vector<Real>> &v_src,
                           const sctl::Integer nd, const Real *zk, const Real thresh, const sctl::Integer digits) {
-    GenericKernel<Helmholtz3D<Real, VecLen, chrg, dipo, poten, grad>> ker;
+    sctl::GenericKernel<Helmholtz3D<Real, VecLen, chrg, dipo, poten, grad>> ker;
     ker.thresh2 = thresh * thresh;
     ker.zk[0] = zk[0];
     ker.zk[1] = zk[1];
@@ -383,7 +164,7 @@ template <class Real, sctl::Integer VecLen, sctl::Integer chrg, sctl::Integer di
 static void EvalLaplace(sctl::Vector<sctl::Vector<Real>> &v_trg, const sctl::Vector<Real> &r_trg,
                         const sctl::Vector<Real> &r_src, const sctl::Vector<sctl::Vector<Real>> &v_src,
                         const sctl::Integer nd, const Real thresh, const sctl::Integer digits) {
-    GenericKernel<Laplace3D<Real, VecLen, chrg, dipo, poten, grad>> ker;
+    sctl::GenericKernel<Laplace3D<Real, VecLen, chrg, dipo, poten, grad>> ker;
     ker.thresh2 = thresh * thresh;
 
     if (digits < 0)
@@ -400,6 +181,126 @@ static void EvalLaplace(sctl::Vector<sctl::Vector<Real>> &v_trg, const sctl::Vec
         ker.template Eval<true, 15>(v_trg, r_trg, r_src, v_src, nd);
     else
         ker.template Eval<true, -1>(v_trg, r_trg, r_src, v_src, nd);
+}
+
+struct Laplace3DLocalPSWF {
+    template <class Real, sctl::Integer digits>
+    static constexpr auto get_coeffs = []() {
+        if constexpr (digits <= 3) {
+            return std::array<Real, 7>{1.627823522210361e-01,  -4.553645597616490e-01, 4.171687104204163e-01,
+                                       -7.073638602709915e-02, -8.957845614474928e-02, 2.617986644718201e-02,
+                                       9.633427876507601e-03};
+        } else if constexpr (digits <= 6) {
+            return std::array<Real, 13>{5.482525801351582e-02,  -2.616592110444692e-01, 4.862652666337138e-01,
+                                        -3.894296348642919e-01, 1.638587821812791e-02,  1.870328434198821e-01,
+                                        -8.714171086568978e-02, -3.927020727017803e-02, 3.728187607052319e-02,
+                                        3.153734425831139e-03,  -8.651313377285847e-03, 1.725110090795567e-04,
+                                        1.034762385284044e-03};
+        } else if constexpr (digits <= 9) {
+            return std::array<Real, 19>{
+                1.835718730962269e-02,  -1.258015846164503e-01, 3.609487248584408e-01,  -5.314579651112283e-01,
+                3.447559412892380e-01,  9.664692318551721e-02,  -3.124274531849053e-01, 1.322460720579388e-01,
+                9.773007866584822e-02,  -1.021958831082768e-01, -3.812847450976566e-03, 3.858117355875043e-02,
+                -8.728545924521301e-03, -9.401196355382909e-03, 4.024549377076924e-03,  1.512806105865091e-03,
+                -9.576734877247042e-04, -1.303457547418901e-04, 1.100385844683190e-04};
+        } else if constexpr (digits <= 12) {
+            return std::array<Real, 25>{
+                6.262472576363448e-03,  -5.605742936112479e-02, 2.185890864792949e-01,  -4.717350304955679e-01,
+                5.669680214206270e-01,  -2.511606878849214e-01, -2.744523658778361e-01, 4.582527599363415e-01,
+                -1.397724810121539e-01, -2.131762135835757e-01, 1.995489373508990e-01,  1.793390341864239e-02,
+                -1.035055132403432e-01, 3.035606831075176e-02,  3.153931762550532e-02,  -2.033178627450288e-02,
+                -5.406682731236552e-03, 7.543645573618463e-03,  1.437788047407851e-05,  -1.928370882351732e-03,
+                2.891658777328665e-04,  3.332996162099811e-04,  -8.397699195938912e-05, -3.015837377517983e-05,
+                9.640642701924662e-06};
+        }
+    };
+
+    template <class VecType>
+    struct Context {
+        VecType thresh2;
+        VecType d2max_vec;
+        VecType rsc_vec;
+        VecType cen_vec;
+    };
+
+    static const std::string &Name() {
+        static const std::string name = "Laplace3D-LocalPSWF";
+        return name;
+    };
+    static constexpr sctl::Integer FLOPS() {
+        // FIXME should be 'digits' dependent
+        return 1;
+    }
+    template <class Real>
+    static constexpr Real uKerScaleFactor() {
+        return 1;
+    }
+
+    template <sctl::Integer digits, class VecType>
+    static void uKerMatrix(VecType (&u)[1][1], const VecType (&dX)[3], const void *ctx_ptr) {
+        static_assert(digits <= 12, "Laplace3DLocalPSWF only supports up to 12 digits.");
+        using RealType = typename VecType::ScalarType;
+        static constexpr sctl::Integer COORD_DIM = 3;
+
+        const Context<VecType> &ker = *(Context<VecType> *)(ctx_ptr);
+
+        const auto &thresh2 = ker.thresh2;
+        const VecType &d2max_vec = ker.d2max_vec;
+        const VecType &rsc_vec = ker.rsc_vec;
+        const VecType &cen_vec = ker.cen_vec;
+        constexpr auto coefs = get_coeffs<typename VecType::ScalarType, digits>();
+
+        const VecType R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
+        const auto mask = (R2 > thresh2) & (R2 < d2max_vec);
+        // Branch misses not worth it for lower precisions. Always do the polynomial expansion then
+        if constexpr (digits >= 6) {
+            if (!mask_popcnt_intrin(mask)) {
+                u[0][0] = VecType::Zero();
+                return;
+            }
+        }
+        const VecType Rinv = sctl::approx_rsqrt<digits>(R2, mask);
+
+        // evaluate the PSWF kernel
+        const VecType xtmp = FMA(R2, Rinv, cen_vec) * rsc_vec;
+        const VecType ptmp = sctl::EvalPolynomial(xtmp.get(), coefs);
+
+        u[0][0] = ptmp * Rinv;
+    }
+};
+
+template <class Real, sctl::Integer ndim, sctl::Integer MaxVecLen = sctl::DefaultVecLen<Real>()>
+static void EvalLaplaceLocalPSWF(const int32_t *nd, const int32_t *digits, const Real *rsc, const Real *cen,
+                                 const Real *d2max, const Real *sources, const int32_t *ns, const Real *charge,
+                                 const Real *rtrg, const int32_t *nt, Real *pot, const Real *thresh2) {
+    sctl::GenericKernel<Laplace3DLocalPSWF> ker;
+    Laplace3DLocalPSWF::Context<sctl::Vec<Real, MaxVecLen>> ctx;
+
+    ctx.thresh2 = thresh2[0];
+    ctx.d2max_vec = d2max[0];
+    ctx.rsc_vec = rsc[0];
+    ctx.cen_vec = cen[0];
+
+    ker.SetCtxPtr(&ctx);
+
+    sctl::Vector<Real> v_trg(nt[0], pot, false);
+    sctl::Vector<Real> r_trg(ndim * nt[0], const_cast<Real *>(rtrg), false);
+    sctl::Vector<Real> r_src(ndim * ns[0], const_cast<Real *>(sources), false);
+    sctl::Vector<Real> v_src(ns[0], const_cast<Real *>(charge), false);
+    sctl::Vector<Real> n_src;
+
+    if (*digits < 0)
+        throw std::runtime_error("EvalLaplaceLocalPSFW only supports positive digits up to 12.");
+    else if (*digits <= 3)
+        ker.template Eval<Real, false, 3>(v_trg, r_trg, r_src, n_src, v_src);
+    else if (*digits <= 6)
+        ker.template Eval<Real, false, 6>(v_trg, r_trg, r_src, n_src, v_src);
+    else if (*digits <= 9)
+        ker.template Eval<Real, false, 9>(v_trg, r_trg, r_src, n_src, v_src);
+    else if (*digits <= 12)
+        ker.template Eval<Real, false, 12>(v_trg, r_trg, r_src, n_src, v_src);
+    else
+        throw std::runtime_error("EvalLaplaceLocalPSFW only supports up to 12 digits.");
 }
 
 /* local kernel for the 1/r kernel */
@@ -434,35 +335,7 @@ void l3d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
         Vt = 0;
     }
 
-    constexpr auto coefs = []() {
-        if constexpr (digits <= 3) {
-            return std::array<Real, 7>{1.627823522210361e-01,  -4.553645597616490e-01, 4.171687104204163e-01,
-                                       -7.073638602709915e-02, -8.957845614474928e-02, 2.617986644718201e-02,
-                                       9.633427876507601e-03};
-        } else if constexpr (digits <= 6) {
-            return std::array<Real, 13>{5.482525801351582e-02,  -2.616592110444692e-01, 4.862652666337138e-01,
-                                        -3.894296348642919e-01, 1.638587821812791e-02,  1.870328434198821e-01,
-                                        -8.714171086568978e-02, -3.927020727017803e-02, 3.728187607052319e-02,
-                                        3.153734425831139e-03,  -8.651313377285847e-03, 1.725110090795567e-04,
-                                        1.034762385284044e-03};
-        } else if constexpr (digits <= 9) {
-            return std::array<Real, 19>{
-                1.835718730962269e-02,  -1.258015846164503e-01, 3.609487248584408e-01,  -5.314579651112283e-01,
-                3.447559412892380e-01,  9.664692318551721e-02,  -3.124274531849053e-01, 1.322460720579388e-01,
-                9.773007866584822e-02,  -1.021958831082768e-01, -3.812847450976566e-03, 3.858117355875043e-02,
-                -8.728545924521301e-03, -9.401196355382909e-03, 4.024549377076924e-03,  1.512806105865091e-03,
-                -9.576734877247042e-04, -1.303457547418901e-04, 1.100385844683190e-04};
-        } else if constexpr (digits <= 12) {
-            return std::array<Real, 25>{
-                6.262472576363448e-03,  -5.605742936112479e-02, 2.185890864792949e-01,  -4.717350304955679e-01,
-                5.669680214206270e-01,  -2.511606878849214e-01, -2.744523658778361e-01, 4.582527599363415e-01,
-                -1.397724810121539e-01, -2.131762135835757e-01, 1.995489373508990e-01,  1.793390341864239e-02,
-                -1.035055132403432e-01, 3.035606831075176e-02,  3.153931762550532e-02,  -2.033178627450288e-02,
-                -5.406682731236552e-03, 7.543645573618463e-03,  1.437788047407851e-05,  -1.928370882351732e-03,
-                2.891658777328665e-04,  3.332996162099811e-04,  -8.397699195938912e-05, -3.015837377517983e-05,
-                9.640642701924662e-06};
-        }
-    }();
+    static constexpr auto coefs = Laplace3DLocalPSWF::get_coeffs<Real, digits>();
 
     Vec thresh2 = thresh[0];
     Vec d2max_vec = d2max[0];
@@ -490,16 +363,17 @@ void l3d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
             }
 
             const auto mask = (R2 > thresh2) & (R2 < d2max_vec);
-            if (mask_popcnt_intrin(mask) == 0)
-                continue;
+            if constexpr (digits >= 6) {
+                if (!mask_popcnt_intrin(mask))
+                    continue;
+            }
 
             const Vec Rinv = sctl::approx_rsqrt<digits>(R2, mask);
 
             // evaluate the PSWF kernel
             const Vec xtmp = FMA(R2, Rinv, cen_vec) * rsc_vec;
             Vec ptmp = sctl::EvalPolynomial(xtmp.get(), coefs);
-
-            ptmp = ptmp * Rinv;
+            ptmp *= Rinv;
 
             for (long i = 0; i < nd_; i++)
                 Vtrg[i] += Vec::Load1(&Vs_[s][i]) * ptmp;
@@ -515,17 +389,10 @@ void l3d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rsc
 
     constexpr auto horner_flops = [](int n_coeffs) { return 3 * n_coeffs - 1; };
     constexpr auto distance_flops = []() { return 3 * 3 + 3 + 3; };
-    constexpr auto inner_loop_flops = [horner_flops, distance_flops](int n_coeffs) {
-        return horner_flops(n_coeffs) + distance_flops() + 2;
+    constexpr auto inner_loop_flops = [horner_flops, distance_flops]() {
+        return horner_flops(coefs.size()) + distance_flops() + 2;
     };
-    if constexpr (digits <= 3)
-        sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, inner_loop_flops(7) * Nsrc * Ntrg + Ntrg);
-    else if constexpr (digits <= 6)
-        sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, inner_loop_flops(13) * Nsrc * Ntrg + Ntrg);
-    else if constexpr (digits <= 9)
-        sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, inner_loop_flops(19) * Nsrc * Ntrg + Ntrg);
-    else if constexpr (digits <= 12)
-        sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, inner_loop_flops(25) * Nsrc * Ntrg + Ntrg);
+    sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, inner_loop_flops() * Nsrc * Ntrg + Ntrg);
 }
 
 template <class Real, sctl::Integer MaxVecLen = sctl::DefaultVecLen<Real>()>
