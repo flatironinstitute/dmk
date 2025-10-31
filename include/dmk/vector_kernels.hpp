@@ -263,9 +263,9 @@ struct Laplace3DLocalPSWF {
 
         // evaluate the PSWF kernel
         const VecType xtmp = FMA(R2, Rinv, cen_vec) * rsc_vec;
-        const VecType ptmp = sctl::EvalPolynomial(xtmp.get(), coefs);
+        const VecType poly = sctl::EvalPolynomial(xtmp.get(), coefs);
 
-        u[0][0] = ptmp * Rinv;
+        u[0][0] = poly * Rinv;
     }
 };
 
@@ -303,7 +303,7 @@ void EvalLaplaceLocalPSWF(const int32_t *nd, const int32_t *digits, const Real *
         throw std::runtime_error("EvalLaplaceLocalPSFW only supports up to 12 digits.");
 }
 
-template <int n_dim, int n_coeffs_>
+template <int n_coeffs_>
 struct Laplace3DLocalUnknownCoeffs {
     static constexpr int n_coeffs = n_coeffs_;
 
@@ -321,7 +321,7 @@ struct Laplace3DLocalUnknownCoeffs {
         return name;
     };
     static constexpr sctl::Integer FLOPS() {
-        // FIXME should be 'digits' dependent
+        // FIXME should be 'digits' and n_coeffs_ dependent
         return 1;
     }
     template <class Real>
@@ -330,22 +330,15 @@ struct Laplace3DLocalUnknownCoeffs {
     }
 
     template <sctl::Integer digits, class VecType>
-    static void uKerMatrix(VecType (&u)[1][1], const VecType (&dX)[n_dim], const void *ctx_ptr) {
-        using RealType = typename VecType::ScalarType;
-        static constexpr sctl::Integer COORD_DIM = 3;
-
-        const Context<VecType> &ker = *(Context<VecType> *)(ctx_ptr);
-
-        const auto &thresh2 = ker.thresh2;
-        const auto &d2max_vec = ker.d2max_vec;
-        const auto &rsc_vec = ker.rsc_vec;
-        const auto &cen_vec = ker.cen_vec;
-        const auto &coefs = ker.coefs;
+    static void uKerMatrix(VecType (&u)[1][1], const VecType (&dX)[3], const void *ctx_ptr) {
+        const Context<VecType> &ctx = *(Context<VecType> *)(ctx_ptr);
 
         const VecType R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
-        const auto mask = (R2 > thresh2) & (R2 < d2max_vec);
+        const auto mask = (R2 > ctx.thresh2) & (R2 < ctx.d2max_vec);
+
         // Branch misses not worth it for lower precisions. Always do the polynomial expansion then
         if constexpr (digits >= 6) {
+            // Early exit if no targets are in range
             if (!mask_popcnt_intrin(mask)) {
                 u[0][0] = VecType::Zero();
                 return;
@@ -354,46 +347,21 @@ struct Laplace3DLocalUnknownCoeffs {
         const VecType Rinv = sctl::approx_rsqrt<digits>(R2, mask);
 
         // evaluate the PSWF kernel
-        const VecType xtmp = FMA(R2, Rinv, cen_vec) * rsc_vec;
-        const VecType ptmp = sctl::EvalPolynomial(xtmp.get(), coefs);
+        const VecType xtmp = FMA(R2, Rinv, ctx.cen_vec) * ctx.rsc_vec;
+        VecType poly = VecType::Zero();
+        for (int i = n_coeffs - 1; i >= 0; --i)
+            poly = FMA(poly, xtmp, VecType::Load1(&ctx.coefs[i]));
 
-        u[0][0] = ptmp * Rinv;
+        u[0][0] = poly * Rinv;
     }
 };
 
-template <class Real, sctl::Integer ndim, sctl::Integer n_coeffs, sctl::Integer MaxVecLen = sctl::DefaultVecLen<Real>()>
-void EvalLaplaceLocalUnknownCoeffs(const int32_t *nd, const int32_t *digits, const Real *rsc, const Real *cen,
-                                   const Real *d2max, const Real *sources, const int32_t *ns, const Real *charge,
-                                   const Real *rtrg, const int32_t *nt, Real *pot, const Real *thresh2,
-                                   const std::array<Real, n_coeffs> &coeffs) {
-    using KerType = Laplace3DLocalUnknownCoeffs<ndim, n_coeffs>;
-    using VecType = sctl::Vec<Real, MaxVecLen>;
-    typename KerType::template Context<VecType> ctx;
-    sctl::GenericKernel<KerType> ker;
-
-    ctx.thresh2 = thresh2[0];
-    ctx.d2max_vec = d2max[0];
-    ctx.rsc_vec = rsc[0];
-    ctx.cen_vec = cen[0];
-    ctx.coefs = coeffs;
-
-    ker.SetCtxPtr(&ctx);
-
-    sctl::Vector<Real> v_trg(nt[0], pot, false);
-    sctl::Vector<Real> r_trg(ndim * nt[0], const_cast<Real *>(rtrg), false);
-    sctl::Vector<Real> r_src(ndim * ns[0], const_cast<Real *>(sources), false);
-    sctl::Vector<Real> v_src(ns[0], const_cast<Real *>(charge), false);
-    sctl::Vector<Real> n_src; // unused normal
-
-    ker.template Eval<Real, false>(v_trg, r_trg, r_src, n_src, v_src, *digits, (const char *)(&ker));
-}
-
-template <class Real, sctl::Integer ndim, sctl::Integer n_coeffs, sctl::Integer MaxVecLen = sctl::DefaultVecLen<Real>()>
-void EvalLaplaceLocalUnknownCoeffs(int32_t nd, int digits, Real rsc, const Real cen, Real d2max, Real thresh2,
+template <class Real, int n_coeffs, int digits, sctl::Integer MaxVecLen = sctl::DefaultVecLen<Real>()>
+void EvalLaplaceLocalUnknownCoeffs(int32_t nd, Real rsc, const Real cen, Real d2max, Real thresh2,
                                    const std::array<Real, n_coeffs> &coeffs, const sctl::Vector<Real> &r_src,
                                    const sctl::Vector<Real> &charge, const sctl::Vector<Real> &r_trg,
                                    sctl::Vector<Real> &pot) {
-    using KerType = Laplace3DLocalUnknownCoeffs<ndim, n_coeffs>;
+    using KerType = Laplace3DLocalUnknownCoeffs<n_coeffs>;
     using VecType = sctl::Vec<Real, MaxVecLen>;
     typename KerType::template Context<VecType> ctx;
     sctl::GenericKernel<KerType> ker;
@@ -403,11 +371,87 @@ void EvalLaplaceLocalUnknownCoeffs(int32_t nd, int digits, Real rsc, const Real 
     ctx.rsc_vec = rsc;
     ctx.cen_vec = cen;
     ctx.coefs = coeffs;
-
     ker.SetCtxPtr(&ctx);
-    sctl::Vector<Real> n_src; // unused normal
 
-    ker.template Eval<Real, false>(pot, r_trg, r_src, n_src, charge, digits, (const char *)(&ker));
+    ker.template Eval<Real, false, digits>(pot, r_trg, r_src, {}, charge);
+}
+
+template <typename Real, int N>
+std::array<Real, N> vec2arr(const sctl::Vector<Real> &vec) {
+    std::array<Real, N> arr{};
+    std::copy_n(&vec[0], N, arr.data());
+    return arr;
+}
+
+template <int digits, typename Real, sctl::Integer MaxVecLen, int... N>
+void EvalLaplaceLocalUnknownCoeffs(int32_t nd, Real rsc, const Real cen, Real d2max, Real thresh2,
+                                   const sctl::Vector<Real> &coeffs, const sctl::Vector<Real> &r_src,
+                                   const sctl::Vector<Real> &charge, const sctl::Vector<Real> &r_trg,
+                                   sctl::Vector<Real> &pot) {
+    bool matched = false;
+    const int n_coeffs = coeffs.Dim();
+    ((n_coeffs == N ? (EvalLaplaceLocalUnknownCoeffs<Real, N, digits, MaxVecLen>(
+                           nd, rsc, cen, d2max, thresh2, vec2arr<Real, N>(coeffs), r_src, charge, r_trg, pot),
+                       matched = true)
+                    : false),
+     ...);
+    if (!matched)
+        throw std::runtime_error("Invalid n_coeffs for digits");
+}
+
+template <class Real, sctl::Integer MaxVecLen = sctl::DefaultVecLen<Real>()>
+void EvalLaplaceLocalUnknownCoeffs(int32_t nd, int digits, Real rsc, const Real cen, Real d2max, Real thresh2,
+                                   const sctl::Vector<Real> &coeffs, const sctl::Vector<Real> &r_src,
+                                   const sctl::Vector<Real> &charge, const sctl::Vector<Real> &r_trg,
+                                   sctl::Vector<Real> &pot) {
+    switch (digits) {
+    case 2:
+        EvalLaplaceLocalUnknownCoeffs<2, Real, MaxVecLen, 3, 4, 5, 6, 7, 8, 9, 10>(nd, rsc, cen, d2max, thresh2, coeffs,
+                                                                                   r_src, charge, r_trg, pot);
+        break;
+    case 3:
+        EvalLaplaceLocalUnknownCoeffs<3, Real, MaxVecLen, 5, 6, 7, 8, 9, 10, 11, 12>(nd, rsc, cen, d2max, thresh2,
+                                                                                     coeffs, r_src, charge, r_trg, pot);
+        break;
+    case 4:
+        EvalLaplaceLocalUnknownCoeffs<4, Real, MaxVecLen, 7, 8, 9, 10, 11, 12, 13, 14>(
+            nd, rsc, cen, d2max, thresh2, coeffs, r_src, charge, r_trg, pot);
+        break;
+    case 5:
+        EvalLaplaceLocalUnknownCoeffs<5, Real, MaxVecLen, 9, 10, 11, 12, 13, 14, 15, 16>(
+            nd, rsc, cen, d2max, thresh2, coeffs, r_src, charge, r_trg, pot);
+        break;
+    case 6:
+        EvalLaplaceLocalUnknownCoeffs<6, Real, MaxVecLen, 11, 12, 13, 14, 15, 16, 17, 18>(
+            nd, rsc, cen, d2max, thresh2, coeffs, r_src, charge, r_trg, pot);
+        break;
+    case 7:
+        EvalLaplaceLocalUnknownCoeffs<7, Real, MaxVecLen, 13, 14, 15, 16, 17, 18, 19, 20>(
+            nd, rsc, cen, d2max, thresh2, coeffs, r_src, charge, r_trg, pot);
+        break;
+    case 8:
+        EvalLaplaceLocalUnknownCoeffs<8, Real, MaxVecLen, 15, 16, 17, 18, 19, 20, 21, 22>(
+            nd, rsc, cen, d2max, thresh2, coeffs, r_src, charge, r_trg, pot);
+        break;
+    case 9:
+        EvalLaplaceLocalUnknownCoeffs<9, Real, MaxVecLen, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26>(
+            nd, rsc, cen, d2max, thresh2, coeffs, r_src, charge, r_trg, pot);
+        break;
+    case 10:
+        EvalLaplaceLocalUnknownCoeffs<10, Real, MaxVecLen, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28>(
+            nd, rsc, cen, d2max, thresh2, coeffs, r_src, charge, r_trg, pot);
+        break;
+    case 11:
+        EvalLaplaceLocalUnknownCoeffs<11, Real, MaxVecLen, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30>(
+            nd, rsc, cen, d2max, thresh2, coeffs, r_src, charge, r_trg, pot);
+        break;
+    case 12:
+        EvalLaplaceLocalUnknownCoeffs<12, Real, MaxVecLen, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32>(
+            nd, rsc, cen, d2max, thresh2, coeffs, r_src, charge, r_trg, pot);
+        break;
+    default:
+        throw std::runtime_error("Unsupported digits: " + std::to_string(digits));
+    }
 }
 
 /* local kernel for the 1/r kernel */

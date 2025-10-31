@@ -144,7 +144,7 @@ sctl::Vector<Real> make_polyfit_abs_error(Real tol) {
     dmk::Prolate0Fun prolate_fun(c0, 10000);
     const Real prolate_inf_inv = 1.0 / prolate_fun.int_eval(1.0);
     auto pswf = [&prolate_inf_inv, &prolate_fun](Real x) {
-        return 1.0 - prolate_inf_inv * prolate_fun.int_eval((x + 1) / 2.0);
+        return Real(1.0 - prolate_inf_inv * prolate_fun.int_eval((x + 1) / 2.0));
     };
 
     for (int n_coeffs = 5; n_coeffs < 32; ++n_coeffs) {
@@ -164,7 +164,6 @@ sctl::Vector<Real> make_polyfit_abs_error(Real tol) {
             if (passed) {
                 std::cout << "Achieved tol " << tol << " with n_coeffs = " << n_coeffs << std::endl;
                 auto coeffs = to_vector<sctl::Vector<Real>>(prolate_int_fun.coeffs());
-                std::reverse(coeffs.begin(), coeffs.end());
                 return coeffs;
             }
         } catch (std::exception &e) {
@@ -232,16 +231,15 @@ void laplace_3d_pswf_direct_uKernel_cpu(const Opts &opts, const sctl::Vector<Rea
 }
 
 template <class Real>
-void laplace_3d_coeffs_direct_uKernel_cpu(const Opts &opts, const sctl::Vector<Real> &r_src,
-                                          const sctl::Vector<Real> &r_trg, const sctl::Vector<Real> &charge,
-                                          sctl::Vector<Real> &u) {
+void laplace_3d_coeffs_direct_uKernel_cpu(const Opts &opts, const sctl::Vector<Real> &coefs,
+                                          const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &r_trg,
+                                          const sctl::Vector<Real> &charge, sctl::Vector<Real> &u) {
     constexpr int nd = 1;
     constexpr PSWFParams<Real> p;
     const int ns = r_src.Dim() / 3;
     const int nt = r_trg.Dim() / 3;
-    auto coefs = Laplace3DLocalPSWF::get_coeffs<Real, 3>();
-    EvalLaplaceLocalUnknownCoeffs<Real, 3, coefs.size()>(nd, opts.digits, p.rsc, p.cen, p.d2max, p.thresh2, coefs,
-                                                         r_src, charge, r_trg, u);
+    EvalLaplaceLocalUnknownCoeffs<Real>(nd, opts.digits, p.rsc, p.cen, p.d2max, p.thresh2, coefs, r_src, charge, r_trg,
+                                        u);
 }
 
 template <class Real>
@@ -354,6 +352,8 @@ void run_comparison(const Opts &opts) {
     sctl::Vector<Real> res(opts.n_trg);
     const int n_pairs = opts.n_src * opts.n_trg * 27;
     const int n_warmup = 4e9 / n_pairs;
+
+    auto coeffs = make_polyfit_abs_error<Real>(std::pow(10.0, -opts.digits));
     ankerl::nanobench::Bench().batch(n_pairs).unit("pair").warmup(n_warmup).run("Full", [&] {
         for (int i = 0; i < 27; ++i)
             evaluator(opts, r_src_all[i], r_trg_t, charges, res);
@@ -366,7 +366,7 @@ void run_comparison(const Opts &opts) {
     });
     ankerl::nanobench::Bench().batch(n_pairs).unit("pair").run("uKernelCoeff", [&] {
         for (int i = 0; i < 27; ++i)
-            laplace_3d_coeffs_direct_uKernel_cpu(opts, r_src_all[i], r_trg, charges, res);
+            laplace_3d_coeffs_direct_uKernel_cpu(opts, coeffs, r_src_all[i], r_trg, charges, res);
         ankerl::nanobench::doNotOptimizeAway(res);
     });
 }
