@@ -1,6 +1,8 @@
+#include <algorithm>
 #include <cstdlib>
 #include <dmk/vector_kernels.hpp>
 #include <nanobench.h>
+#include <polyfit/fast_eval.hpp>
 
 #include <stdexcept>
 
@@ -92,7 +94,7 @@ struct Opts {
         }
     }
 
-    int n_warmup = 2;
+    int n_warmup = 10;
     int n_src = 800;
     int n_trg = 800;
     int digits = 3;
@@ -101,30 +103,22 @@ struct Opts {
 };
 
 template <class Real>
-sctl::Matrix<Real> init_random(int rows, int cols, Real left = 0.0, Real right = 1.0) {
-    sctl::Matrix<Real> mat(rows, cols);
+sctl::Vector<Real> init_random(int rows, int cols, Real left = 0.0, Real right = 1.0) {
+    sctl::Vector<Real> mat(rows * cols);
     for (int i = 0; i < rows; ++i)
         for (int j = 0; j < cols; ++j)
-            mat(i, j) = left + (right - left) * drand48();
+            mat[i * cols + j] = left + (right - left) * drand48();
     return mat;
 }
 
-template <class Real, int N>
-Real eval_horner(const std::array<Real, N> &coefs, Real x) {
+auto eval_horner(const auto &coefs, typename std::decay_t<decltype(coefs)>::value_type x) {
+    using Real = typename std::decay_t<decltype(coefs)>::value_type;
     Real result = 0.0;
+    int N = coefs.size();
+
     for (int i = N - 1; i >= 0; --i)
         result = std::fma(result, x, coefs[i]);
-    return result;
-}
 
-template <class Real, int N>
-Real eval_poly_dumb(const std::array<Real, N> &coefs, Real x) {
-    Real result = 0.0;
-    Real xpow = 1.0;
-    for (int i = 0; i < N; ++i) {
-        result += coefs[i] * xpow;
-        xpow *= x;
-    }
     return result;
 }
 
@@ -137,9 +131,53 @@ struct PSWFParams {
     const T thresh2 = 1E-30;
 };
 
+template <class Vec>
+auto to_vector(const auto &arr) {
+    Vec vec(arr.size());
+    std::copy_n(arr.data(), arr.size(), &vec[0]);
+    return vec;
+}
+
+template <class Real>
+sctl::Vector<Real> make_polyfit_abs_error(Real tol) {
+    const Real c0 = procl180_rescale(tol);
+    dmk::Prolate0Fun prolate_fun(c0, 10000);
+    const Real prolate_inf_inv = 1.0 / prolate_fun.int_eval(1.0);
+    auto pswf = [&prolate_inf_inv, &prolate_fun](Real x) {
+        return 1.0 - prolate_inf_inv * prolate_fun.int_eval((x + 1) / 2.0);
+    };
+
+    for (int n_coeffs = 5; n_coeffs < 32; ++n_coeffs) {
+        try {
+            auto prolate_int_fun = poly_eval::make_func_eval(pswf, n_coeffs, -1.0, 1.0);
+
+            bool passed = true;
+            for (double x = -1.0; x <= 1.0; x += 0.01) {
+                const Real fit = prolate_int_fun(x);
+                const Real act = pswf(x);
+                const Real abs_err = std::abs(act - fit);
+                if (abs_err > tol) {
+                    passed = false;
+                    continue;
+                }
+            }
+            if (passed) {
+                std::cout << "Achieved tol " << tol << " with n_coeffs = " << n_coeffs << std::endl;
+                auto coeffs = to_vector<sctl::Vector<Real>>(prolate_int_fun.coeffs());
+                std::reverse(coeffs.begin(), coeffs.end());
+                return coeffs;
+            }
+        } catch (std::exception &e) {
+            std::cout << "Failed to fit with n_coeffs = " << n_coeffs << "\n";
+            std::cout << e.what() << std::endl;
+        }
+    }
+    return {};
+}
+
 template <class Real, int digits>
-void laplace_3d_pswf_direct(const sctl::Matrix<Real> &r_src, const sctl::Matrix<Real> &r_trg,
-                            const sctl::Matrix<Real> &charge, sctl::Vector<Real> &u) {
+void laplace_3d_pswf_direct(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &r_trg,
+                            const sctl::Vector<Real> &charge, sctl::Vector<Real> &u) {
     constexpr PSWFParams<Real> p;
 
     constexpr auto coefs = []() {
@@ -182,30 +220,100 @@ void laplace_3d_pswf_direct(const sctl::Matrix<Real> &r_src, const sctl::Matrix<
 }
 
 template <class Real>
-void laplace_3d_pswf_direct_uKernel_cpu(const Opts &opts, const sctl::Matrix<Real> &r_src,
-                                        const sctl::Matrix<Real> &r_trg, const sctl::Matrix<Real> &charge,
+void laplace_3d_pswf_direct_uKernel_cpu(const Opts &opts, const sctl::Vector<Real> &r_src,
+                                        const sctl::Vector<Real> &r_trg, const sctl::Vector<Real> &charge,
                                         sctl::Vector<Real> &u) {
     constexpr int nd = 1;
     constexpr PSWFParams<Real> p;
-    const int ns = r_src.Dim(0);
-    const int nt = r_trg.Dim(0);
-    EvalLaplaceLocalPSWF<Real, 3>(&nd, &opts.digits, &p.rsc, &p.cen, &p.d2max, &r_src(0, 0), &ns, &charge(0, 0),
-                                  &r_trg(0, 0), &nt, &u[0], &p.thresh2);
+    const int ns = r_src.Dim() / 3;
+    const int nt = r_trg.Dim() / 3;
+    EvalLaplaceLocalPSWF<Real, 3>(&nd, &opts.digits, &p.rsc, &p.cen, &p.d2max, &r_src[0], &ns, &charge[0], &r_trg[0],
+                                  &nt, &u[0], &p.thresh2);
 }
 
 template <class Real>
-void laplace_3d_pswf_direct_cpu(const Opts &opts, const sctl::Matrix<Real> &r_src, const sctl::Matrix<Real> &r_trg,
-                                const sctl::Matrix<Real> &charge, sctl::Vector<Real> &u) {
+void laplace_3d_coeffs_direct_uKernel_cpu(const Opts &opts, const sctl::Vector<Real> &r_src,
+                                          const sctl::Vector<Real> &r_trg, const sctl::Vector<Real> &charge,
+                                          sctl::Vector<Real> &u) {
     constexpr int nd = 1;
     constexpr PSWFParams<Real> p;
-    const int ns = r_src.Dim(0);
-    const int nt = r_trg.Dim(1);
-    const Real *xtrg = &r_trg(0, 0);
-    const Real *ytrg = &r_trg(1, 0);
-    const Real *ztrg = &r_trg(2, 0);
+    const int ns = r_src.Dim() / 3;
+    const int nt = r_trg.Dim() / 3;
+    auto coefs = Laplace3DLocalPSWF::get_coeffs<Real, 3>();
+    EvalLaplaceLocalUnknownCoeffs<Real, 3, coefs.size()>(nd, opts.digits, p.rsc, p.cen, p.d2max, p.thresh2, coefs,
+                                                         r_src, charge, r_trg, u);
+}
 
-    l3d_local_kernel_directcp_vec_cpp(&nd, &n_dim, &opts.digits, &p.rsc, &p.cen, &p.d2max, &r_src(0, 0), &ns,
-                                      &charge(0, 0), xtrg, ytrg, ztrg, &nt, &u[0], &p.thresh2);
+template <class Real>
+void laplace_3d_pswf_direct_cpu(const Opts &opts, const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &r_trg,
+                                const sctl::Vector<Real> &charge, sctl::Vector<Real> &u) {
+    constexpr int nd = 1;
+    constexpr PSWFParams<Real> p;
+    const int ns = r_src.Dim() / 3;
+    const int nt = r_trg.Dim() / 3;
+    const Real *xtrg = &r_trg[0 * nt];
+    const Real *ytrg = &r_trg[1 * nt];
+    const Real *ztrg = &r_trg[2 * nt];
+
+    l3d_local_kernel_directcp_vec_cpp(&nd, &n_dim, &opts.digits, &p.rsc, &p.cen, &p.d2max, &r_src[0], &ns, &charge[0],
+                                      xtrg, ytrg, ztrg, &nt, &u[0], &p.thresh2);
+}
+
+template <typename Real, sctl::Integer MaxVecLen = sctl::DefaultVecLen<Real>()>
+void eval_points_sctl_vec(const Real *__restrict__ pts, Real *__restrict__ res, int n_pts, const auto &coeffs) {
+    using VecType = sctl::Vec<Real, MaxVecLen>;
+    constexpr int unroll_factor = 2;
+    int i = 0;
+    int n_vec = n_pts / (MaxVecLen * unroll_factor) * (unroll_factor * MaxVecLen);
+    for (; i < n_vec; i += unroll_factor * MaxVecLen) {
+        VecType x[unroll_factor];
+        VecType y[unroll_factor];
+
+        for (int j = 0; j < unroll_factor; ++j) {
+            x[j] = VecType::LoadAligned(&pts[i + j * MaxVecLen]);
+            y[j] = sctl::EvalPolynomial(x[j].get(), coeffs);
+        }
+        for (int j = 0; j < unroll_factor; ++j)
+            y[j].StoreAligned(&res[i + j * MaxVecLen]);
+    }
+    for (; i < n_pts; ++i)
+        res[i] = eval_horner(coeffs, pts[i]);
+}
+
+template <typename Real>
+void compare_horner_polyfit_sctl() {
+    const int n_coeffs = 15;
+    const double eps = 1e-3;
+    const Real c0 = procl180_rescale(eps);
+    dmk::Prolate0Fun prolate_fun(c0, 10000);
+    const Real prolate_inf_inv = 1.0 / prolate_fun.int_eval(1.0);
+    auto pswf = [&prolate_inf_inv, &prolate_fun](Real x) {
+        return Real(1.0 - prolate_inf_inv * prolate_fun.int_eval((x + 1) / 2.0));
+    };
+
+    auto pswf_fit = poly_eval::make_func_eval<n_coeffs>(pswf, -1.0, 1.0);
+
+    int n_pts = 8001;
+    auto pts = init_random<Real>(n_pts, 1, -1.0, 1.0);
+    auto res = sctl::Vector<Real>(n_pts);
+
+    pswf_fit(&pts(0, 0), &res[0], n_pts);
+    auto coeffs = pswf_fit.coeffs();
+    std::reverse(coeffs.begin(), coeffs.end());
+
+    std::cout << res[n_pts - 1] << std::endl;
+    eval_points_sctl_vec(&pts(0, 0), &res[0], n_pts, coeffs);
+    std::cout << res[n_pts - 1] << std::endl;
+
+    ankerl::nanobench::Bench().batch(n_pts).unit("pts").warmup(1000).run("sctl", [&] {
+        eval_points_sctl_vec(&pts(0, 0), &res[0], n_pts, coeffs);
+        ankerl::nanobench::doNotOptimizeAway(res);
+    });
+
+    ankerl::nanobench::Bench().batch(n_pts).unit("pts").run("pf_0_0", [&] {
+        pswf_fit.template operator()(&pts(0, 0), &res[0], n_pts);
+        ankerl::nanobench::doNotOptimizeAway(res);
+    });
 }
 
 template <typename Real>
@@ -215,7 +323,7 @@ void run_comparison(const Opts &opts) {
     auto charges = init_random<Real>(1, opts.n_src, -1.0, 1.0);
     const int sample_offset = (opts.n_trg - 1);
 
-    std::array<sctl::Matrix<Real>, 27> r_src_all;
+    std::array<sctl::Vector<Real>, 27> r_src_all;
     for (auto &r : r_src_all)
         r = r_src_base;
     for (int i = 0; i < 3; ++i)
@@ -225,13 +333,13 @@ void run_comparison(const Opts &opts) {
                 const Real dr[3] = {i - Real{1.0}, j - Real{1.0}, k - Real{1.0}};
                 for (int s = 0; s < opts.n_src; ++s)
                     for (int l = 0; l < 3; ++l)
-                        r_src_all[image_idx](s, l) += dr[l];
+                        r_src_all[image_idx][s * 3 + l] += dr[l];
             }
 
-    auto r_src_all_t = r_src_all;
-    for (auto &r : r_src_all_t)
-        r = r.Transpose();
-    const auto r_trg_t = r_trg.Transpose();
+    auto r_trg_t = r_trg;
+    for (int i = 0; i < opts.n_src; ++i)
+        for (int j = 0; j < n_dim; ++j)
+            r_trg_t[j * opts.n_src + i] = r_trg[i * n_dim + j];
 
     auto evaluator = [&opts]() {
         switch (opts.eval) {
@@ -251,9 +359,14 @@ void run_comparison(const Opts &opts) {
             evaluator(opts, r_src_all[i], r_trg_t, charges, res);
         ankerl::nanobench::doNotOptimizeAway(res);
     });
-    ankerl::nanobench::Bench().batch(n_pairs).unit("pair").warmup(n_warmup).run("uKernel", [&] {
+    ankerl::nanobench::Bench().batch(n_pairs).unit("pair").run("uKernel", [&] {
         for (int i = 0; i < 27; ++i)
             laplace_3d_pswf_direct_uKernel_cpu(opts, r_src_all[i], r_trg, charges, res);
+        ankerl::nanobench::doNotOptimizeAway(res);
+    });
+    ankerl::nanobench::Bench().batch(n_pairs).unit("pair").run("uKernelCoeff", [&] {
+        for (int i = 0; i < 27; ++i)
+            laplace_3d_coeffs_direct_uKernel_cpu(opts, r_src_all[i], r_trg, charges, res);
         ankerl::nanobench::doNotOptimizeAway(res);
     });
 }
@@ -263,6 +376,7 @@ int main(int argc, char *argv[]) {
         Opts opts(argc, argv);
 
         if (opts.prec == 'f')
+            // compare_horner_polyfit_sctl<float>();
             run_comparison<float>(opts);
         else if (opts.prec == 'd')
             run_comparison<double>(opts);

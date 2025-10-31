@@ -65,6 +65,17 @@ add_subdirectory(extern/nanobench EXCLUDE_FROM_ALL)
 add_subdirectory(extern/doctest)
 add_subdirectory(extern/nda)
 
+include(FetchContent)
+FetchContent_Declare(
+    polyfit
+    GIT_REPOSITORY https://github.com/DiamonDinoia/polyfit.git
+    GIT_TAG        main
+)
+set(Build_Tests OFF CACHE BOOL "" FORCE) # gtest... tests
+set(MONOFIT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(MONOFIT_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(polyfit)
+
 file(GLOB_RECURSE DMK_REF_COMMON_SRC "src/common/*.f*" "vec-kernels/src/libkernels2.cpp")
 add_library(dmk_ref_common OBJECT ${DMK_REF_COMMON_SRC})
 set_target_properties(dmk_ref_common PROPERTIES POSITION_INDEPENDENT_CODE ON)
