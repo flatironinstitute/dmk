@@ -126,6 +126,11 @@ add_library(dmk_shared SHARED)
 set_target_properties(${PROJECT_NAME}_shared PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
 target_link_libraries(${PROJECT_NAME}_shared DMKOBJS dmk_ref_common OpenMP::OpenMP_CXX MPI::MPI_CXX BLAS::BLAS spdlog doctest ${PAPI_TARGET})
 
+file(GLOB_RECURSE EWALD_SRC "${PROJECT_SOURCE_DIR}/src/ewald.cpp")
+add_library(ewald STATIC ${EWALD_SRC})
+target_link_libraries(ewald PUBLIC dmk dmk_ref BLAS::BLAS MPI::MPI_CXX nanobench OpenMP::OpenMP_CXX ducc0 ${PAPI_TARGET})
+target_include_directories(ewald PUBLIC ${PROJECT_SOURCE_DIR}/include)
+
 if(${DMK_BUILD_TESTS})
   add_subdirectory(test)
 endif()
