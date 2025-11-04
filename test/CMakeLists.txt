@@ -13,3 +13,6 @@
 
 add_executable(test_all test_all.cpp)
 target_link_libraries(test_all dmk_shared dmk_ref doctest)
+
+add_executable(ewald_final_test test_ewald.cpp)
+target_link_libraries(ewald_final_test ewald)

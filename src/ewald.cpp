@@ -11,7 +11,7 @@ Otherwise, there is the option of creating a library. */
 #include <dmk/vector_kernels_pme.hpp>
 #include <ducc0/fft/fft.h>
 #include <ducc0/fft/fftnd_impl.h>
-#include <ewald_total.h>
+#include <dmk/ewald.h>
 #include <fstream>
 #include <getopt.h>
 #include <iostream>
@@ -443,7 +443,8 @@ void compute_potential(Real *pot, const Real *x, const Real *y, const Real *z, c
                        Real r_cut_sq, Real alpha) {
 
 // iterate through all source particles
-#pragma omp parallel for
+#pragma omp parallel for default(none)                                                                                 \
+    shared(pot, x, y, z, charges, x_other, y_other, z_other, offset, n_other, r_cut_sq, alpha, n_particles)
     for (int i = 0; i < n_particles; ++i) {
         // Moved repetitive comps out of inner loop
         const Real xi = x[i] - offset[0];
@@ -490,11 +491,11 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
     std::vector<Real> pot_sorted(n_trg, 0.0); // sorted potential vector
 
 // iterate through all boxes
-#pragma omp parallel for
+#pragma omp parallel for default(none) shared(n_boxes, pot_sorted, System, r_cut, Short, alpha, vectorized, n_trg)
     for (size_t box = 0; box < n_boxes; ++box) {
         // go through the neighbors
         const Real r_cut_sq = r_cut * r_cut;
-        constexpr int n_dim = 3;
+        const int n_dim = System.n_dim;
         const int n_src = System.n_src;
         const Real L = System.L;
 
@@ -504,12 +505,12 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
 
         Real *pot_part = &(pot_sorted[0]) + Short.box_begin[box];
         const int *box_corner = &Short.box_corners[box * n_dim];
-        std::array<Real, n_dim> offset;
+        std::vector<Real> offset(n_dim, 0.0);
 
         for (int nb : Short.box_neighbors[box]) {
             // check periodic boundary conditions
             const int *nb_corner = &Short.box_corners[nb * n_dim];
-            for (int a = 0; a < n_dim; ++a) { 
+            for (int a = 0; a < n_dim; ++a) {
                 int diff = box_corner[a] - nb_corner[a];
                 if (diff > 1)
                     offset[a] = L;
@@ -531,11 +532,11 @@ std::vector<Real> evaluate_short_range(const TestCaseSystem<Real> &System, Short
             if (!vectorized) {
                 // TODO: Pass a pointer to the potential function
                 compute_potential(pot_part, x, y, z, ch, Short.box_lengths[box], x_other, y_other, z_other,
-                                  Short.box_lengths[nb], offset.data(), r_cut_sq, alpha);
+                                  Short.box_lengths[nb], &(offset[0]), r_cut_sq, alpha);
             } else {
                 l3d_local_kernel_directcp_vec_cpp__rinv_helper<Real, 3>(r_cut_sq, r_other, Short.box_lengths[nb], ch, x,
                                                                         y, z, Short.box_lengths[box], alpha,
-                                                                        offset.data(), pot_part);
+                                                                        &(offset[0]), pot_part);
             }
         }
     }
@@ -561,20 +562,17 @@ std::vector<Real> compute_green_func(int N, Real alpha, Real L) {
     // TODO: generalize to different box lengths
     const Real h = L / N;
     const Real TWOPI_L = 2 * M_PI / L;
-    const Real HN = N / 2;
-    const Real four_alpha2_inv = Real{1.0} / (4 * alpha * alpha);
-    const Real FOURPI = 4 * M_PI;
 
     std::vector<Real> G(N * N * N, 0.0);
-#pragma omp parallel for
+#pragma omp parallel for default(none) shared(h, TWOPI_L, N, alpha, G)
     for (size_t w = 0; w < N; ++w) {
         for (size_t j = 0; j < N; ++j) {
             for (size_t i = 0; i < N; ++i) {
                 // TODO: optimize this step; structure the loop accordingly
                 // conditionals are expensive (?)
-                const int i_new = (i > HN) ? i - N : i;
-                const int j_new = (j > HN) ? j - N : j;
-                const int w_new = (w > HN) ? w - N : w;
+                const int i_new = (i > (N / 2)) ? i - N : i;
+                const int j_new = (j > (N / 2)) ? j - N : j;
+                const int w_new = (w > (N / 2)) ? w - N : w;
 
                 const int k_x = TWOPI_L * i_new;
                 const int k_y = TWOPI_L * j_new;
@@ -586,7 +584,7 @@ std::vector<Real> compute_green_func(int N, Real alpha, Real L) {
                 }
 
                 // update G_hat
-                G[i + N * (j + N * w)] = FOURPI / mode_sq * std::exp(-mode_sq * four_alpha2_inv);
+                G[i + N * (j + N * w)] = 4 * M_PI / mode_sq * std::exp(-mode_sq / (4 * alpha * alpha));
             }
         }
     }
@@ -694,12 +692,11 @@ int assign_charge(const std::vector<Real> &r_src, const std::vector<Real> &charg
     const int N3 = N * N * N;
     const size_t j_fac = N;
     const size_t k_fac = N * N;
-    const Real LN = 1 / L * N;
-    const Real hp = p / 2;
 
 #pragma omp parallel
     {
         std::vector<Real> local_grid(N3, 0.0);
+
 // iterate through charges and their coordinates
 #pragma omp for nowait
         for (size_t ind = 0; ind < n_charges; ++ind) {
@@ -715,9 +712,9 @@ int assign_charge(const std::vector<Real> &r_src, const std::vector<Real> &charg
             // identify the middle point (only works for odd number of points)
             // round to the nearest integer
             // TODO: generalize for even number of points
-            const int middle_x = int(x * LN + 0.50) % N; // e.g., if x=0.99, middle_x=0
-            const int middle_y = int(y * LN + 0.50) % N;
-            const int middle_z = int(z * LN + 0.50) % N;
+            const int middle_x = int(x / L * N + 0.50) % N; // e.g., if x=0.99, middle_x=0
+            const int middle_y = int(y / L * N + 0.50) % N;
+            const int middle_z = int(z / L * N + 0.50) % N;
 
             // compute W_x, W_y, W_z
             std::vector<Real> W_x = compute_contribution(x, middle_x, N, h, p, L);
@@ -725,17 +722,17 @@ int assign_charge(const std::vector<Real> &r_src, const std::vector<Real> &charg
             std::vector<Real> W_z = compute_contribution(z, middle_z, N, h, p, L);
 
             // update the grid values
-            for (int count_z = 0, k = middle_z - hp; count_z < p + 1; ++count_z, ++k) {
+            for (int count_z = 0, k = middle_z - p / 2; count_z < p + 1; ++count_z, ++k) {
                 int kk = (k + N) % N;
                 const size_t base_k = kk * k_fac;
                 wz = W_z[count_z] * fac;
 
-                for (int count_y = 0, j = middle_y - hp; count_y < p + 1; ++count_y, ++j) {
+                for (int count_y = 0, j = middle_y - p / 2; count_y < p + 1; ++count_y, ++j) {
                     int jj = (j + N) % N;
                     const size_t base_j = jj * j_fac + base_k;
                     wyz = wz * W_y[count_y];
 
-                    for (int count_x = 0, i = middle_x - hp; count_x < p + 1; ++count_x, ++i) {
+                    for (int count_x = 0, i = middle_x - p / 2; count_x < p + 1; ++count_x, ++i) {
                         int ii = (i + N) % N;
                         // grid[ii + base_j] += W_x[count_x] * wyz;
                         local_grid[ii + base_j] += W_x[count_x] * wyz;
@@ -761,12 +758,14 @@ int back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vect
                      Real L) {
 
     int n_trg = r_trg.size() / 3;
+    // std::vector<Real> W_x(p + 1, 0.0);
+    // std::vector<Real> W_y(p + 1, 0.0);
+    // std::vector<Real> W_z(p + 1, 0.0);
+    // Real wz, wyz;
     const size_t j_fac = N;
     const size_t k_fac = N * N;
-    const Real LN = 1 / L * N;
-    const Real hp = p / 2;
 
-#pragma omp parallel for
+#pragma omp parallel for default(none) shared(r_trg, pot, trg_pot, N, h, p, L, n_trg, j_fac, k_fac)
     for (size_t ind = 0; ind < n_trg; ++ind) {
         // coordinates of the target point
         // column-major
@@ -777,9 +776,9 @@ int back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vect
         // identify the middle point
         // round to the nearest integer
         // TODO: generalize for odd p / polynomial order
-        const int middle_x = int(x * LN + 0.50) % N; // e.g., if x=0.99, middle_x=0
-        const int middle_y = int(y * LN + 0.50) % N;
-        const int middle_z = int(z * LN + 0.50) % N;
+        const int middle_x = int(x / L * N + 0.50) % N; // e.g., if x=0.99, middle_x=0
+        const int middle_y = int(y / L * N + 0.50) % N;
+        const int middle_z = int(z / L * N + 0.50) % N;
 
         // compute W_x, W_y, W_z
         std::vector<Real> W_x = compute_contribution(x, middle_x, N, h, p, L);
@@ -791,17 +790,17 @@ int back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vect
         compute_contribution(W_y, y, middle_y, N, h, p, L);
         compute_contribution(W_z, z, middle_z, N, h, p, L);
 
-        for (int count_z = 0, k = middle_z - hp; count_z < p + 1; ++count_z, ++k) {
+        for (int count_z = 0, k = middle_z - p / 2; count_z < p + 1; ++count_z, ++k) {
             int kk = (k + N) % N;
             const size_t base_k = kk * k_fac;
             wz = W_z[count_z];
 
-            for (int count_y = 0, j = middle_y - hp; count_y < p + 1; ++count_y, ++j) {
+            for (int count_y = 0, j = middle_y - p / 2; count_y < p + 1; ++count_y, ++j) {
                 int jj = (j + N) % N;
                 const size_t base_j = jj * j_fac + base_k;
                 wyz = wz * W_y[count_y];
 
-                for (int count_x = 0, i = middle_x - hp; count_x < p + 1; ++count_x, ++i) {
+                for (int count_x = 0, i = middle_x - p / 2; count_x < p + 1; ++count_x, ++i) {
                     int ii = (i + N) % N;
                     accum += pot[ii + base_j] * W_x[count_x] * wyz;
                     // trg_pot[ind] += pot[ii + base_j] * W_x[count_x] * wyz;
@@ -1014,7 +1013,7 @@ void run_test_case_00(const TestOptions &opts) {
     }
 
     std::cout << "Final Potential:" << std::endl;
-    // print_vector(pot);
+    print_vector(pot);
 }
 
 // test case with two opposite charges very close to each other
@@ -1039,7 +1038,7 @@ void run_test_case_01(const TestOptions &opts) {
     pme_poisson3d_lagrange(pot.data(), n_src, n_dim, L, alpha, r_cut, N, p, true, false, r_src.data(), charges.data());
 
     std::cout << "Final Potential:" << std::endl;
-    print_vector(pot);
+    // print_vector(pot);
 }
 
 // test case: Madelung constant verification
