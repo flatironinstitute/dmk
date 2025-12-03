@@ -28,7 +28,7 @@ c
 c     nd - number of different densities
       nd=1
 c     dim - dimension of the problem
-      dim=3
+      dim=2
 c     ikernel - 0: Yukawa kernel; 1: Laplace kernel;
 c               2: square root Laplace kernel; 3: Stokeslet
       ikernel = 3

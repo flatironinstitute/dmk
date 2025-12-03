@@ -711,7 +711,7 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
 	foffd = EvalPolynomial(xtmp.get(),coffd[0],coffd[1],coffd[2],coffd[3],coffd[4],coffd[5],coffd[6],coffd[7],coffd[8],coffd[9],coffd[10],coffd[11],coffd[12],coffd[13],coffd[14],coffd[15],coffd[16],coffd[17],coffd[18],coffd[19],coffd[20],coffd[21],coffd[22],coffd[23]);
       }
       Vec R2sc = R2*bsizeinv2_vec;
-      Vec Fdiag = select((R2 >= d2min_vec) & (R2 <= d2max_vec), -0.25e0*Vec::log(R2sc)-fdiag, Vec::Zero());	  
+      Vec Fdiag = select((R2 >= d2min_vec) & (R2 <= d2max_vec), -0.25e0*log(R2sc)-fdiag, Vec::Zero());	  
       Vec Foffd = (0.5e0-foffd)*R2inv;
 
       for (long i = 0; i < nd_; i++) {
@@ -873,7 +873,7 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
 	foffd = EvalPolynomial(xtmp.get(),coffd[0],coffd[1],coffd[2],coffd[3],coffd[4],coffd[5],coffd[6],coffd[7],coffd[8],coffd[9],coffd[10],coffd[11],coffd[12],coffd[13],coffd[14],coffd[15],coffd[16],coffd[17],coffd[18],coffd[19],coffd[20],coffd[21],coffd[22],coffd[23]);
       }
       Vec R2sc = R2*bsizeinv2_vec;
-      Vec Fdiag = select((R2 >= d2min_vec) & (R2 <= d2max_vec), -0.25e0*Vec::log(R2sc)-fdiag, Vec::Zero());	  
+      Vec Fdiag = select((R2 >= d2min_vec) & (R2 <= d2max_vec), -0.25e0*log(R2sc)-fdiag, Vec::Zero());	  
       Vec Foffd = (0.5e0-foffd)*R2inv;
       Fdiag.StoreAligned(Fdiag_work+s);
       Foffd.StoreAligned(Foffd_work+s);

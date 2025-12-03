@@ -20,11 +20,11 @@ FFLAGS = -fPIC -O3 -march=native -funroll-loops -std=legacy -w
 #FFLAGS = -fPIC -O3 -march=native -funroll-loops -std=legacy -pg -no-pie -Wall
 CFLAGS= -fPIC -O3 -march=native -funroll-loops -std=c99
 #-fsanitize=address -g -rdynamic
-CXXFLAGS= -std=c++17 -DSCTL_PROFILE=-1 -fPIC -O3 -march=native -funroll-loops -Wno-unused-command-line-argument
+CXXFLAGS= -std=c++17 -DSCTL_PROFILE=-1 -fPIC -O3 -march=native -funroll-loops 
 #-fsanitize=address -g -rdynamic
 
 ifeq ($(FAST_KER),ON)
-  CXXFLAGS= -std=c++17 -DSCTL_PROFILE=-1 -DSCTL_HAVE_SVML -fPIC -O3 -march=native -funroll-loops -Wno-unused-command-line-argument
+  CXXFLAGS= -std=c++17 -DSCTL_PROFILE=-1 -fPIC -O3 -march=native -funroll-loops 
 # gcc flags
 #  CXXFLAGS= -std=c++11 -DSCTL_PROFILE=-1 -fPIC -O3 -march=native -funroll-loops
 endif
@@ -39,15 +39,10 @@ OMPFLAGS =-fopenmp
 OMPLIBS =-lgomp 
 OMP = OFF
 
-#LBLAS = -lblas -llapack
-LBLAS = -lopenblas
+LBLAS = -lblas -llapack
+#LBLAS = -lopenblas
 
 #LBLAS = -qmkl=sequential
-
-DMK_INSTALL_DIR=$(PREFIX)
-ifeq ($(PREFIX),)
-	DMK_INSTALL_DIR = ${HOME}/lib
-endif
 
 
 # absolute path of this makefile, ie DMK's top-level directory...
@@ -60,7 +55,6 @@ DMK = $(dir $(realpath $(firstword $(MAKEFILE_LIST))))
 LIBS += -lstdc++
 DYLIBS += -lstdc++
 CLIBS += -lstdc++
-FFLAGS += -lstdc++
 CFLAGS += -lstdc++
 
 
@@ -147,12 +141,6 @@ COMOBJS+= $(SRCDIR)/libkernels7.o
 PDMK = src/pdmk
 PDMKOBJS = $(PDMK)/lndiv.o \
 	$(PDMK)/lndiv_fast.o \
-	$(PDMK)/kernelevaluation/y2dkernels.o \
-	$(PDMK)/kernelevaluation/y3dkernels.o \
-	$(PDMK)/kernelevaluation/y3dkernels_fast.o \
-	$(PDMK)/kernelevaluation/l3dkernels.o \
-	$(PDMK)/kernelevaluation/logkernels.o \
-	$(PDMK)/kernelevaluation/sl3dkernels.o \
 	$(PDMK)/kernelevaluation/st2dkernels.o \
 	$(PDMK)/kernelevaluation/st3dkernels.o \
 	$(PDMK)/pdmk_pwterms_stokes3.o \
@@ -166,7 +154,7 @@ PDMKOBJS = $(PDMK)/lndiv.o \
 OBJS = $(COMOBJS) $(PDMKOBJS)
 
 
-.PHONY: usage lib install test-static test-dyn python 
+.PHONY: usage test-static test-dyn python 
 
 default: usage
 
@@ -176,11 +164,7 @@ $(SRCDIR)/libkernels7.o: $(SRCDIR)/libkernels7.cpp
 usage:
 	@echo "-------------------------------------------------------------------------"
 	@echo "Makefile for DMK. Specify what to make:"
-	@echo "  make install - compile and install the main library"
-	@echo "  make install PREFIX=(INSTALL_DIR) - compile and install the main library at custom location given by PREFIX"
-	@echo "  make lib - compile the main library (in lib/ and lib-static/)"
 	@echo "  make test-static - compile and run validation tests"
-	@echo "  make test-dyn - test successful installation by validation tests linked to dynamic library"
 	@echo "  make objclean - removal all object files, preserving lib"
 	@echo "  make clean - also remove lib and demo executables"
 	@echo ""
@@ -202,61 +186,20 @@ usage:
 #
 # build the library...
 #
-lib: $(STATICLIB) $(DYNAMICLIB)
-ifneq ($(OMP),OFF)
-	@echo "$(STATICLIB) and $(DYNAMICLIB) built, multithread versions"
-else
-	@echo "$(STATICLIB) and $(DYNAMICLIB) built, single-threaded versions"
-endif
-
-$(STATICLIB): $(OBJS) 
-	ar rcs $(STATICLIB) $(OBJS)
-	mv $(STATICLIB) lib-static/
-
-$(DYNAMICLIB): $(OBJS) 
-	$(FC) -shared -fPIC $(OBJS) -o $(DYNAMICLIB) $(DYLIBS)
-	mv $(DYNAMICLIB) lib/
-	[ ! -f $(LIMPLIB) ] || mv $(LIMPLIB) lib/
-
-install: $(STATICLIB) $(DYNAMICLIB)
-	echo $(DMK_INSTALL_DIR)
-	mkdir -p $(DMK_INSTALL_DIR)
-	cp -f lib/$(DYNAMICLIB) $(DMK_INSTALL_DIR)/
-	cp -f lib-static/$(STATICLIB) $(DMK_INSTALL_DIR)/
-	[ ! -f lib/$(LIMPLIB) ] || cp lib/$(LIMPLIB) $(DMK_INSTALL_DIR)/
-	@echo "Make sure to include " $(DMK_INSTALL_DIR) " in the appropriate path variable"
-	@echo "    LD_LIBRARY_PATH on Linux"
-	@echo "    PATH on windows"
-	@echo "    DYLD_LIBRARY_PATH on Mac OSX (not needed if default installation directory is used"
-	@echo " "
-	@echo "In order to link against the dynamic library, use -L"$(DMK_INSTALL_DIR)  " "$(LLINKLIB) " -L"$(FINUFFT_INSTALL_DIR)  " "$(LFINUFFTLINKLIB)
-
-
 #
 # testing routines
 #
-test-static: $(STATICLIB)  test/pdmk-static
-	cd test/pdmk; ./int2-pdmk
-
-test-dyn: $(DYNAMICLIB)  test/pdmk-dyn
+test-static:  $(OBJS) test/pdmk-static
 	cd test/pdmk; ./int2-pdmk
 
 test/pdmk-static:
-	$(FC) $(FFLAGS) test/pdmk/teststokesdmk.f -o test/pdmk/int2-pdmk lib-static/$(STATICLIB) $(LIBS) 
+	$(FC) $(FFLAGS) test/pdmk/teststokesdmk.f -o test/pdmk/int2-pdmk $(OBJS) $(LIBS)
 
-
-#
-# Linking test files to dynamic libraries
-#
-
-test/pdmk-dyn:
-	$(FC) $(FFLAGS) test/pdmk/teststokesdmk.f -o test/pdmk/int2-pdmk $(ABSDYNLIB) $(LBLAS) $(LDBLASINC)
 
 #
 # housekeeping routines
 #
 clean: objclean
-	rm -f lib-static/*.a lib/*.so
 	rm -f test/pdmk/int2-pdmk
 	rm -f test/bdmk/int2-bdmk
 
