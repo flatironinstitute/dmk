@@ -217,6 +217,9 @@ namespace SCTL_NAMESPACE {
       friend Vec exp(const Vec& x) {
         return exp_intrin(x.v);
       }
+      friend Vec log(const Vec& x) {
+        return log_intrin(x.v);
+      }
       friend Vec erfc(const Vec& x) {
         return erfc_intrin(x.v);
       }

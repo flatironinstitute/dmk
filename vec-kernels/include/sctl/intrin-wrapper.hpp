@@ -982,6 +982,15 @@ namespace SCTL_NAMESPACE { // Generic
     for (Integer i = 0; i < VData::Size; i++) expx_.x[i] = exp(x_.x[i]);
     return expx_.v;
   }
+  template <class VData> VData log_intrin(const VData& x) {
+    union U {
+      VData v;
+      typename VData::ScalarType x[VData::Size];
+    };
+    U logx_, x_ = {x};
+    for (Integer i = 0; i < VData::Size; i++) logx_.x[i] = log(x_.x[i]);
+    return logx_.v;
+  }
   template <class VData> VData erfc_intrin(const VData& x) {
     union U {
       VData v;

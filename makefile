@@ -1,14 +1,14 @@
 # Makefile for the point DMK
 
 # compiler, and linking from C, fortran
-#CC = gcc
-#CXX = g++
-#FC = gfortran
+CC = gcc
+CXX = g++
+FC = gfortran
 FAST_KER = ON
 
-CC = icx
-CXX = icpx
-FC = ifx
+#CC = icx
+#CXX = icpx
+#FC = ifx
 
 CLINK = -lstdc++
 FLINK = $(CLINK)
@@ -40,9 +40,9 @@ OMPLIBS =-lgomp
 OMP = OFF
 
 #LBLAS = -lblas -llapack
-#LBLAS = -lopenblas
+LBLAS = -lopenblas
 
-LBLAS = -qmkl=sequential
+#LBLAS = -qmkl=sequential
 
 DMK_INSTALL_DIR=$(PREFIX)
 ifeq ($(PREFIX),)
@@ -103,7 +103,6 @@ DYLIBS += $(LBLAS) $(LDBLASINC)
 # vectorized kernel directory
 SRCDIR = ./vec-kernels/src
 INCDIR = ./vec-kernels/include
-VCLDIR = ./extern/VCL/version2
 #
 # objects to compile
 # 
@@ -172,7 +171,7 @@ OBJS = $(COMOBJS) $(PDMKOBJS)
 default: usage
 
 $(SRCDIR)/libkernels7.o: $(SRCDIR)/libkernels7.cpp
-		$(CXX) $(CXXFLAGS) -I$(VCLDIR) -I$(INCDIR) -c $^ -o $@
+		$(CXX) $(CXXFLAGS) -I$(INCDIR) -c $^ -o $@
 
 usage:
 	@echo "-------------------------------------------------------------------------"
