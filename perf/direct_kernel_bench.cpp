@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <dmk/vector_kernels.hpp>
+#include <filesystem>
 #include <format>
 #include <limits>
 #include <nanobench.h>
@@ -11,8 +12,6 @@
 #include <dmk/prolate0_eval.hpp>
 
 #include <rufus.hpp>
-
-#include "jit_kernels_ir.h"
 
 constexpr int n_dim = 3;
 
@@ -361,7 +360,8 @@ void run_comparison(const Opts &opts) {
     auto coeffs = make_polyfit_abs_error<Real>(std::pow(10.0, -opts.digits));
 
     RuFuS RS;
-    RS.load_ir_string(rufus::embedded::jit_kernels_ir);
+    auto dir = std::filesystem::read_symlink("/proc/self/exe").parent_path();
+    RS.load_ir_file(dir / "jit_kernels.ll");
 
     constexpr int V = std::is_same_v<Real, float> ? 16 : 8;
     constexpr auto T = std::is_same_v<Real, float> ? "float" : "double";
@@ -460,13 +460,14 @@ void run_comparison(const Opts &opts) {
             laplace_3d_coeffs_direct_uKernel_cpu(opts, coeffs, r_src_all[i], r_trg, charges, res);
         ankerl::nanobench::doNotOptimizeAway(res);
     });
-    ankerl::nanobench::Bench().batch(n_pairs).unit("pair").run("uKernelJitNCoeffsDigits", [&] {
-        constexpr PSWFParams<Real> p;
-        for (int i = 0; i < 27; ++i)
-            jit_n_coeffs_n_digits(1, p.rsc, p.cen, p.d2max, p.thresh2, &coeffs[0], opts.n_src, &r_src_all[i][0],
-                                  &charges[0], opts.n_trg, &r_trg[0], &res[0]);
-        ankerl::nanobench::doNotOptimizeAway(res);
-    });
+    while (1)
+        ankerl::nanobench::Bench().batch(n_pairs).unit("pair").run("uKernelJitNCoeffsDigits", [&] {
+            constexpr PSWFParams<Real> p;
+            for (int i = 0; i < 27; ++i)
+                jit_n_coeffs_n_digits(1, p.rsc, p.cen, p.d2max, p.thresh2, &coeffs[0], opts.n_src, &r_src_all[i][0],
+                                      &charges[0], opts.n_trg, &r_trg[0], &res[0]);
+            ankerl::nanobench::doNotOptimizeAway(res);
+        });
     ankerl::nanobench::Bench().batch(n_pairs).unit("pair").run("uKernelJitNCoeffs", [&] {
         constexpr PSWFParams<Real> p;
         for (int i = 0; i < 27; ++i)
