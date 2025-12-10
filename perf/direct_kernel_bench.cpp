@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <dmk/vector_kernels.hpp>
 #include <format>
+#include <limits>
 #include <nanobench.h>
 #include <polyfit/fast_eval.hpp>
 
@@ -60,7 +61,7 @@ enum Evaluator : int { DIRECT_CPU };
 struct Opts {
     Opts(int argc, char *argv[]) {
         int opt;
-        while ((opt = getopt(argc, argv, "N:M:d:t:h?")) != -1) {
+        while ((opt = getopt(argc, argv, "N:M:d:t:e:u:h?")) != -1) {
             switch (opt) {
             case 'N':
                 n_src = std::atof(optarg);
@@ -70,6 +71,9 @@ struct Opts {
                 break;
             case 'd':
                 digits = std::atoi(optarg);
+                break;
+            case 'u':
+                unroll_factor = std::atoi(optarg);
                 break;
             case 't':
                 if (optarg[0] == 'd')
@@ -103,6 +107,7 @@ struct Opts {
     int n_src = 800;
     int n_trg = 800;
     int digits = 3;
+    int unroll_factor = 1;
     char prec = 'f';
     Evaluator eval = DIRECT_CPU;
 };
@@ -361,20 +366,20 @@ void run_comparison(const Opts &opts) {
     constexpr int V = std::is_same_v<Real, float> ? 16 : 8;
     constexpr auto T = std::is_same_v<Real, float> ? "float" : "double";
     const auto func_name = std::format("void laplace_pswf_all_pairs_jit<{}, {}>(int, int, {}, {}, {}, {}, "
-                                       "int, {} const*, int, {} const*, {} const*, int, {} const*, {}*)",
+                                       "int, {} const*, int, {} const*, {} const*, int, {} const*, {}*, int)",
                                        T, V, T, T, T, T, T, T, T, T, T);
 
-    auto jit_n_coeffs_n_digits =
-        RS.compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *, const Real *, int,
-                            const Real *, Real *)>(func_name, {{"n_coeffs", coeffs.Dim()}, {"n_digits", opts.digits}});
+    auto jit_n_coeffs_n_digits = RS.compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
+                                                     const Real *, int, const Real *, Real *)>(
+        func_name, {{"n_coeffs", coeffs.Dim()}, {"n_digits", opts.digits}, {"unroll_factor", opts.unroll_factor}});
 
-    auto jit_n_coeffs =
-        RS.compile<void (*)(int, int, Real, Real, Real, Real, const Real *, int, const Real *, const Real *, int,
-                            const Real *, Real *)>(func_name, {{"n_coeffs", coeffs.Dim()}});
+    auto jit_n_coeffs = RS.compile<void (*)(int, int, Real, Real, Real, Real, const Real *, int, const Real *,
+                                            const Real *, int, const Real *, Real *)>(
+        func_name, {{"n_coeffs", coeffs.Dim()}, {"unroll_factor", opts.unroll_factor}});
 
     auto jit_func_unspecialized =
         RS.compile<void (*)(int, int, Real, Real, Real, Real, int, const Real *, int, const Real *, const Real *, int,
-                            const Real *, Real *)>(func_name, {});
+                            const Real *, Real *)>(func_name, {{"unroll_factor", opts.unroll_factor}});
 
     if (!jit_n_coeffs_n_digits)
         return;
@@ -416,10 +421,16 @@ void run_comparison(const Opts &opts) {
         std::cout << std::endl;
 
         res = 0;
-        laplace_3d_coeffs_direct_uKernel_cpu(opts, coeffs, r_src_base, r_trg, charges, res);
+        auto test = res;
+        laplace_3d_coeffs_direct_uKernel_cpu(opts, coeffs, r_src_base, r_trg, charges, test);
+        jit_n_coeffs_n_digits(1, p.rsc, p.cen, p.d2max, p.thresh2, &coeffs[0], opts.n_src, &r_src_base[0], &charges[0],
+                              opts.n_trg, &r_trg[0], &res[0]);
         for (int j = 0; j < 16; ++j)
-            std::cout << res[j] << " ";
+            std::cout << test[j] << " ";
         std::cout << std::endl;
+        for (int i = 0; i < res.Dim(); ++i)
+            if (test[i] && std::abs(1.0 - res[i] / test[i]) > 5 * std::numeric_limits<Real>::epsilon())
+                std::cout << "OOF: " << i << " " << res[i] << " " << test[i] << "\n";
     }
 
     const int n_pairs = opts.n_src * opts.n_trg * 27;
