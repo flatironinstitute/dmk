@@ -1,12 +1,17 @@
 #include <algorithm>
 #include <cstdlib>
 #include <dmk/vector_kernels.hpp>
+#include <format>
 #include <nanobench.h>
 #include <polyfit/fast_eval.hpp>
 
 #include <stdexcept>
 
 #include <dmk/prolate0_eval.hpp>
+
+#include <rufus.hpp>
+
+#include "jit_kernels_ir.h"
 
 constexpr int n_dim = 3;
 
@@ -348,12 +353,87 @@ void run_comparison(const Opts &opts) {
             throw std::runtime_error("Unknown evaluator");
         }
     }();
+    auto coeffs = make_polyfit_abs_error<Real>(std::pow(10.0, -opts.digits));
+
+    RuFuS RS;
+    RS.load_ir_string(rufus::embedded::jit_kernels_ir);
+
+    constexpr int V = std::is_same_v<Real, float> ? 16 : 8;
+    constexpr auto T = std::is_same_v<Real, float> ? "float" : "double";
+    const auto func_name = std::format("void laplace_pswf_all_pairs_jit<{}, {}>(int, int, {}, {}, {}, {}, "
+                                       "int, {} const*, int, {} const*, {} const*, int, {} const*, {}*)",
+                                       T, V, T, T, T, T, T, T, T, T, T);
+
+    auto jit_n_coeffs_n_digits =
+        RS.compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *, const Real *, int,
+                            const Real *, Real *)>(func_name, {{"n_coeffs", coeffs.Dim()}, {"n_digits", opts.digits}});
+
+    auto jit_n_coeffs =
+        RS.compile<void (*)(int, int, Real, Real, Real, Real, const Real *, int, const Real *, const Real *, int,
+                            const Real *, Real *)>(func_name, {{"n_coeffs", coeffs.Dim()}});
+
+    auto jit_func_unspecialized =
+        RS.compile<void (*)(int, int, Real, Real, Real, Real, int, const Real *, int, const Real *, const Real *, int,
+                            const Real *, Real *)>(func_name, {});
+
+    if (!jit_n_coeffs_n_digits)
+        return;
 
     sctl::Vector<Real> res(opts.n_trg);
+    {
+        constexpr PSWFParams<Real> p;
+        res = 0;
+        jit_n_coeffs_n_digits(1, p.rsc, p.cen, p.d2max, p.thresh2, &coeffs[0], opts.n_src, &r_src_base[0], &charges[0],
+                              opts.n_trg, &r_trg[0], &res[0]);
+        for (int j = 0; j < 16; ++j)
+            std::cout << res[j] << " ";
+        std::cout << std::endl;
+
+        res = 0;
+        jit_n_coeffs(1, opts.digits, p.rsc, p.cen, p.d2max, p.thresh2, &coeffs[0], opts.n_src, &r_src_base[0],
+                     &charges[0], 16, &r_trg[0], &res[0]);
+        for (int j = 0; j < 16; ++j)
+            std::cout << res[j] << " ";
+        std::cout << std::endl;
+
+        res = 0;
+        jit_func_unspecialized(1, opts.digits, p.rsc, p.cen, p.d2max, p.thresh2, coeffs.Dim(), &coeffs[0], opts.n_src,
+                               &r_src_base[0], &charges[0], opts.n_trg, &r_trg[0], &res[0]);
+        for (int j = 0; j < 16; ++j)
+            std::cout << res[j] << " ";
+        std::cout << std::endl;
+
+        res = 0;
+        evaluator(opts, r_src_base, r_trg_t, charges, res);
+        for (int j = 0; j < 16; ++j)
+            std::cout << res[j] << " ";
+        std::cout << std::endl;
+
+        res = 0;
+        laplace_3d_pswf_direct_uKernel_cpu(opts, r_src_base, r_trg_t, charges, res);
+        for (int j = 0; j < 16; ++j)
+            std::cout << res[j] << " ";
+        std::cout << std::endl;
+
+        res = 0;
+        laplace_3d_coeffs_direct_uKernel_cpu(opts, coeffs, r_src_base, r_trg, charges, res);
+        for (int j = 0; j < 16; ++j)
+            std::cout << res[j] << " ";
+        std::cout << std::endl;
+    }
+
     const int n_pairs = opts.n_src * opts.n_trg * 27;
     const int n_warmup = 4e9 / n_pairs;
-
-    auto coeffs = make_polyfit_abs_error<Real>(std::pow(10.0, -opts.digits));
+    {
+        int i = 13;
+        constexpr PSWFParams<Real> p;
+        auto res_jit = res;
+        jit_n_coeffs_n_digits(1, p.rsc, p.cen, p.d2max, p.thresh2, &coeffs[0], opts.n_src, &r_src_all[i][0],
+                              &charges[0], opts.n_trg, &r_trg[0], &res_jit[0]);
+        auto res_evaluator = res;
+        evaluator(opts, r_src_all[i], r_trg_t, charges, res_evaluator);
+        std::cout << res_jit[sample_offset] << " " << res_evaluator[sample_offset] << std::endl;
+    }
     ankerl::nanobench::Bench().batch(n_pairs).unit("pair").warmup(n_warmup).run("Full", [&] {
         for (int i = 0; i < 27; ++i)
             evaluator(opts, r_src_all[i], r_trg_t, charges, res);
@@ -367,6 +447,27 @@ void run_comparison(const Opts &opts) {
     ankerl::nanobench::Bench().batch(n_pairs).unit("pair").run("uKernelCoeff", [&] {
         for (int i = 0; i < 27; ++i)
             laplace_3d_coeffs_direct_uKernel_cpu(opts, coeffs, r_src_all[i], r_trg, charges, res);
+        ankerl::nanobench::doNotOptimizeAway(res);
+    });
+    ankerl::nanobench::Bench().batch(n_pairs).unit("pair").run("uKernelJitNCoeffsDigits", [&] {
+        constexpr PSWFParams<Real> p;
+        for (int i = 0; i < 27; ++i)
+            jit_n_coeffs_n_digits(1, p.rsc, p.cen, p.d2max, p.thresh2, &coeffs[0], opts.n_src, &r_src_all[i][0],
+                                  &charges[0], opts.n_trg, &r_trg[0], &res[0]);
+        ankerl::nanobench::doNotOptimizeAway(res);
+    });
+    ankerl::nanobench::Bench().batch(n_pairs).unit("pair").run("uKernelJitNCoeffs", [&] {
+        constexpr PSWFParams<Real> p;
+        for (int i = 0; i < 27; ++i)
+            jit_n_coeffs(1, opts.digits, p.rsc, p.cen, p.d2max, p.thresh2, &coeffs[0], opts.n_src, &r_src_all[i][0],
+                         &charges[0], opts.n_trg, &r_trg[0], &res[0]);
+        ankerl::nanobench::doNotOptimizeAway(res);
+    });
+    ankerl::nanobench::Bench().batch(n_pairs).unit("pair").run("uKernelJitNone", [&] {
+        constexpr PSWFParams<Real> p;
+        for (int i = 0; i < 27; ++i)
+            jit_func_unspecialized(1, opts.digits, p.rsc, p.cen, p.d2max, p.thresh2, coeffs.Dim(), &coeffs[0],
+                                   opts.n_src, &r_src_all[i][0], &charges[0], opts.n_trg, &r_trg[0], &res[0]);
         ankerl::nanobench::doNotOptimizeAway(res);
     });
 }

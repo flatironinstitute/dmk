@@ -13,3 +13,6 @@
 [submodule "extern/nda"]
 	path = extern/nda
 	url = https://github.com/TRIQS/nda
+[submodule "extern/RuFuS"]
+	path = extern/RuFuS
+	url = https://github.com/blackwer/RuFuS

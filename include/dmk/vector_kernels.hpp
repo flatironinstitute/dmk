@@ -2569,8 +2569,8 @@ void st2d_local_kernel_directcp_vec_cpp_helper(const int32_t *nd, const Real *rs
             Vec one = 1.0e0;
             Vec R2inv = select((R2 >= d2min_vec) & (R2 <= d2max_vec), one / R2, Vec::Zero());
             Vec xtmp = FMA(R2, rsc_vec, cen_vec);
-            Vec fdiag = EvalPolynomial(x.get(), cdiag);
-            Vec foffd = EvalPolynomial(x.get(), coffd);
+            Vec fdiag = EvalPolynomial(xtmp.get(), cdiag);
+            Vec foffd = EvalPolynomial(xtmp.get(), coffd);
             Vec R2sc = R2 * bsizeinv2_vec;
             Vec Fdiag = select((R2 >= d2min_vec) & (R2 <= d2max_vec), -0.25e0 * sctl::log(R2sc) - fdiag, Vec::Zero());
             Vec Foffd = (0.5e0 - foffd) * R2inv;

@@ -64,6 +64,10 @@ add_subdirectory(extern/spdlog EXCLUDE_FROM_ALL)
 add_subdirectory(extern/nanobench EXCLUDE_FROM_ALL)
 add_subdirectory(extern/doctest)
 add_subdirectory(extern/nda)
+set(RUFUS_BUILD_EXAMPLES ON CACHE BOOL "" FORCE)
+set(RUFUS_LINK_LLVM_SHARED ON CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+add_subdirectory(extern/RuFuS)
 
 include(FetchContent)
 FetchContent_Declare(
