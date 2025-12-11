@@ -363,6 +363,9 @@ void run_comparison(const Opts &opts) {
     auto dir = std::filesystem::read_symlink("/proc/self/exe").parent_path();
     RS.load_ir_file(dir / "jit_kernels.ll");
 
+    constexpr PSWFParams<Real> p;
+    sctl::Vector<Real> res(opts.n_trg);
+
     constexpr int V = std::is_same_v<Real, float> ? 16 : 8;
     constexpr auto T = std::is_same_v<Real, float> ? "float" : "double";
     const auto func_name = std::format("void laplace_pswf_all_pairs_jit<{}, {}>(int, int, {}, {}, {}, {}, "
@@ -384,9 +387,7 @@ void run_comparison(const Opts &opts) {
     if (!jit_n_coeffs_n_digits)
         return;
 
-    sctl::Vector<Real> res(opts.n_trg);
     {
-        constexpr PSWFParams<Real> p;
         res = 0;
         jit_n_coeffs_n_digits(1, p.rsc, p.cen, p.d2max, p.thresh2, &coeffs[0], opts.n_src, &r_src_base[0], &charges[0],
                               opts.n_trg, &r_trg[0], &res[0]);
@@ -437,7 +438,6 @@ void run_comparison(const Opts &opts) {
     const int n_warmup = 4e9 / n_pairs;
     {
         int i = 13;
-        constexpr PSWFParams<Real> p;
         auto res_jit = res;
         jit_n_coeffs_n_digits(1, p.rsc, p.cen, p.d2max, p.thresh2, &coeffs[0], opts.n_src, &r_src_all[i][0],
                               &charges[0], opts.n_trg, &r_trg[0], &res_jit[0]);
@@ -460,23 +460,19 @@ void run_comparison(const Opts &opts) {
             laplace_3d_coeffs_direct_uKernel_cpu(opts, coeffs, r_src_all[i], r_trg, charges, res);
         ankerl::nanobench::doNotOptimizeAway(res);
     });
-    while (1)
-        ankerl::nanobench::Bench().batch(n_pairs).unit("pair").run("uKernelJitNCoeffsDigits", [&] {
-            constexpr PSWFParams<Real> p;
-            for (int i = 0; i < 27; ++i)
-                jit_n_coeffs_n_digits(1, p.rsc, p.cen, p.d2max, p.thresh2, &coeffs[0], opts.n_src, &r_src_all[i][0],
-                                      &charges[0], opts.n_trg, &r_trg[0], &res[0]);
-            ankerl::nanobench::doNotOptimizeAway(res);
-        });
+    ankerl::nanobench::Bench().batch(n_pairs).unit("pair").run("uKernelJitNCoeffsDigits", [&] {
+        for (int i = 0; i < 27; ++i)
+            jit_n_coeffs_n_digits(1, p.rsc, p.cen, p.d2max, p.thresh2, &coeffs[0], opts.n_src, &r_src_all[i][0],
+                                  &charges[0], opts.n_trg, &r_trg[0], &res[0]);
+        ankerl::nanobench::doNotOptimizeAway(res);
+    });
     ankerl::nanobench::Bench().batch(n_pairs).unit("pair").run("uKernelJitNCoeffs", [&] {
-        constexpr PSWFParams<Real> p;
         for (int i = 0; i < 27; ++i)
             jit_n_coeffs(1, opts.digits, p.rsc, p.cen, p.d2max, p.thresh2, &coeffs[0], opts.n_src, &r_src_all[i][0],
                          &charges[0], opts.n_trg, &r_trg[0], &res[0]);
         ankerl::nanobench::doNotOptimizeAway(res);
     });
     ankerl::nanobench::Bench().batch(n_pairs).unit("pair").run("uKernelJitNone", [&] {
-        constexpr PSWFParams<Real> p;
         for (int i = 0; i < 27; ++i)
             jit_func_unspecialized(1, opts.digits, p.rsc, p.cen, p.d2max, p.thresh2, coeffs.Dim(), &coeffs[0],
                                    opts.n_src, &r_src_all[i][0], &charges[0], opts.n_trg, &r_trg[0], &res[0]);
