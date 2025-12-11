@@ -173,6 +173,7 @@ sctl::Vector<Real> make_polyfit_abs_error(Real tol) {
             if (passed) {
                 std::cout << "Achieved tol " << tol << " with n_coeffs = " << n_coeffs << std::endl;
                 auto coeffs = to_vector<sctl::Vector<Real>>(prolate_int_fun.coeffs());
+                std::reverse(coeffs.begin(), coeffs.end());
                 return coeffs;
             }
         } catch (std::exception &e) {
@@ -208,21 +209,21 @@ void laplace_3d_pswf_direct(const sctl::Vector<Real> &r_src, const sctl::Vector<
         return 1.0 - prolate_inf_inv * prolate_fun.int_eval(0.5 * (x + 1));
     };
 
-    for (int i_src = 0; i_src < r_src.Dim(0); ++i_src) {
-        for (int i_trg = 0; i_trg < r_trg.Dim(0); ++i_trg) {
+    for (int i_src = 0; i_src < r_src.Dim() / n_dim; ++i_src) {
+        for (int i_trg = 0; i_trg < r_trg.Dim() / n_dim; ++i_trg) {
             Real dr[3];
             Real dr2{0.0};
             for (int i = 0; i < n_dim; ++i) {
-                dr[i] = r_trg(i_trg, i) - r_src(i_src, i);
+                dr[i] = r_trg[i_trg * n_dim + i] - r_src[i_src * n_dim + i];
                 dr2 += dr[i] * dr[i];
             }
             if (dr2 < p.thresh2 || dr2 > p.d2max)
                 continue;
             Real Rinv = 1.0 / std::sqrt(dr2);
             Real xtmp = std::fma(dr2, Rinv, p.cen) * p.rsc;
-            Real ptmp = eval_horner<Real, coefs.size()>(coefs, xtmp) * Rinv;
+            Real ptmp = eval_horner(coefs, xtmp) * Rinv;
 
-            u[i_trg] += charge(0, i_src) * ptmp;
+            u[i_trg] += charge[i_src] * ptmp;
         }
     }
 }
@@ -368,7 +369,7 @@ void run_comparison(const Opts &opts) {
 
     constexpr int V = std::is_same_v<Real, float> ? 16 : 8;
     constexpr auto T = std::is_same_v<Real, float> ? "float" : "double";
-    const auto func_name = std::format("void laplace_pswf_all_pairs_jit<{}, {}>(int, int, {}, {}, {}, {}, "
+    const auto func_name = std::format("void laplace_poly_all_pairs<{}, {}>(int, int, {}, {}, {}, {}, "
                                        "int, {} const*, int, {} const*, {} const*, int, {} const*, {}*, int)",
                                        T, V, T, T, T, T, T, T, T, T, T);
 
@@ -388,47 +389,42 @@ void run_comparison(const Opts &opts) {
         return;
 
     {
+        auto print_16 = [](const auto &prefix, auto &res) {
+            std::cout << prefix << ": ";
+            for (int j = 0; j < 16; ++j)
+                std::cout << res[j] << " ";
+            std::cout << std::endl;
+        };
         res = 0;
         jit_n_coeffs_n_digits(1, p.rsc, p.cen, p.d2max, p.thresh2, &coeffs[0], opts.n_src, &r_src_base[0], &charges[0],
                               opts.n_trg, &r_trg[0], &res[0]);
-        for (int j = 0; j < 16; ++j)
-            std::cout << res[j] << " ";
-        std::cout << std::endl;
+        print_16("coeffs_digs  ", res);
 
         res = 0;
         jit_n_coeffs(1, opts.digits, p.rsc, p.cen, p.d2max, p.thresh2, &coeffs[0], opts.n_src, &r_src_base[0],
                      &charges[0], 16, &r_trg[0], &res[0]);
-        for (int j = 0; j < 16; ++j)
-            std::cout << res[j] << " ";
-        std::cout << std::endl;
+        print_16("coeffs       ", res);
 
         res = 0;
         jit_func_unspecialized(1, opts.digits, p.rsc, p.cen, p.d2max, p.thresh2, coeffs.Dim(), &coeffs[0], opts.n_src,
                                &r_src_base[0], &charges[0], opts.n_trg, &r_trg[0], &res[0]);
-        for (int j = 0; j < 16; ++j)
-            std::cout << res[j] << " ";
-        std::cout << std::endl;
+        print_16("unspecialized", res);
 
         res = 0;
         evaluator(opts, r_src_base, r_trg_t, charges, res);
-        for (int j = 0; j < 16; ++j)
-            std::cout << res[j] << " ";
-        std::cout << std::endl;
+        print_16("evaluator    ", res);
 
         res = 0;
-        laplace_3d_pswf_direct_uKernel_cpu(opts, r_src_base, r_trg_t, charges, res);
-        for (int j = 0; j < 16; ++j)
-            std::cout << res[j] << " ";
-        std::cout << std::endl;
+        laplace_3d_pswf_direct_uKernel_cpu(opts, r_src_base, r_trg, charges, res);
+        print_16("uKernel_pswf ", res);
 
         res = 0;
         auto test = res;
         laplace_3d_coeffs_direct_uKernel_cpu(opts, coeffs, r_src_base, r_trg, charges, test);
         jit_n_coeffs_n_digits(1, p.rsc, p.cen, p.d2max, p.thresh2, &coeffs[0], opts.n_src, &r_src_base[0], &charges[0],
                               opts.n_trg, &r_trg[0], &res[0]);
-        for (int j = 0; j < 16; ++j)
-            std::cout << test[j] << " ";
-        std::cout << std::endl;
+        print_16("uKernel_poly ", res);
+
         for (int i = 0; i < res.Dim(); ++i)
             if (test[i] && std::abs(1.0 - res[i] / test[i]) > 5 * std::numeric_limits<Real>::epsilon())
                 std::cout << "OOF: " << i << " " << res[i] << " " << test[i] << "\n";
@@ -436,15 +432,6 @@ void run_comparison(const Opts &opts) {
 
     const int n_pairs = opts.n_src * opts.n_trg * 27;
     const int n_warmup = 4e9 / n_pairs;
-    {
-        int i = 13;
-        auto res_jit = res;
-        jit_n_coeffs_n_digits(1, p.rsc, p.cen, p.d2max, p.thresh2, &coeffs[0], opts.n_src, &r_src_all[i][0],
-                              &charges[0], opts.n_trg, &r_trg[0], &res_jit[0]);
-        auto res_evaluator = res;
-        evaluator(opts, r_src_all[i], r_trg_t, charges, res_evaluator);
-        std::cout << res_jit[sample_offset] << " " << res_evaluator[sample_offset] << std::endl;
-    }
     ankerl::nanobench::Bench().batch(n_pairs).unit("pair").warmup(n_warmup).run("Full", [&] {
         for (int i = 0; i < 27; ++i)
             evaluator(opts, r_src_all[i], r_trg_t, charges, res);

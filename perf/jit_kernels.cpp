@@ -337,182 +337,10 @@ void EvalPairs(int Ns, const Real *__restrict__ r_src, const Real *__restrict__ 
     }
 }
 
-template <class Real, int KERNEL_INPUT_DIM, int KERNEL_OUTPUT_DIM, int SPATIAL_DIM, int NORMAL_DIM, int VecLen,
-          class uKernelEvaluator>
-void EvalPairsCompressed(int Ns, const Real *__restrict__ r_src, const Real *__restrict__ v_src,
-                         const Real *__restrict__ src_normals, int Nt, const Real *__restrict__ r_trg,
-                         Real *__restrict__ v_trg, uKernelEvaluator uKernel, int unroll_factor, int digits) {
-    using namespace sctl;
-    using RealVec = Vec<Real, VecLen>;
-    using MaskType = typename RealVec::MaskType;
-
-    Real scale_factor = 1.0;
-    if constexpr (requires {
-                      { uKernel.scale_factor() };
-                  }) {
-        scale_factor = static_cast<Real>(uKernel.scale_factor());
-    }
-
-    const Long NNt = ((Nt + VecLen - 1) / VecLen) * VecLen;
-
-    const Real *__restrict__ Xs_ = r_src;
-    const Real *__restrict__ Ns_ = src_normals;
-    const Real *__restrict__ Vs_ = v_src;
-
-    constexpr Integer Nbuff = 16 * 1024;
-
-    const Integer Xt_size = SPATIAL_DIM * NNt;
-    const Integer required_size = Xt_size + NNt * KERNEL_OUTPUT_DIM;
-
-    StackOrHeapBuffer<Real, Nbuff> buffer(required_size);
-    Real *buff = buffer.data();
-    Real *__restrict__ Xt_ = buff;
-    Real *__restrict__ Vt_ = buff + Xt_size;
-
-    for (Long k = 0; k < SPATIAL_DIM; k++) {
-        for (Long i = 0; i < Nt; i++) {
-            Xt_[k * NNt + i] = r_trg[i * SPATIAL_DIM + k];
-        }
-        for (Long i = Nt; i < NNt; i++) {
-            Xt_[k * NNt + i] = 0;
-        }
-    }
-
-    // Work buffers for compression
-    constexpr Integer MAX_SOURCES = 4096;
-    alignas(64) Real dX_compressed[SPATIAL_DIM][MAX_SOURCES * VecLen];
-    alignas(64) Real ns_compressed[NORMAL_DIM][MAX_SOURCES * VecLen];
-    alignas(64) Real vs_compressed[KERNEL_INPUT_DIM][MAX_SOURCES * VecLen];
-    alignas(64) Real U_compressed[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM][MAX_SOURCES * VecLen];
-    MaskType masks[MAX_SOURCES];
-    int start_indices[MAX_SOURCES];
-    int source_indices[MAX_SOURCES];
-
-    RealVec zero_vec = RealVec::Zero();
-
-    for (Long t = 0; t < NNt; t += VecLen) {
-        RealVec xt[SPATIAL_DIM];
-        RealVec vt[KERNEL_OUTPUT_DIM];
-
-        for (Integer k = 0; k < KERNEL_OUTPUT_DIM; k++)
-            vt[k] = RealVec::Zero();
-        for (Integer k = 0; k < SPATIAL_DIM; k++)
-            xt[k] = RealVec::LoadAligned(&Xt_[k * NNt + t]);
-
-        // Pass 1: Compute R2, compress valid pairs
-        int valid_count = 0;
-        int source_count = 0;
-
-        for (Long s = 0; s < Ns; s++) {
-            RealVec xs[SPATIAL_DIM], vs[KERNEL_INPUT_DIM], ns[NORMAL_DIM];
-            RealVec dX[SPATIAL_DIM];
-
-            for (Integer k = 0; k < SPATIAL_DIM; k++)
-                xs[k] = RealVec::Load1(&r_src[s * SPATIAL_DIM + k]);
-            for (Integer k = 0; k < NORMAL_DIM; k++)
-                ns[k] = RealVec::Load1(&src_normals[s * NORMAL_DIM + k]);
-            for (Integer k = 0; k < KERNEL_INPUT_DIM; k++)
-                vs[k] = RealVec::Load1(&v_src[s * KERNEL_INPUT_DIM + k]);
-
-            for (Integer k = 0; k < SPATIAL_DIM; k++)
-                dX[k] = xt[k] - xs[k];
-
-            // Get mask from uKernel (need to expose this)
-            MaskType mask = uKernel.compute_mask(dX);
-            int count = sctl::mask_popcnt_intrin(mask);
-
-            if (count > 0) {
-                masks[source_count] = mask;
-                start_indices[source_count] = valid_count;
-                source_indices[source_count] = s;
-
-                // Compress dX
-                for (Integer k = 0; k < SPATIAL_DIM; k++) {
-                    sctl::mask_compress_store(mask, dX[k].get(), &dX_compressed[k][valid_count]);
-                }
-                // Compress normals
-                for (Integer k = 0; k < NORMAL_DIM; k++) {
-                    sctl::mask_compress_store(mask, ns[k].get(), &ns_compressed[k][valid_count]);
-                }
-                // Compress charges
-                for (Integer k = 0; k < KERNEL_INPUT_DIM; k++) {
-                    sctl::mask_compress_store(mask, vs[k].get(), &vs_compressed[k][valid_count]);
-                }
-
-                source_count++;
-                valid_count += count;
-            }
-        }
-
-        // Pad valid_count to VecLen boundary
-        int valid_count_padded = ((valid_count + VecLen - 1) / VecLen) * VecLen;
-        for (int i = valid_count; i < valid_count_padded; i++) {
-            for (Integer k = 0; k < SPATIAL_DIM; k++)
-                dX_compressed[k][i] = Real(0);
-            for (Integer k = 0; k < NORMAL_DIM; k++)
-                ns_compressed[k][i] = Real(0);
-            for (Integer k = 0; k < KERNEL_INPUT_DIM; k++)
-                vs_compressed[k][i] = Real(0);
-        }
-
-        // Pass 2: Evaluate kernel on compressed data
-        for (int i = 0; i < valid_count_padded; i += VecLen) {
-            RealVec dX[SPATIAL_DIM], ns[NORMAL_DIM];
-            RealVec U[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM];
-
-            for (Integer k = 0; k < SPATIAL_DIM; k++)
-                dX[k] = RealVec::LoadAligned(&dX_compressed[k][i]);
-            for (Integer k = 0; k < NORMAL_DIM; k++)
-                ns[k] = RealVec::LoadAligned(&ns_compressed[k][i]);
-
-            if constexpr (NORMAL_DIM > 0)
-                uKernel.evaluate_no_mask(U, dX, ns);
-            else
-                uKernel.evaluate_no_mask(U, dX);
-
-            // Store results
-            for (Integer k0 = 0; k0 < KERNEL_INPUT_DIM; k0++) {
-                for (Integer k1 = 0; k1 < KERNEL_OUTPUT_DIM; k1++) {
-                    U[k0][k1].StoreAligned(&U_compressed[k0][k1][i]);
-                }
-            }
-        }
-
-        // Pass 3: Expand and accumulate
-        for (int s_idx = 0; s_idx < source_count; s_idx++) {
-            int start = start_indices[s_idx];
-            MaskType mask = masks[s_idx];
-
-            RealVec vs[KERNEL_INPUT_DIM];
-            for (Integer k = 0; k < KERNEL_INPUT_DIM; k++) {
-                vs[k] = RealVec::Load1(&v_src[source_indices[s_idx] * KERNEL_INPUT_DIM + k]);
-            }
-
-            for (Integer k0 = 0; k0 < KERNEL_INPUT_DIM; k0++) {
-                for (Integer k1 = 0; k1 < KERNEL_OUTPUT_DIM; k1++) {
-                    RealVec U_expanded = sctl::mask_expand_load(mask, zero_vec.get(), &U_compressed[k0][k1][start]);
-                    vt[k1] = FMA(U_expanded, vs[k0], vt[k1]);
-                }
-            }
-        }
-
-        // Store results
-        for (Integer k = 0; k < KERNEL_OUTPUT_DIM; k++) {
-            vt[k].StoreAligned(&Vt_[k * NNt + t]);
-        }
-    }
-
-    for (Long k = 0; k < KERNEL_OUTPUT_DIM; k++) {
-        for (Long i = 0; i < Nt; i++) {
-            v_trg[i * KERNEL_OUTPUT_DIM + k] += Vt_[k * NNt + i] * scale_factor;
-        }
-    }
-}
-
 template <class Real, int MaxVecLen>
-void laplace_pswf_all_pairs_jit(int nd, int n_digits, Real rsc, Real cen, Real d2max, Real thresh2, int n_coeffs,
-                                const Real *coeffs, int n_src, const Real *r_src, const Real *charge, int n_trg,
-                                const Real *r_trg, Real *pot, int unroll_factor) {
+void laplace_poly_all_pairs(int nd, int n_digits, Real rsc, Real cen, Real d2max, Real thresh2, int n_coeffs,
+                            const Real *coeffs, int n_src, const Real *r_src, const Real *charge, int n_trg,
+                            const Real *r_trg, Real *pot, int unroll_factor) {
     using VecType = sctl::Vec<Real, MaxVecLen>;
 
     struct Evaluator {
@@ -528,20 +356,6 @@ void laplace_pswf_all_pairs_jit(int nd, int n_digits, Real rsc, Real cen, Real d
                   int n_coeffs, int digits)
             : thresh2_vec(thresh2_vec), d2max_vec(d2max_vec), rsc_vec(rsc_vec), cen_vec(cen_vec), coeffs(coeffs),
               n_coeffs(n_coeffs), n_digits(digits) {}
-
-        // New: compute mask only
-        MaskType compute_mask(const VecType (&dX)[3]) const {
-            const VecType R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
-            return (R2 > thresh2_vec) & (R2 < d2max_vec);
-        }
-
-        // New: evaluate without mask check (assumes all lanes valid)
-        void evaluate_no_mask(VecType (&u)[1][1], const VecType (&dX)[3]) const {
-            const VecType R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
-            const VecType Rinv = approx_rsqrt_runtime(R2, MaskType(-1), n_digits);
-            const VecType x = sctl::FMA(R2, Rinv, cen_vec) * rsc_vec;
-            u[0][0] = horner(x, coeffs, n_coeffs) * Rinv;
-        }
 
         void operator()(VecType (&u)[1][1], const VecType (&dX)[3]) const {
             const VecType R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
@@ -571,11 +385,11 @@ void laplace_pswf_all_pairs_jit(int nd, int n_digits, Real rsc, Real cen, Real d
         n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);
 }
 
-template void laplace_pswf_all_pairs_jit<float, 16>(int nd, int n_digits, float rsc, const float cen, float d2max,
-                                                    float thresh2, int n_coeffs, const float *coeffs, int n_src,
-                                                    const float *r_src, const float *charge, int n_trg,
-                                                    const float *r_trg, float *pot, int unroll_factor);
-template void laplace_pswf_all_pairs_jit<double, 8>(int nd, int n_digits, double rsc, const double cen, double d2max,
-                                                    double thresh2, int n_coeffs, const double *coeffs, int n_src,
-                                                    const double *r_src, const double *charge, int n_trg,
-                                                    const double *r_trg, double *pot, int unroll_factor);
+template void laplace_poly_all_pairs<float, 16>(int nd, int n_digits, float rsc, const float cen, float d2max,
+                                                float thresh2, int n_coeffs, const float *coeffs, int n_src,
+                                                const float *r_src, const float *charge, int n_trg, const float *r_trg,
+                                                float *pot, int unroll_factor);
+template void laplace_poly_all_pairs<double, 8>(int nd, int n_digits, double rsc, const double cen, double d2max,
+                                                double thresh2, int n_coeffs, const double *coeffs, int n_src,
+                                                const double *r_src, const double *charge, int n_trg,
+                                                const double *r_trg, double *pot, int unroll_factor);
