@@ -1,5 +1,13 @@
 #include <sctl.hpp>
 
+#define VECDIM 4
+
+#ifdef __AVX512F__
+#undef VECDIM
+#define VECDIM 8
+#endif
+
+
 #define ALWAYS_INLINE __attribute__((always_inline))
 
 template <typename T, size_t StackSize>
@@ -168,7 +176,7 @@ void EvalPairs(int Ns, const Real *__restrict__ r_src, const Real *__restrict__ 
     if constexpr (requires {
                       { uKernel.scale_factor() };
                   }) {
-        scale_factor = static_cast<Real>(uKernel.scale_factor());
+        scale_factor = uKernel.scale_factor();
     }
 
     const Long NNt = ((Nt + VecLen - 1) / VecLen) * VecLen;
@@ -338,13 +346,12 @@ void EvalPairs(int Ns, const Real *__restrict__ r_src, const Real *__restrict__ 
 }
 
 template <class Real, int MaxVecLen>
-void laplace_poly_all_pairs(int nd, int n_digits, Real rsc, Real cen, Real d2max, Real thresh2, int n_coeffs,
-                            const Real *coeffs, int n_src, const Real *r_src, const Real *charge, int n_trg,
-                            const Real *r_trg, Real *pot, int unroll_factor) {
+void laplace_3d_poly_all_pairs(int nd, int n_digits, Real rsc, Real cen, Real d2max, Real thresh2, int n_coeffs,
+                               const Real *coeffs, int n_src, const Real *r_src, const Real *charge, int n_trg,
+                               const Real *r_trg, Real *pot, int unroll_factor) {
     using VecType = sctl::Vec<Real, MaxVecLen>;
 
     struct Evaluator {
-        using MaskType = typename VecType::MaskType;
         VecType thresh2_vec, d2max_vec, rsc_vec, cen_vec;
         const Real *coeffs;
         int n_coeffs;
@@ -385,11 +392,71 @@ void laplace_poly_all_pairs(int nd, int n_digits, Real rsc, Real cen, Real d2max
         n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);
 }
 
-template void laplace_poly_all_pairs<float, 16>(int nd, int n_digits, float rsc, const float cen, float d2max,
-                                                float thresh2, int n_coeffs, const float *coeffs, int n_src,
-                                                const float *r_src, const float *charge, int n_trg, const float *r_trg,
-                                                float *pot, int unroll_factor);
-template void laplace_poly_all_pairs<double, 8>(int nd, int n_digits, double rsc, const double cen, double d2max,
-                                                double thresh2, int n_coeffs, const double *coeffs, int n_src,
-                                                const double *r_src, const double *charge, int n_trg,
-                                                const double *r_trg, double *pot, int unroll_factor);
+template <class Real, int MaxVecLen>
+void laplace_2d_poly_all_pairs(int nd, int n_digits, Real rsc, Real cen, Real d2max, Real thresh2, int n_coeffs,
+                              const Real *coeffs, int n_src, const Real *r_src, const Real *charge, int n_trg,
+                              const Real *r_trg, Real *pot, int unroll_factor) {
+    using VecType = sctl::Vec<Real, MaxVecLen>;
+
+    struct Evaluator {
+        VecType thresh2_vec, d2max_vec, rsc_vec, cen_vec, bsizeinv2_vec;
+        const Real *coeffs;
+        int n_coeffs;
+        int n_digits;
+
+        static constexpr Real scale_factor() { return Real{1.0}; }
+
+        Evaluator(VecType thresh2_vec, VecType d2max_vec, VecType rsc_vec, VecType cen_vec, const Real *coeffs,
+                  int n_coeffs, int digits)
+            : thresh2_vec(thresh2_vec), d2max_vec(d2max_vec), rsc_vec(rsc_vec), cen_vec(cen_vec),
+              bsizeinv2_vec(Real{0.5} * rsc_vec), coeffs(coeffs), n_coeffs(n_coeffs), n_digits(digits) {}
+
+        void operator()(VecType (&u)[1][1], const VecType (&dX)[2]) const {
+            const VecType R2 = dX[0] * dX[0] + dX[1] * dX[1];
+            const auto mask = (R2 > thresh2_vec) & (R2 < d2max_vec);
+
+            if (n_digits >= 6) {
+                if (__builtin_expect(!sctl::mask_any(mask), 0)) {
+                    u[0][0] = VecType::Zero();
+                    return;
+                }
+            }
+            const VecType x = sctl::FMA(R2, rsc_vec, cen_vec);
+            const VecType R2sc = R2 * bsizeinv2_vec;
+            const VecType ptmp = horner(x, coeffs, n_coeffs);
+            u[0][0] = select(mask, Real{0.5} * sctl::log(R2sc) + ptmp, VecType::Zero());
+        }
+    };
+
+    Evaluator evaluator(thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits);
+
+    constexpr int KERNEL_INPUT_DIM = 1;
+    constexpr int KERNEL_OUTPUT_DIM = 1;
+    constexpr int SPATIAL_DIM = 2;
+    constexpr int NORMAL_DIM = 0;
+
+    EvalPairs<Real, KERNEL_INPUT_DIM, KERNEL_OUTPUT_DIM, SPATIAL_DIM, NORMAL_DIM, MaxVecLen>(
+        n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);
+}
+
+template void laplace_2d_poly_all_pairs<float, 2 * VECDIM>(int nd, int n_digits, float rsc, const float cen,
+                                                           float d2max, float thresh2, int n_coeffs,
+                                                           const float *coeffs, int n_src, const float *r_src,
+                                                           const float *charge, int n_trg, const float *r_trg,
+                                                           float *pot, int unroll_factor);
+template void laplace_2d_poly_all_pairs<double, VECDIM>(int nd, int n_digits, double rsc, const double cen,
+                                                        double d2max, double thresh2, int n_coeffs,
+                                                        const double *coeffs, int n_src, const double *r_src,
+                                                        const double *charge, int n_trg, const double *r_trg,
+                                                        double *pot, int unroll_factor);
+
+template void laplace_3d_poly_all_pairs<float, 2 * VECDIM>(int nd, int n_digits, float rsc, const float cen,
+                                                           float d2max, float thresh2, int n_coeffs,
+                                                           const float *coeffs, int n_src, const float *r_src,
+                                                           const float *charge, int n_trg, const float *r_trg,
+                                                           float *pot, int unroll_factor);
+template void laplace_3d_poly_all_pairs<double, VECDIM>(int nd, int n_digits, double rsc, const double cen,
+                                                        double d2max, double thresh2, int n_coeffs,
+                                                        const double *coeffs, int n_src, const double *r_src,
+                                                        const double *charge, int n_trg, const double *r_trg,
+                                                        double *pot, int unroll_factor);

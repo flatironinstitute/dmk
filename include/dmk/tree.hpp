@@ -180,6 +180,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<std::array<int, n_neighbs_flipped_max_>> direct_neighbs_flipped_;
     sctl::Vector<int> n_direct_neighbs_flipped_;
     sctl::Vector<sctl::Vector<Real>> workspaces_;
+    direct_evaluator_func<Real> evaluator;
     const sctl::Comm comm_;
 };
 

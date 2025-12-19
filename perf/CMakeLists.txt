@@ -1,11 +1,5 @@
-add_executable(direct_kernel_bench direct_kernel_bench.cpp
-  ${PROJECT_SOURCE_DIR}/src/prolate0_eval.cpp
-  ${PROJECT_SOURCE_DIR}/src/prolate.cpp
-  ${PROJECT_SOURCE_DIR}/src/legeexps.cpp
-)
+add_executable(direct_kernel_bench direct_kernel_bench.cpp)
 
-embed_ir_as_header(jit_kernels jit_kernels.cpp
-  INCLUDES ${DMK_INCLUDES}
-)
 target_include_directories(direct_kernel_bench PRIVATE ${DMK_INCLUDES})
-target_link_libraries(direct_kernel_bench jit_kernels nanobench polyfit::polyfit RuFuS::rufus)
+target_link_libraries(direct_kernel_bench dmk nanobench polyfit::polyfit RuFuS::rufus nda::nda_c)
+

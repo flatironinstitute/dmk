@@ -78,6 +78,12 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     auto &logger = dmk::get_logger(comm, params.log_level);
     auto &rank_logger = dmk::get_rank_logger(comm, params.log_level);
     sctl::Profile::Scoped profile("DMKPtTree::DMKPtTree", &comm_);
+    try {
+        evaluator = make_evaluator<Real>(params.kernel, DIM, n_digits);
+    }
+    catch (std::exception &e) {
+        logger->error("Failed to create direct evaluator: {}", e.what());
+    }
 
     logger->info("tree build started");
 
@@ -722,22 +728,35 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
 
             std::array<std::span<const Real>, DIM> r_trg;
             if (n_src_neighb) {
-                for (int i = 0; i < DIM; ++i)
-                    r_trg[i] = std::span<const Real>(r_src_t + (r_src_offsets[neighb] / DIM) + src_counts_local[0] * i,
-                                                     n_src_neighb);
+                if (!evaluator) {
+                    for (int i = 0; i < DIM; ++i)
+                        r_trg[i] = std::span<const Real>(
+                            r_src_t + (r_src_offsets[neighb] / DIM) + src_counts_local[0] * i, n_src_neighb);
 
-                direct_eval<Real, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
-                                       &params.fparam, rsc[i_level], cen[i_level], d2max[i_level], pot_src_view(neighb),
-                                       n_digits);
+                    direct_eval<Real, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
+                                           &params.fparam, rsc[i_level], cen[i_level], d2max[i_level],
+                                           pot_src_view(neighb), n_digits);
+                }
+                else {
+                    evaluator(params.n_mfm, rsc[i_level], cen[i_level], d2max[i_level], 1e-30, src_counts_local[box],
+                              r_src_ptr(box), charge_ptr(box), src_counts_local[neighb], r_src_ptr(neighb),
+                              pot_src_ptr(neighb));
+                }
             }
             if (n_trg_neighb) {
-                for (int i = 0; i < DIM; ++i)
-                    r_trg[i] = std::span<const Real>(r_trg_t + (r_trg_offsets[neighb] / DIM) + trg_counts_local[0] * i,
-                                                     n_trg_neighb);
+                if (!evaluator) {
+                    for (int i = 0; i < DIM; ++i)
+                        r_trg[i] = std::span<const Real>(
+                            r_trg_t + (r_trg_offsets[neighb] / DIM) + trg_counts_local[0] * i, n_trg_neighb);
 
-                direct_eval<Real, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
-                                       &params.fparam, rsc[i_level], cen[i_level], d2max[i_level], pot_trg_view(neighb),
-                                       n_digits);
+                    direct_eval<Real, DIM>(params.kernel, r_src_view(box), r_trg, charge_view(box), cheb_coeffs,
+                                           &params.fparam, rsc[i_level], cen[i_level], d2max[i_level],
+                                           pot_trg_view(neighb), n_digits);
+                } else {
+                    evaluator(params.n_mfm, rsc[i_level], cen[i_level], d2max[i_level], 1e-30, src_counts_local[box],
+                              r_src_ptr(box), charge_ptr(box), trg_counts_local[neighb], r_trg_ptr(neighb),
+                              pot_trg_ptr(neighb));
+                }
             }
         }
 

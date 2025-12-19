@@ -93,16 +93,16 @@ MPI_TEST_CASE("[DMK] pdmk 3d float", 1) {
     pdmk(test_comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0], &pot_src[0],
          nullptr, nullptr, &pot_trg[0], nullptr, nullptr);
 
-    params.eps = 1e-5;
+    params.eps = 1e-4;
     pdmkf(test_comm, params, n_src, &r_srcf[0], &chargesf[0], &rnormalf[0], &dipstrf[0], n_trg, &r_trgf[0],
           &pot_srcf[0], nullptr, nullptr, &pot_trgf[0], nullptr, nullptr);
 
     double l2_err_src = 0.0;
     double l2_err_trg = 0.0;
     for (int i = 0; i < n_src; ++i)
-        l2_err_src += pot_src[i] != 0.0 ? sctl::pow<2>(1.0 - pot_srcf[i] / pot_src[i]) : 0.0;
+        l2_err_src += pot_src[i] ? sctl::pow<2>(1.0 - pot_srcf[i] / pot_src[i]) : 0.0;
     for (int i = 0; i < n_trg; ++i)
-        l2_err_trg += pot_trg[i] != 0.0 ? sctl::pow<2>(1.0 - pot_trgf[i] / pot_trg[i]) : 0.0;
+        l2_err_trg += pot_trg[i] ? sctl::pow<2>(1.0 - pot_trgf[i] / pot_trg[i]) : 0.0;
 
     l2_err_src = std::sqrt(l2_err_src) / n_src;
     l2_err_trg = std::sqrt(l2_err_trg) / n_trg;

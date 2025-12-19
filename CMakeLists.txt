@@ -7,11 +7,14 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 if (CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
   set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -std=legacy")
 endif()
+
+set(DMK_VECLIB_DEFINE "")
 if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
-  add_compile_options("-DSCTL_HAVE_SVML")
+  set(DMK_VECLIB_DEFINE "SCTL_HAVE_SVML")
 else()
-  add_compile_options("-DSCTL_HAVE_LIBMVEC")
+  set(DMK_VECLIB_DEFINE "SCTL_HAVE_LIBMVEC")
 endif()
+add_compile_options(-D${DMK_VECLIB_DEFINE})
 
 option(DMK_BUILD_TESTS "Build tests" ON)
 option(DMK_BUILD_EXAMPLES "Build examples" ON)
@@ -105,6 +108,11 @@ add_library(dmk_ref STATIC $<TARGET_OBJECTS:dmk_ref_common> $<TARGET_OBJECTS:dmk
 add_library(dmk_ref_shared SHARED $<TARGET_OBJECTS:dmk_ref_common> $<TARGET_OBJECTS:dmk_ref_pdmk> $<TARGET_OBJECTS:dmk_ref_bdmk>)
 set_target_properties(dmk_ref_shared PROPERTIES OUTPUT_NAME dmk_ref)
 
+embed_ir_as_header(jit_kernels src/jit_kernels.cpp
+  INCLUDES ${DMK_INCLUDES}
+  DEFINITIONS ${DMK_VECLIB_DEFINE}
+)
+
 set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp src/legeexps.cpp
   src/fourier_data.cpp src/tensorprod.cpp src/planewave.cpp src/direct.cpp src/prolate.cpp src/prolate0_eval.cpp
   ${DMK_TEST_SRC}
@@ -112,15 +120,15 @@ set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp s
 add_library(DMKOBJS OBJECT ${DMK_SRC})
 set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES} ${MPI_CXX_INCLUDE_DIRS} ${PAPI_INCLUDEDIR})
-target_link_libraries(DMKOBJS PUBLIC OpenMP::OpenMP_CXX ${PAPI_TARGET} nda::nda_c)
+target_link_libraries(DMKOBJS PUBLIC OpenMP::OpenMP_CXX ${PAPI_TARGET} nda::nda_c RuFuS::rufus polyfit::polyfit jit_kernels)
 target_compile_options(DMKOBJS PUBLIC "-DSCTL_HAVE_MPI;-DSCTL_MAX_DEPTH=62;-funroll-loops")
 
 add_library(dmk STATIC)
-target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX DMKOBJS dmk_ref_common spdlog::spdlog)
+target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX DMKOBJS dmk_ref_common spdlog::spdlog RuFuS::rufus polyfit::polyfit jit_kernels)
 
 add_library(dmk_shared SHARED)
 set_target_properties(${PROJECT_NAME}_shared PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
-target_link_libraries(${PROJECT_NAME}_shared DMKOBJS dmk_ref_common OpenMP::OpenMP_CXX MPI::MPI_CXX BLAS::BLAS spdlog doctest ${PAPI_TARGET})
+target_link_libraries(${PROJECT_NAME}_shared DMKOBJS dmk_ref_common OpenMP::OpenMP_CXX MPI::MPI_CXX BLAS::BLAS spdlog doctest ${PAPI_TARGET} RuFuS::rufus polyfit::polyfit jit_kernels)
 
 if(${DMK_BUILD_TESTS})
   add_subdirectory(test)
