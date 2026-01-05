@@ -12,4 +12,4 @@
 # target_link_libraries(test_pdmk dmk_shared dmk_ref)
 
 add_executable(test_all test_all.cpp)
-target_link_libraries(test_all dmk_shared dmk_ref doctest)
+target_link_libraries(test_all dmk_shared ${DMK_REFERENCE_TARGET} doctest)

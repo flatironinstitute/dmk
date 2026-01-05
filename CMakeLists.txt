@@ -19,6 +19,7 @@ option(DMK_INSTRUMENT "Instrument the code. Requires PAPI" OFF)
 option(DMK_BUILD_PVFMM "Build PVFMM for comparison. Useless without DMK_BUILD_EXAMPLES" OFF)
 option(DMK_HAVE_MPI "Use MPI for parallelism" ON)
 option(DMK_HAVE_OPENMP "Use OpenMP for parallelism" ON)
+option(DMK_BUILD_REFERENCE "Build reference Fortran implementation" OFF)
 
 # Disable google tests and HDF5 for NDA
 set(Build_Tests OFF CACHE BOOL "" FORCE)
@@ -86,30 +87,36 @@ add_subdirectory(extern/nanobench EXCLUDE_FROM_ALL)
 add_subdirectory(extern/doctest)
 add_subdirectory(extern/nda)
 
-file(GLOB_RECURSE DMK_REF_COMMON_SRC "src/common/*.f*" "vec-kernels/src/libkernels2.cpp")
-add_library(dmk_ref_common OBJECT ${DMK_REF_COMMON_SRC})
-set_target_properties(dmk_ref_common PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(dmk_ref_common PRIVATE "extern/VCL/version2" "vec-kernels/include")
+set(DMK_REFERENCE_TARGET "")
+if (DMK_BUILD_REFERENCE)
+  set(DMK_CXX_FLAGS "${DMK_CXX_FLAGS};-DDMK_HAVE_REFERENCE")
+  set(DMK_REFERENCE_TARGET dmk_ref)
+  file(GLOB_RECURSE DMK_REF_COMMON_SRC "src/common/*.f*" "vec-kernels/src/libkernels2.cpp")
+  add_library(dmk_ref_common OBJECT ${DMK_REF_COMMON_SRC})
+  set_target_properties(dmk_ref_common PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_include_directories(dmk_ref_common PRIVATE "extern/VCL/version2" "vec-kernels/include")
 
-file(GLOB_RECURSE DMK_REF_PDMK_SRC "src/pdmk/*.f")
-list(REMOVE_ITEM DMK_REF_PDMK_SRC
-  "${CMAKE_SOURCE_DIR}/src/pdmk/kernelevaluation/l3dkernels_fast.f"
-  "${CMAKE_SOURCE_DIR}/src/pdmk/pdmk.f"
-  "${CMAKE_SOURCE_DIR}/src/pdmk/pdmk4.f"
-)
-add_library(dmk_ref_pdmk OBJECT ${DMK_REF_PDMK_SRC})
-set_target_properties(dmk_ref_pdmk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-file(GLOB_RECURSE DMK_REF_BDMK_SRC "src/bdmk/*.f")
-list(REMOVE_ITEM DMK_REF_BDMK_SRC
-  "${CMAKE_SOURCE_DIR}/src/bdmk/bdmk4.f"
-)
-add_library(dmk_ref_bdmk OBJECT ${DMK_REF_BDMK_SRC})
-set_target_properties(dmk_ref_bdmk PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  file(GLOB_RECURSE DMK_REF_PDMK_SRC "src/pdmk/*.f")
+  list(REMOVE_ITEM DMK_REF_PDMK_SRC
+    "${CMAKE_SOURCE_DIR}/src/pdmk/kernelevaluation/l3dkernels_fast.f"
+    "${CMAKE_SOURCE_DIR}/src/pdmk/pdmk.f"
+    "${CMAKE_SOURCE_DIR}/src/pdmk/pdmk4.f"
+  )
+  add_library(dmk_ref_pdmk OBJECT ${DMK_REF_PDMK_SRC})
+  set_target_properties(dmk_ref_pdmk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-add_library(dmk_ref STATIC $<TARGET_OBJECTS:dmk_ref_common> $<TARGET_OBJECTS:dmk_ref_pdmk> $<TARGET_OBJECTS:dmk_ref_bdmk>)
-add_library(dmk_ref_shared SHARED $<TARGET_OBJECTS:dmk_ref_common> $<TARGET_OBJECTS:dmk_ref_pdmk> $<TARGET_OBJECTS:dmk_ref_bdmk>)
-set_target_properties(dmk_ref_shared PROPERTIES OUTPUT_NAME dmk_ref)
+  file(GLOB_RECURSE DMK_REF_BDMK_SRC "src/bdmk/*.f")
+  list(REMOVE_ITEM DMK_REF_BDMK_SRC
+    "${CMAKE_SOURCE_DIR}/src/bdmk/bdmk4.f"
+  )
+  add_library(dmk_ref_bdmk OBJECT ${DMK_REF_BDMK_SRC})
+  set_target_properties(dmk_ref_bdmk PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+  add_library(dmk_ref STATIC $<TARGET_OBJECTS:dmk_ref_common> $<TARGET_OBJECTS:dmk_ref_pdmk> $<TARGET_OBJECTS:dmk_ref_bdmk>)
+  add_library(dmk_ref_shared SHARED $<TARGET_OBJECTS:dmk_ref_common> $<TARGET_OBJECTS:dmk_ref_pdmk> $<TARGET_OBJECTS:dmk_ref_bdmk>)
+  set_target_properties(dmk_ref_shared PROPERTIES OUTPUT_NAME dmk_ref)
+endif()
 
 set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp src/legeexps.cpp
   src/fourier_data.cpp src/tensorprod.cpp src/planewave.cpp src/direct.cpp src/prolate.cpp src/prolate0_eval.cpp
@@ -122,11 +129,11 @@ target_link_libraries(DMKOBJS PUBLIC ${DMK_OPENMP_TARGET} ${PAPI_TARGET} nda::nd
 target_compile_options(DMKOBJS PUBLIC "${DMK_CXX_FLAGS}")
 
 add_library(dmk STATIC)
-target_link_libraries(${PROJECT_NAME} ${DMK_OPENMP_TARGET} DMKOBJS dmk_ref_common spdlog::spdlog)
+target_link_libraries(${PROJECT_NAME} ${DMK_OPENMP_TARGET} DMKOBJS spdlog::spdlog)
 
 add_library(dmk_shared SHARED)
 set_target_properties(${PROJECT_NAME}_shared PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
-target_link_libraries(${PROJECT_NAME}_shared DMKOBJS dmk_ref_common ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET} BLAS::BLAS spdlog doctest ${PAPI_TARGET})
+target_link_libraries(${PROJECT_NAME}_shared DMKOBJS ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET} BLAS::BLAS spdlog doctest ${PAPI_TARGET})
 
 if(${DMK_BUILD_TESTS})
   add_subdirectory(test)

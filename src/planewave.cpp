@@ -218,6 +218,7 @@ template void dmk::calc_planewave_coeff_matrices<double>(double boxsize, double 
                                                          sctl::Vector<std::complex<double>> &prox2pw_vec,
                                                          sctl::Vector<std::complex<double>> &pw2poly_vec);
 
+#ifdef DMK_HAVE_REFERENCE
 TEST_CASE("[DMK] planewave_to_proxy_potential") {
     const int n_pw = 10;
     const int n_charge_dim = 1;
@@ -268,3 +269,4 @@ TEST_CASE("[DMK] planewave_to_proxy_potential") {
         }
     }
 }
+#endif
