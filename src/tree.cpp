@@ -18,9 +18,7 @@
 #include <stdexcept>
 #include <unistd.h>
 
-#ifdef DMK_HAVE_OPENMP
-#include <omp.h>
-#endif
+#include <dmk/omp_wrapper.hpp>
 
 namespace dmk {
 
@@ -365,7 +363,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
 
 #pragma omp parallel
 #pragma omp single
-    workspaces_.ReInit(omp_get_num_threads());
+    workspaces_.ReInit(MY_OMP_GET_NUM_THREADS());
 
     sctl::Vector<sctl::Long> counts;
     this->GetData(proxy_coeffs, counts, "proxy_coeffs");
@@ -384,7 +382,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
 
 #pragma omp parallel
         {
-            sctl::Vector<T> &workspace = workspaces_[omp_get_thread_num()];
+            sctl::Vector<T> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
 
 #pragma omp for schedule(dynamic)
             for (auto i_box : level_indices[start_level]) {
@@ -402,7 +400,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
         sctl::Profile::Scoped profile("charge2proxy_rest", &comm_);
 #pragma omp parallel
         {
-            sctl::Vector<T> &workspace = workspaces_[omp_get_thread_num()];
+            sctl::Vector<T> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
 
             for (int i_level = start_level - 1; i_level >= 0; --i_level) {
 #pragma omp for schedule(dynamic)
@@ -516,7 +514,7 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &box
     // coefficients using Tprox2pw
 #pragma omp parallel
     {
-        sctl::Vector<Real> &workspace = workspaces_[omp_get_thread_num()];
+        sctl::Vector<Real> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
 
 #pragma omp for schedule(static)
         for (auto box : boxes) {
@@ -549,7 +547,7 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
     unsigned long n_shifts{0};
 #pragma omp parallel
     {
-        sctl::Vector<Real> &workspace = workspaces_[omp_get_thread_num()];
+        sctl::Vector<Real> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
         sctl::Vector<std::complex<Real>> pw_in(n_pw_per_box);
 
         auto pw_in_view = [this, &pw_in]() {
