@@ -10,11 +10,10 @@
 #include <dmk/prolate0_fun.hpp>
 #include <dmk/proxy.hpp>
 #include <dmk/tensorprod.hpp>
+#include <dmk/testing.hpp>
 #include <dmk/tree.hpp>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
-#include <doctest/extensions/doctest_mpi.h>
-#include <mpi.h>
 #include <omp.h>
 #include <sctl/profile.hpp>
 #include <stdexcept>
@@ -827,6 +826,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
     logger->info("downward pass completed");
 }
 
+#ifdef DMK_HAVE_MPI
 MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
     constexpr int n_dim = 3;
     constexpr int n_src = 10000;
@@ -850,7 +850,11 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
     params.n_per_leaf = 80;
 
     double st = omp_get_wtime();
+#ifdef DMK_HAVE_MPI
     auto comm = sctl::Comm(test_comm);
+#else
+    auto comm = sctl::Comm::Self();
+#endif
     DMKPtTree<double, n_dim> tree(comm, params, r_src, r_trg, charges);
     tree.upward_pass();
     tree.downward_pass();
@@ -920,6 +924,7 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
         }
     }
 }
+#endif
 
 template struct DMKPtTree<float, 2>;
 template struct DMKPtTree<float, 3>;

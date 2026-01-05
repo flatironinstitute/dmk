@@ -1,8 +1,6 @@
 #ifndef DMK_H
 #define DMK_H
 
-#include <mpi.h>
-
 typedef enum : int {
     DMK_YUKAWA = 0,
     DMK_LAPLACE = 1,
@@ -26,6 +24,12 @@ typedef enum : int {
 } dmk_log_level;
 
 typedef void *pdmk_tree;
+#ifdef DMK_HAVE_MPI
+#include <mpi.h>
+typedef MPI_Comm dmk_communicator;
+#else
+typedef void *dmk_communicator;
+#endif
 
 typedef struct pdmk_params {
     int n_mfm = 1;                   // number of charge/dipole dimensions per source location
@@ -45,23 +49,25 @@ typedef struct pdmk_params {
 extern "C" {
 #endif
 
-pdmk_tree pdmk_tree_createf(MPI_Comm comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
-                           const float *normal, const float *dipole_str, int n_trg, const float *r_trg);
+pdmk_tree pdmk_tree_createf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src,
+                            const float *charge, const float *normal, const float *dipole_str, int n_trg,
+                            const float *r_trg);
 void pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *grad_src, float *hess_src, float *pot_trg, float *grad_trg,
                      float *hess_trg);
-pdmk_tree pdmk_tree_create(MPI_Comm comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
-                           const double *normal, const double *dipole_str, int n_trg, const double *r_trg);
+pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src,
+                           const double *charge, const double *normal, const double *dipole_str, int n_trg,
+                           const double *r_trg);
 void pdmk_tree_destroy(pdmk_tree tree);
 void pdmk_tree_eval(pdmk_tree tree, double *pot_src, double *grad_src, double *hess_src, double *pot_trg,
                     double *grad_trg, double *hess_trg);
-void pdmk_print_profile_data(MPI_Comm comm);
+void pdmk_print_profile_data(dmk_communicator comm);
 
-void pdmk(MPI_Comm comm, pdmk_params params, int n_src, const double *r_src, const double *charge, const double *normal,
-          const double *dipole_str, int n_trg, const double *r_trg, double *pot_src, double *grad_src, double *hess_src,
-          double *pot_trg, double *grad_trg, double *hess_trg);
-void pdmkf(MPI_Comm comm, pdmk_params params, int n_src, const float *r_src, const float *charge, const float *normal,
-           const float *dipole_str, int n_trg, const float *r_trg, float *pot_src, float *grad_src, float *hess_src,
-           float *pot_trg, float *grad_trg, float *hess_trg);
+void pdmk(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
+          const double *normal, const double *dipole_str, int n_trg, const double *r_trg, double *pot_src,
+          double *grad_src, double *hess_src, double *pot_trg, double *grad_trg, double *hess_trg);
+void pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
+           const float *normal, const float *dipole_str, int n_trg, const float *r_trg, float *pot_src, float *grad_src,
+           float *hess_src, float *pot_trg, float *grad_trg, float *hess_trg);
 #ifdef __cplusplus
 }
 #endif

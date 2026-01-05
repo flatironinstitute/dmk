@@ -1,3 +1,4 @@
+#ifdef DMK_HAVE_MPI
 #include <doctest/extensions/doctest_mpi.h>
 
 int main(int argc, char **argv) {
@@ -15,3 +16,7 @@ int main(int argc, char **argv) {
 
     return test_result;
 }
+#else
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <doctest/doctest.h>
+#endif
