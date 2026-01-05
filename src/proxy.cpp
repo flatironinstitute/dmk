@@ -10,8 +10,6 @@
 #include <sctl.hpp>
 #include <stdexcept>
 
-#include <omp.h>
-
 namespace dmk::proxy {
 template <typename T>
 void proxycharge2pw_2d(const ndview<T, 3> &proxy_coeffs, const ndview<std::complex<T>, 2> &poly2pw,

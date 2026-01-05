@@ -14,10 +14,13 @@
 #include <dmk/tree.hpp>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
-#include <omp.h>
 #include <sctl/profile.hpp>
 #include <stdexcept>
 #include <unistd.h>
+
+#ifdef DMK_HAVE_OPENMP
+#include <omp.h>
+#endif
 
 namespace dmk {
 
