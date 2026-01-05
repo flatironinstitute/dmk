@@ -14,6 +14,7 @@
 #include <dmk/util.hpp>
 #include <sctl.hpp>
 
+#include <dmk/omp_wrapper.hpp>
 #include <dmk/testing.hpp>
 
 using pdmk_tree_impl =
@@ -34,7 +35,7 @@ void pdmk(dmk_communicator comm, const pdmk_params &params, int n_src, const T *
     auto &logger = dmk::get_logger(sctl_comm, params.log_level);
     auto &rank_logger = dmk::get_rank_logger(sctl_comm, params.log_level);
     logger->info("PDMK called");
-    auto st = omp_get_wtime();
+    auto st = MY_OMP_GET_WTIME();
 
     sctl::Vector<T> r_src_vec(n_src * params.n_dim, const_cast<T *>(r_src), false);
     sctl::Vector<T> r_trg_vec(n_trg * params.n_dim, const_cast<T *>(r_trg), false);
@@ -50,7 +51,7 @@ void pdmk(dmk_communicator comm, const pdmk_params &params, int n_src, const T *
     tree.GetParticleData(res, "pdmk_pot_trg");
     sctl::Vector<T>(res.Dim(), pot_trg, false) = res;
 
-    auto dt = omp_get_wtime() - st;
+    auto dt = MY_OMP_GET_WTIME() - st;
     int N = n_src + n_trg;
 #ifdef DMK_HAVE_MPI
     if (sctl_comm.Rank() == 0)
@@ -292,12 +293,12 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d all", 1) {
 
                 // double tottimeinfo[20];
                 // int use_dipole = 0;
-                // double st = omp_get_wtime();
+                // double st = MY_OMP_GET_WTIME();
                 // pdmk_(&nd, &n_dim, &params.eps, (int *)&params.kernel, &params.fparam, &params.use_periodic, &n_src,
                 //       &r_src[0], &params.use_charge, &charges[0], &use_dipole, nullptr, nullptr, (int
                 //       *)&params.pgh_src, &pot_src_fort[0], &grad_src_fort[0], &hess_src_fort[0], &n_trg, &r_trg[0],
                 //       (int *)&params.pgh_trg, &pot_trg_fort[0], &grad_trg_fort[0], &hess_trg_fort[0], tottimeinfo);
-                // std::cout << omp_get_wtime() - st << std::endl;
+                // std::cout << MY_OMP_GET_WTIME() - st << std::endl;
 
                 double l2_err_src = 0.0;
                 double l2_err_trg = 0.0;

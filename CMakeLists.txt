@@ -120,6 +120,7 @@ endif()
 
 set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp src/legeexps.cpp
   src/fourier_data.cpp src/tensorprod.cpp src/planewave.cpp src/direct.cpp src/prolate.cpp src/prolate0_eval.cpp
+  src/timing.cpp
   ${DMK_TEST_SRC}
 )
 add_library(DMKOBJS OBJECT ${DMK_SRC})

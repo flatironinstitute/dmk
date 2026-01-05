@@ -505,7 +505,7 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &box
                                                     const ndview<std::complex<Real>, 2> &poly2pw_view,
                                                     const sctl::Vector<Real> &radialft) {
 #ifdef DMK_INSTRUMENT
-    double dt = -omp_get_wtime();
+    double dt = -MY_OMP_GET_WTIME();
 #endif
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const int n_pw_per_box = n_pw_modes * params.n_mfm;
@@ -524,7 +524,7 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &box
     }
 
 #ifdef DMK_INSTRUMENT
-    dt += omp_get_wtime();
+    dt += MY_OMP_GET_WTIME();
     sctl::Profile::IncrementCounter(sctl::ProfileCounter::CUSTOM1, (unsigned long)(1e9 * dt));
 #endif
 }
@@ -535,7 +535,7 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
                                                 const ndview<std::complex<Real>, 2> &pw2poly_view,
                                                 const sctl::Vector<Real> &p2c) {
 #ifdef DMK_INSTRUMENT
-    double dt = -omp_get_wtime();
+    double dt = -MY_OMP_GET_WTIME();
 #endif
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const int n_pw_per_box = n_pw_modes * params.n_mfm;
@@ -624,7 +624,7 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
     constexpr int flops_per_pw = 8;
     sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, n_shifts * flops_per_pw * n_pw_per_box);
 #ifdef DMK_INSTRUMENT
-    dt += omp_get_wtime();
+    dt += MY_OMP_GET_WTIME();
     sctl::Profile::IncrementCounter(sctl::ProfileCounter::CUSTOM2, (unsigned long)(1e9 * dt));
 #endif
 }
@@ -850,7 +850,7 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
     params.n_mfm = n_charge_dim;
     params.n_per_leaf = 80;
 
-    double st = omp_get_wtime();
+    double st = MY_OMP_GET_WTIME();
 #ifdef DMK_HAVE_MPI
     auto comm = sctl::Comm(test_comm);
 #else
@@ -862,7 +862,7 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
     tree.GetParticleData(pot_src, "pdmk_pot_src");
     tree.GetParticleData(pot_trg, "pdmk_pot_trg");
     if (test_rank == 0)
-        std::cout << omp_get_wtime() - st << std::endl;
+        std::cout << MY_OMP_GET_WTIME() - st << std::endl;
 
     if (test_rank == 0) {
         dmk::util::init_test_data(n_dim, n_charge_dim, n_src, n_trg, uniform, true, r_src, r_trg, r_src_norms, charges,

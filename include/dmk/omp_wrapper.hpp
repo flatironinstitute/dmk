@@ -5,24 +5,18 @@
 #ifdef _OPENMP
 #include <omp.h>
 // point to actual omp utils
-static inline int MY_OMP_GET_NUM_THREADS [[maybe_unused]] () {
-  return omp_get_num_threads();
-}
-static inline int MY_OMP_GET_MAX_THREADS [[maybe_unused]] () {
-  return omp_get_max_threads();
-}
-static inline int MY_OMP_GET_THREAD_NUM [[maybe_unused]] () {
-  return omp_get_thread_num();
-}
-static inline void MY_OMP_SET_NUM_THREADS [[maybe_unused]] (int x) {
-  omp_set_num_threads(x);
-}
+static inline int MY_OMP_GET_NUM_THREADS [[maybe_unused]] () { return omp_get_num_threads(); }
+static inline int MY_OMP_GET_MAX_THREADS [[maybe_unused]] () { return omp_get_max_threads(); }
+static inline int MY_OMP_GET_THREAD_NUM [[maybe_unused]] () { return omp_get_thread_num(); }
+static inline void MY_OMP_SET_NUM_THREADS [[maybe_unused]] (int x) { omp_set_num_threads(x); }
+static inline double MY_OMP_GET_WTIME [[maybe_unused]] () { return omp_get_wtime(); }
 #else
 // non-omp safe dummy versions of omp utils...
 static inline int MY_OMP_GET_NUM_THREADS [[maybe_unused]] () { return 1; }
 static inline int MY_OMP_GET_MAX_THREADS [[maybe_unused]] () { return 1; }
 static inline int MY_OMP_GET_THREAD_NUM [[maybe_unused]] () { return 0; }
 static inline void MY_OMP_SET_NUM_THREADS [[maybe_unused]] (int) {}
+double MY_OMP_GET_WTIME();
 #endif
 
 
