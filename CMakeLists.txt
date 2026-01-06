@@ -132,12 +132,13 @@ target_compile_options(DMKOBJS PUBLIC "${DMK_CXX_FLAGS}")
 add_library(dmk STATIC)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${DMK_OPENMP_TARGET} DMKOBJS)
 target_include_directories(${PROJECT_NAME} PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_compile_options(${PROJECT_NAME} PUBLIC "${DMK_CXX_FLAGS}")
 
 add_library(dmk_shared SHARED)
 set_target_properties(${PROJECT_NAME}_shared PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
 target_link_libraries(${PROJECT_NAME}_shared PRIVATE DMKOBJS)
 target_include_directories(${PROJECT_NAME}_shared PUBLIC ${PROJECT_SOURCE_DIR}/include)
-
+target_compile_options(${PROJECT_NAME}_shared PUBLIC "${DMK_CXX_FLAGS}")
 
 if(${DMK_BUILD_TESTS})
   add_subdirectory(test)
