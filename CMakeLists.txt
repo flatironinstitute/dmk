@@ -1,17 +1,8 @@
 cmake_minimum_required(VERSION 3.18)
 
-project(dmk LANGUAGES CXX Fortran)
+project(dmk LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_EXTENSIONS OFF)
-
-if (CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
-  set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -std=legacy")
-endif()
-if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
-  add_compile_options("-DSCTL_HAVE_SVML")
-else()
-  add_compile_options("-DSCTL_HAVE_LIBMVEC")
-endif()
 
 option(DMK_BUILD_TESTS "Build tests" ON)
 option(DMK_BUILD_EXAMPLES "Build examples" ON)
@@ -20,6 +11,21 @@ option(DMK_BUILD_PVFMM "Build PVFMM for comparison. Useless without DMK_BUILD_EX
 option(DMK_HAVE_MPI "Use MPI for parallelism" ON)
 option(DMK_HAVE_OPENMP "Use OpenMP for parallelism" ON)
 option(DMK_BUILD_REFERENCE "Build reference Fortran implementation" OFF)
+
+if (DMK_BUILD_REFERENCE)
+   add_language(Fortran)
+   if (CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
+     set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -std=legacy")
+   endif()
+endif()
+
+if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
+  add_compile_options("-DSCTL_HAVE_SVML")
+else()
+  if (NOT APPLE)
+    add_compile_options("-DSCTL_HAVE_LIBMVEC")
+  endif()
+endif()
 
 # Disable google tests and HDF5 for NDA
 set(Build_Tests OFF CACHE BOOL "" FORCE)
