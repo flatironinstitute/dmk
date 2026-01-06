@@ -78,8 +78,6 @@ endif()
 set(DMK_INCLUDES
   ${PROJECT_SOURCE_DIR}/include
   ${PROJECT_SOURCE_DIR}/extern/SCTL/include
-  ${PROJECT_SOURCE_DIR}/extern/spdlog/include
-  ${PROJECT_SOURCE_DIR}/extern/doctest
 )
 
 add_subdirectory(extern/spdlog EXCLUDE_FROM_ALL)
@@ -125,16 +123,21 @@ set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp s
 )
 add_library(DMKOBJS OBJECT ${DMK_SRC})
 set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES} ${MPI_CXX_INCLUDE_DIRS} ${PAPI_INCLUDEDIR})
-target_link_libraries(DMKOBJS PUBLIC ${DMK_OPENMP_TARGET} ${PAPI_TARGET} nda::nda_c)
+target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES} ${PAPI_INCLUDEDIR})
+target_link_libraries(DMKOBJS PUBLIC ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET} ${PAPI_TARGET}
+  nda::nda_c spdlog::spdlog_header_only doctest::doctest BLAS::BLAS
+)
 target_compile_options(DMKOBJS PUBLIC "${DMK_CXX_FLAGS}")
 
 add_library(dmk STATIC)
-target_link_libraries(${PROJECT_NAME} ${DMK_OPENMP_TARGET} DMKOBJS spdlog::spdlog)
+target_link_libraries(${PROJECT_NAME} PRIVATE ${DMK_OPENMP_TARGET} DMKOBJS)
+target_include_directories(${PROJECT_NAME} PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
 add_library(dmk_shared SHARED)
 set_target_properties(${PROJECT_NAME}_shared PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
-target_link_libraries(${PROJECT_NAME}_shared DMKOBJS ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET} BLAS::BLAS spdlog doctest ${PAPI_TARGET})
+target_link_libraries(${PROJECT_NAME}_shared PRIVATE DMKOBJS)
+target_include_directories(${PROJECT_NAME}_shared PUBLIC ${PROJECT_SOURCE_DIR}/include)
+
 
 if(${DMK_BUILD_TESTS})
   add_subdirectory(test)

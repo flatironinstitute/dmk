@@ -649,8 +649,8 @@ Real calc_log_windowed_kernel_value_at_zero(int dim, const FourierData<Real> &fo
         const Real xval = xs[i] * boxsize / beta;
         const Real fval0 = fourier_data.prolate0_fun.eval_val(xval);
         const Real z = rl * xs[i];
-        const Real dj0 = std::cyl_bessel_j(0, z);
-        const Real dj1 = std::cyl_bessel_j(1, z);
+        const Real dj0 = util::cyl_bessel_j(0, z);
+        const Real dj1 = util::cyl_bessel_j(1, z);
         const Real tker = -(1 - dj0) / (xs[i] * xs[i]) + dfac * dj1 / xs[i];
         const Real fhat = tker * fval0 / psi0;
         fval += fhat * whts[i] * xs[i];

@@ -1,5 +1,6 @@
 #include <dmk/chebychev.hpp>
 #include <dmk/direct.hpp>
+#include <dmk/util.hpp>
 #include <dmk/vector_kernels.hpp>
 
 #define VECDIM 4
@@ -39,7 +40,7 @@ void yukawa_direct_eval(const ndview<const Real, 2> &r_src, const std::array<std
             const Real fval = chebyshev::evaluate(xval, norder + 1, coeffs.data());
             Real dkval;
             if constexpr (DIM == 2)
-                dkval = std::cyl_bessel_k(0, lambda * r);
+                dkval = util::cyl_bessel_k(0, lambda * r);
             if constexpr (DIM == 3)
                 dkval = std::exp(-lambda * r) / r;
 

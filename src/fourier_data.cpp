@@ -7,6 +7,7 @@
 #include <dmk/planewave.hpp>
 #include <dmk/prolate0_fun.hpp>
 #include <dmk/types.hpp>
+#include <dmk/util.hpp>
 
 #include <complex.h>
 #include <sctl.hpp>
@@ -160,8 +161,8 @@ void yukawa_windowed_kernel_ft(const double *rpars, Real beta, int ndigits, Real
     if (near_correction) {
         Real arg = rl * rlambda;
         if constexpr (DIM == 2) {
-            dk0 = std::cyl_bessel_j(0, arg);
-            dk1 = std::cyl_bessel_j(1, arg);
+            dk0 = util::cyl_bessel_j(0, arg);
+            dk1 = util::cyl_bessel_j(1, arg);
         } else if constexpr (DIM == 3)
             delam = std::exp(-arg);
     }
@@ -179,7 +180,7 @@ void yukawa_windowed_kernel_ft(const double *rpars, Real beta, int ndigits, Real
         if (near_correction) {
             const Real xsc = rl * rk;
             if constexpr (DIM == 2) {
-                using std::cyl_bessel_j;
+                using util::cyl_bessel_j;
                 windowed_ft[i] *=
                     -rl * rlambda * cyl_bessel_j(0, xsc) * dk1 + Real{1.0} + xsc * cyl_bessel_j(1, xsc) * dk0;
             } else if constexpr (DIM == 3) {
@@ -207,8 +208,8 @@ void laplace_2d_windowed_kernel_ft(const double *rpars, Real beta, int ndigits, 
 
         windowed_ft[i] = ws * fval / psi0;
         if (x > 1E-10) {
-            const Real dj0 = std::cyl_bessel_j(0, x);
-            const Real dj1 = std::cyl_bessel_j(1, x);
+            const Real dj0 = util::cyl_bessel_j(0, x);
+            const Real dj1 = util::cyl_bessel_j(1, x);
             const Real tker = -(1 - dj0) / (rk * rk) + dfact * dj1 / rk;
             windowed_ft[i] *= tker;
         } else
@@ -318,7 +319,7 @@ inline void sqrt_laplace_2d_windowed_kernel_ft(const double *rpars, Real beta, i
         windowed_ft[i] = Real{0.0};
         for (int j = 0; j < n_quad; ++j) {
             const Real z = rk * xs[j];
-            const Real dj0 = (i == 0) ? 1.0 : std::cyl_bessel_j(0, z);
+            const Real dj0 = (i == 0) ? 1.0 : util::cyl_bessel_j(0, z);
 
             windowed_ft[i] += dj0 * fvals[j] * whts[j] / c0;
         }
@@ -607,7 +608,7 @@ void sqrt_laplace_2d_difference_kernel_ft(const double *rpars, Real beta, int nd
         diff_kernel_ft[i] = Real{0.0};
         for (int j = 0; j < n_quad; ++j) {
             const Real z = rk * x2[j];
-            const Real dj0 = (i == 0) ? 1.0 : std::cyl_bessel_j(0, z);
+            const Real dj0 = (i == 0) ? 1.0 : util::cyl_bessel_j(0, z);
 
             diff_kernel_ft[i] += dj0 * (fv2[j] - fv1[j]) * w2[j] / c0;
         }
@@ -767,8 +768,8 @@ Real yukawa_windowed_kernel_value_at_zero(int n_dim, Real rlambda, Real beta, Re
     Real dk0, dk1, delam;
     if (near_correction) {
         if (n_dim == 2) {
-            dk0 = std::cyl_bessel_k(0, rl * rlambda);
-            dk1 = std::cyl_bessel_k(1, rl * rlambda);
+            dk0 = util::cyl_bessel_k(0, rl * rlambda);
+            dk1 = util::cyl_bessel_k(1, rl * rlambda);
         } else if (n_dim == 3)
             delam = std::exp(-rl * rlambda);
     }
@@ -796,7 +797,7 @@ Real yukawa_windowed_kernel_value_at_zero(int n_dim, Real rlambda, Real beta, Re
         if (near_correction) {
             const Real xsc = rl * xs[i];
             if (n_dim == 2)
-                fhat *= -rl * rlambda * std::cyl_bessel_j(0, xsc) * dk1 + 1 + xsc * std::cyl_bessel_j(1, xsc) * dk0;
+                fhat *= -rl * rlambda * util::cyl_bessel_j(0, xsc) * dk1 + 1 + xsc * util::cyl_bessel_j(1, xsc) * dk0;
             else if (n_dim == 3)
                 fhat *= 1 - delam * (std::cos(xsc) + rlambda / xs[i] * std::sin(xsc));
         }
@@ -865,8 +866,8 @@ void FourierData<Real>::update_local_coeffs_yukawa(Real eps) {
         if (near_correction) {
             Real arg = rl * rlambda;
             if (n_dim_ == 2) {
-                dk0 = std::cyl_bessel_k(0, arg);
-                dk1 = std::cyl_bessel_k(1, arg);
+                dk0 = util::cyl_bessel_k(0, arg);
+                dk1 = util::cyl_bessel_k(1, arg);
             } else
                 delam = std::exp(-arg);
         }
@@ -886,7 +887,7 @@ void FourierData<Real>::update_local_coeffs_yukawa(Real eps) {
                 Real xsc = rl * xs[i];
                 if (n_dim_ == 2)
                     fhat[i] *=
-                        -rl * rlambda * std::cyl_bessel_j(0, xsc) * dk1 + 1 + xsc * std::cyl_bessel_j(1, xsc) * dk0;
+                        -rl * rlambda * util::cyl_bessel_j(0, xsc) * dk1 + 1 + xsc * util::cyl_bessel_j(1, xsc) * dk0;
                 else
                     fhat[i] *= 1 - delam * (std::cos(xsc) + rlambda / xs[i] * std::sin(xsc));
             }
@@ -897,7 +898,7 @@ void FourierData<Real>::update_local_coeffs_yukawa(Real eps) {
             for (int i = 0; i < nr1; ++i) {
                 fvals(i) = 0.0;
                 for (int j = 0; j < n_quad; ++j)
-                    fvals(i) -= std::cyl_bessel_j(0, r1[i] * xs[j]) * fhat[j];
+                    fvals(i) -= util::cyl_bessel_j(0, r1[i] * xs[j]) * fhat[j];
             }
         } else if (n_dim_ == 3) {
             for (int i = 0; i < nr1; ++i) {
@@ -930,9 +931,9 @@ void FourierData<Real>::update_local_coeffs_yukawa(Real eps) {
                 fvals(i) = 0.0;
                 const Real r = sqrt(r2(i));
                 for (int j = 0; j < n_quad; ++j)
-                    fvals(i) -= std::cyl_bessel_j(0, r * xs[j]) * fhat[j];
+                    fvals(i) -= util::cyl_bessel_j(0, r * xs[j]) * fhat[j];
 
-                fvals(i) += std::cyl_bessel_j(0, rlambda * r);
+                fvals(i) += util::cyl_bessel_j(0, rlambda * r);
             }
         } else if (n_dim_ == 3) {
             for (int i = 0; i < nr2; ++i) {

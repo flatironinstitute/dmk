@@ -5,6 +5,7 @@
 #include <random>
 #include <vector>
 
+#include <mpi.h>
 #include <omp.h>
 
 template <typename Real>
