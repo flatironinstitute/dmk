@@ -53,10 +53,10 @@ make -j 10
 # Building on mac
 Currently an OpenMP capable compiler is required to build the code, which the MacOS default
 clang is not. I have managed to get the build working with clang++ from brew via the following.
-You'll need to update the LLVM path
+You'll need to update the LLVM path to wherever homebrew installed it.
 
 ```
-brew install open-mpi llvm
+brew install open-mpi llvm openblas cmake
 LLVM_ROOT=/opt/homebrew/Cellar/llvm/21.1.8
 git clone git@github.com:flatironinstitute/dmk --recursive
 mkdir dmk/build
