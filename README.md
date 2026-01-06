@@ -49,6 +49,21 @@ cd build
 cmake .. -DCMAKE_BUILD_TYPE=relwithdebinfo -DBLA_VENDOR=FlexiBLAS
 make -j 10
 ```
+
+# Building on mac
+Currently an OpenMP capable compiler is required to build the code, which the MacOS default
+clang is not. I have managed to get the build working with clang++ from brew via the following.
+You'll need to update the LLVM path
+
+```
+brew install open-mpi llvm
+LLVM_ROOT=/opt/homebrew/Cellar/llvm/21.1.8
+git clone git@github.com:flatironinstitute/dmk --recursive
+mkdir dmk/build
+cd dmk/build
+cmake .. -DCMAKE_CXX_COMPILER="$LLVM_ROOT/bin/clang++" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_EXE_LINKER_FLAGS="-L$LLVM_ROOT/lib/c++ -Wl,-rpath,$LLVM_ROOT/lib/c++" -DCMAKE_SHARED_LINKER_FLAGS="-L$LLVM_ROOT/lib/c++ -Wl,-rpath,$LLVM_ROOT/lib/c++" -DCMAKE_CXX_FLAGS=-Wno-deprecated -DCMAKE_INSTALL_PREFIX=$PWD/install 
+```
+
 # Fortran code installation guide
 
 We use make utility to install static and/or dynamic libraries, and to run the tests. 
