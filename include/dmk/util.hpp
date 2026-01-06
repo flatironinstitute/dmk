@@ -20,8 +20,7 @@ namespace dmk::util {
 template <class...>
 constexpr std::false_type always_false{};
 
-template <typename Real1, typename Real2>
-static inline Real1 cyl_bessel_k(Real1 nu, Real2 x) {
+static inline auto cyl_bessel_k(auto nu, auto x) {
 #ifdef __cpp_lib_math_special_functions
     return std::cyl_bessel_k(nu, x);
 #else
@@ -29,15 +28,13 @@ static inline Real1 cyl_bessel_k(Real1 nu, Real2 x) {
 #endif
 }
 
-template <typename Real1, typename Real2>
-static inline Real1 cyl_bessel_j(Real1 nu, Real2 x) {
+static inline auto cyl_bessel_j(auto nu, auto x) {
 #ifdef __cpp_lib_math_special_functions
     return std::cyl_bessel_j(nu, x);
 #else
     return bessel::cyl_j(nu, x);
 #endif
 }
-
 
 template <typename Real>
 void mesh_nd(int dim, Real *in, int size, Real *out);
