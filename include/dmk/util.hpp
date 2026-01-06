@@ -10,11 +10,9 @@
 #include <papi.h>
 #endif
 
-namespace {
 #ifndef __cpp_lib_math_special_functions
 #include <vendor/bessel.hpp>
 #endif
-}
 
 namespace dmk::util {
 template <class...>
