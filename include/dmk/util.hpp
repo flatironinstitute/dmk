@@ -3,15 +3,41 @@
 
 #include <dmk/types.hpp>
 #include <sctl.hpp>
+#include <cmath>
 #include <type_traits>
 
 #ifdef DMK_INSTRUMENT
 #include <papi.h>
 #endif
 
+namespace {
+#ifndef __cpp_lib_math_special_functions
+#include <vendor/bessel.hpp>
+#endif
+}
+
 namespace dmk::util {
 template <class...>
 constexpr std::false_type always_false{};
+
+template <typename Real1, typename Real2>
+static inline Real1 cyl_bessel_k(Real1 nu, Real2 x) {
+#ifdef __cpp_lib_math_special_functions
+    return std::cyl_bessel_k(nu, x);
+#else
+    return bessel::cyl_k(nu, x);
+#endif
+}
+
+template <typename Real1, typename Real2>
+static inline Real1 cyl_bessel_j(Real1 nu, Real2 x) {
+#ifdef __cpp_lib_math_special_functions
+    return std::cyl_bessel_j(nu, x);
+#else
+    return bessel::cyl_j(nu, x);
+#endif
+}
+
 
 template <typename Real>
 void mesh_nd(int dim, Real *in, int size, Real *out);

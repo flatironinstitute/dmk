@@ -171,7 +171,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d all", 1) {
                         return 0.0;
 
                     dr = std::sqrt(dr);
-                    return std::cyl_bessel_k(0, params.fparam * dr);
+                    return util::cyl_bessel_k(double{0}, params.fparam * dr);
                 };
             if (n_dim == 3)
                 return [distance2, &params](double *r_a, double *r_b) {
