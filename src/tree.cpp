@@ -22,6 +22,39 @@
 
 namespace dmk {
 
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::dump() const {
+    auto logger = dmk::get_rank_logger(comm_);
+    logger->info("Dumping DMKPtTree data on rank {} of comm size {}", comm_.Rank(), comm_.Size());
+
+    auto dumper = [&logger, this](const std::string &name, const auto &data) {
+        std::string filename = name + "." + std::to_string(comm_.Size()) + "." + std::to_string(comm_.Rank()) + ".dat";
+        data.Write(filename.c_str());
+        logger->info("Dumped {}", filename);
+    };
+
+    sctl::Vector<bool> is_ghost(n_boxes());
+    const auto &node_attr = this->GetNodeAttr();
+    for (int i = 0; i < n_boxes(); ++i)
+        is_ghost[i] = node_attr[i].Ghost;
+
+    sctl::Vector<bool> is_leaf(n_boxes());
+    for (int i = 0; i < n_boxes(); ++i)
+        is_leaf[i] = node_attr[i].Leaf;
+
+    dumper("dmk_centers", centers);
+    dumper("dmk_is_ghost", is_ghost);
+    dumper("dmk_is_leaf", is_leaf);
+    dumper("dmk_pw_out", pw_out);
+    dumper("dmk_pw_out_offsets", pw_out_offsets);
+    dumper("dmk_proxy_coeffs", proxy_coeffs);
+    dumper("dmk_proxy_coeffs_offsets", proxy_coeffs_offsets);
+    dumper("dmk_proxy_coeffs_downward", proxy_coeffs_downward);
+    dumper("dmk_proxy_coeffs_offsets_downward", proxy_coeffs_offsets_downward);
+    dumper("dmk_eval_tp_expansion", eval_tp_expansion);
+    dumper("dmk_src_counts_local", src_counts_local);
+}
+
 inline auto ghostleaf_or_ghost_children(int box, auto &node_attr, auto &node_lists) {
     if (node_attr[box].Leaf && node_attr[box].Ghost)
         return true;
@@ -72,7 +105,7 @@ void update_offsets_from_counts(const sctl::Vector<sctl::Long> &counts, sctl::Lo
 template <typename Real, int DIM>
 DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, const sctl::Vector<Real> &r_src,
                                 const sctl::Vector<Real> &r_trg, const sctl::Vector<Real> &charge)
-    : sctl::PtTree<Real, DIM>(comm), params(params_), n_digits(std::round(log10(1.0 / params_.eps) - 0.1)),
+    : sctl::PtTree<Real, DIM>(comm), comm_(comm), params(params_), n_digits(std::round(log10(1.0 / params_.eps) - 0.1)),
       n_pw_max(get_pwmax_and_poly_order(DIM, n_digits, params_.kernel).first),
       n_order(get_pwmax_and_poly_order(DIM, n_digits, params_.kernel).second) {
     auto &logger = dmk::get_logger(comm, params.log_level);
@@ -800,31 +833,35 @@ void DMKPtTree<T, DIM>::downward_pass() {
 
     sctl::Profile::Toc();
     sctl::Profile::Tic("expansion_propagation_and_eval", &comm_);
-    for (int i_level = 0; i_level < n_levels(); ++i_level) {
-        // Initialize everything for this level
-        // 1. Difference kernel
-        // 2. Radial fourier transform of the difference kernel
-        // 3. Planewave <-> polynomial coefficient conversion matrices
-        // 4. Planewave translation matrix
-        {
-            // sctl::Profile::Scoped profile("downward_pass_loop_init", &comm_);
-            const bool is_root = i_level == 0;
-            get_difference_kernel_ft<T, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_digits,
-                                             boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
-            util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<T, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
-                                                      ndview<T, 1>({n_pw_modes}, &radialft[0]));
-            fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
-            dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw,
-                                                        fourier_data.difference_kernel(i_level).hpw, wpwshift);
+    if (getenv("DMK_DEBUG_OMIT_PW") == nullptr) {
+        for (int i_level = 0; i_level < n_levels(); ++i_level) {
+            // Initialize everything for this level
+            // 1. Difference kernel
+            // 2. Radial fourier transform of the difference kernel
+            // 3. Planewave <-> polynomial coefficient conversion matrices
+            // 4. Planewave translation matrix
+            {
+                // sctl::Profile::Scoped profile("downward_pass_loop_init", &comm_);
+                const bool is_root = i_level == 0;
+                get_difference_kernel_ft<T, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_digits,
+                                                 boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
+                util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<T, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
+                                                          ndview<T, 1>({n_pw_modes}, &radialft[0]));
+                fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
+                dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw,
+                                                            fourier_data.difference_kernel(i_level).hpw, wpwshift);
+            }
+            form_outgoing_expansions(level_indices_outgoing[i_level], poly2pw_view, radialft);
+            form_eval_expansions(level_indices_incoming[i_level], wpwshift, boxsize[i_level], pw2poly_view, p2c);
         }
-        form_outgoing_expansions(level_indices_outgoing[i_level], poly2pw_view, radialft);
-        form_eval_expansions(level_indices_incoming[i_level], wpwshift, boxsize[i_level], pw2poly_view, p2c);
     }
     sctl::Profile::Toc();
-
-    evaluate_direct_interactions(r_src_t.data(), r_trg_t.data());
+    if (getenv("DMK_DEBUG_OMIT_DIRECT") == nullptr)
+        evaluate_direct_interactions(r_src_t.data(), r_trg_t.data());
 
     logger->info("downward pass completed");
+    if (getenv("DMK_DEBUG_DUMP_TREE") != nullptr)
+        dump();
 }
 
 #ifdef DMK_HAVE_MPI

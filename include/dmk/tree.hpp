@@ -172,6 +172,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
             static_assert(dmk::util::always_false<std::complex<Real>>, "Invalid DIM supplied");
     }
 
+    void dump() const;
     void upward_pass();
     void downward_pass();
 
