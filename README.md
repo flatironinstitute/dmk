@@ -62,6 +62,7 @@ git clone git@github.com:flatironinstitute/dmk --recursive
 mkdir dmk/build
 cd dmk/build
 cmake .. -DCMAKE_CXX_COMPILER="$LLVM_ROOT/bin/clang++" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_EXE_LINKER_FLAGS="-L$LLVM_ROOT/lib/c++ -Wl,-rpath,$LLVM_ROOT/lib/c++" -DCMAKE_SHARED_LINKER_FLAGS="-L$LLVM_ROOT/lib/c++ -Wl,-rpath,$LLVM_ROOT/lib/c++" -DCMAKE_CXX_FLAGS=-Wno-deprecated -DCMAKE_INSTALL_PREFIX=$PWD/install 
+make -j 12
 ```
 
 # Fortran code installation guide
