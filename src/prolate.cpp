@@ -430,7 +430,7 @@ void prol0eva(double x, const double *w, double &psi0, double &derpsi0) {
     double thresh = w[8];
 
     if (std::abs(x) > 1) {
-        if (c < thresh - 1.0e-10) {
+        if (c >= thresh - 1.0e-10) {
             psi0 = 0;
             derpsi0 = 0;
             return;
