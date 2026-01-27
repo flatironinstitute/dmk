@@ -397,7 +397,7 @@ void prol0ini(int &ier, double c, double *w, double &rlam20, double &rkhi, int l
 
     // Evaluate the prolate function at the Gaussian nodes
     for (int i = 0; i < ngauss; ++i) {
-        legeexev(w[its + i - 2], w[ifs + i - 2], w + iw - 1, nterms - 1);
+        legeexev(w[its + i - 1], w[ifs + i - 1], w + iw - 1, nterms - 1);
     }
 
     // Calculate the eigenvalue corresponding to ψ^c_0
