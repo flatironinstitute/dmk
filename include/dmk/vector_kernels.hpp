@@ -6,6 +6,8 @@
 #endif
 #include <sctl.hpp>
 
+namespace dmk {
+
 template <class Real, class VecType, sctl::Integer DIM, sctl::Integer KDIM0, sctl::Integer KDIM1, sctl::Integer SCDIM,
           class uKernel, sctl::Integer digits>
 struct uKerHelper {
@@ -3766,6 +3768,7 @@ void log_local_kernel_directdp_vec_cpp(const int32_t *nd, const int32_t *ndim, c
     else
         log_local_kernel_directdp_vec_cpp_helper<Real, MaxVecLen, -1, 2>(nd, rsc, cen, d2min, d2max, sources, ns,
                                                                          dipvec, xtarg, ytarg, nt, pot);
+}
 }
 
 #endif

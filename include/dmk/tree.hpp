@@ -15,8 +15,6 @@ struct FourierData;
 template <typename Real, int DIM>
 struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Vector<int>> level_indices;
-    sctl::Vector<sctl::Vector<int>> level_indices_outgoing;
-    sctl::Vector<sctl::Vector<int>> level_indices_incoming;
     sctl::Vector<Real> boxsize;
     sctl::Vector<Real> centers;
 
@@ -51,9 +49,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<std::complex<Real>> pw_out;
     sctl::Vector<sctl::Long> pw_out_offsets;
 
-    sctl::Vector<int> form_pw_expansion;
-    sctl::Vector<int> eval_pw_expansion;
-    sctl::Vector<int> eval_tp_expansion;
+    std::vector<int> ifpwexp;
+    std::vector<int> iftensprodeval;
     const pdmk_params params;
     const int n_digits;
     const int n_pw_max;
@@ -85,8 +82,9 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     void evaluate_direct_interactions(const Real *r_src_t, const Real *r_trg_t);
 
-    std::span<const int> direct_neighbs_flipped(int i_box) const {
-        return std::span<const int>(direct_neighbs_flipped_[i_box].data(), n_direct_neighbs_flipped_[i_box]);
+    std::span<const int> list1(int i_box) const { return std::span<const int>(list1_[i_box].data(), nlist1_[i_box]); }
+    std::span<const int> listpw(int i_box) const {
+        return std::span<const int>(listpw_[i_box].data(), nlistpw_[i_box]);
     }
 
     Real *r_src_ptr(int i_node) {
@@ -177,9 +175,16 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void downward_pass();
 
   private:
-    static constexpr int n_neighbs_flipped_max_ = sctl::pow<DIM>(4) - sctl::pow<DIM>(2) + 1;
-    sctl::Vector<std::array<int, n_neighbs_flipped_max_>> direct_neighbs_flipped_;
-    sctl::Vector<int> n_direct_neighbs_flipped_;
+    static constexpr int nlist1_max_ = sctl::pow<DIM>(4) - sctl::pow<DIM>(2) + 1;
+    // list1 contains boxes that are neighbors for direct interaction
+    std::vector<std::array<int, nlist1_max_>> list1_;
+    std::vector<int> nlist1_;
+
+    static constexpr int nlistpw_max_ = sctl::pow<DIM>(3);
+    // listpw_ contains source boxes in the pw interaction
+    std::vector<std::array<int, nlistpw_max_>> listpw_;
+    std::vector<int> nlistpw_;
+
     sctl::Vector<sctl::Vector<Real>> workspaces_;
     const sctl::Comm comm_;
 };

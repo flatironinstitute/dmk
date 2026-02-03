@@ -88,7 +88,8 @@ std::tuple<int, double, double> get_PSWF_difference_kernel_pwterms(dmk_ikernel k
             npw = 39;
             hpw = M_PI * 0.6625 / boxsize;
         } else if (ndigits <= 12) {
-            npw = 53;
+            // FIXME: was 53, but currently the code requires it be the same as the difference kernel
+            npw = 55;
             hpw = M_PI * 0.6677 / boxsize;
         }
     }
@@ -123,7 +124,8 @@ std::tuple<int, double, double, double> get_PSWF_windowed_kernel_pwterms(int ndi
         npw = 39;
         hpw = M_PI * 0.357 / boxsize;
     } else if (ndigits <= 12) {
-        npw = 53;
+        // FIXME: was 53, but currently the code requires it be the same as the difference kernel
+        npw = 55;
         hpw = M_PI * 0.338 / boxsize;
     }
 

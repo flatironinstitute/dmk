@@ -13,10 +13,10 @@ option(DMK_HAVE_OPENMP "Use OpenMP for parallelism" ON)
 option(DMK_BUILD_REFERENCE "Build reference Fortran implementation" OFF)
 
 if (DMK_BUILD_REFERENCE)
-   add_language(Fortran)
-   if (CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
-     set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -std=legacy")
-   endif()
+  enable_language(Fortran)
+  if (CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -std=legacy")
+  endif()
 endif()
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
@@ -105,7 +105,7 @@ if (DMK_BUILD_REFERENCE)
   list(REMOVE_ITEM DMK_REF_PDMK_SRC
     "${CMAKE_SOURCE_DIR}/src/pdmk/kernelevaluation/l3dkernels_fast.f"
     "${CMAKE_SOURCE_DIR}/src/pdmk/pdmk.f"
-    "${CMAKE_SOURCE_DIR}/src/pdmk/pdmk4.f"
+    "${CMAKE_SOURCE_DIR}/src/pdmk/pdmk3.f"
   )
   add_library(dmk_ref_pdmk OBJECT ${DMK_REF_PDMK_SRC})
   set_target_properties(dmk_ref_pdmk PROPERTIES POSITION_INDEPENDENT_CODE ON)

@@ -90,7 +90,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d float", 1) {
     pot_trgf.ReInit(n_trg * nd);
 
     pdmk_params params;
-    params.eps = 1e-10;
+    params.eps = 1e-9;
     params.n_dim = n_dim;
     params.n_per_leaf = 80;
     params.n_mfm = nd;
@@ -103,7 +103,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d float", 1) {
     pdmk(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0], &pot_src[0], nullptr,
          nullptr, &pot_trg[0], nullptr, nullptr);
 
-    params.eps = 1e-5;
+    params.eps = 1e-3;
     pdmkf(comm, params, n_src, &r_srcf[0], &chargesf[0], &rnormalf[0], &dipstrf[0], n_trg, &r_trgf[0], &pot_srcf[0],
           nullptr, nullptr, &pot_trgf[0], nullptr, nullptr);
 
@@ -143,7 +143,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d all", 1) {
     const int n_trg = r_trg.Dim() / n_dim;
 
     pdmk_params params;
-    params.eps = 1e-6;
+    params.eps = 1e-12;
     params.n_dim = n_dim;
     params.n_per_leaf = 80;
     params.n_mfm = nd;
@@ -264,13 +264,6 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d all", 1) {
                     hess_trg(n_trg * nd * n_dim * n_dim);
                 params.n_per_leaf = ndiv[int(kernel)];
 
-                auto pot_src_fort = pot_src;
-                auto grad_src_fort = grad_src;
-                auto hess_src_fort = hess_src;
-                auto pot_trg_fort = pot_trg;
-                auto grad_trg_fort = grad_trg;
-                auto hess_trg_fort = hess_trg;
-
                 params.kernel = kernel;
                 auto potential = get_pot_func(n_dim, kernel);
 
@@ -289,16 +282,23 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d all", 1) {
                 pdmk_tree tree = pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0],
                                                   n_trg, &r_trg[0]);
                 pdmk_tree_eval(tree, &pot_src[0], &grad_src[0], &hess_src[0], &pot_trg[0], &grad_trg[0], &hess_trg[0]);
-                pdmk_tree_destroy(tree);
 
-                // double tottimeinfo[20];
-                // int use_dipole = 0;
-                // double st = MY_OMP_GET_WTIME();
-                // pdmk_(&nd, &n_dim, &params.eps, (int *)&params.kernel, &params.fparam, &params.use_periodic, &n_src,
-                //       &r_src[0], &params.use_charge, &charges[0], &use_dipole, nullptr, nullptr, (int
-                //       *)&params.pgh_src, &pot_src_fort[0], &grad_src_fort[0], &hess_src_fort[0], &n_trg, &r_trg[0],
-                //       (int *)&params.pgh_trg, &pot_trg_fort[0], &grad_trg_fort[0], &hess_trg_fort[0], tottimeinfo);
-                // std::cout << MY_OMP_GET_WTIME() - st << std::endl;
+#ifdef DMK_HAVE_REFERENCE
+                double tottimeinfo[20];
+                int use_dipole = 0;
+                auto pot_src_fort = pot_src;
+                auto grad_src_fort = grad_src;
+                auto hess_src_fort = hess_src;
+                auto pot_trg_fort = pot_trg;
+                auto grad_trg_fort = grad_trg;
+                auto hess_trg_fort = hess_trg;
+                double st = MY_OMP_GET_WTIME();
+                pdmk_(&nd, &n_dim, &params.eps, (int *)&params.kernel, &params.fparam, &params.use_periodic, &n_src,
+                      &r_src[0], &params.use_charge, &charges[0], &use_dipole, nullptr, nullptr, (int *)&params.pgh_src,
+                      &pot_src_fort[0], &grad_src_fort[0], &hess_src_fort[0], &n_trg, &r_trg[0], (int *)&params.pgh_trg,
+                      &pot_trg_fort[0], &grad_trg_fort[0], &hess_trg_fort[0], tottimeinfo);
+                std::cout << MY_OMP_GET_WTIME() - st << std::endl;
+#endif
 
                 double l2_err_src = 0.0;
                 double l2_err_trg = 0.0;
@@ -311,6 +311,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d all", 1) {
                 l2_err_trg = std::sqrt(l2_err_trg) / n_test_trg;
                 CHECK(l2_err_src < 5 * params.eps);
                 CHECK(l2_err_trg < 5 * params.eps);
+                pdmk_tree_destroy(tree);
             }
         }
     }
