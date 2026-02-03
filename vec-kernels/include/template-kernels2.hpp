@@ -742,9 +742,9 @@ template <class Real, sctl::Integer MaxVecLen=sctl::DefaultVecLen<Real>(), sctl:
   sctl::Long Ntrg = nt[0];
   sctl::Long Ntrg_ = ((Ntrg+MaxVecLen-1)/MaxVecLen)*MaxVecLen;
 
-
-  sctl::StaticArray<Real,400*COORD_DIM> buff0;
-  sctl::StaticArray<Real,400*1> buff1;
+  using VecType = sctl::Vec<Real, MaxVecLen>;
+  alignas(sizeof(VecType)) sctl::StaticArray<Real,400*COORD_DIM> buff0;
+  alignas(sizeof(VecType)) sctl::StaticArray<Real,400*1> buff1;
   sctl::Matrix<Real> Xt(COORD_DIM, Ntrg_, buff0, false);
   sctl::Matrix<Real> Vt(nd_, Ntrg_, buff1, false);
   if (Ntrg_ > 400) {

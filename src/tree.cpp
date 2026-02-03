@@ -635,29 +635,44 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
         for (auto box : boxes) {
             const int nboxpts = src_counts_local[box] + trg_counts_local[box];
 
-            if (!ifpwexp[box] || !nboxpts)
-                continue;
+            if (ifpwexp[box] && nboxpts) {
+                memcpy(&pw_in[0], pw_out_ptr(box), n_pw_per_box * sizeof(std::complex<Real>));
+                for (auto &neighbor : node_lists[box].nbr) {
+                    if (neighbor >= 0 && neighbor != box && (!node_attr[box].Leaf || !node_attr[neighbor].Leaf)) {
+                        // Translate the outgoing expansion Φl(colleague) to the center of box and add to the incoming
+                        // plane wave expansion Ψl(box) using wpwshift.
 
-            memcpy(&pw_in[0], pw_out_ptr(box), n_pw_per_box * sizeof(std::complex<Real>));
-            for (auto &neighbor : node_lists[box].nbr) {
-                if (neighbor >= 0 && neighbor != box && (!node_attr[box].Leaf || !node_attr[neighbor].Leaf)) {
-                    // Translate the outgoing expansion Φl(colleague) to the center of box and add to the incoming
-                    // plane wave expansion Ψl(box) using wpwshift.
+                        // note: neighbors in SCTL are sorted in reverse order to wpwshift
+                        // FIXME: check if valid for periodic boundary conditions
+                        constexpr int n_neighbors = sctl::pow<DIM>(3);
+                        const int ind = n_neighbors - 1 - (&neighbor - &node_lists[box].nbr[0]);
+                        assert(ind >= 0 && ind < n_neighbors);
 
-                    // note: neighbors in SCTL are sorted in reverse order to wpwshift
-                    // FIXME: check if valid for periodic boundary conditions
-                    constexpr int n_neighbors = sctl::pow<DIM>(3);
-                    const int ind = n_neighbors - 1 - (&neighbor - &node_lists[box].nbr[0]);
-                    assert(ind >= 0 && ind < n_neighbors);
+                        ndview<const std::complex<Real>, 1> wpwshift_view({n_pw_per_box},
+                                                                          &wpwshift[n_pw_per_box * ind]);
+                        shift_planewave<std::complex<Real>, DIM>(pw_out_view(neighbor), pw_in_view, wpwshift_view);
+                        n_shifts++;
+                    }
+                }
 
-                    ndview<const std::complex<Real>, 1> wpwshift_view({n_pw_per_box}, &wpwshift[n_pw_per_box * ind]);
-                    shift_planewave<std::complex<Real>, DIM>(pw_out_view(neighbor), pw_in_view, wpwshift_view);
-                    n_shifts++;
+                // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
+                dmk::planewave_to_proxy_potential<Real, DIM>(pw_in_view, pw2poly_view, proxy_view_downward(box),
+                                                             workspace);
+
+                if (!iftensprodeval[box]) {
+                    // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
+                    constexpr int n_children = 1u << DIM;
+                    for (int i_child = 0; i_child < n_children; ++i_child) {
+                        const int child = node_lists[box].child[i_child];
+                        if (child < 0 || !(src_counts_local[child] + trg_counts_local[child]))
+                            continue;
+                        const ndview<Real, 2> p2c_view({n_order, DIM},
+                                                       const_cast<Real *>(&p2c[i_child * DIM * n_order * n_order]));
+                        tensorprod::transform<Real, DIM>(nd, true, proxy_view_downward(box), p2c_view,
+                                                         proxy_view_downward(child), workspace);
+                    }
                 }
             }
-
-            // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
-            dmk::planewave_to_proxy_potential<Real, DIM>(pw_in_view, pw2poly_view, proxy_view_downward(box), workspace);
 
             if (iftensprodeval[box]) {
                 if (src_counts_local[box])
@@ -666,18 +681,6 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
                 if (trg_counts_local[box])
                     proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_trg_view(box), center_view(box), sc,
                                                    pot_trg_view(box), workspace);
-            } else {
-                // Translate and add the local expansion of Λl(box) to the local expansion of Λl(child).
-                constexpr int n_children = 1u << DIM;
-                for (int i_child = 0; i_child < n_children; ++i_child) {
-                    const int child = node_lists[box].child[i_child];
-                    if (child < 0 || !(src_counts_local[child] + trg_counts_local[child]))
-                        continue;
-                    const ndview<Real, 2> p2c_view({n_order, DIM},
-                                                   const_cast<Real *>(&p2c[i_child * DIM * n_order * n_order]));
-                    tensorprod::transform<Real, DIM>(nd, true, proxy_view_downward(box), p2c_view,
-                                                     proxy_view_downward(child), workspace);
-                }
             }
         }
     }
