@@ -446,8 +446,8 @@ void DMKPtTree<T, DIM>::upward_pass() {
     const auto &node_mid = this->GetNodeMID();
     const int dim = DIM;
 
+    std::vector<bool> iftensprodform(n_boxes());
     sctl::Profile::Toc();
-    const int start_level = std::max(n_levels() - 2, 0);
     {
         sctl::Profile::Scoped profile("charge2proxy_base", &comm_);
 
@@ -455,47 +455,46 @@ void DMKPtTree<T, DIM>::upward_pass() {
         {
             sctl::Vector<T> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
 
+            for (int i_level = n_levels() - 1; i_level >= 0; --i_level) {
 #pragma omp for schedule(dynamic)
-            for (auto i_box : level_indices[start_level]) {
-                if (!ifpwexp[i_box] || !src_counts_local[i_box] || node_attr[i_box].Ghost)
-                    continue;
+                for (auto i_box : level_indices[i_level]) {
+                    iftensprodform[i_box] = src_counts_local[i_box] > 0 && ifpwexp[i_box];
+                    if (iftensprodform[i_box]) {
+                        const bool iftpform = [&]() {
+                            bool iftpform = 0;
+                            for (auto child : node_lists[i_box].child) {
+                                if (child >= 0 && iftensprodform[child])
+                                    return true;
+                            }
+                            return false;
+                        }();
 
-                proxy::charge2proxycharge<T, DIM>(r_src_view(i_box), charge_view(i_box), center_view(i_box),
-                                                  2.0 / boxsize[start_level], proxy_view_upward(i_box), workspace);
-            }
-        }
-        logger->debug("proxy: finished building base proxy charges");
-    }
+                        if (!iftpform) {
+                            proxy::charge2proxycharge<T, DIM>(r_src_view(i_box), charge_view(i_box), center_view(i_box),
+                                                              2.0 / boxsize[i_level], proxy_view_upward(i_box),
+                                                              workspace);
+                        } else {
+                            auto &children = node_lists[i_box].child;
+                            for (int i_child = 0; i_child < n_children; ++i_child) {
+                                const int child_box = children[i_child];
+                                if (child_box < 0)
+                                    continue;
 
-    {
-        sctl::Profile::Scoped profile("charge2proxy_rest", &comm_);
-#pragma omp parallel
-        {
-            sctl::Vector<T> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
-
-            for (int i_level = start_level - 1; i_level >= 0; --i_level) {
-#pragma omp for schedule(dynamic)
-                for (auto parent_box : level_indices[i_level]) {
-                    if (!ifpwexp[parent_box])
-                        continue;
-
-                    auto &children = node_lists[parent_box].child;
-                    for (int i_child = 0; i_child < n_children; ++i_child) {
-                        const int child_box = children[i_child];
-                        if (child_box < 0 || !src_counts_local[child_box])
-                            continue;
-
-                        if (ifpwexp[child_box]) {
-                            const ndview<T, 2> c2p_view({n_order, DIM}, &c2p[i_child * DIM * n_order * n_order]);
-                            tensorprod::transform<T, DIM>(params.n_mfm, true, proxy_view_upward(child_box), c2p_view,
-                                                          proxy_view_upward(parent_box), workspace);
-                        } else if (!node_attr[child_box].Ghost) {
-                            proxy::charge2proxycharge<T, DIM>(r_src_view(child_box), charge_view(child_box),
-                                                              center_view(parent_box), 2.0 / boxsize[i_level],
-                                                              proxy_view_upward(parent_box), workspace);
+                                if (iftensprodform[child_box]) {
+                                    const ndview<T, 2> c2p_view({n_order, DIM},
+                                                                &c2p[i_child * DIM * n_order * n_order]);
+                                    tensorprod::transform<T, DIM>(params.n_mfm, true, proxy_view_upward(child_box),
+                                                                  c2p_view, proxy_view_upward(i_box), workspace);
+                                } else if (src_counts_local[child_box]) {
+                                    proxy::charge2proxycharge<T, DIM>(r_src_view(child_box), charge_view(child_box),
+                                                                      center_view(i_box), 2.0 / boxsize[i_level],
+                                                                      proxy_view_upward(i_box), workspace);
+                                }
+                            }
                         }
                     }
                 }
+                logger->debug("proxy: finished building base proxy charges");
             }
         }
     }
@@ -515,7 +514,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
     sctl::Profile::Toc();
     logger->debug("proxy: finished broadcasting proxy charges");
     logger->info("upward pass finished");
-}
+    }
 
 template <typename T, int DIM>
 void multiply_kernelFT_cd2p(const sctl::Vector<T> &radialft, auto &&pwexp) {
