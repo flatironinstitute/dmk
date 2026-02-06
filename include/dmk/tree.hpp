@@ -49,8 +49,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<std::complex<Real>> pw_out;
     sctl::Vector<sctl::Long> pw_out_offsets;
 
-    std::vector<int> ifpwexp;
-    std::vector<int> iftensprodeval;
+    sctl::Vector<bool> ifpwexp;
+    sctl::Vector<bool> iftensprodeval;
     const pdmk_params params;
     const int n_digits;
     const int n_pw_max;

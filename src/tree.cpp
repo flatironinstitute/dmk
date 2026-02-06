@@ -251,7 +251,8 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     }
 
     // Determine if we need a plane wave expansion for each box
-    ifpwexp.resize(n_nodes);
+    ifpwexp.ReInit(n_nodes);
+    ifpwexp.SetZero();
     ifpwexp[0] = true;
     for (int box = 0; box < n_nodes; ++box) {
         if (!node_attr[box].Leaf) {
@@ -271,7 +272,8 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     }
 
     // Determine if proxy potential needs to be evaluated for each box
-    iftensprodeval.resize(n_nodes);
+    iftensprodeval.ReInit(n_nodes);
+    iftensprodeval.SetZero();
     for (const auto &level_boxes : level_indices) {
         for (auto box : level_boxes) {
             if (ifpwexp[box] && (src_counts_local[box] + trg_counts_local[box])) {
@@ -292,6 +294,29 @@ void DMKPtTree<T, DIM>::generate_metadata() {
                     if (child >= 0 && !ifpwexp[child] && (src_counts_local[child] + trg_counts_local[child]))
                         iftensprodeval[child] = true;
             }
+        }
+    }
+
+    sctl::Vector<sctl::Long> counts(n_boxes());
+    for (int i = 0; i < n_boxes(); ++i)
+        counts[i] = 1;
+    this->AddData("ifpwexp", ifpwexp, counts);
+    this->AddData("iftensprodeval", ifpwexp, counts);
+    this->template Broadcast<bool>("ifpwexp");
+    this->template Broadcast<bool>("iftensprodeval");
+    sctl::Vector<bool> ifpwexp_halo, iftensprodeval_halo;
+    this->GetData(ifpwexp_halo, counts, "ifpwexp");
+    this->GetData(iftensprodeval_halo, counts, "iftensprodeval");
+
+    long offset = 0;
+    for (int i = 0; i < n_boxes(); ++i) {
+        if (counts[i]) {
+            ifpwexp[i] = ifpwexp_halo[offset];
+            iftensprodeval[i] = iftensprodeval_halo[offset];
+            offset++;
+        } else {
+            ifpwexp[i] = false;
+            iftensprodeval[i] = false;
         }
     }
 
@@ -384,7 +409,6 @@ void DMKPtTree<T, DIM>::generate_metadata() {
         }
     }
 
-    sctl::Vector<sctl::Long> counts(n_boxes());
     const int n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
     for (int i = 0; i < n_boxes(); ++i)
         counts[i] = ifpwexp[i] ? n_coeffs : 0;
@@ -449,7 +473,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
     std::vector<bool> iftensprodform(n_boxes());
     sctl::Profile::Toc();
     {
-        sctl::Profile::Scoped profile("charge2proxy_base", &comm_);
+        sctl::Profile::Scoped profile("charge2proxy", &comm_);
 
 #pragma omp parallel
         {
@@ -469,7 +493,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
                             return false;
                         }();
 
-                        if (!iftpform) {
+                        if (!iftpform && !node_attr[i_box].Ghost) {
                             proxy::charge2proxycharge<T, DIM>(r_src_view(i_box), charge_view(i_box), center_view(i_box),
                                                               2.0 / boxsize[i_level], proxy_view_upward(i_box),
                                                               workspace);
@@ -485,7 +509,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
                                                                 &c2p[i_child * DIM * n_order * n_order]);
                                     tensorprod::transform<T, DIM>(params.n_mfm, true, proxy_view_upward(child_box),
                                                                   c2p_view, proxy_view_upward(i_box), workspace);
-                                } else if (src_counts_local[child_box]) {
+                                } else if (src_counts_local[child_box] && !node_attr[child_box].Ghost) {
                                     proxy::charge2proxycharge<T, DIM>(r_src_view(child_box), charge_view(child_box),
                                                                       center_view(i_box), 2.0 / boxsize[i_level],
                                                                       proxy_view_upward(i_box), workspace);
@@ -494,9 +518,9 @@ void DMKPtTree<T, DIM>::upward_pass() {
                         }
                     }
                 }
-                logger->debug("proxy: finished building base proxy charges");
             }
         }
+        logger->debug("proxy: finished building proxy charges");
     }
 
     sctl::Profile::Tic("broadcast_proxy_coeffs", &comm_);
@@ -514,7 +538,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
     sctl::Profile::Toc();
     logger->debug("proxy: finished broadcasting proxy charges");
     logger->info("upward pass finished");
-    }
+}
 
 template <typename T, int DIM>
 void multiply_kernelFT_cd2p(const sctl::Vector<T> &radialft, auto &&pwexp) {
