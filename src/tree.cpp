@@ -301,7 +301,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     for (int i = 0; i < n_boxes(); ++i)
         counts[i] = 1;
     this->AddData("ifpwexp", ifpwexp, counts);
-    this->AddData("iftensprodeval", ifpwexp, counts);
+    this->AddData("iftensprodeval", iftensprodeval, counts);
     this->template Broadcast<bool>("ifpwexp");
     this->template Broadcast<bool>("iftensprodeval");
     sctl::Vector<bool> ifpwexp_halo, iftensprodeval_halo;
