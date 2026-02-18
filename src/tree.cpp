@@ -77,7 +77,7 @@ void DMKPtTree<Real, DIM>::dump() const {
     dumper("dmk_iftensprodeval", iftensprodeval);
     dumper("dmk_pw_out", pw_out);
     dumper("dmk_pw_out_offsets", pw_out_offsets);
-    dumper("dmk_proxy_coeffs", proxy_coeffs);
+    dumper("dmk_proxy_coeffs", proxy_coeffs_upward);
     dumper("dmk_proxy_coeffs_offsets", proxy_coeffs_offsets);
     dumper("dmk_proxy_coeffs_downward", proxy_coeffs_downward);
     dumper("dmk_proxy_coeffs_offsets_downward", proxy_coeffs_offsets_downward);
@@ -223,6 +223,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
         pot_trg_offsets[0] = charge_offsets_owned[0] = charge_offsets_with_halo[0] = 0;
     for (int i_node = 1; i_node < n_boxes(); ++i_node) {
         r_src_offsets_with_halo[i_node] = r_src_offsets_with_halo[i_node - 1] + DIM * r_src_cnt_with_halo[i_node - 1];
+        r_trg_offsets_owned[i_node] = r_trg_offsets_owned[i_node - 1] + DIM * r_trg_cnt_owned[i_node - 1];
         pot_src_offsets[i_node] = pot_src_offsets[i_node - 1] + params.n_mfm * pot_src_cnt[i_node - 1];
         pot_trg_offsets[i_node] = pot_trg_offsets[i_node - 1] + params.n_mfm * pot_trg_cnt[i_node - 1];
         charge_offsets_owned[i_node] = charge_offsets_owned[i_node - 1] + params.n_mfm * charge_cnt_owned[i_node - 1];
@@ -289,9 +290,6 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     }
 
     // Determine if we need a plane wave expansion for each box
-    ifpwexp.ReInit(n_boxes());
-    ifpwexp.SetZero();
-    ifpwexp[0] = true;
     is_global_leaf.ReInit(n_boxes());
     is_global_leaf.SetZero();
     for (int box = 0; box < n_boxes(); ++box)
@@ -318,6 +316,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
 
     ifpwexp.ReInit(n_boxes());
     ifpwexp.SetZero();
+    ifpwexp[0] = true;
     for (int box = 0; box < n_boxes(); ++box) {
         if (!is_global_leaf[box]) {
             ifpwexp[box] = true;
@@ -454,10 +453,10 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     for (int i = 0; i < n_boxes(); ++i)
         counts[i] = ifpwexp[i] ? n_coeffs : 0;
 
-    proxy_coeffs.ReInit(n_coeffs * n_proxy_boxes_upward);
+    proxy_coeffs_upward.ReInit(n_coeffs * n_proxy_boxes_upward);
     proxy_coeffs_downward.ReInit(n_coeffs * n_proxy_boxes_downward);
 
-    this->AddData("proxy_coeffs", proxy_coeffs, counts);
+    this->AddData("proxy_coeffs", proxy_coeffs_upward, counts);
     proxy_coeffs_offsets.ReInit(n_boxes());
     proxy_coeffs_offsets_downward.ReInit(n_boxes());
 
@@ -502,8 +501,8 @@ void DMKPtTree<T, DIM>::upward_pass() {
     workspaces_.ReInit(MY_OMP_GET_NUM_THREADS());
 
     sctl::Vector<sctl::Long> counts;
-    this->GetData(proxy_coeffs, counts, "proxy_coeffs");
-    proxy_coeffs.SetZero();
+    this->GetData(proxy_coeffs_upward, counts, "proxy_coeffs");
+    proxy_coeffs_upward.SetZero();
 
     constexpr int n_children = 1u << DIM;
     const auto &node_lists = this->GetNodeLists();
@@ -569,7 +568,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
     sctl::Profile::Tic("broadcast_proxy_coeffs", &comm_);
     logger->debug("Finished building proxy charges");
     this->template ReduceBroadcast<T>("proxy_coeffs");
-    this->GetData(proxy_coeffs, counts, "proxy_coeffs");
+    this->GetData(proxy_coeffs_upward, counts, "proxy_coeffs");
     long last_offset = 0;
     for (int box = 0; box < n_boxes(); ++box) {
         if (counts[box]) {
@@ -704,7 +703,7 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
 
 #pragma omp for schedule(dynamic) reduction(+ : n_shifts)
         for (auto box : boxes) {
-            const int nboxpts = src_counts_with_halo[box] + trg_counts_owned[box];
+            const int nboxpts = src_counts_owned[box] + trg_counts_owned[box];
 
             if (ifpwexp[box] && nboxpts) {
                 memcpy(&pw_in[0], pw_out_ptr(box), n_pw_per_box * sizeof(std::complex<Real>));
@@ -735,7 +734,7 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
                     constexpr int n_children = 1u << DIM;
                     for (int i_child = 0; i_child < n_children; ++i_child) {
                         const int child = node_lists[box].child[i_child];
-                        if (child < 0 || !(src_counts_with_halo[child] + trg_counts_owned[child]))
+                        if (child < 0 || !(src_counts_owned[child] + trg_counts_owned[child]))
                             continue;
                         const ndview<Real, 2> p2c_view({n_order, DIM},
                                                        const_cast<Real *>(&p2c[i_child * DIM * n_order * n_order]));
@@ -746,9 +745,9 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
             }
 
             if (iftensprodeval[box]) {
-                if (src_counts_with_halo[box])
-                    proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_src_with_halo_view(box),
-                                                   center_view(box), sc, pot_src_view(box), workspace);
+                if (src_counts_owned[box])
+                    proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_src_owned_view(box), center_view(box),
+                                                   sc, pot_src_view(box), workspace);
                 if (trg_counts_owned[box])
                     proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_trg_owned_view(box), center_view(box),
                                                    sc, pot_trg_view(box), workspace);
@@ -1068,6 +1067,11 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
 
             double maxerr_up = 0.0;
             if (ibox == 0 || tree.ifpwexp[ibox]) {
+                // FIXME: ifpwexp is no longer a sufficient check for valid proxy coeffs, since
+                // we only care about halos, not the global ifpwexp flag.
+                if (tree_single.proxy_coeffs_offsets[single_box] == -1 || tree.proxy_coeffs_offsets[ibox] == -1)
+                    break;
+
                 double max_actual = 0.0;
                 for (int i = 0; i < sctl::pow<3>(tree.n_order); ++i) {
                     const double actual = tree_single.proxy_ptr_upward(single_box)[i];

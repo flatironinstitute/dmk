@@ -50,7 +50,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> charge_cnt_with_halo;
     sctl::Vector<sctl::Long> charge_offsets_with_halo;
 
-    sctl::Vector<Real> proxy_coeffs;
+    sctl::Vector<Real> proxy_coeffs_upward;
     sctl::Vector<sctl::Long> proxy_coeffs_offsets;
     sctl::Vector<Real> proxy_coeffs_downward;
     sctl::Vector<sctl::Long> proxy_coeffs_offsets_downward;
@@ -161,7 +161,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     Real *proxy_ptr_upward(int i_box) {
         assert(proxy_coeffs_offsets[i_box] != -1);
-        return &proxy_coeffs[proxy_coeffs_offsets[i_box]];
+        return &proxy_coeffs_upward[proxy_coeffs_offsets[i_box]];
     }
     ndview<Real, DIM + 1> proxy_view_upward(int i_box) {
         if constexpr (DIM == 2)
