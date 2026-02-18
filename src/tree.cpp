@@ -82,7 +82,8 @@ void DMKPtTree<Real, DIM>::dump() const {
     dumper("dmk_proxy_coeffs_downward", proxy_coeffs_downward);
     dumper("dmk_proxy_coeffs_offsets_downward", proxy_coeffs_offsets_downward);
     dumper("dmk_pw_expansion", ifpwexp);
-    dumper("dmk_src_counts_local", src_counts_local);
+    dumper("dmk_src_counts_with_halo", src_counts_with_halo);
+    dumper("dmk_src_counts_owned", src_counts_owned);
     dumper("dmk_morton_ids", morton_ids);
 }
 
@@ -189,8 +190,8 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     const auto &node_mid = this->GetNodeMID();
     const auto &node_lists = this->GetNodeLists();
 
-    src_counts_local.ReInit(n_boxes());
-    trg_counts_local.ReInit(n_boxes());
+    src_counts_with_halo.ReInit(n_boxes());
+    trg_counts_with_halo.ReInit(n_boxes());
     r_src_offsets.ReInit(n_boxes());
     r_trg_offsets.ReInit(n_boxes());
     pot_src_offsets.ReInit(n_boxes());
@@ -233,18 +234,26 @@ void DMKPtTree<T, DIM>::generate_metadata() {
         scale *= 0.5;
     }
 
-    src_counts_local.SetZero();
-    trg_counts_local.SetZero();
+    src_counts_with_halo.SetZero();
+    src_counts_owned.ReInit(n_boxes());
+    src_counts_owned.SetZero();
+    trg_counts_with_halo.SetZero();
+    trg_counts_owned.ReInit(n_boxes());
+    trg_counts_owned.SetZero();
     for (int i_level = max_depth - 1; i_level >= 0; i_level--) {
         for (auto i_node : level_indices[i_level]) {
             auto &node = node_mid[i_node];
             assert(i_level == node.Depth());
 
-            src_counts_local[i_node] += r_src_cnt[i_node];
-            trg_counts_local[i_node] += r_trg_cnt[i_node];
+            src_counts_with_halo[i_node] += r_src_cnt[i_node];
+            trg_counts_with_halo[i_node] += r_trg_cnt[i_node];
+            src_counts_owned[i_node] += node_attr[i_node].Ghost ? 0 : r_src_cnt[i_node];
+            trg_counts_owned[i_node] += node_attr[i_node].Ghost ? 0 : r_trg_cnt[i_node];
             if (node_lists[i_node].parent != -1) {
-                src_counts_local[node_lists[i_node].parent] += src_counts_local[i_node];
-                trg_counts_local[node_lists[i_node].parent] += trg_counts_local[i_node];
+                src_counts_with_halo[node_lists[i_node].parent] += src_counts_with_halo[i_node];
+                trg_counts_with_halo[node_lists[i_node].parent] += trg_counts_with_halo[i_node];
+                src_counts_owned[node_lists[i_node].parent] += src_counts_owned[i_node];
+                trg_counts_owned[node_lists[i_node].parent] += trg_counts_owned[i_node];
             }
         }
     }
@@ -301,7 +310,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     iftensprodeval.SetZero();
     for (const auto &level_boxes : level_indices) {
         for (auto box : level_boxes) {
-            if (ifpwexp[box] && (src_counts_local[box] + trg_counts_local[box])) {
+            if (ifpwexp[box] && (src_counts_with_halo[box] + trg_counts_with_halo[box])) {
                 const bool iftpeval = [&]() {
                     for (auto child : node_lists[box].child) {
                         if (child >= 0 && ifpwexp[child])
@@ -316,7 +325,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
                     continue;
 
                 for (auto child : node_lists[box].child)
-                    if (child >= 0 && !ifpwexp[child] && (src_counts_local[child] + trg_counts_local[child]))
+                    if (child >= 0 && !ifpwexp[child] && (src_counts_with_halo[child] + trg_counts_with_halo[child]))
                         iftensprodeval[child] = true;
             }
         }
@@ -484,7 +493,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
             for (int i_level = n_levels() - 1; i_level >= 0; --i_level) {
 #pragma omp for schedule(dynamic)
                 for (auto i_box : level_indices[i_level]) {
-                    if (src_counts_local[i_box] > 0 && ifpwexp[i_box]) {
+                    if (src_counts_owned[i_box] > 0 && ifpwexp[i_box]) {
                         iftensprodform[i_box] = true;
                         const bool iftpform = [&]() {
                             bool iftpform = 0;
@@ -496,16 +505,15 @@ void DMKPtTree<T, DIM>::upward_pass() {
                         }();
 
                         if (!iftpform && !node_attr[i_box].Ghost) {
+                            assert(src_counts_owned[i_box] == src_counts_with_halo[i_box]);
                             proxy::charge2proxycharge<T, DIM>(r_src_view(i_box), charge_view(i_box), center_view(i_box),
                                                               2.0 / boxsize[i_level], proxy_view_upward(i_box),
                                                               workspace);
                         } else {
-                            if (node_attr[i_box].Ghost)
-                                continue;
                             auto &children = node_lists[i_box].child;
                             for (int i_child = 0; i_child < n_children; ++i_child) {
                                 const int child_box = children[i_child];
-                                if (child_box < 0 || node_attr[child_box].Ghost)
+                                if (child_box < 0)
                                     continue;
 
                                 if (iftensprodform[child_box]) {
@@ -513,7 +521,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
                                                                 &c2p[i_child * DIM * n_order * n_order]);
                                     tensorprod::transform<T, DIM>(params.n_mfm, true, proxy_view_upward(child_box),
                                                                   c2p_view, proxy_view_upward(i_box), workspace);
-                                } else if (src_counts_local[child_box]) {
+                                } else if (src_counts_owned[child_box]) {
                                     proxy::charge2proxycharge<T, DIM>(r_src_view(child_box), charge_view(child_box),
                                                                       center_view(i_box), 2.0 / boxsize[i_level],
                                                                       proxy_view_upward(i_box), workspace);
@@ -667,7 +675,7 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
 
 #pragma omp for schedule(dynamic) reduction(+ : n_shifts)
         for (auto box : boxes) {
-            const int nboxpts = src_counts_local[box] + trg_counts_local[box];
+            const int nboxpts = src_counts_with_halo[box] + trg_counts_with_halo[box];
 
             if (ifpwexp[box] && nboxpts) {
                 memcpy(&pw_in[0], pw_out_ptr(box), n_pw_per_box * sizeof(std::complex<Real>));
@@ -698,7 +706,7 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
                     constexpr int n_children = 1u << DIM;
                     for (int i_child = 0; i_child < n_children; ++i_child) {
                         const int child = node_lists[box].child[i_child];
-                        if (child < 0 || !(src_counts_local[child] + trg_counts_local[child]))
+                        if (child < 0 || !(src_counts_with_halo[child] + trg_counts_with_halo[child]))
                             continue;
                         const ndview<Real, 2> p2c_view({n_order, DIM},
                                                        const_cast<Real *>(&p2c[i_child * DIM * n_order * n_order]));
@@ -709,10 +717,10 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
             }
 
             if (iftensprodeval[box]) {
-                if (src_counts_local[box])
+                if (src_counts_with_halo[box])
                     proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_src_view(box), center_view(box), sc,
                                                    pot_src_view(box), workspace);
-                if (trg_counts_local[box])
+                if (trg_counts_with_halo[box])
                     proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_trg_view(box), center_view(box), sc,
                                                    pot_trg_view(box), workspace);
             }
@@ -802,8 +810,8 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
 
 #pragma omp parallel for schedule(dynamic)
     for (int i_box = 0; i_box < n_boxes(); ++i_box) {
-        const int n_src_i = src_counts_local[i_box];
-        const int n_trg_i = trg_counts_local[i_box];
+        const int n_src_i = src_counts_with_halo[i_box];
+        const int n_trg_i = trg_counts_with_halo[i_box];
         const int n_pts = n_src_i + n_trg_i;
         if (!n_pts || node_attr[i_box].Ghost)
             continue;
@@ -811,7 +819,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
         const int i_level = node_mid[i_box].Depth();
         for (auto j_box : list1(i_box)) {
             // FIXME: Why add to list1 if empty?
-            if (!src_counts_local[j_box])
+            if (!src_counts_with_halo[j_box])
                 continue;
 
             int j_level = node_mid[j_box].Depth();
@@ -850,7 +858,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
             std::array<std::span<const Real>, DIM> r_trg;
             if (n_src_i) {
                 for (int i = 0; i < DIM; ++i)
-                    r_trg[i] = std::span<const Real>(r_src_t + (r_src_offsets[i_box] / DIM) + src_counts_local[0] * i,
+                    r_trg[i] = std::span<const Real>(r_src_t + (r_src_offsets[i_box] / DIM) + src_counts_with_halo[0] * i,
                                                      n_src_i);
 
                 direct_eval<Real, DIM>(params.kernel, r_src_view(j_box), r_trg, charge_view(j_box), cheb_coeffs,
@@ -858,7 +866,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
             }
             if (n_trg_i) {
                 for (int i = 0; i < DIM; ++i)
-                    r_trg[i] = std::span<const Real>(r_trg_t + (r_trg_offsets[i_box] / DIM) + trg_counts_local[0] * i,
+                    r_trg[i] = std::span<const Real>(r_trg_t + (r_trg_offsets[i_box] / DIM) + trg_counts_with_halo[0] * i,
                                                      n_trg_i);
 
                 direct_eval<Real, DIM>(params.kernel, r_src_view(j_box), r_trg, charge_view(j_box), cheb_coeffs,
@@ -922,8 +930,8 @@ void DMKPtTree<T, DIM>::downward_pass() {
     proxy_coeffs_downward.SetZero();
     dmk::planewave_to_proxy_potential<T, DIM>(pw_out_view(0), pw2poly_view, proxy_view_downward(0), workspaces_[0]);
 
-    ndamatrix<T> r_src_t = nda::transpose(matrixview<T>({DIM, src_counts_local[0]}, r_src_ptr(0)));
-    ndamatrix<T> r_trg_t = nda::transpose(matrixview<T>({DIM, trg_counts_local[0]}, r_trg_ptr(0)));
+    ndamatrix<T> r_src_t = nda::transpose(matrixview<T>({DIM, src_counts_with_halo[0]}, r_src_ptr(0)));
+    ndamatrix<T> r_trg_t = nda::transpose(matrixview<T>({DIM, trg_counts_with_halo[0]}, r_trg_ptr(0)));
 
     sctl::Profile::Toc();
     sctl::Profile::Tic("expansion_propagation_and_eval", &comm_);

@@ -18,8 +18,10 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<Real> boxsize;
     sctl::Vector<Real> centers;
 
-    sctl::Vector<int> src_counts_local;
-    sctl::Vector<int> trg_counts_local;
+    sctl::Vector<int> src_counts_owned;
+    sctl::Vector<int> trg_counts_owned;
+    sctl::Vector<int> src_counts_with_halo;
+    sctl::Vector<int> trg_counts_with_halo;
 
     sctl::Vector<Real> r_src_sorted;
     sctl::Vector<sctl::Long> r_src_cnt;
@@ -89,44 +91,44 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     }
 
     Real *r_src_ptr(int i_node) {
-        assert(src_counts_local[i_node]);
+        assert(src_counts_with_halo[i_node]);
         return &r_src_sorted[r_src_offsets[i_node]];
     }
     ndview<Real, 2> r_src_view(int i_node) {
-        return ndview<Real, 2>({DIM, src_counts_local[i_node]}, r_src_ptr(i_node));
+        return ndview<Real, 2>({DIM, src_counts_with_halo[i_node]}, r_src_ptr(i_node));
     }
 
     Real *r_trg_ptr(int i_node) {
-        if (trg_counts_local[i_node] == 0)
+        if (trg_counts_with_halo[i_node] == 0)
             return nullptr;
         return &r_trg_sorted[r_trg_offsets[i_node]];
     }
     ndview<Real, 2> r_trg_view(int i_node) {
-        return ndview<Real, 2>({DIM, trg_counts_local[i_node]}, r_trg_ptr(i_node));
+        return ndview<Real, 2>({DIM, trg_counts_with_halo[i_node]}, r_trg_ptr(i_node));
     }
 
     Real *pot_src_ptr(int i_node) {
-        assert(src_counts_local[i_node]);
+        assert(src_counts_with_halo[i_node]);
         return &pot_src_sorted[pot_src_offsets[i_node]];
     }
     ndview<Real, 2> pot_src_view(int i_node) {
-        return ndview<Real, 2>({params.n_mfm, src_counts_local[i_node]}, pot_src_ptr(i_node));
+        return ndview<Real, 2>({params.n_mfm, src_counts_with_halo[i_node]}, pot_src_ptr(i_node));
     }
 
     Real *pot_trg_ptr(int i_node) {
-        assert(trg_counts_local[i_node]);
+        assert(trg_counts_with_halo[i_node]);
         return &pot_trg_sorted[pot_trg_offsets[i_node]];
     }
     ndview<Real, 2> pot_trg_view(int i_node) {
-        return ndview<Real, 2>({params.n_mfm, trg_counts_local[i_node]}, pot_trg_ptr(i_node));
+        return ndview<Real, 2>({params.n_mfm, trg_counts_with_halo[i_node]}, pot_trg_ptr(i_node));
     }
 
     Real *charge_ptr(int i_node) {
-        assert(src_counts_local[i_node]);
+        assert(src_counts_with_halo[i_node]);
         return &charge_sorted[charge_offsets[i_node]];
     }
     ndview<Real, 2> charge_view(int i_node) {
-        return ndview<Real, 2>({params.n_mfm, src_counts_local[i_node]}, charge_ptr(i_node));
+        return ndview<Real, 2>({params.n_mfm, src_counts_with_halo[i_node]}, charge_ptr(i_node));
     }
 
     Real *center_ptr(int i_node) { return &centers[i_node * DIM]; }
