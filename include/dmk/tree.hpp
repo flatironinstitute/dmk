@@ -21,15 +21,18 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<int> src_counts_owned;
     sctl::Vector<int> trg_counts_owned;
     sctl::Vector<int> src_counts_with_halo;
-    sctl::Vector<int> trg_counts_with_halo;
 
-    sctl::Vector<Real> r_src_sorted;
-    sctl::Vector<sctl::Long> r_src_cnt;
-    sctl::Vector<sctl::Long> r_src_offsets;
+    sctl::Vector<Real> r_src_sorted_with_halo;
+    sctl::Vector<sctl::Long> r_src_cnt_with_halo;
+    sctl::Vector<sctl::Long> r_src_offsets_with_halo;
 
-    sctl::Vector<Real> r_trg_sorted;
-    sctl::Vector<sctl::Long> r_trg_cnt;
-    sctl::Vector<sctl::Long> r_trg_offsets;
+    sctl::Vector<Real> r_src_sorted_owned;
+    sctl::Vector<sctl::Long> r_src_cnt_owned;
+    sctl::Vector<sctl::Long> r_src_offsets_owned;
+
+    sctl::Vector<Real> r_trg_sorted_owned;
+    sctl::Vector<sctl::Long> r_trg_cnt_owned;
+    sctl::Vector<sctl::Long> r_trg_offsets_owned;
 
     sctl::Vector<Real> pot_src_sorted;
     sctl::Vector<sctl::Long> pot_src_cnt;
@@ -39,9 +42,13 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> pot_trg_cnt;
     sctl::Vector<sctl::Long> pot_trg_offsets;
 
-    sctl::Vector<Real> charge_sorted;
-    sctl::Vector<sctl::Long> charge_cnt;
-    sctl::Vector<sctl::Long> charge_offsets;
+    sctl::Vector<Real> charge_sorted_owned;
+    sctl::Vector<sctl::Long> charge_cnt_owned;
+    sctl::Vector<sctl::Long> charge_offsets_owned;
+
+    sctl::Vector<Real> charge_sorted_with_halo;
+    sctl::Vector<sctl::Long> charge_cnt_with_halo;
+    sctl::Vector<sctl::Long> charge_offsets_with_halo;
 
     sctl::Vector<Real> proxy_coeffs;
     sctl::Vector<sctl::Long> proxy_coeffs_offsets;
@@ -90,21 +97,29 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
         return std::span<const int>(listpw_[i_box].data(), nlistpw_[i_box]);
     }
 
-    Real *r_src_ptr(int i_node) {
+    Real *r_src_with_halo_ptr(int i_node) {
         assert(src_counts_with_halo[i_node]);
-        return &r_src_sorted[r_src_offsets[i_node]];
+        return &r_src_sorted_with_halo[r_src_offsets_with_halo[i_node]];
     }
-    ndview<Real, 2> r_src_view(int i_node) {
-        return ndview<Real, 2>({DIM, src_counts_with_halo[i_node]}, r_src_ptr(i_node));
+    ndview<Real, 2> r_src_with_halo_view(int i_node) {
+        return ndview<Real, 2>({DIM, src_counts_with_halo[i_node]}, r_src_with_halo_ptr(i_node));
     }
 
-    Real *r_trg_ptr(int i_node) {
-        if (trg_counts_with_halo[i_node] == 0)
-            return nullptr;
-        return &r_trg_sorted[r_trg_offsets[i_node]];
+    Real *r_src_owned_ptr(int i_node) {
+        assert(src_counts_owned[i_node]);
+        return &r_src_sorted_owned[r_src_offsets_owned[i_node]];
     }
-    ndview<Real, 2> r_trg_view(int i_node) {
-        return ndview<Real, 2>({DIM, trg_counts_with_halo[i_node]}, r_trg_ptr(i_node));
+    ndview<Real, 2> r_src_owned_view(int i_node) {
+        return ndview<Real, 2>({DIM, src_counts_owned[i_node]}, r_src_owned_ptr(i_node));
+    }
+
+    Real *r_trg_owned_ptr(int i_node) {
+        if (trg_counts_owned[i_node] == 0)
+            return nullptr;
+        return &r_trg_sorted_owned[r_trg_offsets_owned[i_node]];
+    }
+    ndview<Real, 2> r_trg_owned_view(int i_node) {
+        return ndview<Real, 2>({DIM, trg_counts_owned[i_node]}, r_trg_owned_ptr(i_node));
     }
 
     Real *pot_src_ptr(int i_node) {
@@ -116,19 +131,27 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     }
 
     Real *pot_trg_ptr(int i_node) {
-        assert(trg_counts_with_halo[i_node]);
+        assert(trg_counts_owned[i_node]);
         return &pot_trg_sorted[pot_trg_offsets[i_node]];
     }
     ndview<Real, 2> pot_trg_view(int i_node) {
-        return ndview<Real, 2>({params.n_mfm, trg_counts_with_halo[i_node]}, pot_trg_ptr(i_node));
+        return ndview<Real, 2>({params.n_mfm, trg_counts_owned[i_node]}, pot_trg_ptr(i_node));
     }
 
-    Real *charge_ptr(int i_node) {
-        assert(src_counts_with_halo[i_node]);
-        return &charge_sorted[charge_offsets[i_node]];
+    Real *charge_owned_ptr(int i_node) {
+        assert(src_counts_owned[i_node]);
+        return &charge_sorted_owned[charge_offsets_owned[i_node]];
     }
-    ndview<Real, 2> charge_view(int i_node) {
-        return ndview<Real, 2>({params.n_mfm, src_counts_with_halo[i_node]}, charge_ptr(i_node));
+    ndview<Real, 2> charge_owned_view(int i_node) {
+        return ndview<Real, 2>({params.n_mfm, src_counts_owned[i_node]}, charge_owned_ptr(i_node));
+    }
+
+    Real *charge_with_halo_ptr(int i_node) {
+        assert(src_counts_with_halo[i_node]);
+        return &charge_sorted_with_halo[charge_offsets_with_halo[i_node]];
+    }
+    ndview<Real, 2> charge_with_halo_view(int i_node) {
+        return ndview<Real, 2>({params.n_mfm, src_counts_with_halo[i_node]}, charge_with_halo_ptr(i_node));
     }
 
     Real *center_ptr(int i_node) { return &centers[i_node * DIM]; }

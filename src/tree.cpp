@@ -136,25 +136,45 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     sctl::Vector<Real> pot_vec_trg(n_trg * params.n_mfm);
 
     logger->debug("Building tree and sorting points");
-    constexpr bool balance21 = true; // Use "2-1" balancing for the tree, i.e. bordering boxes
-                                     // never more than one level away in depth
-    constexpr int halo = 0;          // Only grab nearest neighbors as 'ghosts'
+    // Use "2-1" balancing for the tree, i.e. touching boxes never more than one level away in depth
+    constexpr bool balance21 = true;
+    // Only grab nearest neighbors as 'ghosts' <-> halo = 0
+    constexpr int halo = 0;
+
+    // All data that needs to be tree sorted
     this->AddParticles("pdmk_src", r_src);
     this->AddParticles("pdmk_trg", r_trg);
     this->AddParticleData("pdmk_charge", "pdmk_src", charge);
     this->AddParticleData("pdmk_pot_src", "pdmk_src", pot_vec_src);
     this->AddParticleData("pdmk_pot_trg", "pdmk_trg", pot_vec_trg);
     this->UpdateRefinement(r_src, params.n_per_leaf, balance21, params.use_periodic, halo);
-    this->template Broadcast<Real>("pdmk_src");
-    this->template Broadcast<Real>("pdmk_trg");
-    this->template Broadcast<Real>("pdmk_charge");
-    this->template Broadcast<Real>("pdmk_pot_src");
-    this->template Broadcast<Real>("pdmk_pot_trg");
-    this->GetData(r_src_sorted, r_src_cnt, "pdmk_src");
-    this->GetData(r_trg_sorted, r_trg_cnt, "pdmk_trg");
-    this->GetData(charge_sorted, charge_cnt, "pdmk_charge");
+
+    // Grab sorted particle data without the halo, so it's easier to get anything local to this rank.
+    // Direct evaluations need halo data (for source particles), but targets points/particles should be owned by the
+    // rank.
+    // Planewaves only need owned particles and their charges for calculation
+    this->GetData(r_trg_sorted_owned, r_trg_cnt_owned, "pdmk_trg");
     this->GetData(pot_src_sorted, pot_src_cnt, "pdmk_pot_src");
     this->GetData(pot_trg_sorted, pot_trg_cnt, "pdmk_pot_trg");
+    // We need temporaries to copy from for things that we broadcast to the halo, since GetData
+    // only gets a pointer which gets re-used on Broadcast
+    {
+        sctl::Vector<Real> data;
+        sctl::Vector<long> count;
+        this->GetData(data, count, "pdmk_src");
+        r_src_sorted_owned = data;
+        r_src_cnt_owned = count;
+
+        this->GetData(data, count, "pdmk_charge");
+        charge_sorted_owned = data;
+        charge_cnt_owned = count;
+    }
+
+    // Now grab sorted particle data with the halo, so we have it for direct evaluations
+    this->template Broadcast<Real>("pdmk_src");
+    this->template Broadcast<Real>("pdmk_charge");
+    this->GetData(charge_sorted_with_halo, charge_cnt_with_halo, "pdmk_charge");
+    this->GetData(r_src_sorted_with_halo, r_src_cnt_with_halo, "pdmk_src");
 
     logger->debug("base tree build completed");
     logger->debug("generating tree traversal metadata");
@@ -191,20 +211,23 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     const auto &node_lists = this->GetNodeLists();
 
     src_counts_with_halo.ReInit(n_boxes());
-    trg_counts_with_halo.ReInit(n_boxes());
-    r_src_offsets.ReInit(n_boxes());
-    r_trg_offsets.ReInit(n_boxes());
+    r_src_offsets_with_halo.ReInit(n_boxes());
+    r_src_offsets_owned.ReInit(n_boxes());
+    r_trg_offsets_owned.ReInit(n_boxes());
     pot_src_offsets.ReInit(n_boxes());
     pot_trg_offsets.ReInit(n_boxes());
-    charge_offsets.ReInit(n_boxes());
+    charge_offsets_owned.ReInit(n_boxes());
+    charge_offsets_with_halo.ReInit(n_boxes());
 
-    r_src_offsets[0] = r_trg_offsets[0] = pot_src_offsets[0] = pot_trg_offsets[0] = charge_offsets[0] = 0;
+    r_src_offsets_owned[0] = r_trg_offsets_owned[0] = r_src_offsets_with_halo[0] = pot_src_offsets[0] =
+        pot_trg_offsets[0] = charge_offsets_owned[0] = charge_offsets_with_halo[0] = 0;
     for (int i_node = 1; i_node < n_boxes(); ++i_node) {
-        r_src_offsets[i_node] = r_src_offsets[i_node - 1] + DIM * r_src_cnt[i_node - 1];
-        r_trg_offsets[i_node] = r_trg_offsets[i_node - 1] + DIM * r_trg_cnt[i_node - 1];
+        r_src_offsets_with_halo[i_node] = r_src_offsets_with_halo[i_node - 1] + DIM * r_src_cnt_with_halo[i_node - 1];
         pot_src_offsets[i_node] = pot_src_offsets[i_node - 1] + params.n_mfm * pot_src_cnt[i_node - 1];
         pot_trg_offsets[i_node] = pot_trg_offsets[i_node - 1] + params.n_mfm * pot_trg_cnt[i_node - 1];
-        charge_offsets[i_node] = charge_offsets[i_node - 1] + params.n_mfm * charge_cnt[i_node - 1];
+        charge_offsets_owned[i_node] = charge_offsets_owned[i_node - 1] + params.n_mfm * charge_cnt_owned[i_node - 1];
+        charge_offsets_with_halo[i_node] =
+            charge_offsets_with_halo[i_node - 1] + params.n_mfm * charge_cnt_with_halo[i_node - 1];
     }
 
     level_indices.ReInit(SCTL_MAX_DEPTH);
@@ -237,7 +260,6 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     src_counts_with_halo.SetZero();
     src_counts_owned.ReInit(n_boxes());
     src_counts_owned.SetZero();
-    trg_counts_with_halo.SetZero();
     trg_counts_owned.ReInit(n_boxes());
     trg_counts_owned.SetZero();
     for (int i_level = max_depth - 1; i_level >= 0; i_level--) {
@@ -245,17 +267,25 @@ void DMKPtTree<T, DIM>::generate_metadata() {
             auto &node = node_mid[i_node];
             assert(i_level == node.Depth());
 
-            src_counts_with_halo[i_node] += r_src_cnt[i_node];
-            trg_counts_with_halo[i_node] += r_trg_cnt[i_node];
-            src_counts_owned[i_node] += node_attr[i_node].Ghost ? 0 : r_src_cnt[i_node];
-            trg_counts_owned[i_node] += node_attr[i_node].Ghost ? 0 : r_trg_cnt[i_node];
+            src_counts_with_halo[i_node] += r_src_cnt_with_halo[i_node];
+            src_counts_owned[i_node] += r_src_cnt_owned[i_node];
+            trg_counts_owned[i_node] += r_trg_cnt_owned[i_node];
             if (node_lists[i_node].parent != -1) {
                 src_counts_with_halo[node_lists[i_node].parent] += src_counts_with_halo[i_node];
-                trg_counts_with_halo[node_lists[i_node].parent] += trg_counts_with_halo[i_node];
                 src_counts_owned[node_lists[i_node].parent] += src_counts_owned[i_node];
                 trg_counts_owned[node_lists[i_node].parent] += trg_counts_owned[i_node];
             }
         }
+    }
+
+    r_src_sorted_owned.ReInit(DIM * src_counts_owned[0]);
+    r_src_offsets_owned.ReInit(n_boxes());
+    r_src_offsets_owned[0] = 0;
+    for (int i_node = 1; i_node < n_boxes(); ++i_node) {
+        r_src_offsets_owned[i_node] = r_src_offsets_owned[i_node - 1] + DIM * r_src_cnt_owned[i_node - 1];
+        if (src_counts_owned[i_node] && node_attr[i_node].Leaf && !node_attr[i_node].Ghost)
+            std::copy(r_src_with_halo_ptr(i_node), r_src_with_halo_ptr(i_node) + DIM * r_src_cnt_owned[i_node],
+                      r_src_owned_ptr(i_node));
     }
 
     // Determine if we need a plane wave expansion for each box
@@ -504,11 +534,10 @@ void DMKPtTree<T, DIM>::upward_pass() {
                             return false;
                         }();
 
-                        if (!iftpform && !node_attr[i_box].Ghost) {
-                            assert(src_counts_owned[i_box] == src_counts_with_halo[i_box]);
-                            proxy::charge2proxycharge<T, DIM>(r_src_view(i_box), charge_view(i_box), center_view(i_box),
-                                                              2.0 / boxsize[i_level], proxy_view_upward(i_box),
-                                                              workspace);
+                        if (!iftpform && src_counts_owned[i_box]) {
+                            proxy::charge2proxycharge<T, DIM>(r_src_owned_view(i_box), charge_owned_view(i_box),
+                                                              center_view(i_box), 2.0 / boxsize[i_level],
+                                                              proxy_view_upward(i_box), workspace);
                         } else {
                             auto &children = node_lists[i_box].child;
                             for (int i_child = 0; i_child < n_children; ++i_child) {
@@ -522,9 +551,9 @@ void DMKPtTree<T, DIM>::upward_pass() {
                                     tensorprod::transform<T, DIM>(params.n_mfm, true, proxy_view_upward(child_box),
                                                                   c2p_view, proxy_view_upward(i_box), workspace);
                                 } else if (src_counts_owned[child_box]) {
-                                    proxy::charge2proxycharge<T, DIM>(r_src_view(child_box), charge_view(child_box),
-                                                                      center_view(i_box), 2.0 / boxsize[i_level],
-                                                                      proxy_view_upward(i_box), workspace);
+                                    proxy::charge2proxycharge<T, DIM>(
+                                        r_src_owned_view(child_box), charge_owned_view(child_box), center_view(i_box),
+                                        2.0 / boxsize[i_level], proxy_view_upward(i_box), workspace);
                                 }
                             }
                         }
@@ -675,7 +704,7 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
 
 #pragma omp for schedule(dynamic) reduction(+ : n_shifts)
         for (auto box : boxes) {
-            const int nboxpts = src_counts_with_halo[box] + trg_counts_with_halo[box];
+            const int nboxpts = src_counts_with_halo[box] + trg_counts_owned[box];
 
             if (ifpwexp[box] && nboxpts) {
                 memcpy(&pw_in[0], pw_out_ptr(box), n_pw_per_box * sizeof(std::complex<Real>));
@@ -706,7 +735,7 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
                     constexpr int n_children = 1u << DIM;
                     for (int i_child = 0; i_child < n_children; ++i_child) {
                         const int child = node_lists[box].child[i_child];
-                        if (child < 0 || !(src_counts_with_halo[child] + trg_counts_with_halo[child]))
+                        if (child < 0 || !(src_counts_with_halo[child] + trg_counts_owned[child]))
                             continue;
                         const ndview<Real, 2> p2c_view({n_order, DIM},
                                                        const_cast<Real *>(&p2c[i_child * DIM * n_order * n_order]));
@@ -718,11 +747,11 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
 
             if (iftensprodeval[box]) {
                 if (src_counts_with_halo[box])
-                    proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_src_view(box), center_view(box), sc,
-                                                   pot_src_view(box), workspace);
-                if (trg_counts_with_halo[box])
-                    proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_trg_view(box), center_view(box), sc,
-                                                   pot_trg_view(box), workspace);
+                    proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_src_with_halo_view(box),
+                                                   center_view(box), sc, pot_src_view(box), workspace);
+                if (trg_counts_owned[box])
+                    proxy::eval_targets<Real, DIM>(proxy_view_downward(box), r_trg_owned_view(box), center_view(box),
+                                                   sc, pot_trg_view(box), workspace);
             }
         }
     }
@@ -861,18 +890,18 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
             if (n_src_i) {
                 for (int i = 0; i < DIM; ++i)
                     r_trg[i] = std::span<const Real>(
-                        r_src_t + (r_src_offsets[i_box] / DIM) + src_counts_with_halo[0] * i, n_src_i);
+                        r_src_t + (r_src_offsets_owned[i_box] / DIM) + src_counts_owned[0] * i, n_src_i);
 
-                direct_eval<Real, DIM>(params.kernel, r_src_view(j_box), r_trg, charge_view(j_box), cheb_coeffs,
-                                       &params.fparam, rsc, cen, d2max, pot_src_view(i_box), n_digits);
+                direct_eval<Real, DIM>(params.kernel, r_src_with_halo_view(j_box), r_trg, charge_with_halo_view(j_box),
+                                       cheb_coeffs, &params.fparam, rsc, cen, d2max, pot_src_view(i_box), n_digits);
             }
             if (n_trg_i) {
                 for (int i = 0; i < DIM; ++i)
                     r_trg[i] = std::span<const Real>(
-                        r_trg_t + (r_trg_offsets[i_box] / DIM) + trg_counts_with_halo[0] * i, n_trg_i);
+                        r_trg_t + (r_trg_offsets_owned[i_box] / DIM) + trg_counts_owned[0] * i, n_trg_i);
 
-                direct_eval<Real, DIM>(params.kernel, r_src_view(j_box), r_trg, charge_view(j_box), cheb_coeffs,
-                                       &params.fparam, rsc, cen, d2max, pot_trg_view(i_box), n_digits);
+                direct_eval<Real, DIM>(params.kernel, r_src_with_halo_view(j_box), r_trg, charge_with_halo_view(j_box),
+                                       cheb_coeffs, &params.fparam, rsc, cen, d2max, pot_trg_view(i_box), n_digits);
             }
         }
 
@@ -881,10 +910,10 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
 
         // Correct for self-evaluations
         auto pot = pot_src_view(i_box);
-        auto charge = charge_view(i_box);
+        auto charge = charge_with_halo_view(i_box);
         const auto depth = node_mid[i_box].Depth() + ifpwexp[i_box];
         const auto correction_factor = w0[depth];
-        for (int i_src = 0; i_src < r_src_cnt[i_box]; ++i_src)
+        for (int i_src = 0; i_src < r_src_cnt_with_halo[i_box]; ++i_src)
             for (int i = 0; i < params.n_mfm; ++i)
                 pot(i, i_src) -= correction_factor * charge(i, i_src);
     }
@@ -904,8 +933,6 @@ void DMKPtTree<T, DIM>::downward_pass() {
     auto &rank_logger = dmk::get_rank_logger(comm_);
     logger->info("downward pass started");
 
-    this->GetData(pot_src_sorted, pot_src_cnt, "pdmk_pot_src");
-    this->GetData(pot_trg_sorted, pot_trg_cnt, "pdmk_pot_trg");
     pot_src_sorted.SetZero();
     pot_trg_sorted.SetZero();
 
@@ -932,8 +959,8 @@ void DMKPtTree<T, DIM>::downward_pass() {
     proxy_coeffs_downward.SetZero();
     dmk::planewave_to_proxy_potential<T, DIM>(pw_out_view(0), pw2poly_view, proxy_view_downward(0), workspaces_[0]);
 
-    ndamatrix<T> r_src_t = nda::transpose(matrixview<T>({DIM, src_counts_with_halo[0]}, r_src_ptr(0)));
-    ndamatrix<T> r_trg_t = nda::transpose(matrixview<T>({DIM, trg_counts_with_halo[0]}, r_trg_ptr(0)));
+    ndamatrix<T> r_src_t = nda::transpose(matrixview<T>({DIM, src_counts_owned[0]}, r_src_owned_ptr(0)));
+    ndamatrix<T> r_trg_t = nda::transpose(matrixview<T>({DIM, trg_counts_owned[0]}, r_trg_owned_ptr(0)));
 
     sctl::Profile::Toc();
     sctl::Profile::Tic("expansion_propagation_and_eval", &comm_);
