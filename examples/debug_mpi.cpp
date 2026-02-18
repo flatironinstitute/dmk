@@ -283,7 +283,7 @@ void run_comparison(pdmk_params params, int n_src, bool uniform, bool compare_di
             if (std::abs((pot_mpi[i] - pot_single[i]) / pot_single[i]) > 10 * params.eps ||
                 std::abs((pot_single[i] - pot_direct[i]) / pot_direct_mpi[i]) > 10 * params.eps)
                 printf("%11d %+12.5e %+12.5e %+12.5e %+12.5e %+12.5e\n", i, pot_single[i], pot_mpi[i],
-                       pot_direct_mpi[i], std::abs(pot_mpi[i] - pot_single[i]),
+                       pot_direct_mpi[i], std::abs((pot_mpi[i] - pot_single[i])/pot_single[i]),
                        std::abs((pot_single[i] - pot_direct_mpi[i]) / pot_direct_mpi[i]));
     }
 

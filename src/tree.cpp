@@ -310,7 +310,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     iftensprodeval.SetZero();
     for (const auto &level_boxes : level_indices) {
         for (auto box : level_boxes) {
-            if (ifpwexp[box] && (src_counts_with_halo[box] + trg_counts_with_halo[box])) {
+            if (ifpwexp[box] && (src_counts_owned[box] + trg_counts_owned[box])) {
                 const bool iftpeval = [&]() {
                     for (auto child : node_lists[box].child) {
                         if (child >= 0 && ifpwexp[child])
@@ -325,7 +325,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
                     continue;
 
                 for (auto child : node_lists[box].child)
-                    if (child >= 0 && !ifpwexp[child] && (src_counts_with_halo[child] + trg_counts_with_halo[child]))
+                    if (child >= 0 && !ifpwexp[child] && (src_counts_owned[child] + trg_counts_owned[child]))
                         iftensprodeval[child] = true;
             }
         }
@@ -810,8 +810,8 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
 
 #pragma omp parallel for schedule(dynamic)
     for (int i_box = 0; i_box < n_boxes(); ++i_box) {
-        const int n_src_i = src_counts_with_halo[i_box];
-        const int n_trg_i = trg_counts_with_halo[i_box];
+        const int n_src_i = src_counts_owned[i_box];
+        const int n_trg_i = trg_counts_owned[i_box];
         const int n_pts = n_src_i + n_trg_i;
         if (!n_pts || node_attr[i_box].Ghost)
             continue;
@@ -856,18 +856,20 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
             }
 
             std::array<std::span<const Real>, DIM> r_trg;
+            assert(is_global_leaf[i_box]);
+            assert(is_global_leaf[j_box]);
             if (n_src_i) {
                 for (int i = 0; i < DIM; ++i)
-                    r_trg[i] = std::span<const Real>(r_src_t + (r_src_offsets[i_box] / DIM) + src_counts_with_halo[0] * i,
-                                                     n_src_i);
+                    r_trg[i] = std::span<const Real>(
+                        r_src_t + (r_src_offsets[i_box] / DIM) + src_counts_with_halo[0] * i, n_src_i);
 
                 direct_eval<Real, DIM>(params.kernel, r_src_view(j_box), r_trg, charge_view(j_box), cheb_coeffs,
                                        &params.fparam, rsc, cen, d2max, pot_src_view(i_box), n_digits);
             }
             if (n_trg_i) {
                 for (int i = 0; i < DIM; ++i)
-                    r_trg[i] = std::span<const Real>(r_trg_t + (r_trg_offsets[i_box] / DIM) + trg_counts_with_halo[0] * i,
-                                                     n_trg_i);
+                    r_trg[i] = std::span<const Real>(
+                        r_trg_t + (r_trg_offsets[i_box] / DIM) + trg_counts_with_halo[0] * i, n_trg_i);
 
                 direct_eval<Real, DIM>(params.kernel, r_src_view(j_box), r_trg, charge_view(j_box), cheb_coeffs,
                                        &params.fparam, rsc, cen, d2max, pot_trg_view(i_box), n_digits);
