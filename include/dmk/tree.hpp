@@ -51,6 +51,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     sctl::Vector<bool> ifpwexp;
     sctl::Vector<bool> iftensprodeval;
+    sctl::Vector<bool> is_global_leaf;
     const pdmk_params params;
     const int n_digits;
     const int n_pw_max;

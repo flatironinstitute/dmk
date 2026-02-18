@@ -176,7 +176,7 @@ void init_test_data(MPI_Comm comm, int n_dim, int nd, int n_src, int n_trg, bool
 }
 
 template <typename Real>
-void run_comparison(pdmk_params params, int n_src, bool uniform) {
+void run_comparison(pdmk_params params, int n_src, bool uniform, bool compare_direct) {
     int rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
@@ -202,12 +202,14 @@ void run_comparison(pdmk_params params, int n_src, bool uniform) {
 
     std::vector<Real> pot_src_split(n_src_per_rank * nd), pot_trg_split(n_src_per_rank * nd);
     std::vector<Real> pot_direct;
-    std::vector<Real> r_dl, charges_dl;
-    pot_direct.resize(n_src_per_rank * nd);
-    direct_eval(r_src, charges, r_dl, charges_dl, r_src, pot_direct, pvfmm::LaplaceKernel<Real>::potential(),
-                MPI_COMM_WORLD);
-    for (auto &el : pot_direct)
-        el *= 4 * M_PI;
+    if (compare_direct) {
+        std::vector<Real> r_dl, charges_dl;
+        pot_direct.resize(n_src_per_rank * nd);
+        direct_eval(r_src, charges, r_dl, charges_dl, r_src, pot_direct, pvfmm::LaplaceKernel<Real>::potential(),
+                    MPI_COMM_WORLD);
+        for (auto &el : pot_direct)
+            el *= 4 * M_PI;
+    }
 
     pdmk_tree tree;
     if constexpr (std::is_same_v<Real, float>)
@@ -236,20 +238,23 @@ void run_comparison(pdmk_params params, int n_src, bool uniform) {
         return {avg_rel_err, max_rel_err};
     };
 
-    auto [avg_rel_err_dmk, max_rel_err_dmk] = rel_err(pot_src_split, pot_direct);
+    if (compare_direct)
+        auto [avg_rel_err_dmk, max_rel_err_dmk] = rel_err(pot_src_split, pot_direct);
 
     std::vector<Real> pot_mpi(n_src);
     std::vector<Real> pot_direct_mpi(n_src);
     if constexpr (std::is_same_v<float, Real>) {
         MPI_Gather(pot_src_split.data(), n_src_per_rank, MPI_FLOAT, pot_mpi.data(), n_src_per_rank, MPI_FLOAT, 0,
                    MPI_COMM_WORLD);
-        MPI_Gather(pot_direct.data(), n_src_per_rank, MPI_FLOAT, pot_direct_mpi.data(), n_src_per_rank, MPI_FLOAT, 0,
-                   MPI_COMM_WORLD);
+        if (compare_direct)
+            MPI_Gather(pot_direct.data(), n_src_per_rank, MPI_FLOAT, pot_direct_mpi.data(), n_src_per_rank, MPI_FLOAT,
+                       0, MPI_COMM_WORLD);
     } else {
         MPI_Gather(pot_src_split.data(), n_src_per_rank, MPI_DOUBLE, pot_mpi.data(), n_src_per_rank, MPI_DOUBLE, 0,
                    MPI_COMM_WORLD);
-        MPI_Gather(pot_direct.data(), n_src_per_rank, MPI_DOUBLE, pot_direct_mpi.data(), n_src_per_rank, MPI_DOUBLE, 0,
-                   MPI_COMM_WORLD);
+        if (compare_direct)
+            MPI_Gather(pot_direct.data(), n_src_per_rank, MPI_DOUBLE, pot_direct_mpi.data(), n_src_per_rank, MPI_DOUBLE,
+                       0, MPI_COMM_WORLD);
     }
 
     std::vector<Real> pot_single(n_src);
@@ -272,7 +277,7 @@ void run_comparison(pdmk_params params, int n_src, bool uniform) {
         pdmk_tree_destroy(tree);
     }
 
-    if (rank == 0) {
+    if (rank == 0 && compare_direct) {
         printf("      index  size = 1     size = %d     direct       |%d - 1|\n", size, size);
         for (int i = 0; i < pot_mpi.size(); ++i)
             if (std::abs((pot_mpi[i] - pot_single[i]) / pot_single[i]) > 10 * params.eps ||
@@ -280,6 +285,14 @@ void run_comparison(pdmk_params params, int n_src, bool uniform) {
                 printf("%11d %+12.5e %+12.5e %+12.5e %+12.5e %+12.5e\n", i, pot_single[i], pot_mpi[i],
                        pot_direct_mpi[i], std::abs(pot_mpi[i] - pot_single[i]),
                        std::abs((pot_single[i] - pot_direct_mpi[i]) / pot_direct_mpi[i]));
+    }
+
+    if (rank == 0 && !compare_direct) {
+        printf("      index  size = 1     size = %d     |%d - 1|\n", size, size);
+        for (int i = 0; i < pot_mpi.size(); ++i)
+            if (std::abs((pot_mpi[i] - pot_single[i]) / pot_single[i]) > 10 * params.eps)
+                printf("%11d %+12.5e %+12.5e %+12.5e\n", i, pot_single[i], pot_mpi[i],
+                       std::abs(pot_mpi[i] - pot_single[i]));
     }
 
     pdmk_tree_destroy(tree);
@@ -299,9 +312,10 @@ int main(int argc, char *argv[]) {
     double eps = 1e-3;
     char prec = 'f';
     int log_level = 6;
+    bool direct_eval = false;
 
     int opt;
-    while ((opt = getopt(argc, argv, "N:n:l:e:t:uh?")) != -1) {
+    while ((opt = getopt(argc, argv, "N:n:l:e:t:udh?")) != -1) {
         switch (opt) {
         case 'N':
             n_src = std::atof(optarg);
@@ -328,6 +342,9 @@ int main(int argc, char *argv[]) {
         case 'u':
             uniform = true;
             break;
+        case 'd':
+            direct_eval = true;
+            break;            
         case 'h':
         case '?':
         default:
@@ -350,9 +367,9 @@ int main(int argc, char *argv[]) {
     params.log_level = log_level;
 
     if (prec == 'd')
-        run_comparison<double>(params, n_src, uniform);
+        run_comparison<double>(params, n_src, uniform, direct_eval);
     else if (prec == 'f')
-        run_comparison<float>(params, n_src, uniform);
+        run_comparison<float>(params, n_src, uniform, direct_eval);
     else {
         std::cerr << "Unknown precision: " << prec << std::endl;
         MPI_Finalize();

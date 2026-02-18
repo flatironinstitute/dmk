@@ -53,6 +53,23 @@ void DMKPtTree<Real, DIM>::dump() const {
     for (int i = 0; i < n_boxes(); ++i)
         is_leaf[i] = node_attr[i].Leaf;
 
+    sctl::Vector<sctl::Morton<DIM>> morton_ids(n_boxes());
+    const auto node_mid = this->GetNodeMID();
+    for (int i = 0; i < n_boxes(); ++i)
+        morton_ids[i] = node_mid[i];
+
+    if (comm_.Rank() == 0) {
+        std::string params_filename = "dmk_params." + std::to_string(comm_.Size()) + ".dat";
+        struct ParamsData {
+            int n_dim;
+            int n_order;
+            int n_pw;
+            int floatsize;
+        } params_data{DIM, n_order, n_pw, sizeof(Real)};
+        auto fout = std::fstream(params_filename.c_str(), std::ios::out | std::ios::binary);
+        fout.write(reinterpret_cast<const char *>(&params_data), sizeof(ParamsData));
+    }
+
     dumper("dmk_centers", centers);
     dumper("dmk_is_ghost", is_ghost);
     dumper("dmk_is_leaf", is_leaf);
@@ -66,24 +83,7 @@ void DMKPtTree<Real, DIM>::dump() const {
     dumper("dmk_proxy_coeffs_offsets_downward", proxy_coeffs_offsets_downward);
     dumper("dmk_pw_expansion", ifpwexp);
     dumper("dmk_src_counts_local", src_counts_local);
-}
-
-inline auto ghostleaf_or_ghost_children(int box, auto &node_attr, auto &node_lists) {
-    if (node_attr[box].Leaf && node_attr[box].Ghost)
-        return true;
-
-    if (!node_attr[box].Leaf) {
-        for (auto child : node_lists[box].child) {
-            if (child < 0)
-                continue;
-            if (!node_attr[child].Ghost)
-                return false;
-        }
-
-        return true;
-    }
-
-    return false;
+    dumper("dmk_morton_ids", morton_ids);
 }
 
 std::pair<int, int> get_pwmax_and_poly_order(int dim, int ndigits, dmk_ikernel kernel) {
@@ -185,21 +185,20 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::generate_metadata() {
     sctl::Profile::Scoped profile("generate_metadata", &comm_);
-    const int n_nodes = n_boxes();
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_mid = this->GetNodeMID();
     const auto &node_lists = this->GetNodeLists();
 
-    src_counts_local.ReInit(n_nodes);
-    trg_counts_local.ReInit(n_nodes);
-    r_src_offsets.ReInit(n_nodes);
-    r_trg_offsets.ReInit(n_nodes);
-    pot_src_offsets.ReInit(n_nodes);
-    pot_trg_offsets.ReInit(n_nodes);
-    charge_offsets.ReInit(n_nodes);
+    src_counts_local.ReInit(n_boxes());
+    trg_counts_local.ReInit(n_boxes());
+    r_src_offsets.ReInit(n_boxes());
+    r_trg_offsets.ReInit(n_boxes());
+    pot_src_offsets.ReInit(n_boxes());
+    pot_trg_offsets.ReInit(n_boxes());
+    charge_offsets.ReInit(n_boxes());
 
     r_src_offsets[0] = r_trg_offsets[0] = pot_src_offsets[0] = pot_trg_offsets[0] = charge_offsets[0] = 0;
-    for (int i_node = 1; i_node < n_nodes; ++i_node) {
+    for (int i_node = 1; i_node < n_boxes(); ++i_node) {
         r_src_offsets[i_node] = r_src_offsets[i_node - 1] + DIM * r_src_cnt[i_node - 1];
         r_trg_offsets[i_node] = r_trg_offsets[i_node - 1] + DIM * r_trg_cnt[i_node - 1];
         pot_src_offsets[i_node] = pot_src_offsets[i_node - 1] + params.n_mfm * pot_src_cnt[i_node - 1];
@@ -209,7 +208,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
 
     level_indices.ReInit(SCTL_MAX_DEPTH);
     int8_t max_depth = 0;
-    for (int i_node = 0; i_node < n_nodes; ++i_node) {
+    for (int i_node = 0; i_node < n_boxes(); ++i_node) {
         auto &node = node_mid[i_node];
         level_indices[node.Depth()].PushBack(i_node);
         max_depth = std::max(node.Depth(), max_depth);
@@ -223,7 +222,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
         boxsize[i] = 0.5 * boxsize[i - 1];
 
     T scale = 1.0;
-    centers.ReInit(n_nodes * DIM);
+    centers.ReInit(n_boxes() * DIM);
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         for (auto i_node : level_indices[i_level]) {
             auto &node = node_mid[i_node];
@@ -251,11 +250,37 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     }
 
     // Determine if we need a plane wave expansion for each box
-    ifpwexp.ReInit(n_nodes);
+    ifpwexp.ReInit(n_boxes());
     ifpwexp.SetZero();
     ifpwexp[0] = true;
-    for (int box = 0; box < n_nodes; ++box) {
-        if (!node_attr[box].Leaf) {
+    is_global_leaf.ReInit(n_boxes());
+    is_global_leaf.SetZero();
+    for (int box = 0; box < n_boxes(); ++box)
+        is_global_leaf[box] = node_attr[box].Leaf;
+
+    sctl::Vector<sctl::Long> counts(n_boxes());
+    sctl::Vector<sctl::Long> counts_dum;
+    for (int i = 0; i < n_boxes(); ++i)
+        counts[i] = 1;
+    sctl::Vector<bool> is_global_leaf_halo;
+    this->AddData("is_global_leaf", is_global_leaf, counts);
+    this->template Broadcast<bool>("is_global_leaf");
+    this->GetData(is_global_leaf_halo, counts_dum, "is_global_leaf");
+
+    long offset = 0;
+    for (int i = 0; i < n_boxes(); ++i) {
+        if (counts_dum[i]) {
+            is_global_leaf[i] = is_global_leaf_halo[offset];
+            offset++;
+        } else {
+            is_global_leaf[i] = false;
+        }
+    }
+
+    ifpwexp.ReInit(n_boxes());
+    ifpwexp.SetZero();
+    for (int box = 0; box < n_boxes(); ++box) {
+        if (!is_global_leaf[box]) {
             ifpwexp[box] = true;
             continue;
         }
@@ -264,7 +289,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
             if (neighbor < 0)
                 continue;
 
-            if (!node_attr[neighbor].Leaf) {
+            if (!is_global_leaf[neighbor]) {
                 ifpwexp[box] = true;
                 break;
             }
@@ -272,7 +297,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     }
 
     // Determine if proxy potential needs to be evaluated for each box
-    iftensprodeval.ReInit(n_nodes);
+    iftensprodeval.ReInit(n_boxes());
     iftensprodeval.SetZero();
     for (const auto &level_boxes : level_indices) {
         for (auto box : level_boxes) {
@@ -297,47 +322,24 @@ void DMKPtTree<T, DIM>::generate_metadata() {
         }
     }
 
-    sctl::Vector<sctl::Long> counts(n_boxes());
-    for (int i = 0; i < n_boxes(); ++i)
-        counts[i] = 1;
-    this->AddData("ifpwexp", ifpwexp, counts);
-    this->AddData("iftensprodeval", iftensprodeval, counts);
-    this->template Broadcast<bool>("ifpwexp");
-    this->template Broadcast<bool>("iftensprodeval");
-    sctl::Vector<bool> ifpwexp_halo, iftensprodeval_halo;
-    this->GetData(ifpwexp_halo, counts, "ifpwexp");
-    this->GetData(iftensprodeval_halo, counts, "iftensprodeval");
-
-    long offset = 0;
-    for (int i = 0; i < n_boxes(); ++i) {
-        if (counts[i]) {
-            ifpwexp[i] = ifpwexp_halo[offset];
-            iftensprodeval[i] = iftensprodeval_halo[offset];
-            offset++;
-        } else {
-            ifpwexp[i] = false;
-            iftensprodeval[i] = false;
-        }
-    }
-
     long n_proxy_boxes_upward = 0;
     long n_proxy_boxes_downward = 0;
-    for (int i_box = 0; i_box < n_nodes; ++i_box) {
+    for (int i_box = 0; i_box < n_boxes(); ++i_box) {
         if (ifpwexp[i_box])
             n_proxy_boxes_upward++;
         if (ifpwexp[i_box] || iftensprodeval[i_box])
             n_proxy_boxes_downward++;
     }
 
-    nlistpw_.resize(n_nodes);
-    listpw_.resize(n_nodes);
+    nlistpw_.resize(n_boxes());
+    listpw_.resize(n_boxes());
     for (const auto &level_boxes : level_indices) {
         for (const auto &box : level_boxes) {
             for (const auto &neighb : node_lists[box].nbr) {
                 if (neighb < 0 || neighb == box)
                     continue;
 
-                if (node_attr[box].Leaf || !node_attr[neighb].Leaf) {
+                if (is_global_leaf[box] || is_global_leaf[neighb]) {
                     listpw_[box][nlistpw_[box]] = neighb;
                     nlistpw_[box]++;
                 }
@@ -345,13 +347,13 @@ void DMKPtTree<T, DIM>::generate_metadata() {
         }
     }
 
-    list1_.resize(n_nodes);
-    nlist1_.resize(n_nodes);
+    list1_.resize(n_boxes());
+    nlist1_.resize(n_boxes());
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         // Loop through target boxes at this level (boxes where we loop through neighbors for direct eval)
         // We parallelize over these boxes since they are independent
         for (int box : level_indices[i_level]) {
-            if (!node_attr[box].Leaf || node_attr[box].Ghost)
+            if (!is_global_leaf[box] || node_attr[box].Ghost)
                 continue;
 
             // (boxsize + 0.5 boxsize) / 2 is the max distance from center of box to center of child neighbor box
@@ -359,7 +361,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
             for (auto neighb : node_lists[box].nbr) {
                 if (neighb < 0)
                     continue;
-                if (node_attr[neighb].Leaf) {
+                if (is_global_leaf[neighb]) {
                     list1_[box][nlist1_[box]] = neighb;
                     nlist1_[box]++;
                     continue;
@@ -392,7 +394,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
             // (boxsize + 2 * boxsize) / 2 is the max distance from center of box to center of parent neighbor box
             const double cutoff = 1.5 * 1.05 * boxsize[i_level];
             for (auto neighb : node_lists[node_lists[box].parent].nbr) {
-                if (neighb < 0 || !node_attr[neighb].Leaf)
+                if (neighb < 0 || !is_global_leaf[neighb])
                     continue;
 
                 bool inrange = true;
@@ -421,7 +423,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     proxy_coeffs_offsets_downward.ReInit(n_boxes());
 
     long last_offset = 0;
-    for (int box = 0; box < n_nodes; ++box) {
+    for (int box = 0; box < n_boxes(); ++box) {
         if (counts[box]) {
             proxy_coeffs_offsets[box] = last_offset;
             last_offset += n_coeffs;
@@ -482,8 +484,8 @@ void DMKPtTree<T, DIM>::upward_pass() {
             for (int i_level = n_levels() - 1; i_level >= 0; --i_level) {
 #pragma omp for schedule(dynamic)
                 for (auto i_box : level_indices[i_level]) {
-                    iftensprodform[i_box] = src_counts_local[i_box] > 0 && ifpwexp[i_box];
-                    if (iftensprodform[i_box]) {
+                    if (src_counts_local[i_box] > 0 && ifpwexp[i_box]) {
+                        iftensprodform[i_box] = true;
                         const bool iftpform = [&]() {
                             bool iftpform = 0;
                             for (auto child : node_lists[i_box].child) {
@@ -498,10 +500,12 @@ void DMKPtTree<T, DIM>::upward_pass() {
                                                               2.0 / boxsize[i_level], proxy_view_upward(i_box),
                                                               workspace);
                         } else {
+                            if (node_attr[i_box].Ghost)
+                                continue;
                             auto &children = node_lists[i_box].child;
                             for (int i_child = 0; i_child < n_children; ++i_child) {
                                 const int child_box = children[i_child];
-                                if (child_box < 0)
+                                if (child_box < 0 || node_attr[child_box].Ghost)
                                     continue;
 
                                 if (iftensprodform[child_box]) {
@@ -509,13 +513,15 @@ void DMKPtTree<T, DIM>::upward_pass() {
                                                                 &c2p[i_child * DIM * n_order * n_order]);
                                     tensorprod::transform<T, DIM>(params.n_mfm, true, proxy_view_upward(child_box),
                                                                   c2p_view, proxy_view_upward(i_box), workspace);
-                                } else if (src_counts_local[child_box] && !node_attr[child_box].Ghost) {
+                                } else if (src_counts_local[child_box]) {
                                     proxy::charge2proxycharge<T, DIM>(r_src_view(child_box), charge_view(child_box),
                                                                       center_view(i_box), 2.0 / boxsize[i_level],
                                                                       proxy_view_upward(i_box), workspace);
                                 }
                             }
                         }
+                    } else {
+                        iftensprodform[i_box] = false;
                     }
                 }
             }
@@ -584,10 +590,14 @@ void DMKPtTree<T, DIM>::init_planewave_data() {
     pw_out_offsets.ReInit(n_boxes());
     pw_out_offsets[0] = 0;
     int n_pw_boxes_out = 1;
-    int n_pw_boxes_in = 1;
-    for (int i_box = 1; i_box < n_boxes(); ++i_box) {
-        pw_out_offsets[i_box] = pw_out_offsets[i_box - 1] + ifpwexp[i_box] * n_pw_per_box;
-        n_pw_boxes_out += ifpwexp[i_box];
+    int64_t last_offset = n_pw_per_box;
+    for (int box = 1; box < n_boxes(); ++box) {
+        if (ifpwexp[box]) {
+            pw_out_offsets[box] = last_offset;
+            last_offset += n_pw_per_box;
+            n_pw_boxes_out++;
+        } else
+            pw_out_offsets[box] = -1;
     }
 
     pw_out.ReInit(n_pw_per_box * n_pw_boxes_out);
@@ -612,7 +622,8 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &box
 
 #pragma omp for schedule(static)
         for (auto box : boxes) {
-            if (ifpwexp[box]) {
+            // FIXME: HACK. offsets are set to -1 when not in halo, i assume is the issue
+            if (ifpwexp[box] && proxy_coeffs_offsets[box] != -1) {
                 dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(box), poly2pw_view, pw_out_view(box),
                                                       workspace);
                 multiply_kernelFT_cd2p<Real, DIM>(radialft, pw_out_view(box));
@@ -661,7 +672,7 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
             if (ifpwexp[box] && nboxpts) {
                 memcpy(&pw_in[0], pw_out_ptr(box), n_pw_per_box * sizeof(std::complex<Real>));
                 for (auto &neighbor : node_lists[box].nbr) {
-                    if (neighbor >= 0 && neighbor != box && (!node_attr[box].Leaf || !node_attr[neighbor].Leaf)) {
+                    if (neighbor >= 0 && neighbor != box && (!is_global_leaf[box] || !is_global_leaf[neighbor])) {
                         // Translate the outgoing expansion Φl(colleague) to the center of box and add to the incoming
                         // plane wave expansion Ψl(box) using wpwshift.
 
