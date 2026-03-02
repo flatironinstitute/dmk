@@ -25,6 +25,7 @@ struct Config {
     bool enable_direct = true;
     int n_direct = -1; // -1 means "same as n_src"
     int n_runs = 100;
+    int log_level = DMK_LOG_OFF; // 6: off, 5: critical, 4: err, 3: warn, 2: info, 1: debug, 0: trace
 };
 
 struct TimingResult {
@@ -79,7 +80,8 @@ void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ost
        << "# n_per_leaf_pvfmm:     " << cfg.n_per_leaf_pvfmm << "\n"
        << "# m_pvfmm:              " << cfg.m_pvfmm << "\n"
        << "# direct_enabled:       " << cfg.enable_direct << "\n"
-       << "# n_direct:             " << cfg.n_direct << "\n";
+       << "# n_direct:             " << cfg.n_direct << "\n"
+       << "# log_level:            " << cfg.log_level << "\n";
 }
 
 void print_csv_header(std::ostream &os) {
@@ -220,8 +222,10 @@ void run_direct(const std::vector<Real> &r_src, const std::vector<Real> &charges
     // Evaluate
     std::vector<Real> glb_val_local(n_trg_glb * kdim1, Real(0));
     {
-        std::vector<Real> r_dl, c_dl; // empty double-layer
-        int omp_p = omp_get_max_threads();
+        int omp_p;
+#pragma omp parallel
+        omp_p = omp_get_num_threads();
+
 #pragma omp parallel for schedule(static)
         for (int tid = 0; tid < omp_p; ++tid) {
             size_t a = (tid * n_trg_glb) / omp_p;
@@ -302,10 +306,10 @@ void run_comparison(const Config &cfg) {
     params.n_dim = n_dim;
     params.n_per_leaf = cfg.n_per_leaf_dmk;
     params.n_mfm = nd;
+    params.log_level = cfg.log_level;
     params.pgh_src = DMK_POTENTIAL;
     params.pgh_trg = DMK_POTENTIAL;
     params.kernel = DMK_LAPLACE;
-    params.log_level = DMK_LOG_OFF;
 
     std::vector<Real> r_trg; // self-evaluation: empty target list
     pdmk_tree dmk_tree;
@@ -411,15 +415,16 @@ Config parse_args(int argc, char *argv[]) {
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "N:n:p:m:e:t:r:D:uh?", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "N:n:p:m:e:t:r:D:l:uh?", long_opts, nullptr)) != -1) {
         switch (opt) {
         case 'N':  cfg.n_src            = static_cast<int>(std::atof(optarg)); break;
-        case 'n':  cfg.n_per_leaf_dmk   = std::atoi(optarg);                  break;
-        case 'p':  cfg.n_per_leaf_pvfmm = std::atoi(optarg);                  break;
-        case 'm':  cfg.m_pvfmm          = std::atoi(optarg);                  break;
+        case 'n':  cfg.n_per_leaf_dmk   = std::atoi(optarg);                   break;
+        case 'p':  cfg.n_per_leaf_pvfmm = std::atoi(optarg);                   break;
+        case 'm':  cfg.m_pvfmm          = std::atoi(optarg);                   break;
         case 'e':  cfg.eps              = std::atof(optarg);                   break;
         case 'r':  cfg.n_runs           = std::atoi(optarg);                   break;
         case 'D':  cfg.n_direct         = static_cast<int>(std::atof(optarg)); break;
+        case 'l':  cfg.log_level        = std::atoi(optarg);                   break;
         case 't':
             if (optarg[0] == 'd')      cfg.prec = 'd';
             else if (optarg[0] == 'f') cfg.prec = 'f';
@@ -435,18 +440,19 @@ Config parse_args(int argc, char *argv[]) {
         default:
             std::cout
                 << "Usage: " << argv[0] << "\n"
-                << "  -N n_src              Number of source points\n"
-                << "  -n n_per_leaf_dmk     DMK leaf size\n"
-                << "  -p n_per_leaf_pvfmm   PVFMM leaf size\n"
-                << "  -m multipole_order    PVFMM multipole order\n"
-                << "  -e eps                DMK tolerance\n"
-                << "  -t f|d                Float or double precision\n"
-                << "  -r n_runs             Number of benchmark iterations\n"
-                << "  -D n_direct           Number of points for direct comparison\n"
-                << "  -u                    Uniform random distribution\n"
-                << "  --pvfmm / --no-pvfmm  Enable/disable PVFMM comparison\n"
+                << "  -N n_src               Number of source points\n"
+                << "  -n n_per_leaf_dmk      DMK leaf size\n"
+                << "  -p n_per_leaf_pvfmm    PVFMM leaf size\n"
+                << "  -m multipole_order     PVFMM multipole order\n"
+                << "  -e eps                 DMK tolerance\n"
+                << "  -t f|d                 Float or double precision\n"
+                << "  -r n_runs              Number of benchmark iterations\n"
+                << "  -D n_direct            Number of points for direct comparison\n"
+                << "  -l log_level           Verbosity of DMK logs\n"
+                << "  -u                     Uniform random distribution\n"
+                << "  --pvfmm / --no-pvfmm   Enable/disable PVFMM comparison\n"
                 << "  --direct / --no-direct Enable/disable all-pairs reference\n"
-                << "  -h                    This help message\n";
+                << "  -h                     This help message\n";
             std::exit(0);
         }
     }
