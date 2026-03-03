@@ -84,7 +84,22 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     int n_levels() const { return level_indices.Dim(); }
     std::size_t n_boxes() const { return this->GetNodeMID().Dim(); }
+
+    // Metadata generation subroutines
+    void compute_data_offsets();
+    void compute_level_indices_and_boxsizes();
+    void compute_box_centers();
+    void accumulate_subtree_counts();
+    void gather_owned_source_positions();
+    void broadcast_global_leaf_status();
+    void compute_proxy_expansion_flags();
+    void compute_proxy_evaluation_flags();
+    void build_plane_wave_interaction_lists();
+    void build_direct_interaction_lists();
+    void build_upward_pass_work_lists();
+    void allocate_proxy_coefficients();
     void generate_metadata();
+
     void init_planewave_data();
 
     void form_outgoing_expansions(const sctl::Vector<int> &boxes, const ndview<std::complex<Real>, 2> &poly2pw_view,

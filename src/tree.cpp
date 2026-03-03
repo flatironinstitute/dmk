@@ -197,20 +197,9 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     logger->info("tree build completed");
 }
 
-/// @brief Build any bookkeeping data associated with the tree
-///
-/// This must be called after the constructor (FIXME: should be done at construction)
-///
-/// @tparam T Floating point format to use (float, double)
-/// @tparam DIM Spatial dimension tree lives in
 template <typename T, int DIM>
-void DMKPtTree<T, DIM>::generate_metadata() {
-    sctl::Profile::Scoped profile("generate_metadata", &comm_);
-    const auto &node_attr = this->GetNodeAttr();
+void DMKPtTree<T, DIM>::compute_data_offsets() {
     const auto &node_mid = this->GetNodeMID();
-    const auto &node_lists = this->GetNodeLists();
-
-    src_counts_with_halo.ReInit(n_boxes());
     r_src_offsets_with_halo.ReInit(n_boxes());
     r_src_offsets_owned.ReInit(n_boxes());
     r_trg_offsets_owned.ReInit(n_boxes());
@@ -219,24 +208,27 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     charge_offsets_owned.ReInit(n_boxes());
     charge_offsets_with_halo.ReInit(n_boxes());
 
-    r_src_offsets_owned[0] = r_trg_offsets_owned[0] = r_src_offsets_with_halo[0] = pot_src_offsets[0] =
+    r_src_offsets_with_halo[0] = r_src_offsets_owned[0] = r_trg_offsets_owned[0] = pot_src_offsets[0] =
         pot_trg_offsets[0] = charge_offsets_owned[0] = charge_offsets_with_halo[0] = 0;
-    for (int i_node = 1; i_node < n_boxes(); ++i_node) {
-        r_src_offsets_with_halo[i_node] = r_src_offsets_with_halo[i_node - 1] + DIM * r_src_cnt_with_halo[i_node - 1];
-        r_trg_offsets_owned[i_node] = r_trg_offsets_owned[i_node - 1] + DIM * r_trg_cnt_owned[i_node - 1];
-        pot_src_offsets[i_node] = pot_src_offsets[i_node - 1] + params.n_mfm * pot_src_cnt[i_node - 1];
-        pot_trg_offsets[i_node] = pot_trg_offsets[i_node - 1] + params.n_mfm * pot_trg_cnt[i_node - 1];
-        charge_offsets_owned[i_node] = charge_offsets_owned[i_node - 1] + params.n_mfm * charge_cnt_owned[i_node - 1];
-        charge_offsets_with_halo[i_node] =
-            charge_offsets_with_halo[i_node - 1] + params.n_mfm * charge_cnt_with_halo[i_node - 1];
-    }
 
+    for (int i = 1; i < n_boxes(); ++i) {
+        r_src_offsets_with_halo[i] = r_src_offsets_with_halo[i - 1] + DIM * r_src_cnt_with_halo[i - 1];
+        r_trg_offsets_owned[i] = r_trg_offsets_owned[i - 1] + DIM * r_trg_cnt_owned[i - 1];
+        pot_src_offsets[i] = pot_src_offsets[i - 1] + params.n_mfm * pot_src_cnt[i - 1];
+        pot_trg_offsets[i] = pot_trg_offsets[i - 1] + params.n_mfm * pot_trg_cnt[i - 1];
+        charge_offsets_owned[i] = charge_offsets_owned[i - 1] + params.n_mfm * charge_cnt_owned[i - 1];
+        charge_offsets_with_halo[i] = charge_offsets_with_halo[i - 1] + params.n_mfm * charge_cnt_with_halo[i - 1];
+    }
+}
+
+template <typename T, int DIM>
+void DMKPtTree<T, DIM>::compute_level_indices_and_boxsizes() {
+    const auto &node_mid = this->GetNodeMID();
     level_indices.ReInit(SCTL_MAX_DEPTH);
     int8_t max_depth = 0;
-    for (int i_node = 0; i_node < n_boxes(); ++i_node) {
-        auto &node = node_mid[i_node];
-        level_indices[node.Depth()].PushBack(i_node);
-        max_depth = std::max(node.Depth(), max_depth);
+    for (int i = 0; i < n_boxes(); ++i) {
+        level_indices[node_mid[i].Depth()].PushBack(i);
+        max_depth = std::max(node_mid[i].Depth(), max_depth);
     }
     max_depth++;
 
@@ -245,51 +237,70 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     boxsize[0] = 1.0;
     for (int i = 1; i < max_depth + 1; ++i)
         boxsize[i] = 0.5 * boxsize[i - 1];
+}
 
-    T scale = 1.0;
+template <typename T, int DIM>
+void DMKPtTree<T, DIM>::compute_box_centers() {
+    const auto &node_mid = this->GetNodeMID();
     centers.ReInit(n_boxes() * DIM);
+    T scale = 1.0;
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         for (auto i_node : level_indices[i_level]) {
-            auto &node = node_mid[i_node];
-            auto node_origin = node.template Coord<T>();
+            auto node_origin = node_mid[i_node].template Coord<T>();
             for (int i = 0; i < DIM; ++i)
                 centers[i_node * DIM + i] = node_origin[i] + 0.5 * scale;
         }
         scale *= 0.5;
     }
+}
 
+template <typename T, int DIM>
+void DMKPtTree<T, DIM>::accumulate_subtree_counts() {
+    const auto &node_mid = this->GetNodeMID();
+    const auto &node_lists = this->GetNodeLists();
+    src_counts_with_halo.ReInit(n_boxes());
     src_counts_with_halo.SetZero();
     src_counts_owned.ReInit(n_boxes());
     src_counts_owned.SetZero();
     trg_counts_owned.ReInit(n_boxes());
     trg_counts_owned.SetZero();
-    for (int i_level = max_depth - 1; i_level >= 0; i_level--) {
-        for (auto i_node : level_indices[i_level]) {
-            auto &node = node_mid[i_node];
-            assert(i_level == node.Depth());
 
+    for (int i_level = n_levels() - 1; i_level >= 0; --i_level) {
+        for (auto i_node : level_indices[i_level]) {
             src_counts_with_halo[i_node] += r_src_cnt_with_halo[i_node];
             src_counts_owned[i_node] += r_src_cnt_owned[i_node];
             trg_counts_owned[i_node] += r_trg_cnt_owned[i_node];
-            if (node_lists[i_node].parent != -1) {
-                src_counts_with_halo[node_lists[i_node].parent] += src_counts_with_halo[i_node];
-                src_counts_owned[node_lists[i_node].parent] += src_counts_owned[i_node];
-                trg_counts_owned[node_lists[i_node].parent] += trg_counts_owned[i_node];
+
+            const int parent = node_lists[i_node].parent;
+            if (parent != -1) {
+                src_counts_with_halo[parent] += src_counts_with_halo[i_node];
+                src_counts_owned[parent] += src_counts_owned[i_node];
+                trg_counts_owned[parent] += trg_counts_owned[i_node];
             }
         }
     }
+}
 
+template <typename T, int DIM>
+void DMKPtTree<T, DIM>::gather_owned_source_positions() {
+    const auto &node_attr = this->GetNodeAttr();
     r_src_sorted_owned.ReInit(DIM * src_counts_owned[0]);
     r_src_offsets_owned.ReInit(n_boxes());
     r_src_offsets_owned[0] = 0;
-    for (int i_node = 1; i_node < n_boxes(); ++i_node) {
-        r_src_offsets_owned[i_node] = r_src_offsets_owned[i_node - 1] + DIM * r_src_cnt_owned[i_node - 1];
-        if (src_counts_owned[i_node] && node_attr[i_node].Leaf && !node_attr[i_node].Ghost)
-            std::copy(r_src_with_halo_ptr(i_node), r_src_with_halo_ptr(i_node) + DIM * r_src_cnt_owned[i_node],
-                      r_src_owned_ptr(i_node));
-    }
 
-    // Determine if we need a plane wave expansion for each box
+    for (int i = 1; i < n_boxes(); ++i) {
+        r_src_offsets_owned[i] = r_src_offsets_owned[i - 1] + DIM * r_src_cnt_owned[i - 1];
+
+        if (src_counts_owned[i] && node_attr[i].Leaf && !node_attr[i].Ghost) {
+            std::copy(r_src_with_halo_ptr(i), r_src_with_halo_ptr(i) + DIM * r_src_cnt_owned[i], r_src_owned_ptr(i));
+        }
+    }
+}
+
+template <typename T, int DIM>
+void DMKPtTree<T, DIM>::broadcast_global_leaf_status() {
+    const auto &node_attr = this->GetNodeAttr();
+    const auto &node_lists = this->GetNodeLists();
     is_global_leaf.ReInit(n_boxes());
     is_global_leaf.SetZero();
     for (int box = 0; box < n_boxes(); ++box)
@@ -299,6 +310,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     sctl::Vector<sctl::Long> counts_dum;
     for (int i = 0; i < n_boxes(); ++i)
         counts[i] = 1;
+
     sctl::Vector<bool> is_global_leaf_halo;
     this->AddData("is_global_leaf", is_global_leaf, counts);
     this->template Broadcast<bool>("is_global_leaf");
@@ -313,10 +325,15 @@ void DMKPtTree<T, DIM>::generate_metadata() {
             is_global_leaf[i] = false;
         }
     }
+}
 
+template <typename T, int DIM>
+void DMKPtTree<T, DIM>::compute_proxy_expansion_flags() {
+    const auto &node_lists = this->GetNodeLists();
     ifpwexp.ReInit(n_boxes());
     ifpwexp.SetZero();
     ifpwexp[0] = true;
+
     for (int box = 0; box < n_boxes(); ++box) {
         if (!is_global_leaf[box]) {
             ifpwexp[box] = true;
@@ -326,51 +343,52 @@ void DMKPtTree<T, DIM>::generate_metadata() {
         for (auto neighbor : node_lists[box].nbr) {
             if (neighbor < 0)
                 continue;
-
             if (!is_global_leaf[neighbor]) {
                 ifpwexp[box] = true;
                 break;
             }
         }
     }
+}
 
-    // Determine if proxy potential needs to be evaluated for each box
+template <typename T, int DIM>
+void DMKPtTree<T, DIM>::compute_proxy_evaluation_flags() {
+    const auto &node_lists = this->GetNodeLists();
     iftensprodeval.ReInit(n_boxes());
     iftensprodeval.SetZero();
+
     for (const auto &level_boxes : level_indices) {
         for (auto box : level_boxes) {
-            if (ifpwexp[box] && (src_counts_owned[box] + trg_counts_owned[box])) {
-                const bool iftpeval = [&]() {
-                    for (auto child : node_lists[box].child) {
-                        if (child >= 0 && ifpwexp[child])
-                            return false;
-                    }
-                    return true;
-                }();
+            if (!(ifpwexp[box] && (src_counts_owned[box] + trg_counts_owned[box])))
+                continue;
 
-                iftensprodeval[box] = iftpeval;
+            const bool iftpeval = [&]() {
+                for (auto child : node_lists[box].child) {
+                    if (child >= 0 && ifpwexp[child])
+                        return false;
+                }
+                return true;
+            }();
 
-                if (iftpeval)
-                    continue;
+            iftensprodeval[box] = iftpeval;
 
-                for (auto child : node_lists[box].child)
-                    if (child >= 0 && !ifpwexp[child] && (src_counts_owned[child] + trg_counts_owned[child]))
-                        iftensprodeval[child] = true;
+            if (iftpeval)
+                continue;
+
+            for (auto child : node_lists[box].child) {
+                if (child >= 0 && !ifpwexp[child] && (src_counts_owned[child] + trg_counts_owned[child]))
+                    iftensprodeval[child] = true;
             }
         }
     }
+}
 
-    long n_proxy_boxes_upward = 0;
-    long n_proxy_boxes_downward = 0;
-    for (int i_box = 0; i_box < n_boxes(); ++i_box) {
-        if (ifpwexp[i_box])
-            n_proxy_boxes_upward++;
-        if (ifpwexp[i_box] || iftensprodeval[i_box])
-            n_proxy_boxes_downward++;
-    }
-
+template <typename T, int DIM>
+void DMKPtTree<T, DIM>::build_plane_wave_interaction_lists() {
+    const auto &node_lists = this->GetNodeLists();
     nlistpw_.resize(n_boxes());
     listpw_.resize(n_boxes());
+
     for (const auto &level_boxes : level_indices) {
         for (const auto &box : level_boxes) {
             for (const auto &neighb : node_lists[box].nbr) {
@@ -384,12 +402,17 @@ void DMKPtTree<T, DIM>::generate_metadata() {
             }
         }
     }
+}
 
+template <typename T, int DIM>
+void DMKPtTree<T, DIM>::build_direct_interaction_lists() {
+    const auto &node_attr = this->GetNodeAttr();
+    const auto &node_lists = this->GetNodeLists();
     list1_.resize(n_boxes());
     nlist1_.resize(n_boxes());
+
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         // Loop through target boxes at this level (boxes where we loop through neighbors for direct eval)
-        // We parallelize over these boxes since they are independent
         for (int box : level_indices[i_level]) {
             if (!is_global_leaf[box] || node_attr[box].Ghost)
                 continue;
@@ -399,6 +422,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
             for (auto neighb : node_lists[box].nbr) {
                 if (neighb < 0)
                     continue;
+
                 if (is_global_leaf[neighb]) {
                     list1_[box][nlist1_[box]] = neighb;
                     nlist1_[box]++;
@@ -414,7 +438,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
                         const double distance = std::abs(center_ptr(box)[k] - center_ptr(child)[k]);
                         if (distance > cutoff_child) {
                             inrange = false;
-                            continue;
+                            break;
                         }
                     }
                     if (inrange) {
@@ -448,9 +472,14 @@ void DMKPtTree<T, DIM>::generate_metadata() {
             }
         }
     }
+}
 
+template <typename T, int DIM>
+void DMKPtTree<T, DIM>::build_upward_pass_work_lists() {
+    const auto &node_lists = this->GetNodeLists();
     has_proxy_from_children.ReInit(n_boxes());
     charge2proxy_work.clear();
+
     for (int i_level = n_levels() - 1; i_level >= 0; --i_level) {
         for (auto i_box : level_indices[i_level]) {
             has_proxy_from_children[i_box] = false;
@@ -475,8 +504,22 @@ void DMKPtTree<T, DIM>::generate_metadata() {
             }
         }
     }
+}
 
+template <typename T, int DIM>
+void DMKPtTree<T, DIM>::allocate_proxy_coefficients() {
     const int n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
+
+    long n_proxy_boxes_upward = 0;
+    long n_proxy_boxes_downward = 0;
+    for (int i = 0; i < n_boxes(); ++i) {
+        if (ifpwexp[i])
+            n_proxy_boxes_upward++;
+        if (ifpwexp[i] || iftensprodeval[i])
+            n_proxy_boxes_downward++;
+    }
+
+    sctl::Vector<sctl::Long> counts(n_boxes());
     for (int i = 0; i < n_boxes(); ++i)
         counts[i] = ifpwexp[i] ? n_coeffs : 0;
 
@@ -484,6 +527,7 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     proxy_coeffs_downward.ReInit(n_coeffs * n_proxy_boxes_downward);
 
     this->AddData("proxy_coeffs", proxy_coeffs_upward, counts);
+
     proxy_coeffs_offsets.ReInit(n_boxes());
     proxy_coeffs_offsets_downward.ReInit(n_boxes());
 
@@ -506,6 +550,31 @@ void DMKPtTree<T, DIM>::generate_metadata() {
             proxy_coeffs_offsets_downward[box] = -1;
         }
     }
+}
+
+/// @brief Build any bookkeeping data associated with the tree
+///
+/// @tparam T Floating point format to use (float, double)
+/// @tparam DIM Spatial dimension tree lives in
+template <typename T, int DIM>
+void DMKPtTree<T, DIM>::generate_metadata() {
+    sctl::Profile::Scoped profile("generate_metadata", &comm_);
+    const auto &node_attr = this->GetNodeAttr();
+    const auto &node_mid = this->GetNodeMID();
+    const auto &node_lists = this->GetNodeLists();
+
+    compute_data_offsets();
+    compute_level_indices_and_boxsizes();
+    compute_box_centers();
+    accumulate_subtree_counts();
+    gather_owned_source_positions();
+    broadcast_global_leaf_status();
+    compute_proxy_expansion_flags();
+    compute_proxy_evaluation_flags();
+    build_plane_wave_interaction_lists();
+    build_direct_interaction_lists();
+    build_upward_pass_work_lists();
+    allocate_proxy_coefficients();
 }
 
 /// @brief Fill out the proxy coefficients used in the upward pass
@@ -547,7 +616,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
             sctl::Vector<T> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
 
 #pragma omp for schedule(static)
-            for (int i = 0; i < (int)charge2proxy_work.size(); ++i) {
+            for (int i = 0; i < charge2proxy_work.size(); ++i) {
                 const auto &w = charge2proxy_work[i];
                 proxy::charge2proxycharge<T, DIM>(r_src_owned_view(w.src_box), charge_owned_view(w.src_box),
                                                   center_view(w.center_box), 2.0 / boxsize[w.level],
@@ -584,7 +653,9 @@ void DMKPtTree<T, DIM>::upward_pass() {
         }
         sctl::Profile::Toc();
 
+#ifdef SCTL_PROFILE
         comm_.Barrier();
+#endif
     }
 
     sctl::Profile::Tic("broadcast_proxy_coeffs", &comm_);
