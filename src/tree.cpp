@@ -449,6 +449,33 @@ void DMKPtTree<T, DIM>::generate_metadata() {
         }
     }
 
+    has_proxy_from_children.ReInit(n_boxes());
+    charge2proxy_work.clear();
+    for (int i_level = n_levels() - 1; i_level >= 0; --i_level) {
+        for (auto i_box : level_indices[i_level]) {
+            has_proxy_from_children[i_box] = false;
+
+            if (!(src_counts_owned[i_box] > 0 && ifpwexp[i_box]))
+                continue;
+
+            for (auto child : node_lists[i_box].child) {
+                if (child >= 0 && src_counts_owned[child] > 0 && ifpwexp[child]) {
+                    has_proxy_from_children[i_box] = true;
+                    break;
+                }
+            }
+
+            if (has_proxy_from_children[i_box]) {
+                for (auto cb : node_lists[i_box].child) {
+                    if (cb >= 0 && src_counts_owned[cb] > 0 && !ifpwexp[cb])
+                        charge2proxy_work.push_back({(int)cb, i_box, i_level});
+                }
+            } else {
+                charge2proxy_work.push_back({i_box, i_box, i_level});
+            }
+        }
+    }
+
     const int n_coeffs = params.n_mfm * sctl::pow<DIM>(n_order);
     for (int i = 0; i < n_boxes(); ++i)
         counts[i] = ifpwexp[i] ? n_coeffs : 0;
@@ -508,61 +535,56 @@ void DMKPtTree<T, DIM>::upward_pass() {
     const auto &node_lists = this->GetNodeLists();
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_mid = this->GetNodeMID();
-    const int dim = DIM;
 
-    std::vector<bool> iftensprodform(n_boxes());
     sctl::Profile::Toc();
     {
         sctl::Profile::Scoped profile("charge2proxy", &comm_);
+        sctl::Profile::Tic("charge2proxy", &comm_);
 
+        // charge2proxycharge
+#pragma omp parallel
+        {
+            sctl::Vector<T> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
+
+#pragma omp for schedule(static)
+            for (int i = 0; i < (int)charge2proxy_work.size(); ++i) {
+                const auto &w = charge2proxy_work[i];
+                proxy::charge2proxycharge<T, DIM>(r_src_owned_view(w.src_box), charge_owned_view(w.src_box),
+                                                  center_view(w.center_box), 2.0 / boxsize[w.level],
+                                                  proxy_view_upward(w.center_box), workspace);
+            }
+        }
+        sctl::Profile::Toc();
+
+        sctl::Profile::Tic("tensorprod::transform", &comm_);
 #pragma omp parallel
         {
             sctl::Vector<T> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
 
             for (int i_level = n_levels() - 1; i_level >= 0; --i_level) {
-#pragma omp for schedule(dynamic)
-                for (auto i_box : level_indices[i_level]) {
-                    if (src_counts_owned[i_box] > 0 && ifpwexp[i_box]) {
-                        iftensprodform[i_box] = true;
-                        const bool iftpform = [&]() {
-                            bool iftpform = 0;
-                            for (auto child : node_lists[i_box].child) {
-                                if (child >= 0 && iftensprodform[child])
-                                    return true;
-                            }
-                            return false;
-                        }();
+#pragma omp for schedule(static)
+                for (int idx = 0; idx < level_indices[i_level].Dim(); ++idx) {
+                    const int i_box = level_indices[i_level][idx];
 
-                        if (!iftpform && src_counts_owned[i_box]) {
-                            proxy::charge2proxycharge<T, DIM>(r_src_owned_view(i_box), charge_owned_view(i_box),
-                                                              center_view(i_box), 2.0 / boxsize[i_level],
-                                                              proxy_view_upward(i_box), workspace);
-                        } else {
-                            auto &children = node_lists[i_box].child;
-                            for (int i_child = 0; i_child < n_children; ++i_child) {
-                                const int child_box = children[i_child];
-                                if (child_box < 0)
-                                    continue;
+                    if (!has_proxy_from_children[i_box])
+                        continue;
 
-                                if (iftensprodform[child_box]) {
-                                    const ndview<T, 2> c2p_view({n_order, DIM},
-                                                                &c2p[i_child * DIM * n_order * n_order]);
-                                    tensorprod::transform<T, DIM>(params.n_mfm, true, proxy_view_upward(child_box),
-                                                                  c2p_view, proxy_view_upward(i_box), workspace);
-                                } else if (src_counts_owned[child_box]) {
-                                    proxy::charge2proxycharge<T, DIM>(
-                                        r_src_owned_view(child_box), charge_owned_view(child_box), center_view(i_box),
-                                        2.0 / boxsize[i_level], proxy_view_upward(i_box), workspace);
-                                }
-                            }
-                        }
-                    } else {
-                        iftensprodform[i_box] = false;
+                    auto &children = node_lists[i_box].child;
+                    for (int ic = 0; ic < n_children; ++ic) {
+                        const int cb = children[ic];
+                        if (cb < 0 || !(src_counts_owned[cb] > 0 && ifpwexp[cb]))
+                            continue;
+
+                        const ndview<T, 2> c2p_view({n_order, DIM}, &c2p[ic * DIM * n_order * n_order]);
+                        tensorprod::transform<T, DIM>(params.n_mfm, true, proxy_view_upward(cb), c2p_view,
+                                                      proxy_view_upward(i_box), workspace);
                     }
                 }
             }
         }
-        logger->debug("proxy: finished building proxy charges");
+        sctl::Profile::Toc();
+
+        comm_.Barrier();
     }
 
     sctl::Profile::Tic("broadcast_proxy_coeffs", &comm_);

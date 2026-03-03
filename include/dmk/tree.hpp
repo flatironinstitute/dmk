@@ -60,6 +60,15 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     sctl::Vector<bool> ifpwexp;
     sctl::Vector<bool> iftensprodeval;
+
+    sctl::Vector<bool> has_proxy_from_children;
+    struct C2PWork {
+        int src_box;
+        int center_box;
+        int level;
+    };
+    std::vector<C2PWork> charge2proxy_work;
+
     sctl::Vector<bool> is_global_leaf;
     const pdmk_params params;
     const int n_digits;
