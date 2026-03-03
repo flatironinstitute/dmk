@@ -125,6 +125,9 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     auto &logger = dmk::get_logger(comm, params.log_level);
     auto &rank_logger = dmk::get_rank_logger(comm, params.log_level);
     sctl::Profile::Scoped profile("DMKPtTree::DMKPtTree", &comm_);
+    debug_omit_pw = getenv("DMK_DEBUG_OMIT_PW") != nullptr;
+    debug_omit_direct = getenv("DMK_DEBUG_OMIT_DIRECT") != nullptr;
+    debug_dump_tree = getenv("DMK_DEBUG_DUMP_TREE") != nullptr;
 
     logger->info("tree build started");
 
@@ -1056,35 +1059,33 @@ void DMKPtTree<T, DIM>::downward_pass() {
 
     sctl::Profile::Toc();
     sctl::Profile::Tic("expansion_propagation_and_eval", &comm_);
-    if (getenv("DMK_DEBUG_OMIT_PW") == nullptr) {
-        for (int i_level = 0; i_level < n_levels(); ++i_level) {
-            // Initialize everything for this level
-            // 1. Difference kernel
-            // 2. Radial fourier transform of the difference kernel
-            // 3. Planewave <-> polynomial coefficient conversion matrices
-            // 4. Planewave translation matrix
-            {
-                // sctl::Profile::Scoped profile("downward_pass_loop_init", &comm_);
-                const bool is_root = i_level == 0;
-                get_difference_kernel_ft<T, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_digits,
-                                                 boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
-                util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<T, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
-                                                          ndview<T, 1>({n_pw_modes}, &radialft[0]));
-                fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
-                dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw,
-                                                            fourier_data.difference_kernel(i_level).hpw, wpwshift);
-            }
-            form_outgoing_expansions(level_indices[i_level], poly2pw_view, radialft);
-            if (getenv("DMK_DEBUG_OMIT_PW") == nullptr)
-                form_eval_expansions(level_indices[i_level], wpwshift, boxsize[i_level], pw2poly_view, p2c);
+    for (int i_level = 0; i_level < n_levels(); ++i_level) {
+        // Initialize everything for this level
+        // 1. Difference kernel
+        // 2. Radial fourier transform of the difference kernel
+        // 3. Planewave <-> polynomial coefficient conversion matrices
+        // 4. Planewave translation matrix
+        {
+            // sctl::Profile::Scoped profile("downward_pass_loop_init", &comm_);
+            const bool is_root = i_level == 0;
+            get_difference_kernel_ft<T, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_digits,
+                                             boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
+            util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<T, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
+                                                      ndview<T, 1>({n_pw_modes}, &radialft[0]));
+            fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
+            dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw,
+                                                        fourier_data.difference_kernel(i_level).hpw, wpwshift);
         }
+        form_outgoing_expansions(level_indices[i_level], poly2pw_view, radialft);
+        if (!debug_omit_pw)
+            form_eval_expansions(level_indices[i_level], wpwshift, boxsize[i_level], pw2poly_view, p2c);
     }
     sctl::Profile::Toc();
-    if (getenv("DMK_DEBUG_OMIT_DIRECT") == nullptr)
+    if (!debug_omit_direct)
         evaluate_direct_interactions(r_src_t.data(), r_trg_t.data());
 
     logger->info("downward pass completed");
-    if (getenv("DMK_DEBUG_DUMP_TREE") != nullptr)
+    if (debug_dump_tree)
         dump();
 }
 
