@@ -358,12 +358,6 @@ inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *grad_src, Real *
                 t->upward_pass();
                 t->downward_pass();
 
-#ifdef DMK_INSTRUMENT
-                sctl::Profile::Tic("pdmk_tree_eval_sync_barrier", &comm);
-                comm.Barrier();
-                sctl::Profile::Toc();
-#endif
-
                 sctl::Profile::Tic("pdmk_tree_eval_sync", &comm);
                 sctl::Vector<Real> res;
                 t->GetParticleData(res, "pdmk_pot_src");

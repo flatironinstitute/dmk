@@ -196,6 +196,11 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     logger->debug("planewave params at root box: n: {}, stepsize: {}, weight: {}, radius: {}", fourier_data.n_pw(),
                   wk.hpw, wk.ws, wk.rl);
     fourier_data.update_local_coeffs(params.eps);
+
+    // FIXME: n_pw shouldn't be fixed (can be different for windowed/difference)
+    n_pw = fourier_data.n_pw();
+
+    precompute_fourier_data();
     logger->debug("finished updating local potential expansion coefficients");
     logger->info("tree build completed");
 }
@@ -555,6 +560,41 @@ void DMKPtTree<T, DIM>::allocate_proxy_coefficients() {
     }
 }
 
+template <typename T, int DIM>
+void DMKPtTree<T, DIM>::precompute_fourier_data() {
+    const long n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
+    difference_fourier_data.resize(n_levels());
+
+    sctl::Vector<T> kernel_ft;
+
+    window_fourier_data.poly2pw.ReInit(n_order * n_pw);
+    window_fourier_data.pw2poly.ReInit(n_order * n_pw);
+    window_fourier_data.radialft.ReInit(n_pw_modes);
+    window_fourier_data.wpwshift.ReInit(n_pw_modes * sctl::pow<DIM>(3));
+    get_windowed_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits, boxsize[0],
+                                   fourier_data.prolate0_fun, kernel_ft);
+    util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<T, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
+                                              ndview<T, 1>({n_pw_modes}, &window_fourier_data.radialft[0]));
+    fourier_data.calc_planewave_coeff_matrices(-1, n_order, window_fourier_data.poly2pw, window_fourier_data.pw2poly);
+
+    for (int i_level = 0; i_level < n_levels(); ++i_level) {
+        auto &lfd = difference_fourier_data[i_level];
+        lfd.radialft.ReInit(n_pw_modes);
+        lfd.wpwshift.ReInit(n_pw_modes * sctl::pow<DIM>(3));
+        lfd.poly2pw.ReInit(n_order * n_pw);
+        lfd.pw2poly.ReInit(n_order * n_pw);
+
+        const bool is_root = (i_level == 0);
+        get_difference_kernel_ft<T, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_digits,
+                                         boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
+        util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<T, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
+                                                  ndview<T, 1>({n_pw_modes}, &lfd.radialft[0]));
+        fourier_data.calc_planewave_coeff_matrices(i_level, n_order, lfd.poly2pw, lfd.pw2poly);
+        dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw,
+                                                    fourier_data.difference_kernel(i_level).hpw, lfd.wpwshift);
+    }
+}
+
 /// @brief Build any bookkeeping data associated with the tree
 ///
 /// @tparam T Floating point format to use (float, double)
@@ -717,7 +757,6 @@ void shift_planewave(const ndview<Complex, DIM + 1> &pwexp1_, ndview<Complex, DI
 
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::init_planewave_data() {
-    sctl::Profile::Scoped profile("init_planewave_data", &comm_);
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const int n_pw_per_box = n_pw_modes * params.n_mfm;
 
@@ -754,7 +793,7 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &box
     {
         sctl::Vector<Real> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
 
-#pragma omp for schedule(static)
+#pragma omp for schedule(dynamic)
         for (auto box : boxes) {
             // FIXME: HACK. offsets are set to -1 when not in halo, i assume is the issue
             if (ifpwexp[box] && proxy_coeffs_offsets[box] != -1) {
@@ -1026,58 +1065,43 @@ void DMKPtTree<T, DIM>::downward_pass() {
     pot_src_sorted.SetZero();
     pot_trg_sorted.SetZero();
 
-    // FIXME: This should be assigned automatically at tree construction (fourier_data should be subobject)
-    n_pw = fourier_data.n_pw();
-
     init_planewave_data();
-    const long n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
-    sctl::Vector<std::complex<T>> wpwshift(n_pw_modes * sctl::pow<DIM>(3));
-    sctl::Vector<T> radialft(n_pw_modes);
-    sctl::Vector<T> kernel_ft;
-    get_windowed_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits, boxsize[0],
-                                   fourier_data.prolate0_fun, kernel_ft);
-    util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<T, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
-                                              ndview<T, 1>({n_pw_modes}, &radialft[0]));
-
-    sctl::Vector<std::complex<T>> poly2pw(n_order * n_pw), pw2poly(n_order * n_pw);
-    fourier_data.calc_planewave_coeff_matrices(-1, n_order, poly2pw, pw2poly);
-    const ndview<std::complex<T>, 2> poly2pw_view({n_pw, n_order}, &poly2pw[0]);
-    const ndview<std::complex<T>, 2> pw2poly_view({n_pw, n_order}, &pw2poly[0]);
-    dmk::proxy::proxycharge2pw<T, DIM>(proxy_view_upward(0), poly2pw_view, pw_out_view(0), workspaces_[0]);
-    multiply_kernelFT_cd2p<T, DIM>(radialft, pw_out_view(0));
-    proxy_coeffs_downward.SetZero();
-    dmk::planewave_to_proxy_potential<T, DIM>(pw_out_view(0), pw2poly_view, proxy_view_downward(0), workspaces_[0]);
-
     sctl::Profile::Toc();
+
     sctl::Profile::Tic("expansion_propagation_and_eval", &comm_);
+    const long n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
+    { // Windowed kernel for root
+        const ndview<std::complex<T>, 2> p2pw({n_pw, n_order}, &window_fourier_data.poly2pw[0]);
+        const ndview<std::complex<T>, 2> pw2p({n_pw, n_order}, &window_fourier_data.pw2poly[0]);
+        dmk::proxy::proxycharge2pw<T, DIM>(proxy_view_upward(0), p2pw, pw_out_view(0), workspaces_[0]);
+        multiply_kernelFT_cd2p<T, DIM>(window_fourier_data.radialft, pw_out_view(0));
+        proxy_coeffs_downward.SetZero();
+        dmk::planewave_to_proxy_potential<T, DIM>(pw_out_view(0), pw2p, proxy_view_downward(0), workspaces_[0]);
+    }
+
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
-        // Initialize everything for this level
-        // 1. Difference kernel
-        // 2. Radial fourier transform of the difference kernel
-        // 3. Planewave <-> polynomial coefficient conversion matrices
-        // 4. Planewave translation matrix
-        {
-            // sctl::Profile::Scoped profile("downward_pass_loop_init", &comm_);
-            const bool is_root = i_level == 0;
-            get_difference_kernel_ft<T, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_digits,
-                                             boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
-            util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<T, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
-                                                      ndview<T, 1>({n_pw_modes}, &radialft[0]));
-            fourier_data.calc_planewave_coeff_matrices(i_level, n_order, poly2pw, pw2poly);
-            dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw,
-                                                        fourier_data.difference_kernel(i_level).hpw, wpwshift);
-        }
-        form_outgoing_expansions(level_indices[i_level], poly2pw_view, radialft);
+        auto &dfd = difference_fourier_data[i_level];
+        const ndview<std::complex<T>, 2> p2pw({n_pw, n_order}, &dfd.poly2pw[0]);
+        const ndview<std::complex<T>, 2> pw2p({n_pw, n_order}, &dfd.pw2poly[0]);
+
+        form_outgoing_expansions(level_indices[i_level], p2pw, dfd.radialft);
         if (!debug_omit_pw)
-            form_eval_expansions(level_indices[i_level], wpwshift, boxsize[i_level], pw2poly_view, p2c);
+            form_eval_expansions(level_indices[i_level], dfd.wpwshift, boxsize[i_level], pw2p, p2c);
     }
     sctl::Profile::Toc();
+
     if (!debug_omit_direct)
         evaluate_direct_interactions(r_src_t.data(), r_trg_t.data());
 
     logger->info("downward pass completed");
     if (debug_dump_tree)
         dump();
+
+#ifdef DMK_INSTRUMENT
+    sctl::Profile::Tic("downward_pass_barrier", &comm_);
+    comm_.Barrier();
+    sctl::Profile::Toc();
+#endif
 }
 
 #ifdef DMK_HAVE_MPI

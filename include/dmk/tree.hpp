@@ -73,6 +73,15 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     };
     std::vector<C2PWork> charge2proxy_work;
 
+    struct LevelFourierData {
+        sctl::Vector<std::complex<Real>> poly2pw;
+        sctl::Vector<std::complex<Real>> pw2poly;
+        sctl::Vector<Real> radialft;
+        sctl::Vector<std::complex<Real>> wpwshift;
+    };
+    std::vector<LevelFourierData> difference_fourier_data; // one per level
+    LevelFourierData window_fourier_data;
+
     sctl::Vector<bool> is_global_leaf;
     const pdmk_params params;
     const int n_digits;
@@ -102,6 +111,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void build_direct_interaction_lists();
     void build_upward_pass_work_lists();
     void allocate_proxy_coefficients();
+    void precompute_fourier_data();
     void generate_metadata();
 
     void init_planewave_data();
