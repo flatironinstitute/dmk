@@ -38,7 +38,7 @@ else()
   set(DMK_TEST_SRC src/doctest.cpp)
 endif()
 
-set(DMK_CXX_FLAGS "-march=native;-DSCTL_MAX_DEPTH=62")
+set(DMK_CXX_FLAGS "${DMK_CXX_FLAGS};-march=native;-DSCTL_MAX_DEPTH=62")
 if(${DMK_INSTRUMENT})
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(PAPI REQUIRED IMPORTED_TARGET papi)

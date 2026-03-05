@@ -381,17 +381,44 @@ inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *grad_src, Real *
 
 extern "C" {
 
-void pdmk_print_profile_data(dmk_communicator comm) {
+void pdmk_print_profile_data(dmk_communicator comm, char type) {
 #ifdef DMK_HAVE_MPI
     sctl::Comm sctl_comm(comm);
 #else
     sctl::Comm sctl_comm;
 #endif
-    sctl::Profile::print(
-        &sctl_comm,
-        {"t_avg", "t_max", "t_min", "f_avg", "f_max", "f_min", "f_total", "f/s_total", "custom1", "custom2", "custom3",
-         "custom4", "custom5"},
-        {"%.5f", "%.5f", "%.5f", "%.5f", "%.5f", "%.5f", "%.5f", "%.5f", "%.3g", "%.3g", "%.3g", "%.3g", "%.3g"});
+    const std::vector<std::string> fields{"t_avg", "t_max",   "t_min",     "f_avg",   "f_max",
+                                          "f_min", "f_total", "f/s_total", "custom1", "custom2"};
+    if (type == 'h') {
+        auto table = sctl::Profile::get_table(fields, &sctl_comm);
+        if (sctl_comm.Rank() == 0) {
+            std::string sep;
+            for (auto &row : table) {
+                for (auto &field : row.second) {
+                    std::cout << sep << row.first << "|" << field.first;
+                    sep = ",";
+                }
+            }
+        }
+    }
+    if (type == 'c') {
+        auto table = sctl::Profile::get_table(fields, &sctl_comm);
+        if (sctl_comm.Rank() == 0) {
+            std::string sep;
+            for (auto &row : table) {
+                for (auto &field : row.second) {
+                    std::cout << sep << field.second;
+                    sep = ",";
+                }
+            }
+        }
+        sctl::Profile::reset();
+    } else if (type == 't') {
+        sctl::Profile::print(
+            &sctl_comm,
+            {"t_avg", "t_max", "t_min", "f_avg", "f_max", "f_min", "f_total", "f/s_total", "custom1", "custom2"},
+            {"%.5f", "%.5f", "%.5f", "%.5f", "%.5f", "%.5f", "%.5f", "%.5f", "%.3g", "%.3g"});
+    }
 }
 
 pdmk_tree pdmk_tree_createf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src,

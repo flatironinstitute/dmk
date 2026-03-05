@@ -136,7 +136,7 @@ void run_example(const pdmk_params &params, int n_src_per_rank, int n_runs, bool
         else
             pdmk_tree_eval(tree, &pot_src_split[0], nullptr, nullptr, &pot_trg_split[0], nullptr, nullptr);
 
-        pdmk_print_profile_data(MPI_COMM_WORLD);
+        pdmk_print_profile_data(MPI_COMM_WORLD, 't');
 
         auto points_per_sec_per_rank = n_src_per_rank / (omp_get_wtime() - st);
         auto point_per_sec_per_thread = points_per_sec_per_rank / n_threads;

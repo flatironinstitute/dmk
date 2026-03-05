@@ -426,14 +426,14 @@ void DMKPtTree<T, DIM>::build_direct_interaction_lists() {
                 if (neighb < 0)
                     continue;
 
-                if (is_global_leaf[neighb]) {
+                if (is_global_leaf[neighb] && src_counts_with_halo[neighb]) {
                     list1_[box][nlist1_[box]] = neighb;
                     nlist1_[box]++;
                     continue;
                 }
 
                 for (auto child : node_lists[neighb].child) {
-                    if (child < 0)
+                    if (child < 0 || !src_counts_with_halo[child])
                         continue;
 
                     bool inrange = true;
@@ -719,21 +719,21 @@ void DMKPtTree<T, DIM>::init_planewave_data() {
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const int n_pw_per_box = n_pw_modes * params.n_mfm;
 
-    pw_out_offsets.ReInit(n_boxes());
-    pw_out_offsets[0] = 0;
-    int n_pw_boxes_out = 1;
-    int64_t last_offset = n_pw_per_box;
-    for (int box = 1; box < n_boxes(); ++box) {
-        if (ifpwexp[box]) {
-            pw_out_offsets[box] = last_offset;
-            last_offset += n_pw_per_box;
-            n_pw_boxes_out++;
-        } else
-            pw_out_offsets[box] = -1;
+    if (!pw_out_offsets.Dim()) {
+        pw_out_offsets.ReInit(n_boxes());
+        pw_out_offsets[0] = 0;
+        int n_pw_boxes_out = 1;
+        int64_t last_offset = n_pw_per_box;
+        for (int box = 1; box < n_boxes(); ++box) {
+            if (ifpwexp[box]) {
+                pw_out_offsets[box] = last_offset;
+                last_offset += n_pw_per_box;
+                n_pw_boxes_out++;
+            } else
+                pw_out_offsets[box] = -1;
+        }
+        pw_out.ReInit(n_pw_per_box * n_pw_boxes_out);
     }
-
-    pw_out.ReInit(n_pw_per_box * n_pw_boxes_out);
-    pw_out.SetZero();
 }
 
 template <typename Real, int DIM>
@@ -759,7 +759,8 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &box
                 dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(box), poly2pw_view, pw_out_view(box),
                                                       workspace);
                 multiply_kernelFT_cd2p<Real, DIM>(radialft, pw_out_view(box));
-            }
+            } else if (proxy_coeffs_offsets_downward[box] != -1)
+                pw_out_view(box) = 0;
         }
     }
 
@@ -936,16 +937,8 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
     for (int i_box = 0; i_box < n_boxes(); ++i_box) {
         const int n_src_i = src_counts_owned[i_box];
         const int n_trg_i = trg_counts_owned[i_box];
-        const int n_pts = n_src_i + n_trg_i;
-        if (!n_pts || node_attr[i_box].Ghost)
-            continue;
-
         const int i_level = node_mid[i_box].Depth();
         for (auto j_box : list1(i_box)) {
-            // FIXME: Why add to list1 if empty?
-            if (!src_counts_with_halo[j_box])
-                continue;
-
             int j_level = node_mid[j_box].Depth();
             Real bsize = boxsize[j_level];
             // now find the interaction range of the residual kernel

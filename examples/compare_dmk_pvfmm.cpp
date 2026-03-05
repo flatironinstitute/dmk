@@ -11,6 +11,7 @@
 #include <type_traits>
 #include <vector>
 
+#include <mpi.h>
 #include <omp.h>
 
 struct Config {
@@ -86,7 +87,7 @@ void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ost
 
 void print_csv_header(std::ostream &os) {
     os << "dmk_time,dmk_pts_s,dmk_pts_s_rank,dmk_pts_s_thread,dmk_avg_rel_err,dmk_max_rel_err,"
-       << "pvfmm_time,pvfmm_pts_s,pvfmm_pts_s_rank,pvfmm_pts_s_thread,pvfmm_avg_rel_err,pvfmm_max_rel_err\n";
+       << "pvfmm_time,pvfmm_pts_s,pvfmm_pts_s_rank,pvfmm_pts_s_thread,pvfmm_avg_rel_err,pvfmm_max_rel_err";
 }
 
 void print_csv_row(const TimingResult &t_dmk, const ErrorMetrics *err_dmk, const TimingResult *t_pv,
@@ -111,8 +112,6 @@ void print_csv_row(const TimingResult &t_dmk, const ErrorMetrics *err_dmk, const
         os << err_pv->avg_rel << "," << err_pv->max_rel;
     else
         os << nan << "," << nan;
-
-    os << "\n";
 }
 
 // Return how many items rank `r` owns when distributing `n` items over `np` ranks.
@@ -363,8 +362,14 @@ void run_comparison(const Config &cfg) {
         std::vector<Real> pot_dmk;
         sctl::Profile::reset();
         double dt_dmk = run_dmk<Real>(dmk_tree, pot_dmk, n_src_per_rank, MPI_COMM_WORLD);
-        pdmk_print_profile_data(MPI_COMM_WORLD);
         TimingResult t_dmk = make_timing(dt_dmk, n_src, n_src_per_rank, n_threads);
+        if (run == 0) {
+            if (rank == 0)
+                std::cout << ",";
+            pdmk_print_profile_data(MPI_COMM_WORLD, 'h');
+            if (rank == 0)
+                std::cout << "\n";
+        }
 
         ErrorMetrics err_dmk{};
         bool have_err_dmk = false;
@@ -394,8 +399,12 @@ void run_comparison(const Config &cfg) {
         if (rank == 0) {
             print_csv_row(t_dmk, have_err_dmk ? &err_dmk : nullptr, have_pv ? &t_pv : nullptr,
                           have_err_pv ? &err_pv : nullptr, std::cout);
-            std::cout << std::flush;
         }
+        if (rank == 0)
+            std::cout << ",";
+        pdmk_print_profile_data(MPI_COMM_WORLD, 'c');
+        if (rank == 0)
+            std::cout << std::endl << std::flush;
     }
 
     pdmk_tree_destroy(dmk_tree);

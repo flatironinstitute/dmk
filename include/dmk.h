@@ -60,7 +60,7 @@ pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src,
 void pdmk_tree_destroy(pdmk_tree tree);
 void pdmk_tree_eval(pdmk_tree tree, double *pot_src, double *grad_src, double *hess_src, double *pot_trg,
                     double *grad_trg, double *hess_trg);
-void pdmk_print_profile_data(dmk_communicator comm);
+void pdmk_print_profile_data(dmk_communicator comm, char type);
 
 void pdmk(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
           const double *normal, const double *dipole_str, int n_trg, const double *r_trg, double *pot_src,
