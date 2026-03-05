@@ -64,6 +64,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     // FIXME: I really hate these.
     ndamatrix<Real> r_src_t, r_trg_t;
+    std::vector<int> direct_work;
 
     sctl::Vector<bool> has_proxy_from_children;
     struct C2PWork {
@@ -248,6 +249,9 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     // listpw_ contains source boxes in the pw interaction
     std::vector<std::array<int, nlistpw_max_>> listpw_;
     std::vector<int> nlistpw_;
+
+    // If proxy_view_downward(i_box) has been zeroed yet.
+    std::vector<int> proxy_down_zeroed;
 
     sctl::Vector<sctl::Vector<Real>> workspaces_;
     const sctl::Comm comm_;

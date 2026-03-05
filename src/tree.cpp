@@ -620,6 +620,24 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     allocate_proxy_coefficients();
     r_src_t = nda::transpose(matrixview<T>({DIM, src_counts_owned[0]}, r_src_owned_ptr(0)));
     r_trg_t = nda::transpose(matrixview<T>({DIM, trg_counts_owned[0]}, r_trg_owned_ptr(0)));
+
+    direct_work.clear();
+    for (int i_box = 0; i_box < n_boxes(); ++i_box) {
+        if (is_global_leaf[i_box] && !node_attr[i_box].Ghost && nlist1_[i_box] > 0)
+            direct_work.push_back(i_box);
+    }
+
+    // Sort by descending interaction cost so heaviest boxes get scheduled first
+    std::sort(direct_work.begin(), direct_work.end(), [&](int a, int b) {
+        long cost_a = 0, cost_b = 0;
+        for (auto j : list1(a))
+            cost_a += src_counts_with_halo[j];
+        for (auto j : list1(b))
+            cost_b += src_counts_with_halo[j];
+        return cost_a > cost_b;
+    });
+
+    proxy_down_zeroed.resize(n_boxes());
 }
 
 /// @brief Fill out the proxy coefficients used in the upward pass
@@ -864,6 +882,10 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
                 }
 
                 // Convert incoming plane wave expansion Ψl(box) to the local expansion Λl(box) using Tpw2poly
+                if (!proxy_down_zeroed[box]) {
+                    proxy_view_downward(box) = 0;
+                    proxy_down_zeroed[box] = true;
+                }
                 dmk::planewave_to_proxy_potential<Real, DIM>(pw_in_view, pw2poly_view, proxy_view_downward(box),
                                                              workspace);
 
@@ -876,8 +898,9 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
                             continue;
                         const ndview<Real, 2> p2c_view({n_order, DIM},
                                                        const_cast<Real *>(&p2c[i_child * DIM * n_order * n_order]));
-                        tensorprod::transform<Real, DIM>(nd, true, proxy_view_downward(box), p2c_view,
+                        tensorprod::transform<Real, DIM>(nd, proxy_down_zeroed[child], proxy_view_downward(box), p2c_view,
                                                          proxy_view_downward(child), workspace);
+                        proxy_down_zeroed[child] = true;
                     }
                 }
             }
@@ -975,7 +998,8 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
         w0[i_level] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
 
 #pragma omp parallel for schedule(dynamic)
-    for (int i_box = 0; i_box < n_boxes(); ++i_box) {
+    for (int idx = 0; idx < direct_work.size(); ++idx) {
+        const int i_box = direct_work[idx];
         const int n_src_i = src_counts_owned[i_box];
         const int n_trg_i = trg_counts_owned[i_box];
         const int i_level = node_mid[i_box].Depth();
@@ -1075,7 +1099,9 @@ void DMKPtTree<T, DIM>::downward_pass() {
         const ndview<std::complex<T>, 2> pw2p({n_pw, n_order}, &window_fourier_data.pw2poly[0]);
         dmk::proxy::proxycharge2pw<T, DIM>(proxy_view_upward(0), p2pw, pw_out_view(0), workspaces_[0]);
         multiply_kernelFT_cd2p<T, DIM>(window_fourier_data.radialft, pw_out_view(0));
-        proxy_coeffs_downward.SetZero();
+        std::fill(proxy_down_zeroed.begin(), proxy_down_zeroed.end(), 0);
+        proxy_view_downward(0) = 0;
+        proxy_down_zeroed[0] = true;
         dmk::planewave_to_proxy_potential<T, DIM>(pw_out_view(0), pw2p, proxy_view_downward(0), workspaces_[0]);
     }
 
