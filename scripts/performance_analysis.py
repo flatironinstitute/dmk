@@ -51,7 +51,19 @@ cfg, df = read_csv_with_yaml_header(csv_file)
 pprint.pprint(cfg)
 
 
-df = df[10:]
+def remove_outliers_iqr(df, columns=None, k=1.5):
+    if columns is None:
+        columns = df.select_dtypes(include='number').columns
+    mask = pd.Series(True, index=df.index)
+    for col in columns:
+        q1 = df[col].quantile(0.25)
+        q3 = df[col].quantile(0.75)
+        iqr = q3 - q1
+        mask &= df[col].between(q1 - k * iqr, q3 + k * iqr)
+    return df[mask]
+
+df = remove_outliers_iqr(df, columns=['dmk_time'])
+
 df_tree = df[df.columns[df.columns.str.contains(r'(t_min|t_max)$')]]
 total_time_median = df['dmk_time'].median()
 print(df.describe())

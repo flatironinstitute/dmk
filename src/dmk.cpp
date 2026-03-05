@@ -354,10 +354,9 @@ inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *grad_src, Real *
             if constexpr (std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 2>>> ||
                           std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 3>>>) {
                 const auto &comm = (*static_cast<TreeType *>(tree))->GetComm();
-                sctl::Profile::Tic("pdmk_tree_eval", &comm);
+                sctl::Profile::Scoped prof("pdmk_tree_eval", &comm);
                 t->upward_pass();
                 t->downward_pass();
-                sctl::Profile::Toc();
 
 #ifdef DMK_INSTRUMENT
                 sctl::Profile::Tic("pdmk_tree_eval_sync_barrier", &comm);

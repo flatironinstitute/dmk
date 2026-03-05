@@ -578,6 +578,8 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     build_direct_interaction_lists();
     build_upward_pass_work_lists();
     allocate_proxy_coefficients();
+    r_src_t = nda::transpose(matrixview<T>({DIM, src_counts_owned[0]}, r_src_owned_ptr(0)));
+    r_trg_t = nda::transpose(matrixview<T>({DIM, trg_counts_owned[0]}, r_trg_owned_ptr(0)));
 }
 
 /// @brief Fill out the proxy coefficients used in the upward pass
@@ -1041,14 +1043,10 @@ void DMKPtTree<T, DIM>::downward_pass() {
     fourier_data.calc_planewave_coeff_matrices(-1, n_order, poly2pw, pw2poly);
     const ndview<std::complex<T>, 2> poly2pw_view({n_pw, n_order}, &poly2pw[0]);
     const ndview<std::complex<T>, 2> pw2poly_view({n_pw, n_order}, &pw2poly[0]);
-
     dmk::proxy::proxycharge2pw<T, DIM>(proxy_view_upward(0), poly2pw_view, pw_out_view(0), workspaces_[0]);
     multiply_kernelFT_cd2p<T, DIM>(radialft, pw_out_view(0));
     proxy_coeffs_downward.SetZero();
     dmk::planewave_to_proxy_potential<T, DIM>(pw_out_view(0), pw2poly_view, proxy_view_downward(0), workspaces_[0]);
-
-    ndamatrix<T> r_src_t = nda::transpose(matrixview<T>({DIM, src_counts_owned[0]}, r_src_owned_ptr(0)));
-    ndamatrix<T> r_trg_t = nda::transpose(matrixview<T>({DIM, trg_counts_owned[0]}, r_trg_owned_ptr(0)));
 
     sctl::Profile::Toc();
     sctl::Profile::Tic("expansion_propagation_and_eval", &comm_);

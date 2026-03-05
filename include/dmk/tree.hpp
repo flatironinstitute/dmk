@@ -5,6 +5,7 @@
 #include <dmk.h>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
+#include <nda/nda.hpp>
 #include <sctl.hpp>
 #include <span>
 
@@ -60,6 +61,9 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     sctl::Vector<bool> ifpwexp;
     sctl::Vector<bool> iftensprodeval;
+
+    // FIXME: I really hate these.
+    ndamatrix<Real> r_src_t, r_trg_t;
 
     sctl::Vector<bool> has_proxy_from_children;
     struct C2PWork {
