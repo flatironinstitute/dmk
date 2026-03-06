@@ -6,6 +6,227 @@
 #endif
 #include <sctl.hpp>
 
+namespace dmk {
+
+template <class Real, class VecType, sctl::Integer DIM, sctl::Integer KDIM0, sctl::Integer KDIM1, sctl::Integer SCDIM,
+          class uKernel, sctl::Integer digits>
+struct uKerHelper {
+    template <class CtxType>
+    static inline void Eval(VecType *vt, const VecType (&dX)[DIM], const Real *vs, const sctl::Integer nd,
+                            const CtxType &ctx) {
+        VecType M[KDIM0][KDIM1][SCDIM];
+        uKernel::template uKerMatrix<digits>(M, dX, ctx);
+        for (sctl::Integer i = 0; i < nd; i++) {
+            const Real *vs_ = vs + i * SCDIM;
+            for (sctl::Integer k1 = 0; k1 < KDIM1; k1++) {
+                VecType *vt_ = vt + (k1 * nd + i) * SCDIM;
+                for (sctl::Integer k0 = 0; k0 < KDIM0; k0++) {
+                    const VecType vs0(vs_[(k0 * nd) * SCDIM + 0]);
+                    vt_[0] = FMA(M[k0][k1][0], vs0, vt_[0]);
+                    if (SCDIM == 2) {
+                        const VecType vs1(vs_[(k0 * nd) * SCDIM + 1]);
+                        vt_[0] = FMA(M[k0][k1][1], -vs1, vt_[0]);
+                        vt_[1] = FMA(M[k0][k1][1], vs0, vt_[1]);
+                        vt_[1] = FMA(M[k0][k1][0], vs1, vt_[1]);
+                    }
+                }
+            }
+        }
+    }
+    template <sctl::Integer nd, class CtxType>
+    static inline void EvalND(VecType *vt, const VecType (&dX)[DIM], const Real *vs, const CtxType &ctx) {
+        VecType M[KDIM0][KDIM1][SCDIM];
+        uKernel::template uKerMatrix<digits>(M, dX, ctx);
+        for (sctl::Integer i = 0; i < nd; i++) {
+            const Real *vs_ = vs + i * SCDIM;
+            for (sctl::Integer k1 = 0; k1 < KDIM1; k1++) {
+                VecType *vt_ = vt + (k1 * nd + i) * SCDIM;
+                for (sctl::Integer k0 = 0; k0 < KDIM0; k0++) {
+                    const VecType vs0(vs_[(k0 * nd) * SCDIM + 0]);
+                    vt_[0] = FMA(M[k0][k1][0], vs0, vt_[0]);
+                    if (SCDIM == 2) {
+                        const VecType vs1(vs_[(k0 * nd) * SCDIM + 1]);
+                        vt_[0] = FMA(M[k0][k1][1], -vs1, vt_[0]);
+                        vt_[1] = FMA(M[k0][k1][1], vs0, vt_[1]);
+                        vt_[1] = FMA(M[k0][k1][0], vs1, vt_[1]);
+                    }
+                }
+            }
+        }
+    }
+};
+
+template <class uKernel>
+class GenericKernel : public uKernel {
+    static constexpr sctl::Integer VecLen = uKernel::VecLen;
+    using VecType = typename uKernel::VecType;
+    using Real = typename uKernel::RealType;
+
+    template <sctl::Integer K0, sctl::Integer K1, sctl::Integer Q, sctl::Integer D, class... T>
+    static constexpr sctl::Integer get_DIM(void (*uKer)(VecType (&M)[K0][K1][Q], const VecType (&r)[D], T... args)) {
+        return D;
+    }
+    template <sctl::Integer K0, sctl::Integer K1, sctl::Integer Q, sctl::Integer D, class... T>
+    static constexpr sctl::Integer get_SCDIM(void (*uKer)(VecType (&M)[K0][K1][Q], const VecType (&r)[D], T... args)) {
+        return Q;
+    }
+    template <sctl::Integer K0, sctl::Integer K1, sctl::Integer Q, sctl::Integer D, class... T>
+    static constexpr sctl::Integer get_KDIM0(void (*uKer)(VecType (&M)[K0][K1][Q], const VecType (&r)[D], T... args)) {
+        return K0;
+    }
+    template <sctl::Integer K0, sctl::Integer K1, sctl::Integer Q, sctl::Integer D, class... T>
+    static constexpr sctl::Integer get_KDIM1(void (*uKer)(VecType (&M)[K0][K1][Q], const VecType (&r)[D], T... args)) {
+        return K1;
+    }
+
+    static constexpr sctl::Integer DIM = get_DIM(uKernel::template uKerMatrix<0, GenericKernel>);
+    static constexpr sctl::Integer SCDIM = get_SCDIM(uKernel::template uKerMatrix<0, GenericKernel>);
+    static constexpr sctl::Integer KDIM0 = get_KDIM0(uKernel::template uKerMatrix<0, GenericKernel>);
+    static constexpr sctl::Integer KDIM1 = get_KDIM1(uKernel::template uKerMatrix<0, GenericKernel>);
+
+  public:
+    GenericKernel() : ctx_ptr(this) {}
+
+    static constexpr sctl::Integer CoordDim() { return DIM; }
+    static constexpr sctl::Integer SrcDim() { return KDIM0 * SCDIM; }
+    static constexpr sctl::Integer TrgDim() { return KDIM1 * SCDIM; }
+
+    template <bool enable_openmp = false, sctl::Integer digits = -1>
+    void Eval(sctl::Vector<sctl::Vector<Real>> &v_trg_, const sctl::Vector<Real> &r_trg,
+              const sctl::Vector<Real> &r_src, const sctl::Vector<sctl::Vector<Real>> &v_src_,
+              const sctl::Integer nd) const {
+        if (nd == 1)
+            EvalHelper<enable_openmp, digits, 1>(v_trg_, r_trg, r_src, v_src_, nd);
+        else if (nd == 2)
+            EvalHelper<enable_openmp, digits, 2>(v_trg_, r_trg, r_src, v_src_, nd);
+        else if (nd == 3)
+            EvalHelper<enable_openmp, digits, 3>(v_trg_, r_trg, r_src, v_src_, nd);
+        else if (nd == 4)
+            EvalHelper<enable_openmp, digits, 4>(v_trg_, r_trg, r_src, v_src_, nd);
+        else if (nd == 5)
+            EvalHelper<enable_openmp, digits, 5>(v_trg_, r_trg, r_src, v_src_, nd);
+        else if (nd == 6)
+            EvalHelper<enable_openmp, digits, 6>(v_trg_, r_trg, r_src, v_src_, nd);
+        else if (nd == 7)
+            EvalHelper<enable_openmp, digits, 7>(v_trg_, r_trg, r_src, v_src_, nd);
+        else if (nd == 8)
+            EvalHelper<enable_openmp, digits, 8>(v_trg_, r_trg, r_src, v_src_, nd);
+        else
+            EvalHelper<enable_openmp, digits, 0>(v_trg_, r_trg, r_src, v_src_, nd);
+    }
+
+  private:
+    template <bool enable_openmp = false, sctl::Integer digits = -1, sctl::Integer ND = 0>
+    void EvalHelper(sctl::Vector<sctl::Vector<Real>> &v_trg_, const sctl::Vector<Real> &r_trg,
+                    const sctl::Vector<Real> &r_src, const sctl::Vector<sctl::Vector<Real>> &v_src_,
+                    const sctl::Integer nd) const {
+        static constexpr sctl::Integer digits_ =
+            (digits == -1 ? (sctl::Integer)(sctl::TypeTraits<Real>::SigBits * 0.3010299957) : digits);
+        auto uKerEval = [this](VecType *vt, const VecType(&dX)[DIM], const Real *vs, const sctl::Integer nd) {
+            if (ND > 0)
+                uKerHelper<Real, VecType, DIM, KDIM0, KDIM1, SCDIM, uKernel, digits_>::template EvalND<ND>(vt, dX, vs,
+                                                                                                           *this);
+            else
+                uKerHelper<Real, VecType, DIM, KDIM0, KDIM1, SCDIM, uKernel, digits_>::Eval(vt, dX, vs, nd, *this);
+        };
+
+        const sctl::Long Ns = r_src.Dim() / DIM;
+        const sctl::Long Nt = r_trg.Dim() / DIM;
+        SCTL_ASSERT(r_trg.Dim() == Nt * DIM);
+        SCTL_ASSERT(r_src.Dim() == Ns * DIM);
+
+        sctl::Vector<sctl::Long> src_cnt(v_src_.Dim()), src_dsp(v_src_.Dim());
+        src_dsp = 0;
+        sctl::Vector<sctl::Long> trg_cnt(v_trg_.Dim()), trg_dsp(v_trg_.Dim());
+        trg_dsp = 0;
+        for (sctl::Integer i = 0; i < trg_cnt.Dim(); i++) {
+            trg_cnt[i] = v_trg_[i].Dim() / Nt;
+            trg_dsp[i] = (i ? trg_dsp[i - 1] + trg_cnt[i - 1] : 0);
+        }
+        for (sctl::Integer i = 0; i < src_cnt.Dim(); i++) {
+            src_cnt[i] = v_src_[i].Dim() / Ns;
+            src_dsp[i] = (i ? src_dsp[i - 1] + src_cnt[i - 1] : 0);
+        }
+        SCTL_ASSERT(src_cnt[src_cnt.Dim() - 1] + src_dsp[src_dsp.Dim() - 1] == SrcDim() * nd);
+        SCTL_ASSERT(trg_cnt[trg_cnt.Dim() - 1] + trg_dsp[trg_dsp.Dim() - 1] == TrgDim() * nd);
+
+        sctl::Vector<Real> v_src(Ns * SrcDim() * nd);
+        for (sctl::Integer j = 0; j < src_cnt.Dim(); j++) {
+            const sctl::Integer src_cnt_ = src_cnt[j];
+            const sctl::Integer src_dsp_ = src_dsp[j];
+            for (sctl::Integer k = 0; k < src_cnt_; k++) {
+                for (sctl::Long i = 0; i < Ns; i++) {
+                    v_src[i * SrcDim() * nd + src_dsp_ + k] = v_src_[j][i * src_cnt_ + k];
+                }
+            }
+        }
+
+        const sctl::Long NNt = ((Nt + VecLen - 1) / VecLen) * VecLen;
+        {
+            const sctl::Matrix<Real> Xs_(Ns, DIM, (sctl::Iterator<Real>)r_src.begin(), false);
+            const sctl::Matrix<Real> Vs_(Ns, SrcDim() * nd, (sctl::Iterator<Real>)v_src.begin(), false);
+
+            sctl::Matrix<Real> Xt_(DIM, NNt), Vt_(TrgDim() * nd, NNt);
+            for (sctl::Long k = 0; k < DIM; k++) { // Set Xt_
+                for (sctl::Long i = 0; i < Nt; i++) {
+                    Xt_[k][i] = r_trg[i * DIM + k];
+                }
+                for (sctl::Long i = Nt; i < NNt; i++) {
+                    Xt_[k][i] = 0;
+                }
+            }
+            if (enable_openmp) { // Compute Vt_
+#pragma omp parallel for schedule(static)
+                for (sctl::Long t = 0; t < NNt; t += VecLen) {
+                    VecType xt[DIM], vt[TrgDim() * nd];
+                    for (sctl::Integer k = 0; k < TrgDim() * nd; k++)
+                        vt[k] = VecType::Zero();
+                    for (sctl::Integer k = 0; k < DIM; k++)
+                        xt[k] = VecType::LoadAligned(&Xt_[k][t]);
+
+                    for (sctl::Long s = 0; s < Ns; s++) {
+                        VecType dX[DIM];
+                        for (sctl::Integer k = 0; k < DIM; k++)
+                            dX[k] = xt[k] - Xs_[s][k];
+                        uKerEval(vt, dX, &Vs_[s][0], nd);
+                    }
+                    for (sctl::Integer k = 0; k < TrgDim() * nd; k++)
+                        vt[k].StoreAligned(&Vt_[k][t]);
+                }
+            } else {
+                for (sctl::Long t = 0; t < NNt; t += VecLen) {
+                    VecType xt[DIM], vt[TrgDim() * nd];
+                    for (sctl::Integer k = 0; k < TrgDim() * nd; k++)
+                        vt[k] = VecType::Zero();
+                    for (sctl::Integer k = 0; k < DIM; k++)
+                        xt[k] = VecType::LoadAligned(&Xt_[k][t]);
+
+                    for (sctl::Long s = 0; s < Ns; s++) {
+                        VecType dX[DIM];
+                        for (sctl::Integer k = 0; k < DIM; k++)
+                            dX[k] = xt[k] - Xs_[s][k];
+                        uKerEval(vt, dX, &Vs_[s][0], nd);
+                    }
+                    for (sctl::Integer k = 0; k < TrgDim() * nd; k++)
+                        vt[k].StoreAligned(&Vt_[k][t]);
+                }
+            }
+
+            for (sctl::Integer j = 0; j < trg_cnt.Dim(); j++) {
+                const sctl::Integer trg_cnt_ = trg_cnt[j];
+                const sctl::Integer trg_dsp_ = trg_dsp[j];
+                for (sctl::Long i = 0; i < Nt; i++) {
+                    for (sctl::Integer k = 0; k < trg_cnt_; k++) {
+                        v_trg_[j][i * trg_cnt_ + k] += Vt_[trg_dsp_ + k][i] * uKernel::uKerScaleFactor();
+                    }
+                }
+            }
+        }
+    }
+
+    void *ctx_ptr;
+};
+
 template <class Real, sctl::Integer VecLen_, sctl::Integer chrg, sctl::Integer dipo, sctl::Integer poten,
           sctl::Integer grad>
 struct Helmholtz3D {
@@ -3550,5 +3771,6 @@ void log_local_kernel_directdp_vec_cpp(const int32_t *nd, const int32_t *ndim, c
         log_local_kernel_directdp_vec_cpp_helper<Real, MaxVecLen, -1, 2>(nd, rsc, cen, d2min, d2max, sources, ns,
                                                                          dipvec, xtarg, ytarg, nt, pot);
 }
+} // namespace dmk
 
 #endif

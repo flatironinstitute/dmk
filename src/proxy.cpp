@@ -10,8 +10,6 @@
 #include <sctl.hpp>
 #include <stdexcept>
 
-#include <omp.h>
-
 namespace dmk::proxy {
 template <typename T>
 void proxycharge2pw_2d(const ndview<T, 3> &proxy_coeffs, const ndview<std::complex<T>, 2> &poly2pw,
@@ -344,6 +342,7 @@ template void eval_targets<double, 3>(const ndview<double, 4> &coeffs, const ndv
                                       const ndview<double, 1> &cen, double sc, ndview<double, 2> pot,
                                       sctl::Vector<double> &workspace);
 
+#ifdef DMK_HAVE_REFERENCE
 TEST_CASE("[DMK] proxycharge2pw") {
     const int n_charge_dim = 1;
     const int n_pw = 10;
@@ -487,5 +486,6 @@ TEST_CASE("[DMK] eval_targets_3d") {
         CHECK(l2 < std::numeric_limits<double>::epsilon());
     }
 }
+#endif
 
 } // namespace dmk::proxy

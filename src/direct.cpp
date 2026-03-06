@@ -11,6 +11,7 @@
 #include <dmk/legeexps.hpp>
 #include <dmk/prolate0_fun.hpp>
 #include <dmk/types.hpp>
+#include <dmk/util.hpp>
 #include <dmk/vector_kernels.hpp>
 
 #include <polyfit/fast_eval.hpp>
@@ -228,7 +229,7 @@ void yukawa_direct_eval(const ndview<const Real, 2> &r_src, const std::array<std
             const Real fval = chebyshev::evaluate(xval, norder + 1, coeffs.data());
             Real dkval;
             if constexpr (DIM == 2)
-                dkval = std::cyl_bessel_k(0, lambda * r);
+                dkval = util::cyl_bessel_k(0, lambda * r);
             if constexpr (DIM == 3)
                 dkval = std::exp(-lambda * r) / r;
 
@@ -256,20 +257,20 @@ void direct_eval(dmk_ikernel ikernel, const ndview<Real, 2> &r_src, const std::a
         return yukawa_direct_eval<Real, DIM>(r_src, r_trg, charges, coeffs, *kernel_params, scale, center, d2max, u);
     case dmk_ikernel::DMK_LAPLACE:
         if constexpr (DIM == 2)
-            return log_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
+            return dmk::log_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
                 &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data(), &nsrc, charges.data(), trg_ptrs[0],
                 trg_ptrs[1], trg_ptrs[2], &ntrg, u.data(), &thresh2);
         if constexpr (DIM == 3)
-            return l3d_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
+            return dmk::l3d_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
                 &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data(), &nsrc, charges.data(), trg_ptrs[0],
                 trg_ptrs[1], trg_ptrs[2], &ntrg, u.data(), &thresh2);
     case dmk_ikernel::DMK_SQRT_LAPLACE:
         if constexpr (DIM == 2)
-            return l3d_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
+            return dmk::l3d_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
                 &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data(), &nsrc, charges.data(), trg_ptrs[0],
                 trg_ptrs[1], trg_ptrs[2], &ntrg, u.data(), &thresh2);
         if constexpr (DIM == 3)
-            return sl3d_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
+            return dmk::sl3d_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
                 &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data(), &nsrc, charges.data(), trg_ptrs[0],
                 trg_ptrs[1], trg_ptrs[2], &ntrg, u.data(), &thresh2);
     }

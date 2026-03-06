@@ -3,15 +3,32 @@
 
 #include <dmk/types.hpp>
 #include <sctl.hpp>
+#include <cmath>
 #include <type_traits>
 
-#ifdef DMK_INSTRUMENT
-#include <papi.h>
+#ifndef __cpp_lib_math_special_functions
+#include <vendor/bessel.hpp>
 #endif
 
 namespace dmk::util {
 template <class...>
 constexpr std::false_type always_false{};
+
+static inline auto cyl_bessel_k(auto nu, auto x) {
+#ifdef __cpp_lib_math_special_functions
+    return std::cyl_bessel_k(nu, x);
+#else
+    return bessel::cyl_k(nu, x);
+#endif
+}
+
+static inline auto cyl_bessel_j(auto nu, auto x) {
+#ifdef __cpp_lib_math_special_functions
+    return std::cyl_bessel_j(nu, x);
+#else
+    return bessel::cyl_j(nu, x);
+#endif
+}
 
 template <typename Real>
 void mesh_nd(int dim, Real *in, int size, Real *out);
@@ -48,25 +65,6 @@ inline auto get_opt_dot(int n_order) {
     else
         throw std::runtime_error("Invalid order " + std::to_string(n_order) + " provided");
 }
-
-class PAPICounter {
-#ifdef DMK_INSTRUMENT
-  public:
-    inline PAPICounter() { PAPI_flops_rate(PAPI_FP_OPS, &real_time, &proc_time, &flpops, &mflops); }
-    inline ~PAPICounter() {
-        PAPI_flops_rate(PAPI_FP_OPS, &real_time, &proc_time, &flpops, &mflops);
-        sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, flpops);
-    }
-
-  private:
-    float real_time, proc_time, mflops;
-    long long flpops;
-#else
-  public:
-    inline PAPICounter() {}
-    inline ~PAPICounter() {}
-#endif
-};
 
 template <typename T>
 inline T int_pow(T base, int exp) {

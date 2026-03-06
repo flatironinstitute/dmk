@@ -108,7 +108,6 @@ template <typename Real, int DIM>
 void planewave_to_proxy_potential(const ndview<std::complex<Real>, DIM + 1> &pw_expansion,
                                   const ndview<std::complex<Real>, 2> &pw_to_coefs_mat,
                                   ndview<Real, DIM + 1> proxy_coeffs, sctl::Vector<Real> &workspace) {
-    // dmk::util::PAPICounter papi_counter;
     if constexpr (DIM == 2)
         return pw2proxypot_2d(pw_expansion, pw_to_coefs_mat, proxy_coeffs, workspace);
     if constexpr (DIM == 3)
@@ -218,6 +217,7 @@ template void dmk::calc_planewave_coeff_matrices<double>(double boxsize, double 
                                                          sctl::Vector<std::complex<double>> &prox2pw_vec,
                                                          sctl::Vector<std::complex<double>> &pw2poly_vec);
 
+#ifdef DMK_HAVE_REFERENCE
 TEST_CASE("[DMK] planewave_to_proxy_potential") {
     const int n_pw = 10;
     const int n_charge_dim = 1;
@@ -268,3 +268,4 @@ TEST_CASE("[DMK] planewave_to_proxy_potential") {
         }
     }
 }
+#endif

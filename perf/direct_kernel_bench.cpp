@@ -95,11 +95,11 @@ void laplace_pswf_direct_cpu(const Opts &opts, const sctl::Vector<Real> &r_src, 
     const Real *ztrg = (opts.n_dim == 2) ? nullptr : &r_trg[2 * nt];
 
     if (opts.n_dim == 2)
-        log_local_kernel_directcp_vec_cpp(&nd, &opts.n_dim, &opts.digits, &p.rsc, &p.cen, &p.d2max, &r_src[0], &ns,
-                                          &charge[0], xtrg, ytrg, ztrg, &nt, &u[0], &p.thresh2);
+        dmk::log_local_kernel_directcp_vec_cpp(&nd, &opts.n_dim, &opts.digits, &p.rsc, &p.cen, &p.d2max, &r_src[0], &ns,
+                                               &charge[0], xtrg, ytrg, ztrg, &nt, &u[0], &p.thresh2);
     else
-        l3d_local_kernel_directcp_vec_cpp(&nd, &opts.n_dim, &opts.digits, &p.rsc, &p.cen, &p.d2max, &r_src[0], &ns,
-                                          &charge[0], xtrg, ytrg, ztrg, &nt, &u[0], &p.thresh2);
+        dmk::l3d_local_kernel_directcp_vec_cpp(&nd, &opts.n_dim, &opts.digits, &p.rsc, &p.cen, &p.d2max, &r_src[0], &ns,
+                                               &charge[0], xtrg, ytrg, ztrg, &nt, &u[0], &p.thresh2);
 }
 
 template <typename Real>
