@@ -94,7 +94,7 @@ include(FetchContent)
 FetchContent_Declare(
     polyfit
     GIT_REPOSITORY https://github.com/DiamonDinoia/polyfit.git
-    GIT_TAG        main
+    GIT_TAG        a2994771155ed4cd22c2b792b463c42eefca3067
 )
 set(Build_Tests OFF CACHE BOOL "" FORCE) # gtest... tests
 set(MONOFIT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
