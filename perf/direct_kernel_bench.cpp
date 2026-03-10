@@ -1,16 +1,18 @@
-#include <cstdlib>
+#include <dmk.h>
 #include <dmk/direct.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/vector_kernels.hpp>
+
 #include <nanobench.h>
 
+#include <cstdlib>
 #include <stdexcept>
 
-enum Evaluator : int { DIRECT_CPU };
+using Kernel = dmk_ikernel;
 struct Opts {
     Opts(int argc, char *argv[]) {
         int opt;
-        while ((opt = getopt(argc, argv, "N:M:d:D:t:e:u:h?")) != -1) {
+        while ((opt = getopt(argc, argv, "N:M:d:D:t:k:u:h?")) != -1) {
             switch (opt) {
             case 'N':
                 n_src = std::atof(optarg);
@@ -37,18 +39,25 @@ struct Opts {
                     throw std::runtime_error("Unknown precision");
                 }
                 break;
-            case 'e':
-                if (strcmp(optarg, "CPU") == 0)
-                    eval = DIRECT_CPU;
+            case 'k': {
+                std::string kernel_str(optarg);
+                for (auto &c : kernel_str)
+                    c = std::tolower(c);
+
+                if (kernel_str == "laplace" || kernel_str == "1")
+                    kernel = DMK_LAPLACE;
+                else if (kernel_str == "sqrt_laplace" || kernel_str == "2")
+                    kernel = DMK_SQRT_LAPLACE;
                 else {
-                    std::cerr << "Unknown evaluator: " << optarg << std::endl;
+                    std::cerr << "Unknown evaluator: " << kernel_str << std::endl;
                     throw std::runtime_error("Unknown evaluator");
                 }
                 break;
+            }
             case 'h':
             case '?':
             default:
-                std::cout << "Usage: " << argv[0] << " [-N n_src] [-M n_trg] [-t float_or_double] [-e CPU] [-h]"
+                std::cout << "Usage: " << argv[0] << " [-N n_src] [-M n_trg] [-t float_or_double] [-k KERNEL] [-h]"
                           << std::endl;
                 exit(0);
             }
@@ -62,7 +71,7 @@ struct Opts {
     int digits = 3;
     int unroll_factor = 1;
     char prec = 'f';
-    Evaluator eval = DIRECT_CPU;
+    Kernel kernel = DMK_LAPLACE;
 };
 
 template <class Real>
@@ -95,11 +104,34 @@ void laplace_pswf_direct_cpu(const Opts &opts, const sctl::Vector<Real> &r_src, 
     const Real *ztrg = (opts.n_dim == 2) ? nullptr : &r_trg[2 * nt];
 
     if (opts.n_dim == 2)
-        dmk::log_local_kernel_directcp_vec_cpp(&nd, &opts.n_dim, &opts.digits, &p.rsc, &p.cen, &p.d2max, &r_src[0], &ns,
-                                               &charge[0], xtrg, ytrg, ztrg, &nt, &u[0], &p.thresh2);
+        return dmk::log_local_kernel_directcp_vec_cpp(&nd, &opts.n_dim, &opts.digits, &p.rsc, &p.cen, &p.d2max,
+                                                      &r_src[0], &ns, &charge[0], xtrg, ytrg, ztrg, &nt, &u[0],
+                                                      &p.thresh2);
     else
-        dmk::l3d_local_kernel_directcp_vec_cpp(&nd, &opts.n_dim, &opts.digits, &p.rsc, &p.cen, &p.d2max, &r_src[0], &ns,
-                                               &charge[0], xtrg, ytrg, ztrg, &nt, &u[0], &p.thresh2);
+        return dmk::l3d_local_kernel_directcp_vec_cpp(&nd, &opts.n_dim, &opts.digits, &p.rsc, &p.cen, &p.d2max,
+                                                      &r_src[0], &ns, &charge[0], xtrg, ytrg, ztrg, &nt, &u[0],
+                                                      &p.thresh2);
+}
+
+template <class Real>
+void sqrt_laplace_pswf_direct_cpu(const Opts &opts, const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &r_trg,
+                                  const sctl::Vector<Real> &charge, sctl::Vector<Real> &u) {
+    constexpr int nd = 1;
+    constexpr PSWFParams<Real> p;
+    const int ns = r_src.Dim() / opts.n_dim;
+    const int nt = r_trg.Dim() / opts.n_dim;
+    const Real *xtrg = &r_trg[0 * nt];
+    const Real *ytrg = &r_trg[1 * nt];
+    const Real *ztrg = (opts.n_dim == 2) ? nullptr : &r_trg[2 * nt];
+
+    if (opts.n_dim == 2)
+        return dmk::l3d_local_kernel_directcp_vec_cpp(&nd, &opts.n_dim, &opts.digits, &p.rsc, &p.cen, &p.d2max,
+                                                      &r_src[0], &ns, &charge[0], xtrg, ytrg, ztrg, &nt, &u[0],
+                                                      &p.thresh2);
+    else
+        return dmk::sl3d_local_kernel_directcp_vec_cpp(&nd, &opts.n_dim, &opts.digits, &p.rsc, &p.cen, &p.d2max,
+                                                       &r_src[0], &ns, &charge[0], xtrg, ytrg, ztrg, &nt, &u[0],
+                                                       &p.thresh2);
 }
 
 template <typename Real>
@@ -139,34 +171,39 @@ void run_comparison(const Opts &opts) {
             r_trg_t[j * opts.n_trg + i] = r_trg[i * opts.n_dim + j];
 
     auto evaluator = [&opts]() {
-        switch (opts.eval) {
-        case DIRECT_CPU:
+        switch (opts.kernel) {
+        case DMK_LAPLACE:
             return laplace_pswf_direct_cpu<Real>;
-            break;
+        case DMK_SQRT_LAPLACE:
+            return sqrt_laplace_pswf_direct_cpu<Real>;
         default:
             throw std::runtime_error("Unknown evaluator");
         }
     }();
-    auto jit_evaluator = dmk::make_evaluator<Real>(DMK_LAPLACE, opts.n_dim, opts.digits);
+    auto jit_evaluator = dmk::make_evaluator<Real>(opts.kernel, opts.n_dim, opts.digits);
 
     constexpr PSWFParams<Real> p;
     sctl::Vector<Real> res(opts.n_trg);
     {
-        auto print_16 = [opts](const auto &prefix, auto &res) {
+        auto print_16 = [opts](const auto &prefix, const auto &res) {
             const int n_sample = std::min(16, opts.n_trg);
             std::cout << prefix << ": ";
             for (int j = 0; j < n_sample; ++j)
                 std::cout << res[j] << " ";
             std::cout << std::endl;
         };
-        res = 0;
+
+        auto jit_res = res;
+        jit_res = 0;
         jit_evaluator(1, p.rsc, p.cen, p.d2max, p.thresh2, opts.n_src, &r_src_base[0], &charges[0], opts.n_trg,
-                      &r_trg[0], &res[0]);
-        print_16("jit          ", res);
+                      &r_trg[0], &jit_res[0]);
+        print_16("jit          ", jit_res);
 
         res = 0;
         evaluator(opts, r_src_base, r_trg_t, charges, res);
         print_16("production   ", res);
+
+        print_16("jit / prod   ", jit_res / res);
     }
 
     const int n_images = opts.n_dim == 2 ? 9 : 27;
@@ -199,6 +236,7 @@ int main(int argc, char *argv[]) {
         }
         return 0;
     } catch (const std::runtime_error &e) {
+        std::cerr << "Error: " << e.what() << std::endl;
         return 1;
     }
 }

@@ -1,4 +1,5 @@
 #include <format>
+#include <mutex>
 #include <tuple>
 #include <typeinfo>
 #include <unordered_map>
@@ -116,7 +117,7 @@ Real log_windowed_kernel(Real x, Real beta, int dim, dmk::Prolate0Fun &prolate) 
         whts[i] *= 0.5 * beta;
     }
 
-    const Real rl = sqrt(dim * 1.0) * 2;
+    const Real rl = sqrt(Real(dim)) * 2;
     const Real dfac = rl * std::log(rl);
 
     Real fval = 0.0;
@@ -124,11 +125,11 @@ Real log_windowed_kernel(Real x, Real beta, int dim, dmk::Prolate0Fun &prolate) 
         const Real xval = xs[i] / beta;
         const Real fval0 = prolate.eval_val(xval);
         const Real z = rl * xs[i];
-        Real dj0 = std::cyl_bessel_j(0, z);
-        const Real dj1 = std::cyl_bessel_j(1, z);
+        Real dj0 = util::cyl_bessel_j(0, z);
+        const Real dj1 = util::cyl_bessel_j(1, z);
         const Real tker = -(1 - dj0) / (xs[i] * xs[i]) + dfac * dj1 / xs[i];
         const Real fhat = tker * fval0 / psi0;
-        dj0 = x > 0 ? std::cyl_bessel_j(0, x * xs[i]) : Real{1.0};
+        dj0 = x > 0 ? util::cyl_bessel_j(0, x * xs[i]) : Real{1.0};
         fval += fhat * dj0 * whts[i] * xs[i];
     }
 
@@ -136,30 +137,57 @@ Real log_windowed_kernel(Real x, Real beta, int dim, dmk::Prolate0Fun &prolate) 
 }
 
 template <typename Real>
+Real sl3d_local_kernel(Real r2, Real bsize, dmk::Prolate0Fun &prolate) {
+    const Real r = std::sqrt(r2);
+    auto compute_F = [&](Real upper) -> Real {
+        constexpr int n_quad = 400; // overkill but it's offline
+        static std::array<Real, n_quad> xs, whts;
+        static bool init = false;
+        if (!init) {
+            legerts(1, n_quad, xs.data(), whts.data());
+            init = true;
+        }
+        Real val = 0;
+        for (int i = 0; i < n_quad; ++i) {
+            const Real t = Real{0.5} * (xs[i] + Real{1}) * upper;
+            const Real w = Real{0.5} * whts[i] * upper;
+            val += prolate.eval_val(t / bsize) * t * w;
+        }
+        return val;
+    };
+    const Real c0 = compute_F(bsize);
+    const Real F_r = compute_F(r);
+
+    return Real{1} - F_r / c0;
+}
+
+template <typename Real>
 direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_digits) {
+    static std::mutex lock;
+    std::lock_guard<std::mutex> lock_guard(lock);
     constexpr int VECWIDTH = std::is_same_v<Real, float> ? 2 * VECDIM : VECDIM;
     constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
-    Real tol = std::pow(10.0, -n_digits);
+    const Real tol = std::pow(10.0, -n_digits);
+    const Real c0 = procl180_rescale(tol);
+    dmk::Prolate0Fun prolate_fun(c0, 10000);
+
+    auto build_func_name = [&](const std::string &base_name) {
+        return std::format("void {}<{}, {}>", base_name, T_str, VECWIDTH);
+    };
 
     switch (kernel) {
     case dmk_ikernel::DMK_LAPLACE:
         if (n_dim == 2) {
-            Real beta = procl180_rescale(tol);
-            dmk::Prolate0Fun prolate(beta, 10000);
-            auto log_windowed = [&beta, &prolate](Real x) {
-                return -log_windowed_kernel<Real>(std::sqrt(x), beta, 2, prolate);
+            auto log_windowed = [&c0, &prolate_fun](Real x) {
+                return -log_windowed_kernel<Real>(std::sqrt(x), c0, 2, prolate_fun);
             };
             auto fit_func = [&log_windowed](int digits) {
                 return make_polyfit_abs_error<Real>(digits, log_windowed, 0.0, 1.0);
             };
 
             const auto coeffs = coeffs_cache.get<Real>(n_digits, fit_func);
-
-            const auto func_name =
-                std::format("void laplace_2d_poly_all_pairs<{}, {}>(int, int, {}, {}, {}, {}, "
-                            "int, {} const*, int, {} const*, {} const*, int, {} const*, {}*, int)",
-                            T_str, VECWIDTH, T_str, T_str, T_str, T_str, T_str, T_str, T_str, T_str, T_str);
-
+            auto test = poly_eval::make_func_eval(log_windowed, coeffs.size(), 0.0, 1.0);
+            const auto func_name = build_func_name("laplace_2d_poly_all_pairs");
             auto jit_func = RS->compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
                                                  const Real *, int, const Real *, Real *)>(
                 func_name, {{"n_coeffs", coeffs.size()}, {"n_digits", n_digits}, {"unroll_factor", 3}});
@@ -170,21 +198,13 @@ direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_
             };
         }
         if (n_dim == 3) {
-            const Real tol = std::pow(10.0, -n_digits);
-            const Real c0 = procl180_rescale(tol);
-            dmk::Prolate0Fun prolate_fun(c0, 10000);
             const Real prolate_inf_inv = 1.0 / prolate_fun.int_eval(1.0);
             auto pswf = [&prolate_inf_inv, &prolate_fun](Real x) {
                 return Real(1.0 - prolate_inf_inv * prolate_fun.int_eval((x + 1) / 2.0));
             };
             auto fit_func = [&pswf](int digits) { return make_polyfit_abs_error<Real>(digits, pswf, -1.0, 1.0); };
-
             const auto pswf_coeffs = coeffs_cache.get<Real>(n_digits, fit_func);
-
-            const auto func_name =
-                std::format("void laplace_3d_poly_all_pairs<{}, {}>(int, int, {}, {}, {}, {}, "
-                            "int, {} const*, int, {} const*, {} const*, int, {} const*, {}*, int)",
-                            T_str, VECWIDTH, T_str, T_str, T_str, T_str, T_str, T_str, T_str, T_str, T_str);
+            const auto func_name = build_func_name("laplace_3d_poly_all_pairs");
 
             auto jit_func = RS->compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
                                                  const Real *, int, const Real *, Real *)>(
@@ -196,6 +216,48 @@ direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_
                 jit_func(nd, rsc, cen, d2max, thresh2, pswf_coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot);
             };
         }
+    case dmk_ikernel::DMK_SQRT_LAPLACE: {
+        if (n_dim == 2) {
+            const Real prolate_inf_inv = 1.0 / prolate_fun.int_eval(1.0);
+            auto pswf = [&prolate_inf_inv, &prolate_fun](Real x) {
+                return Real(1.0 - prolate_inf_inv * prolate_fun.int_eval((x + 1) / 2.0));
+            };
+            auto fit_func = [&pswf](int digits) { return make_polyfit_abs_error<Real>(digits, pswf, -1.0, 1.0); };
+            const auto pswf_coeffs = coeffs_cache.get<Real>(n_digits, fit_func);
+            const auto func_name = build_func_name("sqrt_laplace_2d_poly_all_pairs");
+
+            auto jit_func = RS->compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
+                                                 const Real *, int, const Real *, Real *)>(
+                func_name, {{"n_coeffs", pswf_coeffs.size()}, {"n_digits", n_digits}, {"unroll_factor", 3}});
+
+            return [jit_func, pswf_coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
+                                           const Real *r_src, const Real *charge, int n_trg, const Real *r_trg,
+                                           Real *pot) {
+                jit_func(nd, rsc, cen, d2max, thresh2, pswf_coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot);
+            };
+        }
+        if (n_dim == 3) {
+            auto kernel_func = [&prolate_fun](Real x) -> Real {
+                return sl3d_local_kernel<Real>(x, Real{1.0}, prolate_fun);
+            };
+
+            auto fit_func = [&kernel_func](int n_digits) {
+                return make_polyfit_abs_error<Real>(n_digits, kernel_func, Real{0}, Real{1.0});
+            };
+
+            const auto coeffs = coeffs_cache.get<Real>(n_digits, fit_func);
+            const auto func_name = build_func_name("sqrt_laplace_3d_poly_all_pairs");
+
+            auto jit_func = RS->compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
+                                                 const Real *, int, const Real *, Real *)>(
+                func_name, {{"n_coeffs", coeffs.size()}, {"n_digits", n_digits}, {"unroll_factor", 3}});
+
+            return [jit_func, coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
+                                      const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+                jit_func(nd, rsc, cen, d2max, thresh2, coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot);
+            };
+        }
+    }
     default:
         throw std::runtime_error("Unsupported kernel for direct evaluator");
     }
