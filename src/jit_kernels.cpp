@@ -260,14 +260,18 @@ void EvalPairs(int Ns, const Real *__restrict__ r_src, const Real *__restrict__ 
                 }
             }
 
-            for (Long s = 0; s < Ns; s++) {
+            const Real *__restrict__ src_ptr = r_src;
+            const Real *__restrict__ charge_ptr = v_src;
+            const Real *__restrict__ normal_ptr = src_normals;
+            for (Long s = 0; s < Ns;
+                 s++, src_ptr += SPATIAL_DIM, charge_ptr += KERNEL_INPUT_DIM, normal_ptr += NORMAL_DIM) {
                 RealVec xs[SPATIAL_DIM], vs[KERNEL_INPUT_DIM], ns[NORMAL_DIM];
                 for (Integer k = 0; k < SPATIAL_DIM; k++)
-                    xs[k] = RealVec::Load1(&r_src[s * SPATIAL_DIM + k]);
+                    xs[k] = RealVec::Load1(&src_ptr[k]);
                 for (Integer k = 0; k < NORMAL_DIM; k++)
-                    ns[k] = RealVec::Load1(&src_normals[s * NORMAL_DIM + k]);
+                    ns[k] = RealVec::Load1(&normal_ptr[k]);
                 for (Integer k = 0; k < KERNEL_INPUT_DIM; k++)
-                    vs[k] = RealVec::Load1(&v_src[s * KERNEL_INPUT_DIM + k]);
+                    vs[k] = RealVec::Load1(&charge_ptr[k]);
 
                 for (int u = 0; u < unroll_factor; u++) {
                     RealVec dX[SPATIAL_DIM];
