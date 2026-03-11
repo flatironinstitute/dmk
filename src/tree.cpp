@@ -131,7 +131,7 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     debug_dump_tree = getenv("DMK_DEBUG_DUMP_TREE") != nullptr;
 
     try {
-        evaluator = make_evaluator<Real>(params.kernel, DIM, n_digits);
+        evaluator = make_evaluator<Real>(params.kernel, DIM, n_digits, 3);
     }
     catch (std::exception &e) {
         logger->error("Failed to create direct evaluator: {}", e.what());

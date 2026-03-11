@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <sctl.hpp>
 
 #define VECDIM 4
@@ -157,8 +158,8 @@ ALWAYS_INLINE VecType blocked_horner(const VecType &x, const typename VecType::S
 
 template <typename VecType>
 ALWAYS_INLINE VecType horner(const VecType &x, const typename VecType::ScalarType *coeffs, int n_coeffs) {
-    VecType poly = VecType::Zero();
-    for (int i = n_coeffs - 1; i >= 0; --i)
+    VecType poly = coeffs[n_coeffs - 1];
+    for (int i = n_coeffs - 2; i >= 0; --i)
         poly = FMA(poly, x, VecType::Load1(&coeffs[i]));
     return poly;
 }
@@ -244,7 +245,7 @@ void EvalPairs(int Ns, const Real *__restrict__ r_src, const Real *__restrict__ 
             }
         }
 
-        constexpr int MAX_UNROLL = 4;
+        constexpr int MAX_UNROLL = 8;
         Long t = 0;
         for (; t + unroll_factor * VecLen <= NNt; t += unroll_factor * VecLen) {
             RealVec xt[MAX_UNROLL][SPATIAL_DIM];
@@ -260,9 +261,7 @@ void EvalPairs(int Ns, const Real *__restrict__ r_src, const Real *__restrict__ 
             }
 
             for (Long s = 0; s < Ns; s++) {
-                __builtin_prefetch(&r_src[(s + 4) * SPATIAL_DIM], 0, 3);
                 RealVec xs[SPATIAL_DIM], vs[KERNEL_INPUT_DIM], ns[NORMAL_DIM];
-
                 for (Integer k = 0; k < SPATIAL_DIM; k++)
                     xs[k] = RealVec::Load1(&r_src[s * SPATIAL_DIM + k]);
                 for (Integer k = 0; k < NORMAL_DIM; k++)
@@ -270,24 +269,18 @@ void EvalPairs(int Ns, const Real *__restrict__ r_src, const Real *__restrict__ 
                 for (Integer k = 0; k < KERNEL_INPUT_DIM; k++)
                     vs[k] = RealVec::Load1(&v_src[s * KERNEL_INPUT_DIM + k]);
 
-                RealVec dX[MAX_UNROLL][SPATIAL_DIM];
-                RealVec U[MAX_UNROLL][KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM];
-
                 for (int u = 0; u < unroll_factor; u++) {
+                    RealVec dX[SPATIAL_DIM];
+                    RealVec U[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM];
                     for (Integer i = 0; i < SPATIAL_DIM; i++)
-                        dX[u][i] = xt[u][i] - xs[i];
+                        dX[i] = xt[u][i] - xs[i];
                     if constexpr (NORMAL_DIM > 0)
-                        uKernel(U[u], dX[u], ns);
+                        uKernel(U, dX, ns);
                     else
-                        uKernel(U[u], dX[u]);
-                }
-
-                for (int u = 0; u < unroll_factor; u++) {
-                    for (Integer k0 = 0; k0 < KERNEL_INPUT_DIM; k0++) {
-                        for (Integer k1 = 0; k1 < KERNEL_OUTPUT_DIM; k1++) {
-                            vt[u][k1] = FMA(U[u][k0][k1], vs[k0], vt[u][k1]);
-                        }
-                    }
+                        uKernel(U, dX);
+                    for (Integer k0 = 0; k0 < KERNEL_INPUT_DIM; k0++)
+                        for (Integer k1 = 0; k1 < KERNEL_OUTPUT_DIM; k1++)
+                            vt[u][k1] = FMA(U[k0][k1], vs[k0], vt[u][k1]);
                 }
             }
 
@@ -414,7 +407,8 @@ void laplace_3d_poly_all_pairs(int nd, int n_digits, Real rsc, Real cen, Real d2
               n_coeffs(n_coeffs), n_digits(digits) {}
 
         void operator()(VecType (&u)[1][1], const VecType (&dX)[SPATIAL_DIM]) const {
-            const VecType R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
+            // const VecType R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
+            const VecType R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
             const auto mask = (R2 > thresh2_vec) & (R2 < d2max_vec);
 
             if (n_digits >= 6) {
@@ -425,12 +419,22 @@ void laplace_3d_poly_all_pairs(int nd, int n_digits, Real rsc, Real cen, Real d2
             }
             const VecType Rinv = approx_rsqrt_runtime(R2, mask, n_digits);
 
-            const VecType x = sctl::FMA(R2, Rinv, cen_vec) * rsc_vec;
+            const VecType x = R2 * Rinv; // sctl::FMA(R2, Rinv, cen_vec);
             u[0][0] = horner(x, coeffs, n_coeffs) * Rinv;
         }
     };
 
-    Evaluator evaluator(thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits);
+    Real coeffs_mod[64];
+    Real rsc_pow = rsc * 0.5;
+    for (int i = 0; i < n_coeffs; ++i) {
+        coeffs_mod[i] = coeffs[i] * rsc_pow;
+        rsc_pow *= rsc;
+    }
+    for (int i = 0; i < n_coeffs; ++i)
+        for (int j = n_coeffs - 1; j > i; --j)
+            coeffs_mod[j - 1] += cen * coeffs_mod[j];
+
+    Evaluator evaluator(thresh2, d2max, rsc, cen, coeffs_mod, n_coeffs, n_digits);
 
     EvalPairs<Real, KERNEL_INPUT_DIM, KERNEL_OUTPUT_DIM, SPATIAL_DIM, NORMAL_DIM, MaxVecLen>(
         n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);

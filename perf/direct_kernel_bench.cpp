@@ -180,7 +180,7 @@ void run_comparison(const Opts &opts) {
             throw std::runtime_error("Unknown evaluator");
         }
     }();
-    auto jit_evaluator = dmk::make_evaluator<Real>(opts.kernel, opts.n_dim, opts.digits);
+    auto jit_evaluator = dmk::make_evaluator<Real>(opts.kernel, opts.n_dim, opts.digits, opts.unroll_factor);
 
     constexpr PSWFParams<Real> p;
     sctl::Vector<Real> res(opts.n_trg);

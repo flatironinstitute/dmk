@@ -162,7 +162,7 @@ Real sl3d_local_kernel(Real r2, Real bsize, dmk::Prolate0Fun &prolate) {
 }
 
 template <typename Real>
-direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_digits) {
+direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_digits, int unroll_factor) {
     static std::mutex lock;
     std::lock_guard<std::mutex> lock_guard(lock);
     constexpr int VECWIDTH = std::is_same_v<Real, float> ? 2 * VECDIM : VECDIM;
@@ -190,7 +190,7 @@ direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_
             const auto func_name = build_func_name("laplace_2d_poly_all_pairs");
             auto jit_func = RS->compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
                                                  const Real *, int, const Real *, Real *)>(
-                func_name, {{"n_coeffs", coeffs.size()}, {"n_digits", n_digits}, {"unroll_factor", 3}});
+                func_name, {{"n_coeffs", coeffs.size()}, {"n_digits", n_digits}, {"unroll_factor", unroll_factor}});
 
             return [jit_func, coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
                                       const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
@@ -208,7 +208,8 @@ direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_
 
             auto jit_func = RS->compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
                                                  const Real *, int, const Real *, Real *)>(
-                func_name, {{"n_coeffs", pswf_coeffs.size()}, {"n_digits", n_digits}, {"unroll_factor", 3}});
+                func_name,
+                {{"n_coeffs", pswf_coeffs.size()}, {"n_digits", n_digits}, {"unroll_factor", unroll_factor}});
 
             return [jit_func, pswf_coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
                                            const Real *r_src, const Real *charge, int n_trg, const Real *r_trg,
@@ -228,7 +229,8 @@ direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_
 
             auto jit_func = RS->compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
                                                  const Real *, int, const Real *, Real *)>(
-                func_name, {{"n_coeffs", pswf_coeffs.size()}, {"n_digits", n_digits}, {"unroll_factor", 3}});
+                func_name,
+                {{"n_coeffs", pswf_coeffs.size()}, {"n_digits", n_digits}, {"unroll_factor", unroll_factor}});
 
             return [jit_func, pswf_coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
                                            const Real *r_src, const Real *charge, int n_trg, const Real *r_trg,
@@ -250,7 +252,7 @@ direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_
 
             auto jit_func = RS->compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
                                                  const Real *, int, const Real *, Real *)>(
-                func_name, {{"n_coeffs", coeffs.size()}, {"n_digits", n_digits}, {"unroll_factor", 3}});
+                func_name, {{"n_coeffs", coeffs.size()}, {"n_digits", n_digits}, {"unroll_factor", unroll_factor}});
 
             return [jit_func, coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
                                       const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
@@ -357,7 +359,9 @@ template void direct_eval<double, 3>(dmk_ikernel ikernel, const ndview<double, 2
                                      const double *kernel_params, double scale, double center, double d2max,
                                      ndview<double, 2> u, int n_digits);
 
-template direct_evaluator_func<float> make_evaluator<float>(dmk_ikernel kernel, int n_dim, int n_digits);
-template direct_evaluator_func<double> make_evaluator<double>(dmk_ikernel kernel, int n_dim, int n_digits);
+template direct_evaluator_func<float> make_evaluator<float>(dmk_ikernel kernel, int n_dim, int n_digits,
+                                                            int unroll_factor);
+template direct_evaluator_func<double> make_evaluator<double>(dmk_ikernel kernel, int n_dim, int n_digits,
+                                                              int unroll_factor);
 
 } // namespace dmk

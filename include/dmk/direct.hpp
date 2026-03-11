@@ -11,7 +11,7 @@ void direct_eval(dmk_ikernel ikernel, const ndview<Real, 2> &r_src, const std::a
                  Real center, Real d2max, ndview<Real, 2> u, int n_digits);
 
 template <typename Real>
-direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_digits);
+direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_digits, int unroll_factor);
 }
 
 #endif
