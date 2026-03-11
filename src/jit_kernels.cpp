@@ -57,8 +57,8 @@ ALWAYS_INLINE auto dispatch_digits(int n_digits, F &&f, Args &&...args) {
 }
 
 template <typename VecType>
-ALWAYS_INLINE VecType approx_rsqrt_runtime(const VecType &x, const typename VecType::MaskType &m, int digits) {
-    auto kernel = [&]<int DIGITS>() -> VecType { return sctl::approx_rsqrt<DIGITS>(x, m); };
+ALWAYS_INLINE VecType approx_rsqrt_runtime(const VecType &x, int digits) {
+    auto kernel = [&]<int DIGITS>() -> VecType { return sctl::approx_rsqrt<DIGITS>(x); };
     return dispatch_digits(digits, kernel);
 }
 
@@ -407,20 +407,19 @@ void laplace_3d_poly_all_pairs(int nd, int n_digits, Real rsc, Real cen, Real d2
               n_coeffs(n_coeffs), n_digits(digits) {}
 
         void operator()(VecType (&u)[1][1], const VecType (&dX)[SPATIAL_DIM]) const {
-            // const VecType R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
             const VecType R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
-            const auto mask = (R2 > thresh2_vec) & (R2 < d2max_vec);
+            const auto in_range = (R2 > thresh2_vec) & (R2 < d2max_vec);
 
             if (n_digits >= 6) {
-                if (__builtin_expect(!sctl::mask_any(mask), 0)) {
+                if (__builtin_expect(!sctl::mask_any(in_range), 0)) {
                     u[0][0] = VecType::Zero();
                     return;
                 }
             }
-            const VecType Rinv = approx_rsqrt_runtime(R2, mask, n_digits);
-
-            const VecType x = R2 * Rinv; // sctl::FMA(R2, Rinv, cen_vec);
-            u[0][0] = horner(x, coeffs, n_coeffs) * Rinv;
+            const VecType Rinv = approx_rsqrt_runtime(R2, n_digits);
+            const VecType x = R2 * Rinv;
+            const VecType result = horner(x, coeffs, n_coeffs) * Rinv;
+            u[0][0] = sctl::select<Real, MaxVecLen>(in_range, result, VecType::Zero());
         }
     };
 
@@ -473,10 +472,10 @@ void sqrt_laplace_2d_poly_all_pairs(int nd, int n_digits, Real rsc, Real cen, Re
                     return;
                 }
             }
-            const VecType Rinv = approx_rsqrt_runtime(R2, mask, n_digits);
+            const VecType Rinv = approx_rsqrt_runtime(R2, n_digits);
 
             const VecType x = sctl::FMA(R2, Rinv, cen_vec) * rsc_vec;
-            u[0][0] = horner(x, coeffs, n_coeffs) * Rinv;
+            u[0][0] = sctl::select(mask, horner(x, coeffs, n_coeffs) * Rinv, VecType::Zero());
         }
     };
 
@@ -519,10 +518,10 @@ void sqrt_laplace_3d_poly_all_pairs(int nd, int n_digits, Real rsc, Real cen, Re
                     return;
                 }
             }
-            const VecType Rinv = approx_rsqrt_runtime(R2, mask, n_digits);
+            const VecType Rinv = approx_rsqrt_runtime(R2, n_digits);
             const VecType R2inv = Rinv * Rinv;
             const VecType x = FMA(R2, rsc_vec, cen_vec);
-            u[0][0] = R2inv * horner(x, coeffs, n_coeffs);
+            u[0][0] = sctl::select(mask, R2inv * horner(x, coeffs, n_coeffs), VecType::Zero());
         }
     };
 
