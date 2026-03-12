@@ -421,23 +421,13 @@ void laplace_3d_poly_all_pairs(int nd, int n_digits, Real rsc, Real cen, Real d2
                 }
             }
             const VecType Rinv = approx_rsqrt_runtime(R2, n_digits);
-            const VecType x = R2 * Rinv;
-            const VecType result = horner(x, coeffs, n_coeffs) * Rinv;
+            const VecType xmapped = FMA(R2, Rinv, cen_vec) * rsc_vec;
+            const VecType result = horner(xmapped, coeffs, n_coeffs) * Rinv;
             u[0][0] = sctl::select<Real, MaxVecLen>(in_range, result, VecType::Zero());
         }
     };
 
-    Real coeffs_mod[64];
-    Real rsc_pow = rsc * 0.5;
-    for (int i = 0; i < n_coeffs; ++i) {
-        coeffs_mod[i] = coeffs[i] * rsc_pow;
-        rsc_pow *= rsc;
-    }
-    for (int i = 0; i < n_coeffs; ++i)
-        for (int j = n_coeffs - 1; j > i; --j)
-            coeffs_mod[j - 1] += cen * coeffs_mod[j];
-
-    Evaluator evaluator(thresh2, d2max, rsc, cen, coeffs_mod, n_coeffs, n_digits);
+    Evaluator evaluator(thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits);
 
     EvalPairs<Real, KERNEL_INPUT_DIM, KERNEL_OUTPUT_DIM, SPATIAL_DIM, NORMAL_DIM, MaxVecLen>(
         n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);
