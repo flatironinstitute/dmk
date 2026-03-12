@@ -36,6 +36,25 @@ class StackOrHeapBuffer {
     }
 };
 
+template <typename Real>
+ALWAYS_INLINE void shift_scale_polynomial(const Real *coeffs_in, Real a, Real b, Real *coeffs_out, int N) {
+    Real tmp[64];
+    for (int i = 0; i < N; i++)
+        tmp[i] = coeffs_in[i];
+
+    for (int i = 0; i < N - 1; i++) {
+        for (int j = N - 2; j >= i; j--) {
+            tmp[j] += b * tmp[j + 1];
+        }
+    }
+
+    Real ak = 1.0;
+    for (int k = 0; k < N; k++) {
+        coeffs_out[k] = tmp[k] * ak;
+        ak *= a;
+    }
+}
+
 template <class F, class... Args>
 ALWAYS_INLINE auto dispatch_digits(int n_digits, F &&f, Args &&...args) {
     // clang-format off
@@ -160,6 +179,15 @@ template <typename VecType>
 ALWAYS_INLINE VecType horner(const VecType &x, const typename VecType::ScalarType *coeffs, int n_coeffs) {
     VecType poly = coeffs[n_coeffs - 1];
     for (int i = n_coeffs - 2; i >= 0; --i)
+        poly = FMA(poly, x, VecType::Load1(&coeffs[i]));
+    return poly;
+}
+
+template <int shift, typename VecType>
+ALWAYS_INLINE VecType horner_split(const VecType &x, const typename VecType::ScalarType *coeffs, int n_coeffs) {
+    const int start_coeff = ((n_coeffs - 1 - shift) & ~1) + shift;
+    VecType poly = coeffs[start_coeff];
+    for (int i = start_coeff - 2; i >= 0; i -= 2)
         poly = FMA(poly, x, VecType::Load1(&coeffs[i]));
     return poly;
 }
@@ -374,14 +402,19 @@ void laplace_2d_poly_all_pairs(int nd, int n_digits, Real rsc, Real cen, Real d2
                     return;
                 }
             }
-            const VecType x = sctl::FMA(R2, rsc_vec, cen_vec);
+
             const VecType R2sc = R2 * bsizeinv2_vec;
-            const VecType ptmp = horner(x, coeffs, n_coeffs);
+            const VecType ptmp = horner(R2, coeffs, n_coeffs); // horner directly in R2
             u[0][0] = select(mask, Real{0.5} * sctl::log(R2sc) + ptmp, VecType::Zero());
         }
     };
 
-    Evaluator evaluator(thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits);
+    // Since we scale/shift everything by rsc/cen, we can just augment our coeffs appropriately
+    // to remove an FMA in every interaction
+    std::array<Real, 64> coeffs_mod;
+    shift_scale_polynomial(coeffs, rsc, cen, coeffs_mod.data(), n_coeffs);
+
+    Evaluator evaluator(thresh2, d2max, rsc, cen, coeffs_mod.data(), n_coeffs, n_digits);
 
     EvalPairs<Real, KERNEL_INPUT_DIM, KERNEL_OUTPUT_DIM, SPATIAL_DIM, NORMAL_DIM, MaxVecLen>(
         n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);
@@ -457,7 +490,7 @@ void sqrt_laplace_2d_poly_all_pairs(int nd, int n_digits, Real rsc, Real cen, Re
               n_coeffs(n_coeffs), n_digits(digits) {}
 
         void operator()(VecType (&u)[1][1], const VecType (&dX)[SPATIAL_DIM]) const {
-            const VecType R2 = dX[0] * dX[0] + dX[1] * dX[1];
+            const VecType R2 = FMA(dX[0], dX[0], dX[1] * dX[1]);
             const auto mask = (R2 > thresh2_vec) & (R2 < d2max_vec);
 
             if (n_digits >= 6) {
@@ -514,12 +547,14 @@ void sqrt_laplace_3d_poly_all_pairs(int nd, int n_digits, Real rsc, Real cen, Re
             }
             const VecType Rinv = approx_rsqrt_runtime(R2, n_digits);
             const VecType R2inv = Rinv * Rinv;
-            const VecType x = FMA(R2, rsc_vec, cen_vec);
-            u[0][0] = sctl::select(mask, R2inv * horner(x, coeffs, n_coeffs), VecType::Zero());
+            u[0][0] = sctl::select(mask, R2inv * horner(R2, coeffs, n_coeffs), VecType::Zero());
         }
     };
 
-    Evaluator evaluator(thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits);
+    std::array<Real, 64> coeffs_mod;
+    shift_scale_polynomial(coeffs, rsc, cen, coeffs_mod.data(), n_coeffs);
+
+    Evaluator evaluator(thresh2, d2max, rsc, cen, coeffs_mod.data(), n_coeffs, n_digits);
 
     EvalPairs<Real, KERNEL_INPUT_DIM, KERNEL_OUTPUT_DIM, SPATIAL_DIM, NORMAL_DIM, MaxVecLen>(
         n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);
