@@ -429,19 +429,21 @@ void laplace_3d_poly_all_pairs(int nd, int n_digits, Real rsc, Real cen, Real d2
     constexpr int KERNEL_OUTPUT_DIM = 1;
     constexpr int SPATIAL_DIM = 3;
     constexpr int NORMAL_DIM = 0;
+    const int transform_poly = n_digits < 6;
 
     struct Evaluator {
         VecType thresh2_vec, d2max_vec, rsc_vec, cen_vec;
         const Real *coeffs;
         int n_coeffs;
         int n_digits;
+        int transform_poly;
 
         static constexpr Real scale_factor() { return Real{1.0}; }
 
         Evaluator(VecType thresh2_vec, VecType d2max_vec, VecType rsc_vec, VecType cen_vec, const Real *coeffs,
-                  int n_coeffs, int digits)
+                  int n_coeffs, int digits, int transform_poly)
             : thresh2_vec(thresh2_vec), d2max_vec(d2max_vec), rsc_vec(rsc_vec), cen_vec(cen_vec), coeffs(coeffs),
-              n_coeffs(n_coeffs), n_digits(digits) {}
+              n_coeffs(n_coeffs), n_digits(digits), transform_poly(transform_poly) {}
 
         void operator()(VecType (&u)[1][1], const VecType (&dX)[SPATIAL_DIM]) const {
             const VecType R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
@@ -454,13 +456,39 @@ void laplace_3d_poly_all_pairs(int nd, int n_digits, Real rsc, Real cen, Real d2
                 }
             }
             const VecType Rinv = approx_rsqrt_runtime(R2, n_digits);
-            const VecType xmapped = FMA(R2, Rinv, cen_vec) * rsc_vec;
-            const VecType result = horner(xmapped, coeffs, n_coeffs) * Rinv;
-            u[0][0] = sctl::select<Real, MaxVecLen>(in_range, result, VecType::Zero());
+
+            if (transform_poly) {
+                const VecType E = horner_split<0>(R2, coeffs, n_coeffs);
+                const VecType O = horner_split<1>(R2, coeffs, n_coeffs);
+                const VecType result = FMA(E, Rinv, O);
+                u[0][0] = sctl::select<Real, MaxVecLen>(in_range, result, VecType::Zero());
+            } else {
+                const VecType xmapped = FMA(R2, Rinv, cen_vec) * rsc_vec;
+                const VecType result = horner(xmapped, coeffs, n_coeffs) * Rinv;
+                u[0][0] = sctl::select<Real, MaxVecLen>(in_range, result, VecType::Zero());
+            }
         }
     };
 
-    Evaluator evaluator(thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits);
+    Real coeffs_mod[64];
+    if (transform_poly) {
+        double rsc_pow = 1.0;
+        double coeffs_mod_d[64];
+        // pre-scale the polynomial coefficients
+        for (int i = 0; i < n_coeffs; ++i) {
+            coeffs_mod_d[i] = coeffs[i] * rsc_pow;
+            rsc_pow *= rsc;
+        }
+        // now taylor shift them using horner method
+        for (int i = 0; i < n_coeffs; ++i)
+            for (int j = n_coeffs - 1; j > i; --j)
+                coeffs_mod_d[j - 1] += cen * coeffs_mod_d[j];
+        for (int i = 0; i < n_coeffs; ++i)
+            coeffs_mod[i] = coeffs_mod_d[i];
+        coeffs = coeffs_mod;
+    }
+
+    Evaluator evaluator(thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits, transform_poly);
 
     EvalPairs<Real, KERNEL_INPUT_DIM, KERNEL_OUTPUT_DIM, SPATIAL_DIM, NORMAL_DIM, MaxVecLen>(
         n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);

@@ -200,11 +200,12 @@ direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_
         if (n_dim == 3) {
             const Real prolate_inf_inv = 1.0 / prolate_fun.int_eval(1.0);
             auto pswf = [&prolate_inf_inv, &prolate_fun](Real x) {
-                return Real(1.0 - prolate_inf_inv * prolate_fun.int_eval((x + 1) / 2.0));
+                return Real(1.0 - prolate_inf_inv * prolate_fun.int_eval(x));
             };
-            auto fit_func = [&pswf](int digits) { return make_polyfit_abs_error<Real>(digits, pswf, -1.0, 1.0); };
+            auto fit_func = [&pswf](int digits) { return make_polyfit_abs_error<Real>(digits, pswf, 0.0, 1.0); };
             const auto pswf_coeffs = coeffs_cache.get<Real>(n_digits, fit_func);
             const auto func_name = build_func_name("laplace_3d_poly_all_pairs");
+            std::cout << pswf_coeffs.size() << std::endl;
 
             auto jit_func = RS->compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
                                                  const Real *, int, const Real *, Real *)>(
