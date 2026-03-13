@@ -132,8 +132,7 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 
     try {
         evaluator = make_evaluator<Real>(params.kernel, DIM, n_digits, 3);
-    }
-    catch (std::exception &e) {
+    } catch (std::exception &e) {
         logger->error("Failed to create direct evaluator: {}", e.what());
     }
 
@@ -906,8 +905,8 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
                             continue;
                         const ndview<Real, 2> p2c_view({n_order, DIM},
                                                        const_cast<Real *>(&p2c[i_child * DIM * n_order * n_order]));
-                        tensorprod::transform<Real, DIM>(nd, proxy_down_zeroed[child], proxy_view_downward(box), p2c_view,
-                                                         proxy_view_downward(child), workspace);
+                        tensorprod::transform<Real, DIM>(nd, proxy_down_zeroed[child], proxy_view_downward(box),
+                                                         p2c_view, proxy_view_downward(child), workspace);
                         proxy_down_zeroed[child] = true;
                     }
                 }
@@ -1007,89 +1006,86 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
 
 #pragma omp parallel for schedule(dynamic)
     for (int idx = 0; idx < direct_work.size(); ++idx) {
-        const int i_box = direct_work[idx];
-        const int n_src_i = src_counts_owned[i_box];
-        const int n_trg_i = trg_counts_owned[i_box];
-        const int i_level = node_mid[i_box].Depth();
-        for (auto j_box : list1(i_box)) {
-            int j_level = node_mid[j_box].Depth();
-            Real bsize = boxsize[j_level];
+        const int trg_box = direct_work[idx];
+        const int trg_level = node_mid[trg_box].Depth();
+        for (auto src_box : list1(trg_box)) {
+            int src_level = node_mid[src_box].Depth();
+            Real bsize = boxsize[src_level];
             // now find the interaction range of the residual kernel
-            if (ifpwexp[j_box] && j_box == i_box) {
+            if (ifpwexp[src_box] && src_box == trg_box) {
                 // when ifpwexp(jbox)=1, self interaction at its own
                 // level is taken care of by plane - wave expansion
                 bsize /= Real{2.0};
-                j_level = j_level + 1;
-            } else if (j_level < i_level) {
+                src_level = src_level + 1;
+            } else if (src_level < trg_level) {
                 // when the source box is bigger than the target box, residual interaction
                 // starts from the target box level
-                bsize = boxsize[i_level];
-                j_level = i_level;
+                bsize = boxsize[trg_level];
+                src_level = trg_level;
             }
 
             // kernel truncated at bsize, i.e., K(x,y)=0 for |x-y|^2 > d2max
             const Real d2max = bsize * bsize;
             const Real bsizeinv = Real{1} / bsize;
 
-            // used in the kernel approximatin for boxes in list1
+            // used in the kernel approximation for boxes in list1
             Real rsc = 2 * bsizeinv;
             Real cen = -bsize / Real{2};
-            const auto &cheb_coeffs = fourier_data.cheb_coeffs(j_level);
+            const auto &cheb_coeffs = fourier_data.cheb_coeffs(src_level);
 
             if ((params.kernel == DMK_SQRT_LAPLACE && DIM == 3) || (params.kernel == DMK_LAPLACE && DIM == 2)) {
                 rsc = 2 * bsizeinv * bsizeinv;
                 cen = Real{-1.0};
-            }
-            if (params.kernel == DMK_YUKAWA) {
-                rsc = 2 * bsizeinv;
+            } else if (params.kernel == DMK_YUKAWA)
                 cen = Real{-1.0};
-            }
 
             std::array<std::span<const Real>, DIM> r_trg;
 
             assert(is_global_leaf[i_box]);
             assert(is_global_leaf[j_box]);
-            if (n_src_i) {
+            if (src_counts_owned[trg_box]) {
                 if (!evaluator) {
                     for (int i = 0; i < DIM; ++i)
-                        r_trg[i] = std::span<const Real>(
-                            r_src_t + (r_src_offsets_owned[i_box] / DIM) + src_counts_owned[0] * i, n_src_i);
+                        r_trg[i] = std::span<const Real>(r_src_t + (r_src_offsets_owned[trg_box] / DIM) +
+                                                             src_counts_owned[0] * i,
+                                                         src_counts_owned[trg_box]);
 
-                    direct_eval<Real, DIM>(params.kernel, r_src_with_halo_view(j_box), r_trg,
-                                           charge_with_halo_view(j_box), cheb_coeffs, &params.fparam, rsc, cen, d2max,
-                                           pot_src_view(i_box), n_digits);
+                    direct_eval<Real, DIM>(params.kernel, r_src_with_halo_view(src_box), r_trg,
+                                           charge_with_halo_view(src_box), cheb_coeffs, &params.fparam, rsc, cen, d2max,
+                                           pot_src_view(trg_box), n_digits);
                 } else {
-                    evaluator(params.n_mfm, rsc, cen, d2max, 1e-30, src_counts_with_halo[j_box],
-                              r_src_with_halo_ptr(j_box), charge_with_halo_ptr(j_box), src_counts_owned[i_box],
-                              r_src_owned_ptr(i_box), pot_src_ptr(i_box));
+                    evaluator(params.n_mfm, rsc, cen, d2max, 1e-30, src_counts_with_halo[src_box],
+                              r_src_with_halo_ptr(src_box), charge_with_halo_ptr(src_box), src_counts_owned[trg_box],
+                              r_src_owned_ptr(trg_box), pot_src_ptr(trg_box));
                 }
             }
-            if (n_trg_i) {
+            if (trg_counts_owned[trg_box]) {
                 if (!evaluator) {
                     for (int i = 0; i < DIM; ++i)
-                        r_trg[i] = std::span<const Real>(
-                            r_trg_t + (r_trg_offsets_owned[i_box] / DIM) + trg_counts_owned[0] * i, n_trg_i);
+                        r_trg[i] = std::span<const Real>(r_trg_t + (r_trg_offsets_owned[trg_box] / DIM) +
+                                                             trg_counts_owned[0] * i,
+                                                         trg_counts_owned[trg_box]);
 
-                    direct_eval<Real, DIM>(params.kernel, r_src_with_halo_view(j_box), r_trg,
-                                           charge_with_halo_view(j_box), cheb_coeffs, &params.fparam, rsc, cen, d2max,
-                                           pot_trg_view(i_box), n_digits);
+                    direct_eval<Real, DIM>(params.kernel, r_src_with_halo_view(src_box), r_trg,
+                                           charge_with_halo_view(src_box), cheb_coeffs, &params.fparam, rsc, cen, d2max,
+                                           pot_trg_view(trg_box), n_digits);
                 } else {
-                    evaluator(params.n_mfm, rsc, cen, d2max, 1e-30, src_counts_with_halo[j_box],
-                              r_src_with_halo_ptr(j_box), charge_with_halo_ptr(j_box), trg_counts_owned[i_box],
-                              r_trg_owned_ptr(i_box), pot_trg_ptr(i_box));
+                    evaluator(params.n_mfm, rsc, cen, d2max, 1e-30, src_counts_with_halo[src_box],
+                              r_src_with_halo_ptr(src_box), charge_with_halo_ptr(src_box), trg_counts_owned[trg_box],
+                              r_trg_owned_ptr(trg_box), pot_trg_ptr(trg_box));
                 }
             }
         }
 
-        if (!n_src_i)
+        if (!src_counts_owned[trg_box])
             continue;
 
         // Correct for self-evaluations
-        auto pot = pot_src_view(i_box);
-        auto charge = charge_with_halo_view(i_box);
-        const auto depth = node_mid[i_box].Depth() + ifpwexp[i_box];
+        auto pot = pot_src_view(trg_box);
+        auto charge = charge_with_halo_view(trg_box);
+        const auto depth = node_mid[trg_box].Depth() + ifpwexp[trg_box];
         const auto correction_factor = w0[depth];
-        for (int i_src = 0; i_src < r_src_cnt_with_halo[i_box]; ++i_src)
+        for (int i_src = 0; i_src < r_src_cnt_with_halo[trg_box]; ++i_src)
             for (int i = 0; i < params.n_mfm; ++i)
                 pot(i, i_src) -= correction_factor * charge(i, i_src);
     }

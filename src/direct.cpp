@@ -71,20 +71,27 @@ std::vector<Real> make_polyfit_abs_error(int digits, Func &&f, Real a, Real b) {
 struct CoeffsCache {
   public:
     template <typename T, class FitFunction>
-    std::vector<T> &get(int digits, FitFunction &fit_function) {
+    const std::vector<T> &get(int digits, FitFunction &fit_function) {
         auto key = std::make_tuple(typeid(FitFunction).hash_code(), digits);
-        if (coeffs_map.contains(key)) {
-            return std::get<std::vector<T>>(coeffs_map[key]);
+
+        // Always fit in double first
+        if (!double_map.contains(key)) {
+            double_map[key] = fit_function(digits);
+        }
+
+        if constexpr (std::is_same_v<T, double>) {
+            return double_map[key];
         } else {
-            coeffs_map[key] = fit_function(digits);
-            return std::get<std::vector<T>>(coeffs_map[key]);
+            if (!float_map.contains(key)) {
+                const auto &d = double_map[key];
+                float_map[key] = std::vector<float>(d.begin(), d.end());
+            }
+            return float_map[key];
         }
     }
 
   private:
-    using Coefficients = std::variant<std::vector<float>, std::vector<double>>;
     using CacheKey = std::tuple<std::size_t, int>;
-
     struct hash_tuple {
         template <typename T1, typename T2>
         size_t operator()(const std::tuple<T1, T2> &x) const {
@@ -93,9 +100,10 @@ struct CoeffsCache {
             return a ^ (b << 32);
         }
     };
-
-    std::unordered_map<CacheKey, Coefficients, hash_tuple> coeffs_map;
+    std::unordered_map<CacheKey, std::vector<double>, hash_tuple> double_map;
+    std::unordered_map<CacheKey, std::vector<float>, hash_tuple> float_map;
 };
+
 
 std::unique_ptr<RuFuS> RS;
 CoeffsCache coeffs_cache;
@@ -167,8 +175,8 @@ direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_
     std::lock_guard<std::mutex> lock_guard(lock);
     constexpr int VECWIDTH = std::is_same_v<Real, float> ? 2 * VECDIM : VECDIM;
     constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
-    const Real tol = std::pow(10.0, -n_digits);
-    const Real c0 = procl180_rescale(tol);
+    const double tol = std::pow(10.0, -n_digits);
+    const double c0 = procl180_rescale(tol);
     dmk::Prolate0Fun prolate_fun(c0, 10000);
 
     auto build_func_name = [&](const std::string &base_name) {
@@ -178,11 +186,11 @@ direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_
     switch (kernel) {
     case dmk_ikernel::DMK_LAPLACE:
         if (n_dim == 2) {
-            auto log_windowed = [&c0, &prolate_fun](Real x) {
-                return -log_windowed_kernel<Real>(std::sqrt(x), c0, 2, prolate_fun);
+            auto log_windowed = [&c0, &prolate_fun](double x) {
+                return -log_windowed_kernel<double>(std::sqrt(x), c0, 2, prolate_fun);
             };
             auto fit_func = [&log_windowed](int digits) {
-                return make_polyfit_abs_error<Real>(digits, log_windowed, 0.0, 1.0);
+                return make_polyfit_abs_error<double>(digits, log_windowed, 0.0, 1.0);
             };
 
             const auto coeffs = coeffs_cache.get<Real>(n_digits, fit_func);
@@ -198,33 +206,33 @@ direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_
             };
         }
         if (n_dim == 3) {
-            const Real prolate_inf_inv = 1.0 / prolate_fun.int_eval(1.0);
-            auto pswf = [&prolate_inf_inv, &prolate_fun](Real x) {
-                return Real(1.0 - prolate_inf_inv * prolate_fun.int_eval(x));
+            const double prolate_inf_inv = 1.0 / prolate_fun.int_eval(1.0);
+            auto pswf = [&prolate_inf_inv, &prolate_fun](double x) {
+                return double(1.0 - prolate_inf_inv * prolate_fun.int_eval(x));
             };
-            auto fit_func = [&pswf](int digits) { return make_polyfit_abs_error<Real>(digits, pswf, 0.0, 1.0); };
-            const auto pswf_coeffs = coeffs_cache.get<Real>(n_digits, fit_func);
+            auto fit_func = [&pswf](int digits) { return make_polyfit_abs_error<double>(digits, pswf, 0.0, 1.0); };
+            auto &coeffs = coeffs_cache.get<Real>(n_digits, fit_func);
+
             const auto func_name = build_func_name("laplace_3d_poly_all_pairs");
-            std::cout << pswf_coeffs.size() << std::endl;
 
             auto jit_func = RS->compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
                                                  const Real *, int, const Real *, Real *)>(
                 func_name,
-                {{"n_coeffs", pswf_coeffs.size()}, {"n_digits", n_digits}, {"unroll_factor", unroll_factor}});
+                {{"n_coeffs", coeffs.size()}, {"n_digits", n_digits}, {"unroll_factor", unroll_factor}});
 
-            return [jit_func, pswf_coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
+            return [jit_func, coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
                                            const Real *r_src, const Real *charge, int n_trg, const Real *r_trg,
                                            Real *pot) {
-                jit_func(nd, rsc, cen, d2max, thresh2, pswf_coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot);
+                jit_func(nd, rsc, cen, d2max, thresh2, coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot);
             };
         }
     case dmk_ikernel::DMK_SQRT_LAPLACE: {
         if (n_dim == 2) {
-            const Real prolate_inf_inv = 1.0 / prolate_fun.int_eval(1.0);
-            auto pswf = [&prolate_inf_inv, &prolate_fun](Real x) {
-                return Real(1.0 - prolate_inf_inv * prolate_fun.int_eval((x + 1) / 2.0));
+            const double prolate_inf_inv = 1.0 / prolate_fun.int_eval(1.0);
+            auto pswf = [&prolate_inf_inv, &prolate_fun](double x) {
+                return double(1.0 - prolate_inf_inv * prolate_fun.int_eval((x + 1) / 2.0));
             };
-            auto fit_func = [&pswf](int digits) { return make_polyfit_abs_error<Real>(digits, pswf, -1.0, 1.0); };
+            auto fit_func = [&pswf](int digits) { return make_polyfit_abs_error<double>(digits, pswf, -1.0, 1.0); };
             const auto pswf_coeffs = coeffs_cache.get<Real>(n_digits, fit_func);
             const auto func_name = build_func_name("sqrt_laplace_2d_poly_all_pairs");
 
@@ -240,12 +248,12 @@ direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_
             };
         }
         if (n_dim == 3) {
-            auto kernel_func = [&prolate_fun](Real x) -> Real {
-                return sl3d_local_kernel<Real>(x, Real{1.0}, prolate_fun);
+            auto kernel_func = [&prolate_fun](double x) -> double {
+                return sl3d_local_kernel<double>(x, Real{1.0}, prolate_fun);
             };
 
             auto fit_func = [&kernel_func](int n_digits) {
-                return make_polyfit_abs_error<Real>(n_digits, kernel_func, Real{0}, Real{1.0});
+                return make_polyfit_abs_error<double>(n_digits, kernel_func, double{0}, double{1.0});
             };
 
             const auto coeffs = coeffs_cache.get<Real>(n_digits, fit_func);

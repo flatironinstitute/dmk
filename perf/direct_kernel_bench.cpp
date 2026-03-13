@@ -85,7 +85,7 @@ sctl::Vector<Real> init_random(int rows, int cols, Real left = 0.0, Real right =
 
 template <class T>
 struct PSWFParams {
-    const T bsize = 0.2;
+    const T bsize = 1.0;
     const T rsc = 2.0 / bsize;
     const T cen = -bsize / 2.0;
     const T d2max = bsize * bsize;
