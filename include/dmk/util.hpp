@@ -30,6 +30,32 @@ static inline auto cyl_bessel_j(auto nu, auto x) {
 #endif
 }
 
+template <typename T, size_t StackSize>
+class StackOrHeapBuffer {
+    alignas(64) std::array<T, StackSize> stack_buffer_;
+    T *heap_buffer_ = nullptr;
+    T *data_;
+
+  public:
+    StackOrHeapBuffer(size_t required_size) {
+        if (required_size <= StackSize) {
+            data_ = stack_buffer_.data();
+        } else {
+            heap_buffer_ = new T[required_size](64);
+            data_ = heap_buffer_;
+        }
+    }
+
+    T *data() { return data_; }
+    const T *data() const { return data_; }
+
+    ~StackOrHeapBuffer() {
+        if (heap_buffer_) {
+            delete[] heap_buffer_;
+        }
+    }
+};
+
 template <typename Real>
 void mesh_nd(int dim, Real *in, int size, Real *out);
 

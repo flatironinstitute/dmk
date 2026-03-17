@@ -994,100 +994,273 @@ Real get_self_interaction_constant(FourierData<Real> &fourier_data, dmk_ikernel 
     return w0;
 }
 
+// Contact geometry between two adjacent boxes.
+//
+// Two boxes can share a face, edge, or corner. In each spatial dimension,
+// the boxes either "touch" (share a boundary plane) or "overlap" (have a
+// shared extent in that dimension).
+//
+// The contact feature between two adjacent boxes:
+//
+//   2D:
+//     - Edge:   1 touch dim, 1 overlap dim → a line segment
+//     - Corner: 2 touch dims               → a point
+//
+//   3D:
+//     - Face:   1 touch dim,  2 overlap dims → a rectangle
+//     - Edge:   2 touch dims, 1 overlap dim  → a line segment
+//     - Corner: 3 touch dims                 → a point
+//
+//   In general: n_touch = DIM is always a corner,
+//               n_touch = 1 is the codimension-1 feature (edge in 2D, face in 3D)
+template <typename Real, int DIM>
+struct ContactGeometry {
+    int touch_dims[DIM];
+    Real touch_coords[DIM];
+    int overlap_dims[DIM];
+    Real overlap_lo[DIM];
+    Real overlap_hi[DIM];
+    int n_touch = 0;
+    int n_overlap = 0;
+    Real d2max;
+
+    ContactGeometry(const Real *corner_a, const Real *corner_b, Real size_a, Real size_b, Real d2max_) : d2max(d2max_) {
+        for (int d = 0; d < DIM; d++) {
+            Real a = corner_a[d], b = corner_b[d];
+            Real sa = size_a, sb = size_b;
+            if (a + sa == b) {
+                touch_dims[n_touch] = d;
+                touch_coords[n_touch] = b;
+                n_touch++;
+            } else if (b + sb == a) {
+                touch_dims[n_touch] = d;
+                touch_coords[n_touch] = a;
+                n_touch++;
+            } else {
+                overlap_dims[n_overlap] = d;
+                overlap_lo[n_overlap] = std::max(a, b);
+                overlap_hi[n_overlap] = std::min(a + sa, b + sb);
+                n_overlap++;
+            }
+        }
+    }
+
+    // To check if a particle is within interaction range of the target box,
+    // we compute its distance to the nearest point on the contact feature.
+    //   - In touch dimensions, the contact is a fixed coordinate (the shared plane),
+    //     so distance is just |p - contact_coord|.
+    //   - In overlap dimensions, the contact spans an interval [lo, hi]. The nearest
+    //     point is obtained by clamping p to that interval. If p is inside the
+    //     interval, its contribution to the distance is zero. If p is outside, the
+    //     contribution is the distance to the nearest endpoint. This produces a rounded
+    //     corner at the edge of the overlap intervals. half-diskorectangles,
+    //     quarter-spherocylinders, faces with quarter-circle bevels, 1/8th spheres, 1/4
+    //     circles. yadayada.
+    Real dist2_to_contact(const Real *p) const {
+        Real dist2 = 0;
+        for (int t = 0; t < n_touch; t++) {
+            Real delta = p[touch_dims[t]] - touch_coords[t];
+            dist2 += delta * delta;
+        }
+        for (int t = 0; t < n_overlap; t++) {
+            Real coord = p[overlap_dims[t]];
+            Real clamped = std::min(std::max(coord, overlap_lo[t]), overlap_hi[t]);
+            Real delta = coord - clamped;
+            dist2 += delta * delta;
+        }
+        return dist2;
+    }
+
+    bool in_range(const Real *p) const { return dist2_to_contact(p) < d2max; }
+};
+
+// Filter source particles by distance to contact feature.
+// Returns the number of particles that passed the filter.
+// Filtered positions and charges are written contiguously into the provided buffers.
+template <typename Real, int DIM>
+int filter_sources(const ContactGeometry<Real, DIM> &geom, int n_src, const Real *r_src, const Real *charge,
+                   int n_charge_components, Real *r_src_out, Real *charge_out) {
+    int n_filtered = 0;
+    for (int i = 0; i < n_src; ++i) {
+        const Real *p = r_src + DIM * i;
+        if (geom.in_range(p)) {
+            for (int d = 0; d < DIM; ++d)
+                r_src_out[DIM * n_filtered + d] = p[d];
+            for (int j = 0; j < n_charge_components; ++j)
+                charge_out[n_filtered * n_charge_components + j] = charge[i * n_charge_components + j];
+            n_filtered++;
+        }
+    }
+    return n_filtered;
+}
+
+// Filter evaluation target points by distance to contact feature.
+// Returns the number of points that passed the filter.
+// Filtered positions are written contiguously into r_trg_out.
+// index_map[k] = original index of the k-th filtered point, used to scatter results back.
+template <typename Real, int DIM>
+int filter_targets(const ContactGeometry<Real, DIM> &geom, int n_trg, const Real *r_trg, Real *r_trg_out,
+                   int *index_map) {
+    int n_filtered = 0;
+    for (int i = 0; i < n_trg; ++i) {
+        const Real *p = r_trg + DIM * i;
+        if (geom.in_range(p)) {
+            for (int d = 0; d < DIM; ++d)
+                r_trg_out[DIM * n_filtered + d] = p[d];
+            index_map[n_filtered] = i;
+            n_filtered++;
+        }
+    }
+    return n_filtered;
+}
+
+// Scatter-add filtered potential values back to the original potential array.
+template <typename Real>
+void scatter_add_potential(const Real *pot_filtered, Real *pot, const int *index_map, int n_filtered,
+                           int n_components) {
+    for (int i = 0; i < n_filtered; ++i)
+        for (int j = 0; j < n_components; ++j)
+            pot[index_map[i] * n_components + j] += pot_filtered[i * n_components + j];
+}
+
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, const Real *r_trg_t) {
     sctl::Profile::Scoped profile("evaluate_direct_interactions", &comm_);
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_mid = this->GetNodeMID();
     const auto &node_lists = this->GetNodeLists();
+
     Real w0[SCTL_MAX_DEPTH];
     for (int i_level = 0; i_level < n_levels(); ++i_level)
         w0[i_level] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
 
-#pragma omp parallel for schedule(dynamic)
-    for (int idx = 0; idx < direct_work.size(); ++idx) {
-        const int trg_box = direct_work[idx];
-        const int trg_level = node_mid[trg_box].Depth();
-        for (auto src_box : list1(trg_box)) {
-            int src_level = node_mid[src_box].Depth();
-            Real bsize = boxsize[src_level];
-            // now find the interaction range of the residual kernel
-            if (ifpwexp[src_box] && src_box == trg_box) {
-                // when ifpwexp(jbox)=1, self interaction at its own
-                // level is taken care of by plane - wave expansion
-                bsize /= Real{2.0};
-                src_level = src_level + 1;
-            } else if (src_level < trg_level) {
-                // when the source box is bigger than the target box, residual interaction
-                // starts from the target box level
-                bsize = boxsize[trg_level];
-                src_level = trg_level;
-            }
+#pragma omp parallel
+    {
+        // Thread-local buffers for filtered particles
+        constexpr int MAX_CHARGE_DIM = 9;
+        constexpr int MAX_PTS = 1000;
+        util::StackOrHeapBuffer<Real, DIM * MAX_PTS> r_buf(DIM * params.n_per_leaf);
+        util::StackOrHeapBuffer<Real, MAX_CHARGE_DIM * MAX_PTS> charge_buf(params.n_mfm * params.n_per_leaf);
+        util::StackOrHeapBuffer<Real, DIM * MAX_PTS> r_trg_buf(DIM * params.n_per_leaf);
+        util::StackOrHeapBuffer<Real, MAX_CHARGE_DIM> pot_buf(params.n_mfm * params.n_per_leaf);
+        util::StackOrHeapBuffer<int, MAX_PTS> index_map(params.n_per_leaf);
 
-            // kernel truncated at bsize, i.e., K(x,y)=0 for |x-y|^2 > d2max
-            const Real d2max = bsize * bsize;
-            const Real bsizeinv = Real{1} / bsize;
+#pragma omp for schedule(dynamic)
+        for (int idx = 0; idx < direct_work.size(); ++idx) {
+            const int trg_box = direct_work[idx];
+            const int trg_level = node_mid[trg_box].Depth();
 
-            // used in the kernel approximation for boxes in list1
-            Real rsc = 2 * bsizeinv;
-            Real cen = -bsize / Real{2};
-            const auto &cheb_coeffs = fourier_data.cheb_coeffs(src_level);
+            for (auto src_box : list1(trg_box)) {
+                int src_level = node_mid[src_box].Depth();
+                Real bsize = boxsize[src_level];
 
-            if ((params.kernel == DMK_SQRT_LAPLACE && DIM == 3) || (params.kernel == DMK_LAPLACE && DIM == 2)) {
-                rsc = 2 * bsizeinv * bsizeinv;
-                cen = Real{-1.0};
-            } else if (params.kernel == DMK_YUKAWA)
-                cen = Real{-1.0};
+                if (ifpwexp[src_box] && src_box == trg_box) {
+                    bsize /= Real{2.0};
+                    src_level = src_level + 1;
+                } else if (src_level < trg_level) {
+                    bsize = boxsize[trg_level];
+                    src_level = trg_level;
+                }
 
-            std::array<std::span<const Real>, DIM> r_trg;
+                const Real d2max = bsize * bsize;
+                const Real bsizeinv = Real{1} / bsize;
 
-            assert(is_global_leaf[i_box]);
-            assert(is_global_leaf[j_box]);
-            if (src_counts_owned[trg_box]) {
-                if (!evaluator) {
-                    for (int i = 0; i < DIM; ++i)
-                        r_trg[i] = std::span<const Real>(r_src_t + (r_src_offsets_owned[trg_box] / DIM) +
-                                                             src_counts_owned[0] * i,
-                                                         src_counts_owned[trg_box]);
+                Real rsc = 2 * bsizeinv;
+                Real cen = -bsize / Real{2};
+                const auto &cheb_coeffs = fourier_data.cheb_coeffs(src_level);
 
-                    direct_eval<Real, DIM>(params.kernel, r_src_with_halo_view(src_box), r_trg,
-                                           charge_with_halo_view(src_box), cheb_coeffs, &params.fparam, rsc, cen, d2max,
-                                           pot_src_view(trg_box), n_digits);
-                } else {
-                    evaluator(params.n_mfm, rsc, cen, d2max, 1e-30, src_counts_with_halo[src_box],
-                              r_src_with_halo_ptr(src_box), charge_with_halo_ptr(src_box), src_counts_owned[trg_box],
-                              r_src_owned_ptr(trg_box), pot_src_ptr(trg_box));
+                if ((params.kernel == DMK_SQRT_LAPLACE && DIM == 3) || (params.kernel == DMK_LAPLACE && DIM == 2)) {
+                    rsc = 2 * bsizeinv * bsizeinv;
+                    cen = Real{-1.0};
+                } else if (params.kernel == DMK_YUKAWA)
+                    cen = Real{-1.0};
+
+                // Determine if we should filter, and on which side
+                const bool src_larger = node_mid[src_box].Depth() < node_mid[trg_box].Depth();
+                const bool trg_larger = node_mid[src_box].Depth() > node_mid[trg_box].Depth();
+                const bool should_filter = src_larger || trg_larger;
+
+                // Precompute contact geometry once per box pair (only if asymmetric)
+                auto corner_a = node_mid[src_box].template Coord<Real>();
+                auto corner_b = node_mid[trg_box].template Coord<Real>();
+                auto size_a = boxsize[node_mid[src_box].Depth()];
+                auto size_b = boxsize[node_mid[trg_box].Depth()];
+
+                // Resolve source data: either filtered or original
+                int n_src = src_counts_with_halo[src_box];
+                const Real *r_src_ptr = r_src_with_halo_ptr(src_box);
+                const Real *charge_ptr = charge_with_halo_ptr(src_box);
+
+                // Remove points outside sqrt(d2max) range from shared box boundary
+                if (src_larger) {
+                    ContactGeometry<Real, DIM> geom(corner_a.data(), corner_b.data(), size_a, size_b, d2max);
+                    n_src = filter_sources(geom, n_src, r_src_ptr, charge_ptr, params.n_mfm, r_buf.data(),
+                                           charge_buf.data());
+                    r_src_ptr = r_buf.data();
+                    charge_ptr = charge_buf.data();
+                }
+
+                // Evaluate potential at owned source points in the target box
+                if (src_counts_owned[trg_box]) {
+                    int n_eval_trg = src_counts_owned[trg_box];
+                    Real *eval_r_trg = r_src_owned_ptr(trg_box);
+                    Real *eval_pot = pot_src_ptr(trg_box);
+
+                    // Remove target points outside sqrt(d2max) range from shared box boundary
+                    if (trg_larger) {
+                        ContactGeometry<Real, DIM> geom(corner_a.data(), corner_b.data(), size_a, size_b, d2max);
+                        n_eval_trg = filter_targets(geom, n_eval_trg, eval_r_trg, r_trg_buf.data(), index_map.data());
+                        std::memset(pot_buf.data(), 0, n_eval_trg * params.n_mfm * sizeof(Real));
+                        eval_r_trg = r_trg_buf.data();
+                        eval_pot = pot_buf.data();
+                    }
+
+                    if (n_src > 0 && n_eval_trg > 0)
+                        evaluator(params.n_mfm, rsc, cen, d2max, 1e-30, n_src, r_src_ptr, charge_ptr, n_eval_trg,
+                                  eval_r_trg, eval_pot);
+
+                    if (trg_larger)
+                        scatter_add_potential(pot_buf.data(), pot_src_ptr(trg_box), index_map.data(), n_eval_trg,
+                                              params.n_mfm);
+                }
+
+                // Evaluate potential at owned target points in the target box
+                if (trg_counts_owned[trg_box]) {
+                    int n_eval_trg = trg_counts_owned[trg_box];
+                    Real *eval_r_trg = r_trg_owned_ptr(trg_box);
+                    Real *eval_pot = pot_trg_ptr(trg_box);
+
+                    // Remove target points outside sqrt(d2max) range from shared box boundary
+                    if (trg_larger) {
+                        ContactGeometry<Real, DIM> geom(corner_a.data(), corner_b.data(), size_a, size_b, d2max);
+                        n_eval_trg = filter_targets(geom, n_eval_trg, eval_r_trg, r_trg_buf.data(), index_map.data());
+                        std::memset(pot_buf.data(), 0, n_eval_trg * params.n_mfm * sizeof(Real));
+                        eval_r_trg = r_trg_buf.data();
+                        eval_pot = pot_buf.data();
+                    }
+
+                    if (n_src > 0 && n_eval_trg > 0)
+                        evaluator(params.n_mfm, rsc, cen, d2max, 1e-30, n_src, r_src_ptr, charge_ptr, n_eval_trg,
+                                  eval_r_trg, eval_pot);
+
+                    if (trg_larger)
+                        scatter_add_potential(pot_buf.data(), pot_trg_ptr(trg_box), index_map.data(), n_eval_trg,
+                                              params.n_mfm);
                 }
             }
-            if (trg_counts_owned[trg_box]) {
-                if (!evaluator) {
-                    for (int i = 0; i < DIM; ++i)
-                        r_trg[i] = std::span<const Real>(r_trg_t + (r_trg_offsets_owned[trg_box] / DIM) +
-                                                             trg_counts_owned[0] * i,
-                                                         trg_counts_owned[trg_box]);
 
-                    direct_eval<Real, DIM>(params.kernel, r_src_with_halo_view(src_box), r_trg,
-                                           charge_with_halo_view(src_box), cheb_coeffs, &params.fparam, rsc, cen, d2max,
-                                           pot_trg_view(trg_box), n_digits);
-                } else {
-                    evaluator(params.n_mfm, rsc, cen, d2max, 1e-30, src_counts_with_halo[src_box],
-                              r_src_with_halo_ptr(src_box), charge_with_halo_ptr(src_box), trg_counts_owned[trg_box],
-                              r_trg_owned_ptr(trg_box), pot_trg_ptr(trg_box));
-                }
-            }
+            if (!src_counts_owned[trg_box])
+                continue;
+
+            // Correct for self-evaluations
+            auto pot = pot_src_view(trg_box);
+            auto charge = charge_with_halo_view(trg_box);
+            const auto depth = node_mid[trg_box].Depth() + ifpwexp[trg_box];
+            const auto correction_factor = w0[depth];
+            for (int i_src = 0; i_src < r_src_cnt_with_halo[trg_box]; ++i_src)
+                for (int i = 0; i < params.n_mfm; ++i)
+                    pot(i, i_src) -= correction_factor * charge(i, i_src);
         }
-
-        if (!src_counts_owned[trg_box])
-            continue;
-
-        // Correct for self-evaluations
-        auto pot = pot_src_view(trg_box);
-        auto charge = charge_with_halo_view(trg_box);
-        const auto depth = node_mid[trg_box].Depth() + ifpwexp[trg_box];
-        const auto correction_factor = w0[depth];
-        for (int i_src = 0; i_src < r_src_cnt_with_halo[trg_box]; ++i_src)
-            for (int i = 0; i < params.n_mfm; ++i)
-                pot(i, i_src) -= correction_factor * charge(i, i_src);
     }
 }
 
