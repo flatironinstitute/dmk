@@ -6,7 +6,6 @@
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
 
-#include <limits>
 #include <sctl.hpp>
 #include <stdexcept>
 
@@ -164,25 +163,32 @@ void charge2proxycharge_3d(const ndview<const T, 2> &r_src, const ndview<const T
     matrixview<T> dz({n_src, order}, &workspace[0]);
     matrixview<T> dyz({n_src, order * order}, &workspace[n_src * order]);
     matrixview<T> poly_x({order, n_src}, &workspace[n_src * order + n_src * order * order]);
-    matrixview<T> poly_y({order, n_src}, &workspace[2 * n_src * order + n_src * order * order]);
-    matrixview<T> poly_z({order, n_src}, &workspace[3 * n_src * order + n_src * order * order]);
-
+    matrixview<T> poly_y({n_src, order}, &workspace[2 * n_src * order + n_src * order * order]);
+    matrixview<T> poly_z({n_src, order}, &workspace[3 * n_src * order + n_src * order * order]);
+    constexpr int MAX_ORDER = 80;
     auto calc_polynomial = dmk::chebyshev::get_polynomial_calculator<T>(order);
+
     for (int i_src = 0; i_src < n_src; ++i_src) {
         calc_polynomial(scale_factor * (r_src(0, i_src) - center(0)), &poly_x(0, i_src));
-        calc_polynomial(scale_factor * (r_src(1, i_src) - center(1)), &poly_y(0, i_src));
-        calc_polynomial(scale_factor * (r_src(2, i_src) - center(2)), &poly_z(0, i_src));
+
+        T tmp[MAX_ORDER];
+        calc_polynomial(scale_factor * (r_src(1, i_src) - center(1)), tmp);
+        for (int k = 0; k < order; ++k)
+            poly_y(i_src, k) = tmp[k];
+        calc_polynomial(scale_factor * (r_src(2, i_src) - center(2)), tmp);
+        for (int k = 0; k < order; ++k)
+            poly_z(i_src, k) = tmp[k];
     }
 
     for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
+        const T *ch = &charge(i_dim, 0);
+
         for (int k = 0; k < order; ++k)
-            for (int m = 0; m < n_src; ++m)
-                dz(m, k) = charge(i_dim, m) * poly_z(k, m);
+            util::vec_mul(&dz(0, k), ch, &poly_z(0, k), n_src);
 
         for (int k = 0; k < order; ++k)
             for (int j = 0; j < order; ++j)
-                for (int m = 0; m < n_src; ++m)
-                    dyz(m, j + k * order) = poly_y(j, m) * dz(m, k);
+                util::vec_mul(&dyz(0, j + k * order), &poly_y(0, j), &dz(0, k), n_src);
 
         matrixview<T>({order, order * order}, &coeffs(0, 0, 0, i_dim)) += poly_x * dyz;
     }

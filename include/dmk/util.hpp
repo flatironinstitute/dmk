@@ -105,6 +105,50 @@ void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool 
                     sctl::Vector<Real> &r_src, sctl::Vector<Real> &r_trg, sctl::Vector<Real> &rnormal,
                     sctl::Vector<Real> &charges, sctl::Vector<Real> &dipstr, long seed);
 
+
+template <typename T>
+inline void vec_mul(T *__restrict__ dst, const T *__restrict__ a, const T *__restrict__ b, int n) {
+    using Vec = sctl::Vec<T, sctl::DefaultVecLen<T>()>;
+    constexpr int N = Vec::Size();
+    int i = 0;
+    for (; i + N <= n; i += N) {
+        Vec va = Vec::Load(a + i);
+        Vec vb = Vec::Load(b + i);
+        (va * vb).Store(dst + i);
+    }
+    for (; i < n; ++i)
+        dst[i] = a[i] * b[i];
+}
+
+template <typename T>
+inline void vec_mul_broadcast(T *__restrict__ dst, const T *__restrict__ a, T b, int n) {
+    using Vec = sctl::Vec<T, sctl::DefaultVecLen<T>()>;
+    constexpr int N = Vec::Size();
+    Vec vb(b);
+    int i = 0;
+    for (; i + N <= n; i += N) {
+        Vec va = Vec::Load(a + i);
+        (va * vb).Store(dst + i);
+    }
+    for (; i < n; ++i)
+        dst[i] = a[i] * b;
+}
+
+template <typename T>
+inline void vec_fma(T *__restrict__ dst, const T *__restrict__ a, const T *__restrict__ b, int n) {
+    using Vec = sctl::Vec<T, sctl::DefaultVecLen<T>()>;
+    constexpr int N = Vec::Size();
+    int i = 0;
+    for (; i + N <= n; i += N) {
+        Vec vd = Vec::Load(dst + i);
+        Vec va = Vec::Load(a + i);
+        Vec vb = Vec::Load(b + i);
+        FMA(va, vb, vd).Store(dst + i);
+    }
+    for (; i < n; ++i)
+        dst[i] += a[i] * b[i];
+}
+
 #if defined(__AVX512F__)
 inline void complex_deinterleave(const __m512 &lo, const __m512 &hi, __m512 &real, __m512 &imag) {
     const __m512i idx_r = _mm512_setr_epi32(0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30);
