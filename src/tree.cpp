@@ -577,7 +577,6 @@ void DMKPtTree<T, DIM>::precompute_fourier_data() {
     window_fourier_data.poly2pw.ReInit(n_order * n_pw);
     window_fourier_data.pw2poly.ReInit(n_order * n_pw);
     window_fourier_data.radialft.ReInit(n_pw_modes);
-    window_fourier_data.wpwshift.ReInit(n_pw_modes * sctl::pow<DIM>(3));
     get_windowed_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits, boxsize[0],
                                    fourier_data.prolate0_fun, kernel_ft);
     util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<T, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
@@ -761,23 +760,68 @@ void multiply_kernelFT_cd2p(const sctl::Vector<T> &radialft, auto &&pwexp) {
     sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, n_flops);
 }
 
+template <typename Real, int VecLen>
+inline void shift_planewave_simd(int nexp, int nd, const Real *__restrict__ pw1, Real *__restrict__ pw2,
+                                 const Real *__restrict__ shift_r, const Real *__restrict__ shift_i) {
+    using Vec = sctl::Vec<Real, VecLen>;
+    constexpr int N = VecLen;
+    using dmk::util::complex_deinterleave;
+    using dmk::util::complex_interleave;
+
+    for (int ind = 0; ind < nd; ++ind) {
+        const Real *s1 = pw1 + ind * nexp * 2;
+        Real *s2 = pw2 + ind * nexp * 2;
+
+        int i = 0;
+        for (; i + N <= nexp; i += N) {
+            Vec ar, ai;
+            Vec lo1 = Vec::Load(s1 + 2 * i);
+            Vec hi1 = Vec::Load(s1 + 2 * i + N);
+            complex_deinterleave(lo1.get().v, hi1.get().v, ar.get().v, ai.get().v);
+
+            Vec dr, di;
+            Vec lo2 = Vec::Load(s2 + 2 * i);
+            Vec hi2 = Vec::Load(s2 + 2 * i + N);
+            complex_deinterleave(lo2.get().v, hi2.get().v, dr.get().v, di.get().v);
+
+            Vec cr = Vec::Load(shift_r + i);
+            Vec ci = Vec::Load(shift_i + i);
+
+            dr = FMA(ar, cr, dr);
+            dr = FMA(-ai, ci, dr);
+            di = FMA(ar, ci, di);
+            di = FMA(ai, cr, di);
+
+            Vec out_lo, out_hi;
+            complex_interleave(dr.get().v, di.get().v, out_lo.get().v, out_hi.get().v);
+            out_lo.Store(s2 + 2 * i);
+            out_hi.Store(s2 + 2 * i + N);
+        }
+
+        for (; i < nexp; ++i) {
+            Real ar = s1[2 * i], ai = s1[2 * i + 1];
+            Real cr = shift_r[i], ci = shift_i[i];
+            s2[2 * i] += ar * cr - ai * ci;
+            s2[2 * i + 1] += ar * ci + ai * cr;
+        }
+    }
+}
+
 template <typename Complex, int DIM>
 void shift_planewave(const ndview<Complex, DIM + 1> &pwexp1_, ndview<Complex, DIM + 1> &pwexp2_,
                      const ndview<const Complex, 1> &wpwshift) {
-    // Flatten our views
+    using Real = typename Complex::value_type;
+    constexpr int VecLen = sctl::DefaultVecLen<Real>();
+
     const int nd = pwexp1_.extent(DIM);
     const int nexp = wpwshift.extent(0);
-    dmk::ndview<const Complex, 2> pwexp1({nexp, nd}, pwexp1_.data());
-    dmk::ndview<Complex, 2> pwexp2({nexp, nd}, pwexp2_.data());
+    const Real *shift_r = reinterpret_cast<const Real *>(wpwshift.data());
+    const Real *shift_i = shift_r + nexp;
 
-    using ArrayMap = ndview<Complex, 1>;
-    using ConstArrayMap = ndview<const Complex, 1>;
-    ConstArrayMap wpwshift_view({nexp}, &wpwshift(0));
-    for (int ind = 0; ind < nd; ++ind) {
-        ConstArrayMap pw1_view({nexp}, &pwexp1(0, ind));
-        ArrayMap pw2_view({nexp}, &pwexp2(0, ind));
-        pw2_view += pw1_view * wpwshift_view;
-    }
+    const Real *pw1 = reinterpret_cast<const Real *>(pwexp1_.data());
+    Real *pw2 = reinterpret_cast<Real *>(pwexp2_.data());
+
+    shift_planewave_simd<Real, VecLen>(nexp, nd, pw1, pw2, shift_r, shift_i);
 }
 
 template <typename T, int DIM>

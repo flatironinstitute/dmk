@@ -148,41 +148,75 @@ void calc_planewave_coeff_matrices(T boxsize, T hpw, int n_pw, int n_order, sctl
 template <int DIM, typename T>
 void calc_planewave_translation_matrix(int nmax, T xmin, int npw, T hpw, sctl::Vector<std::complex<T>> &shift_vec) {
     static_assert(DIM > 0 && DIM <= 3, "Invalid DIM");
-    assert(((npw + 1) / 2) * sctl::pow<DIM - 1>(npw) * sctl::pow<DIM>(2 * nmax + 1) == shift_vec.Dim());
-    const int shift = npw / 2;
+    const int n_pw_modes = ((npw + 1) / 2) * sctl::pow<DIM - 1>(npw);
+    const int n_translations = sctl::pow<DIM>(2 * nmax + 1);
+    assert(n_pw_modes * n_translations == shift_vec.Dim());
+    const int npw_2 = npw / 2;
 
-    // Temporary array precomp
+    // Precompute exp(i * ts * xmin)^k for each frequency and translation offset
+    // ww(j, k) = exp(i * (j - half) * hpw * xmin)^k   for k in [-nmax, nmax]
     sctl::Vector<std::complex<T>> ww(npw * (2 * nmax + 1));
-    for (int j1 = 0; j1 < npw; ++j1) {
-        T ts = (j1 - shift) * hpw;
-        std::complex<T> ztmp = std::exp<T>(std::complex<T>{0.0, ts * xmin});
-        ww[j1 + npw * nmax] = 1;
-        for (int k1 = 1; k1 <= nmax; ++k1) {
-            ww[j1 + npw * (nmax + k1)] = ztmp;
-            ww[j1 + npw * (nmax - k1)] = conj(ztmp);
-            ztmp *= ztmp;
+    for (int j = 0; j < npw; ++j) {
+        T ts = (j - npw_2) * hpw;
+        std::complex<T> base = std::exp(std::complex<T>{0, ts * xmin});
+        ww[j + npw * nmax] = 1;
+        for (int k = 1; k <= nmax; ++k) {
+            ww[j + npw * (nmax + k)] = base;
+            ww[j + npw * (nmax - k)] = conj(base);
+            base *= base;
         }
     }
 
-    // Calculating wshift
-    if constexpr (DIM == 1)
-        for (int k1 = 0, i = 0; k1 <= 2 * nmax; ++k1)
-            for (int j1 = 0; j1 < (npw + 1) / 2; ++j1)
-                shift_vec[i++] = ww[j1 + npw * k1];
-    else if constexpr (DIM == 2)
-        for (int k1 = 0, i = 0; k1 <= 2 * nmax; ++k1)
-            for (int k2 = 0; k2 <= 2 * nmax; ++k2)
-                for (int j1 = 0; j1 < (npw + 1) / 2; ++j1)
-                    for (int j2 = 0; j2 < npw; ++j2)
-                        shift_vec[i++] = ww[j1 + npw * k1] * ww[j2 + npw * k2];
-    else if constexpr (DIM == 3)
-        for (int k1 = 0, i = 0; k1 <= 2 * nmax; ++k1)
-            for (int k2 = 0; k2 <= 2 * nmax; ++k2)
-                for (int k3 = 0; k3 <= 2 * nmax; ++k3)
-                    for (int j1 = 0; j1 < (npw + 1) / 2; ++j1)
-                        for (int j2 = 0; j2 < npw; ++j2)
-                            for (int j3 = 0; j3 < npw; ++j3)
-                                shift_vec[i++] = ww[j1 + npw * k1] * ww[j2 + npw * k2] * ww[j3 + npw * k3];
+    auto ww_at = [&](int j, int k) -> std::complex<T> { return ww[j + npw * k]; };
+
+    // For each translation vector, compute the outer product of 1D phase shifts
+    // across all plane wave modes, and store in per-block SoA layout:
+    //   [real_0 ... real_{M-1} imag_0 ... imag_{M-1}]
+    // where M = n_pw_modes
+    for (int t = 0; t < n_translations; ++t) {
+        T *block = reinterpret_cast<T *>(shift_vec.begin()) + t * n_pw_modes * 2;
+        T *block_r = block;
+        T *block_i = block + n_pw_modes;
+
+        // Decode translation vector indices from flat index
+        int k[DIM];
+        int tmp = t;
+        for (int d = DIM - 1; d >= 0; --d) {
+            k[d] = tmp % (2 * nmax + 1);
+            tmp /= (2 * nmax + 1);
+        }
+
+        // Compute product of 1D phase shifts for each mode
+        int m = 0;
+        if constexpr (DIM == 1) {
+            for (int j0 = 0; j0 < (npw + 1) / 2; ++j0, ++m) {
+                auto val = ww_at(j0, k[0]);
+                block_r[m] = val.real();
+                block_i[m] = val.imag();
+            }
+        } else if constexpr (DIM == 2) {
+            for (int j0 = 0; j0 < (npw + 1) / 2; ++j0) {
+                auto w0 = ww_at(j0, k[0]);
+                for (int j1 = 0; j1 < npw; ++j1, ++m) {
+                    auto val = w0 * ww_at(j1, k[1]);
+                    block_r[m] = val.real();
+                    block_i[m] = val.imag();
+                }
+            }
+        } else if constexpr (DIM == 3) {
+            for (int j0 = 0; j0 < (npw + 1) / 2; ++j0) {
+                auto w0 = ww_at(j0, k[0]);
+                for (int j1 = 0; j1 < npw; ++j1) {
+                    auto w01 = w0 * ww_at(j1, k[1]);
+                    for (int j2 = 0; j2 < npw; ++j2, ++m) {
+                        auto val = w01 * ww_at(j2, k[2]);
+                        block_r[m] = val.real();
+                        block_i[m] = val.imag();
+                    }
+                }
+            }
+        }
+    }
 
     // Estimate exp(complex) ~ 1 cos + 1 sin, which are ~64 flops in stl
     sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, npw * 128 + (DIM - 1) * shift_vec.Dim());
