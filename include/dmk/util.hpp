@@ -1,9 +1,9 @@
 #ifndef UTIL_HPP
 #define UTIL_HPP
 
+#include <cmath>
 #include <dmk/types.hpp>
 #include <sctl.hpp>
-#include <cmath>
 #include <type_traits>
 
 #ifndef __cpp_lib_math_special_functions
@@ -105,7 +105,6 @@ void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool 
                     sctl::Vector<Real> &r_src, sctl::Vector<Real> &r_trg, sctl::Vector<Real> &rnormal,
                     sctl::Vector<Real> &charges, sctl::Vector<Real> &dipstr, long seed);
 
-
 template <typename T>
 inline void vec_mul(T *__restrict__ dst, const T *__restrict__ a, const T *__restrict__ b, int n) {
     using Vec = sctl::Vec<T, sctl::DefaultVecLen<T>()>;
@@ -147,6 +146,23 @@ inline void vec_fma(T *__restrict__ dst, const T *__restrict__ a, const T *__res
     }
     for (; i < n; ++i)
         dst[i] += a[i] * b[i];
+}
+
+template <typename T>
+inline void vec_fma_3(T *__restrict__ dst, const T *__restrict__ a, const T *__restrict__ b, const T *__restrict__ c,
+                      int n) {
+    using Vec = sctl::Vec<T, sctl::DefaultVecLen<T>()>;
+    constexpr int N = Vec::Size();
+    int i = 0;
+    for (; i + N <= n; i += N) {
+        Vec vd = Vec::Load(dst + i);
+        Vec va = Vec::Load(a + i);
+        Vec vb = Vec::Load(b + i);
+        Vec vc = Vec::Load(c + i);
+        FMA(va * vb, vc, vd).Store(dst + i);
+    }
+    for (; i < n; ++i)
+        dst[i] += a[i] * b[i] * c[i];
 }
 
 #if defined(__AVX512F__)
