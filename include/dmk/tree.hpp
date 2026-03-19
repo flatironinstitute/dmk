@@ -39,9 +39,17 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> pot_src_cnt;
     sctl::Vector<sctl::Long> pot_src_offsets;
 
+    sctl::Vector<Real> grad_src_sorted;
+    sctl::Vector<sctl::Long> grad_src_cnt;
+    sctl::Vector<sctl::Long> grad_src_offsets;
+
     sctl::Vector<Real> pot_trg_sorted;
     sctl::Vector<sctl::Long> pot_trg_cnt;
     sctl::Vector<sctl::Long> pot_trg_offsets;
+
+    sctl::Vector<Real> grad_trg_sorted;
+    sctl::Vector<sctl::Long> grad_trg_cnt;
+    sctl::Vector<sctl::Long> grad_trg_offsets;
 
     sctl::Vector<Real> charge_sorted_owned;
     sctl::Vector<sctl::Long> charge_cnt_owned;
@@ -175,6 +183,22 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     }
     ndview<Real, 2> pot_trg_view(int i_node) {
         return ndview<Real, 2>({params.n_mfm, trg_counts_owned[i_node]}, pot_trg_ptr(i_node));
+    }
+
+    Real *grad_src_ptr(int i_node) {
+        assert(src_counts_with_halo[i_node]);
+        return &grad_src_sorted[grad_src_offsets[i_node]];
+    }
+    ndview<Real, 3> grad_src_view_owned(int i_node) {
+        return ndview<Real, 3>({params.n_mfm, DIM, src_counts_owned[i_node]}, grad_src_ptr(i_node));
+    }
+
+    Real *grad_trg_ptr(int i_node) {
+        assert(trg_counts_owned[i_node]);
+        return &grad_trg_sorted[grad_trg_offsets[i_node]];
+    }
+    ndview<Real, 3> grad_trg_view(int i_node) {
+        return ndview<Real, 3>({params.n_mfm, DIM, trg_counts_owned[i_node]}, grad_trg_ptr(i_node));
     }
 
     Real *charge_owned_ptr(int i_node) {

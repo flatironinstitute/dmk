@@ -30,5 +30,9 @@ template <typename T, int DIM>
 void eval_targets(const ndview<T, DIM + 1> &coefs, const ndview<T, 2> &r_trg, const ndview<T, 1> &cen, T sc,
                   ndview<T, 2> pot, sctl::Vector<T> &workspace);
 
+template <typename T, int DIM>
+void eval_target_gradients(const ndview<T, DIM + 1> &coefs, const ndview<T, 2> &r_trg, const ndview<T, 1> &cen, T sc,
+                           ndview<T, 3> grad, sctl::Vector<T> &workspace);
+
 } // namespace dmk::proxy
 #endif

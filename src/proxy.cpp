@@ -240,6 +240,54 @@ void eval_targets_2d(const ndview<T, 3> &coeffs, const ndview<T, 2> &r_trg, cons
 }
 
 template <typename T>
+inline void calc_polynomial_and_derivative(int order, T x, T *poly, T *dpoly) {
+    poly[0] = T{1};
+    dpoly[0] = T{0};
+    if (order == 1)
+        return;
+
+    poly[1] = x;
+    dpoly[1] = T{1};
+    for (int i = 2; i < order; ++i) {
+        poly[i] = T{2} * x * poly[i - 1] - poly[i - 2];
+        dpoly[i] = T{2} * poly[i - 1] + T{2} * x * dpoly[i - 1] - dpoly[i - 2];
+    }
+}
+
+template <typename T>
+void eval_target_gradients_2d(const ndview<T, 3> &coeffs, const ndview<T, 2> &r_trg, const ndview<T, 1> &cen, T sc,
+                              ndview<T, 3> grad, sctl::Vector<T> &workspace) {
+    const int n_order = coeffs.extent(0);
+    const int n_charge_dim = coeffs.extent(2);
+    const int n_trg = r_trg.extent(1);
+
+    workspace.ReInit(5 * n_order * n_trg);
+    ndview<T, 2> poly_x({n_order, n_trg}, &workspace[0]);
+    ndview<T, 2> dpoly_x({n_order, n_trg}, &workspace[n_order * n_trg]);
+    ndview<T, 2> poly_y({n_order, n_trg}, &workspace[2 * n_order * n_trg]);
+    ndview<T, 2> dpoly_y({n_order, n_trg}, &workspace[3 * n_order * n_trg]);
+    ndview<T, 2> tmp({n_order, n_trg}, &workspace[4 * n_order * n_trg]);
+
+    for (int i = 0; i < n_trg; ++i) {
+        calc_polynomial_and_derivative(n_order, (r_trg(0, i) - cen(0)) * sc, &poly_x(0, i), &dpoly_x(0, i));
+        calc_polynomial_and_derivative(n_order, (r_trg(1, i) - cen(1)) * sc, &poly_y(0, i), &dpoly_y(0, i));
+    }
+
+    const auto opt_dot = dmk::util::get_opt_dot<T>(n_order);
+    for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
+        gemm::gemm('n', 'n', n_order, n_trg, n_order, T{1.0}, &coeffs(0, 0, i_dim), n_order, poly_y.data(), n_order,
+                   T{0.0}, tmp.data(), n_order);
+        for (int k = 0; k < n_trg; ++k)
+            grad(i_dim, 0, k) += sc * opt_dot(&tmp(0, k), &dpoly_x(0, k));
+
+        gemm::gemm('n', 'n', n_order, n_trg, n_order, T{1.0}, &coeffs(0, 0, i_dim), n_order, dpoly_y.data(), n_order,
+                   T{0.0}, tmp.data(), n_order);
+        for (int k = 0; k < n_trg; ++k)
+            grad(i_dim, 1, k) += sc * opt_dot(&tmp(0, k), &poly_x(0, k));
+    }
+}
+
+template <typename T>
 void eval_targets_3d(const ndview<T, 4> &coeffs, const ndview<T, 2> &r_trg, const ndview<T, 1> &cen, T sc,
                      ndview<T, 2> &pot, sctl::Vector<T> &workspace) {
     const int n_dim = 3;
@@ -281,6 +329,58 @@ void eval_targets_3d(const ndview<T, 4> &coeffs, const ndview<T, 2> &r_trg, cons
     sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, n_flops);
 }
 
+template <typename T>
+void eval_target_gradients_3d(const ndview<T, 4> &coeffs, const ndview<T, 2> &r_trg, const ndview<T, 1> &cen, T sc,
+                              ndview<T, 3> grad, sctl::Vector<T> &workspace) {
+    constexpr int n_dim = 3;
+    const int n_order = coeffs.extent(0);
+    const int n_charge_dim = coeffs.extent(3);
+    const int n_trg = r_trg.extent(1);
+
+    workspace.ReInit(6 * n_order * n_trg + 2 * n_order * n_order * n_trg);
+    ndview<T, 2> poly_views[] = {
+        ndview<T, 2>({n_order, n_trg}, &workspace[0]),
+        ndview<T, 2>({n_order, n_trg}, &workspace[n_order * n_trg]),
+        ndview<T, 2>({n_order, n_trg}, &workspace[2 * n_order * n_trg]),
+    };
+    ndview<T, 2> dpoly_views[] = {
+        ndview<T, 2>({n_order, n_trg}, &workspace[3 * n_order * n_trg]),
+        ndview<T, 2>({n_order, n_trg}, &workspace[4 * n_order * n_trg]),
+        ndview<T, 2>({n_order, n_trg}, &workspace[5 * n_order * n_trg]),
+    };
+    ndview<T, 3> tmp({n_order, n_order, n_trg}, &workspace[6 * n_order * n_trg]);
+    ndview<T, 3> tmp_z({n_order, n_order, n_trg}, tmp.data() + tmp.size());
+
+    for (int i_dim = 0; i_dim < n_dim; ++i_dim) {
+        for (int i = 0; i < n_trg; ++i) {
+            calc_polynomial_and_derivative(n_order, (r_trg(i_dim, i) - cen(i_dim)) * sc, &poly_views[i_dim](0, i),
+                                           &dpoly_views[i_dim](0, i));
+        }
+    }
+
+    const auto opt_dot = dmk::util::get_opt_dot<T>(n_order);
+    for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
+        gemm::gemm('n', 'n', n_order * n_order, n_trg, n_order, T{1.0}, &coeffs(0, 0, 0, i_dim), n_order * n_order,
+                   poly_views[2].data(), n_order, T{0.0}, tmp.data(), n_order * n_order);
+        gemm::gemm('n', 'n', n_order * n_order, n_trg, n_order, T{1.0}, &coeffs(0, 0, 0, i_dim), n_order * n_order,
+                   dpoly_views[2].data(), n_order, T{0.0}, tmp_z.data(), n_order * n_order);
+
+        for (int k = 0; k < n_trg; ++k) {
+            T gx = T{0};
+            T gy = T{0};
+            T gz = T{0};
+            for (int i = 0; i < n_order; ++i) {
+                gx += poly_views[1](i, k) * opt_dot(&tmp(0, i, k), &dpoly_views[0](0, k));
+                gy += dpoly_views[1](i, k) * opt_dot(&tmp(0, i, k), &poly_views[0](0, k));
+                gz += poly_views[1](i, k) * opt_dot(&tmp_z(0, i, k), &poly_views[0](0, k));
+            }
+            grad(i_dim, 0, k) += sc * gx;
+            grad(i_dim, 1, k) += sc * gy;
+            grad(i_dim, 2, k) += sc * gz;
+        }
+    }
+}
+
 template <typename T, int DIM>
 void eval_targets(const ndview<T, DIM + 1> &coeffs, const ndview<T, 2> &r_trg, const ndview<T, 1> &cen, T sc,
                   ndview<T, 2> pot, sctl::Vector<T> &workspace) {
@@ -288,6 +388,17 @@ void eval_targets(const ndview<T, DIM + 1> &coeffs, const ndview<T, 2> &r_trg, c
         return eval_targets_2d(coeffs, r_trg, cen, sc, pot, workspace);
     else if constexpr (DIM == 3)
         return eval_targets_3d(coeffs, r_trg, cen, sc, pot, workspace);
+    else
+        static_assert(dmk::util::always_false<T>, "Invalid DIM supplied");
+}
+
+template <typename T, int DIM>
+void eval_target_gradients(const ndview<T, DIM + 1> &coeffs, const ndview<T, 2> &r_trg, const ndview<T, 1> &cen, T sc,
+                           ndview<T, 3> grad, sctl::Vector<T> &workspace) {
+    if constexpr (DIM == 2)
+        return eval_target_gradients_2d(coeffs, r_trg, cen, sc, grad, workspace);
+    else if constexpr (DIM == 3)
+        return eval_target_gradients_3d(coeffs, r_trg, cen, sc, grad, workspace);
     else
         static_assert(dmk::util::always_false<T>, "Invalid DIM supplied");
 }
@@ -341,6 +452,119 @@ template void eval_targets<double, 2>(const ndview<double, 3> &coeffs, const ndv
 template void eval_targets<double, 3>(const ndview<double, 4> &coeffs, const ndview<double, 2> &targ,
                                       const ndview<double, 1> &cen, double sc, ndview<double, 2> pot,
                                       sctl::Vector<double> &workspace);
+
+template void eval_target_gradients<float, 2>(const ndview<float, 3> &coeffs, const ndview<float, 2> &targ,
+                                              const ndview<float, 1> &cen, float sc, ndview<float, 3> grad,
+                                              sctl::Vector<float> &workspace);
+template void eval_target_gradients<float, 3>(const ndview<float, 4> &coeffs, const ndview<float, 2> &targ,
+                                              const ndview<float, 1> &cen, float sc, ndview<float, 3> grad,
+                                              sctl::Vector<float> &workspace);
+template void eval_target_gradients<double, 2>(const ndview<double, 3> &coeffs, const ndview<double, 2> &targ,
+                                               const ndview<double, 1> &cen, double sc, ndview<double, 3> grad,
+                                               sctl::Vector<double> &workspace);
+template void eval_target_gradients<double, 3>(const ndview<double, 4> &coeffs, const ndview<double, 2> &targ,
+                                               const ndview<double, 1> &cen, double sc, ndview<double, 3> grad,
+                                               sctl::Vector<double> &workspace);
+
+template <int DIM>
+void check_eval_target_gradients_fd() {
+    constexpr int n_order = 9;
+    constexpr int n_charge_dim = 1;
+    constexpr int n_trg = 5;
+    constexpr double h = 1e-7;
+    const double sc = 1.5;
+
+    sctl::Vector<double> coeffs_data(dmk::util::int_pow(n_order, DIM) * n_charge_dim);
+    for (int i = 0; i < coeffs_data.Dim(); ++i)
+        coeffs_data[i] = std::sin(0.1 * (i + 1));
+
+    sctl::Vector<double> center_data(DIM);
+    center_data.SetZero();
+    sctl::Vector<double> trg_data(DIM * n_trg);
+    for (int i = 0; i < n_trg; ++i)
+        for (int i_dim = 0; i_dim < DIM; ++i_dim)
+            trg_data[i_dim + DIM * i] = -0.25 + 0.08 * i + 0.03 * i_dim;
+
+    ndview<double, 1> center_view({DIM}, &center_data[0]);
+    ndview<double, 2> trg_view({DIM, n_trg}, &trg_data[0]);
+
+    sctl::Vector<double> pot_data(n_charge_dim * n_trg);
+    sctl::Vector<double> grad_data(n_charge_dim * DIM * n_trg);
+    ndview<double, 2> pot_view({n_charge_dim, n_trg}, &pot_data[0]);
+    ndview<double, 3> grad_view({n_charge_dim, DIM, n_trg}, &grad_data[0]);
+    sctl::Vector<double> workspace;
+
+    if constexpr (DIM == 2) {
+        ndview<double, 3> coeffs_view({n_order, n_order, n_charge_dim}, &coeffs_data[0]);
+        pot_view = 0.0;
+        grad_view = 0.0;
+        eval_targets<double, DIM>(coeffs_view, trg_view, center_view, sc, pot_view, workspace);
+        eval_target_gradients<double, DIM>(coeffs_view, trg_view, center_view, sc, grad_view, workspace);
+
+        double err2 = 0.0;
+        double ref2 = 0.0;
+        for (int i = 0; i < n_trg; ++i) {
+            for (int i_dim = 0; i_dim < DIM; ++i_dim) {
+                auto trg_p = trg_data;
+                auto trg_m = trg_data;
+                trg_p[i_dim + DIM * i] += h;
+                trg_m[i_dim + DIM * i] -= h;
+                ndview<double, 2> trg_p_view({DIM, n_trg}, &trg_p[0]);
+                ndview<double, 2> trg_m_view({DIM, n_trg}, &trg_m[0]);
+                sctl::Vector<double> pot_p_data(n_charge_dim * n_trg);
+                sctl::Vector<double> pot_m_data(n_charge_dim * n_trg);
+                ndview<double, 2> pot_p_view({n_charge_dim, n_trg}, &pot_p_data[0]);
+                ndview<double, 2> pot_m_view({n_charge_dim, n_trg}, &pot_m_data[0]);
+                pot_p_view = 0.0;
+                pot_m_view = 0.0;
+                eval_targets<double, DIM>(coeffs_view, trg_p_view, center_view, sc, pot_p_view, workspace);
+                eval_targets<double, DIM>(coeffs_view, trg_m_view, center_view, sc, pot_m_view, workspace);
+                const double fd = (pot_p_view(0, i) - pot_m_view(0, i)) / (2 * h);
+                const double diff = grad_view(0, i_dim, i) - fd;
+                err2 += diff * diff;
+                ref2 += fd * fd;
+            }
+        }
+        CHECK(std::sqrt(err2 / ref2) < 1e-8);
+    } else {
+        ndview<double, 4> coeffs_view({n_order, n_order, n_order, n_charge_dim}, &coeffs_data[0]);
+        pot_view = 0.0;
+        grad_view = 0.0;
+        eval_targets<double, DIM>(coeffs_view, trg_view, center_view, sc, pot_view, workspace);
+        eval_target_gradients<double, DIM>(coeffs_view, trg_view, center_view, sc, grad_view, workspace);
+
+        double err2 = 0.0;
+        double ref2 = 0.0;
+        for (int i = 0; i < n_trg; ++i) {
+            for (int i_dim = 0; i_dim < DIM; ++i_dim) {
+                auto trg_p = trg_data;
+                auto trg_m = trg_data;
+                trg_p[i_dim + DIM * i] += h;
+                trg_m[i_dim + DIM * i] -= h;
+                ndview<double, 2> trg_p_view({DIM, n_trg}, &trg_p[0]);
+                ndview<double, 2> trg_m_view({DIM, n_trg}, &trg_m[0]);
+                sctl::Vector<double> pot_p_data(n_charge_dim * n_trg);
+                sctl::Vector<double> pot_m_data(n_charge_dim * n_trg);
+                ndview<double, 2> pot_p_view({n_charge_dim, n_trg}, &pot_p_data[0]);
+                ndview<double, 2> pot_m_view({n_charge_dim, n_trg}, &pot_m_data[0]);
+                pot_p_view = 0.0;
+                pot_m_view = 0.0;
+                eval_targets<double, DIM>(coeffs_view, trg_p_view, center_view, sc, pot_p_view, workspace);
+                eval_targets<double, DIM>(coeffs_view, trg_m_view, center_view, sc, pot_m_view, workspace);
+                const double fd = (pot_p_view(0, i) - pot_m_view(0, i)) / (2 * h);
+                const double diff = grad_view(0, i_dim, i) - fd;
+                err2 += diff * diff;
+                ref2 += fd * fd;
+            }
+        }
+        CHECK(std::sqrt(err2 / ref2) < 1e-8);
+    }
+}
+
+TEST_CASE("[DMK] proxy eval_target_gradients finite difference") {
+    check_eval_target_gradients_fd<2>();
+    check_eval_target_gradients_fd<3>();
+}
 
 #ifdef DMK_HAVE_REFERENCE
 TEST_CASE("[DMK] proxycharge2pw") {

@@ -50,6 +50,14 @@ void pdmk(dmk_communicator comm, const pdmk_params &params, int n_src, const T *
     sctl::Vector<T>(res.Dim(), pot_src, false) = res;
     tree.GetParticleData(res, "pdmk_pot_trg");
     sctl::Vector<T>(res.Dim(), pot_trg, false) = res;
+    if (grad_src != nullptr && params.pgh_src >= DMK_POTENTIAL_GRAD) {
+        tree.GetParticleData(res, "pdmk_grad_src");
+        sctl::Vector<T>(res.Dim(), grad_src, false) = res;
+    }
+    if (grad_trg != nullptr && params.pgh_trg >= DMK_POTENTIAL_GRAD) {
+        tree.GetParticleData(res, "pdmk_grad_trg");
+        sctl::Vector<T>(res.Dim(), grad_trg, false) = res;
+    }
 
     auto dt = MY_OMP_GET_WTIME() - st;
     int N = n_src + n_trg;
@@ -318,6 +326,109 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d all", 1) {
     }
 }
 
+TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace gradient", 1) {
+    constexpr int n_dim = 3;
+    constexpr int n_src = 4000;
+    constexpr int n_trg = 3000;
+    constexpr int nd = 1;
+    constexpr bool uniform = false;
+    constexpr bool set_fixed_charges = true;
+    constexpr double thresh2 = 1e-30;
+
+#ifdef DMK_HAVE_MPI
+    auto comm = test_comm;
+#else
+    auto comm = nullptr;
+#endif
+
+    sctl::Vector<double> r_src, pot_src, grad_src, hess_src, charges, rnormal, dipstr, pot_trg, r_trg, grad_trg,
+        hess_trg;
+    dmk::util::init_test_data(n_dim, nd, n_src, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges,
+                              dipstr, 0);
+
+    pot_src.ReInit(n_src * nd);
+    pot_trg.ReInit(n_trg * nd);
+    grad_src.ReInit(n_src * nd * n_dim);
+    grad_trg.ReInit(n_trg * nd * n_dim);
+    hess_src.ReInit(n_src * nd * n_dim * n_dim);
+    hess_trg.ReInit(n_trg * nd * n_dim * n_dim);
+    pot_src.SetZero();
+    pot_trg.SetZero();
+    grad_src.SetZero();
+    grad_trg.SetZero();
+    hess_src.SetZero();
+    hess_trg.SetZero();
+
+    pdmk_params params;
+    params.eps = 1e-7;
+    params.n_dim = n_dim;
+    params.n_per_leaf = 280;
+    params.n_mfm = nd;
+    params.pgh_src = DMK_POTENTIAL_GRAD;
+    params.pgh_trg = DMK_POTENTIAL_GRAD;
+    params.kernel = DMK_LAPLACE;
+    params.log_level = SPDLOG_LEVEL_OFF;
+
+    pdmk_tree tree =
+        pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0]);
+    pdmk_tree_eval(tree, &pot_src[0], &grad_src[0], &hess_src[0], &pot_trg[0], &grad_trg[0], &hess_trg[0]);
+    pdmk_tree_destroy(tree);
+
+    const int n_test_src = std::min(n_src, 64);
+    const int n_test_trg = std::min(n_trg, 64);
+    std::vector<double> direct_grad_src(n_test_src * n_dim, 0.0);
+    std::vector<double> direct_grad_trg(n_test_trg * n_dim, 0.0);
+
+    const auto grad_index = [n_dim](int i_pt, int i_dim) { return i_dim + n_dim * i_pt; };
+    const auto accumulate_laplace_grad = [&](const double *target, int i_out, std::vector<double> &out) {
+        for (int i_src = 0; i_src < n_src; ++i_src) {
+            double dx[n_dim];
+            double dr2 = 0.0;
+            for (int i_dim = 0; i_dim < n_dim; ++i_dim) {
+                dx[i_dim] = target[i_dim] - r_src[i_src * n_dim + i_dim];
+                dr2 += dx[i_dim] * dx[i_dim];
+            }
+            if (dr2 <= thresh2)
+                continue;
+
+            const double rinv = 1.0 / std::sqrt(dr2);
+            const double rinv3 = rinv / dr2;
+            for (int i_dim = 0; i_dim < n_dim; ++i_dim)
+                out[grad_index(i_out, i_dim)] -= charges[i_src] * dx[i_dim] * rinv3;
+        }
+    };
+
+    for (int i = 0; i < n_test_src; ++i)
+        accumulate_laplace_grad(&r_src[i * n_dim], i, direct_grad_src);
+    for (int i = 0; i < n_test_trg; ++i)
+        accumulate_laplace_grad(&r_trg[i * n_dim], i, direct_grad_trg);
+
+    auto relative_l2_error = [](const auto &approx, const auto &exact) {
+        double err2 = 0.0;
+        double ref2 = 0.0;
+        for (int i = 0; i < exact.size(); ++i) {
+            err2 += sctl::pow<2>(approx[i] - exact[i]);
+            ref2 += sctl::pow<2>(exact[i]);
+        }
+        return std::sqrt(err2 / ref2);
+    };
+
+    std::vector<double> grad_src_prefix(direct_grad_src.size());
+    std::vector<double> grad_trg_prefix(direct_grad_trg.size());
+    for (int i = 0; i < n_test_src; ++i)
+        for (int i_dim = 0; i_dim < n_dim; ++i_dim)
+            grad_src_prefix[grad_index(i, i_dim)] = grad_src[grad_index(i, i_dim)];
+    for (int i = 0; i < n_test_trg; ++i)
+        for (int i_dim = 0; i_dim < n_dim; ++i_dim)
+            grad_trg_prefix[grad_index(i, i_dim)] = grad_trg[grad_index(i, i_dim)];
+
+    const double l2_err_src = relative_l2_error(grad_src_prefix, direct_grad_src);
+    const double l2_err_trg = relative_l2_error(grad_trg_prefix, direct_grad_trg);
+
+    CHECK(l2_err_src < 2e-4);
+    CHECK(l2_err_trg < 1e-3);
+}
+
 template <typename Real>
 inline pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src, const Real *r_src,
                                   const Real *charge, const Real *normal, const Real *dipole_str, int n_trg,
@@ -364,6 +475,14 @@ inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *grad_src, Real *
                 sctl::Vector<Real>(res.Dim(), pot_src, false) = res;
                 t->GetParticleData(res, "pdmk_pot_trg");
                 sctl::Vector<Real>(res.Dim(), pot_trg, false) = res;
+                if (grad_src != nullptr && t->params.pgh_src >= DMK_POTENTIAL_GRAD) {
+                    t->GetParticleData(res, "pdmk_grad_src");
+                    sctl::Vector<Real>(res.Dim(), grad_src, false) = res;
+                }
+                if (grad_trg != nullptr && t->params.pgh_trg >= DMK_POTENTIAL_GRAD) {
+                    t->GetParticleData(res, "pdmk_grad_trg");
+                    sctl::Vector<Real>(res.Dim(), grad_trg, false) = res;
+                }
                 sctl::Profile::Toc();
             }
         },
