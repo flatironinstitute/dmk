@@ -1,9 +1,3 @@
-#include <format>
-#include <mutex>
-#include <tuple>
-#include <typeinfo>
-#include <unordered_map>
-
 #include <dmk.h>
 #include <dmk/aot_kernels.hpp>
 #include <dmk/chebychev.hpp>
@@ -14,14 +8,22 @@
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
 
+#ifdef DMK_USE_JIT
+#include <format>
+#include <mutex>
+#include <tuple>
+#include <typeinfo>
+#include <unordered_map>
+
 #include <polyfit/fast_eval.hpp>
 #include <rufus.hpp>
 
 #include "jit_kernels_ir.h"
+#endif
 
 namespace dmk {
+#ifdef DMK_USE_JIT
 namespace {
-
 template <class Vec>
 auto to_vector(const auto &arr) {
     Vec vec(arr.size());
@@ -161,25 +163,6 @@ Real sl3d_local_kernel(Real r2, Real bsize, dmk::Prolate0Fun &prolate) {
 }
 
 template <typename Real>
-direct_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, int n_dim, int n_digits, int unroll_factor) {
-    constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
-    switch (kernel) {
-    case dmk_ikernel::DMK_LAPLACE:
-        if (n_dim == 2)
-            return get_laplace_2d_kernel<Real, MaxVecLen>(n_digits);
-        if (n_dim == 3)
-            return get_laplace_3d_kernel<Real, MaxVecLen>(n_digits);
-    case dmk_ikernel::DMK_SQRT_LAPLACE:
-        if (n_dim == 2)
-            return get_sqrt_laplace_2d_kernel<Real, MaxVecLen>(n_digits);
-        if (n_dim == 3)
-            return get_sqrt_laplace_3d_kernel<Real, MaxVecLen>(n_digits);
-    default:
-        throw std::runtime_error("Unsupported kernel for direct evaluator");
-    }
-}
-
-template <typename Real>
 direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, int n_dim, int n_digits, int unroll_factor) {
     static std::mutex lock;
     std::lock_guard<std::mutex> lock_guard(lock);
@@ -284,53 +267,35 @@ direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, int n_dim, in
         throw std::runtime_error("Unsupported kernel for direct evaluator");
     }
 }
+template direct_evaluator_func<float> make_evaluator_jit<float>(dmk_ikernel kernel, int n_dim, int n_digits,
+                                                                int unroll_factor);
+template direct_evaluator_func<double> make_evaluator_jit<double>(dmk_ikernel kernel, int n_dim, int n_digits,
+                                                                  int unroll_factor);
+#endif
+// (DMK_USE_JIT)
 
-template <typename Real, int DIM>
-void yukawa_direct_eval(const ndview<const Real, 2> &r_src, const std::array<std::span<const Real>, DIM> &r_trg,
-                        const ndview<const Real, 2> &charges, const ndview<const Real, 1> &coeffs, Real lambda,
-                        Real scale, Real center, Real d2max, ndview<Real, 2> &u) {
-    const int nsrc = r_src.extent(1);
-    const int ntrg = r_trg[0].size();
-    const int nd = u.extent(0);
-    const int norder = coeffs.extent(0);
-    constexpr Real threshq = 1E-30;
-
-    for (int i_trg = 0; i_trg < ntrg; i_trg++) {
-        for (int i_src = 0; i_src < nsrc; i_src++) {
-            const Real dx = r_trg[0][i_trg] - r_src(0, i_src);
-            const Real dy = r_trg[1][i_trg] - r_src(1, i_src);
-            Real dd = dx * dx + dy * dy;
-            if constexpr (DIM == 3) {
-                Real dz = r_trg[2][i_trg] - r_src(2, i_src);
-                dd += dz * dz;
-            }
-
-            if (dd < threshq || dd > d2max)
-                continue;
-
-            const Real r = sqrt(dd);
-            const Real xval = r * scale + center;
-            const Real fval = chebyshev::evaluate(xval, norder + 1, coeffs.data());
-            Real dkval;
-            if constexpr (DIM == 2)
-                dkval = util::cyl_bessel_k(0, lambda * r);
-            if constexpr (DIM == 3)
-                dkval = std::exp(-lambda * r) / r;
-
-            const Real factor = dkval + fval;
-            for (int i = 0; i < nd; ++i)
-                u(i, i_trg) += charges(i, i_src) * factor;
-        }
+template <typename Real>
+direct_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, int n_dim, int n_digits, int unroll_factor) {
+    constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
+    switch (kernel) {
+    case dmk_ikernel::DMK_LAPLACE:
+        if (n_dim == 2)
+            return get_laplace_2d_kernel<Real, MaxVecLen>(n_digits);
+        if (n_dim == 3)
+            return get_laplace_3d_kernel<Real, MaxVecLen>(n_digits);
+    case dmk_ikernel::DMK_SQRT_LAPLACE:
+        if (n_dim == 2)
+            return get_sqrt_laplace_2d_kernel<Real, MaxVecLen>(n_digits);
+        if (n_dim == 3)
+            return get_sqrt_laplace_3d_kernel<Real, MaxVecLen>(n_digits);
+    default:
+        throw std::runtime_error("Unsupported kernel for direct evaluator");
     }
 }
 
 template direct_evaluator_func<float> make_evaluator_aot<float>(dmk_ikernel kernel, int n_dim, int n_digits,
                                                                 int unroll_factor);
 template direct_evaluator_func<double> make_evaluator_aot<double>(dmk_ikernel kernel, int n_dim, int n_digits,
-                                                                  int unroll_factor);
-template direct_evaluator_func<float> make_evaluator_jit<float>(dmk_ikernel kernel, int n_dim, int n_digits,
-                                                                int unroll_factor);
-template direct_evaluator_func<double> make_evaluator_jit<double>(dmk_ikernel kernel, int n_dim, int n_digits,
                                                                   int unroll_factor);
 
 } // namespace dmk

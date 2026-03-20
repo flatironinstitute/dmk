@@ -206,7 +206,11 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     logger->debug("building evaluators");
 
     try {
-        auto eval = make_evaluator_jit<Real>(params.kernel, DIM, n_digits, 3);
+        auto eval = make_evaluator_aot<Real>(params.kernel, DIM, n_digits, 3);
+#ifdef DMK_USE_JIT
+        if (getenv("DMK_DEBUG_FORCE_AOT") == nullptr)
+            eval = make_evaluator_jit<Real>(params.kernel, DIM, n_digits, 3);
+#endif
         evaluator_by_level.assign(n_levels(), eval);
     } catch (std::exception &e) {
         logger->error("Failed to create direct evaluator: {}", e.what());
