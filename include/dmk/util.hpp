@@ -1,13 +1,14 @@
 #ifndef UTIL_HPP
 #define UTIL_HPP
 
+#include <cmath>
 #include <dmk/types.hpp>
 #include <sctl.hpp>
 #include <cmath>
 #include <type_traits>
 
-#ifdef DMK_INSTRUMENT
-#include <papi.h>
+#ifndef __cpp_lib_math_special_functions
+#include <vendor/bessel.hpp>
 #endif
 
 #ifndef __cpp_lib_math_special_functions
@@ -33,6 +34,35 @@ static inline auto cyl_bessel_j(auto nu, auto x) {
     return bessel::cyl_j(nu, x);
 #endif
 }
+
+template <typename T, size_t StackSize>
+class StackOrHeapBuffer {
+    alignas(64) std::array<T, StackSize> stack_buffer_;
+    T *heap_buffer_ = nullptr;
+    T *data_;
+
+  public:
+    StackOrHeapBuffer(size_t required_size) {
+        if (required_size <= StackSize) {
+            data_ = stack_buffer_.data();
+        } else {
+            size_t alloc_size = required_size * sizeof(T);
+            // aligned_alloc requires size to be a multiple of alignment
+            alloc_size = (alloc_size + 63) & ~size_t{63};
+            heap_buffer_ = static_cast<T *>(std::aligned_alloc(64, alloc_size));
+            data_ = heap_buffer_;
+        }
+    }
+
+    T *data() { return data_; }
+    const T *data() const { return data_; }
+
+    ~StackOrHeapBuffer() {
+        if (heap_buffer_) {
+            std::free(heap_buffer_);
+        }
+    }
+};
 
 template <typename Real>
 void mesh_nd(int dim, Real *in, int size, Real *out);
@@ -70,25 +100,6 @@ inline auto get_opt_dot(int n_order) {
         throw std::runtime_error("Invalid order " + std::to_string(n_order) + " provided");
 }
 
-class PAPICounter {
-#ifdef DMK_INSTRUMENT
-  public:
-    inline PAPICounter() { PAPI_flops_rate(PAPI_FP_OPS, &real_time, &proc_time, &flpops, &mflops); }
-    inline ~PAPICounter() {
-        PAPI_flops_rate(PAPI_FP_OPS, &real_time, &proc_time, &flpops, &mflops);
-        sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, flpops);
-    }
-
-  private:
-    float real_time, proc_time, mflops;
-    long long flpops;
-#else
-  public:
-    inline PAPICounter() {}
-    inline ~PAPICounter() {}
-#endif
-};
-
 template <typename T>
 inline T int_pow(T base, int exp) {
     T result{1};
@@ -101,6 +112,125 @@ template <typename Real>
 void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
                     sctl::Vector<Real> &r_src, sctl::Vector<Real> &r_trg, sctl::Vector<Real> &rnormal,
                     sctl::Vector<Real> &charges, sctl::Vector<Real> &dipstr, long seed);
+
+template <typename T>
+inline void vec_mul(T *__restrict__ dst, const T *__restrict__ a, const T *__restrict__ b, int n) {
+    using Vec = sctl::Vec<T, sctl::DefaultVecLen<T>()>;
+    constexpr int N = Vec::Size();
+    int i = 0;
+    for (; i + N <= n; i += N) {
+        Vec va = Vec::Load(a + i);
+        Vec vb = Vec::Load(b + i);
+        (va * vb).Store(dst + i);
+    }
+    for (; i < n; ++i)
+        dst[i] = a[i] * b[i];
+}
+
+template <typename T>
+inline void vec_mul_broadcast(T *__restrict__ dst, const T *__restrict__ a, T b, int n) {
+    using Vec = sctl::Vec<T, sctl::DefaultVecLen<T>()>;
+    constexpr int N = Vec::Size();
+    Vec vb(b);
+    int i = 0;
+    for (; i + N <= n; i += N) {
+        Vec va = Vec::Load(a + i);
+        (va * vb).Store(dst + i);
+    }
+    for (; i < n; ++i)
+        dst[i] = a[i] * b;
+}
+
+template <typename T>
+inline void vec_fma(T *__restrict__ dst, const T *__restrict__ a, const T *__restrict__ b, int n) {
+    using Vec = sctl::Vec<T, sctl::DefaultVecLen<T>()>;
+    constexpr int N = Vec::Size();
+    int i = 0;
+    for (; i + N <= n; i += N) {
+        Vec vd = Vec::Load(dst + i);
+        Vec va = Vec::Load(a + i);
+        Vec vb = Vec::Load(b + i);
+        FMA(va, vb, vd).Store(dst + i);
+    }
+    for (; i < n; ++i)
+        dst[i] += a[i] * b[i];
+}
+
+template <typename T>
+inline void vec_fma_3(T *__restrict__ dst, const T *__restrict__ a, const T *__restrict__ b, const T *__restrict__ c,
+                      int n) {
+    using Vec = sctl::Vec<T, sctl::DefaultVecLen<T>()>;
+    constexpr int N = Vec::Size();
+    int i = 0;
+    for (; i + N <= n; i += N) {
+        Vec vd = Vec::Load(dst + i);
+        Vec va = Vec::Load(a + i);
+        Vec vb = Vec::Load(b + i);
+        Vec vc = Vec::Load(c + i);
+        FMA(va * vb, vc, vd).Store(dst + i);
+    }
+    for (; i < n; ++i)
+        dst[i] += a[i] * b[i] * c[i];
+}
+
+#if defined(__AVX512F__)
+inline void complex_deinterleave(const __m512 &lo, const __m512 &hi, __m512 &real, __m512 &imag) {
+    const __m512i idx_r = _mm512_setr_epi32(0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30);
+    const __m512i idx_i = _mm512_setr_epi32(1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31);
+    real = _mm512_permutex2var_ps(lo, idx_r, hi);
+    imag = _mm512_permutex2var_ps(lo, idx_i, hi);
+}
+inline void complex_interleave(const __m512 &real, const __m512 &imag, __m512 &lo, __m512 &hi) {
+    const __m512i idx_lo = _mm512_setr_epi32(0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23);
+    const __m512i idx_hi = _mm512_setr_epi32(8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31);
+    lo = _mm512_permutex2var_ps(real, idx_lo, imag);
+    hi = _mm512_permutex2var_ps(real, idx_hi, imag);
+}
+inline void complex_deinterleave(const __m512d &lo, const __m512d &hi, __m512d &real, __m512d &imag) {
+    const __m512i idx_r = _mm512_setr_epi64(0, 2, 4, 6, 8, 10, 12, 14);
+    const __m512i idx_i = _mm512_setr_epi64(1, 3, 5, 7, 9, 11, 13, 15);
+    real = _mm512_permutex2var_pd(lo, idx_r, hi);
+    imag = _mm512_permutex2var_pd(lo, idx_i, hi);
+}
+inline void complex_interleave(const __m512d &real, const __m512d &imag, __m512d &lo, __m512d &hi) {
+    const __m512i idx_lo = _mm512_setr_epi64(0, 8, 1, 9, 2, 10, 3, 11);
+    const __m512i idx_hi = _mm512_setr_epi64(4, 12, 5, 13, 6, 14, 7, 15);
+    lo = _mm512_permutex2var_pd(real, idx_lo, imag);
+    hi = _mm512_permutex2var_pd(real, idx_hi, imag);
+}
+#endif
+
+#ifdef __AVX2__
+inline void complex_deinterleave(const __m256 &lo, const __m256 &hi, __m256 &real, __m256 &imag) {
+    // lo = [r0,i0,r1,i1,r2,i2,r3,i3], hi = [r4,i4,r5,i5,r6,i6,r7,i7]
+    __m256 a = _mm256_shuffle_ps(lo, hi, 0x88);                    // [r0,r1,r4,r5,r2,r3,r6,r7]
+    __m256 b = _mm256_shuffle_ps(lo, hi, 0xDD);                    // [i0,i1,i4,i5,i2,i3,i6,i7]
+    real = _mm256_permute4x64_epi64(_mm256_castps_si256(a), 0xD8); // fix cross-lane
+    real = _mm256_castsi256_ps(_mm256_permute4x64_epi64(_mm256_castps_si256(a), 0xD8));
+    imag = _mm256_castsi256_ps(_mm256_permute4x64_epi64(_mm256_castps_si256(b), 0xD8));
+}
+inline void complex_interleave(const __m256 &real, const __m256 &imag, __m256 &lo, __m256 &hi) {
+    lo = _mm256_unpacklo_ps(real, imag);              // [r0,i0,r1,i1,r4,i4,r5,i5]
+    hi = _mm256_unpackhi_ps(real, imag);              // [r2,i2,r3,i3,r6,i6,r7,i7]
+    __m256 t0 = _mm256_permute2f128_ps(lo, hi, 0x20); // [r0,i0,r1,i1,r2,i2,r3,i3]
+    __m256 t1 = _mm256_permute2f128_ps(lo, hi, 0x31); // [r4,i4,r5,i5,r6,i6,r7,i7]
+    lo = t0;
+    hi = t1;
+}
+inline void complex_deinterleave(const __m256d &lo, const __m256d &hi, __m256d &real, __m256d &imag) {
+    real = _mm256_permute4x64_pd(_mm256_unpacklo_pd(lo, hi), 0xD8);
+    imag = _mm256_permute4x64_pd(_mm256_unpackhi_pd(lo, hi), 0xD8);
+}
+inline void complex_interleave(const __m256d &real, const __m256d &imag, __m256d &lo, __m256d &hi) {
+    lo = _mm256_unpacklo_pd(real, imag);
+    hi = _mm256_unpackhi_pd(real, imag);
+    __m256d t0 = _mm256_permute2f128_pd(lo, hi, 0x20);
+    __m256d t1 = _mm256_permute2f128_pd(lo, hi, 0x31);
+    lo = t0;
+    hi = t1;
+}
+#endif
+
 } // namespace dmk::util
 
 #endif

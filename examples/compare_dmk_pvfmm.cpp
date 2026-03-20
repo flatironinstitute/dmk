@@ -1,4 +1,6 @@
 #include <dmk.h>
+#include <dmk/omp_wrapper.hpp>
+
 #include <pvfmm.hpp>
 
 #include <algorithm>
@@ -12,7 +14,6 @@
 #include <vector>
 
 #include <mpi.h>
-#include <omp.h>
 
 struct Config {
     int n_src = 1'000'000;
@@ -221,9 +222,7 @@ void run_direct(const std::vector<Real> &r_src, const std::vector<Real> &charges
     // Evaluate
     std::vector<Real> glb_val_local(n_trg_glb * kdim1, Real(0));
     {
-        int omp_p;
-#pragma omp parallel
-        omp_p = omp_get_num_threads();
+        int omp_p = MY_OMP_GET_MAX_THREADS();
 
 #pragma omp parallel for schedule(static)
         for (int tid = 0; tid < omp_p; ++tid) {
@@ -286,12 +285,7 @@ void run_comparison(const Config &cfg) {
 
     const int n_dim = 3;
     const int nd = 1;
-    const int n_threads = []() {
-        int nt;
-#pragma omp parallel
-        nt = omp_get_num_threads();
-        return nt;
-    }();
+    const int n_threads = MY_OMP_GET_MAX_THREADS();
 
     const int n_src = cfg.n_src;
     const int n_src_per_rank = local_count(n_src, np, rank);

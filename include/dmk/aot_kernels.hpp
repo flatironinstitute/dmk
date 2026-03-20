@@ -1,0 +1,16 @@
+#ifndef AOT_KERNELS_HPP
+#define AOT_KERNELS_HPP
+
+#include <dmk/types.hpp>
+
+namespace dmk {
+template <class Real, int MaxVecLen>
+direct_evaluator_func<Real> get_laplace_2d_kernel(int n_digits);
+template <class Real, int MaxVecLen>
+direct_evaluator_func<Real> get_laplace_3d_kernel(int n_digits);
+template <class Real, int MaxVecLen>
+direct_evaluator_func<Real> get_sqrt_laplace_2d_kernel(int n_digits);
+template <class Real, int MaxVecLen>
+direct_evaluator_func<Real> get_sqrt_laplace_3d_kernel(int n_digits);
+}
+#endif
