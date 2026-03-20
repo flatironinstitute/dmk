@@ -41,7 +41,10 @@ class StackOrHeapBuffer {
         if (required_size <= StackSize) {
             data_ = stack_buffer_.data();
         } else {
-            heap_buffer_ = new T[required_size](64);
+            size_t alloc_size = required_size * sizeof(T);
+            // aligned_alloc requires size to be a multiple of alignment
+            alloc_size = (alloc_size + 63) & ~size_t{63};
+            heap_buffer_ = static_cast<T *>(std::aligned_alloc(64, alloc_size));
             data_ = heap_buffer_;
         }
     }
@@ -51,7 +54,7 @@ class StackOrHeapBuffer {
 
     ~StackOrHeapBuffer() {
         if (heap_buffer_) {
-            delete[] heap_buffer_;
+            std::free(heap_buffer_);
         }
     }
 };

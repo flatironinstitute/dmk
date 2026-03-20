@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.19)
 
 project(dmk LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
@@ -132,14 +132,15 @@ if (DMK_BUILD_REFERENCE)
   set_target_properties(dmk_ref_shared PROPERTIES OUTPUT_NAME dmk_ref)
 endif()
 
-embed_ir_as_header(jit_kernels src/jit_kernels.cpp
+rufus_embed_ir_as_header(jit_kernels src/jit_kernels.cpp
   INCLUDES ${DMK_INCLUDES}
   DEFINITIONS ${DMK_VECLIB_DEFINE}
+  FROM_TARGET nda::nda_c
 )
 
 set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp src/legeexps.cpp
   src/fourier_data.cpp src/tensorprod.cpp src/planewave.cpp src/direct.cpp src/prolate.cpp src/prolate0_eval.cpp
-  src/timing.cpp
+  src/timing.cpp src/aot_kernels.cpp
   ${DMK_TEST_SRC}
 )
 add_library(DMKOBJS OBJECT ${DMK_SRC})

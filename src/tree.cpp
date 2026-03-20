@@ -130,12 +130,6 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     debug_omit_direct = getenv("DMK_DEBUG_OMIT_DIRECT") != nullptr;
     debug_dump_tree = getenv("DMK_DEBUG_DUMP_TREE") != nullptr;
 
-    try {
-        evaluator = make_evaluator<Real>(params.kernel, DIM, n_digits, 3);
-    } catch (std::exception &e) {
-        logger->error("Failed to create direct evaluator: {}", e.what());
-    }
-
     logger->info("tree build started");
 
     const int n_src = r_src.Dim() / DIM;
@@ -209,6 +203,60 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 
     precompute_fourier_data();
     logger->debug("finished updating local potential expansion coefficients");
+    logger->debug("building evaluators");
+
+    try {
+        auto eval = make_evaluator_jit<Real>(params.kernel, DIM, n_digits, 3);
+        evaluator_by_level.assign(n_levels(), eval);
+    } catch (std::exception &e) {
+        logger->error("Failed to create direct evaluator: {}", e.what());
+    }
+    if (params.kernel == DMK_YUKAWA) {
+        // FIXME: This should be moved to direct.cpp, but it was annoying to add the coefficient
+        // binding cleanly
+        for (int level = 0; level < n_levels(); ++level) {
+            const auto coeffs = fourier_data.cheb_coeffs(level);
+            const Real lambda = params.fparam;
+            evaluator_by_level.push_back([coeffs, lambda](int nd, Real rsc, Real cen, Real d2max, Real thresh2,
+                                                          int n_src, const Real *r_src_ptr, const Real *charge_ptr,
+                                                          int n_trg, const Real *r_trg_ptr, Real *pot) {
+                constexpr Real threshq = 1e-30;
+                ndview<Real, 2> u({nd, n_trg}, pot);
+                ndview<const Real, 2> charges({nd, n_src}, charge_ptr);
+                ndview<const Real, 2> r_src({DIM, n_src}, r_src_ptr);
+                ndview<const Real, 2> r_trg({DIM, n_trg}, r_trg_ptr);
+                for (int i_trg = 0; i_trg < n_trg; i_trg++) {
+                    for (int i_src = 0; i_src < n_src; i_src++) {
+                        const Real dx = r_trg(0, i_trg) - r_src(0, i_src);
+                        const Real dy = r_trg(1, i_trg) - r_src(1, i_src);
+                        Real dd = dx * dx + dy * dy;
+                        if constexpr (DIM == 3) {
+                            Real dz = r_trg(2, i_trg) - r_src(2, i_src);
+                            dd += dz * dz;
+                        }
+
+                        if (dd < threshq || dd > d2max)
+                            continue;
+
+                        const Real r = sqrt(dd);
+                        const Real xval = r * rsc + cen;
+                        const Real fval = chebyshev::evaluate(xval, coeffs.size() + 1, coeffs.data());
+                        Real dkval;
+                        if constexpr (DIM == 2)
+                            dkval = util::cyl_bessel_k(0, lambda * r);
+                        if constexpr (DIM == 3)
+                            dkval = std::exp(-lambda * r) / r;
+
+                        const Real factor = dkval + fval;
+                        for (int i = 0; i < nd; ++i)
+                            u(i, i_trg) += charges(i, i_src) * factor;
+                    }
+                }
+            });
+        }
+    }
+
+    logger->debug("finished building evaluators");
     logger->info("tree build completed");
 }
 
@@ -471,7 +519,7 @@ void DMKPtTree<T, DIM>::build_direct_interaction_lists() {
             // (boxsize + 2 * boxsize) / 2 is the max distance from center of box to center of parent neighbor box
             const double cutoff = 1.5 * 1.05 * boxsize[i_level];
             for (auto neighb : node_lists[node_lists[box].parent].nbr) {
-                if (neighb < 0 || !is_global_leaf[neighb])
+                if (neighb < 0 || !is_global_leaf[neighb] || !src_counts_with_halo[neighb])
                     continue;
 
                 bool inrange = true;
@@ -869,7 +917,7 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &box
                 dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(box), poly2pw_view, pw_out_view(box),
                                                       workspace);
                 multiply_kernelFT_cd2p<Real, DIM>(radialft, pw_out_view(box));
-            } else if (proxy_coeffs_offsets_downward[box] != -1)
+            } else if (pw_out_offsets[box] != -1)
                 pw_out_view(box) = 0;
         }
     }
@@ -1186,7 +1234,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
         util::StackOrHeapBuffer<Real, DIM * MAX_PTS> r_buf(DIM * params.n_per_leaf);
         util::StackOrHeapBuffer<Real, MAX_CHARGE_DIM * MAX_PTS> charge_buf(params.n_mfm * params.n_per_leaf);
         util::StackOrHeapBuffer<Real, DIM * MAX_PTS> r_trg_buf(DIM * params.n_per_leaf);
-        util::StackOrHeapBuffer<Real, MAX_CHARGE_DIM> pot_buf(params.n_mfm * params.n_per_leaf);
+        util::StackOrHeapBuffer<Real, MAX_CHARGE_DIM * MAX_PTS> pot_buf(params.n_mfm * params.n_per_leaf);
         util::StackOrHeapBuffer<int, MAX_PTS> index_map(params.n_per_leaf);
 
 #pragma omp for schedule(dynamic)
@@ -1243,6 +1291,8 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
                     r_src_ptr = r_buf.data();
                     charge_ptr = charge_buf.data();
                 }
+                if (!n_src)
+                    continue;
 
                 // Evaluate potential at owned source points in the target box
                 if (src_counts_owned[trg_box]) {
@@ -1259,13 +1309,14 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
                         eval_pot = pot_buf.data();
                     }
 
-                    if (n_src > 0 && n_eval_trg > 0)
-                        evaluator(params.n_mfm, rsc, cen, d2max, 1e-30, n_src, r_src_ptr, charge_ptr, n_eval_trg,
-                                  eval_r_trg, eval_pot);
-
-                    if (trg_larger)
-                        scatter_add_potential(pot_buf.data(), pot_src_ptr(trg_box), index_map.data(), n_eval_trg,
-                                              params.n_mfm);
+                    if (n_eval_trg > 0) {
+                        if (evaluator_by_level[src_level])
+                            evaluator_by_level[src_level](params.n_mfm, rsc, cen, d2max, 1e-30, n_src, r_src_ptr,
+                                                          charge_ptr, n_eval_trg, eval_r_trg, eval_pot);
+                        if (trg_larger)
+                            scatter_add_potential(pot_buf.data(), pot_src_ptr(trg_box), index_map.data(), n_eval_trg,
+                                                  params.n_mfm);
+                    }
                 }
 
                 // Evaluate potential at owned target points in the target box
@@ -1283,13 +1334,14 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
                         eval_pot = pot_buf.data();
                     }
 
-                    if (n_src > 0 && n_eval_trg > 0)
-                        evaluator(params.n_mfm, rsc, cen, d2max, 1e-30, n_src, r_src_ptr, charge_ptr, n_eval_trg,
-                                  eval_r_trg, eval_pot);
+                    if (n_eval_trg > 0) {
+                        evaluator_by_level[src_level](params.n_mfm, rsc, cen, d2max, 1e-30, n_src, r_src_ptr,
+                                                      charge_ptr, n_eval_trg, eval_r_trg, eval_pot);
 
-                    if (trg_larger)
-                        scatter_add_potential(pot_buf.data(), pot_trg_ptr(trg_box), index_map.data(), n_eval_trg,
-                                              params.n_mfm);
+                        if (trg_larger)
+                            scatter_add_potential(pot_buf.data(), pot_trg_ptr(trg_box), index_map.data(), n_eval_trg,
+                                                  params.n_mfm);
+                    }
                 }
             }
 

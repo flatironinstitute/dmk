@@ -1,7 +1,7 @@
 #include <dmk.h>
 #include <dmk/direct.hpp>
 #include <dmk/fourier_data.hpp>
-#include <dmk/vector_kernels.hpp>
+#include <dmk/vector_kernels_deprecated.hpp>
 
 #include <nanobench.h>
 
@@ -180,7 +180,8 @@ void run_comparison(const Opts &opts) {
             throw std::runtime_error("Unknown evaluator");
         }
     }();
-    auto jit_evaluator = dmk::make_evaluator<Real>(opts.kernel, opts.n_dim, opts.digits, opts.unroll_factor);
+    auto jit_evaluator = dmk::make_evaluator_jit<Real>(opts.kernel, opts.n_dim, opts.digits, opts.unroll_factor);
+    auto aot_evaluator = dmk::make_evaluator_aot<Real>(opts.kernel, opts.n_dim, opts.digits, opts.unroll_factor);
 
     constexpr PSWFParams<Real> p;
     sctl::Vector<Real> res(opts.n_trg);
@@ -192,18 +193,23 @@ void run_comparison(const Opts &opts) {
                 std::cout << res[j] << " ";
             std::cout << std::endl;
         };
-
         auto jit_res = res;
         jit_res = 0;
         jit_evaluator(1, p.rsc, p.cen, p.d2max, p.thresh2, opts.n_src, &r_src_base[0], &charges[0], opts.n_trg,
                       &r_trg[0], &jit_res[0]);
         print_16("jit          ", jit_res);
 
+        auto aot_res = res;
+        aot_res = 0;
+        aot_evaluator(1, p.rsc, p.cen, p.d2max, p.thresh2, opts.n_src, &r_src_base[0], &charges[0], opts.n_trg,
+                      &r_trg[0], &aot_res[0]);
+        print_16("aot          ", aot_res);
+
         res = 0;
         evaluator(opts, r_src_base, r_trg_t, charges, res);
         print_16("production   ", res);
-
         print_16("jit / prod   ", jit_res / res);
+        print_16("aot / prod   ", aot_res / res);
     }
 
     const int n_images = opts.n_dim == 2 ? 9 : 27;
@@ -217,6 +223,12 @@ void run_comparison(const Opts &opts) {
     ankerl::nanobench::Bench().batch(n_pairs).unit("pair").run("JIT", [&] {
         for (int i = 0; i < n_images; ++i)
             jit_evaluator(1, p.rsc, p.cen, p.d2max, p.thresh2, opts.n_src, &r_src_all[i][0], &charges[0], opts.n_trg,
+                          &r_trg[0], &res[0]);
+        ankerl::nanobench::doNotOptimizeAway(res);
+    });
+    ankerl::nanobench::Bench().batch(n_pairs).unit("pair").run("AoT", [&] {
+        for (int i = 0; i < n_images; ++i)
+            aot_evaluator(1, p.rsc, p.cen, p.d2max, p.thresh2, opts.n_src, &r_src_all[i][0], &charges[0], opts.n_trg,
                           &r_trg[0], &res[0]);
         ankerl::nanobench::doNotOptimizeAway(res);
     });

@@ -3,9 +3,9 @@
 #include <tuple>
 #include <typeinfo>
 #include <unordered_map>
-#include <variant>
 
 #include <dmk.h>
+#include <dmk/aot_kernels.hpp>
 #include <dmk/chebychev.hpp>
 #include <dmk/direct.hpp>
 #include <dmk/fourier_data.hpp>
@@ -13,19 +13,11 @@
 #include <dmk/prolate0_fun.hpp>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
-#include <dmk/vector_kernels.hpp>
 
 #include <polyfit/fast_eval.hpp>
 #include <rufus.hpp>
 
 #include "jit_kernels_ir.h"
-
-#define VECDIM 4
-
-#ifdef __AVX512F__
-#undef VECDIM
-#define VECDIM 8
-#endif
 
 namespace dmk {
 namespace {
@@ -104,7 +96,6 @@ struct CoeffsCache {
     std::unordered_map<CacheKey, std::vector<float>, hash_tuple> float_map;
 };
 
-
 std::unique_ptr<RuFuS> RS;
 CoeffsCache coeffs_cache;
 __attribute__((constructor)) void init() {
@@ -170,17 +161,36 @@ Real sl3d_local_kernel(Real r2, Real bsize, dmk::Prolate0Fun &prolate) {
 }
 
 template <typename Real>
-direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_digits, int unroll_factor) {
+direct_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, int n_dim, int n_digits, int unroll_factor) {
+    constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
+    switch (kernel) {
+    case dmk_ikernel::DMK_LAPLACE:
+        if (n_dim == 2)
+            return get_laplace_2d_kernel<Real, MaxVecLen>(n_digits);
+        if (n_dim == 3)
+            return get_laplace_3d_kernel<Real, MaxVecLen>(n_digits);
+    case dmk_ikernel::DMK_SQRT_LAPLACE:
+        if (n_dim == 2)
+            return get_sqrt_laplace_2d_kernel<Real, MaxVecLen>(n_digits);
+        if (n_dim == 3)
+            return get_sqrt_laplace_3d_kernel<Real, MaxVecLen>(n_digits);
+    default:
+        throw std::runtime_error("Unsupported kernel for direct evaluator");
+    }
+}
+
+template <typename Real>
+direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, int n_dim, int n_digits, int unroll_factor) {
     static std::mutex lock;
     std::lock_guard<std::mutex> lock_guard(lock);
-    constexpr int VECWIDTH = std::is_same_v<Real, float> ? 2 * VECDIM : VECDIM;
+    constexpr int VECWIDTH = sctl::DefaultVecLen<Real>();
     constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
     const double tol = std::pow(10.0, -n_digits);
     const double c0 = procl180_rescale(tol);
     dmk::Prolate0Fun prolate_fun(c0, 10000);
 
     auto build_func_name = [&](const std::string &base_name) {
-        return std::format("void {}<{}, {}>", base_name, T_str, VECWIDTH);
+        return std::format("void {}<{}, {}, -1, -1>", base_name, T_str, VECWIDTH);
     };
 
     switch (kernel) {
@@ -198,7 +208,8 @@ direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_
             const auto func_name = build_func_name("laplace_2d_poly_all_pairs");
             auto jit_func = RS->compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
                                                  const Real *, int, const Real *, Real *)>(
-                func_name, {{"n_coeffs", coeffs.size()}, {"n_digits", n_digits}, {"unroll_factor", unroll_factor}});
+                func_name,
+                {{"n_coeffs_rt", coeffs.size()}, {"n_digits_rt", n_digits}, {"unroll_factor", unroll_factor}});
 
             return [jit_func, coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
                                       const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
@@ -218,11 +229,10 @@ direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_
             auto jit_func = RS->compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
                                                  const Real *, int, const Real *, Real *)>(
                 func_name,
-                {{"n_coeffs", coeffs.size()}, {"n_digits", n_digits}, {"unroll_factor", unroll_factor}});
+                {{"n_coeffs_rt", coeffs.size()}, {"n_digits_rt", n_digits}, {"unroll_factor", unroll_factor}});
 
             return [jit_func, coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
-                                           const Real *r_src, const Real *charge, int n_trg, const Real *r_trg,
-                                           Real *pot) {
+                                      const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
                 jit_func(nd, rsc, cen, d2max, thresh2, coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot);
             };
         }
@@ -239,7 +249,7 @@ direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_
             auto jit_func = RS->compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
                                                  const Real *, int, const Real *, Real *)>(
                 func_name,
-                {{"n_coeffs", pswf_coeffs.size()}, {"n_digits", n_digits}, {"unroll_factor", unroll_factor}});
+                {{"n_coeffs_rt", pswf_coeffs.size()}, {"n_digits_rt", n_digits}, {"unroll_factor", unroll_factor}});
 
             return [jit_func, pswf_coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
                                            const Real *r_src, const Real *charge, int n_trg, const Real *r_trg,
@@ -261,7 +271,8 @@ direct_evaluator_func<Real> make_evaluator(dmk_ikernel kernel, int n_dim, int n_
 
             auto jit_func = RS->compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
                                                  const Real *, int, const Real *, Real *)>(
-                func_name, {{"n_coeffs", coeffs.size()}, {"n_digits", n_digits}, {"unroll_factor", unroll_factor}});
+                func_name,
+                {{"n_coeffs_rt", coeffs.size()}, {"n_digits_rt", n_digits}, {"unroll_factor", unroll_factor}});
 
             return [jit_func, coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
                                       const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
@@ -313,64 +324,13 @@ void yukawa_direct_eval(const ndview<const Real, 2> &r_src, const std::array<std
     }
 }
 
-template <typename Real, int DIM>
-void direct_eval(dmk_ikernel ikernel, const ndview<Real, 2> &r_src, const std::array<std::span<const Real>, DIM> &r_trg,
-                 const ndview<Real, 2> &charges, const ndview<Real, 1> &coeffs, const double *kernel_params, Real scale,
-                 Real center, Real d2max, ndview<Real, 2> u, int n_digits) {
-    constexpr int VECWIDTH = std::is_same_v<Real, float> ? 2 * VECDIM : VECDIM;
-    const int nd = charges.extent(0);
-    const int ndim = DIM;
-    const int nsrc = r_src.extent(1);
-    const int ntrg = r_trg[0].size();
-    const Real thresh2 = 1E-30; // FIXME
-    const Real *trg_ptrs[3] = {r_trg[0].data(), r_trg[1].data(), DIM == 3 ? r_trg[2].data() : nullptr};
-
-    switch (ikernel) {
-    case dmk_ikernel::DMK_YUKAWA:
-        return yukawa_direct_eval<Real, DIM>(r_src, r_trg, charges, coeffs, *kernel_params, scale, center, d2max, u);
-    case dmk_ikernel::DMK_LAPLACE:
-        if constexpr (DIM == 2)
-            return dmk::log_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
-                &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data(), &nsrc, charges.data(), trg_ptrs[0],
-                trg_ptrs[1], trg_ptrs[2], &ntrg, u.data(), &thresh2);
-        if constexpr (DIM == 3)
-            return dmk::l3d_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
-                &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data(), &nsrc, charges.data(), trg_ptrs[0],
-                trg_ptrs[1], trg_ptrs[2], &ntrg, u.data(), &thresh2);
-    case dmk_ikernel::DMK_SQRT_LAPLACE:
-        if constexpr (DIM == 2)
-            return dmk::l3d_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
-                &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data(), &nsrc, charges.data(), trg_ptrs[0],
-                trg_ptrs[1], trg_ptrs[2], &ntrg, u.data(), &thresh2);
-        if constexpr (DIM == 3)
-            return dmk::sl3d_local_kernel_directcp_vec_cpp<Real, VECWIDTH>(
-                &nd, &ndim, &n_digits, &scale, &center, &d2max, r_src.data(), &nsrc, charges.data(), trg_ptrs[0],
-                trg_ptrs[1], trg_ptrs[2], &ntrg, u.data(), &thresh2);
-    }
-}
-
-template void direct_eval<float, 2>(dmk_ikernel ikernel, const ndview<float, 2> &r_src,
-                                    const std::array<std::span<const float>, 2> &r_trg, const ndview<float, 2> &charges,
-                                    const ndview<float, 1> &coeffs, const double *kernel_params, float scale,
-                                    float center, float d2max, ndview<float, 2> u, int n_digits);
-template void direct_eval<float, 3>(dmk_ikernel ikernel, const ndview<float, 2> &r_src,
-                                    const std::array<std::span<const float>, 3> &r_trg, const ndview<float, 2> &charges,
-                                    const ndview<float, 1> &coeffs, const double *kernel_params, float scale,
-                                    float center, float d2max, ndview<float, 2> u, int n_digits);
-template void direct_eval<double, 2>(dmk_ikernel ikernel, const ndview<double, 2> &r_src,
-                                     const std::array<std::span<const double>, 2> &r_trg,
-                                     const ndview<double, 2> &charges, const ndview<double, 1> &coeffs,
-                                     const double *kernel_params, double scale, double center, double d2max,
-                                     ndview<double, 2> u, int n_digits);
-template void direct_eval<double, 3>(dmk_ikernel ikernel, const ndview<double, 2> &r_src,
-                                     const std::array<std::span<const double>, 3> &r_trg,
-                                     const ndview<double, 2> &charges, const ndview<double, 1> &coeffs,
-                                     const double *kernel_params, double scale, double center, double d2max,
-                                     ndview<double, 2> u, int n_digits);
-
-template direct_evaluator_func<float> make_evaluator<float>(dmk_ikernel kernel, int n_dim, int n_digits,
-                                                            int unroll_factor);
-template direct_evaluator_func<double> make_evaluator<double>(dmk_ikernel kernel, int n_dim, int n_digits,
-                                                              int unroll_factor);
+template direct_evaluator_func<float> make_evaluator_aot<float>(dmk_ikernel kernel, int n_dim, int n_digits,
+                                                                int unroll_factor);
+template direct_evaluator_func<double> make_evaluator_aot<double>(dmk_ikernel kernel, int n_dim, int n_digits,
+                                                                  int unroll_factor);
+template direct_evaluator_func<float> make_evaluator_jit<float>(dmk_ikernel kernel, int n_dim, int n_digits,
+                                                                int unroll_factor);
+template direct_evaluator_func<double> make_evaluator_jit<double>(dmk_ikernel kernel, int n_dim, int n_digits,
+                                                                  int unroll_factor);
 
 } // namespace dmk
