@@ -205,7 +205,6 @@ inline void complex_deinterleave(const __m256 &lo, const __m256 &hi, __m256 &rea
     // lo = [r0,i0,r1,i1,r2,i2,r3,i3], hi = [r4,i4,r5,i5,r6,i6,r7,i7]
     __m256 a = _mm256_shuffle_ps(lo, hi, 0x88);                    // [r0,r1,r4,r5,r2,r3,r6,r7]
     __m256 b = _mm256_shuffle_ps(lo, hi, 0xDD);                    // [i0,i1,i4,i5,i2,i3,i6,i7]
-    real = _mm256_permute4x64_epi64(_mm256_castps_si256(a), 0xD8); // fix cross-lane
     real = _mm256_castsi256_ps(_mm256_permute4x64_epi64(_mm256_castps_si256(a), 0xD8));
     imag = _mm256_castsi256_ps(_mm256_permute4x64_epi64(_mm256_castps_si256(b), 0xD8));
 }
