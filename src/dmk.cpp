@@ -118,9 +118,9 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d float", 1) {
     double l2_err_src = 0.0;
     double l2_err_trg = 0.0;
     for (int i = 0; i < n_src; ++i)
-        l2_err_src += pot_src[i] != 0.0 ? sctl::pow<2>(1.0 - pot_srcf[i] / pot_src[i]) : 0.0;
+        l2_err_src += pot_src[i] ? sctl::pow<2>(1.0 - pot_srcf[i] / pot_src[i]) : 0.0;
     for (int i = 0; i < n_trg; ++i)
-        l2_err_trg += pot_trg[i] != 0.0 ? sctl::pow<2>(1.0 - pot_trgf[i] / pot_trg[i]) : 0.0;
+        l2_err_trg += pot_trg[i] ? sctl::pow<2>(1.0 - pot_trgf[i] / pot_trg[i]) : 0.0;
 
     l2_err_src = std::sqrt(l2_err_src) / n_src;
     l2_err_trg = std::sqrt(l2_err_trg) / n_trg;

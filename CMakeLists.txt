@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.19)
 
 project(dmk LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
@@ -6,11 +6,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(DMK_BUILD_TESTS "Build tests" ON)
 option(DMK_BUILD_EXAMPLES "Build examples" ON)
-option(DMK_INSTRUMENT "Instrument the code. Requires PAPI" OFF)
+option(DMK_INSTRUMENT "Instrument the code" OFF)
 option(DMK_BUILD_PVFMM "Build PVFMM for comparison. Useless without DMK_BUILD_EXAMPLES" OFF)
 option(DMK_HAVE_MPI "Use MPI for parallelism" ON)
 option(DMK_HAVE_OPENMP "Use OpenMP for parallelism" ON)
 option(DMK_BUILD_REFERENCE "Build reference Fortran implementation" OFF)
+option(DMK_USE_JIT "Use JIT compilation where supported (requires LLVM)" OFF)
 
 if (DMK_BUILD_REFERENCE)
   enable_language(Fortran)
@@ -19,13 +20,13 @@ if (DMK_BUILD_REFERENCE)
   endif()
 endif()
 
+set(DMK_VECLIB_DEFINE "")
 if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
-  add_compile_options("-DSCTL_HAVE_SVML")
+  set(DMK_VECLIB_DEFINE "SCTL_HAVE_SVML")
 else()
-  if (NOT APPLE)
-    add_compile_options("-DSCTL_HAVE_LIBMVEC")
-  endif()
+  set(DMK_VECLIB_DEFINE "SCTL_HAVE_LIBMVEC")
 endif()
+add_compile_options(-D${DMK_VECLIB_DEFINE})
 
 # Disable google tests and HDF5 for NDA
 set(Build_Tests OFF CACHE BOOL "" FORCE)
@@ -40,12 +41,7 @@ endif()
 
 set(DMK_CXX_FLAGS "${DMK_CXX_FLAGS};-march=native;-DSCTL_MAX_DEPTH=62")
 if(${DMK_INSTRUMENT})
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(PAPI REQUIRED IMPORTED_TARGET papi)
-  set(PAPI_TARGET papi)
   add_compile_options("-DSCTL_PROFILE=5;-DDMK_INSTRUMENT")
-else()
-  set(PAPI_TARGET "")
 endif()
 
 set(DMK_OPENMP_TARGET "")
@@ -90,6 +86,30 @@ add_subdirectory(extern/spdlog EXCLUDE_FROM_ALL)
 add_subdirectory(extern/nanobench EXCLUDE_FROM_ALL)
 add_subdirectory(extern/doctest)
 add_subdirectory(extern/nda)
+if (DMK_USE_JIT)
+  set(DMK_CXX_FLAGS "${DMK_CXX_FLAGS};-DDMK_USE_JIT")
+  set(RUFUS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(RUFUS_LINK_LLVM_SHARED ON CACHE BOOL "" FORCE)
+  set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+  add_subdirectory(extern/RuFuS)
+
+  include(FetchContent)
+  FetchContent_Declare(
+    polyfit
+    GIT_REPOSITORY https://github.com/DiamonDinoia/polyfit.git
+    GIT_TAG        a2994771155ed4cd22c2b792b463c42eefca3067
+  )
+  set(Build_Tests OFF CACHE BOOL "" FORCE) # gtest... tests
+  set(MONOFIT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(MONOFIT_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(polyfit)
+
+  rufus_embed_ir_as_header(jit_kernels src/jit_kernels.cpp
+    INCLUDES ${DMK_INCLUDES}
+    DEFINITIONS ${DMK_VECLIB_DEFINE}
+    FROM_TARGET nda::nda_c
+  )
+endif()
 
 set(DMK_REFERENCE_TARGET "")
 if (DMK_BUILD_REFERENCE)
@@ -124,14 +144,15 @@ endif()
 
 set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp src/legeexps.cpp
   src/fourier_data.cpp src/tensorprod.cpp src/planewave.cpp src/direct.cpp src/prolate.cpp src/prolate0_eval.cpp
-  src/timing.cpp
+  src/timing.cpp src/aot_kernels.cpp
   ${DMK_TEST_SRC}
 )
 add_library(DMKOBJS OBJECT ${DMK_SRC})
 set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES} ${PAPI_INCLUDEDIR})
-target_link_libraries(DMKOBJS PUBLIC ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET} ${PAPI_TARGET}
-  nda::nda_c spdlog::spdlog_header_only doctest::doctest BLAS::BLAS
+target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES})
+target_link_libraries(DMKOBJS PUBLIC ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET}
+  nda::nda_c spdlog::spdlog_header_only doctest::doctest BLAS::BLAS 
+  $<$<BOOL:${DMK_USE_JIT}>:RuFuS::rufus jit_kernels polyfit::polyfit>
 )
 target_compile_options(DMKOBJS PUBLIC "${DMK_CXX_FLAGS}")
 
@@ -142,7 +163,9 @@ target_compile_options(${PROJECT_NAME} PUBLIC "${DMK_CXX_FLAGS}")
 
 add_library(dmk_shared SHARED)
 set_target_properties(${PROJECT_NAME}_shared PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
-target_link_libraries(${PROJECT_NAME}_shared PRIVATE DMKOBJS)
+target_link_libraries(${PROJECT_NAME}_shared PRIVATE DMKOBJS
+  $<$<BOOL:${DMK_USE_JIT}>:RuFuS::rufus jit_kernels polyfit::polyfit>
+)
 target_include_directories(${PROJECT_NAME}_shared PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_compile_options(${PROJECT_NAME}_shared PUBLIC "${DMK_CXX_FLAGS}")
 
@@ -153,3 +176,5 @@ endif()
 if(${DMK_BUILD_EXAMPLES})
   add_subdirectory(examples)
 endif()
+
+add_subdirectory(perf)

@@ -6,7 +6,6 @@
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
 
-#include <limits>
 #include <sctl.hpp>
 #include <stdexcept>
 
@@ -164,25 +163,32 @@ void charge2proxycharge_3d(const ndview<const T, 2> &r_src, const ndview<const T
     matrixview<T> dz({n_src, order}, &workspace[0]);
     matrixview<T> dyz({n_src, order * order}, &workspace[n_src * order]);
     matrixview<T> poly_x({order, n_src}, &workspace[n_src * order + n_src * order * order]);
-    matrixview<T> poly_y({order, n_src}, &workspace[2 * n_src * order + n_src * order * order]);
-    matrixview<T> poly_z({order, n_src}, &workspace[3 * n_src * order + n_src * order * order]);
-
+    matrixview<T> poly_y({n_src, order}, &workspace[2 * n_src * order + n_src * order * order]);
+    matrixview<T> poly_z({n_src, order}, &workspace[3 * n_src * order + n_src * order * order]);
+    constexpr int MAX_ORDER = 80;
     auto calc_polynomial = dmk::chebyshev::get_polynomial_calculator<T>(order);
+
     for (int i_src = 0; i_src < n_src; ++i_src) {
         calc_polynomial(scale_factor * (r_src(0, i_src) - center(0)), &poly_x(0, i_src));
-        calc_polynomial(scale_factor * (r_src(1, i_src) - center(1)), &poly_y(0, i_src));
-        calc_polynomial(scale_factor * (r_src(2, i_src) - center(2)), &poly_z(0, i_src));
+
+        T tmp[MAX_ORDER];
+        calc_polynomial(scale_factor * (r_src(1, i_src) - center(1)), tmp);
+        for (int k = 0; k < order; ++k)
+            poly_y(i_src, k) = tmp[k];
+        calc_polynomial(scale_factor * (r_src(2, i_src) - center(2)), tmp);
+        for (int k = 0; k < order; ++k)
+            poly_z(i_src, k) = tmp[k];
     }
 
     for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
+        const T *ch = &charge(i_dim, 0);
+
         for (int k = 0; k < order; ++k)
-            for (int m = 0; m < n_src; ++m)
-                dz(m, k) = charge(i_dim, m) * poly_z(k, m);
+            util::vec_mul(&dz(0, k), ch, &poly_z(0, k), n_src);
 
         for (int k = 0; k < order; ++k)
             for (int j = 0; j < order; ++j)
-                for (int m = 0; m < n_src; ++m)
-                    dyz(m, j + k * order) = poly_y(j, m) * dz(m, k);
+                util::vec_mul(&dyz(0, j + k * order), &poly_y(0, j), &dz(0, k), n_src);
 
         matrixview<T>({order, order * order}, &coeffs(0, 0, 0, i_dim)) += poly_x * dyz;
     }
@@ -294,31 +300,45 @@ void eval_targets_3d(const ndview<T, 4> &coeffs, const ndview<T, 2> &r_trg, cons
     const int n_order = coeffs.extent(0);
     const int n_charge_dim = coeffs.extent(3);
     const int n_trg = r_trg.extent(1);
+    if (!n_trg)
+        return;
 
     workspace.ReInit(3 * n_order * n_trg + n_order * n_order * n_trg);
-    ndview<T, 2> poly_views[] = {ndview<T, 2>({n_order, n_trg}, &workspace[0]),
-                                 ndview<T, 2>({n_order, n_trg}, &workspace[n_order * n_trg]),
-                                 ndview<T, 2>({n_order, n_trg}, &workspace[2 * n_order * n_trg])};
-
-    ndview<T, 3> tmp({n_order, n_order, n_trg}, &workspace[3 * n_order * n_trg]);
+    ndview<T, 2> poly_x({n_trg, n_order}, &workspace[0]);
+    ndview<T, 2> poly_y({n_trg, n_order}, &workspace[n_order * n_trg]);
+    ndview<T, 2> poly_z({n_trg, n_order}, &workspace[2 * n_order * n_trg]);
+    ndview<T, 2> tmp_flat({n_trg, n_order * n_order}, &workspace[3 * n_order * n_trg]);
 
     auto calc_polynomial = dmk::chebyshev::get_polynomial_calculator<T>(n_order);
-    for (int i_dim = 0; i_dim < n_dim; ++i_dim) {
-        for (int i = 0; i < n_trg; ++i) {
-            T x = (r_trg(i_dim, i) - cen(i_dim)) * sc;
-            calc_polynomial(x, &poly_views[i_dim](0, i));
-        }
+
+    constexpr int MAX_ORDER = 80;
+    for (int i = 0; i < n_trg; ++i) {
+        T tmp[MAX_ORDER];
+        calc_polynomial(sc * (r_trg(0, i) - cen(0)), tmp);
+        for (int k = 0; k < n_order; ++k)
+            poly_x(i, k) = tmp[k];
+        calc_polynomial(sc * (r_trg(1, i) - cen(1)), tmp);
+        for (int k = 0; k < n_order; ++k)
+            poly_y(i, k) = tmp[k];
+        calc_polynomial(sc * (r_trg(2, i) - cen(2)), tmp);
+        for (int k = 0; k < n_order; ++k)
+            poly_z(i, k) = tmp[k];
     }
 
-    auto opt_dot = dmk::util::get_opt_dot<T>(n_order);
     for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
-        // Transform in z
-        gemm::gemm('n', 'n', n_order * n_order, n_trg, n_order, T{1.0}, &coeffs(0, 0, 0, i_dim), n_order * n_order,
-                   poly_views[2].data(), n_order, T{0.0}, tmp.data(), n_order * n_order);
+        gemm::gemm('n', 't', n_trg, n_order * n_order, n_order, T{1.0}, poly_z.data(), n_trg, &coeffs(0, 0, 0, i_dim),
+                   n_order * n_order, T{0.0}, tmp_flat.data(), n_trg);
 
-        for (int k = 0; k < n_trg; ++k)
-            for (int i = 0; i < n_order; ++i)
-                pot(i_dim, k) += poly_views[1](i, k) * opt_dot(&tmp(0, i, k), &poly_views[0](0, k));
+        // Accumulate: pot(i_dim, k) += Σ_i poly_y(k, i) * Σ_j tmp_flat(k, j + i*n_order) * poly_x(k, j)
+        T *__restrict__ pot_ptr = &pot(i_dim, 0);
+        for (int i = 0; i < n_order; ++i) {
+            const T *__restrict__ py = &poly_y(0, i);
+            for (int j = 0; j < n_order; ++j) {
+                const T *__restrict__ tf = &tmp_flat(0, j + i * n_order);
+                const T *__restrict__ px = &poly_x(0, j);
+                util::vec_fma_3(pot_ptr, py, tf, px, n_trg); // pot[k] += py[k] * tf[k] * px[k]
+            }
+        }
     }
 
     const int n_flops_poly = (3 * n_order + 2) * n_trg;

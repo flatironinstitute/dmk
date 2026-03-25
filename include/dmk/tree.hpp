@@ -278,6 +278,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     std::vector<int> proxy_down_zeroed;
 
     sctl::Vector<sctl::Vector<Real>> workspaces_;
+    std::vector<direct_evaluator_func<Real>> evaluator_by_level;
     const sctl::Comm comm_;
     bool debug_omit_pw = false;
     bool debug_omit_direct = false;

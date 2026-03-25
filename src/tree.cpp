@@ -130,6 +130,10 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     debug_omit_direct = getenv("DMK_DEBUG_OMIT_DIRECT") != nullptr;
     debug_dump_tree = getenv("DMK_DEBUG_DUMP_TREE") != nullptr;
 
+    debug_omit_pw = getenv("DMK_DEBUG_OMIT_PW") != nullptr;
+    debug_omit_direct = getenv("DMK_DEBUG_OMIT_DIRECT") != nullptr;
+    debug_dump_tree = getenv("DMK_DEBUG_DUMP_TREE") != nullptr;
+
     logger->info("tree build started");
 
     const int n_src = r_src.Dim() / DIM;
@@ -209,6 +213,64 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 
     precompute_fourier_data();
     logger->debug("finished updating local potential expansion coefficients");
+    logger->debug("building evaluators");
+
+    try {
+        auto eval = make_evaluator_aot<Real>(params.kernel, DIM, n_digits, 3);
+#ifdef DMK_USE_JIT
+        if (getenv("DMK_DEBUG_FORCE_AOT") == nullptr)
+            eval = make_evaluator_jit<Real>(params.kernel, DIM, n_digits, 3);
+#endif
+        evaluator_by_level.assign(n_levels(), eval);
+    } catch (std::exception &e) {
+        logger->error("Failed to create direct evaluator: {}", e.what());
+    }
+    if (params.kernel == DMK_YUKAWA) {
+        // FIXME: This should be moved to direct.cpp, but it was annoying to add the coefficient
+        // binding cleanly
+        for (int level = 0; level < n_levels(); ++level) {
+            const auto coeffs = fourier_data.cheb_coeffs(level);
+            const Real lambda = params.fparam;
+            evaluator_by_level.push_back([coeffs, lambda](int nd, Real rsc, Real cen, Real d2max, Real thresh2,
+                                                          int n_src, const Real *r_src_ptr, const Real *charge_ptr,
+                                                          int n_trg, const Real *r_trg_ptr, Real *pot) {
+                constexpr Real threshq = 1e-30;
+                ndview<Real, 2> u({nd, n_trg}, pot);
+                ndview<const Real, 2> charges({nd, n_src}, charge_ptr);
+                ndview<const Real, 2> r_src({DIM, n_src}, r_src_ptr);
+                ndview<const Real, 2> r_trg({DIM, n_trg}, r_trg_ptr);
+                for (int i_trg = 0; i_trg < n_trg; i_trg++) {
+                    for (int i_src = 0; i_src < n_src; i_src++) {
+                        const Real dx = r_trg(0, i_trg) - r_src(0, i_src);
+                        const Real dy = r_trg(1, i_trg) - r_src(1, i_src);
+                        Real dd = dx * dx + dy * dy;
+                        if constexpr (DIM == 3) {
+                            Real dz = r_trg(2, i_trg) - r_src(2, i_src);
+                            dd += dz * dz;
+                        }
+
+                        if (dd < threshq || dd > d2max)
+                            continue;
+
+                        const Real r = sqrt(dd);
+                        const Real xval = r * rsc + cen;
+                        const Real fval = chebyshev::evaluate(xval, coeffs.size() + 1, coeffs.data());
+                        Real dkval;
+                        if constexpr (DIM == 2)
+                            dkval = util::cyl_bessel_k(0, lambda * r);
+                        if constexpr (DIM == 3)
+                            dkval = std::exp(-lambda * r) / r;
+
+                        const Real factor = dkval + fval;
+                        for (int i = 0; i < nd; ++i)
+                            u(i, i_trg) += charges(i, i_src) * factor;
+                    }
+                }
+            });
+        }
+    }
+
+    logger->debug("finished building evaluators");
     logger->info("tree build completed");
 }
 
@@ -476,7 +538,7 @@ void DMKPtTree<T, DIM>::build_direct_interaction_lists() {
             // (boxsize + 2 * boxsize) / 2 is the max distance from center of box to center of parent neighbor box
             const double cutoff = 1.5 * 1.05 * boxsize[i_level];
             for (auto neighb : node_lists[node_lists[box].parent].nbr) {
-                if (neighb < 0 || !is_global_leaf[neighb])
+                if (neighb < 0 || !is_global_leaf[neighb] || !src_counts_with_halo[neighb])
                     continue;
 
                 bool inrange = true;
@@ -582,7 +644,6 @@ void DMKPtTree<T, DIM>::precompute_fourier_data() {
     window_fourier_data.poly2pw.ReInit(n_order * n_pw);
     window_fourier_data.pw2poly.ReInit(n_order * n_pw);
     window_fourier_data.radialft.ReInit(n_pw_modes);
-    window_fourier_data.wpwshift.ReInit(n_pw_modes * sctl::pow<DIM>(3));
     get_windowed_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits, boxsize[0],
                                    fourier_data.prolate0_fun, kernel_ft);
     util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<T, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
@@ -766,23 +827,68 @@ void multiply_kernelFT_cd2p(const sctl::Vector<T> &radialft, auto &&pwexp) {
     sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, n_flops);
 }
 
+template <typename Real, int VecLen>
+inline void shift_planewave_simd(int nexp, int nd, const Real *__restrict__ pw1, Real *__restrict__ pw2,
+                                 const Real *__restrict__ shift_r, const Real *__restrict__ shift_i) {
+    using Vec = sctl::Vec<Real, VecLen>;
+    constexpr int N = VecLen;
+    using dmk::util::complex_deinterleave;
+    using dmk::util::complex_interleave;
+
+    for (int ind = 0; ind < nd; ++ind) {
+        const Real *s1 = pw1 + ind * nexp * 2;
+        Real *s2 = pw2 + ind * nexp * 2;
+
+        int i = 0;
+        for (; i + N <= nexp; i += N) {
+            Vec ar, ai;
+            Vec lo1 = Vec::Load(s1 + 2 * i);
+            Vec hi1 = Vec::Load(s1 + 2 * i + N);
+            complex_deinterleave(lo1.get().v, hi1.get().v, ar.get().v, ai.get().v);
+
+            Vec dr, di;
+            Vec lo2 = Vec::Load(s2 + 2 * i);
+            Vec hi2 = Vec::Load(s2 + 2 * i + N);
+            complex_deinterleave(lo2.get().v, hi2.get().v, dr.get().v, di.get().v);
+
+            Vec cr = Vec::Load(shift_r + i);
+            Vec ci = Vec::Load(shift_i + i);
+
+            dr = FMA(ar, cr, dr);
+            dr = FMA(-ai, ci, dr);
+            di = FMA(ar, ci, di);
+            di = FMA(ai, cr, di);
+
+            Vec out_lo, out_hi;
+            complex_interleave(dr.get().v, di.get().v, out_lo.get().v, out_hi.get().v);
+            out_lo.Store(s2 + 2 * i);
+            out_hi.Store(s2 + 2 * i + N);
+        }
+
+        for (; i < nexp; ++i) {
+            Real ar = s1[2 * i], ai = s1[2 * i + 1];
+            Real cr = shift_r[i], ci = shift_i[i];
+            s2[2 * i] += ar * cr - ai * ci;
+            s2[2 * i + 1] += ar * ci + ai * cr;
+        }
+    }
+}
+
 template <typename Complex, int DIM>
 void shift_planewave(const ndview<Complex, DIM + 1> &pwexp1_, ndview<Complex, DIM + 1> &pwexp2_,
                      const ndview<const Complex, 1> &wpwshift) {
-    // Flatten our views
+    using Real = typename Complex::value_type;
+    constexpr int VecLen = sctl::DefaultVecLen<Real>();
+
     const int nd = pwexp1_.extent(DIM);
     const int nexp = wpwshift.extent(0);
-    dmk::ndview<const Complex, 2> pwexp1({nexp, nd}, pwexp1_.data());
-    dmk::ndview<Complex, 2> pwexp2({nexp, nd}, pwexp2_.data());
+    const Real *shift_r = reinterpret_cast<const Real *>(wpwshift.data());
+    const Real *shift_i = shift_r + nexp;
 
-    using ArrayMap = ndview<Complex, 1>;
-    using ConstArrayMap = ndview<const Complex, 1>;
-    ConstArrayMap wpwshift_view({nexp}, &wpwshift(0));
-    for (int ind = 0; ind < nd; ++ind) {
-        ConstArrayMap pw1_view({nexp}, &pwexp1(0, ind));
-        ArrayMap pw2_view({nexp}, &pwexp2(0, ind));
-        pw2_view += pw1_view * wpwshift_view;
-    }
+    const Real *pw1 = reinterpret_cast<const Real *>(pwexp1_.data());
+    Real *pw2 = reinterpret_cast<Real *>(pwexp2_.data());
+
+    shift_planewave_simd<Real, VecLen>(nexp, nd, pw1, pw2, shift_r, shift_i);
 }
 
 template <typename T, int DIM>
@@ -830,7 +936,7 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &box
                 dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(box), poly2pw_view, pw_out_view(box),
                                                       workspace);
                 multiply_kernelFT_cd2p<Real, DIM>(radialft, pw_out_view(box));
-            } else if (proxy_coeffs_offsets_downward[box] != -1)
+            } else if (pw_out_offsets[box] != -1)
                 pw_out_view(box) = 0;
         }
     }
@@ -912,9 +1018,8 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
                             continue;
                         const ndview<Real, 2> p2c_view({n_order, DIM},
                                                        const_cast<Real *>(&p2c[i_child * DIM * n_order * n_order]));
-                        const bool add_to_child = proxy_down_zeroed[child];
-                        tensorprod::transform<Real, DIM>(nd, add_to_child, proxy_view_downward(box), p2c_view,
-                                                         proxy_view_downward(child), workspace);
+                        tensorprod::transform<Real, DIM>(nd, proxy_down_zeroed[child], proxy_view_downward(box),
+                                                         p2c_view, proxy_view_downward(child), workspace);
                         proxy_down_zeroed[child] = true;
                     }
                 }
@@ -1011,92 +1116,279 @@ Real get_self_interaction_constant(FourierData<Real> &fourier_data, dmk_ikernel 
     return w0;
 }
 
+// Contact geometry between two adjacent boxes.
+//
+// Two boxes can share a face, edge, or corner. In each spatial dimension,
+// the boxes either "touch" (share a boundary plane) or "overlap" (have a
+// shared extent in that dimension).
+//
+// The contact feature between two adjacent boxes:
+//
+//   2D:
+//     - Edge:   1 touch dim, 1 overlap dim → a line segment
+//     - Corner: 2 touch dims               → a point
+//
+//   3D:
+//     - Face:   1 touch dim,  2 overlap dims → a rectangle
+//     - Edge:   2 touch dims, 1 overlap dim  → a line segment
+//     - Corner: 3 touch dims                 → a point
+//
+//   In general: n_touch = DIM is always a corner,
+//               n_touch = 1 is the codimension-1 feature (edge in 2D, face in 3D)
+template <typename Real, int DIM>
+struct ContactGeometry {
+    int touch_dims[DIM];
+    Real touch_coords[DIM];
+    int overlap_dims[DIM];
+    Real overlap_lo[DIM];
+    Real overlap_hi[DIM];
+    int n_touch = 0;
+    int n_overlap = 0;
+    Real d2max;
+
+    ContactGeometry(const Real *corner_a, const Real *corner_b, Real size_a, Real size_b, Real d2max_) : d2max(d2max_) {
+        for (int d = 0; d < DIM; d++) {
+            Real a = corner_a[d], b = corner_b[d];
+            Real sa = size_a, sb = size_b;
+            if (a + sa == b) {
+                touch_dims[n_touch] = d;
+                touch_coords[n_touch] = b;
+                n_touch++;
+            } else if (b + sb == a) {
+                touch_dims[n_touch] = d;
+                touch_coords[n_touch] = a;
+                n_touch++;
+            } else {
+                overlap_dims[n_overlap] = d;
+                overlap_lo[n_overlap] = std::max(a, b);
+                overlap_hi[n_overlap] = std::min(a + sa, b + sb);
+                n_overlap++;
+            }
+        }
+    }
+
+    // To check if a particle is within interaction range of the target box,
+    // we compute its distance to the nearest point on the contact feature.
+    //   - In touch dimensions, the contact is a fixed coordinate (the shared plane),
+    //     so distance is just |p - contact_coord|.
+    //   - In overlap dimensions, the contact spans an interval [lo, hi]. The nearest
+    //     point is obtained by clamping p to that interval. If p is inside the
+    //     interval, its contribution to the distance is zero. If p is outside, the
+    //     contribution is the distance to the nearest endpoint. This produces a rounded
+    //     corner at the edge of the overlap intervals. half-diskorectangles,
+    //     quarter-spherocylinders, faces with quarter-circle bevels, 1/8th spheres, 1/4
+    //     circles. yadayada.
+    Real dist2_to_contact(const Real *p) const {
+        Real dist2 = 0;
+        for (int t = 0; t < n_touch; t++) {
+            Real delta = p[touch_dims[t]] - touch_coords[t];
+            dist2 += delta * delta;
+        }
+        for (int t = 0; t < n_overlap; t++) {
+            Real coord = p[overlap_dims[t]];
+            Real clamped = std::min(std::max(coord, overlap_lo[t]), overlap_hi[t]);
+            Real delta = coord - clamped;
+            dist2 += delta * delta;
+        }
+        return dist2;
+    }
+
+    bool in_range(const Real *p) const { return dist2_to_contact(p) < d2max; }
+};
+
+// Filter source particles by distance to contact feature.
+// Returns the number of particles that passed the filter.
+// Filtered positions and charges are written contiguously into the provided buffers.
+template <typename Real, int DIM>
+int filter_sources(const ContactGeometry<Real, DIM> &geom, int n_src, const Real *r_src, const Real *charge,
+                   int n_charge_components, Real *r_src_out, Real *charge_out) {
+    int n_filtered = 0;
+    for (int i = 0; i < n_src; ++i) {
+        const Real *p = r_src + DIM * i;
+        if (geom.in_range(p)) {
+            for (int d = 0; d < DIM; ++d)
+                r_src_out[DIM * n_filtered + d] = p[d];
+            for (int j = 0; j < n_charge_components; ++j)
+                charge_out[n_filtered * n_charge_components + j] = charge[i * n_charge_components + j];
+            n_filtered++;
+        }
+    }
+    return n_filtered;
+}
+
+// Filter evaluation target points by distance to contact feature.
+// Returns the number of points that passed the filter.
+// Filtered positions are written contiguously into r_trg_out.
+// index_map[k] = original index of the k-th filtered point, used to scatter results back.
+template <typename Real, int DIM>
+int filter_targets(const ContactGeometry<Real, DIM> &geom, int n_trg, const Real *r_trg, Real *r_trg_out,
+                   int *index_map) {
+    int n_filtered = 0;
+    for (int i = 0; i < n_trg; ++i) {
+        const Real *p = r_trg + DIM * i;
+        if (geom.in_range(p)) {
+            for (int d = 0; d < DIM; ++d)
+                r_trg_out[DIM * n_filtered + d] = p[d];
+            index_map[n_filtered] = i;
+            n_filtered++;
+        }
+    }
+    return n_filtered;
+}
+
+// Scatter-add filtered potential values back to the original potential array.
+template <typename Real>
+void scatter_add_potential(const Real *pot_filtered, Real *pot, const int *index_map, int n_filtered,
+                           int n_components) {
+    for (int i = 0; i < n_filtered; ++i)
+        for (int j = 0; j < n_components; ++j)
+            pot[index_map[i] * n_components + j] += pot_filtered[i * n_components + j];
+}
+
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, const Real *r_trg_t) {
     sctl::Profile::Scoped profile("evaluate_direct_interactions", &comm_);
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_mid = this->GetNodeMID();
     const auto &node_lists = this->GetNodeLists();
+
     Real w0[SCTL_MAX_DEPTH];
     for (int i_level = 0; i_level < n_levels(); ++i_level)
         w0[i_level] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
     const bool need_grad_src = params.kernel == DMK_LAPLACE && params.pgh_src >= DMK_POTENTIAL_GRAD;
     const bool need_grad_trg = params.kernel == DMK_LAPLACE && params.pgh_trg >= DMK_POTENTIAL_GRAD;
 
-#pragma omp parallel for schedule(dynamic)
-    for (int idx = 0; idx < direct_work.size(); ++idx) {
-        const int i_box = direct_work[idx];
-        const int n_src_i = src_counts_owned[i_box];
-        const int n_trg_i = trg_counts_owned[i_box];
-        const int i_level = node_mid[i_box].Depth();
-        for (auto j_box : list1(i_box)) {
-            int j_level = node_mid[j_box].Depth();
-            Real bsize = boxsize[j_level];
-            // now find the interaction range of the residual kernel
-            if (ifpwexp[j_box] && j_box == i_box) {
-                // when ifpwexp(jbox)=1, self interaction at its own
-                // level is taken care of by plane - wave expansion
-                bsize /= Real{2.0};
-                j_level = j_level + 1;
-            } else if (j_level < i_level) {
-                // when the source box is bigger than the target box, residual interaction
-                // starts from the target box level
-                bsize = boxsize[i_level];
-                j_level = i_level;
+#pragma omp parallel
+    {
+        // Thread-local buffers for filtered particles
+        constexpr int MAX_CHARGE_DIM = 9;
+        constexpr int MAX_PTS = 1000;
+        util::StackOrHeapBuffer<Real, DIM * MAX_PTS> r_buf(DIM * params.n_per_leaf);
+        util::StackOrHeapBuffer<Real, MAX_CHARGE_DIM * MAX_PTS> charge_buf(params.n_mfm * params.n_per_leaf);
+        util::StackOrHeapBuffer<Real, DIM * MAX_PTS> r_trg_buf(DIM * params.n_per_leaf);
+        util::StackOrHeapBuffer<Real, MAX_CHARGE_DIM * MAX_PTS> pot_buf(params.n_mfm * params.n_per_leaf);
+        util::StackOrHeapBuffer<int, MAX_PTS> index_map(params.n_per_leaf);
+
+#pragma omp for schedule(dynamic)
+        for (int idx = 0; idx < direct_work.size(); ++idx) {
+            const int trg_box = direct_work[idx];
+            const int trg_level = node_mid[trg_box].Depth();
+
+            for (auto src_box : list1(trg_box)) {
+                int src_level = node_mid[src_box].Depth();
+                Real bsize = boxsize[src_level];
+
+                if (ifpwexp[src_box] && src_box == trg_box) {
+                    bsize /= Real{2.0};
+                    src_level = src_level + 1;
+                } else if (src_level < trg_level) {
+                    bsize = boxsize[trg_level];
+                    src_level = trg_level;
+                }
+
+                const Real d2max = bsize * bsize;
+                const Real bsizeinv = Real{1} / bsize;
+
+                Real rsc = 2 * bsizeinv;
+                Real cen = -bsize / Real{2};
+                const auto &cheb_coeffs = fourier_data.cheb_coeffs(src_level);
+
+                if ((params.kernel == DMK_SQRT_LAPLACE && DIM == 3) || (params.kernel == DMK_LAPLACE && DIM == 2)) {
+                    rsc = 2 * bsizeinv * bsizeinv;
+                    cen = Real{-1.0};
+                } else if (params.kernel == DMK_YUKAWA)
+                    cen = Real{-1.0};
+
+                // Determine if we should filter, and on which side
+                const bool src_larger = node_mid[src_box].Depth() < node_mid[trg_box].Depth();
+                const bool trg_larger = node_mid[src_box].Depth() > node_mid[trg_box].Depth();
+                const bool should_filter = src_larger || trg_larger;
+
+                // Precompute contact geometry once per box pair (only if asymmetric)
+                auto corner_a = node_mid[src_box].template Coord<Real>();
+                auto corner_b = node_mid[trg_box].template Coord<Real>();
+                auto size_a = boxsize[node_mid[src_box].Depth()];
+                auto size_b = boxsize[node_mid[trg_box].Depth()];
+
+                // Resolve source data: either filtered or original
+                int n_src = src_counts_with_halo[src_box];
+                const Real *r_src_ptr = r_src_with_halo_ptr(src_box);
+                const Real *charge_ptr = charge_with_halo_ptr(src_box);
+
+                // Remove points outside sqrt(d2max) range from shared box boundary
+                if (src_larger) {
+                    ContactGeometry<Real, DIM> geom(corner_a.data(), corner_b.data(), size_a, size_b, d2max);
+                    n_src = filter_sources(geom, n_src, r_src_ptr, charge_ptr, params.n_mfm, r_buf.data(),
+                                           charge_buf.data());
+                    r_src_ptr = r_buf.data();
+                    charge_ptr = charge_buf.data();
+                }
+                if (!n_src)
+                    continue;
+
+                // Evaluate potential at owned source points in the target box
+                if (src_counts_owned[trg_box]) {
+                    int n_eval_trg = src_counts_owned[trg_box];
+                    Real *eval_r_trg = r_src_owned_ptr(trg_box);
+                    Real *eval_pot = pot_src_ptr(trg_box);
+
+                    // Remove target points outside sqrt(d2max) range from shared box boundary
+                    if (trg_larger) {
+                        ContactGeometry<Real, DIM> geom(corner_a.data(), corner_b.data(), size_a, size_b, d2max);
+                        n_eval_trg = filter_targets(geom, n_eval_trg, eval_r_trg, r_trg_buf.data(), index_map.data());
+                        std::memset(pot_buf.data(), 0, n_eval_trg * params.n_mfm * sizeof(Real));
+                        eval_r_trg = r_trg_buf.data();
+                        eval_pot = pot_buf.data();
+                    }
+
+                    if (n_eval_trg > 0) {
+                        if (evaluator_by_level[src_level])
+                            evaluator_by_level[src_level](params.n_mfm, rsc, cen, d2max, 1e-30, n_src, r_src_ptr,
+                                                          charge_ptr, n_eval_trg, eval_r_trg, eval_pot);
+                        if (trg_larger)
+                            scatter_add_potential(pot_buf.data(), pot_src_ptr(trg_box), index_map.data(), n_eval_trg,
+                                                  params.n_mfm);
+                    }
+                }
+
+                // Evaluate potential at owned target points in the target box
+                if (trg_counts_owned[trg_box]) {
+                    int n_eval_trg = trg_counts_owned[trg_box];
+                    Real *eval_r_trg = r_trg_owned_ptr(trg_box);
+                    Real *eval_pot = pot_trg_ptr(trg_box);
+
+                    // Remove target points outside sqrt(d2max) range from shared box boundary
+                    if (trg_larger) {
+                        ContactGeometry<Real, DIM> geom(corner_a.data(), corner_b.data(), size_a, size_b, d2max);
+                        n_eval_trg = filter_targets(geom, n_eval_trg, eval_r_trg, r_trg_buf.data(), index_map.data());
+                        std::memset(pot_buf.data(), 0, n_eval_trg * params.n_mfm * sizeof(Real));
+                        eval_r_trg = r_trg_buf.data();
+                        eval_pot = pot_buf.data();
+                    }
+
+                    if (n_eval_trg > 0) {
+                        evaluator_by_level[src_level](params.n_mfm, rsc, cen, d2max, 1e-30, n_src, r_src_ptr,
+                                                      charge_ptr, n_eval_trg, eval_r_trg, eval_pot);
+
+                        if (trg_larger)
+                            scatter_add_potential(pot_buf.data(), pot_trg_ptr(trg_box), index_map.data(), n_eval_trg,
+                                                  params.n_mfm);
+                    }
+                }
             }
 
-            // kernel truncated at bsize, i.e., K(x,y)=0 for |x-y|^2 > d2max
-            const Real d2max = bsize * bsize;
-            const Real bsizeinv = Real{1} / bsize;
+            if (!src_counts_owned[trg_box])
+                continue;
 
-            // used in the kernel approximatin for boxes in list1
-            Real rsc = 2 * bsizeinv;
-            Real cen = -bsize / Real{2};
-            const auto &cheb_coeffs = fourier_data.cheb_coeffs(j_level);
-
-            if ((params.kernel == DMK_SQRT_LAPLACE && DIM == 3) || (params.kernel == DMK_LAPLACE && DIM == 2)) {
-                rsc = 2 * bsizeinv * bsizeinv;
-                cen = Real{-1.0};
-            }
-            if (params.kernel == DMK_YUKAWA) {
-                rsc = 2 * bsizeinv;
-                cen = Real{-1.0};
-            }
-
-            std::array<std::span<const Real>, DIM> r_trg;
-            assert(is_global_leaf[i_box]);
-            assert(is_global_leaf[j_box]);
-            if (n_src_i) {
-                for (int i = 0; i < DIM; ++i)
-                    r_trg[i] = std::span<const Real>(
-                        r_src_t + (r_src_offsets_owned[i_box] / DIM) + src_counts_owned[0] * i, n_src_i);
-
-                direct_eval<Real, DIM>(params.kernel, r_src_with_halo_view(j_box), r_trg, charge_with_halo_view(j_box),
-                                       cheb_coeffs, &params.fparam, rsc, cen, d2max, pot_src_view(i_box),
-                                       need_grad_src ? grad_src_ptr(i_box) : nullptr, n_digits);
-            }
-            if (n_trg_i) {
-                for (int i = 0; i < DIM; ++i)
-                    r_trg[i] = std::span<const Real>(
-                        r_trg_t + (r_trg_offsets_owned[i_box] / DIM) + trg_counts_owned[0] * i, n_trg_i);
-
-                direct_eval<Real, DIM>(params.kernel, r_src_with_halo_view(j_box), r_trg, charge_with_halo_view(j_box),
-                                       cheb_coeffs, &params.fparam, rsc, cen, d2max, pot_trg_view(i_box),
-                                       need_grad_trg ? grad_trg_ptr(i_box) : nullptr, n_digits);
-            }
+            // Correct for self-evaluations
+            auto pot = pot_src_view(trg_box);
+            auto charge = charge_with_halo_view(trg_box);
+            const auto depth = node_mid[trg_box].Depth() + ifpwexp[trg_box];
+            const auto correction_factor = w0[depth];
+            for (int i_src = 0; i_src < r_src_cnt_with_halo[trg_box]; ++i_src)
+                for (int i = 0; i < params.n_mfm; ++i)
+                    pot(i, i_src) -= correction_factor * charge(i, i_src);
         }
-
-        if (!n_src_i)
-            continue;
-
-        // Correct for self-evaluations
-        auto pot = pot_src_view(i_box);
-        auto charge = charge_with_halo_view(i_box);
-        const auto depth = node_mid[i_box].Depth() + ifpwexp[i_box];
-        const auto correction_factor = w0[depth];
-        for (int i_src = 0; i_src < r_src_cnt_with_halo[i_box]; ++i_src)
-            for (int i = 0; i < params.n_mfm; ++i)
-                pot(i, i_src) -= correction_factor * charge(i, i_src);
     }
 }
 

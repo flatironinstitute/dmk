@@ -77,7 +77,6 @@ void transform_3d(int add_flag, const ndview<T, 3> &fin, const ndview<T, 2> &uma
 template <typename T, int DIM>
 void transform(int nvec, int add_flag, const ndview<T, DIM + 1> &fin, const ndview<T, 2> &umat, ndview<T, DIM + 1> fout,
                sctl::Vector<T> &workspace) {
-    // dmk::util::PAPICounter papi_counter;
     const int nin = fin.extent(0);
     const int nout = fout.extent(0);
     if (DIM == 1) {
