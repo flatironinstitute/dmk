@@ -3,7 +3,6 @@
 // Usage: compile and run, or use as a doctest test file
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -13,6 +12,12 @@
 #include <dmk/tree.hpp>
 #include <dmk/util.hpp>
 #include <sctl.hpp>
+
+#ifdef DMK_HAVE_MPI
+auto MYCOMM = MPI_COMM_WORLD;
+#else
+auto MYCOMM = nullptr;
+#endif
 
 struct BenchmarkResult {
     int n_dim;
@@ -49,9 +54,12 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
     sctl::Vector<Real> pot_src(n_src * nd), pot_trg(n_trg * nd);
     sctl::Vector<Real> grad_src(n_src * nd * n_dim), grad_trg(n_trg * nd * n_dim);
     sctl::Vector<Real> hess_src(n_src * nd * n_dim * n_dim), hess_trg(n_trg * nd * n_dim * n_dim);
-    pot_src.SetZero(); pot_trg.SetZero();
-    grad_src.SetZero(); grad_trg.SetZero();
-    hess_src.SetZero(); hess_trg.SetZero();
+    pot_src.SetZero();
+    pot_trg.SetZero();
+    grad_src.SetZero();
+    grad_trg.SetZero();
+    hess_src.SetZero();
+    hess_trg.SetZero();
 
     pdmk_params params;
     params.eps = eps;
@@ -65,14 +73,14 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
 
     // Tree build
     double t0 = MY_OMP_GET_WTIME();
-    pdmk_tree tree = pdmk_tree_create(nullptr, params, n_src, &r_src[0], &charges[0],
-                                       &rnormal[0], &dipstr[0], n_trg, &r_trg[0]);
+    pdmk_tree tree =
+        pdmk_tree_create(MYCOMM, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0]);
     result.tree_build_time = MY_OMP_GET_WTIME() - t0;
 
     // Eval
     t0 = MY_OMP_GET_WTIME();
-    pdmk_tree_eval(tree, &pot_src[0], with_grad ? &grad_src[0] : nullptr, &hess_src[0],
-                   &pot_trg[0], with_grad ? &grad_trg[0] : nullptr, &hess_trg[0]);
+    pdmk_tree_eval(tree, &pot_src[0], with_grad ? &grad_src[0] : nullptr, &hess_src[0], &pot_trg[0],
+                   with_grad ? &grad_trg[0] : nullptr, &hess_trg[0]);
     result.eval_time = MY_OMP_GET_WTIME() - t0;
     result.total_time = result.tree_build_time + result.eval_time;
 
@@ -85,8 +93,8 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
     std::vector<double> direct_pot_src(n_test, 0.0), direct_pot_trg(n_test, 0.0);
     std::vector<double> direct_grad_src(n_test * n_dim, 0.0), direct_grad_trg(n_test * n_dim, 0.0);
 
-    auto compute_direct = [&](const Real *target, int n_dim, int i_out,
-                              std::vector<double> &pot_out, std::vector<double> &grad_out) {
+    auto compute_direct = [&](const Real *target, int n_dim, int i_out, std::vector<double> &pot_out,
+                              std::vector<double> &grad_out) {
         for (int i_src = 0; i_src < n_src; ++i_src) {
             double dx[3];
             double dr2 = 0.0;
@@ -94,7 +102,8 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
                 dx[d] = (double)target[d] - (double)r_src[i_src * n_dim + d];
                 dr2 += dx[d] * dx[d];
             }
-            if (dr2 <= thresh2) continue;
+            if (dr2 <= thresh2)
+                continue;
 
             double q = (double)charges[i_src];
             if (n_dim == 2) {
@@ -163,29 +172,40 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
 }
 
 void print_header() {
-    printf("%-4s %7s %7s %10s %5s %10s %10s %10s %10s %10s %10s %10s %10s %10s\n",
-           "dim", "n_src", "n_trg", "eps", "grad", "build(s)", "eval(s)", "total(s)",
-           "pot_src_e", "pot_trg_e", "grd_src_e", "grd_trg_e", "grd_src_mx", "grd_trg_mx");
-    printf("%-4s %7s %7s %10s %5s %10s %10s %10s %10s %10s %10s %10s %10s %10s\n",
-           "----", "-------", "-------", "----------", "-----", "----------", "----------", "----------",
-           "----------", "----------", "----------", "----------", "----------", "----------");
+    printf("%-4s %7s %7s %10s %5s %10s %10s %10s %10s %10s %10s %10s %10s %10s\n", "dim", "n_src", "n_trg", "eps",
+           "grad", "build(s)", "eval(s)", "total(s)", "pot_src_e", "pot_trg_e", "grd_src_e", "grd_trg_e", "grd_src_mx",
+           "grd_trg_mx");
+    printf("%-4s %7s %7s %10s %5s %10s %10s %10s %10s %10s %10s %10s %10s %10s\n", "----", "-------", "-------",
+           "----------", "-----", "----------", "----------", "----------", "----------", "----------", "----------",
+           "----------", "----------", "----------");
 }
 
 void print_result(const BenchmarkResult &r) {
-    printf("%-4d %7d %7d %10.1e %5s %10.4f %10.4f %10.4f %10.3e %10.3e",
-           r.n_dim, r.n_src, r.n_trg, r.eps,
-           r.with_grad ? "yes" : "no",
-           r.tree_build_time, r.eval_time, r.total_time,
-           r.pot_src_l2_err, r.pot_trg_l2_err);
+    printf("%-4d %7d %7d %10.1e %5s %10.4f %10.4f %10.4f %10.3e %10.3e", r.n_dim, r.n_src, r.n_trg, r.eps,
+           r.with_grad ? "yes" : "no", r.tree_build_time, r.eval_time, r.total_time, r.pot_src_l2_err,
+           r.pot_trg_l2_err);
     if (r.with_grad)
-        printf(" %10.3e %10.3e %10.3e %10.3e",
-               r.grad_src_l2_err, r.grad_trg_l2_err, r.grad_src_max_err, r.grad_trg_max_err);
+        printf(" %10.3e %10.3e %10.3e %10.3e", r.grad_src_l2_err, r.grad_trg_l2_err, r.grad_src_max_err,
+               r.grad_trg_max_err);
     else
         printf(" %10s %10s %10s %10s", "n/a", "n/a", "n/a", "n/a");
     printf("\n");
 }
 
-int main() {
+int main(int argc, char **argv) {
+#ifdef DMK_HAVE_MPI
+    MPI_Init(&argc, &argv);
+    int size, rank;
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    if (size > 1) {
+        if (!rank)
+            std::cerr << "Benchmark not MPI aware. Exiting\n";
+        MPI_Finalize();
+        return 0;
+    }
+#endif
+
     printf("=== FIDMK Laplace Gradient Benchmark (poly-derivative method) ===\n");
     printf("Method: Chebyshev polynomial differentiation of proxy expansion\n");
     printf("Precision: double\n");
@@ -206,26 +226,27 @@ int main() {
 
     std::vector<TestConfig> configs = {
         // Small problems: accuracy focus
-        {3,  4000,  3000, 1e-3,  280},
-        {3,  4000,  3000, 1e-6,  280},
-        {3,  4000,  3000, 1e-9,  280},
-        {3,  4000,  3000, 1e-12, 280},
+        {3, 4000, 3000, 1e-3, 280},
+        {3, 4000, 3000, 1e-6, 280},
+        {3, 4000, 3000, 1e-9, 280},
+        {3, 4000, 3000, 1e-12, 280},
         // Medium problems: speed focus
-        {3, 20000, 20000, 1e-6,  280},
-        {3, 20000, 20000, 1e-9,  280},
+        {3, 20000, 20000, 1e-6, 280},
+        {3, 20000, 20000, 1e-9, 280},
         // Larger problems
-        {3, 50000, 50000, 1e-6,  280},
-        {3,100000,100000, 1e-6,  280},
-        {3,200000,200000, 1e-6,  280},
+        {3, 50000, 50000, 1e-6, 280},
+        {3, 100000, 100000, 1e-6, 280},
+        {3, 200000, 200000, 1e-6, 280},
     };
 
     // --- Accuracy sweep ---
     printf("--- Accuracy vs Direct O(N^2) ---\n");
     print_header();
     for (auto &cfg : configs) {
-        if (cfg.n_src > 20000) continue; // skip large for accuracy (direct is O(N^2))
-        auto r_pot  = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, false, cfg.n_per_leaf);
-        auto r_grad = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, true,  cfg.n_per_leaf);
+        if (cfg.n_src > 20000)
+            continue; // skip large for accuracy (direct is O(N^2))
+        auto r_pot = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, false, cfg.n_per_leaf);
+        auto r_grad = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, true, cfg.n_per_leaf);
         print_result(r_pot);
         print_result(r_grad);
     }
@@ -233,22 +254,27 @@ int main() {
     printf("\n--- Speed: Potential-only vs Potential+Gradient ---\n");
     print_header();
     for (auto &cfg : configs) {
-        auto r_pot  = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, false, cfg.n_per_leaf);
-        auto r_grad = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, true,  cfg.n_per_leaf);
+        auto r_pot = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, false, cfg.n_per_leaf);
+        auto r_grad = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, true, cfg.n_per_leaf);
         print_result(r_pot);
         print_result(r_grad);
     }
 
     printf("\n--- Gradient overhead (eval time ratio: grad/pot-only) ---\n");
     printf("%-4s %7s %10s %12s %12s %10s\n", "dim", "n_src", "eps", "pot_eval(s)", "grad_eval(s)", "overhead");
-    printf("%-4s %7s %10s %12s %12s %10s\n", "----", "-------", "----------", "------------", "------------", "----------");
+    printf("%-4s %7s %10s %12s %12s %10s\n", "----", "-------", "----------", "------------", "------------",
+           "----------");
     for (auto &cfg : configs) {
-        auto r_pot  = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, false, cfg.n_per_leaf);
-        auto r_grad = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, true,  cfg.n_per_leaf);
+        auto r_pot = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, false, cfg.n_per_leaf);
+        auto r_grad = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, true, cfg.n_per_leaf);
         double overhead = r_grad.eval_time / r_pot.eval_time;
-        printf("%-4d %7d %10.1e %12.4f %12.4f %9.2fx\n",
-               cfg.n_dim, cfg.n_src, cfg.eps, r_pot.eval_time, r_grad.eval_time, overhead);
+        printf("%-4d %7d %10.1e %12.4f %12.4f %9.2fx\n", cfg.n_dim, cfg.n_src, cfg.eps, r_pot.eval_time,
+               r_grad.eval_time, overhead);
     }
+
+#ifdef DMK_HAVE_MPI
+    MPI_Finalize();
+#endif
 
     return 0;
 }
