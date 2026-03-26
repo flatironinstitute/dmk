@@ -59,7 +59,6 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
     params.eps = eps;
     params.n_dim = n_dim;
     params.n_per_leaf = n_per_leaf;
-    params.n_mfm = nd;
     params.pgh_src = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
     params.pgh_trg = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
     params.kernel = DMK_LAPLACE;

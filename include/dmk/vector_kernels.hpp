@@ -267,7 +267,7 @@ DMK_ALWAYS_INLINE void EvalPairs(int Ns, const Real *__restrict__ r_src, const R
 }
 
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1>
-void laplace_2d_poly_all_pairs(int nd, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2, int n_coeffs_rt,
+void laplace_2d_poly_all_pairs(int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2, int n_coeffs_rt,
                                const Real *coeffs, int n_src, const Real *r_src, const Real *charge, int n_trg,
                                const Real *r_trg, Real *pot, int unroll_factor) {
     constexpr bool is_static = (N_DIGITS > 0);
@@ -314,7 +314,7 @@ void laplace_2d_poly_all_pairs(int nd, int n_digits_rt, Real rsc, Real cen, Real
 }
 
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1>
-void laplace_3d_poly_all_pairs(int nd, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2, int n_coeffs_rt,
+void laplace_3d_poly_all_pairs(int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2, int n_coeffs_rt,
                                const Real *coeffs, int n_src, const Real *r_src, const Real *charge, int n_trg,
                                const Real *r_trg, Real *pot, int unroll_factor) {
     constexpr bool is_static = (N_DIGITS > 0);
@@ -388,10 +388,9 @@ void laplace_3d_poly_all_pairs(int nd, int n_digits_rt, Real rsc, Real cen, Real
 }
 
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1>
-void sqrt_laplace_2d_poly_all_pairs(int nd, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
-                                    int n_coeffs_rt, const Real *coeffs, int n_src, const Real *r_src,
-                                    const Real *charge, int n_trg, const Real *r_trg, Real *pot,
-                                    int unroll_factor) {
+void sqrt_laplace_2d_poly_all_pairs(int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2, int n_coeffs_rt,
+                                    const Real *coeffs, int n_src, const Real *r_src, const Real *charge, int n_trg,
+                                    const Real *r_trg, Real *pot, int unroll_factor) {
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt;
@@ -431,9 +430,9 @@ void sqrt_laplace_2d_poly_all_pairs(int nd, int n_digits_rt, Real rsc, Real cen,
 }
 
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1>
-void sqrt_laplace_3d_poly_all_pairs(int nd, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
-                                    int n_coeffs_rt, const Real *coeffs, int n_src, const Real *r_src,
-                                    const Real *charge, int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
+void sqrt_laplace_3d_poly_all_pairs(int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2, int n_coeffs_rt,
+                                    const Real *coeffs, int n_src, const Real *r_src, const Real *charge, int n_trg,
+                                    const Real *r_trg, Real *pot, int unroll_factor) {
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt;

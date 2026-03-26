@@ -10,10 +10,10 @@ direct_evaluator_func<Real> get_laplace_2d_kernel(int n_digits) {
     auto make = []<int ND, int NC>(const Real(&c)[NC]) -> direct_evaluator_func<Real> {
         std::array<Real, NC> coeffs;
         std::copy_n(c, NC, coeffs.data());
-        return [coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
-                        const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC>(nd, ND, rsc, cen, d2max, thresh2, NC, coeffs.data(),
-                                                               n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor);
+        return [coeffs](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                        int n_trg, const Real *r_trg, Real *pot) {
+            laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC>(ND, rsc, cen, d2max, thresh2, NC, coeffs.data(), n_src,
+                                                               r_src, charge, n_trg, r_trg, pot, unroll_factor);
         };
     };
 
@@ -47,10 +47,10 @@ direct_evaluator_func<Real> get_laplace_3d_kernel(int n_digits) {
     auto make = []<int ND, int NC>(const Real(&c)[NC]) -> direct_evaluator_func<Real> {
         std::array<Real, NC> coeffs;
         std::copy_n(c, NC, coeffs.data());
-        return [coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
-                        const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC>(nd, ND, rsc, cen, d2max, thresh2, NC, coeffs.data(),
-                                                               n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor);
+        return [coeffs](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                        int n_trg, const Real *r_trg, Real *pot) {
+            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC>(ND, rsc, cen, d2max, thresh2, NC, coeffs.data(), n_src,
+                                                               r_src, charge, n_trg, r_trg, pot, unroll_factor);
         };
     };
 
@@ -88,9 +88,9 @@ direct_evaluator_func<Real> get_sqrt_laplace_2d_kernel(int n_digits) {
     auto make = []<int ND, int NC>(const Real(&c)[NC]) -> direct_evaluator_func<Real> {
         std::array<Real, NC> coeffs;
         std::copy_n(c, NC, coeffs.data());
-        return [coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
-                        const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC>(nd, ND, rsc, cen, d2max, thresh2, NC, coeffs.data(),
+        return [coeffs](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                        int n_trg, const Real *r_trg, Real *pot) {
+            sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC>(ND, rsc, cen, d2max, thresh2, NC, coeffs.data(),
                                                                     n_src, r_src, charge, n_trg, r_trg, pot,
                                                                     unroll_factor);
         };
@@ -130,9 +130,9 @@ direct_evaluator_func<Real> get_sqrt_laplace_3d_kernel(int n_digits) {
     auto make = []<int ND, int NC>(const Real(&c)[NC]) -> direct_evaluator_func<Real> {
         std::array<Real, NC> coeffs;
         std::copy_n(c, NC, coeffs.data());
-        return [coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
-                        const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC>(nd, ND, rsc, cen, d2max, thresh2, NC, coeffs.data(),
+        return [coeffs](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                        int n_trg, const Real *r_trg, Real *pot) {
+            sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC>(ND, rsc, cen, d2max, thresh2, NC, coeffs.data(),
                                                                     n_src, r_src, charge, n_trg, r_trg, pot,
                                                                     unroll_factor);
         };

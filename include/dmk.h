@@ -32,7 +32,6 @@ typedef void *dmk_communicator;
 #endif
 
 typedef struct pdmk_params {
-    int n_mfm = 1;                   // number of charge/dipole dimensions per source location
     int n_dim = 0;                   // dimension of system
     double eps = 1e-7;               // target precision
     dmk_ikernel kernel = DMK_YUKAWA; // evaluation kernel

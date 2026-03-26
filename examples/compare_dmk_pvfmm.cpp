@@ -298,7 +298,6 @@ void run_comparison(const Config &cfg) {
     params.eps = cfg.eps;
     params.n_dim = n_dim;
     params.n_per_leaf = cfg.n_per_leaf_dmk;
-    params.n_mfm = nd;
     params.log_level = cfg.log_level;
     params.pgh_src = DMK_POTENTIAL;
     params.pgh_trg = DMK_POTENTIAL;

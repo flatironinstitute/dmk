@@ -360,7 +360,6 @@ int main(int argc, char *argv[]) {
     params.eps = eps;
     params.n_dim = n_dim;
     params.n_per_leaf = n_per_leaf_dmk;
-    params.n_mfm = nd;
     params.pgh_src = DMK_POTENTIAL;
     params.pgh_trg = DMK_POTENTIAL;
     params.kernel = DMK_LAPLACE;
