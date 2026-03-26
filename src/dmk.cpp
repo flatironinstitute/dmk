@@ -25,8 +25,7 @@ namespace dmk {
 
 template <typename T, int DIM>
 void pdmk(dmk_communicator comm, const pdmk_params &params, int n_src, const T *r_src, const T *charge, const T *normal,
-          const T *dipole_str, int n_trg, const T *r_trg, T *pot_src, T *grad_src, T *hess_src, T *pot_trg, T *grad_trg,
-          T *hess_trg) {
+          const T *dipole_str, int n_trg, const T *r_trg, T *pot_src, T *pot_trg) {
 #ifdef DMK_HAVE_MPI
     const auto &sctl_comm = sctl::Comm(MPI_Comm(comm));
 #else
@@ -50,14 +49,6 @@ void pdmk(dmk_communicator comm, const pdmk_params &params, int n_src, const T *
     sctl::Vector<T>(res.Dim(), pot_src, false) = res;
     tree.GetParticleData(res, "pdmk_pot_trg");
     sctl::Vector<T>(res.Dim(), pot_trg, false) = res;
-    if (grad_src != nullptr && params.pgh_src >= DMK_POTENTIAL_GRAD) {
-        tree.GetParticleData(res, "pdmk_grad_src");
-        sctl::Vector<T>(res.Dim(), grad_src, false) = res;
-    }
-    if (grad_trg != nullptr && params.pgh_trg >= DMK_POTENTIAL_GRAD) {
-        tree.GetParticleData(res, "pdmk_grad_trg");
-        sctl::Vector<T>(res.Dim(), grad_trg, false) = res;
-    }
 
     auto dt = MY_OMP_GET_WTIME() - st;
     int N = n_src + n_trg;
@@ -86,8 +77,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d float", 1) {
     auto comm = nullptr;
 #endif
 
-    sctl::Vector<double> r_src, pot_src, grad_src, hess_src, charges, rnormal, dipstr, pot_trg, r_trg;
-    sctl::Vector<float> r_srcf, pot_srcf, grad_srcf, hess_srcf, chargesf, rnormalf, dipstrf, pot_trgf, r_trgf;
+    sctl::Vector<double> r_src, pot_src, charges, rnormal, dipstr, pot_trg, r_trg;
+    sctl::Vector<float> r_srcf, pot_srcf, chargesf, rnormalf, dipstrf, pot_trgf, r_trgf;
     dmk::util::init_test_data(n_dim, 1, n_src, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges,
                               dipstr, 0);
     dmk::util::init_test_data(n_dim, 1, n_src, n_trg, uniform, set_fixed_charges, r_srcf, r_trgf, rnormalf, chargesf,
@@ -108,12 +99,12 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d float", 1) {
     params.fparam = 6.0;
     params.log_level = SPDLOG_LEVEL_OFF;
 
-    pdmk(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0], &pot_src[0], nullptr,
-         nullptr, &pot_trg[0], nullptr, nullptr);
+    pdmk(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0], &pot_src[0],
+         &pot_trg[0]);
 
     params.eps = 1e-3;
     pdmkf(comm, params, n_src, &r_srcf[0], &chargesf[0], &rnormalf[0], &dipstrf[0], n_trg, &r_trgf[0], &pot_srcf[0],
-          nullptr, nullptr, &pot_trgf[0], nullptr, nullptr);
+          &pot_trgf[0]);
 
     double l2_err_src = 0.0;
     double l2_err_trg = 0.0;
@@ -141,8 +132,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d all", 1) {
     auto comm = nullptr;
 #endif
 
-    sctl::Vector<double> r_src, pot_src, grad_src, hess_src, charges, rnormal, dipstr, pot_trg, r_trg, grad_trg,
-        hess_trg;
+    sctl::Vector<double> r_src, pot_src, charges, rnormal, dipstr, pot_trg, r_trg;
     dmk::util::init_test_data(n_dim, 1, n_src, 0, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, dipstr,
                               0);
     r_trg = r_src;
@@ -289,7 +279,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d all", 1) {
 
                 pdmk_tree tree = pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0],
                                                   n_trg, &r_trg[0]);
-                pdmk_tree_eval(tree, &pot_src[0], &grad_src[0], &hess_src[0], &pot_trg[0], &grad_trg[0], &hess_trg[0]);
+                pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
 
 #ifdef DMK_HAVE_REFERENCE
                 double tottimeinfo[20];
@@ -371,7 +361,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace gradient", 1) {
 
     pdmk_tree tree =
         pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0]);
-    pdmk_tree_eval(tree, &pot_src[0], &grad_src[0], &hess_src[0], &pot_trg[0], &grad_trg[0], &hess_trg[0]);
+    pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
     pdmk_tree_destroy(tree);
 
     const int n_test_src = std::min(n_src, 64);
@@ -457,8 +447,7 @@ inline pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int
 }
 
 template <typename Real>
-inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *grad_src, Real *hess_src, Real *pot_trg, Real *grad_trg,
-                           Real *hess_trg) {
+inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *pot_trg) {
     std::visit(
         [&](auto &t) {
             using TreeType = std::decay_t<decltype(t)>;
@@ -475,14 +464,6 @@ inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *grad_src, Real *
                 sctl::Vector<Real>(res.Dim(), pot_src, false) = res;
                 t->GetParticleData(res, "pdmk_pot_trg");
                 sctl::Vector<Real>(res.Dim(), pot_trg, false) = res;
-                if (grad_src != nullptr && t->params.pgh_src >= DMK_POTENTIAL_GRAD) {
-                    t->GetParticleData(res, "pdmk_grad_src");
-                    sctl::Vector<Real>(res.Dim(), grad_src, false) = res;
-                }
-                if (grad_trg != nullptr && t->params.pgh_trg >= DMK_POTENTIAL_GRAD) {
-                    t->GetParticleData(res, "pdmk_grad_trg");
-                    sctl::Vector<Real>(res.Dim(), grad_trg, false) = res;
-                }
                 sctl::Profile::Toc();
             }
         },
@@ -550,35 +531,29 @@ void pdmk_tree_destroy(pdmk_tree tree) {
         delete static_cast<pdmk_tree_impl *>(tree);
 }
 
-void pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *grad_src, float *hess_src, float *pot_trg, float *grad_trg,
-                     float *hess_trg) {
-    dmk::pdmk_tree_eval(tree, pot_src, grad_src, hess_src, pot_trg, grad_trg, hess_trg);
-}
+void pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *pot_trg) { dmk::pdmk_tree_eval(tree, pot_src, pot_trg); }
 
-void pdmk_tree_eval(pdmk_tree tree, double *pot_src, double *grad_src, double *hess_src, double *pot_trg,
-                    double *grad_trg, double *hess_trg) {
-    dmk::pdmk_tree_eval(tree, pot_src, grad_src, hess_src, pot_trg, grad_trg, hess_trg);
-}
+void pdmk_tree_eval(pdmk_tree tree, double *pot_src, double *pot_trg) { dmk::pdmk_tree_eval(tree, pot_src, pot_trg); }
 
 void pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
-           const float *normal, const float *dipole_str, int n_trg, const float *r_trg, float *pot_src, float *grad_src,
-           float *hess_src, float *pot_trg, float *grad_trg, float *hess_trg) {
+           const float *normal, const float *dipole_str, int n_trg, const float *r_trg, float *pot_src,
+           float *pot_trg) {
     if (params.n_dim == 2)
         return dmk::pdmk<float, 2>(comm, params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot_src,
-                                   grad_src, hess_src, pot_trg, grad_trg, hess_trg);
+                                   pot_trg);
     if (params.n_dim == 3)
         return dmk::pdmk<float, 3>(comm, params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot_src,
-                                   grad_src, hess_src, pot_trg, grad_trg, hess_trg);
+                                   pot_trg);
 }
 
 void pdmk(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
           const double *normal, const double *dipole_str, int n_trg, const double *r_trg, double *pot_src,
-          double *grad_src, double *hess_src, double *pot_trg, double *grad_trg, double *hess_trg) {
+          double *pot_trg) {
     if (params.n_dim == 2)
         return dmk::pdmk<double, 2>(comm, params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot_src,
-                                    grad_src, hess_src, pot_trg, grad_trg, hess_trg);
+                                    pot_trg);
     if (params.n_dim == 3)
         return dmk::pdmk<double, 3>(comm, params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot_src,
-                                    grad_src, hess_src, pot_trg, grad_trg, hess_trg);
+                                    pot_trg);
 }
 }

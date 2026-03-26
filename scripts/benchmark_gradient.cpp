@@ -52,14 +52,8 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
     dmk::util::init_test_data(n_dim, nd, n_src, n_trg, false, false, r_src, r_trg, rnormal, charges, dipstr, 0);
 
     sctl::Vector<Real> pot_src(n_src * nd), pot_trg(n_trg * nd);
-    sctl::Vector<Real> grad_src(n_src * nd * n_dim), grad_trg(n_trg * nd * n_dim);
-    sctl::Vector<Real> hess_src(n_src * nd * n_dim * n_dim), hess_trg(n_trg * nd * n_dim * n_dim);
     pot_src.SetZero();
     pot_trg.SetZero();
-    grad_src.SetZero();
-    grad_trg.SetZero();
-    hess_src.SetZero();
-    hess_trg.SetZero();
 
     pdmk_params params;
     params.eps = eps;
@@ -79,8 +73,7 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
 
     // Eval
     t0 = MY_OMP_GET_WTIME();
-    pdmk_tree_eval(tree, &pot_src[0], with_grad ? &grad_src[0] : nullptr, &hess_src[0], &pot_trg[0],
-                   with_grad ? &grad_trg[0] : nullptr, &hess_trg[0]);
+    pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
     result.eval_time = MY_OMP_GET_WTIME() - t0;
     result.total_time = result.tree_build_time + result.eval_time;
 
@@ -161,12 +154,13 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
     result.pot_src_l2_err = rel_l2_vec(pot_src, direct_pot_src, n_test);
     result.pot_trg_l2_err = rel_l2_vec(pot_trg, direct_pot_trg, n_test);
 
-    if (with_grad) {
-        result.grad_src_l2_err = rel_l2_vec(grad_src, direct_grad_src, n_test * n_dim);
-        result.grad_trg_l2_err = rel_l2_vec(grad_trg, direct_grad_trg, n_test * n_dim);
-        result.grad_src_max_err = max_rel(grad_src, direct_grad_src, n_test * n_dim);
-        result.grad_trg_max_err = max_rel(grad_trg, direct_grad_trg, n_test * n_dim);
-    }
+    // FIXME
+    // if (with_grad) {
+    //     result.grad_src_l2_err = rel_l2_vec(grad_src, direct_grad_src, n_test * n_dim);
+    //     result.grad_trg_l2_err = rel_l2_vec(grad_trg, direct_grad_trg, n_test * n_dim);
+    //     result.grad_src_max_err = max_rel(grad_src, direct_grad_src, n_test * n_dim);
+    //     result.grad_trg_max_err = max_rel(grad_trg, direct_grad_trg, n_test * n_dim);
+    // }
 
     return result;
 }

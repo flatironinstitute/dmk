@@ -251,9 +251,9 @@ double run_dmk(pdmk_tree tree, std::vector<Real> &pot, int n_src_per_rank, MPI_C
     double st = omp_get_wtime();
 
     if constexpr (std::is_same_v<Real, float>)
-        pdmk_tree_evalf(tree, pot.data(), nullptr, nullptr, nullptr, nullptr, nullptr);
+        pdmk_tree_evalf(tree, pot.data(), nullptr);
     else
-        pdmk_tree_eval(tree, pot.data(), nullptr, nullptr, nullptr, nullptr, nullptr);
+        pdmk_tree_eval(tree, pot.data(), nullptr);
 
     double ft = omp_get_wtime();
 
