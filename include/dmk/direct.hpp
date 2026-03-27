@@ -28,31 +28,31 @@ inline int get_kernel_output_dim(int dim, dmk_ikernel kernel, dmk_pgh flags) {
         if (flags == DMK_POTENTIAL)
             return 1;
         if (flags == DMK_POTENTIAL_GRAD)
-            return dim;
+            return 1 + dim;
         if (flags == DMK_POTENTIAL_GRAD_HESSIAN)
-            return dim + dim * dim;
+            return 1 + dim + dim * dim;
     case DMK_LAPLACE:
         if (flags == DMK_POTENTIAL)
             return 1;
         if (flags == DMK_POTENTIAL_GRAD)
-            return dim;
+            return 1 + dim;
         if (flags == DMK_POTENTIAL_GRAD_HESSIAN)
-            return dim + dim * dim;
+            return 1 + dim + dim * dim;
     case DMK_SQRT_LAPLACE:
         if (flags == DMK_POTENTIAL)
             return 1;
         if (flags == DMK_POTENTIAL_GRAD)
-            return dim;
+            return 1 + dim;
         if (flags == DMK_POTENTIAL_GRAD_HESSIAN)
-            return dim + dim * dim;
+            return 1 + dim + dim * dim;
     }
     throw std::runtime_error("Invalid kernel");
 }
 
 template <typename Real>
-direct_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, int n_dim, int n_digits, int unroll_factor);
+direct_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits, int unroll_factor);
 template <typename Real>
-direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, int n_dim, int n_digits, int unroll_factor);
+direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits, int unroll_factor);
 } // namespace dmk
 
 #endif

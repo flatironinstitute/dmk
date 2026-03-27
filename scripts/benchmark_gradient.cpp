@@ -51,7 +51,8 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
     sctl::Vector<Real> r_src, r_trg, rnormal, charges, dipstr;
     dmk::util::init_test_data(n_dim, nd, n_src, n_trg, false, false, r_src, r_trg, rnormal, charges, dipstr, 0);
 
-    sctl::Vector<Real> pot_src(n_src * nd), pot_trg(n_trg * nd);
+    const int output_dim = with_grad ? 1 + n_dim : 1;
+    sctl::Vector<Real> pot_src(n_src * output_dim), pot_trg(n_trg * output_dim);
     pot_src.SetZero();
     pot_trg.SetZero();
 

@@ -1,7 +1,8 @@
 #ifndef DMK_TYPES_HPP
 #define DMK_TYPES_HPP
 
-#include <functional>
+#include <dmk.h>
+
 #include <nda/nda.hpp>
 
 namespace dmk {

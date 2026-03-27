@@ -14,6 +14,7 @@
 // runtime dispatch of the rsqrt function, when a template is right there. Or passing
 // performance critical parameters as runtime arguments (like n_digits, n_coeffs).
 
+#include <dmk.h>
 #include <dmk/util.hpp>
 
 #include <sctl.hpp>
@@ -87,6 +88,31 @@ DMK_ALWAYS_INLINE VecType horner_split(const VecType &x2, const typename VecType
     for (int i = start_coeff - 2; i >= 0; i -= 2)
         poly = FMA(poly, x2, VecType::Load1(&coeffs[i]));
     return poly;
+}
+
+// Simultaneous horner and derivative
+template <typename VecType>
+DMK_ALWAYS_INLINE void horner_val_deriv(const VecType &x, const typename VecType::ScalarType *coeffs, int n_coeffs,
+                                        VecType &value, VecType &derivative) {
+    value = VecType::Load1(&coeffs[n_coeffs - 1]);
+    derivative = VecType::Zero();
+    for (int i = n_coeffs - 2; i >= 0; --i) {
+        derivative = FMA(derivative, x, value);
+        value = FMA(value, x, VecType::Load1(&coeffs[i]));
+    }
+}
+
+// Simultaneous split horner val/derivative
+template <int shift, typename VecType>
+DMK_ALWAYS_INLINE void horner_split_val_deriv(const VecType &x2, const typename VecType::ScalarType *coeffs,
+                                              int n_coeffs, VecType &value, VecType &derivative) {
+    const int start_coeff = ((n_coeffs - 1 - shift) & ~1) + shift;
+    value = VecType::Load1(&coeffs[start_coeff]);
+    derivative = VecType::Zero();
+    for (int i = start_coeff - 2; i >= shift; i -= 2) {
+        derivative = FMA(derivative, x2, value);
+        value = FMA(value, x2, VecType::Load1(&coeffs[i]));
+    }
 }
 
 template <class Real, int KERNEL_INPUT_DIM, int KERNEL_OUTPUT_DIM, int SPATIAL_DIM, int NORMAL_DIM, int VecLen,
@@ -266,10 +292,10 @@ DMK_ALWAYS_INLINE void EvalPairs(int Ns, const Real *__restrict__ r_src, const R
     }
 }
 
-template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1>
-void laplace_2d_poly_all_pairs(int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2, int n_coeffs_rt,
-                               const Real *coeffs, int n_src, const Real *r_src, const Real *charge, int n_trg,
-                               const Real *r_trg, Real *pot, int unroll_factor) {
+template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
+void laplace_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
+                               int n_coeffs_rt, const Real *coeffs, int n_src, const Real *r_src, const Real *charge,
+                               int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt;
@@ -313,17 +339,29 @@ void laplace_2d_poly_all_pairs(int n_digits_rt, Real rsc, Real cen, Real d2max, 
         n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);
 }
 
-template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1>
-void laplace_3d_poly_all_pairs(int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2, int n_coeffs_rt,
-                               const Real *coeffs, int n_src, const Real *r_src, const Real *charge, int n_trg,
-                               const Real *r_trg, Real *pot, int unroll_factor) {
+template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
+void laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
+                               int n_coeffs_rt, const Real *coeffs, int n_src, const Real *r_src, const Real *charge,
+                               int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt;
 
+    if constexpr (EVAL_LEVEL == -1) {
+        if (eval_level_rt == 1)
+            laplace_3d_poly_all_pairs<Real, MaxVecLen, N_DIGITS, N_COEFFS, 1>(
+                eval_level_rt, n_digits_rt, rsc, cen, d2max, thresh2, n_coeffs_rt, coeffs, n_src, r_src, charge, n_trg,
+                r_trg, pot, unroll_factor);
+        else
+            laplace_3d_poly_all_pairs<Real, MaxVecLen, N_DIGITS, N_COEFFS, 2>(
+                eval_level_rt, n_digits_rt, rsc, cen, d2max, thresh2, n_coeffs_rt, coeffs, n_src, r_src, charge, n_trg,
+                r_trg, pot, unroll_factor);
+        return;
+    }
+
     using VecType = sctl::Vec<Real, MaxVecLen>;
     constexpr int KERNEL_INPUT_DIM = 1;
-    constexpr int KERNEL_OUTPUT_DIM = 1;
+    constexpr int KERNEL_OUTPUT_DIM = (EVAL_LEVEL == 1) ? 1 : 4;
     constexpr int SPATIAL_DIM = 3;
     constexpr int NORMAL_DIM = 0;
     const int transform_poly = n_digits < 6;
@@ -342,23 +380,53 @@ void laplace_3d_poly_all_pairs(int n_digits_rt, Real rsc, Real cen, Real d2max, 
             : thresh2_vec(thresh2_vec), d2max_vec(d2max_vec), rsc_vec(rsc_vec), cen_vec(cen_vec), coeffs(coeffs),
               n_coeffs(n_coeffs), n_digits(digits), transform_poly(transform_poly) {}
 
-        DMK_ALWAYS_INLINE void operator()(VecType (&u)[1][1], const VecType (&dX)[SPATIAL_DIM]) const {
+        DMK_ALWAYS_INLINE void operator()(VecType (&u)[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM],
+                                          const VecType (&dX)[SPATIAL_DIM]) const {
             const VecType R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
             const auto in_range = (R2 > thresh2_vec) & (R2 < d2max_vec);
             const VecType Rinv = my_approx_rsqrt(R2, n_digits);
+            const VecType zero = VecType::Zero();
 
             if (transform_poly) {
-                // This trick lets us compute horner without knowning R directly.  This removes
-                // Rinv from the horner dependency chain, meaning it can calculate Rinv and
-                // horner simultaneously. Calculate terms separately and scale later.
-                const VecType E = horner_split<0>(R2, coeffs, n_coeffs);
-                const VecType O = horner_split<1>(R2, coeffs, n_coeffs);
-                const VecType result = FMA(E, Rinv, O);
-                u[0][0] = sctl::select<Real, MaxVecLen>(in_range, result, VecType::Zero());
+                if constexpr (EVAL_LEVEL == 1) {
+                    const VecType E = horner_split<0>(R2, coeffs, n_coeffs);
+                    const VecType O = horner_split<1>(R2, coeffs, n_coeffs);
+                    u[0][0] = sctl::select<Real, MaxVecLen>(in_range, FMA(E, Rinv, O), zero);
+                } else {
+                    VecType E, dE, O, dO;
+                    horner_split_val_deriv<0>(R2, coeffs, n_coeffs, E, dE);
+                    horner_split_val_deriv<1>(R2, coeffs, n_coeffs, O, dO);
+
+                    u[0][0] = sctl::select<Real, MaxVecLen>(in_range, FMA(E, Rinv, O), zero);
+
+                    // df/dR2 = E'(R2)*Rinv - E(R2)*Rinv^3/2 + O'(R2)
+                    const VecType Rinv3 = Rinv * Rinv * Rinv;
+                    const VecType half = Real{0.5};
+                    const VecType df_dR2 = FMA(dE, Rinv, dO) - half * E * Rinv3;
+                    const VecType two = Real{2.0};
+                    for (int i = 0; i < 3; i++)
+                        u[0][1 + i] = sctl::select<Real, MaxVecLen>(in_range, two * dX[i] * df_dR2, zero);
+                }
             } else {
                 const VecType xmapped = FMA(R2, Rinv, cen_vec) * rsc_vec;
-                const VecType result = horner(xmapped, coeffs, n_coeffs) * Rinv;
-                u[0][0] = sctl::select<Real, MaxVecLen>(in_range, result, VecType::Zero());
+
+                if constexpr (EVAL_LEVEL == 1) {
+                    const VecType P = horner(xmapped, coeffs, n_coeffs);
+                    u[0][0] = sctl::select<Real, MaxVecLen>(in_range, P * Rinv, zero);
+                } else {
+                    VecType P, dP;
+                    horner_val_deriv(xmapped, coeffs, n_coeffs, P, dP);
+
+                    u[0][0] = sctl::select<Real, MaxVecLen>(in_range, P * Rinv, zero);
+
+                    // df/dR2 = Rinv^2 * (P'(xmapped)*rsc - P(xmapped)*Rinv) / 2
+                    const VecType Rinv2 = Rinv * Rinv;
+                    const VecType half = VecType(Real{0.5});
+                    const VecType df_dR2 = half * Rinv2 * (dP * rsc_vec - P * Rinv);
+                    const VecType two = VecType(Real{2.0});
+                    for (int i = 0; i < 3; i++)
+                        u[0][1 + i] = sctl::select<Real, MaxVecLen>(in_range, two * dX[i] * df_dR2, zero);
+                }
             }
         }
     };
@@ -367,12 +435,10 @@ void laplace_3d_poly_all_pairs(int n_digits_rt, Real rsc, Real cen, Real d2max, 
     if (transform_poly) {
         double rsc_pow = 1.0;
         double coeffs_mod_d[64];
-        // pre-scale the polynomial coefficients
         for (int i = 0; i < n_coeffs; ++i) {
             coeffs_mod_d[i] = coeffs[i] * rsc_pow;
             rsc_pow *= rsc;
         }
-        // now taylor shift them using horner method
         for (int i = 0; i < n_coeffs; ++i)
             for (int j = n_coeffs - 1; j > i; --j)
                 coeffs_mod_d[j - 1] += cen * coeffs_mod_d[j];
@@ -387,10 +453,10 @@ void laplace_3d_poly_all_pairs(int n_digits_rt, Real rsc, Real cen, Real d2max, 
         n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);
 }
 
-template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1>
-void sqrt_laplace_2d_poly_all_pairs(int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2, int n_coeffs_rt,
-                                    const Real *coeffs, int n_src, const Real *r_src, const Real *charge, int n_trg,
-                                    const Real *r_trg, Real *pot, int unroll_factor) {
+template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
+void sqrt_laplace_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
+                                    int n_coeffs_rt, const Real *coeffs, int n_src, const Real *r_src,
+                                    const Real *charge, int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt;
@@ -429,10 +495,10 @@ void sqrt_laplace_2d_poly_all_pairs(int n_digits_rt, Real rsc, Real cen, Real d2
         n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);
 }
 
-template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1>
-void sqrt_laplace_3d_poly_all_pairs(int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2, int n_coeffs_rt,
-                                    const Real *coeffs, int n_src, const Real *r_src, const Real *charge, int n_trg,
-                                    const Real *r_trg, Real *pot, int unroll_factor) {
+template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
+void sqrt_laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
+                                    int n_coeffs_rt, const Real *coeffs, int n_src, const Real *r_src,
+                                    const Real *charge, int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt;

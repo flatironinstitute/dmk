@@ -213,39 +213,6 @@ void charge2proxycharge(const ndview<const T, 2> &r_src_, const ndview<const T, 
 }
 
 template <typename T>
-void eval_targets_2d(const ndview<T, 3> &coeffs, const ndview<T, 2> &r_trg, const ndview<T, 1> &cen, T sc,
-                     ndview<T, 2> pot, sctl::Vector<T> &workspace) {
-    const int n_order = coeffs.extent(0);
-    const int n_charge_dim = coeffs.extent(2);
-    const int n_trg = r_trg.extent(1);
-
-    workspace.ReInit(3 * n_order * n_trg);
-    ndview<T, 2> poly_x({n_order, n_trg}, &workspace[0]);
-    ndview<T, 2> poly_y({n_order, n_trg}, &workspace[n_order * n_trg]);
-    ndview<T, 2> tmp({n_order, n_trg}, &workspace[2 * n_order * n_trg]);
-
-    auto calc_polynomial = dmk::chebyshev::get_polynomial_calculator<T>(n_order);
-    for (int i = 0; i < n_trg; ++i) {
-        T x = (r_trg(0, i) - cen(0)) * sc;
-        calc_polynomial(x, &poly_x(0, i));
-    }
-    for (int i = 0; i < n_trg; ++i) {
-        T y = (r_trg(1, i) - cen(1)) * sc;
-        calc_polynomial(y, &poly_y(0, i));
-    }
-
-    auto opt_dot = dmk::util::get_opt_dot<T>(n_order);
-    for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
-        // Transform in y
-        gemm::gemm('n', 'n', n_order, n_trg, n_order, T{1.0}, &coeffs(0, 0, i_dim), n_order, poly_y.data(), n_order,
-                   T{0.0}, tmp.data(), n_order);
-
-        for (int k = 0; k < n_trg; ++k)
-            pot(i_dim, k) += opt_dot(&tmp(0, k), &poly_x(0, k));
-    }
-}
-
-template <typename T>
 inline void calc_polynomial_and_derivative(int order, T x, T *poly, T *dpoly) {
     poly[0] = T{1};
     dpoly[0] = T{0};
@@ -260,154 +227,208 @@ inline void calc_polynomial_and_derivative(int order, T x, T *poly, T *dpoly) {
     }
 }
 
-template <typename T>
-void eval_target_gradients_2d(const ndview<T, 3> &coeffs, const ndview<T, 2> &r_trg, const ndview<T, 1> &cen, T sc,
-                              ndview<T, 3> grad, sctl::Vector<T> &workspace) {
+template <typename T, int EVAL_LEVEL = 1>
+void eval_targets_2d(const ndview<T, 3> &coeffs, const ndview<T, 2> &r_trg, const ndview<T, 1> &cen, T sc,
+                     ndview<T, 2> pot, sctl::Vector<T> &workspace) {
+    static_assert(EVAL_LEVEL == 1 || EVAL_LEVEL == 2);
+    constexpr int output_dim = (EVAL_LEVEL == 1) ? 1 : 3;
+
     const int n_order = coeffs.extent(0);
     const int n_charge_dim = coeffs.extent(2);
     const int n_trg = r_trg.extent(1);
+    if (!n_trg)
+        return;
 
-    workspace.ReInit(5 * n_order * n_trg);
+    const int poly_block = n_order * n_trg;
+    const int n_poly_sets = (EVAL_LEVEL == 1) ? 2 : 4;
+    const int n_tmp_sets = (EVAL_LEVEL == 1) ? 1 : 2;
+
+    workspace.ReInit(n_poly_sets * poly_block + n_tmp_sets * poly_block);
+
     ndview<T, 2> poly_x({n_order, n_trg}, &workspace[0]);
-    ndview<T, 2> dpoly_x({n_order, n_trg}, &workspace[n_order * n_trg]);
-    ndview<T, 2> poly_y({n_order, n_trg}, &workspace[2 * n_order * n_trg]);
-    ndview<T, 2> dpoly_y({n_order, n_trg}, &workspace[3 * n_order * n_trg]);
-    ndview<T, 2> tmp({n_order, n_trg}, &workspace[4 * n_order * n_trg]);
+    ndview<T, 2> poly_y({n_order, n_trg}, &workspace[poly_block]);
 
-    for (int i = 0; i < n_trg; ++i) {
-        calc_polynomial_and_derivative(n_order, (r_trg(0, i) - cen(0)) * sc, &poly_x(0, i), &dpoly_x(0, i));
-        calc_polynomial_and_derivative(n_order, (r_trg(1, i) - cen(1)) * sc, &poly_y(0, i), &dpoly_y(0, i));
+    T *dpoly_base = &workspace[2 * poly_block];
+    ndview<T, 2> dpoly_x({n_order, n_trg}, dpoly_base);
+    ndview<T, 2> dpoly_y({n_order, n_trg}, dpoly_base + poly_block);
+
+    int tmp_offset = n_poly_sets * poly_block;
+    ndview<T, 2> tmp({n_order, n_trg}, &workspace[tmp_offset]);
+    ndview<T, 2> tmp_y({n_order, n_trg}, (EVAL_LEVEL == 2) ? &workspace[tmp_offset + poly_block] : nullptr);
+
+    if constexpr (EVAL_LEVEL == 1) {
+        auto calc_polynomial = dmk::chebyshev::get_polynomial_calculator<T>(n_order);
+        for (int i = 0; i < n_trg; ++i)
+            calc_polynomial((r_trg(0, i) - cen(0)) * sc, &poly_x(0, i));
+        for (int i = 0; i < n_trg; ++i)
+            calc_polynomial((r_trg(1, i) - cen(1)) * sc, &poly_y(0, i));
+    } else {
+        for (int i = 0; i < n_trg; ++i)
+            calc_polynomial_and_derivative(n_order, (r_trg(0, i) - cen(0)) * sc, &poly_x(0, i), &dpoly_x(0, i));
+        for (int i = 0; i < n_trg; ++i)
+            calc_polynomial_and_derivative(n_order, (r_trg(1, i) - cen(1)) * sc, &poly_y(0, i), &dpoly_y(0, i));
     }
 
-    const auto opt_dot = dmk::util::get_opt_dot<T>(n_order);
+    auto opt_dot = dmk::util::get_opt_dot<T>(n_order);
     for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
+        // tmp(i, trg) = sum_j coeffs(i, j, dim) * poly_y(j, trg)
         gemm::gemm('n', 'n', n_order, n_trg, n_order, T{1.0}, &coeffs(0, 0, i_dim), n_order, poly_y.data(), n_order,
                    T{0.0}, tmp.data(), n_order);
-        for (int k = 0; k < n_trg; ++k)
-            grad(i_dim, 0, k) += sc * opt_dot(&tmp(0, k), &dpoly_x(0, k));
 
-        gemm::gemm('n', 'n', n_order, n_trg, n_order, T{1.0}, &coeffs(0, 0, i_dim), n_order, dpoly_y.data(), n_order,
-                   T{0.0}, tmp.data(), n_order);
-        for (int k = 0; k < n_trg; ++k)
-            grad(i_dim, 1, k) += sc * opt_dot(&tmp(0, k), &poly_x(0, k));
+        if constexpr (EVAL_LEVEL == 1) {
+            for (int k = 0; k < n_trg; ++k)
+                pot(i_dim, k) += opt_dot(&tmp(0, k), &poly_x(0, k));
+        } else {
+            // tmp_y(i, trg) = sum_j coeffs(i, j, dim) * dpoly_y(j, trg)
+            gemm::gemm('n', 'n', n_order, n_trg, n_order, T{1.0}, &coeffs(0, 0, i_dim), n_order, dpoly_y.data(),
+                       n_order, T{0.0}, tmp_y.data(), n_order);
+
+            const int base_row = i_dim * output_dim;
+            for (int k = 0; k < n_trg; ++k) {
+                pot(base_row + 0, k) += opt_dot(&tmp(0, k), &poly_x(0, k));
+                pot(base_row + 1, k) += sc * opt_dot(&tmp(0, k), &dpoly_x(0, k));
+                pot(base_row + 2, k) += sc * opt_dot(&tmp_y(0, k), &poly_x(0, k));
+            }
+        }
     }
 }
 
-template <typename T>
+template <typename T, int EVAL_LEVEL = 1>
 void eval_targets_3d(const ndview<T, 4> &coeffs, const ndview<T, 2> &r_trg, const ndview<T, 1> &cen, T sc,
                      ndview<T, 2> &pot, sctl::Vector<T> &workspace) {
-    const int n_dim = 3;
+    static_assert(EVAL_LEVEL == 1 || EVAL_LEVEL == 2);
+    constexpr int output_dim = (EVAL_LEVEL == 1) ? 1 : 4;
+
     const int n_order = coeffs.extent(0);
     const int n_charge_dim = coeffs.extent(3);
     const int n_trg = r_trg.extent(1);
     if (!n_trg)
         return;
 
-    workspace.ReInit(3 * n_order * n_trg + n_order * n_order * n_trg);
+    const int poly_block = n_order * n_trg;
+    const int tmp_block = n_order * n_order * n_trg;
+    const int n_poly_sets = (EVAL_LEVEL == 1) ? 3 : 6;
+    const int n_tmp_sets = (EVAL_LEVEL == 1) ? 1 : 2;
+    const int acc_buf_size = (EVAL_LEVEL == 2) ? 4 * n_trg : 0;
+
+    workspace.ReInit(n_poly_sets * poly_block + n_tmp_sets * tmp_block + acc_buf_size);
+
     ndview<T, 2> poly_x({n_trg, n_order}, &workspace[0]);
-    ndview<T, 2> poly_y({n_trg, n_order}, &workspace[n_order * n_trg]);
-    ndview<T, 2> poly_z({n_trg, n_order}, &workspace[2 * n_order * n_trg]);
-    ndview<T, 2> tmp_flat({n_trg, n_order * n_order}, &workspace[3 * n_order * n_trg]);
+    ndview<T, 2> poly_y({n_trg, n_order}, &workspace[poly_block]);
+    ndview<T, 2> poly_z({n_trg, n_order}, &workspace[2 * poly_block]);
 
-    auto calc_polynomial = dmk::chebyshev::get_polynomial_calculator<T>(n_order);
+    T *dpoly_base = &workspace[3 * poly_block];
+    ndview<T, 2> dpoly_x({n_trg, n_order}, dpoly_base);
+    ndview<T, 2> dpoly_y({n_trg, n_order}, dpoly_base + poly_block);
+    ndview<T, 2> dpoly_z({n_trg, n_order}, dpoly_base + 2 * poly_block);
 
+    int tmp_offset = n_poly_sets * poly_block;
+    ndview<T, 2> tmp_flat({n_trg, n_order * n_order}, &workspace[tmp_offset]);
+    ndview<T, 2> tmp_z_flat({n_trg, n_order * n_order},
+                            (EVAL_LEVEL == 2) ? &workspace[tmp_offset + tmp_block] : nullptr);
+
+    T *acc_base = (EVAL_LEVEL == 2) ? &workspace[n_poly_sets * poly_block + n_tmp_sets * tmp_block] : nullptr;
+
+    // ---- Compute Chebyshev polynomials (and derivatives if needed) ----
     constexpr int MAX_ORDER = 80;
-    for (int i = 0; i < n_trg; ++i) {
-        T tmp[MAX_ORDER];
-        calc_polynomial(sc * (r_trg(0, i) - cen(0)), tmp);
-        for (int k = 0; k < n_order; ++k)
-            poly_x(i, k) = tmp[k];
-        calc_polynomial(sc * (r_trg(1, i) - cen(1)), tmp);
-        for (int k = 0; k < n_order; ++k)
-            poly_y(i, k) = tmp[k];
-        calc_polynomial(sc * (r_trg(2, i) - cen(2)), tmp);
-        for (int k = 0; k < n_order; ++k)
-            poly_z(i, k) = tmp[k];
+    if constexpr (EVAL_LEVEL == 1) {
+        auto calc_polynomial = dmk::chebyshev::get_polynomial_calculator<T>(n_order);
+        for (int i = 0; i < n_trg; ++i) {
+            T tmp[MAX_ORDER];
+            calc_polynomial(sc * (r_trg(0, i) - cen(0)), tmp);
+            for (int k = 0; k < n_order; ++k)
+                poly_x(i, k) = tmp[k];
+            calc_polynomial(sc * (r_trg(1, i) - cen(1)), tmp);
+            for (int k = 0; k < n_order; ++k)
+                poly_y(i, k) = tmp[k];
+            calc_polynomial(sc * (r_trg(2, i) - cen(2)), tmp);
+            for (int k = 0; k < n_order; ++k)
+                poly_z(i, k) = tmp[k];
+        }
+    } else {
+        for (int i = 0; i < n_trg; ++i) {
+            T p[MAX_ORDER], dp[MAX_ORDER];
+
+            calc_polynomial_and_derivative(n_order, sc * (r_trg(0, i) - cen(0)), p, dp);
+            for (int k = 0; k < n_order; ++k) {
+                poly_x(i, k) = p[k];
+                dpoly_x(i, k) = dp[k];
+            }
+
+            calc_polynomial_and_derivative(n_order, sc * (r_trg(1, i) - cen(1)), p, dp);
+            for (int k = 0; k < n_order; ++k) {
+                poly_y(i, k) = p[k];
+                dpoly_y(i, k) = dp[k];
+            }
+
+            calc_polynomial_and_derivative(n_order, sc * (r_trg(2, i) - cen(2)), p, dp);
+            for (int k = 0; k < n_order; ++k) {
+                poly_z(i, k) = p[k];
+                dpoly_z(i, k) = dp[k];
+            }
+        }
     }
 
+    // ---- Per charge dimension: GEMM + accumulation ----
     for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
         gemm::gemm('n', 't', n_trg, n_order * n_order, n_order, T{1.0}, poly_z.data(), n_trg, &coeffs(0, 0, 0, i_dim),
                    n_order * n_order, T{0.0}, tmp_flat.data(), n_trg);
 
-        // Accumulate: pot(i_dim, k) += Σ_i poly_y(k, i) * Σ_j tmp_flat(k, j + i*n_order) * poly_x(k, j)
-        T *__restrict__ pot_ptr = &pot(i_dim, 0);
-        for (int i = 0; i < n_order; ++i) {
-            const T *__restrict__ py = &poly_y(0, i);
-            for (int j = 0; j < n_order; ++j) {
-                const T *__restrict__ tf = &tmp_flat(0, j + i * n_order);
-                const T *__restrict__ px = &poly_x(0, j);
-                util::vec_fma_3(pot_ptr, py, tf, px, n_trg); // pot[k] += py[k] * tf[k] * px[k]
-            }
-        }
-    }
-
-    const int n_flops_poly = (3 * n_order + 2) * n_trg;
-    const int n_flops_mm = 2 * n_order * n_order * n_trg * n_order;
-    const int n_flops_tmp = 2 * n_trg * n_order * n_order;
-    const int n_flops_pot = 2 * n_trg * n_order;
-    const unsigned long n_flops = n_charge_dim * (n_flops_poly + n_flops_mm + n_flops_tmp + n_flops_pot);
-    sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, n_flops);
-}
-
-template <typename T>
-void eval_target_gradients_3d(const ndview<T, 4> &coeffs, const ndview<T, 2> &r_trg, const ndview<T, 1> &cen, T sc,
-                              ndview<T, 3> grad, sctl::Vector<T> &workspace) {
-    constexpr int n_dim = 3;
-    const int n_order = coeffs.extent(0);
-    const int n_charge_dim = coeffs.extent(3);
-    const int n_trg = r_trg.extent(1);
-
-    workspace.ReInit(6 * n_order * n_trg + 2 * n_order * n_order * n_trg);
-    ndview<T, 2> poly_views[] = {
-        ndview<T, 2>({n_order, n_trg}, &workspace[0]),
-        ndview<T, 2>({n_order, n_trg}, &workspace[n_order * n_trg]),
-        ndview<T, 2>({n_order, n_trg}, &workspace[2 * n_order * n_trg]),
-    };
-    ndview<T, 2> dpoly_views[] = {
-        ndview<T, 2>({n_order, n_trg}, &workspace[3 * n_order * n_trg]),
-        ndview<T, 2>({n_order, n_trg}, &workspace[4 * n_order * n_trg]),
-        ndview<T, 2>({n_order, n_trg}, &workspace[5 * n_order * n_trg]),
-    };
-    ndview<T, 3> tmp({n_order, n_order, n_trg}, &workspace[6 * n_order * n_trg]);
-    ndview<T, 3> tmp_z({n_order, n_order, n_trg}, tmp.data() + tmp.size());
-
-    for (int i_dim = 0; i_dim < n_dim; ++i_dim) {
-        for (int i = 0; i < n_trg; ++i) {
-            calc_polynomial_and_derivative(n_order, (r_trg(i_dim, i) - cen(i_dim)) * sc, &poly_views[i_dim](0, i),
-                                           &dpoly_views[i_dim](0, i));
-        }
-    }
-
-    const auto opt_dot = dmk::util::get_opt_dot<T>(n_order);
-    for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
-        gemm::gemm('n', 'n', n_order * n_order, n_trg, n_order, T{1.0}, &coeffs(0, 0, 0, i_dim), n_order * n_order,
-                   poly_views[2].data(), n_order, T{0.0}, tmp.data(), n_order * n_order);
-        gemm::gemm('n', 'n', n_order * n_order, n_trg, n_order, T{1.0}, &coeffs(0, 0, 0, i_dim), n_order * n_order,
-                   dpoly_views[2].data(), n_order, T{0.0}, tmp_z.data(), n_order * n_order);
-
-        for (int k = 0; k < n_trg; ++k) {
-            T gx = T{0};
-            T gy = T{0};
-            T gz = T{0};
+        if constexpr (EVAL_LEVEL == 1) {
+            T *__restrict__ pot_ptr = &pot(i_dim, 0);
             for (int i = 0; i < n_order; ++i) {
-                gx += poly_views[1](i, k) * opt_dot(&tmp(0, i, k), &dpoly_views[0](0, k));
-                gy += dpoly_views[1](i, k) * opt_dot(&tmp(0, i, k), &poly_views[0](0, k));
-                gz += poly_views[1](i, k) * opt_dot(&tmp_z(0, i, k), &poly_views[0](0, k));
+                const T *__restrict__ py = &poly_y(0, i);
+                for (int j = 0; j < n_order; ++j) {
+                    const T *__restrict__ tf = &tmp_flat(0, j + i * n_order);
+                    const T *__restrict__ px = &poly_x(0, j);
+                    util::vec_fma_3(pot_ptr, py, tf, px, n_trg);
+                }
             }
-            grad(i_dim, 0, k) += sc * gx;
-            grad(i_dim, 1, k) += sc * gy;
-            grad(i_dim, 2, k) += sc * gz;
+        } else {
+            gemm::gemm('n', 't', n_trg, n_order * n_order, n_order, T{1.0}, dpoly_z.data(), n_trg,
+                       &coeffs(0, 0, 0, i_dim), n_order * n_order, T{0.0}, tmp_z_flat.data(), n_trg);
+
+            // Accumulators over target blocks
+            T *__restrict__ acc_pot = acc_base;
+            T *__restrict__ acc_gx = acc_base + n_trg;
+            T *__restrict__ acc_gy = acc_base + 2 * n_trg;
+            T *__restrict__ acc_gz = acc_base + 3 * n_trg;
+            std::fill(acc_pot, acc_pot + 4 * n_trg, T{0});
+
+            // Vectorize pot/grad calculation to do multiple points at once
+            for (int i = 0; i < n_order; ++i) {
+                const T *__restrict__ py = &poly_y(0, i);
+                const T *__restrict__ dpy = &dpoly_y(0, i);
+                for (int j = 0; j < n_order; ++j) {
+                    const T *__restrict__ tf = &tmp_flat(0, j + i * n_order);
+                    const T *__restrict__ tf_z = &tmp_z_flat(0, j + i * n_order);
+                    const T *__restrict__ px = &poly_x(0, j);
+                    const T *__restrict__ dpx = &dpoly_x(0, j);
+
+                    util::vec_fma_3_grad(acc_pot, acc_gx, acc_gy, acc_gz, py, dpy, tf, tf_z, px, dpx, n_trg);
+                }
+            }
+
+            // Gather potentials/grads from tmp back into potential
+            T *__restrict__ pot_out = &pot(i_dim * output_dim, 0);
+            const int stride = n_charge_dim * output_dim;
+            for (int t = 0; t < n_trg; ++t) {
+                pot_out[t * stride + 0] += acc_pot[t];
+                pot_out[t * stride + 1] += sc * acc_gx[t];
+                pot_out[t * stride + 2] += sc * acc_gy[t];
+                pot_out[t * stride + 3] += sc * acc_gz[t];
+            }
         }
     }
 }
 
-template <typename T, int DIM>
+template <typename T, int DIM, int EVAL_LEVEL>
 void eval_targets(const ndview<T, DIM + 1> &coeffs, const ndview<T, 2> &r_trg, const ndview<T, 1> &cen, T sc,
                   ndview<T, 2> pot, sctl::Vector<T> &workspace) {
     if constexpr (DIM == 2)
-        return eval_targets_2d(coeffs, r_trg, cen, sc, pot, workspace);
+        return eval_targets_2d<T, EVAL_LEVEL>(coeffs, r_trg, cen, sc, pot, workspace);
     else if constexpr (DIM == 3)
-        return eval_targets_3d(coeffs, r_trg, cen, sc, pot, workspace);
+        return eval_targets_3d<T, EVAL_LEVEL>(coeffs, r_trg, cen, sc, pot, workspace);
     else
         static_assert(dmk::util::always_false<T>, "Invalid DIM supplied");
 }
@@ -457,34 +478,33 @@ template void proxycharge2pw<double, 3>(const ndview<double, 4> &proxy_coeffs,
                                         const ndview<std::complex<double>, 2> &poly2pw,
                                         ndview<std::complex<double>, 4> pw_expansion, sctl::Vector<double> &workspace);
 
-template void eval_targets<float, 2>(const ndview<float, 3> &coeffs, const ndview<float, 2> &targ,
-                                     const ndview<float, 1> &cen, float sc, ndview<float, 2> pot,
-                                     sctl::Vector<float> &workspace);
+template void eval_targets<float, 2, 1>(const ndview<float, 3> &coeffs, const ndview<float, 2> &targ,
+                                        const ndview<float, 1> &cen, float sc, ndview<float, 2> pot,
+                                        sctl::Vector<float> &workspace);
+template void eval_targets<float, 2, 2>(const ndview<float, 3> &coeffs, const ndview<float, 2> &targ,
+                                        const ndview<float, 1> &cen, float sc, ndview<float, 2> pot,
+                                        sctl::Vector<float> &workspace);
 
-template void eval_targets<float, 3>(const ndview<float, 4> &coeffs, const ndview<float, 2> &targ,
-                                     const ndview<float, 1> &cen, float sc, ndview<float, 2> pot,
-                                     sctl::Vector<float> &workspace);
+template void eval_targets<float, 3, 1>(const ndview<float, 4> &coeffs, const ndview<float, 2> &targ,
+                                        const ndview<float, 1> &cen, float sc, ndview<float, 2> pot,
+                                        sctl::Vector<float> &workspace);
+template void eval_targets<float, 3, 2>(const ndview<float, 4> &coeffs, const ndview<float, 2> &targ,
+                                        const ndview<float, 1> &cen, float sc, ndview<float, 2> pot,
+                                        sctl::Vector<float> &workspace);
 
-template void eval_targets<double, 2>(const ndview<double, 3> &coeffs, const ndview<double, 2> &targ,
-                                      const ndview<double, 1> &cen, double sc, ndview<double, 2> pot,
-                                      sctl::Vector<double> &workspace);
+template void eval_targets<double, 2, 1>(const ndview<double, 3> &coeffs, const ndview<double, 2> &targ,
+                                         const ndview<double, 1> &cen, double sc, ndview<double, 2> pot,
+                                         sctl::Vector<double> &workspace);
+template void eval_targets<double, 2, 2>(const ndview<double, 3> &coeffs, const ndview<double, 2> &targ,
+                                         const ndview<double, 1> &cen, double sc, ndview<double, 2> pot,
+                                         sctl::Vector<double> &workspace);
 
-template void eval_targets<double, 3>(const ndview<double, 4> &coeffs, const ndview<double, 2> &targ,
-                                      const ndview<double, 1> &cen, double sc, ndview<double, 2> pot,
-                                      sctl::Vector<double> &workspace);
-
-template void eval_target_gradients<float, 2>(const ndview<float, 3> &coeffs, const ndview<float, 2> &targ,
-                                              const ndview<float, 1> &cen, float sc, ndview<float, 3> grad,
-                                              sctl::Vector<float> &workspace);
-template void eval_target_gradients<float, 3>(const ndview<float, 4> &coeffs, const ndview<float, 2> &targ,
-                                              const ndview<float, 1> &cen, float sc, ndview<float, 3> grad,
-                                              sctl::Vector<float> &workspace);
-template void eval_target_gradients<double, 2>(const ndview<double, 3> &coeffs, const ndview<double, 2> &targ,
-                                               const ndview<double, 1> &cen, double sc, ndview<double, 3> grad,
-                                               sctl::Vector<double> &workspace);
-template void eval_target_gradients<double, 3>(const ndview<double, 4> &coeffs, const ndview<double, 2> &targ,
-                                               const ndview<double, 1> &cen, double sc, ndview<double, 3> grad,
-                                               sctl::Vector<double> &workspace);
+template void eval_targets<double, 3, 1>(const ndview<double, 4> &coeffs, const ndview<double, 2> &targ,
+                                         const ndview<double, 1> &cen, double sc, ndview<double, 2> pot,
+                                         sctl::Vector<double> &workspace);
+template void eval_targets<double, 3, 2>(const ndview<double, 4> &coeffs, const ndview<double, 2> &targ,
+                                         const ndview<double, 1> &cen, double sc, ndview<double, 2> pot,
+                                         sctl::Vector<double> &workspace);
 
 template <int DIM>
 void check_eval_target_gradients_fd() {
@@ -508,18 +528,15 @@ void check_eval_target_gradients_fd() {
     ndview<double, 1> center_view({DIM}, &center_data[0]);
     ndview<double, 2> trg_view({DIM, n_trg}, &trg_data[0]);
 
-    sctl::Vector<double> pot_data(n_charge_dim * n_trg);
-    sctl::Vector<double> grad_data(n_charge_dim * DIM * n_trg);
-    ndview<double, 2> pot_view({n_charge_dim, n_trg}, &pot_data[0]);
-    ndview<double, 3> grad_view({n_charge_dim, DIM, n_trg}, &grad_data[0]);
+    constexpr int output_dim = 1 + DIM; // potential + gradient
+    sctl::Vector<double> pot_data(n_charge_dim * output_dim * n_trg);
+    ndview<double, 2> pot_view({n_charge_dim * output_dim, n_trg}, &pot_data[0]);
     sctl::Vector<double> workspace;
 
     if constexpr (DIM == 2) {
         ndview<double, 3> coeffs_view({n_order, n_order, n_charge_dim}, &coeffs_data[0]);
         pot_view = 0.0;
-        grad_view = 0.0;
-        eval_targets<double, DIM>(coeffs_view, trg_view, center_view, sc, pot_view, workspace);
-        eval_target_gradients<double, DIM>(coeffs_view, trg_view, center_view, sc, grad_view, workspace);
+        eval_targets<double, DIM, 2>(coeffs_view, trg_view, center_view, sc, pot_view, workspace);
 
         double err2 = 0.0;
         double ref2 = 0.0;
@@ -537,10 +554,10 @@ void check_eval_target_gradients_fd() {
                 ndview<double, 2> pot_m_view({n_charge_dim, n_trg}, &pot_m_data[0]);
                 pot_p_view = 0.0;
                 pot_m_view = 0.0;
-                eval_targets<double, DIM>(coeffs_view, trg_p_view, center_view, sc, pot_p_view, workspace);
-                eval_targets<double, DIM>(coeffs_view, trg_m_view, center_view, sc, pot_m_view, workspace);
+                eval_targets<double, DIM, 1>(coeffs_view, trg_p_view, center_view, sc, pot_p_view, workspace);
+                eval_targets<double, DIM, 1>(coeffs_view, trg_m_view, center_view, sc, pot_m_view, workspace);
                 const double fd = (pot_p_view(0, i) - pot_m_view(0, i)) / (2 * h);
-                const double diff = grad_view(0, i_dim, i) - fd;
+                const double diff = pot_view(0 * output_dim + 1 + i_dim, i) - fd;
                 err2 += diff * diff;
                 ref2 += fd * fd;
             }
@@ -549,9 +566,7 @@ void check_eval_target_gradients_fd() {
     } else {
         ndview<double, 4> coeffs_view({n_order, n_order, n_order, n_charge_dim}, &coeffs_data[0]);
         pot_view = 0.0;
-        grad_view = 0.0;
-        eval_targets<double, DIM>(coeffs_view, trg_view, center_view, sc, pot_view, workspace);
-        eval_target_gradients<double, DIM>(coeffs_view, trg_view, center_view, sc, grad_view, workspace);
+        eval_targets<double, DIM, 2>(coeffs_view, trg_view, center_view, sc, pot_view, workspace);
 
         double err2 = 0.0;
         double ref2 = 0.0;
@@ -569,10 +584,10 @@ void check_eval_target_gradients_fd() {
                 ndview<double, 2> pot_m_view({n_charge_dim, n_trg}, &pot_m_data[0]);
                 pot_p_view = 0.0;
                 pot_m_view = 0.0;
-                eval_targets<double, DIM>(coeffs_view, trg_p_view, center_view, sc, pot_p_view, workspace);
-                eval_targets<double, DIM>(coeffs_view, trg_m_view, center_view, sc, pot_m_view, workspace);
+                eval_targets<double, DIM, 1>(coeffs_view, trg_p_view, center_view, sc, pot_p_view, workspace);
+                eval_targets<double, DIM, 1>(coeffs_view, trg_m_view, center_view, sc, pot_m_view, workspace);
                 const double fd = (pot_p_view(0, i) - pot_m_view(0, i)) / (2 * h);
-                const double diff = grad_view(0, i_dim, i) - fd;
+                const double diff = pot_view(0 * output_dim + 1 + i_dim, i) - fd;
                 err2 += diff * diff;
                 ref2 += fd * fd;
             }
