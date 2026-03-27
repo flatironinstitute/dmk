@@ -79,15 +79,13 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
 
     pdmk_tree_destroy(tree);
 
-    // Accuracy: compute direct potential and gradient for a prefix
+    // Accuracy: compute direct potential (and gradient) for a prefix
     const int n_test = std::min(64, std::min(n_src, n_trg));
 
-    // Direct potential
-    std::vector<double> direct_pot_src(n_test, 0.0), direct_pot_trg(n_test, 0.0);
-    std::vector<double> direct_grad_src(n_test * n_dim, 0.0), direct_grad_trg(n_test * n_dim, 0.0);
+    // Direct results in interleaved layout: [pot, (gx, gy, [gz])] per point
+    std::vector<double> direct_src(n_test * output_dim, 0.0), direct_trg(n_test * output_dim, 0.0);
 
-    auto compute_direct = [&](const Real *target, int n_dim, int i_out, std::vector<double> &pot_out,
-                              std::vector<double> &grad_out) {
+    auto compute_direct = [&](const Real *target, int n_dim, int i_out, std::vector<double> &out) {
         for (int i_src = 0; i_src < n_src; ++i_src) {
             double dx[3];
             double dr2 = 0.0;
@@ -100,67 +98,90 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
 
             double q = (double)charges[i_src];
             if (n_dim == 2) {
-                pot_out[i_out] += q * 0.5 * std::log(dr2);
-                for (int d = 0; d < n_dim; ++d)
-                    grad_out[d + n_dim * i_out] += q * dx[d] / dr2;
+                out[i_out * output_dim] += q * 0.5 * std::log(dr2);
+                if (with_grad)
+                    for (int d = 0; d < n_dim; ++d)
+                        out[i_out * output_dim + 1 + d] += q * dx[d] / dr2;
             } else {
                 double rinv = 1.0 / std::sqrt(dr2);
-                pot_out[i_out] += q * rinv;
-                double rinv3 = rinv / dr2;
-                for (int d = 0; d < n_dim; ++d)
-                    grad_out[d + n_dim * i_out] -= q * dx[d] * rinv3;
+                out[i_out * output_dim] += q * rinv;
+                if (with_grad) {
+                    double rinv3 = rinv / dr2;
+                    for (int d = 0; d < n_dim; ++d)
+                        out[i_out * output_dim + 1 + d] -= q * dx[d] * rinv3;
+                }
             }
         }
     };
 
     for (int i = 0; i < n_test; ++i)
-        compute_direct(&r_src[i * n_dim], n_dim, i, direct_pot_src, direct_grad_src);
+        compute_direct(&r_src[i * n_dim], n_dim, i, direct_src);
     for (int i = 0; i < n_test; ++i)
-        compute_direct(&r_trg[i * n_dim], n_dim, i, direct_pot_trg, direct_grad_trg);
+        compute_direct(&r_trg[i * n_dim], n_dim, i, direct_trg);
 
-    // Relative L2 errors
-    auto rel_l2 = [](const auto &approx_data, const std::vector<double> &exact, int offset_stride, int n, int stride) {
+    // Relative L2 errors over a strided subset of the interleaved arrays
+    auto rel_l2 = [](const auto &approx, const std::vector<double> &exact,
+                     int n, int stride, int offset) {
         double err2 = 0.0, ref2 = 0.0;
         for (int i = 0; i < n; ++i) {
-            double diff = (double)approx_data[i * offset_stride] - exact[i];
+            double diff = (double)approx[i * stride + offset] - exact[i * stride + offset];
             err2 += diff * diff;
-            ref2 += exact[i] * exact[i];
+            ref2 += exact[i * stride + offset] * exact[i * stride + offset];
         }
         return ref2 > 0 ? std::sqrt(err2 / ref2) : 0.0;
     };
 
-    auto rel_l2_vec = [](const auto &approx_data, const std::vector<double> &exact, int n) {
-        double err2 = 0.0, ref2 = 0.0;
-        for (int i = 0; i < n; ++i) {
-            double diff = (double)approx_data[i] - exact[i];
-            err2 += diff * diff;
-            ref2 += exact[i] * exact[i];
-        }
-        return ref2 > 0 ? std::sqrt(err2 / ref2) : 0.0;
-    };
-
-    auto max_rel = [](const auto &approx_data, const std::vector<double> &exact, int n) {
+    auto max_rel = [](const auto &approx, const std::vector<double> &exact,
+                      int n, int stride, int offset) {
         double maxe = 0.0;
         for (int i = 0; i < n; ++i) {
-            double ref = std::abs(exact[i]);
+            double ref = std::abs(exact[i * stride + offset]);
             if (ref > 1e-15) {
-                double err = std::abs((double)approx_data[i] - exact[i]) / ref;
+                double err = std::abs((double)approx[i * stride + offset] - exact[i * stride + offset]) / ref;
                 maxe = std::max(maxe, err);
             }
         }
         return maxe;
     };
 
-    result.pot_src_l2_err = rel_l2_vec(pot_src, direct_pot_src, n_test);
-    result.pot_trg_l2_err = rel_l2_vec(pot_trg, direct_pot_trg, n_test);
+    // Gradient: L2 over all components together
+    auto rel_l2_grad = [](const auto &approx, const std::vector<double> &exact,
+                          int n, int n_dim, int stride) {
+        double err2 = 0.0, ref2 = 0.0;
+        for (int i = 0; i < n; ++i) {
+            for (int d = 0; d < n_dim; ++d) {
+                double diff = (double)approx[i * stride + 1 + d] - exact[i * stride + 1 + d];
+                err2 += diff * diff;
+                ref2 += exact[i * stride + 1 + d] * exact[i * stride + 1 + d];
+            }
+        }
+        return ref2 > 0 ? std::sqrt(err2 / ref2) : 0.0;
+    };
 
-    // FIXME
-    // if (with_grad) {
-    //     result.grad_src_l2_err = rel_l2_vec(grad_src, direct_grad_src, n_test * n_dim);
-    //     result.grad_trg_l2_err = rel_l2_vec(grad_trg, direct_grad_trg, n_test * n_dim);
-    //     result.grad_src_max_err = max_rel(grad_src, direct_grad_src, n_test * n_dim);
-    //     result.grad_trg_max_err = max_rel(grad_trg, direct_grad_trg, n_test * n_dim);
-    // }
+    auto max_rel_grad = [](const auto &approx, const std::vector<double> &exact,
+                           int n, int n_dim, int stride) {
+        double maxe = 0.0;
+        for (int i = 0; i < n; ++i) {
+            for (int d = 0; d < n_dim; ++d) {
+                double ref = std::abs(exact[i * stride + 1 + d]);
+                if (ref > 1e-15) {
+                    double err = std::abs((double)approx[i * stride + 1 + d] - exact[i * stride + 1 + d]) / ref;
+                    maxe = std::max(maxe, err);
+                }
+            }
+        }
+        return maxe;
+    };
+
+    result.pot_src_l2_err = rel_l2(pot_src, direct_src, n_test, output_dim, 0);
+    result.pot_trg_l2_err = rel_l2(pot_trg, direct_trg, n_test, output_dim, 0);
+
+    if (with_grad) {
+        result.grad_src_l2_err = rel_l2_grad(pot_src, direct_src, n_test, n_dim, output_dim);
+        result.grad_trg_l2_err = rel_l2_grad(pot_trg, direct_trg, n_test, n_dim, output_dim);
+        result.grad_src_max_err = max_rel_grad(pot_src, direct_src, n_test, n_dim, output_dim);
+        result.grad_trg_max_err = max_rel_grad(pot_trg, direct_trg, n_test, n_dim, output_dim);
+    }
 
     return result;
 }

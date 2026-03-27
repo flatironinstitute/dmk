@@ -1389,10 +1389,10 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
             auto charge = charge_with_halo_view(trg_box);
             const auto depth = node_mid[trg_box].Depth() + ifpwexp[trg_box];
             const auto correction_factor = w0[depth];
+            // FIXME: How do we properly deal with gradients/etc?
             for (int i_src = 0; i_src < r_src_cnt_with_halo[trg_box]; ++i_src)
                 for (int i = 0; i < kernel_input_dim; ++i)
-                    for (int k = 0; k < kernel_output_dim_src; ++k)
-                        pot(k, i_src) -= correction_factor * charge(i, i_src);
+                    pot(i, i_src) -= correction_factor * charge(i, i_src);
         }
     }
 }
