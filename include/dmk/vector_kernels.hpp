@@ -339,6 +339,72 @@ void laplace_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Rea
         n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);
 }
 
+template <class Real, int MaxVecLen>
+struct LaplacePolyEvaluator3D {
+    using VecType = sctl::Vec<Real, MaxVecLen>;
+    static constexpr int SPATIAL_DIM = 3;
+
+    VecType thresh2_vec, d2max_vec, rsc_vec, cen_vec;
+    const Real *coeffs;
+    int n_coeffs;
+    int n_digits;
+    int transform_poly;
+    int eval_level;
+
+    static constexpr Real scale_factor() { return Real{1.0}; }
+
+    DMK_ALWAYS_INLINE void operator()(auto &u, const VecType (&dX)[SPATIAL_DIM]) const {
+        constexpr int KDIM = std::extent_v<std::remove_reference_t<decltype(u[0])>>;
+        constexpr bool has_grad = (KDIM >= 4);
+        static_assert(KDIM == 1 || KDIM == 4, "Invalid KDIM");
+
+        const VecType R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
+        const auto in_range = (R2 > thresh2_vec) & (R2 < d2max_vec);
+        const VecType Rinv = my_approx_rsqrt(R2, n_digits);
+        const VecType zero = VecType::Zero();
+
+        if (transform_poly) {
+            if constexpr (!has_grad) {
+                const VecType E = horner_split<0>(R2, coeffs, n_coeffs);
+                const VecType O = horner_split<1>(R2, coeffs, n_coeffs);
+                u[0][0] = sctl::select<Real, MaxVecLen>(in_range, FMA(E, Rinv, O), zero);
+            } else {
+                VecType E, dE, O, dO;
+                horner_split_val_deriv<0>(R2, coeffs, n_coeffs, E, dE);
+                horner_split_val_deriv<1>(R2, coeffs, n_coeffs, O, dO);
+
+                u[0][0] = sctl::select<Real, MaxVecLen>(in_range, FMA(E, Rinv, O), zero);
+
+                const VecType Rinv3 = Rinv * Rinv * Rinv;
+                const VecType half = Real{0.5};
+                const VecType df_dR2 = FMA(dE, Rinv, dO) - half * E * Rinv3;
+                const VecType two = Real{2.0};
+                for (int i = 0; i < 3; i++)
+                    u[0][1 + i] = sctl::select<Real, MaxVecLen>(in_range, two * dX[i] * df_dR2, zero);
+            }
+        } else {
+            const VecType xmapped = FMA(R2, Rinv, cen_vec) * rsc_vec;
+
+            if constexpr (!has_grad) {
+                const VecType P = horner(xmapped, coeffs, n_coeffs);
+                u[0][0] = sctl::select<Real, MaxVecLen>(in_range, P * Rinv, zero);
+            } else {
+                VecType P, dP;
+                horner_val_deriv(xmapped, coeffs, n_coeffs, P, dP);
+
+                u[0][0] = sctl::select<Real, MaxVecLen>(in_range, P * Rinv, zero);
+
+                const VecType Rinv2 = Rinv * Rinv;
+                const VecType half = VecType(Real{0.5});
+                const VecType df_dR2 = half * Rinv2 * (dP * rsc_vec - P * Rinv);
+                const VecType two = VecType(Real{2.0});
+                for (int i = 0; i < 3; i++)
+                    u[0][1 + i] = sctl::select<Real, MaxVecLen>(in_range, two * dX[i] * df_dR2, zero);
+            }
+        }
+    }
+};
+
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
 void laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
                                int n_coeffs_rt, const Real *coeffs, int n_src, const Real *r_src, const Real *charge,
@@ -346,90 +412,13 @@ void laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Rea
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt;
-
-    if constexpr (EVAL_LEVEL == -1) {
-        if (eval_level_rt == 1)
-            laplace_3d_poly_all_pairs<Real, MaxVecLen, N_DIGITS, N_COEFFS, 1>(
-                eval_level_rt, n_digits_rt, rsc, cen, d2max, thresh2, n_coeffs_rt, coeffs, n_src, r_src, charge, n_trg,
-                r_trg, pot, unroll_factor);
-        else
-            laplace_3d_poly_all_pairs<Real, MaxVecLen, N_DIGITS, N_COEFFS, 2>(
-                eval_level_rt, n_digits_rt, rsc, cen, d2max, thresh2, n_coeffs_rt, coeffs, n_src, r_src, charge, n_trg,
-                r_trg, pot, unroll_factor);
-        return;
-    }
+    const int eval_level = (EVAL_LEVEL > 0) ? EVAL_LEVEL : eval_level_rt;
 
     using VecType = sctl::Vec<Real, MaxVecLen>;
     constexpr int KERNEL_INPUT_DIM = 1;
-    constexpr int KERNEL_OUTPUT_DIM = (EVAL_LEVEL == 1) ? 1 : 4;
     constexpr int SPATIAL_DIM = 3;
     constexpr int NORMAL_DIM = 0;
     const int transform_poly = n_digits < 6;
-
-    struct Evaluator {
-        VecType thresh2_vec, d2max_vec, rsc_vec, cen_vec;
-        const Real *coeffs;
-        int n_coeffs;
-        int n_digits;
-        int transform_poly;
-
-        static constexpr Real scale_factor() { return Real{1.0}; }
-
-        Evaluator(VecType thresh2_vec, VecType d2max_vec, VecType rsc_vec, VecType cen_vec, const Real *coeffs,
-                  int n_coeffs, int digits, int transform_poly)
-            : thresh2_vec(thresh2_vec), d2max_vec(d2max_vec), rsc_vec(rsc_vec), cen_vec(cen_vec), coeffs(coeffs),
-              n_coeffs(n_coeffs), n_digits(digits), transform_poly(transform_poly) {}
-
-        DMK_ALWAYS_INLINE void operator()(VecType (&u)[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM],
-                                          const VecType (&dX)[SPATIAL_DIM]) const {
-            const VecType R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
-            const auto in_range = (R2 > thresh2_vec) & (R2 < d2max_vec);
-            const VecType Rinv = my_approx_rsqrt(R2, n_digits);
-            const VecType zero = VecType::Zero();
-
-            if (transform_poly) {
-                if constexpr (EVAL_LEVEL == 1) {
-                    const VecType E = horner_split<0>(R2, coeffs, n_coeffs);
-                    const VecType O = horner_split<1>(R2, coeffs, n_coeffs);
-                    u[0][0] = sctl::select<Real, MaxVecLen>(in_range, FMA(E, Rinv, O), zero);
-                } else {
-                    VecType E, dE, O, dO;
-                    horner_split_val_deriv<0>(R2, coeffs, n_coeffs, E, dE);
-                    horner_split_val_deriv<1>(R2, coeffs, n_coeffs, O, dO);
-
-                    u[0][0] = sctl::select<Real, MaxVecLen>(in_range, FMA(E, Rinv, O), zero);
-
-                    // df/dR2 = E'(R2)*Rinv - E(R2)*Rinv^3/2 + O'(R2)
-                    const VecType Rinv3 = Rinv * Rinv * Rinv;
-                    const VecType half = Real{0.5};
-                    const VecType df_dR2 = FMA(dE, Rinv, dO) - half * E * Rinv3;
-                    const VecType two = Real{2.0};
-                    for (int i = 0; i < 3; i++)
-                        u[0][1 + i] = sctl::select<Real, MaxVecLen>(in_range, two * dX[i] * df_dR2, zero);
-                }
-            } else {
-                const VecType xmapped = FMA(R2, Rinv, cen_vec) * rsc_vec;
-
-                if constexpr (EVAL_LEVEL == 1) {
-                    const VecType P = horner(xmapped, coeffs, n_coeffs);
-                    u[0][0] = sctl::select<Real, MaxVecLen>(in_range, P * Rinv, zero);
-                } else {
-                    VecType P, dP;
-                    horner_val_deriv(xmapped, coeffs, n_coeffs, P, dP);
-
-                    u[0][0] = sctl::select<Real, MaxVecLen>(in_range, P * Rinv, zero);
-
-                    // df/dR2 = Rinv^2 * (P'(xmapped)*rsc - P(xmapped)*Rinv) / 2
-                    const VecType Rinv2 = Rinv * Rinv;
-                    const VecType half = VecType(Real{0.5});
-                    const VecType df_dR2 = half * Rinv2 * (dP * rsc_vec - P * Rinv);
-                    const VecType two = VecType(Real{2.0});
-                    for (int i = 0; i < 3; i++)
-                        u[0][1 + i] = sctl::select<Real, MaxVecLen>(in_range, two * dX[i] * df_dR2, zero);
-                }
-            }
-        }
-    };
 
     Real coeffs_mod[64];
     if (transform_poly) {
@@ -447,10 +436,19 @@ void laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Rea
         coeffs = coeffs_mod;
     }
 
-    Evaluator evaluator(thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits, transform_poly);
+    LaplacePolyEvaluator3D<Real, MaxVecLen> evaluator{VecType(thresh2), VecType(d2max), VecType(rsc),
+                                                      VecType(cen),     coeffs,         n_coeffs,
+                                                      n_digits,         transform_poly, eval_level};
 
-    EvalPairs<Real, KERNEL_INPUT_DIM, KERNEL_OUTPUT_DIM, SPATIAL_DIM, NORMAL_DIM, MaxVecLen>(
-        n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);
+    if (eval_level == 1) {
+        constexpr int KERNEL_OUTPUT_DIM = 1;
+        EvalPairs<Real, KERNEL_INPUT_DIM, KERNEL_OUTPUT_DIM, SPATIAL_DIM, NORMAL_DIM, MaxVecLen>(
+            n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);
+    } else {
+        constexpr int KERNEL_OUTPUT_DIM = 4;
+        EvalPairs<Real, KERNEL_INPUT_DIM, KERNEL_OUTPUT_DIM, SPATIAL_DIM, NORMAL_DIM, MaxVecLen>(
+            n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);
+    }
 }
 
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>

@@ -219,8 +219,10 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
         auto src_eval = make_evaluator_aot<Real>(params.kernel, params.pgh_src, DIM, n_digits, 3);
         auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.pgh_trg, DIM, n_digits, 3);
 #ifdef DMK_USE_JIT
-        if (getenv("DMK_DEBUG_FORCE_AOT") == nullptr)
-            eval = make_evaluator_jit<Real>(params.kernel, DIM, n_digits, 3);
+        if (getenv("DMK_DEBUG_FORCE_AOT") == nullptr) {
+            src_eval = make_evaluator_jit<Real>(params.kernel, params.pgh_src, DIM, n_digits, 3);
+            trg_eval = make_evaluator_jit<Real>(params.kernel, params.pgh_trg, DIM, n_digits, 3);
+        }
 #endif
         // FIXME: assumes the same src/trg output configuration
         evaluator_by_level_src.assign(n_levels(), src_eval);
