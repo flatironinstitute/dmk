@@ -286,6 +286,54 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 }
 
 template <typename T, int DIM>
+int DMKPtTree<T, DIM>::update_charges(const T *charge, const T *normal, const T *dipole_str) {
+    if (normal || dipole_str) {
+        std::cerr << "normal updates and dipoles not supported yet\n";
+        return 1;
+    }
+    auto &logger = dmk::get_logger(comm_, params.log_level);
+    logger->info("update_charges started");
+
+    const int n_src = r_src_sorted_owned.Dim() / DIM;
+
+    // Wrap the incoming (unsorted) charge data in a Vector without owning it
+    sctl::Vector<T> charge_vec(n_src * kernel_input_dim, const_cast<T *>(charge), false);
+
+    // Delete the old charge data and re-register with the new values.
+    // The PtTree already knows the sort permutation from the "pdmk_src"
+    // particle set, so AddParticleData will sort the new charges into
+    // tree order automatically.
+    this->DeleteParticleData("pdmk_charge");
+    this->AddParticleData("pdmk_charge", "pdmk_src", charge_vec);
+
+    // Retrieve the sorted owned charges
+    {
+        sctl::Vector<T> data;
+        sctl::Vector<long> count;
+        this->GetData(data, count, "pdmk_charge");
+        charge_sorted_owned = data;
+        charge_cnt_owned = count;
+    }
+
+    // Recompute charge offsets (owned)
+    charge_offsets_owned[0] = 0;
+    for (std::size_t i = 1; i < n_boxes(); ++i)
+        charge_offsets_owned[i] = charge_offsets_owned[i - 1] + kernel_input_dim * charge_cnt_owned[i - 1];
+
+    // Broadcast to halo/ghost nodes and retrieve
+    this->template Broadcast<T>("pdmk_charge");
+    this->GetData(charge_sorted_with_halo, charge_cnt_with_halo, "pdmk_charge");
+
+    // Recompute charge offsets (with halo)
+    charge_offsets_with_halo[0] = 0;
+    for (std::size_t i = 1; i < n_boxes(); ++i)
+        charge_offsets_with_halo[i] = charge_offsets_with_halo[i - 1] + kernel_input_dim * charge_cnt_with_halo[i - 1];
+
+    logger->info("update_charges completed");
+    return 0;
+}
+
+template <typename T, int DIM>
 void DMKPtTree<T, DIM>::compute_data_offsets() {
     const auto &node_mid = this->GetNodeMID();
     r_src_offsets_with_halo.ReInit(n_boxes());

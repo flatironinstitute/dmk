@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <limits>
 #include <string>
 #include <variant>
 
@@ -311,6 +312,35 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d all", 1) {
                 // FIXME: We should strengthen the checks here
                 CHECK(l2_err_src < 6 * params.eps);
                 CHECK(l2_err_trg < 6 * params.eps);
+
+                // Scale charges by 1/2 and re-evaluate. Since the kernel
+                // is linear in the charges, potentials should scale by the same factor.
+                {
+                    const double scale = 2.0;
+                    sctl::Vector<double> scaled_charges(charges.Dim());
+                    for (sctl::Long i = 0; i < charges.Dim(); ++i)
+                        scaled_charges[i] = charges[i] * scale;
+
+                    int rc = pdmk_tree_update_charges(tree, &scaled_charges[0], nullptr, nullptr);
+                    CHECK(rc == 0);
+
+                    sctl::Vector<double> pot_src_updated(n_src * nd), pot_trg_updated(n_trg * nd);
+                    pdmk_tree_eval(tree, &pot_src_updated[0], &pot_trg_updated[0]);
+
+                    // Check that updated potentials ≈ scale * original potentials
+                    double l2_err_src_update = 0.0;
+                    double l2_ref_src = 0.0;
+                    for (int i = 0; i < n_src; ++i) {
+                        double expected = pot_src[i] * scale;
+                        CHECK(std::abs(expected - pot_src_updated[i]) < 5 * std::numeric_limits<double>::epsilon());
+                    }
+
+                    for (int i = 0; i < n_test_trg; ++i) {
+                        double expected = pot_trg[i] * scale;
+                        CHECK(std::abs(expected - pot_trg_updated[i]) < 5 * std::numeric_limits<double>::epsilon());
+                    }
+                }
+
                 pdmk_tree_destroy(tree);
             }
         }
@@ -462,6 +492,21 @@ inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *pot_trg) {
         *static_cast<pdmk_tree_impl *>(tree));
 }
 
+template <typename Real>
+inline int pdmk_tree_update_charges(pdmk_tree tree, const Real *charge, const Real *normal, const Real *dipole_str) {
+    int rc = 1;
+    std::visit(
+        [&](auto &t) {
+            using TreeType = std::decay_t<decltype(t)>;
+            if constexpr (std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 2>>> ||
+                          std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 3>>>) {
+                rc = t->update_charges(charge, normal, dipole_str);
+            }
+        },
+        *static_cast<pdmk_tree_impl *>(tree));
+    return rc;
+}
+
 } // namespace dmk
 
 extern "C" {
@@ -521,6 +566,14 @@ pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src,
 void pdmk_tree_destroy(pdmk_tree tree) {
     if (tree)
         delete static_cast<pdmk_tree_impl *>(tree);
+}
+
+int pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const double *normal, const double *dipole_str) {
+    return dmk::pdmk_tree_update_charges(tree, charge, normal, dipole_str);
+}
+
+int pdmk_tree_update_chargesf(pdmk_tree tree, const float *charge, const float *normal, const float *dipole_str) {
+    return dmk::pdmk_tree_update_charges(tree, charge, normal, dipole_str);
 }
 
 void pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *pot_trg) { dmk::pdmk_tree_eval(tree, pot_src, pot_trg); }

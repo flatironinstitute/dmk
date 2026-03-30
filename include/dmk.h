@@ -55,6 +55,10 @@ void pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *pot_trg);
 pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src,
                            const double *charge, const double *normal, const double *dipole_str, int n_trg,
                            const double *r_trg);
+
+int pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const double *normal, const double *dipole_str);
+int pdmk_tree_update_chargesf(pdmk_tree tree, const float *charge, const float *normal, const float *dipole_str);
+
 void pdmk_tree_destroy(pdmk_tree tree);
 void pdmk_tree_eval(pdmk_tree tree, double *pot_src, double *pot_trg);
 void pdmk_print_profile_data(dmk_communicator comm, char type);

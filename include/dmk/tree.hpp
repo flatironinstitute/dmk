@@ -128,23 +128,23 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void allocate_proxy_coefficients();
     void precompute_fourier_data();
     void generate_metadata();
-
     void init_planewave_data();
 
+    // Subtasks for downward pass
     void form_outgoing_expansions(const sctl::Vector<int> &boxes, const ndview<std::complex<Real>, 2> &poly2pw_view,
                                   const sctl::Vector<Real> &radialft);
-
     void form_incoming_expansions(const sctl::Vector<int> &boxes, const sctl::Vector<std::complex<Real>> &wpwshift);
-
     void form_local_expansions(const sctl::Vector<int> &boxes, Real boxsize,
                                const ndview<std::complex<Real>, 2> &pw2poly_view, const sctl::Vector<Real> &p2c);
-
     void form_eval_expansions(const sctl::Vector<int> &boxes, const sctl::Vector<std::complex<Real>> &wpwshift,
                               Real boxsize, const ndview<std::complex<Real>, 2> &pw2poly_view,
                               const sctl::Vector<Real> &p2c);
-
     void evaluate_direct_interactions(const Real *r_src_t, const Real *r_trg_t);
 
+    // User calls
+    int update_charges(const Real *charge, const Real *normal, const Real *dipole_str);
+
+    // Internal data accessors
     std::span<const int> list1(int i_box) const { return std::span<const int>(list1_[i_box].data(), nlist1_[i_box]); }
     std::span<const int> listpw(int i_box) const {
         return std::span<const int>(listpw_[i_box].data(), nlistpw_[i_box]);
