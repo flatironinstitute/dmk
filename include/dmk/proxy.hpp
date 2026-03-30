@@ -26,9 +26,8 @@ template <typename T, int DIM>
 void proxycharge2pw(const ndview<T, DIM + 1> &proxy_coeffs, const ndview<std::complex<T>, 2> &poly2pw,
                     ndview<std::complex<T>, DIM + 1> pw_expansion, sctl::Vector<T> &workspace);
 
-template <typename T, int DIM>
+template <typename T, int DIM, int EVAL_LEVEL>
 void eval_targets(const ndview<T, DIM + 1> &coefs, const ndview<T, 2> &r_trg, const ndview<T, 1> &cen, T sc,
                   ndview<T, 2> pot, sctl::Vector<T> &workspace);
-
 } // namespace dmk::proxy
 #endif

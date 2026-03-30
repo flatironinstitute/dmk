@@ -220,9 +220,9 @@ void run_comparison(pdmk_params params, int n_src, bool uniform, bool compare_di
                                 n_trg, &r_trg[0]);
 
     if constexpr (std::is_same_v<Real, float>)
-        pdmk_tree_evalf(tree, &pot_src_split[0], nullptr, nullptr, &pot_trg_split[0], nullptr, nullptr);
+        pdmk_tree_evalf(tree, &pot_src_split[0], &pot_trg_split[0]);
     else
-        pdmk_tree_eval(tree, &pot_src_split[0], nullptr, nullptr, &pot_trg_split[0], nullptr, nullptr);
+        pdmk_tree_eval(tree, &pot_src_split[0], &pot_trg_split[0]);
 
     auto rel_err = [size](auto a, auto b) -> std::pair<double, double> {
         double max_rel_err{0.0}, avg_rel_err{0.0}, direct_sum{0.0};
@@ -271,9 +271,9 @@ void run_comparison(pdmk_params params, int n_src, bool uniform, bool compare_di
             tree = pdmk_tree_create(MPI_COMM_SELF, params, n_src, &r_src[0], &charges[0], nullptr, nullptr, 0, nullptr);
 
         if constexpr (std::is_same_v<Real, float>)
-            pdmk_tree_evalf(tree, &pot_single[0], nullptr, nullptr, nullptr, nullptr, nullptr);
+            pdmk_tree_evalf(tree, &pot_single[0], nullptr);
         else
-            pdmk_tree_eval(tree, &pot_single[0], nullptr, nullptr, nullptr, nullptr, nullptr);
+            pdmk_tree_eval(tree, &pot_single[0], nullptr);
         pdmk_tree_destroy(tree);
     }
 
@@ -283,7 +283,7 @@ void run_comparison(pdmk_params params, int n_src, bool uniform, bool compare_di
             if (std::abs((pot_mpi[i] - pot_single[i]) / pot_single[i]) > 10 * params.eps ||
                 std::abs((pot_single[i] - pot_direct[i]) / pot_direct_mpi[i]) > 10 * params.eps)
                 printf("%11d %+12.5e %+12.5e %+12.5e %+12.5e %+12.5e\n", i, pot_single[i], pot_mpi[i],
-                       pot_direct_mpi[i], std::abs((pot_mpi[i] - pot_single[i])/pot_single[i]),
+                       pot_direct_mpi[i], std::abs((pot_mpi[i] - pot_single[i]) / pot_single[i]),
                        std::abs((pot_single[i] - pot_direct_mpi[i]) / pot_direct_mpi[i]));
     }
 
@@ -344,7 +344,7 @@ int main(int argc, char *argv[]) {
             break;
         case 'd':
             direct_eval = true;
-            break;            
+            break;
         case 'h':
         case '?':
         default:
@@ -360,7 +360,6 @@ int main(int argc, char *argv[]) {
     params.eps = eps;
     params.n_dim = n_dim;
     params.n_per_leaf = n_per_leaf_dmk;
-    params.n_mfm = nd;
     params.pgh_src = DMK_POTENTIAL;
     params.pgh_trg = DMK_POTENTIAL;
     params.kernel = DMK_LAPLACE;

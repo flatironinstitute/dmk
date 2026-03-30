@@ -1,12 +1,8 @@
 #include <dmk.h>
 #include <dmk/aot_kernels.hpp>
-#include <dmk/chebychev.hpp>
 #include <dmk/direct.hpp>
-#include <dmk/fourier_data.hpp>
-#include <dmk/legeexps.hpp>
-#include <dmk/prolate0_fun.hpp>
-#include <dmk/types.hpp>
-#include <dmk/util.hpp>
+
+#include <sctl.hpp>
 
 #ifdef DMK_USE_JIT
 #include <format>
@@ -17,6 +13,11 @@
 
 #include <polyfit/fast_eval.hpp>
 #include <rufus.hpp>
+
+#include <dmk/fourier_data.hpp>
+#include <dmk/legeexps.hpp>
+#include <dmk/prolate0_fun.hpp>
+#include <dmk/util.hpp>
 
 #include "jit_kernels_ir.h"
 #endif
@@ -163,7 +164,8 @@ Real sl3d_local_kernel(Real r2, Real bsize, dmk::Prolate0Fun &prolate) {
 }
 
 template <typename Real>
-direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, int n_dim, int n_digits, int unroll_factor) {
+direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits,
+                                               int unroll_factor) {
     static std::mutex lock;
     std::lock_guard<std::mutex> lock_guard(lock);
     constexpr int VECWIDTH = sctl::DefaultVecLen<Real>();
@@ -173,7 +175,7 @@ direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, int n_dim, in
     dmk::Prolate0Fun prolate_fun(c0, 10000);
 
     auto build_func_name = [&](const std::string &base_name) {
-        return std::format("void {}<{}, {}, -1, -1>", base_name, T_str, VECWIDTH);
+        return std::format("void {}<{}, {}, -1, -1, -1>", base_name, T_str, VECWIDTH);
     };
 
     switch (kernel) {
@@ -189,14 +191,16 @@ direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, int n_dim, in
             const auto coeffs = coeffs_cache.get<Real>(n_digits, fit_func);
             auto test = poly_eval::make_func_eval(log_windowed, coeffs.size(), 0.0, 1.0);
             const auto func_name = build_func_name("laplace_2d_poly_all_pairs");
-            auto jit_func = RS->compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
-                                                 const Real *, int, const Real *, Real *)>(
-                func_name,
-                {{"n_coeffs_rt", coeffs.size()}, {"n_digits_rt", n_digits}, {"unroll_factor", unroll_factor}});
+            auto jit_func =
+                RS->compile<void (*)(Real, Real, Real, Real, const Real *, int, const Real *, const Real *, int,
+                                     const Real *, Real *)>(func_name, {{"eval_level_rt", int(eval_level)},
+                                                                        {"n_coeffs_rt", coeffs.size()},
+                                                                        {"n_digits_rt", n_digits},
+                                                                        {"unroll_factor", unroll_factor}});
 
-            return [jit_func, coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
-                                      const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
-                jit_func(nd, rsc, cen, d2max, thresh2, coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot);
+            return [jit_func, coeffs](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                      const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+                jit_func(rsc, cen, d2max, thresh2, coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot);
             };
         }
         if (n_dim == 3) {
@@ -209,14 +213,16 @@ direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, int n_dim, in
 
             const auto func_name = build_func_name("laplace_3d_poly_all_pairs");
 
-            auto jit_func = RS->compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
-                                                 const Real *, int, const Real *, Real *)>(
-                func_name,
-                {{"n_coeffs_rt", coeffs.size()}, {"n_digits_rt", n_digits}, {"unroll_factor", unroll_factor}});
+            auto jit_func =
+                RS->compile<void (*)(Real, Real, Real, Real, const Real *, int, const Real *, const Real *, int,
+                                     const Real *, Real *)>(func_name, {{"eval_level_rt", int(eval_level)},
+                                                                        {"n_coeffs_rt", coeffs.size()},
+                                                                        {"n_digits_rt", n_digits},
+                                                                        {"unroll_factor", unroll_factor}});
 
-            return [jit_func, coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
-                                      const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
-                jit_func(nd, rsc, cen, d2max, thresh2, coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot);
+            return [jit_func, coeffs](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                      const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+                jit_func(rsc, cen, d2max, thresh2, coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot);
             };
         }
     case dmk_ikernel::DMK_SQRT_LAPLACE: {
@@ -229,15 +235,16 @@ direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, int n_dim, in
             const auto pswf_coeffs = coeffs_cache.get<Real>(n_digits, fit_func);
             const auto func_name = build_func_name("sqrt_laplace_2d_poly_all_pairs");
 
-            auto jit_func = RS->compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
-                                                 const Real *, int, const Real *, Real *)>(
-                func_name,
-                {{"n_coeffs_rt", pswf_coeffs.size()}, {"n_digits_rt", n_digits}, {"unroll_factor", unroll_factor}});
+            auto jit_func =
+                RS->compile<void (*)(Real, Real, Real, Real, const Real *, int, const Real *, const Real *, int,
+                                     const Real *, Real *)>(func_name, {{"eval_level_rt", int(eval_level)},
+                                                                        {"n_coeffs_rt", pswf_coeffs.size()},
+                                                                        {"n_digits_rt", n_digits},
+                                                                        {"unroll_factor", unroll_factor}});
 
-            return [jit_func, pswf_coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
-                                           const Real *r_src, const Real *charge, int n_trg, const Real *r_trg,
-                                           Real *pot) {
-                jit_func(nd, rsc, cen, d2max, thresh2, pswf_coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot);
+            return [jit_func, pswf_coeffs](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                           const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+                jit_func(rsc, cen, d2max, thresh2, pswf_coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot);
             };
         }
         if (n_dim == 3) {
@@ -252,14 +259,16 @@ direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, int n_dim, in
             const auto coeffs = coeffs_cache.get<Real>(n_digits, fit_func);
             const auto func_name = build_func_name("sqrt_laplace_3d_poly_all_pairs");
 
-            auto jit_func = RS->compile<void (*)(int, Real, Real, Real, Real, const Real *, int, const Real *,
-                                                 const Real *, int, const Real *, Real *)>(
-                func_name,
-                {{"n_coeffs_rt", coeffs.size()}, {"n_digits_rt", n_digits}, {"unroll_factor", unroll_factor}});
+            auto jit_func =
+                RS->compile<void (*)(Real, Real, Real, Real, const Real *, int, const Real *, const Real *, int,
+                                     const Real *, Real *)>(func_name, {{"eval_level_rt", int(eval_level)},
+                                                                        {"n_coeffs_rt", coeffs.size()},
+                                                                        {"n_digits_rt", n_digits},
+                                                                        {"unroll_factor", unroll_factor}});
 
-            return [jit_func, coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
-                                      const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
-                jit_func(nd, rsc, cen, d2max, thresh2, coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot);
+            return [jit_func, coeffs](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                      const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+                jit_func(rsc, cen, d2max, thresh2, coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot);
             };
         }
     }
@@ -267,35 +276,35 @@ direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, int n_dim, in
         throw std::runtime_error("Unsupported kernel for direct evaluator");
     }
 }
-template direct_evaluator_func<float> make_evaluator_jit<float>(dmk_ikernel kernel, int n_dim, int n_digits,
-                                                                int unroll_factor);
-template direct_evaluator_func<double> make_evaluator_jit<double>(dmk_ikernel kernel, int n_dim, int n_digits,
-                                                                  int unroll_factor);
+template direct_evaluator_func<float> make_evaluator_jit<float>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
+                                                                int n_digits, int unroll_factor);
+template direct_evaluator_func<double> make_evaluator_jit<double>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
+                                                                  int n_digits, int unroll_factor);
 #endif
 // (DMK_USE_JIT)
 
 template <typename Real>
-direct_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, int n_dim, int n_digits, int unroll_factor) {
+direct_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits,
+                                               int unroll_factor) {
     constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
     switch (kernel) {
     case dmk_ikernel::DMK_LAPLACE:
         if (n_dim == 2)
-            return get_laplace_2d_kernel<Real, MaxVecLen>(n_digits);
+            return get_laplace_2d_kernel<Real, MaxVecLen>(eval_level, n_digits);
         if (n_dim == 3)
-            return get_laplace_3d_kernel<Real, MaxVecLen>(n_digits);
+            return get_laplace_3d_kernel<Real, MaxVecLen>(eval_level, n_digits);
     case dmk_ikernel::DMK_SQRT_LAPLACE:
         if (n_dim == 2)
-            return get_sqrt_laplace_2d_kernel<Real, MaxVecLen>(n_digits);
+            return get_sqrt_laplace_2d_kernel<Real, MaxVecLen>(eval_level, n_digits);
         if (n_dim == 3)
-            return get_sqrt_laplace_3d_kernel<Real, MaxVecLen>(n_digits);
+            return get_sqrt_laplace_3d_kernel<Real, MaxVecLen>(eval_level, n_digits);
     default:
         throw std::runtime_error("Unsupported kernel for direct evaluator");
     }
 }
 
-template direct_evaluator_func<float> make_evaluator_aot<float>(dmk_ikernel kernel, int n_dim, int n_digits,
-                                                                int unroll_factor);
-template direct_evaluator_func<double> make_evaluator_aot<double>(dmk_ikernel kernel, int n_dim, int n_digits,
-                                                                  int unroll_factor);
-
+template direct_evaluator_func<float> make_evaluator_aot<float>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
+                                                                int n_digits, int unroll_factor);
+template direct_evaluator_func<double> make_evaluator_aot<double>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
+                                                                  int n_digits, int unroll_factor);
 } // namespace dmk

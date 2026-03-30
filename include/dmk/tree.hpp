@@ -39,9 +39,17 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> pot_src_cnt;
     sctl::Vector<sctl::Long> pot_src_offsets;
 
+    sctl::Vector<Real> grad_src_sorted;
+    sctl::Vector<sctl::Long> grad_src_cnt;
+    sctl::Vector<sctl::Long> grad_src_offsets;
+
     sctl::Vector<Real> pot_trg_sorted;
     sctl::Vector<sctl::Long> pot_trg_cnt;
     sctl::Vector<sctl::Long> pot_trg_offsets;
+
+    sctl::Vector<Real> grad_trg_sorted;
+    sctl::Vector<sctl::Long> grad_trg_cnt;
+    sctl::Vector<sctl::Long> grad_trg_offsets;
 
     sctl::Vector<Real> charge_sorted_owned;
     sctl::Vector<sctl::Long> charge_cnt_owned;
@@ -85,9 +93,15 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     sctl::Vector<bool> is_global_leaf;
     const pdmk_params params;
+    const int kernel_input_dim;
+    const int kernel_output_dim_src;
+    const int kernel_output_dim_trg;
+    const int kernel_output_dim_max;
+    const int n_tables;
     const int n_digits;
     const int n_pw_max;
     const int n_order;
+
     int n_pw; // FIXME: Assigned well after construction, dangerous hack
     FourierData<Real> fourier_data;
     sctl::Vector<Real> c2p;
@@ -166,7 +180,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
         return &pot_src_sorted[pot_src_offsets[i_node]];
     }
     ndview<Real, 2> pot_src_view(int i_node) {
-        return ndview<Real, 2>({params.n_mfm, src_counts_with_halo[i_node]}, pot_src_ptr(i_node));
+        return ndview<Real, 2>({kernel_output_dim_src, src_counts_with_halo[i_node]}, pot_src_ptr(i_node));
     }
 
     Real *pot_trg_ptr(int i_node) {
@@ -174,7 +188,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
         return &pot_trg_sorted[pot_trg_offsets[i_node]];
     }
     ndview<Real, 2> pot_trg_view(int i_node) {
-        return ndview<Real, 2>({params.n_mfm, trg_counts_owned[i_node]}, pot_trg_ptr(i_node));
+        return ndview<Real, 2>({kernel_output_dim_trg, trg_counts_owned[i_node]}, pot_trg_ptr(i_node));
     }
 
     Real *charge_owned_ptr(int i_node) {
@@ -182,7 +196,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
         return &charge_sorted_owned[charge_offsets_owned[i_node]];
     }
     ndview<Real, 2> charge_owned_view(int i_node) {
-        return ndview<Real, 2>({params.n_mfm, src_counts_owned[i_node]}, charge_owned_ptr(i_node));
+        return ndview<Real, 2>({kernel_input_dim, src_counts_owned[i_node]}, charge_owned_ptr(i_node));
     }
 
     Real *charge_with_halo_ptr(int i_node) {
@@ -190,7 +204,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
         return &charge_sorted_with_halo[charge_offsets_with_halo[i_node]];
     }
     ndview<Real, 2> charge_with_halo_view(int i_node) {
-        return ndview<Real, 2>({params.n_mfm, src_counts_with_halo[i_node]}, charge_with_halo_ptr(i_node));
+        return ndview<Real, 2>({kernel_input_dim, src_counts_with_halo[i_node]}, charge_with_halo_ptr(i_node));
     }
 
     Real *center_ptr(int i_node) { return &centers[i_node * DIM]; }
@@ -204,9 +218,9 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     }
     ndview<Real, DIM + 1> proxy_view_upward(int i_box) {
         if constexpr (DIM == 2)
-            return ndview<Real, DIM + 1>({n_order, n_order, params.n_mfm}, proxy_ptr_upward(i_box));
+            return ndview<Real, DIM + 1>({n_order, n_order, n_tables}, proxy_ptr_upward(i_box));
         else if constexpr (DIM == 3)
-            return ndview<Real, DIM + 1>({n_order, n_order, n_order, params.n_mfm}, proxy_ptr_upward(i_box));
+            return ndview<Real, DIM + 1>({n_order, n_order, n_order, n_tables}, proxy_ptr_upward(i_box));
         else
             static_assert(dmk::util::always_false<Real>, "Invalid DIM supplied");
     }
@@ -217,9 +231,9 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     }
     ndview<Real, DIM + 1> proxy_view_downward(int i_box) {
         if constexpr (DIM == 2)
-            return ndview<Real, DIM + 1>({n_order, n_order, params.n_mfm}, proxy_ptr_downward(i_box));
+            return ndview<Real, DIM + 1>({n_order, n_order, n_tables}, proxy_ptr_downward(i_box));
         else if constexpr (DIM == 3)
-            return ndview<Real, DIM + 1>({n_order, n_order, n_order, params.n_mfm}, proxy_ptr_downward(i_box));
+            return ndview<Real, DIM + 1>({n_order, n_order, n_order, n_tables}, proxy_ptr_downward(i_box));
         else
             static_assert(dmk::util::always_false<Real>, "Invalid DIM supplied");
     }
@@ -228,9 +242,9 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     const std::complex<Real> *pw_out_ptr(int i_box) const { return &pw_out[pw_out_offsets[i_box]]; }
     ndview<std::complex<Real>, DIM + 1> pw_out_view(int i_box) {
         if constexpr (DIM == 2)
-            return ndview<std::complex<Real>, DIM + 1>({n_pw, (n_pw + 1) / 2, params.n_mfm}, pw_out_ptr(i_box));
+            return ndview<std::complex<Real>, DIM + 1>({n_pw, (n_pw + 1) / 2, n_tables}, pw_out_ptr(i_box));
         else if constexpr (DIM == 3)
-            return ndview<std::complex<Real>, DIM + 1>({n_pw, n_pw, (n_pw + 1) / 2, params.n_mfm}, pw_out_ptr(i_box));
+            return ndview<std::complex<Real>, DIM + 1>({n_pw, n_pw, (n_pw + 1) / 2, n_tables}, pw_out_ptr(i_box));
         else
             static_assert(dmk::util::always_false<std::complex<Real>>, "Invalid DIM supplied");
     }
@@ -254,7 +268,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     std::vector<int> proxy_down_zeroed;
 
     sctl::Vector<sctl::Vector<Real>> workspaces_;
-    std::vector<direct_evaluator_func<Real>> evaluator_by_level;
+    std::vector<direct_evaluator_func<Real>> evaluator_by_level_src;
+    std::vector<direct_evaluator_func<Real>> evaluator_by_level_trg;
     const sctl::Comm comm_;
     bool debug_omit_pw = false;
     bool debug_omit_direct = false;

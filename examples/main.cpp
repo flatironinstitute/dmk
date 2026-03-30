@@ -132,9 +132,9 @@ void run_example(const pdmk_params &params, int n_src_per_rank, int n_runs, bool
         const auto st = omp_get_wtime();
 
         if constexpr (std::is_same_v<Real, float>)
-            pdmk_tree_evalf(tree, &pot_src_split[0], nullptr, nullptr, &pot_trg_split[0], nullptr, nullptr);
+            pdmk_tree_evalf(tree, &pot_src_split[0], &pot_trg_split[0]);
         else
-            pdmk_tree_eval(tree, &pot_src_split[0], nullptr, nullptr, &pot_trg_split[0], nullptr, nullptr);
+            pdmk_tree_eval(tree, &pot_src_split[0], &pot_trg_split[0]);
 
         pdmk_print_profile_data(MPI_COMM_WORLD, 't');
 
@@ -214,7 +214,6 @@ int main(int argc, char *argv[]) {
     params.eps = eps;
     params.n_dim = n_dim;
     params.n_per_leaf = n_per_leaf;
-    params.n_mfm = nd;
     params.pgh_src = DMK_POTENTIAL;
     params.pgh_trg = DMK_POTENTIAL;
     params.kernel = DMK_LAPLACE;

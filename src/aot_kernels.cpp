@@ -1,3 +1,4 @@
+#include <dmk.h>
 #include <dmk/types.hpp>
 #include <dmk/vector_kernels.hpp>
 #include <sctl.hpp>
@@ -6,14 +7,15 @@ namespace dmk {
 constexpr int unroll_factor = 3;
 
 template <class Real, int MaxVecLen>
-direct_evaluator_func<Real> get_laplace_2d_kernel(int n_digits) {
-    auto make = []<int ND, int NC>(const Real(&c)[NC]) -> direct_evaluator_func<Real> {
-        std::array<Real, NC> coeffs;
-        std::copy_n(c, NC, coeffs.data());
-        return [coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
-                        const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC>(nd, ND, rsc, cen, d2max, thresh2, NC, coeffs.data(),
-                                                               n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor);
+direct_evaluator_func<Real> get_laplace_2d_kernel(dmk_pgh eval_level, int n_digits) {
+    auto make = [eval_level]<int N_DIGITS, int N_COEFFS>(const Real(&c)[N_COEFFS]) -> direct_evaluator_func<Real> {
+        std::array<Real, N_COEFFS> coeffs;
+        std::copy_n(c, N_COEFFS, coeffs.data());
+        return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                    const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_2d_poly_all_pairs<Real, MaxVecLen, N_DIGITS, N_COEFFS>(
+                eval_level, N_DIGITS, rsc, cen, d2max, thresh2, N_COEFFS, coeffs.data(), n_src, r_src, charge, n_trg,
+                r_trg, pot, unroll_factor);
         };
     };
 
@@ -43,14 +45,15 @@ direct_evaluator_func<Real> get_laplace_2d_kernel(int n_digits) {
 }
 
 template <class Real, int MaxVecLen>
-direct_evaluator_func<Real> get_laplace_3d_kernel(int n_digits) {
-    auto make = []<int ND, int NC>(const Real(&c)[NC]) -> direct_evaluator_func<Real> {
+direct_evaluator_func<Real> get_laplace_3d_kernel(dmk_pgh eval_level, int n_digits) {
+    auto make = [eval_level]<int ND, int NC>(const Real(&c)[NC]) -> direct_evaluator_func<Real> {
         std::array<Real, NC> coeffs;
         std::copy_n(c, NC, coeffs.data());
-        return [coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
-                        const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC>(nd, ND, rsc, cen, d2max, thresh2, NC, coeffs.data(),
-                                                               n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor);
+        return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                    const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC>(eval_level, ND, rsc, cen, d2max, thresh2, NC,
+                                                               coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
+                                                               unroll_factor);
         };
     };
 
@@ -84,20 +87,57 @@ direct_evaluator_func<Real> get_laplace_3d_kernel(int n_digits) {
 }
 
 template <class Real, int MaxVecLen>
-direct_evaluator_func<Real> get_sqrt_laplace_2d_kernel(int n_digits) {
-    return get_laplace_3d_kernel<Real, MaxVecLen>(n_digits);
+direct_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_pgh eval_level, int n_digits) {
+    auto make = [eval_level]<int ND, int NC>(const Real(&c)[NC]) -> direct_evaluator_func<Real> {
+        std::array<Real, NC> coeffs;
+        std::copy_n(c, NC, coeffs.data());
+        return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                    const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+            sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC>(eval_level, ND, rsc, cen, d2max, thresh2, NC,
+                                                                    coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
+                                                                    pot, unroll_factor);
+        };
+    };
+
+    if (n_digits <= 3)
+        return make.template operator()<3>({1.627823522210361e-01, -4.553645597616490e-01, 4.171687104204163e-01,
+                                            -7.073638602709915e-02, -8.957845614474928e-02, 2.617986644718201e-02,
+                                            9.633427876507601e-03});
+    if (n_digits <= 6)
+        return make.template operator()<6>({5.482525801351582e-02, -2.616592110444692e-01, 4.862652666337138e-01,
+                                            -3.894296348642919e-01, 1.638587821812791e-02, 1.870328434198821e-01,
+                                            -8.714171086568978e-02, -3.927020727017803e-02, 3.728187607052319e-02,
+                                            3.153734425831139e-03, -8.651313377285847e-03, 1.725110090795567e-04,
+                                            1.034762385284044e-03});
+    if (n_digits <= 9)
+        return make.template operator()<9>(
+            {1.835718730962269e-02, -1.258015846164503e-01, 3.609487248584408e-01, -5.314579651112283e-01,
+             3.447559412892380e-01, 9.664692318551721e-02, -3.124274531849053e-01, 1.322460720579388e-01,
+             9.773007866584822e-02, -1.021958831082768e-01, -3.812847450976566e-03, 3.858117355875043e-02,
+             -8.728545924521301e-03, -9.401196355382909e-03, 4.024549377076924e-03, 1.512806105865091e-03,
+             -9.576734877247042e-04, -1.303457547418901e-04, 1.100385844683190e-04});
+    if (n_digits <= 12)
+        return make.template operator()<12>(
+            {6.262472576363448e-03,  -5.605742936112479e-02, 2.185890864792949e-01,  -4.717350304955679e-01,
+             5.669680214206270e-01,  -2.511606878849214e-01, -2.744523658778361e-01, 4.582527599363415e-01,
+             -1.397724810121539e-01, -2.131762135835757e-01, 1.995489373508990e-01,  1.793390341864239e-02,
+             -1.035055132403432e-01, 3.035606831075176e-02,  3.153931762550532e-02,  -2.033178627450288e-02,
+             -5.406682731236552e-03, 7.543645573618463e-03,  1.437788047407851e-05,  -1.928370882351732e-03,
+             2.891658777328665e-04,  3.332996162099811e-04,  -8.397699195938912e-05, -3.015837377517983e-05,
+             9.640642701924662e-06});
+    throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
 }
 
 template <class Real, int MaxVecLen>
-direct_evaluator_func<Real> get_sqrt_laplace_3d_kernel(int n_digits) {
-    auto make = []<int ND, int NC>(const Real(&c)[NC]) -> direct_evaluator_func<Real> {
+direct_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_pgh eval_level, int n_digits) {
+    auto make = [eval_level]<int ND, int NC>(const Real(&c)[NC]) -> direct_evaluator_func<Real> {
         std::array<Real, NC> coeffs;
         std::copy_n(c, NC, coeffs.data());
-        return [coeffs](int nd, Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
-                        const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC>(nd, ND, rsc, cen, d2max, thresh2, NC, coeffs.data(),
-                                                                    n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                    unroll_factor);
+        return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                    const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+            sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC>(eval_level, ND, rsc, cen, d2max, thresh2, NC,
+                                                                    coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
+                                                                    pot, unroll_factor);
         };
     };
 
@@ -127,14 +167,22 @@ direct_evaluator_func<Real> get_sqrt_laplace_3d_kernel(int n_digits) {
     throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
 }
 
-template direct_evaluator_func<float> get_sqrt_laplace_2d_kernel<float, sctl::DefaultVecLen<float>()>(int n_digits);
-template direct_evaluator_func<float> get_laplace_2d_kernel<float, sctl::DefaultVecLen<float>()>(int n_digits);
-template direct_evaluator_func<float> get_sqrt_laplace_3d_kernel<float, sctl::DefaultVecLen<float>()>(int n_digits);
-template direct_evaluator_func<float> get_laplace_3d_kernel<float, sctl::DefaultVecLen<float>()>(int n_digits);
+template direct_evaluator_func<float>
+get_sqrt_laplace_2d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_pgh eval_level, int n_digits);
+template direct_evaluator_func<float> get_laplace_2d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_pgh eval_level,
+                                                                                                 int n_digits);
+template direct_evaluator_func<float>
+get_sqrt_laplace_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_pgh eval_level, int n_digits);
+template direct_evaluator_func<float> get_laplace_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_pgh eval_level,
+                                                                                                 int n_digits);
 
-template direct_evaluator_func<double> get_sqrt_laplace_2d_kernel<double, sctl::DefaultVecLen<double>()>(int n_digits);
-template direct_evaluator_func<double> get_laplace_2d_kernel<double, sctl::DefaultVecLen<double>()>(int n_digits);
-template direct_evaluator_func<double> get_sqrt_laplace_3d_kernel<double, sctl::DefaultVecLen<double>()>(int n_digits);
-template direct_evaluator_func<double> get_laplace_3d_kernel<double, sctl::DefaultVecLen<double>()>(int n_digits);
+template direct_evaluator_func<double>
+get_sqrt_laplace_2d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_pgh eval_level, int n_digits);
+template direct_evaluator_func<double> get_laplace_2d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_pgh eval_level,
+                                                                                                    int n_digits);
+template direct_evaluator_func<double>
+get_sqrt_laplace_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_pgh eval_level, int n_digits);
+template direct_evaluator_func<double> get_laplace_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_pgh eval_level,
+                                                                                                    int n_digits);
 
 } // namespace dmk
