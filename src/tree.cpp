@@ -979,8 +979,12 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions() {
     // Root box: uses windowed kernel fourier data
     {
         const ndview<std::complex<Real>, 2> p2pw({n_pw, n_order}, &window_fourier_data.poly2pw[0]);
+        const ndview<std::complex<Real>, 2> pw2p({n_pw, n_order}, &window_fourier_data.pw2poly[0]);
         dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(0), p2pw, pw_out_view(0), workspaces_[0]);
         multiply_kernelFT_cd2p<Real, DIM>(window_fourier_data.radialft, pw_out_view(0));
+        proxy_view_downward(0) = 0;
+        proxy_down_zeroed[0] = true;
+        dmk::planewave_to_proxy_potential<Real, DIM>(pw_out_view(0), pw2p, proxy_view_downward(0), workspaces_[0]);
     }
 
 #pragma omp parallel
@@ -1476,17 +1480,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
     sctl::Profile::Toc();
 
     sctl::Profile::Tic("expansion_propagation_and_eval", &comm_);
-    { // Windowed kernel for root
-        const ndview<std::complex<T>, 2> p2pw({n_pw, n_order}, &window_fourier_data.poly2pw[0]);
-        const ndview<std::complex<T>, 2> pw2p({n_pw, n_order}, &window_fourier_data.pw2poly[0]);
-        dmk::proxy::proxycharge2pw<T, DIM>(proxy_view_upward(0), p2pw, pw_out_view(0), workspaces_[0]);
-        multiply_kernelFT_cd2p<T, DIM>(window_fourier_data.radialft, pw_out_view(0));
-        std::fill(proxy_down_zeroed.begin(), proxy_down_zeroed.end(), 0);
-        proxy_view_downward(0) = 0;
-        proxy_down_zeroed[0] = true;
-        dmk::planewave_to_proxy_potential<T, DIM>(pw_out_view(0), pw2p, proxy_view_downward(0), workspaces_[0]);
-    }
-
+    std::fill(proxy_down_zeroed.begin(), proxy_down_zeroed.end(), 0);
     form_outgoing_expansions();
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         auto &dfd = difference_fourier_data[i_level];
