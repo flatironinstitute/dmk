@@ -968,30 +968,38 @@ void DMKPtTree<T, DIM>::init_planewave_data() {
 }
 
 template <typename Real, int DIM>
-void DMKPtTree<Real, DIM>::form_outgoing_expansions(const sctl::Vector<int> &boxes,
-                                                    const ndview<std::complex<Real>, 2> &poly2pw_view,
-                                                    const sctl::Vector<Real> &radialft) {
+void DMKPtTree<Real, DIM>::form_outgoing_expansions() {
 #ifdef DMK_INSTRUMENT
     double dt = -MY_OMP_GET_WTIME();
 #endif
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const int n_pw_per_box = n_pw_modes * n_tables;
+    const auto &node_mid = this->GetNodeMID();
 
-    // Form the outgoing expansion Φl(box) for the difference kernel Dl from the proxy charge expansion
-    // coefficients using Tprox2pw
+    // Root box: uses windowed kernel fourier data
+    {
+        const ndview<std::complex<Real>, 2> p2pw({n_pw, n_order}, &window_fourier_data.poly2pw[0]);
+        dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(0), p2pw, pw_out_view(0), workspaces_[0]);
+        multiply_kernelFT_cd2p<Real, DIM>(window_fourier_data.radialft, pw_out_view(0));
+    }
+
 #pragma omp parallel
     {
         sctl::Vector<Real> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
 
 #pragma omp for schedule(dynamic)
-        for (auto box : boxes) {
-            // FIXME: HACK. offsets are set to -1 when not in halo, i assume is the issue
-            if (ifpwexp[box] && proxy_coeffs_offsets[box] != -1) {
-                dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(box), poly2pw_view, pw_out_view(box),
+        for (int i_box = 0; i_box < n_boxes(); ++i_box) {
+            if (ifpwexp[i_box] && proxy_coeffs_offsets[i_box] != -1) {
+                const int level = node_mid[i_box].Depth();
+                auto &dfd = difference_fourier_data[level];
+                const ndview<std::complex<Real>, 2> poly2pw_view({n_pw, n_order}, &dfd.poly2pw[0]);
+
+                dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(i_box), poly2pw_view, pw_out_view(i_box),
                                                       workspace);
-                multiply_kernelFT_cd2p<Real, DIM>(radialft, pw_out_view(box));
-            } else if (pw_out_offsets[box] != -1)
-                pw_out_view(box) = 0;
+                multiply_kernelFT_cd2p<Real, DIM>(dfd.radialft, pw_out_view(i_box));
+            } else if (pw_out_offsets[i_box] != -1) {
+                pw_out_view(i_box) = 0;
+            }
         }
     }
 
@@ -1479,12 +1487,12 @@ void DMKPtTree<T, DIM>::downward_pass() {
         dmk::planewave_to_proxy_potential<T, DIM>(pw_out_view(0), pw2p, proxy_view_downward(0), workspaces_[0]);
     }
 
+    form_outgoing_expansions();
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         auto &dfd = difference_fourier_data[i_level];
         const ndview<std::complex<T>, 2> p2pw({n_pw, n_order}, &dfd.poly2pw[0]);
         const ndview<std::complex<T>, 2> pw2p({n_pw, n_order}, &dfd.pw2poly[0]);
 
-        form_outgoing_expansions(level_indices[i_level], p2pw, dfd.radialft);
         if (!debug_omit_pw)
             form_eval_expansions(level_indices[i_level], dfd.wpwshift, boxsize[i_level], pw2p, p2c);
     }

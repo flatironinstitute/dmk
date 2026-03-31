@@ -131,8 +131,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void init_planewave_data();
 
     // Subtasks for downward pass
-    void form_outgoing_expansions(const sctl::Vector<int> &boxes, const ndview<std::complex<Real>, 2> &poly2pw_view,
-                                  const sctl::Vector<Real> &radialft);
+    void form_outgoing_expansions();
     void form_incoming_expansions(const sctl::Vector<int> &boxes, const sctl::Vector<std::complex<Real>> &wpwshift);
     void form_local_expansions(const sctl::Vector<int> &boxes, Real boxsize,
                                const ndview<std::complex<Real>, 2> &pw2poly_view, const sctl::Vector<Real> &p2c);
