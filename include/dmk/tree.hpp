@@ -249,6 +249,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     }
 
     void dump() const;
+    void eval();
     void upward_pass();
     void downward_pass();
 
