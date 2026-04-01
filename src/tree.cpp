@@ -1,3 +1,4 @@
+#include <atomic>
 #include <cmath>
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
@@ -15,6 +16,8 @@
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
 #include <fstream>
+#include <omp.h>
+#include <ranges>
 #include <sctl/profile.hpp>
 #include <stdexcept>
 #include <unistd.h>
@@ -61,6 +64,18 @@ struct PriorityWorkQueue {
         omp_unset_lock(&locks[priority]);
         counts[priority].fetch_add(1, std::memory_order_release);
         total.fetch_add(1, std::memory_order_release);
+    }
+
+    void push_batch(auto &&items, int priority) {
+        omp_set_lock(&locks[priority]);
+        int n = 0;
+        for (const auto &el : items) {
+            queues[priority].push_back(el);
+            n++;
+        }
+        omp_unset_lock(&locks[priority]);
+        counts[priority].fetch_add(n, std::memory_order_release);
+        total.fetch_add(n, std::memory_order_release);
     }
 
     bool try_pop(int &item, int &priority) {
@@ -709,30 +724,38 @@ template <typename T, int DIM>
 void DMKPtTree<T, DIM>::allocate_proxy_coefficients() {
     const int n_coeffs = n_tables * sctl::pow<DIM>(n_order);
 
+    sctl::Vector<sctl::Long> counts_upward(n_boxes());
+    sctl::Vector<sctl::Long> counts_downward(n_boxes());
     long n_proxy_boxes_upward = 0;
     long n_proxy_boxes_downward = 0;
     for (int i = 0; i < n_boxes(); ++i) {
-        if (ifpwexp[i])
+        if (ifpwexp[i] && src_counts_with_halo[i] > 0) {
+            counts_upward[i] = n_coeffs;
             n_proxy_boxes_upward++;
-        if (ifpwexp[i] || iftensprodeval[i])
-            n_proxy_boxes_downward++;
-    }
+        } else {
+            counts_upward[i] = 0;
+        }
 
-    sctl::Vector<sctl::Long> counts(n_boxes());
-    for (int i = 0; i < n_boxes(); ++i)
-        counts[i] = ifpwexp[i] ? n_coeffs : 0;
+        if (ifpwexp[i] || iftensprodeval[i]) {
+            counts_downward[i] = n_coeffs;
+            n_proxy_boxes_downward++;
+        } else {
+            counts_downward[i] = 0;
+        }
+    }
 
     proxy_coeffs_upward.ReInit(n_coeffs * n_proxy_boxes_upward);
     proxy_coeffs_downward.ReInit(n_coeffs * n_proxy_boxes_downward);
 
-    this->AddData("proxy_coeffs", proxy_coeffs_upward, counts);
+    this->AddData("proxy_coeffs", proxy_coeffs_upward, counts_upward);
+    this->GetData(proxy_coeffs_upward, counts_upward, "proxy_coeffs");
 
     proxy_coeffs_offsets.ReInit(n_boxes());
     proxy_coeffs_offsets_downward.ReInit(n_boxes());
 
     long last_offset = 0;
     for (int box = 0; box < n_boxes(); ++box) {
-        if (counts[box]) {
+        if (counts_upward[box]) {
             proxy_coeffs_offsets[box] = last_offset;
             last_offset += n_coeffs;
         } else {
@@ -742,7 +765,7 @@ void DMKPtTree<T, DIM>::allocate_proxy_coefficients() {
 
     last_offset = 0;
     for (int box = 0; box < n_boxes(); ++box) {
-        if (ifpwexp[box] || iftensprodeval[box]) {
+        if (counts_downward[box]) {
             proxy_coeffs_offsets_downward[box] = last_offset;
             last_offset += n_coeffs;
         } else {
@@ -851,7 +874,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
 
     sctl::Vector<sctl::Long> counts;
     this->GetData(proxy_coeffs_upward, counts, "proxy_coeffs");
-    proxy_coeffs_upward.SetZero();
+    proxy_coeffs_upward = 0;
 
     constexpr int n_children = 1u << DIM;
     const auto &node_lists = this->GetNodeLists();
@@ -913,6 +936,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
 
     sctl::Profile::Tic("broadcast_proxy_coeffs", &comm_);
     logger->debug("Finished building proxy charges");
+
     this->template ReduceBroadcast<T>("proxy_coeffs");
     this->GetData(proxy_coeffs_upward, counts, "proxy_coeffs");
     long last_offset = 0;
@@ -1575,6 +1599,17 @@ void DMKPtTree<T, DIM>::eval() {
     auto &logger = dmk::get_logger(comm_, params.log_level);
     logger->info("eval() started");
 
+    double t_start = MY_OMP_GET_WTIME();
+    std::atomic<double> t_zeroing{0}, t_c2p{0}, t_deps{0}, t_queue{0}, t_mpi{0}, t_outgoing_done{0},
+        t_downward_seeded{0};
+
+    int n_halo_only = 0;
+    for (int b = 0; b < (int)n_boxes(); ++b)
+        if (ifpwexp[b] && src_counts_with_halo[b] > 0 && src_counts_owned[b] == 0)
+            n_halo_only++;
+    auto &rank_logger = dmk::get_rank_logger(comm_, params.log_level);
+    rank_logger->info("halo_only={}, n_boxes={}", n_halo_only, n_boxes());
+
     const auto &node_lists = this->GetNodeLists();
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_mid = this->GetNodeMID();
@@ -1582,6 +1617,34 @@ void DMKPtTree<T, DIM>::eval() {
     constexpr int n_children = 1u << DIM;
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const int n_pw_per_box = n_pw_modes * n_tables;
+
+    // =================================================================
+    // Build upward pass task dependency graph
+    // =================================================================
+    // Group charge2proxy work items by center_box to avoid write races.
+    // Each group becomes one task.
+    struct C2PGroup {
+        int center_box;
+        int level;
+        std::vector<int> src_boxes;
+    };
+    std::vector<C2PGroup> c2p_groups;
+    {
+        std::vector<int> center_to_group(n_boxes(), -1);
+        for (auto &w : charge2proxy_work) {
+            if (center_to_group[w.center_box] == -1) {
+                center_to_group[w.center_box] = (int)c2p_groups.size();
+                c2p_groups.push_back({w.center_box, w.level, {w.src_box}});
+            } else {
+                c2p_groups[center_to_group[w.center_box]].src_boxes.push_back(w.src_box);
+            }
+        }
+    }
+    // Map center_box -> index into c2p_groups (for dependency wiring)
+    std::vector<int> box_to_c2p_group(n_boxes(), -1);
+    for (int g = 0; g < (int)c2p_groups.size(); ++g)
+        box_to_c2p_group[c2p_groups[g].center_box] = g;
+    t_c2p = MY_OMP_GET_WTIME() - t_start;
 
     // ---- Init workspaces ----
     int n_threads;
@@ -1603,43 +1666,21 @@ void DMKPtTree<T, DIM>::eval() {
     pot_src_direct.SetZero();
     pot_trg_direct.SetZero();
 
-    // ---- Init upward pass state ----
-    sctl::Vector<sctl::Long> proxy_counts;
-    this->GetData(proxy_coeffs_upward, proxy_counts, "proxy_coeffs");
-    proxy_coeffs_upward.SetZero();
-
     // ---- Precompute self-interaction constants for direct eval ----
     T w0[SCTL_MAX_DEPTH];
     for (int lvl = 0; lvl < n_levels(); ++lvl)
         w0[lvl] = get_self_interaction_constant<T, DIM>(fourier_data, params.kernel, lvl, boxsize[lvl]);
 
-    // =================================================================
-    // Build upward pass task dependency graph
-    // =================================================================
-    // Group charge2proxy work items by center_box to avoid write races.
-    // Each group becomes one task.
-    struct C2PGroup {
-        int center_box;
-        int level;
-        std::vector<int> src_boxes;
-    };
-    std::vector<C2PGroup> c2p_groups;
-    {
-        std::map<int, int> center_to_group;
-        for (auto &w : charge2proxy_work) {
-            auto it = center_to_group.find(w.center_box);
-            if (it == center_to_group.end()) {
-                center_to_group[w.center_box] = (int)c2p_groups.size();
-                c2p_groups.push_back({w.center_box, w.level, {w.src_box}});
-            } else {
-                c2p_groups[it->second].src_boxes.push_back(w.src_box);
-            }
-        }
+    // ---- Init upward pass state ----
+    sctl::Vector<sctl::Long> proxy_counts;
+
+    this->GetData(proxy_coeffs_upward, proxy_counts, "proxy_coeffs");
+
+#pragma omp parallel for schedule(static)
+    for (int b = 0; b < (int)n_boxes(); ++b) {
+        if (ifpwexp[b] && proxy_coeffs_offsets[b] != -1 && src_counts_owned[b] == 0)
+            proxy_view_upward(b) = 0;
     }
-    // Map center_box -> index into c2p_groups (for dependency wiring)
-    std::vector<int> box_to_c2p_group(n_boxes(), -1);
-    for (int g = 0; g < (int)c2p_groups.size(); ++g)
-        box_to_c2p_group[c2p_groups[g].center_box] = g;
 
     // Upward dependency counter per box.
     // A box's tensorprod task is ready when deps hits 0.
@@ -1684,6 +1725,8 @@ void DMKPtTree<T, DIM>::eval() {
         n_downward_tasks++;
     }
 
+    t_deps = MY_OMP_GET_WTIME() - t_start;
+
     // =================================================================
     // Build work queue
     // =================================================================
@@ -1716,12 +1759,10 @@ void DMKPtTree<T, DIM>::eval() {
     // Let's just be conservative and use queue.total for termination.
 
     // Enqueue direct tasks (lowest priority, always ready)
-    for (int idx = 0; idx < n_direct_tasks; ++idx)
-        queue.push(idx, PriorityWorkQueue::PRI_DIRECT);
+    queue.push_batch(std::views::iota(0, n_direct_tasks), PriorityWorkQueue::PRI_DIRECT);
 
     // Enqueue charge2proxy group tasks (highest priority)
-    for (int g = 0; g < (int)c2p_groups.size(); ++g)
-        queue.push(C2P_OFFSET + g, PriorityWorkQueue::PRI_UPWARD);
+    queue.push_batch(std::views::iota(C2P_OFFSET, C2P_OFFSET + TPROD_OFFSET), PriorityWorkQueue::PRI_UPWARD);
 
     // Track when all outgoing are done so we can seed downward sweep
     std::atomic<int> outgoing_remaining{0};
@@ -1746,6 +1787,8 @@ void DMKPtTree<T, DIM>::eval() {
             }
         }
     };
+
+    t_queue.store(MY_OMP_GET_WTIME() - t_start, std::memory_order_relaxed);
 
     // =================================================================
     // Worker
@@ -1795,6 +1838,7 @@ void DMKPtTree<T, DIM>::eval() {
                     }
                     sctl::Profile::Toc();
                     mpi_done.store(true, std::memory_order_release);
+                    t_mpi.store(MY_OMP_GET_WTIME() - t_start, std::memory_order_relaxed);
                 }
 
                 // Transition: MPI done → seed form_outgoing tasks
@@ -1821,10 +1865,11 @@ void DMKPtTree<T, DIM>::eval() {
                     outgoing_seeded.store(true, std::memory_order_release);
 
                     // Now push
-                    for (int b = 0; b < (int)n_boxes(); ++b) {
-                        if ((ifpwexp[b] && proxy_coeffs_offsets[b] != -1) || (pw_out_offsets[b] != -1))
-                            queue.push(b, PriorityWorkQueue::PRI_OUTGOING);
-                    }
+                    auto outgoing =
+                        std::views::iota(0, (int)n_boxes()) | std::views::filter([&](int b) {
+                            return (ifpwexp[b] && proxy_coeffs_offsets[b] != -1) || (pw_out_offsets[b] != -1);
+                        });
+                    queue.push_batch(outgoing, PriorityWorkQueue::PRI_OUTGOING);
                 }
 
                 // Transition: all outgoing done → seed downward sweep
@@ -1834,6 +1879,7 @@ void DMKPtTree<T, DIM>::eval() {
                     // Seed root proxy_downward from windowed kernel
                     queue.push(0, PriorityWorkQueue::PRI_DOWNWARD);
                     downward_seeded.store(true, std::memory_order_release);
+                    t_downward_seeded.store(MY_OMP_GET_WTIME() - t_start, std::memory_order_relaxed);
                 }
             }
 
@@ -1854,6 +1900,7 @@ void DMKPtTree<T, DIM>::eval() {
                     // Charge2proxy group
                     int g = item - C2P_OFFSET;
                     auto &grp = c2p_groups[g];
+                    proxy_view_upward(grp.center_box) = 0;
                     for (int src_box : grp.src_boxes) {
                         proxy::charge2proxycharge<T, DIM>(r_src_owned_view(src_box), charge_owned_view(src_box),
                                                           center_view(grp.center_box), 2.0 / boxsize[grp.level],
@@ -1871,6 +1918,8 @@ void DMKPtTree<T, DIM>::eval() {
                 } else {
                     // Tensorprod for a box
                     int box = item - TPROD_OFFSET;
+                    if (box_to_c2p_group[box] < 0)
+                        proxy_view_upward(box) = 0;
                     for (int ic = 0; ic < n_children; ++ic) {
                         int cb = node_lists[box].child[ic];
                         if (cb < 0 || !(src_counts_owned[cb] > 0 && ifpwexp[cb]))
@@ -2119,6 +2168,10 @@ void DMKPtTree<T, DIM>::eval() {
         pot_trg_sorted[i] += pot_trg_direct[i];
 
     logger->info("eval() completed");
+    double t_end = MY_OMP_GET_WTIME() - t_start;
+    logger->info(
+        "phases: c2p={:.4f}  zeroing={:.4f} deps={:.4f} queue={:.4f} mpi={:.4f} downward_seed={:.4f} total={:.4f}",
+        t_c2p.load(), t_zeroing.load(), t_deps.load(), t_queue.load(), t_mpi.load(), t_downward_seeded.load(), t_end);
 
     if (debug_dump_tree)
         dump();
