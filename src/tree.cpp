@@ -736,7 +736,7 @@ void DMKPtTree<T, DIM>::allocate_proxy_coefficients() {
             counts_upward[i] = 0;
         }
 
-        if (ifpwexp[i] || iftensprodeval[i]) {
+        if ((ifpwexp[i] || iftensprodeval[i]) && (src_counts_owned[i] + trg_counts_owned[i])) {
             counts_downward[i] = n_coeffs;
             n_proxy_boxes_downward++;
         } else {
@@ -1043,7 +1043,7 @@ void DMKPtTree<T, DIM>::init_planewave_data() {
         int n_pw_boxes_out = 1;
         int64_t last_offset = n_pw_per_box;
         for (int box = 1; box < n_boxes(); ++box) {
-            if (ifpwexp[box]) {
+            if (proxy_coeffs_offsets[box] != -1) {
                 pw_out_offsets[box] = last_offset;
                 last_offset += n_pw_per_box;
                 n_pw_boxes_out++;
@@ -1137,7 +1137,8 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
             if (ifpwexp[box] && nboxpts) {
                 memcpy(&pw_in[0], pw_out_ptr(box), n_pw_per_box * sizeof(std::complex<Real>));
                 for (auto &neighbor : node_lists[box].nbr) {
-                    if (neighbor >= 0 && neighbor != box && (!is_global_leaf[box] || !is_global_leaf[neighbor])) {
+                    if (neighbor >= 0 && neighbor != box && (!is_global_leaf[box] || !is_global_leaf[neighbor]) &&
+                        (pw_out_offsets[neighbor] != -1)) {
                         // Translate the outgoing expansion Φl(colleague) to the center of box and add to the incoming
                         // plane wave expansion Ψl(box) using wpwshift.
 
@@ -1976,7 +1977,7 @@ void DMKPtTree<T, DIM>::eval() {
                     constexpr int n_neighbors = sctl::pow<DIM>(3);
                     for (int inb = 0; inb < n_neighbors; ++inb) {
                         int neighbor = node_lists[box].nbr[inb];
-                        if (neighbor < 0 || neighbor == box)
+                        if (neighbor < 0 || neighbor == box || pw_out_offsets[neighbor] == -1)
                             continue;
                         if (!(!is_global_leaf[box] || !is_global_leaf[neighbor]))
                             continue;
