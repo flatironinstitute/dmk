@@ -1242,9 +1242,9 @@ void DMKPtTree<T, DIM>::downward_pass() {
 #endif
 }
 
-/// @brief Perform the "downward pass"
+/// @brief Evaluate using the standard OpenMP pathway
 ///
-/// Updates: proxy_coeffs_downward, tree 'pdmk_pot' particle data
+/// Updates: Basically everything
 ///
 /// @tparam T Floating point format to use (float, double)
 /// @tparam DIM Spatial dimension tree lives in
@@ -1257,6 +1257,20 @@ void DMKPtTree<T, DIM>::eval() {
     upward_pass();
     downward_pass();
     logger->info("eval() completed");
+}
+
+template <typename T, int DIM>
+void DMKPtTree<T, DIM>::desort_potentials(T *pot_src, T *pot_trg) {
+    auto &logger = dmk::get_logger(comm_, params.log_level);
+    logger->info("De-sorting potentials into user arrays");
+    sctl::Profile::Tic("pdmk_tree_eval_sync", &comm_);
+    sctl::Vector<T> res;
+    this->GetParticleData(res, "pdmk_pot_src");
+    sctl::Vector<T>(res.Dim(), pot_src, false) = res;
+    this->GetParticleData(res, "pdmk_pot_trg");
+    sctl::Vector<T>(res.Dim(), pot_trg, false) = res;
+    sctl::Profile::Toc();
+    logger->info("De-sort complete");
 }
 
 #ifdef DMK_HAVE_MPI

@@ -285,6 +285,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d all", 1) {
 
 #ifdef DMK_HAVE_REFERENCE
                 double tottimeinfo[20];
+                int use_charge = 1;
                 int use_dipole = 0;
                 auto pot_src_fort = pot_src;
                 auto grad_src_fort = grad_src;
@@ -294,7 +295,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d all", 1) {
                 auto hess_trg_fort = hess_trg;
                 double st = MY_OMP_GET_WTIME();
                 pdmk_(&nd, &n_dim, &params.eps, (int *)&params.kernel, &params.fparam, &params.use_periodic, &n_src,
-                      &r_src[0], &params.use_charge, &charges[0], &use_dipole, nullptr, nullptr, (int *)&params.pgh_src,
+                      &r_src[0], &use_charge, &charges[0], &use_dipole, nullptr, nullptr, (int *)&params.pgh_src,
                       &pot_src_fort[0], &grad_src_fort[0], &hess_src_fort[0], &n_trg, &r_trg[0], (int *)&params.pgh_trg,
                       &pot_trg_fort[0], &grad_trg_fort[0], &hess_trg_fort[0], tottimeinfo);
                 std::cout << MY_OMP_GET_WTIME() - st << std::endl;
@@ -483,13 +484,7 @@ inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *pot_trg) {
                 else
                     t->eval();
 
-                sctl::Profile::Tic("pdmk_tree_eval_sync", &comm);
-                sctl::Vector<Real> res;
-                t->GetParticleData(res, "pdmk_pot_src");
-                sctl::Vector<Real>(res.Dim(), pot_src, false) = res;
-                t->GetParticleData(res, "pdmk_pot_trg");
-                sctl::Vector<Real>(res.Dim(), pot_trg, false) = res;
-                sctl::Profile::Toc();
+                t->desort_potentials(pot_src, pot_trg);
             }
         },
         *static_cast<pdmk_tree_impl *>(tree));

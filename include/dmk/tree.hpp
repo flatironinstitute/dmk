@@ -526,6 +526,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void eval_pq();
     void upward_pass();
     void downward_pass();
+    void desort_potentials(Real *pot_src, Real *pot_trg);
 
   private:
     static constexpr int nlist1_max_ = sctl::pow<DIM>(4) - sctl::pow<DIM>(2) + 1;

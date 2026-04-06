@@ -39,7 +39,7 @@ else()
   set(DMK_TEST_SRC src/doctest.cpp)
 endif()
 
-set(DMK_CXX_FLAGS "${DMK_CXX_FLAGS};-march=native;-DSCTL_MAX_DEPTH=62")
+set(DMK_CXX_FLAGS "${DMK_CXX_FLAGS};-DSCTL_MAX_DEPTH=62")
 if(${DMK_INSTRUMENT})
   add_compile_options("-DSCTL_PROFILE=5;-DDMK_INSTRUMENT")
 endif()

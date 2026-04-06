@@ -19,7 +19,7 @@
 
 #include <sctl.hpp>
 
-#define DMK_ALWAYS_INLINE __attribute__((always_inline))
+#define DMK_ALWAYS_INLINE __attribute__((always_inline)) inline
 
 template <typename Real>
 DMK_ALWAYS_INLINE void shift_scale_polynomial(const Real *coeffs_in, Real a, Real b, Real *coeffs_out, int N) {
