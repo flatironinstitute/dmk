@@ -258,6 +258,10 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     // list1 contains boxes that are neighbors for direct interaction
     std::vector<std::array<int, nlist1_max_>> list1_;
     std::vector<int> nlist1_;
+    // For PBC: periodic shift (in units of the domain size) for each list1 entry.
+    // list1_shift_[box][k][d] = shift in dimension d for the k-th list1 neighbor.
+    // Zero for non-periodic trees.
+    std::vector<std::array<std::array<int, DIM>, nlist1_max_>> list1_shift_;
 
     static constexpr int nlistpw_max_ = sctl::pow<DIM>(3);
     // listpw_ contains source boxes in the pw interaction

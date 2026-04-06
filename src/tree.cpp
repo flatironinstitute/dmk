@@ -540,14 +540,42 @@ void DMKPtTree<T, DIM>::build_plane_wave_interaction_lists() {
     }
 }
 
+// Compute the periodic shift for a neighbor at nbr slot index k.
+// The slot k = d0 + 3*d1 + 9*d2 (for DIM=3) where d ∈ {0,1,2} maps to offset {-1,0,+1}.
+// The expected neighbor center is center[box] + offset * boxsize.
+// The shift is the difference between expected and actual positions, rounded to int.
+template <typename T, int DIM>
+static std::array<int, DIM> compute_periodic_shift_from_slot(int k, T bsize, const T *center_box,
+                                                             const T *center_nbr) {
+    std::array<int, DIM> shift{};
+    for (int d = 0; d < DIM; ++d) {
+        int dir = (k % 3) - 1; // -1, 0, or +1
+        k /= 3;
+        T expected = center_box[d] + dir * bsize;
+        shift[d] = (int)std::round(expected - center_nbr[d]);
+    }
+    return shift;
+}
+
 template <typename T, int DIM>
 void DMKPtTree<T, DIM>::build_direct_interaction_lists() {
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_lists = this->GetNodeLists();
     list1_.resize(n_boxes());
     nlist1_.resize(n_boxes());
+    list1_shift_.resize(n_boxes());
+
+    auto add_list1_entry = [&](int box, int neighb_box, const std::array<int, DIM> &shift) {
+        const int k = nlist1_[box];
+        list1_[box][k] = neighb_box;
+        list1_shift_[box][k] = shift;
+        nlist1_[box]++;
+    };
+
+    const std::array<int, DIM> zero_shift{};
 
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
+        const T bsize_level = boxsize[i_level];
         // Loop through target boxes at this level (boxes where we loop through neighbors for direct eval)
         for (int box : level_indices[i_level]) {
             if (!is_global_leaf[box] || node_attr[box].Ghost)
@@ -555,13 +583,20 @@ void DMKPtTree<T, DIM>::build_direct_interaction_lists() {
 
             // (boxsize + 0.5 boxsize) / 2 is the max distance from center of box to center of child neighbor box
             const double cutoff_child = 1.05 * 0.75 * boxsize[i_level];
-            for (auto neighb : node_lists[box].nbr) {
+            constexpr int MAX_NBRS = sctl::pow<DIM>(3);
+            for (int nbr_k = 0; nbr_k < MAX_NBRS; ++nbr_k) {
+                const auto neighb = node_lists[box].nbr[nbr_k];
                 if (neighb < 0)
                     continue;
 
+                // Compute periodic shift from the nbr slot index
+                const auto nbr_shift = params.use_periodic
+                                           ? compute_periodic_shift_from_slot<T, DIM>(nbr_k, bsize_level,
+                                                                                      center_ptr(box), center_ptr(neighb))
+                                           : zero_shift;
+
                 if (is_global_leaf[neighb] && src_counts_with_halo[neighb]) {
-                    list1_[box][nlist1_[box]] = neighb;
-                    nlist1_[box]++;
+                    add_list1_entry(box, neighb, nbr_shift);
                     continue;
                 }
 
@@ -569,18 +604,18 @@ void DMKPtTree<T, DIM>::build_direct_interaction_lists() {
                     if (child < 0 || !src_counts_with_halo[child])
                         continue;
 
+                    // For PBC: apply the parent's periodic shift when checking child distance
                     bool inrange = true;
                     for (int k = 0; k < DIM; ++k) {
-                        const double distance = std::abs(center_ptr(box)[k] - center_ptr(child)[k]);
+                        const double child_center = center_ptr(child)[k] + nbr_shift[k];
+                        const double distance = std::abs(center_ptr(box)[k] - child_center);
                         if (distance > cutoff_child) {
                             inrange = false;
                             break;
                         }
                     }
-                    if (inrange) {
-                        list1_[box][nlist1_[box]] = child;
-                        nlist1_[box]++;
-                    }
+                    if (inrange)
+                        add_list1_entry(box, child, nbr_shift);
                 }
             }
 
@@ -589,22 +624,27 @@ void DMKPtTree<T, DIM>::build_direct_interaction_lists() {
                 continue;
 
             // Search the colleagues of parent for neighboring leaves
-            // (boxsize + 2 * boxsize) / 2 is the max distance from center of box to center of parent neighbor box
+            const int parent = node_lists[box].parent;
+            const T bsize_parent = boxsize[i_level - 1];
             const double cutoff = 1.5 * 1.05 * boxsize[i_level];
-            for (auto neighb : node_lists[node_lists[box].parent].nbr) {
+            for (int nbr_k = 0; nbr_k < MAX_NBRS; ++nbr_k) {
+                const auto neighb = node_lists[parent].nbr[nbr_k];
                 if (neighb < 0 || !is_global_leaf[neighb] || !src_counts_with_halo[neighb])
                     continue;
 
+                const auto nbr_shift =
+                    params.use_periodic ? compute_periodic_shift_from_slot<T, DIM>(nbr_k, bsize_parent,
+                                                                                   center_ptr(parent), center_ptr(neighb))
+                                        : zero_shift;
+
                 bool inrange = true;
                 for (int k = 0; k < DIM; ++k) {
-                    const double distance = std::abs(center_ptr(box)[k] - center_ptr(neighb)[k]);
+                    const double distance = std::abs(center_ptr(box)[k] - (center_ptr(neighb)[k] + nbr_shift[k]));
                     if (distance > cutoff)
                         inrange = false;
                 }
-                if (inrange) {
-                    list1_[box][nlist1_[box]] = neighb;
-                    nlist1_[box]++;
-                }
+                if (inrange)
+                    add_list1_entry(box, neighb, nbr_shift);
             }
         }
     }
@@ -1311,6 +1351,19 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
     for (int i_level = 0; i_level < n_levels(); ++i_level)
         w0[i_level] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
 
+    // For PBC: precompute the periodic shift for each (trg_box, nbr_index) pair.
+    // The nbr array index k encodes a direction (dx,dy,dz) ∈ {-1,0,+1}^DIM.
+    // k = d0 + 3*d1 + 9*d2 where d ∈ {0,1,2} maps to offset {-1,0,+1}.
+    // When the neighbor wraps around the periodic boundary, the source
+    // positions must be shifted by ±1 in the wrapped dimension.
+    //
+    // We detect the shift by comparing the actual center difference with
+    // the expected neighbor direction. For a box at level L with boxsize B:
+    //   expected offset in dim i = (d_i - 1) * B
+    //   actual offset = center[nbr][i] - center[box][i]
+    //   shift[i] = expected - actual = round(expected - actual)
+    // This is nonzero only when the neighbor wraps periodically.
+
 #pragma omp parallel
     {
         // Thread-local buffers for filtered particles
@@ -1323,12 +1376,16 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
         util::StackOrHeapBuffer<Real, MAX_OUTPUT_DIM * MAX_PTS> pot_buf(kernel_output_dim_max * params.n_per_leaf);
         util::StackOrHeapBuffer<int, MAX_PTS> index_map(params.n_per_leaf);
 
+        // Buffer for periodically shifted source positions
+        std::vector<Real> r_src_shifted;
+
 #pragma omp for schedule(dynamic)
         for (int idx = 0; idx < direct_work.size(); ++idx) {
             const int trg_box = direct_work[idx];
             const int trg_level = node_mid[trg_box].Depth();
 
-            for (auto src_box : list1(trg_box)) {
+            for (int list1_idx = 0; list1_idx < nlist1_[trg_box]; ++list1_idx) {
+                const int src_box = list1_[trg_box][list1_idx];
                 int src_level = node_mid[src_box].Depth();
                 Real bsize = boxsize[src_level];
 
@@ -1368,6 +1425,23 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
                 int n_src = src_counts_with_halo[src_box];
                 const Real *r_src_ptr = r_src_with_halo_ptr(src_box);
                 const Real *charge_ptr = charge_with_halo_ptr(src_box);
+
+                // For PBC: apply the precomputed periodic shift to source positions
+                if (params.use_periodic) {
+                    const auto &shift = list1_shift_[trg_box][list1_idx];
+                    bool needs_shift = false;
+                    for (int d = 0; d < DIM; ++d)
+                        if (shift[d] != 0)
+                            needs_shift = true;
+
+                    if (needs_shift) {
+                        r_src_shifted.resize(DIM * n_src);
+                        for (int i = 0; i < n_src; ++i)
+                            for (int d = 0; d < DIM; ++d)
+                                r_src_shifted[i * DIM + d] = r_src_ptr[i * DIM + d] + shift[d];
+                        r_src_ptr = r_src_shifted.data();
+                    }
+                }
 
                 // Remove points outside sqrt(d2max) range from shared box boundary
                 if (src_larger) {
