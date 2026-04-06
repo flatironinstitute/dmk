@@ -1304,6 +1304,189 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full vs Ewald", 1) {
     }
 }
 
+TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full downward_pass vs Ewald", 1) {
+    // Verify that tree.downward_pass() (which now uses the periodic PSWF kernel
+    // at the root) gives the full periodic 1/r potential matching Ewald.
+
+    constexpr int n_dim = 3;
+    constexpr int n_src = 2000;
+    constexpr int n_trg = 500;
+
+#ifdef DMK_HAVE_MPI
+    auto sctl_comm = sctl::Comm(test_comm);
+#else
+    auto sctl_comm = sctl::Comm::Self();
+#endif
+
+    std::default_random_engine eng(99);
+    std::uniform_real_distribution<double> rng(0.01, 0.99);
+
+    sctl::Vector<double> r_src(n_dim * n_src), r_trg(n_dim * n_trg);
+    sctl::Vector<double> charges(n_src);
+
+    for (int i = 0; i < n_src * n_dim; ++i)
+        r_src[i] = rng(eng);
+    for (int i = 0; i < n_trg * n_dim; ++i)
+        r_trg[i] = rng(eng);
+    for (int i = 0; i < n_src; ++i)
+        charges[i] = rng(eng) - 0.5;
+    {
+        double sum = 0.0;
+        for (int i = 0; i < n_src; ++i)
+            sum += charges[i];
+        for (int i = 0; i < n_src; ++i)
+            charges[i] -= sum / n_src;
+    }
+
+    pdmk_params params;
+    params.eps = 1e-6;
+    params.n_dim = n_dim;
+    params.n_per_leaf = 50;
+    params.pgh_src = DMK_POTENTIAL;
+    params.pgh_trg = DMK_POTENTIAL;
+    params.kernel = DMK_LAPLACE;
+    params.use_periodic = true;
+    params.log_level = SPDLOG_LEVEL_OFF;
+
+    dmk::DMKPtTree<double, n_dim> tree(sctl_comm, params, r_src, r_trg, charges);
+    REQUIRE(tree.n_levels() >= 3);
+    REQUIRE(tree.n_pw_periodic > 0);
+
+    // --- Run full downward_pass ---
+    tree.upward_pass();
+    tree.downward_pass();
+
+    // --- Gather sources and targets ---
+    const auto &node_attr = tree.GetNodeAttr();
+
+    struct SrcInfo {
+        double r[3];
+        double q;
+    };
+    struct TrgInfo {
+        double r[3];
+        int pot_offset;
+    };
+    std::vector<SrcInfo> sources;
+    std::vector<TrgInfo> targets;
+
+    for (int box = 0; box < (int)tree.n_boxes(); ++box) {
+        if (!node_attr[box].Leaf || node_attr[box].Ghost)
+            continue;
+        const int n = tree.r_src_cnt_owned[box];
+        if (!n)
+            continue;
+        const double *rp = tree.r_src_owned_ptr(box);
+        const double *cp = tree.charge_owned_ptr(box);
+        for (int i = 0; i < n; ++i)
+            sources.push_back({{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, cp[i]});
+    }
+    for (int box = 0; box < (int)tree.n_boxes(); ++box) {
+        if (node_attr[box].Ghost || !node_attr[box].Leaf)
+            continue;
+        const int n = tree.r_trg_cnt_owned[box];
+        if (!n)
+            continue;
+        const double *rp = tree.r_trg_owned_ptr(box);
+        for (int i = 0; i < n; ++i)
+            targets.push_back(
+                {{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, (int)tree.pot_trg_offsets[box] + i});
+    }
+
+    // --- V_Ewald reference ---
+    const double L = 1.0;
+    const double V_box = L * L * L;
+    const double dk = 2.0 * M_PI / L;
+    const double alpha = 10.0;
+    const int n_ewald = 15;
+    const int d = 2 * n_ewald + 1;
+
+    // Precompute rho(k)
+    std::vector<std::complex<double>> rho(d * d * d, {0.0, 0.0});
+    for (const auto &src : sources) {
+        const std::complex<double> exp_x0 = std::exp(std::complex<double>(0.0, -dk * src.r[0]));
+        const std::complex<double> exp_y0 = std::exp(std::complex<double>(0.0, -dk * src.r[1]));
+        const std::complex<double> exp_z0 = std::exp(std::complex<double>(0.0, -dk * src.r[2]));
+
+        std::vector<std::complex<double>> exp_x(d), exp_y(d), exp_z(d);
+        for (int a = -n_ewald; a <= n_ewald; ++a) {
+            exp_x[a + n_ewald] = std::pow(exp_x0, a);
+            exp_y[a + n_ewald] = std::pow(exp_y0, a);
+            exp_z[a + n_ewald] = std::pow(exp_z0, a);
+        }
+        for (int ix = 0; ix < d; ++ix)
+            for (int iy = 0; iy < d; ++iy) {
+                auto t2 = src.q * exp_x[ix] * exp_y[iy];
+                for (int iz = 0; iz < d; ++iz)
+                    rho[ix * d * d + iy * d + iz] += t2 * exp_z[iz];
+            }
+    }
+
+    std::vector<double> v_ewald(targets.size(), 0.0);
+
+    // Short range
+    const double r_c = 0.5 * L;
+    for (int it = 0; it < (int)targets.size(); ++it) {
+        const auto &trg = targets[it];
+        for (const auto &src : sources) {
+            for (int mx = -1; mx <= 1; ++mx)
+                for (int my = -1; my <= 1; ++my)
+                    for (int mz = -1; mz <= 1; ++mz) {
+                        const double dx2 = trg.r[0] - src.r[0] - mx * L;
+                        const double dy2 = trg.r[1] - src.r[1] - my * L;
+                        const double dz2 = trg.r[2] - src.r[2] - mz * L;
+                        const double r = std::sqrt(dx2 * dx2 + dy2 * dy2 + dz2 * dz2);
+                        if (r > 1e-15 && r <= r_c)
+                            v_ewald[it] += src.q * std::erfc(alpha * r) / r;
+                    }
+        }
+    }
+
+    // Long range
+    for (int it = 0; it < (int)targets.size(); ++it) {
+        const auto &trg = targets[it];
+        const std::complex<double> exp_tx0 = std::exp(std::complex<double>(0.0, dk * trg.r[0]));
+        const std::complex<double> exp_ty0 = std::exp(std::complex<double>(0.0, dk * trg.r[1]));
+        const std::complex<double> exp_tz0 = std::exp(std::complex<double>(0.0, dk * trg.r[2]));
+
+        std::vector<std::complex<double>> exp_tx(d), exp_ty(d), exp_tz(d);
+        for (int a = -n_ewald; a <= n_ewald; ++a) {
+            exp_tx[a + n_ewald] = std::pow(exp_tx0, a);
+            exp_ty[a + n_ewald] = std::pow(exp_ty0, a);
+            exp_tz[a + n_ewald] = std::pow(exp_tz0, a);
+        }
+
+        double pot_long = 0.0;
+        for (int nx = -n_ewald; nx <= n_ewald; ++nx)
+            for (int ny = -n_ewald; ny <= n_ewald; ++ny)
+                for (int nz = -n_ewald; nz <= n_ewald; ++nz) {
+                    if (nx == 0 && ny == 0 && nz == 0)
+                        continue;
+                    const double kx = dk * nx, ky = dk * ny, kz = dk * nz;
+                    const double k2 = kx * kx + ky * ky + kz * kz;
+                    const double ewald_kernel = std::exp(-k2 / (4.0 * alpha * alpha)) / k2;
+
+                    const int ix = nx + n_ewald, iy = ny + n_ewald, iz = nz + n_ewald;
+                    const auto &rho_k = rho[ix * d * d + iy * d + iz];
+                    const auto exp_ikr = exp_tx[nx + n_ewald] * exp_ty[ny + n_ewald] * exp_tz[nz + n_ewald];
+                    pot_long += ewald_kernel * std::real(rho_k * exp_ikr);
+                }
+        v_ewald[it] += (4.0 * M_PI / V_box) * pot_long;
+    }
+
+    // --- Compare tree.downward_pass vs Ewald ---
+    double err2 = 0.0, ref2 = 0.0;
+    for (int i = 0; i < (int)targets.size(); ++i) {
+        const double v_tree = tree.pot_trg_sorted[targets[i].pot_offset];
+        err2 += sctl::pow<2>(v_tree - v_ewald[i]);
+        ref2 += sctl::pow<2>(v_ewald[i]);
+    }
+    const double l2_err = (ref2 > 0) ? std::sqrt(err2 / ref2) : std::sqrt(err2);
+    MESSAGE("PBC downward_pass vs Ewald: l2_err=", l2_err, " n_levels=", tree.n_levels(),
+            " n_pw_periodic=", tree.n_pw_periodic, " n_boxes=", tree.n_boxes());
+    CHECK(l2_err < 1e-4);
+}
+
 template <typename Real>
 inline pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src, const Real *r_src,
                                   const Real *charge, const Real *normal, const Real *dipole_str, int n_trg,

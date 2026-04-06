@@ -1620,7 +1620,12 @@ void DMKPtTree<T, DIM>::downward_pass() {
         const ndview<std::complex<T>, 2> p2pw({n_pw, n_order}, &dfd.poly2pw[0]);
         const ndview<std::complex<T>, 2> pw2p({n_pw, n_order}, &dfd.pw2poly[0]);
 
-        form_outgoing_expansions(level_indices[i_level], p2pw, dfd.radialft);
+        // When use_periodic, skip form_outgoing at level 0: the periodic root kernel
+        // already includes W_0+D_0, so D_0 must not be computed again. pw_out(0) stays
+        // zero from init_planewave_data, so form_eval's self-interaction adds nothing.
+        // We still run form_eval at level 0 to propagate proxy_downward(0) to children.
+        if (!(params.use_periodic && i_level == 0))
+            form_outgoing_expansions(level_indices[i_level], p2pw, dfd.radialft);
         if (!debug_omit_pw)
             form_eval_expansions(level_indices[i_level], dfd.wpwshift, boxsize[i_level], pw2p, p2c);
     }
