@@ -107,6 +107,11 @@ inline T int_pow(T base, int exp) {
     return result;
 }
 
+inline bool env_is_set(const char *name) {
+    const char *val = getenv(name);
+    return val != nullptr && val[0] != '\0' && std::string_view(val) != "0";
+}
+
 template <typename Real>
 void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
                     sctl::Vector<Real> &r_src, sctl::Vector<Real> &r_trg, sctl::Vector<Real> &rnormal,

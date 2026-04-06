@@ -142,7 +142,7 @@ if (DMK_BUILD_REFERENCE)
   set_target_properties(dmk_ref_shared PROPERTIES OUTPUT_NAME dmk_ref)
 endif()
 
-set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp src/legeexps.cpp
+set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/tree_pq.cpp src/logger.cpp src/util.cpp src/legeexps.cpp
   src/fourier_data.cpp src/tensorprod.cpp src/planewave.cpp src/direct.cpp src/prolate.cpp src/prolate0_eval.cpp
   src/timing.cpp src/aot_kernels.cpp
   ${DMK_TEST_SRC}

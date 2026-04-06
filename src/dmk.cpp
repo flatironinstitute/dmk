@@ -478,12 +478,10 @@ inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *pot_trg) {
                 const auto &comm = (*static_cast<TreeType *>(tree))->GetComm();
                 sctl::Profile::Scoped prof("pdmk_tree_eval", &comm);
 
-                if (getenv("DMK_DEBUG_USE_OLD_PASS") == nullptr)
+                if (util::env_is_set("DMK_DEBUG_USE_PQ"))
+                    t->eval_pq();
+                else
                     t->eval();
-                else {
-                    t->upward_pass();
-                    t->downward_pass();
-                }
 
                 sctl::Profile::Tic("pdmk_tree_eval_sync", &comm);
                 sctl::Vector<Real> res;
