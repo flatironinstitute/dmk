@@ -51,7 +51,7 @@ void pdmk(dmk_communicator comm, const pdmk_params &params, int n_src, const T *
         tree.eval();
 
     tree.desort_potentials(pot_src, pot_trg);
-    if (params.log_level <= DMK_LOG_INFO)     {
+    if (params.log_level <= DMK_LOG_INFO) {
         auto dt = MY_OMP_GET_WTIME() - st;
         int N = n_src + n_trg;
 #ifdef DMK_HAVE_MPI
