@@ -628,6 +628,682 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC direct verification", 1) {
     }
 }
 
+TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace diff+residual vs erfc reference (free space)", 1) {
+    // Verify that the DMK output from PW levels 1..L + direct (i.e., everything
+    // except the root-level windowed kernel and D_0) matches the reference:
+    //   ref(r_t) = sum_s q_s * erfc(|r_t - r_s| / sigma_1) / |r_t - r_s|
+    // This follows from the telescoping sum D_1 + D_2 + ... + R_L = erfc(r/sigma_1)/r,
+    // where sigma_l = boxsize[l] / sqrt(log(1/eps)) (Jiang & Greengard eq 3.26-3.28).
+    // Free-space test first to validate the reference before extending to PBC.
+
+    constexpr int n_dim = 3;
+    constexpr int n_src = 2000;
+    constexpr int n_trg = 500;
+    constexpr double thresh2 = 1e-30;
+
+#ifdef DMK_HAVE_MPI
+    auto sctl_comm = sctl::Comm(test_comm);
+#else
+    auto sctl_comm = sctl::Comm::Self();
+#endif
+
+    std::default_random_engine eng(42);
+    std::uniform_real_distribution<double> rng(0.01, 0.99);
+
+    sctl::Vector<double> r_src(n_dim * n_src), r_trg(n_dim * n_trg);
+    sctl::Vector<double> charges(n_src);
+
+    for (int i = 0; i < n_src * n_dim; ++i)
+        r_src[i] = rng(eng);
+    for (int i = 0; i < n_trg * n_dim; ++i)
+        r_trg[i] = rng(eng);
+    for (int i = 0; i < n_src; ++i)
+        charges[i] = rng(eng) - 0.5;
+    {
+        double sum = 0.0;
+        for (int i = 0; i < n_src; ++i)
+            sum += charges[i];
+        for (int i = 0; i < n_src; ++i)
+            charges[i] -= sum / n_src;
+    }
+
+    pdmk_params params;
+    params.eps = 1e-6;
+    params.n_dim = n_dim;
+    params.n_per_leaf = 50; // ensures 3-level tree
+    params.pgh_src = DMK_POTENTIAL;
+    params.pgh_trg = DMK_POTENTIAL;
+    params.kernel = DMK_LAPLACE;
+    params.use_periodic = false; // free space first
+    params.log_level = SPDLOG_LEVEL_OFF;
+
+    dmk::DMKPtTree<double, n_dim> tree(sctl_comm, params, r_src, r_trg, charges);
+    REQUIRE(tree.n_levels() >= 3);
+
+    // Run upward pass, init PW, zero potentials
+    tree.upward_pass();
+    tree.init_planewave_data();
+    tree.pot_src_sorted.SetZero();
+    tree.pot_trg_sorted.SetZero();
+
+    // Run PW for levels 1..L (skip level 0 = D_0)
+    for (int i_level = 1; i_level < tree.n_levels(); ++i_level) {
+        auto &dfd = tree.difference_fourier_data[i_level];
+        const ndview<std::complex<double>, 2> p2pw({tree.n_pw, tree.n_order}, &dfd.poly2pw[0]);
+        const ndview<std::complex<double>, 2> pw2p({tree.n_pw, tree.n_order}, &dfd.pw2poly[0]);
+        tree.form_outgoing_expansions(tree.level_indices[i_level], p2pw, dfd.radialft);
+        tree.form_eval_expansions(tree.level_indices[i_level], dfd.wpwshift, tree.boxsize[i_level], pw2p, tree.p2c);
+    }
+    // Run direct (residual) evaluation
+    tree.evaluate_direct_interactions(tree.r_src_t.data(), tree.r_trg_t.data());
+
+    const auto &node_attr = tree.GetNodeAttr();
+
+    // Gather sources from leaf boxes
+    struct SourceInfo {
+        double r[3];
+        double charge;
+    };
+    std::vector<SourceInfo> sources;
+    for (int box = 0; box < (int)tree.n_boxes(); ++box) {
+        if (!node_attr[box].Leaf || node_attr[box].Ghost)
+            continue;
+        const int n = tree.r_src_cnt_owned[box];
+        if (!n)
+            continue;
+        const double *rp = tree.r_src_owned_ptr(box);
+        const double *cp = tree.charge_owned_ptr(box);
+        for (int i = 0; i < n; ++i)
+            sources.push_back({{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, cp[i]});
+    }
+
+    // Gather targets from leaf boxes
+    struct TargetInfo {
+        double r[3];
+        int pot_offset;
+    };
+    std::vector<TargetInfo> targets;
+    for (int box = 0; box < (int)tree.n_boxes(); ++box) {
+        if (node_attr[box].Ghost || !node_attr[box].Leaf)
+            continue;
+        const int n = tree.r_trg_cnt_owned[box];
+        if (!n)
+            continue;
+        const double *rp = tree.r_trg_owned_ptr(box);
+        for (int i = 0; i < n; ++i)
+            targets.push_back({{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, (int)tree.pot_trg_offsets[box] + i});
+    }
+
+    // Reference uses the PSWF real-space formula for difference kernels:
+    //   D_l(r) = [1/(4π·r·c0)] · [Φ(min(1, 2r/bsize_l)) - Φ(r/bsize_l)]
+    // where Φ(x) = ∫₀ˣ ψ₀(t) dt = pf.int_eval(x), and c0 = ∫₀¹ ψ₀.
+    // The residual R_L uses the leaf polynomial from aot_kernels.
+    // The sum D_1 + ... + D_{L-1} + R_L should equal the DMK output (PW levels 1..L + direct).
+
+    auto &pf = tree.fourier_data.prolate0_fun;
+    const double c0 = pf.intvals(tree.fourier_data.beta())[0];
+    const double inv_c0 = 1.0 / c0;
+    const int L = tree.n_levels() - 1; // leaf level index
+
+    // 6-digit leaf residual polynomial (from aot_kernels.cpp)
+    // clang-format off
+    const double res_coeffs[] = {
+        5.482525801351582e-02, -2.616592110444692e-01, 4.862652666337138e-01,
+        -3.894296348642919e-01, 1.638587821812791e-02, 1.870328434198821e-01,
+        -8.714171086568978e-02, -3.927020727017803e-02, 3.728187607052319e-02,
+        3.153734425831139e-03, -8.651313377285847e-03, 1.725110090795567e-04,
+        1.034762385284044e-03};
+    // clang-format on
+    const int n_res_coeffs = (int)(sizeof(res_coeffs) / sizeof(double));
+    auto horner_eval = [](double x, const double *c, int n) {
+        double val = c[n - 1];
+        for (int i = n - 2; i >= 0; --i)
+            val = val * x + c[i];
+        return val;
+    };
+
+    // Evaluate D_l(r) via PSWF integral
+    auto eval_D_l = [&](double r, int level) -> double {
+        double bsize = tree.boxsize[level];
+        double u_lo = r / bsize;        // = r / boxsize[l]
+        double u_hi = 2.0 * r / bsize;  // = r / boxsize[l+1]
+        if (u_lo >= 1.0)
+            return 0.0; // outside support
+        u_hi = std::min(u_hi, 1.0);
+        double integral = pf.int_eval(u_hi) - pf.int_eval(u_lo);
+        return inv_c0 * integral / r;
+    };
+
+    // Evaluate leaf residual R_L(r) via polynomial
+    auto eval_R_L = [&](double r) -> double {
+        double bsize = tree.boxsize[L];
+        if (r * r >= bsize * bsize)
+            return 0.0;
+        double rsc = 2.0 / bsize;
+        double cen = -bsize / 2.0;
+        double x = (r + cen) * rsc;
+        return horner_eval(x, res_coeffs, n_res_coeffs) / r;
+    };
+
+    std::vector<double> ref_pot(targets.size(), 0.0);
+    for (int i_trg = 0; i_trg < (int)targets.size(); ++i_trg) {
+        const auto &trg = targets[i_trg];
+        for (const auto &src : sources) {
+            double dx = trg.r[0] - src.r[0];
+            double dy = trg.r[1] - src.r[1];
+            double dz = trg.r[2] - src.r[2];
+            double r2 = dx * dx + dy * dy + dz * dz;
+            if (r2 < thresh2)
+                continue;
+            double r = std::sqrt(r2);
+            // Sum D_1 + D_2 + ... + D_{L-1} + R_L
+            double val = 0.0;
+            for (int l = 1; l < L; ++l)
+                val += eval_D_l(r, l);
+            val += eval_R_L(r);
+            ref_pot[i_trg] += src.charge * val;
+        }
+    }
+
+    const int n_test = std::min((int)targets.size(), 200);
+    double err2 = 0.0, ref2 = 0.0;
+    for (int i = 0; i < n_test; ++i) {
+        double tree_val = tree.pot_trg_sorted[targets[i].pot_offset];
+        err2 += sctl::pow<2>(tree_val - ref_pot[i]);
+        ref2 += sctl::pow<2>(ref_pot[i]);
+        if (i < 5)
+            MESSAGE("  i=", i, " tree=", tree_val, " ref=", ref_pot[i], " diff=", tree_val - ref_pot[i]);
+    }
+    double l2_err = (ref2 > 0) ? std::sqrt(err2 / ref2) : std::sqrt(err2);
+    MESSAGE("diff+residual vs PSWF ref: l2_err=", l2_err, " c0=", c0,
+            " n_levels=", tree.n_levels(), " n_boxes=", tree.n_boxes());
+    CHECK(l2_err < 1e-3);
+}
+
+TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC diff+residual vs PSWF reference", 1) {
+    // PBC version: verify D_1 + ... + D_{L-1} + R_L with 27 periodic images
+    // at 3, 6, 9, 12 digit precision.
+    // D_l(r) = [1/(r*c0)] * [Phi(min(1, 2r/bsize_l)) - Phi(r/bsize_l)]
+    // R_L(r) = P(x_L)/r (leaf residual polynomial)
+
+    constexpr int n_dim = 3;
+    constexpr int n_src = 2000;
+    constexpr int n_trg = 500;
+    constexpr double thresh2 = 1e-30;
+
+#ifdef DMK_HAVE_MPI
+    auto sctl_comm = sctl::Comm(test_comm);
+#else
+    auto sctl_comm = sctl::Comm::Self();
+#endif
+
+    std::default_random_engine eng(42);
+    std::uniform_real_distribution<double> rng(0.01, 0.99);
+
+    sctl::Vector<double> r_src(n_dim * n_src), r_trg(n_dim * n_trg);
+    sctl::Vector<double> charges(n_src);
+
+    for (int i = 0; i < n_src * n_dim; ++i)
+        r_src[i] = rng(eng);
+    for (int i = 0; i < n_trg * n_dim; ++i)
+        r_trg[i] = rng(eng);
+    for (int i = 0; i < n_src; ++i)
+        charges[i] = rng(eng) - 0.5;
+    {
+        double sum = 0.0;
+        for (int i = 0; i < n_src; ++i)
+            sum += charges[i];
+        for (int i = 0; i < n_src; ++i)
+            charges[i] -= sum / n_src;
+    }
+
+    // Residual kernel polynomial coefficients per precision (from aot_kernels.cpp)
+    // clang-format off
+    const double coeffs_3[] = {
+        1.627823522210361e-01, -4.553645597616490e-01, 4.171687104204163e-01,
+        -7.073638602709915e-02, -8.957845614474928e-02, 2.617986644718201e-02,
+        9.633427876507601e-03};
+    const double coeffs_6[] = {
+        5.482525801351582e-02, -2.616592110444692e-01, 4.862652666337138e-01,
+        -3.894296348642919e-01, 1.638587821812791e-02, 1.870328434198821e-01,
+        -8.714171086568978e-02, -3.927020727017803e-02, 3.728187607052319e-02,
+        3.153734425831139e-03, -8.651313377285847e-03, 1.725110090795567e-04,
+        1.034762385284044e-03};
+    const double coeffs_9[] = {
+        1.835718730962269e-02, -1.258015846164503e-01, 3.609487248584408e-01, -5.314579651112283e-01,
+        3.447559412892380e-01, 9.664692318551721e-02, -3.124274531849053e-01, 1.322460720579388e-01,
+        9.773007866584822e-02, -1.021958831082768e-01, -3.812847450976566e-03, 3.858117355875043e-02,
+        -8.728545924521301e-03, -9.401196355382909e-03, 4.024549377076924e-03, 1.512806105865091e-03,
+        -9.576734877247042e-04, -1.303457547418901e-04, 1.100385844683190e-04};
+    const double coeffs_12[] = {
+        6.262472576363448e-03, -5.605742936112479e-02, 2.185890864792949e-01, -4.717350304955679e-01,
+        5.669680214206270e-01, -2.511606878849214e-01, -2.744523658778361e-01, 4.582527599363415e-01,
+        -1.397724810121539e-01, -2.131762135835757e-01, 1.995489373508990e-01, 1.793390341864239e-02,
+        -1.035055132403432e-01, 3.035606831075176e-02, 3.153931762550532e-02, -2.033178627450288e-02,
+        -5.406682731236552e-03, 7.543645573618463e-03, 1.437788047407851e-05, -1.928370882351732e-03,
+        2.891658777328665e-04, 3.332996162099811e-04, -8.397699195938912e-05, -3.015837377517983e-05,
+        9.640642701924662e-06};
+    // clang-format on
+
+    auto horner_eval = [](double x, const double *c, int n) {
+        double val = c[n - 1];
+        for (int i = n - 2; i >= 0; --i)
+            val = val * x + c[i];
+        return val;
+    };
+
+    struct PrecisionCase {
+        int n_digits;
+        double eps;
+        const double *coeffs;
+        int n_coeffs;
+    };
+    const PrecisionCase cases[] = {
+        {3, 1e-3, coeffs_3, (int)(sizeof(coeffs_3) / sizeof(double))},
+        {6, 1e-6, coeffs_6, (int)(sizeof(coeffs_6) / sizeof(double))},
+        {9, 1e-9, coeffs_9, (int)(sizeof(coeffs_9) / sizeof(double))},
+        {12, 1e-12, coeffs_12, (int)(sizeof(coeffs_12) / sizeof(double))},
+    };
+
+    for (const auto &pc : cases) {
+        SUBCASE(("n_digits=" + std::to_string(pc.n_digits)).c_str()) {
+            pdmk_params params;
+            params.eps = pc.eps;
+            params.n_dim = n_dim;
+            params.n_per_leaf = 50;
+            params.pgh_src = DMK_POTENTIAL;
+            params.pgh_trg = DMK_POTENTIAL;
+            params.kernel = DMK_LAPLACE;
+            params.use_periodic = true;
+            params.log_level = SPDLOG_LEVEL_OFF;
+
+            dmk::DMKPtTree<double, n_dim> tree(sctl_comm, params, r_src, r_trg, charges);
+            REQUIRE(tree.n_levels() >= 3);
+
+            // Run upward pass, init PW, zero potentials
+            tree.upward_pass();
+            tree.init_planewave_data();
+            tree.pot_src_sorted.SetZero();
+            tree.pot_trg_sorted.SetZero();
+
+            // Run PW for levels 1..L (skip root level)
+            for (int i_level = 1; i_level < tree.n_levels(); ++i_level) {
+                auto &dfd = tree.difference_fourier_data[i_level];
+                const ndview<std::complex<double>, 2> p2pw({tree.n_pw, tree.n_order}, &dfd.poly2pw[0]);
+                const ndview<std::complex<double>, 2> pw2p({tree.n_pw, tree.n_order}, &dfd.pw2poly[0]);
+                tree.form_outgoing_expansions(tree.level_indices[i_level], p2pw, dfd.radialft);
+                tree.form_eval_expansions(tree.level_indices[i_level], dfd.wpwshift, tree.boxsize[i_level], pw2p,
+                                          tree.p2c);
+            }
+            // Run direct (residual) evaluation
+            tree.evaluate_direct_interactions(tree.r_src_t.data(), tree.r_trg_t.data());
+
+            const auto &node_attr = tree.GetNodeAttr();
+
+            // Gather sources
+            struct SourceInfo {
+                double r[3];
+                double charge;
+            };
+            std::vector<SourceInfo> sources;
+            for (int box = 0; box < (int)tree.n_boxes(); ++box) {
+                if (!node_attr[box].Leaf || node_attr[box].Ghost)
+                    continue;
+                const int n = tree.r_src_cnt_owned[box];
+                if (!n)
+                    continue;
+                const double *rp = tree.r_src_owned_ptr(box);
+                const double *cp = tree.charge_owned_ptr(box);
+                for (int i = 0; i < n; ++i)
+                    sources.push_back({{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, cp[i]});
+            }
+
+            // Gather targets
+            struct TargetInfo {
+                double r[3];
+                int pot_offset;
+            };
+            std::vector<TargetInfo> targets;
+            for (int box = 0; box < (int)tree.n_boxes(); ++box) {
+                if (node_attr[box].Ghost || !node_attr[box].Leaf)
+                    continue;
+                const int n = tree.r_trg_cnt_owned[box];
+                if (!n)
+                    continue;
+                const double *rp = tree.r_trg_owned_ptr(box);
+                for (int i = 0; i < n; ++i)
+                    targets.push_back(
+                        {{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, (int)tree.pot_trg_offsets[box] + i});
+            }
+
+            // PSWF reference with 27 periodic images
+            auto &pf = tree.fourier_data.prolate0_fun;
+            const double c0 = pf.intvals(tree.fourier_data.beta())[0];
+            const double inv_c0 = 1.0 / c0;
+            const int L = tree.n_levels() - 1;
+
+            auto eval_D_l = [&](double r, int level) -> double {
+                double bsize = tree.boxsize[level];
+                double u_lo = r / bsize;
+                double u_hi = 2.0 * r / bsize;
+                if (u_lo >= 1.0)
+                    return 0.0;
+                u_hi = std::min(u_hi, 1.0);
+                return inv_c0 * (pf.int_eval(u_hi) - pf.int_eval(u_lo)) / r;
+            };
+
+            auto eval_R_L = [&](double r) -> double {
+                double bsize = tree.boxsize[L];
+                if (r * r >= bsize * bsize)
+                    return 0.0;
+                double rsc = 2.0 / bsize;
+                double cen = -bsize / 2.0;
+                double x = (r + cen) * rsc;
+                return horner_eval(x, pc.coeffs, pc.n_coeffs) / r;
+            };
+
+            std::vector<double> ref_pot(targets.size(), 0.0);
+            for (int i_trg = 0; i_trg < (int)targets.size(); ++i_trg) {
+                const auto &trg = targets[i_trg];
+                for (const auto &src : sources) {
+                    for (int mx = -1; mx <= 1; ++mx)
+                        for (int my = -1; my <= 1; ++my)
+                            for (int mz = -1; mz <= 1; ++mz) {
+                                double dx = trg.r[0] - src.r[0] - mx;
+                                double dy = trg.r[1] - src.r[1] - my;
+                                double dz = trg.r[2] - src.r[2] - mz;
+                                double r2 = dx * dx + dy * dy + dz * dz;
+                                if (r2 < thresh2)
+                                    continue;
+                                double r = std::sqrt(r2);
+                                double val = 0.0;
+                                for (int l = 1; l < L; ++l)
+                                    val += eval_D_l(r, l);
+                                val += eval_R_L(r);
+                                ref_pot[i_trg] += src.charge * val;
+                            }
+                }
+            }
+
+            const int n_test = std::min((int)targets.size(), 200);
+            double err2 = 0.0, ref2 = 0.0;
+            for (int i = 0; i < n_test; ++i) {
+                double tree_val = tree.pot_trg_sorted[targets[i].pot_offset];
+                err2 += sctl::pow<2>(tree_val - ref_pot[i]);
+                ref2 += sctl::pow<2>(ref_pot[i]);
+            }
+            double l2_err = (ref2 > 0) ? std::sqrt(err2 / ref2) : std::sqrt(err2);
+            MESSAGE("PBC n_digits=", pc.n_digits, " l2_err=", l2_err, " n_levels=", tree.n_levels(),
+                    " n_boxes=", tree.n_boxes());
+            const double tol = (pc.n_digits <= 3) ? 1e-2 : 1e-3;
+            CHECK(l2_err < tol);
+        }
+    }
+}
+
+TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full vs Ewald", 1) {
+    // Verify that V_partial (D_1..R_L from tree) + V_{W0+D0} (PSWF kernel on periodic grid)
+    // matches V_Ewald at 3/6/9/12 digit precision.
+    // W0+D0 kernel: (4pi/psi0(0)) * psi0(|k|*sigma1) / |k|^2, sigma1 = boxsize[1]/beta.
+
+    constexpr int n_dim = 3;
+    constexpr int n_src = 2000;
+    constexpr int n_trg = 500;
+
+#ifdef DMK_HAVE_MPI
+    auto sctl_comm = sctl::Comm(test_comm);
+#else
+    auto sctl_comm = sctl::Comm::Self();
+#endif
+
+    std::default_random_engine eng(77);
+    std::uniform_real_distribution<double> rng(0.01, 0.99);
+
+    sctl::Vector<double> r_src(n_dim * n_src), r_trg(n_dim * n_trg);
+    sctl::Vector<double> charges(n_src);
+
+    for (int i = 0; i < n_src * n_dim; ++i)
+        r_src[i] = rng(eng);
+    for (int i = 0; i < n_trg * n_dim; ++i)
+        r_trg[i] = rng(eng);
+    for (int i = 0; i < n_src; ++i)
+        charges[i] = rng(eng) - 0.5;
+    {
+        double sum = 0.0;
+        for (int i = 0; i < n_src; ++i)
+            sum += charges[i];
+        for (int i = 0; i < n_src; ++i)
+            charges[i] -= sum / n_src;
+    }
+
+    struct PrecisionCase {
+        int n_digits;
+        double eps;
+        double tol;
+    };
+    const PrecisionCase cases[] = {
+        {3, 1e-3, 1e-2},
+        {6, 1e-6, 1e-4},
+        {9, 1e-9, 1e-7},
+        {12, 1e-12, 1e-10},
+    };
+
+    for (const auto &pc : cases) {
+        SUBCASE(("n_digits=" + std::to_string(pc.n_digits)).c_str()) {
+            pdmk_params params;
+            params.eps = pc.eps;
+            params.n_dim = n_dim;
+            params.n_per_leaf = 50;
+            params.pgh_src = DMK_POTENTIAL;
+            params.pgh_trg = DMK_POTENTIAL;
+            params.kernel = DMK_LAPLACE;
+            params.use_periodic = true;
+            params.log_level = SPDLOG_LEVEL_OFF;
+
+            dmk::DMKPtTree<double, n_dim> tree(sctl_comm, params, r_src, r_trg, charges);
+            REQUIRE(tree.n_levels() >= 3);
+
+            // --- V_partial: levels 1..L + direct ---
+            tree.upward_pass();
+            tree.init_planewave_data();
+            tree.pot_src_sorted.SetZero();
+            tree.pot_trg_sorted.SetZero();
+
+            for (int i_level = 1; i_level < tree.n_levels(); ++i_level) {
+                auto &dfd = tree.difference_fourier_data[i_level];
+                const ndview<std::complex<double>, 2> p2pw({tree.n_pw, tree.n_order}, &dfd.poly2pw[0]);
+                const ndview<std::complex<double>, 2> pw2p({tree.n_pw, tree.n_order}, &dfd.pw2poly[0]);
+                tree.form_outgoing_expansions(tree.level_indices[i_level], p2pw, dfd.radialft);
+                tree.form_eval_expansions(tree.level_indices[i_level], dfd.wpwshift, tree.boxsize[i_level],
+                                          pw2p, tree.p2c);
+            }
+            tree.evaluate_direct_interactions(tree.r_src_t.data(), tree.r_trg_t.data());
+
+            // --- Gather sources and targets ---
+            const auto &node_attr = tree.GetNodeAttr();
+
+            struct SrcInfo {
+                double r[3];
+                double q;
+            };
+            struct TrgInfo {
+                double r[3];
+                int pot_offset;
+            };
+            std::vector<SrcInfo> sources;
+            std::vector<TrgInfo> targets;
+
+            for (int box = 0; box < (int)tree.n_boxes(); ++box) {
+                if (!node_attr[box].Leaf || node_attr[box].Ghost)
+                    continue;
+                const int n = tree.r_src_cnt_owned[box];
+                if (!n)
+                    continue;
+                const double *rp = tree.r_src_owned_ptr(box);
+                const double *cp = tree.charge_owned_ptr(box);
+                for (int i = 0; i < n; ++i)
+                    sources.push_back({{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, cp[i]});
+            }
+            for (int box = 0; box < (int)tree.n_boxes(); ++box) {
+                if (node_attr[box].Ghost || !node_attr[box].Leaf)
+                    continue;
+                const int n = tree.r_trg_cnt_owned[box];
+                if (!n)
+                    continue;
+                const double *rp = tree.r_trg_owned_ptr(box);
+                for (int i = 0; i < n; ++i)
+                    targets.push_back(
+                        {{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, (int)tree.pot_trg_offsets[box] + i});
+            }
+
+            // --- V_{W0+D0}: PSWF kernel on periodic Fourier grid ---
+            const double L = 1.0;
+            const double V_box = L * L * L;
+            const double dk = 2.0 * M_PI / L;
+            const double beta = tree.fourier_data.beta();
+            auto &pf = tree.fourier_data.prolate0_fun;
+            const double psi0_at_zero = pf.eval_val(0.0);
+            const double sigma1 = tree.boxsize[1] / beta;
+            const int n_modes = (int)std::ceil(beta / M_PI) + 2;
+
+            // Ewald parameters
+            const double alpha = 10.0;
+            const int n_ewald = std::max(15, n_modes);
+            const int n_grid = std::max(n_modes, n_ewald);
+
+            // Precompute rho(k) on the full grid
+            const int d = 2 * n_grid + 1;
+            std::vector<std::complex<double>> rho(d * d * d, {0.0, 0.0});
+
+            for (const auto &src : sources) {
+                const std::complex<double> exp_x0 = std::exp(std::complex<double>(0.0, -dk * src.r[0]));
+                const std::complex<double> exp_y0 = std::exp(std::complex<double>(0.0, -dk * src.r[1]));
+                const std::complex<double> exp_z0 = std::exp(std::complex<double>(0.0, -dk * src.r[2]));
+
+                std::vector<std::complex<double>> exp_x(d), exp_y(d), exp_z(d);
+                for (int a = -n_grid; a <= n_grid; ++a) {
+                    exp_x[a + n_grid] = std::pow(exp_x0, a);
+                    exp_y[a + n_grid] = std::pow(exp_y0, a);
+                    exp_z[a + n_grid] = std::pow(exp_z0, a);
+                }
+
+                for (int ix = 0; ix < d; ++ix)
+                    for (int iy = 0; iy < d; ++iy) {
+                        auto t2 = src.q * exp_x[ix] * exp_y[iy];
+                        for (int iz = 0; iz < d; ++iz)
+                            rho[ix * d * d + iy * d + iz] += t2 * exp_z[iz];
+                    }
+            }
+
+            // Compute V_{W0+D0} using PSWF kernel
+            std::vector<double> v_w0d0(targets.size(), 0.0);
+            for (int it = 0; it < (int)targets.size(); ++it) {
+                const auto &trg = targets[it];
+                const std::complex<double> exp_tx0 = std::exp(std::complex<double>(0.0, dk * trg.r[0]));
+                const std::complex<double> exp_ty0 = std::exp(std::complex<double>(0.0, dk * trg.r[1]));
+                const std::complex<double> exp_tz0 = std::exp(std::complex<double>(0.0, dk * trg.r[2]));
+
+                std::vector<std::complex<double>> exp_tx(2 * n_modes + 1), exp_ty(2 * n_modes + 1),
+                    exp_tz(2 * n_modes + 1);
+                for (int a = -n_modes; a <= n_modes; ++a) {
+                    exp_tx[a + n_modes] = std::pow(exp_tx0, a);
+                    exp_ty[a + n_modes] = std::pow(exp_ty0, a);
+                    exp_tz[a + n_modes] = std::pow(exp_tz0, a);
+                }
+
+                double pot = 0.0;
+                for (int nx = -n_modes; nx <= n_modes; ++nx)
+                    for (int ny = -n_modes; ny <= n_modes; ++ny)
+                        for (int nz = -n_modes; nz <= n_modes; ++nz) {
+                            if (nx == 0 && ny == 0 && nz == 0)
+                                continue;
+                            const double kx = dk * nx, ky = dk * ny, kz = dk * nz;
+                            const double k2 = kx * kx + ky * ky + kz * kz;
+                            const double kappa = std::sqrt(k2);
+
+                            const double arg = kappa * sigma1;
+                            const double psi_val = (std::abs(arg) <= 1.0) ? pf.eval_val(arg) : 0.0;
+                            const double kernel_hat = (4.0 * M_PI / psi0_at_zero) * psi_val / k2;
+
+                            const int ix = nx + n_grid, iy = ny + n_grid, iz = nz + n_grid;
+                            const auto &rho_k = rho[ix * d * d + iy * d + iz];
+                            const auto exp_ikr =
+                                exp_tx[nx + n_modes] * exp_ty[ny + n_modes] * exp_tz[nz + n_modes];
+                            pot += kernel_hat * std::real(rho_k * exp_ikr);
+                        }
+                v_w0d0[it] = pot / V_box;
+            }
+
+            // --- V_Ewald: self-contained reference ---
+            const double r_c = 0.5 * L;
+            std::vector<double> v_ewald(targets.size(), 0.0);
+
+            // Short range
+            for (int it = 0; it < (int)targets.size(); ++it) {
+                const auto &trg = targets[it];
+                for (const auto &src : sources) {
+                    for (int mx = -1; mx <= 1; ++mx)
+                        for (int my = -1; my <= 1; ++my)
+                            for (int mz = -1; mz <= 1; ++mz) {
+                                const double dx2 = trg.r[0] - src.r[0] - mx * L;
+                                const double dy2 = trg.r[1] - src.r[1] - my * L;
+                                const double dz2 = trg.r[2] - src.r[2] - mz * L;
+                                const double r = std::sqrt(dx2 * dx2 + dy2 * dy2 + dz2 * dz2);
+                                if (r > 1e-15 && r <= r_c)
+                                    v_ewald[it] += src.q * std::erfc(alpha * r) / r;
+                            }
+                }
+            }
+
+            // Long range
+            for (int it = 0; it < (int)targets.size(); ++it) {
+                const auto &trg = targets[it];
+                const std::complex<double> exp_tx0 = std::exp(std::complex<double>(0.0, dk * trg.r[0]));
+                const std::complex<double> exp_ty0 = std::exp(std::complex<double>(0.0, dk * trg.r[1]));
+                const std::complex<double> exp_tz0 = std::exp(std::complex<double>(0.0, dk * trg.r[2]));
+
+                std::vector<std::complex<double>> exp_tx(2 * n_ewald + 1), exp_ty(2 * n_ewald + 1),
+                    exp_tz(2 * n_ewald + 1);
+                for (int a = -n_ewald; a <= n_ewald; ++a) {
+                    exp_tx[a + n_ewald] = std::pow(exp_tx0, a);
+                    exp_ty[a + n_ewald] = std::pow(exp_ty0, a);
+                    exp_tz[a + n_ewald] = std::pow(exp_tz0, a);
+                }
+
+                double pot_long = 0.0;
+                for (int nx = -n_ewald; nx <= n_ewald; ++nx)
+                    for (int ny = -n_ewald; ny <= n_ewald; ++ny)
+                        for (int nz = -n_ewald; nz <= n_ewald; ++nz) {
+                            if (nx == 0 && ny == 0 && nz == 0)
+                                continue;
+                            const double kx = dk * nx, ky = dk * ny, kz = dk * nz;
+                            const double k2 = kx * kx + ky * ky + kz * kz;
+                            const double ewald_kernel = std::exp(-k2 / (4.0 * alpha * alpha)) / k2;
+
+                            const int ix = nx + n_grid, iy = ny + n_grid, iz = nz + n_grid;
+                            const auto &rho_k = rho[ix * d * d + iy * d + iz];
+                            const auto exp_ikr =
+                                exp_tx[nx + n_ewald] * exp_ty[ny + n_ewald] * exp_tz[nz + n_ewald];
+                            pot_long += ewald_kernel * std::real(rho_k * exp_ikr);
+                        }
+                v_ewald[it] += (4.0 * M_PI / V_box) * pot_long;
+            }
+
+            // --- Compare ---
+            double err2 = 0.0, ref2 = 0.0;
+            for (int i = 0; i < (int)targets.size(); ++i) {
+                const double v_total = tree.pot_trg_sorted[targets[i].pot_offset] + v_w0d0[i];
+                err2 += sctl::pow<2>(v_total - v_ewald[i]);
+                ref2 += sctl::pow<2>(v_ewald[i]);
+            }
+            const double l2_err = (ref2 > 0) ? std::sqrt(err2 / ref2) : std::sqrt(err2);
+            MESSAGE("PBC full vs Ewald: n_digits=", pc.n_digits, " l2_err=", l2_err,
+                    " n_levels=", tree.n_levels(), " n_modes=", n_modes, " n_boxes=", tree.n_boxes());
+            CHECK(l2_err < pc.tol);
+        }
+    }
+}
+
 template <typename Real>
 inline pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src, const Real *r_src,
                                   const Real *charge, const Real *normal, const Real *dipole_str, int n_trg,
