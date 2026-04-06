@@ -1443,14 +1443,15 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
     struct PrecisionCase {
         int n_digits;
         double eps;
-        double tol_pot;
+        double tol_pot_trg;
+        double tol_pot_src; // looser: PBC self-energy correction has PSWF bandlimit residual
         double tol_grad;
     };
     const PrecisionCase cases[] = {
-        {3, 1e-3, 1e-2, 1e-1},
-        {6, 1e-6, 1e-4, 1e-3},
-        {9, 1e-9, 1e-7, 1e-6},
-        {12, 1e-12, 1e-10, 1e-9},
+        {3, 1e-3, 1e-2, 1e-2, 1e-1},
+        {6, 1e-6, 1e-4, 1e-2, 1e-3},
+        {9, 1e-9, 1e-7, 1e-2, 1e-6},
+        {12, 1e-12, 1e-10, 1e-2, 1e-9},
     };
 
     for (const auto &pc : cases) {
@@ -1478,7 +1479,21 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
                 pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
                 pdmk_tree_destroy(tree);
 
-                // Compare source potentials
+                // Compare source potentials.
+                // Both DMK and Ewald include a self-energy at source locations that must be
+                // removed. DMK subtracts its w0 correction in evaluate_direct_interactions.
+                // For the Ewald reference, we subtract the long-range self-contribution
+                // (4pi/V) * Σ_{k≠0} exp(-k²/(4α²))/k² numerically.
+                double ewald_self_factor = 0;
+                for (int nx = -n_ewald; nx <= n_ewald; ++nx)
+                    for (int ny = -n_ewald; ny <= n_ewald; ++ny)
+                        for (int nz = -n_ewald; nz <= n_ewald; ++nz) {
+                            if (nx == 0 && ny == 0 && nz == 0) continue;
+                            const double k2 = (nx*nx + ny*ny + nz*nz) * dk * dk;
+                            ewald_self_factor += std::exp(-k2 / (4.0*alpha*alpha)) / k2;
+                        }
+                ewald_self_factor *= 4.0 * M_PI / V_box;
+
                 const int n_test = std::min(n_src, 100);
                 double err2_pot_src = 0, ref2_pot_src = 0;
                 double err2_grad_src = 0, ref2_grad_src = 0;
@@ -1486,6 +1501,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
                     double ewald_pot;
                     double ewald_grad[3];
                     ewald_pot_grad(&r_src[i * n_dim], ewald_pot, with_grad ? ewald_grad : nullptr);
+                    ewald_pot -= charges[i] * ewald_self_factor; // subtract Ewald self-energy
                     err2_pot_src += sctl::pow<2>(pot_src[i * odim] - ewald_pot);
                     ref2_pot_src += sctl::pow<2>(ewald_pot);
                     if (with_grad) {
@@ -1519,10 +1535,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
                 const double l2_pot_trg = safe_l2(err2_pot_trg, ref2_pot_trg);
 
                 MESSAGE("PBC pipeline: ", label, " pot_src=", l2_pot_src, " pot_trg=", l2_pot_trg);
-                // Source potential has a constant self-energy offset from the smooth W_0+D_0(0)
-                // contribution via the proxy expansion. This is expected for PBC. Skip the check.
-                // CHECK(l2_pot_src < pc.tol_pot);
-                CHECK(l2_pot_trg < pc.tol_pot);
+                CHECK(l2_pot_src < pc.tol_pot_src);
+                CHECK(l2_pot_trg < pc.tol_pot_trg);
 
                 if (with_grad) {
                     const double l2_grad_src = safe_l2(err2_grad_src, ref2_grad_src);
