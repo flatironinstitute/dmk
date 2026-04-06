@@ -49,3 +49,5 @@ out
 /compile_commands.json
 /.cache
 /build
+/build*
+/docs
