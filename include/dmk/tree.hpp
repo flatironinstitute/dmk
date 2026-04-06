@@ -103,6 +103,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     const int n_order;
 
     int n_pw; // FIXME: Assigned well after construction, dangerous hack
+    int n_pw_periodic = 0; // PW modes per dim for periodic root grid (0 if free-space)
     FourierData<Real> fourier_data;
     sctl::Vector<Real> c2p;
     sctl::Vector<Real> p2c;

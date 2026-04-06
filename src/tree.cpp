@@ -211,6 +211,12 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     // FIXME: n_pw shouldn't be fixed (can be different for windowed/difference)
     n_pw = fourier_data.n_pw();
 
+    if (params.use_periodic) {
+        n_pw_periodic = 2 * (int)std::ceil(fourier_data.beta() / M_PI) + 3;
+        if (n_pw_periodic % 2 == 0)
+            n_pw_periodic++;
+    }
+
     precompute_fourier_data();
     logger->debug("finished updating local potential expansion coefficients");
     logger->debug("building evaluators");
@@ -735,14 +741,43 @@ void DMKPtTree<T, DIM>::precompute_fourier_data() {
 
     sctl::Vector<T> kernel_ft;
 
-    window_fourier_data.poly2pw.ReInit(n_order * n_pw);
-    window_fourier_data.pw2poly.ReInit(n_order * n_pw);
-    window_fourier_data.radialft.ReInit(n_pw_modes);
-    get_windowed_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits, boxsize[0],
-                                   fourier_data.prolate0_fun, kernel_ft);
-    util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<T, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
-                                              ndview<T, 1>({n_pw_modes}, &window_fourier_data.radialft[0]));
-    fourier_data.calc_planewave_coeff_matrices(-1, n_order, window_fourier_data.poly2pw, window_fourier_data.pw2poly);
+    if (params.use_periodic) {
+        // Periodic grid: dk = 2*pi/L, n_pw_periodic modes per dimension
+        const T dk = 2.0 * M_PI / boxsize[0];
+        const T sigma1 = boxsize[1] / fourier_data.beta();
+        const T psi0_at_zero = fourier_data.prolate0_fun.eval_val(0.0);
+        const long n_pw_modes_periodic = sctl::pow<DIM - 1>(n_pw_periodic) * ((n_pw_periodic + 1) / 2);
+        const int n_fourier = DIM * sctl::pow<2>(n_pw_periodic / 2) + 1;
+
+        // Build periodic radialft: PSWF kernel (4pi/psi0(0)) * psi0(kappa*sigma1) / kappa^2
+        kernel_ft.ReInit(n_fourier);
+        kernel_ft[0] = 0; // k=0 excluded (charge neutrality)
+        for (int i = 1; i < n_fourier; ++i) {
+            const T kappa = std::sqrt(T(i)) * dk;
+            const T arg = kappa * sigma1;
+            const T psi_val = (std::abs(arg) <= 1.0) ? fourier_data.prolate0_fun.eval_val(arg) : T(0);
+            kernel_ft[i] = (4.0 * M_PI / psi0_at_zero) * psi_val / (T(i) * dk * dk);
+        }
+
+        window_fourier_data.radialft.ReInit(n_pw_modes_periodic);
+        util::mk_tensor_product_fourier_transform(DIM, n_pw_periodic,
+                                                  ndview<T, 1>({n_fourier}, &kernel_ft[0]),
+                                                  ndview<T, 1>({n_pw_modes_periodic}, &window_fourier_data.radialft[0]));
+
+        window_fourier_data.poly2pw.ReInit(n_order * n_pw_periodic);
+        window_fourier_data.pw2poly.ReInit(n_order * n_pw_periodic);
+        dmk::calc_planewave_coeff_matrices(boxsize[0], dk, n_pw_periodic, n_order,
+                                           window_fourier_data.poly2pw, window_fourier_data.pw2poly);
+    } else {
+        window_fourier_data.poly2pw.ReInit(n_order * n_pw);
+        window_fourier_data.pw2poly.ReInit(n_order * n_pw);
+        window_fourier_data.radialft.ReInit(n_pw_modes);
+        get_windowed_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits, boxsize[0],
+                                       fourier_data.prolate0_fun, kernel_ft);
+        util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<T, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
+                                                  ndview<T, 1>({n_pw_modes}, &window_fourier_data.radialft[0]));
+        fourier_data.calc_planewave_coeff_matrices(-1, n_order, window_fourier_data.poly2pw, window_fourier_data.pw2poly);
+    }
 
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         auto &lfd = difference_fourier_data[i_level];
@@ -1542,15 +1577,42 @@ void DMKPtTree<T, DIM>::downward_pass() {
     sctl::Profile::Toc();
 
     sctl::Profile::Tic("expansion_propagation_and_eval", &comm_);
-    { // Windowed kernel for root
-        const ndview<std::complex<T>, 2> p2pw({n_pw, n_order}, &window_fourier_data.poly2pw[0]);
-        const ndview<std::complex<T>, 2> pw2p({n_pw, n_order}, &window_fourier_data.pw2poly[0]);
-        dmk::proxy::proxycharge2pw<T, DIM>(proxy_view_upward(0), p2pw, pw_out_view(0), workspaces_[0]);
-        multiply_kernelFT_cd2p<T, DIM>(window_fourier_data.radialft, pw_out_view(0));
+    { // Windowed kernel for root (or periodic PSWF kernel for PBC)
         std::fill(proxy_down_zeroed.begin(), proxy_down_zeroed.end(), 0);
-        proxy_view_downward(0) = 0;
-        proxy_down_zeroed[0] = true;
-        dmk::planewave_to_proxy_potential<T, DIM>(pw_out_view(0), pw2p, proxy_view_downward(0), workspaces_[0]);
+
+        if (params.use_periodic) {
+            const int npw_root = n_pw_periodic;
+            const long n_pw_modes_root = sctl::pow<DIM - 1>(npw_root) * ((npw_root + 1) / 2);
+            const int n_pw_per_box_root = n_pw_modes_root * n_tables;
+
+            sctl::Vector<std::complex<T>> pw_root(n_pw_per_box_root);
+            auto pw_root_view = [&]() {
+                if constexpr (DIM == 2)
+                    return ndview<std::complex<T>, DIM + 1>({npw_root, (npw_root + 1) / 2, n_tables}, &pw_root[0]);
+                else if constexpr (DIM == 3)
+                    return ndview<std::complex<T>, DIM + 1>({npw_root, npw_root, (npw_root + 1) / 2, n_tables},
+                                                            &pw_root[0]);
+            }();
+
+            const ndview<std::complex<T>, 2> p2pw({npw_root, n_order}, &window_fourier_data.poly2pw[0]);
+            const ndview<std::complex<T>, 2> pw2p({npw_root, n_order}, &window_fourier_data.pw2poly[0]);
+
+            dmk::proxy::proxycharge2pw<T, DIM>(proxy_view_upward(0), p2pw, pw_root_view, workspaces_[0]);
+            multiply_kernelFT_cd2p<T, DIM>(window_fourier_data.radialft, pw_root_view);
+
+            proxy_view_downward(0) = 0;
+            proxy_down_zeroed[0] = true;
+            dmk::planewave_to_proxy_potential<T, DIM>(pw_root_view, pw2p, proxy_view_downward(0), workspaces_[0]);
+        } else {
+            const ndview<std::complex<T>, 2> p2pw({n_pw, n_order}, &window_fourier_data.poly2pw[0]);
+            const ndview<std::complex<T>, 2> pw2p({n_pw, n_order}, &window_fourier_data.pw2poly[0]);
+            dmk::proxy::proxycharge2pw<T, DIM>(proxy_view_upward(0), p2pw, pw_out_view(0), workspaces_[0]);
+            multiply_kernelFT_cd2p<T, DIM>(window_fourier_data.radialft, pw_out_view(0));
+
+            proxy_view_downward(0) = 0;
+            proxy_down_zeroed[0] = true;
+            dmk::planewave_to_proxy_potential<T, DIM>(pw_out_view(0), pw2p, proxy_view_downward(0), workspaces_[0]);
+        }
     }
 
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
