@@ -3,6 +3,7 @@
 
 #include <complex>
 #include <dmk.h>
+#include <dmk/logger.h>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
 #include <nda/nda.hpp>
@@ -223,7 +224,6 @@ inline void shift_planewave(const ndview<Complex, DIM + 1> &pwexp1_, ndview<Comp
     shift_planewave_simd<Real, VecLen>(nexp, nd, pw1, pw2, shift_r, shift_i);
 }
 
-
 template <typename Real>
 Real calc_log_windowed_kernel_value_at_zero(int dim, const FourierData<Real> &fourier_data, Real boxsize) {
     const Real psi0 = fourier_data.prolate0_fun.eval_val(0.0);
@@ -343,8 +343,6 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<bool> ifpwexp;
     sctl::Vector<bool> iftensprodeval;
 
-    // FIXME: I really hate these.
-    ndamatrix<Real> r_src_t, r_trg_t;
     std::vector<int> direct_work;
 
     sctl::Vector<bool> has_proxy_from_children;
@@ -372,10 +370,9 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     const int kernel_output_dim_max;
     const int n_tables;
     const int n_digits;
-    const int n_pw_max;
     const int n_order;
+    const int n_pw;
 
-    int n_pw; // FIXME: Assigned well after construction, dangerous hack
     FourierData<Real> fourier_data;
     sctl::Vector<Real> c2p;
     sctl::Vector<Real> p2c;
@@ -398,8 +395,10 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void build_plane_wave_interaction_lists();
     void build_direct_interaction_lists();
     void build_upward_pass_work_lists();
+    void build_direct_work_lists();
     void allocate_proxy_coefficients();
-    void precompute_fourier_data();
+    void precompute_window_difference_data();
+    void build_evaluators();
     void generate_metadata();
     void init_planewave_data();
 
@@ -411,7 +410,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void form_eval_expansions(const sctl::Vector<int> &boxes, const sctl::Vector<std::complex<Real>> &wpwshift,
                               Real boxsize, const ndview<std::complex<Real>, 2> &pw2poly_view,
                               const sctl::Vector<Real> &p2c);
-    void evaluate_direct_interactions(const Real *r_src_t, const Real *r_trg_t);
+    void evaluate_direct_interactions();
 
     // User calls
     int update_charges(const Real *charge, const Real *normal, const Real *dipole_str);
@@ -549,6 +548,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     bool debug_omit_pw = false;
     bool debug_omit_direct = false;
     bool debug_dump_tree = false;
+    std::shared_ptr<spdlog::logger> &logger;
+    std::shared_ptr<spdlog::logger> &rank_logger;
 };
 
 } // namespace dmk

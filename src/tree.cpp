@@ -26,10 +26,9 @@ namespace dmk {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::dump() const {
-    auto logger = dmk::get_rank_logger(comm_);
-    logger->info("Dumping DMKPtTree data on rank {} of comm size {}", comm_.Rank(), comm_.Size());
+    rank_logger->info("Dumping DMKPtTree data on rank {} of comm size {}", comm_.Rank(), comm_.Size());
 
-    auto dumper = [&logger, this](const std::string &name, const auto &data) {
+    auto dumper = [this](const std::string &name, const auto &data) {
         std::string filename = name + "." + std::to_string(comm_.Size()) + "." + std::to_string(comm_.Rank()) + ".dat";
         if constexpr (requires { data.Write(filename.c_str()); })
             data.Write(filename.c_str());
@@ -42,7 +41,7 @@ void DMKPtTree<Real, DIM>::dump() const {
             fout.write(reinterpret_cast<const char *>(data.data()), data.size() * sizeof(decltype(data[0])));
         }
 
-        logger->info("Dumped {}", filename);
+        rank_logger->info("Dumped {}", filename);
     };
 
     sctl::Vector<bool> is_ghost(n_boxes());
@@ -127,10 +126,9 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
       kernel_output_dim_max(std::max(kernel_output_dim_src, kernel_output_dim_trg)),
       n_tables(1), // Placeholder for when we need more proxy coefficient tables
       n_digits(std::round(log10(1.0 / params_.eps) - 0.1)),
-      n_pw_max(get_pwmax_and_poly_order(DIM, n_digits, params_.kernel).first),
-      n_order(get_pwmax_and_poly_order(DIM, n_digits, params_.kernel).second) {
-    auto &logger = dmk::get_logger(comm, params.log_level);
-    auto &rank_logger = dmk::get_rank_logger(comm, params.log_level);
+      n_pw(get_pwmax_and_poly_order(DIM, n_digits, params_.kernel).first),
+      n_order(get_pwmax_and_poly_order(DIM, n_digits, params_.kernel).second),
+      logger(dmk::get_logger(comm, params.log_level)), rank_logger(dmk::get_rank_logger(comm, params.log_level)) {
     sctl::Profile::Scoped profile("DMKPtTree::DMKPtTree", &comm_);
     debug_omit_pw = util::env_is_set("DMK_DEBUG_OMIT_PW");
     debug_omit_direct = util::env_is_set("DMK_DEBUG_OMIT_DIRECT");
@@ -188,102 +186,12 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     this->GetData(r_src_sorted_with_halo, r_src_cnt_with_halo, "pdmk_src");
 
     logger->debug("base tree build completed");
-    logger->debug("generating tree traversal metadata");
     generate_metadata();
-    logger->debug("done generating tree traversal metadata");
-
-    rank_logger->trace("local tree has {} levels and {} boxes", n_levels(), n_boxes());
-
-    // 1: Precomputation
-    logger->debug("generating p2c and c2p matrices of order {}", n_order);
-    std::tie(c2p, p2c) = dmk::chebyshev::get_c2p_p2c_matrices<Real>(DIM, n_order);
-    logger->debug("finished generating matrices");
-
-    fourier_data = FourierData<Real>(params.kernel, DIM, params.eps, n_digits, n_pw_max, params.fparam, boxsize);
-    const auto &wk = fourier_data.windowed_kernel();
-    logger->debug("planewave params at root box: n: {}, stepsize: {}, weight: {}, radius: {}", fourier_data.n_pw(),
-                  wk.hpw, wk.ws, wk.rl);
-    fourier_data.update_local_coeffs(params.eps);
-
-    // FIXME: n_pw shouldn't be fixed (can be different for windowed/difference)
-    n_pw = fourier_data.n_pw();
-
-    precompute_fourier_data();
-    logger->debug("finished updating local potential expansion coefficients");
-    logger->debug("building evaluators");
-
-    try {
-        auto src_eval = make_evaluator_aot<Real>(params.kernel, params.pgh_src, DIM, n_digits, 3);
-        auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.pgh_trg, DIM, n_digits, 3);
-#ifdef DMK_USE_JIT
-        if (util::env_is_set("DMK_DEBUG_FORCE_AOT")) {
-            src_eval = make_evaluator_jit<Real>(params.kernel, params.pgh_src, DIM, n_digits, 3);
-            trg_eval = make_evaluator_jit<Real>(params.kernel, params.pgh_trg, DIM, n_digits, 3);
-        }
-#endif
-        // FIXME: assumes the same src/trg output configuration
-        evaluator_by_level_src.assign(n_levels(), src_eval);
-        evaluator_by_level_trg.assign(n_levels(), trg_eval);
-    } catch (std::exception &e) {
-        logger->error("Failed to create direct evaluator: {}", e.what());
-    }
-    if (params.kernel == DMK_YUKAWA) {
-        // FIXME: This should be moved to direct.cpp, but it was annoying to add the coefficient
-        // binding cleanly
-        for (int level = 0; level < n_levels(); ++level) {
-            const auto coeffs = fourier_data.cheb_coeffs(level);
-            const Real lambda = params.fparam;
-            const int kernel_input_dim = this->kernel_input_dim;
-            const int kernel_output_dim = kernel_output_dim_trg;
-            // FIXME: assumes the same src/trg output configuration
-            evaluator_by_level_src.push_back(
-                [coeffs, lambda, kernel_input_dim](Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
-                                                   const Real *r_src_ptr, const Real *charge_ptr, int n_trg,
-                                                   const Real *r_trg_ptr, Real *pot) {
-                    constexpr Real threshq = 1e-30;
-                    ndview<Real, 2> u({1, n_trg}, pot);
-                    ndview<const Real, 2> charges({kernel_input_dim, n_src}, charge_ptr);
-                    ndview<const Real, 2> r_src({DIM, n_src}, r_src_ptr);
-                    ndview<const Real, 2> r_trg({DIM, n_trg}, r_trg_ptr);
-                    for (int i_trg = 0; i_trg < n_trg; i_trg++) {
-                        for (int i_src = 0; i_src < n_src; i_src++) {
-                            const Real dx = r_trg(0, i_trg) - r_src(0, i_src);
-                            const Real dy = r_trg(1, i_trg) - r_src(1, i_src);
-                            Real dd = dx * dx + dy * dy;
-                            if constexpr (DIM == 3) {
-                                Real dz = r_trg(2, i_trg) - r_src(2, i_src);
-                                dd += dz * dz;
-                            }
-
-                            if (dd < threshq || dd > d2max)
-                                continue;
-
-                            const Real r = sqrt(dd);
-                            const Real xval = r * rsc + cen;
-                            const Real fval = chebyshev::evaluate(xval, coeffs.size() + 1, coeffs.data());
-                            Real dkval;
-                            if constexpr (DIM == 2)
-                                dkval = util::cyl_bessel_k(0, lambda * r);
-                            if constexpr (DIM == 3)
-                                dkval = std::exp(-lambda * r) / r;
-
-                            const Real factor = dkval + fval;
-                            for (int i = 0; i < kernel_input_dim; ++i)
-                                u(i, i_trg) += charges(i, i_src) * factor;
-                        }
-                    }
-                });
-        }
-        // FIXME: assumes the same src/trg output configuration
-        evaluator_by_level_trg = evaluator_by_level_src;
-    }
-
-    logger->debug("finished building evaluators");
     logger->info("tree build completed");
 }
 
-template <typename T, int DIM>
-int DMKPtTree<T, DIM>::update_charges(const T *charge, const T *normal, const T *dipole_str) {
+template <typename Real, int DIM>
+int DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal, const Real *dipole_str) {
     if (normal || dipole_str) {
         std::cerr << "normal updates and dipoles not supported yet\n";
         return 1;
@@ -294,7 +202,7 @@ int DMKPtTree<T, DIM>::update_charges(const T *charge, const T *normal, const T 
     const int n_src = r_src_sorted_owned.Dim() / DIM;
 
     // Wrap the incoming (unsorted) charge data in a Vector without owning it
-    sctl::Vector<T> charge_vec(n_src * kernel_input_dim, const_cast<T *>(charge), false);
+    sctl::Vector<Real> charge_vec(n_src * kernel_input_dim, const_cast<Real *>(charge), false);
 
     // Delete the old charge data and re-register with the new values.
     // The PtTree already knows the sort permutation from the "pdmk_src"
@@ -305,7 +213,7 @@ int DMKPtTree<T, DIM>::update_charges(const T *charge, const T *normal, const T 
 
     // Retrieve the sorted owned charges
     {
-        sctl::Vector<T> data;
+        sctl::Vector<Real> data;
         sctl::Vector<long> count;
         this->GetData(data, count, "pdmk_charge");
         charge_sorted_owned = data;
@@ -318,7 +226,7 @@ int DMKPtTree<T, DIM>::update_charges(const T *charge, const T *normal, const T 
         charge_offsets_owned[i] = charge_offsets_owned[i - 1] + kernel_input_dim * charge_cnt_owned[i - 1];
 
     // Broadcast to halo/ghost nodes and retrieve
-    this->template Broadcast<T>("pdmk_charge");
+    this->template Broadcast<Real>("pdmk_charge");
     this->GetData(charge_sorted_with_halo, charge_cnt_with_halo, "pdmk_charge");
 
     // Recompute charge offsets (with halo)
@@ -330,8 +238,8 @@ int DMKPtTree<T, DIM>::update_charges(const T *charge, const T *normal, const T 
     return 0;
 }
 
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::compute_data_offsets() {
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::compute_data_offsets() {
     const auto &node_mid = this->GetNodeMID();
     r_src_offsets_with_halo.ReInit(n_boxes());
     r_src_offsets_owned.ReInit(n_boxes());
@@ -354,8 +262,8 @@ void DMKPtTree<T, DIM>::compute_data_offsets() {
     }
 }
 
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::compute_level_indices_and_boxsizes() {
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::compute_level_indices_and_boxsizes() {
     const auto &node_mid = this->GetNodeMID();
     level_indices.ReInit(SCTL_MAX_DEPTH);
     int8_t max_depth = 0;
@@ -372,14 +280,14 @@ void DMKPtTree<T, DIM>::compute_level_indices_and_boxsizes() {
         boxsize[i] = 0.5 * boxsize[i - 1];
 }
 
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::compute_box_centers() {
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::compute_box_centers() {
     const auto &node_mid = this->GetNodeMID();
     centers.ReInit(n_boxes() * DIM);
-    T scale = 1.0;
+    Real scale = 1.0;
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         for (auto i_node : level_indices[i_level]) {
-            auto node_origin = node_mid[i_node].template Coord<T>();
+            auto node_origin = node_mid[i_node].template Coord<Real>();
             for (int i = 0; i < DIM; ++i)
                 centers[i_node * DIM + i] = node_origin[i] + 0.5 * scale;
         }
@@ -387,8 +295,8 @@ void DMKPtTree<T, DIM>::compute_box_centers() {
     }
 }
 
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::accumulate_subtree_counts() {
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::accumulate_subtree_counts() {
     const auto &node_mid = this->GetNodeMID();
     const auto &node_lists = this->GetNodeLists();
     src_counts_with_halo.ReInit(n_boxes());
@@ -414,8 +322,8 @@ void DMKPtTree<T, DIM>::accumulate_subtree_counts() {
     }
 }
 
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::gather_owned_source_positions() {
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::gather_owned_source_positions() {
     const auto &node_attr = this->GetNodeAttr();
     r_src_sorted_owned.ReInit(DIM * src_counts_owned[0]);
     r_src_offsets_owned.ReInit(n_boxes());
@@ -430,8 +338,8 @@ void DMKPtTree<T, DIM>::gather_owned_source_positions() {
     }
 }
 
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::broadcast_global_leaf_status() {
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::broadcast_global_leaf_status() {
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_lists = this->GetNodeLists();
     is_global_leaf.ReInit(n_boxes());
@@ -460,8 +368,8 @@ void DMKPtTree<T, DIM>::broadcast_global_leaf_status() {
     }
 }
 
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::compute_proxy_expansion_flags() {
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::compute_proxy_expansion_flags() {
     const auto &node_lists = this->GetNodeLists();
     ifpwexp.ReInit(n_boxes());
     ifpwexp.SetZero();
@@ -484,8 +392,8 @@ void DMKPtTree<T, DIM>::compute_proxy_expansion_flags() {
     }
 }
 
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::compute_proxy_evaluation_flags() {
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::compute_proxy_evaluation_flags() {
     const auto &node_lists = this->GetNodeLists();
     iftensprodeval.ReInit(n_boxes());
     iftensprodeval.SetZero();
@@ -516,8 +424,8 @@ void DMKPtTree<T, DIM>::compute_proxy_evaluation_flags() {
     }
 }
 
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::build_plane_wave_interaction_lists() {
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::build_plane_wave_interaction_lists() {
     const auto &node_lists = this->GetNodeLists();
     nlistpw_.resize(n_boxes());
     listpw_.resize(n_boxes());
@@ -537,8 +445,8 @@ void DMKPtTree<T, DIM>::build_plane_wave_interaction_lists() {
     }
 }
 
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::build_direct_interaction_lists() {
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::build_direct_interaction_lists() {
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_lists = this->GetNodeLists();
     list1_.resize(n_boxes());
@@ -607,8 +515,8 @@ void DMKPtTree<T, DIM>::build_direct_interaction_lists() {
     }
 }
 
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::build_upward_pass_work_lists() {
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::build_upward_pass_work_lists() {
     const auto &node_lists = this->GetNodeLists();
     has_proxy_from_children.ReInit(n_boxes());
     charge2proxy_work.clear();
@@ -639,8 +547,8 @@ void DMKPtTree<T, DIM>::build_upward_pass_work_lists() {
     }
 }
 
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::allocate_proxy_coefficients() {
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
     const int n_coeffs = n_tables * sctl::pow<DIM>(n_order);
 
     sctl::Vector<sctl::Long> counts_upward(n_boxes());
@@ -693,20 +601,20 @@ void DMKPtTree<T, DIM>::allocate_proxy_coefficients() {
     }
 }
 
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::precompute_fourier_data() {
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
     const long n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     difference_fourier_data.resize(n_levels());
 
-    sctl::Vector<T> kernel_ft;
+    sctl::Vector<Real> kernel_ft;
 
     window_fourier_data.poly2pw.ReInit(n_order * n_pw);
     window_fourier_data.pw2poly.ReInit(n_order * n_pw);
     window_fourier_data.radialft.ReInit(n_pw_modes);
-    get_windowed_kernel_ft<T, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits, boxsize[0],
+    get_windowed_kernel_ft<Real, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits, boxsize[0],
                                    fourier_data.prolate0_fun, kernel_ft);
-    util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<T, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
-                                              ndview<T, 1>({n_pw_modes}, &window_fourier_data.radialft[0]));
+    util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<Real, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
+                                              ndview<Real, 1>({n_pw_modes}, &window_fourier_data.radialft[0]));
     fourier_data.calc_planewave_coeff_matrices(-1, n_order, window_fourier_data.poly2pw, window_fourier_data.pw2poly);
 
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
@@ -717,13 +625,115 @@ void DMKPtTree<T, DIM>::precompute_fourier_data() {
         lfd.pw2poly.ReInit(n_order * n_pw);
 
         const bool is_root = (i_level == 0);
-        get_difference_kernel_ft<T, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_digits,
+        get_difference_kernel_ft<Real, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_digits,
                                          boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
-        util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<T, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
-                                                  ndview<T, 1>({n_pw_modes}, &lfd.radialft[0]));
+        util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<Real, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
+                                                  ndview<Real, 1>({n_pw_modes}, &lfd.radialft[0]));
         fourier_data.calc_planewave_coeff_matrices(i_level, n_order, lfd.poly2pw, lfd.pw2poly);
         dmk::calc_planewave_translation_matrix<DIM>(1, boxsize[i_level], n_pw,
                                                     fourier_data.difference_kernel(i_level).hpw, lfd.wpwshift);
+    }
+}
+
+/// @brief Build list of target boxes. Boxes are sorted in descending
+/// order by total number of pairs interacting
+///
+/// @tparam T Floating point format to use (float, double)
+/// @tparam DIM Spatial dimension tree lives in
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::build_direct_work_lists() {
+    const auto &node_attr = this->GetNodeAttr();
+
+    direct_work.clear();
+    direct_work.reserve(n_boxes());
+    for (int i_box = 0; i_box < n_boxes(); ++i_box) {
+        if (is_global_leaf[i_box] && !node_attr[i_box].Ghost && nlist1_[i_box] > 0)
+            direct_work.push_back(i_box);
+    }
+
+    // Sort by descending interaction cost so heaviest boxes get scheduled first
+    std::sort(direct_work.begin(), direct_work.end(), [&](int a, int b) {
+        const long pts_a = src_counts_owned[a] + trg_counts_owned[a];
+        const long pts_b = src_counts_owned[b] + trg_counts_owned[b];
+        long src_a = 0, src_b = 0;
+        for (auto j : list1(a))
+            src_a += src_counts_with_halo[j];
+        for (auto j : list1(b))
+            src_b += src_counts_with_halo[j];
+        return pts_a * src_a > pts_b * src_b;
+    });
+}
+
+/// @brief Build list of direct evaluators for each level, source and target.
+///
+/// @tparam T Floating point format to use (float, double)
+/// @tparam DIM Spatial dimension tree lives in
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::build_evaluators() {
+    try {
+        auto src_eval = make_evaluator_aot<Real>(params.kernel, params.pgh_src, DIM, n_digits, 3);
+        auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.pgh_trg, DIM, n_digits, 3);
+#ifdef DMK_USE_JIT
+        if (util::env_is_set("DMK_DEBUG_FORCE_AOT")) {
+            src_eval = make_evaluator_jit<Real>(params.kernel, params.pgh_src, DIM, n_digits, 3);
+            trg_eval = make_evaluator_jit<Real>(params.kernel, params.pgh_trg, DIM, n_digits, 3);
+        }
+#endif
+        // FIXME: assumes the same src/trg output configuration
+        evaluator_by_level_src.assign(n_levels(), src_eval);
+        evaluator_by_level_trg.assign(n_levels(), trg_eval);
+    } catch (std::exception &e) {
+        logger->error("Failed to create direct evaluator: {}", e.what());
+    }
+    if (params.kernel == DMK_YUKAWA) {
+        // FIXME: This should be moved to direct.cpp, but it was annoying to add the coefficient
+        // binding cleanly
+        for (int level = 0; level < n_levels(); ++level) {
+            const auto coeffs = fourier_data.cheb_coeffs(level);
+            const Real lambda = params.fparam;
+            const int kernel_input_dim = this->kernel_input_dim;
+            const int kernel_output_dim = kernel_output_dim_trg;
+            // FIXME: assumes the same src/trg output configuration
+            evaluator_by_level_src.push_back(
+                [coeffs, lambda, kernel_input_dim](Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
+                                                   const Real *r_src_ptr, const Real *charge_ptr, int n_trg,
+                                                   const Real *r_trg_ptr, Real *pot) {
+                    constexpr Real threshq = 1e-30;
+                    ndview<Real, 2> u({1, n_trg}, pot);
+                    ndview<const Real, 2> charges({kernel_input_dim, n_src}, charge_ptr);
+                    ndview<const Real, 2> r_src({DIM, n_src}, r_src_ptr);
+                    ndview<const Real, 2> r_trg({DIM, n_trg}, r_trg_ptr);
+                    for (int i_trg = 0; i_trg < n_trg; i_trg++) {
+                        for (int i_src = 0; i_src < n_src; i_src++) {
+                            const Real dx = r_trg(0, i_trg) - r_src(0, i_src);
+                            const Real dy = r_trg(1, i_trg) - r_src(1, i_src);
+                            Real dd = dx * dx + dy * dy;
+                            if constexpr (DIM == 3) {
+                                Real dz = r_trg(2, i_trg) - r_src(2, i_src);
+                                dd += dz * dz;
+                            }
+
+                            if (dd < threshq || dd > d2max)
+                                continue;
+
+                            const Real r = sqrt(dd);
+                            const Real xval = r * rsc + cen;
+                            const Real fval = chebyshev::evaluate(xval, coeffs.size() + 1, coeffs.data());
+                            Real dkval;
+                            if constexpr (DIM == 2)
+                                dkval = util::cyl_bessel_k(0, lambda * r);
+                            if constexpr (DIM == 3)
+                                dkval = std::exp(-lambda * r) / r;
+
+                            const Real factor = dkval + fval;
+                            for (int i = 0; i < kernel_input_dim; ++i)
+                                u(i, i_trg) += charges(i, i_src) * factor;
+                        }
+                    }
+                });
+        }
+        // FIXME: assumes the same src/trg output configuration
+        evaluator_by_level_trg = evaluator_by_level_src;
     }
 }
 
@@ -731,12 +741,10 @@ void DMKPtTree<T, DIM>::precompute_fourier_data() {
 ///
 /// @tparam T Floating point format to use (float, double)
 /// @tparam DIM Spatial dimension tree lives in
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::generate_metadata() {
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::generate_metadata() {
     sctl::Profile::Scoped profile("generate_metadata", &comm_);
-    const auto &node_attr = this->GetNodeAttr();
-    const auto &node_mid = this->GetNodeMID();
-    const auto &node_lists = this->GetNodeLists();
+    logger->debug("generating tree traversal metadata and other constants");
 
     compute_data_offsets();
     compute_level_indices_and_boxsizes();
@@ -749,27 +757,16 @@ void DMKPtTree<T, DIM>::generate_metadata() {
     build_plane_wave_interaction_lists();
     build_direct_interaction_lists();
     build_upward_pass_work_lists();
+    build_direct_work_lists();
     allocate_proxy_coefficients();
-    r_src_t = nda::transpose(matrixview<T>({DIM, src_counts_owned[0]}, r_src_owned_ptr(0)));
-    r_trg_t = nda::transpose(matrixview<T>({DIM, trg_counts_owned[0]}, r_trg_owned_ptr(0)));
-
-    direct_work.clear();
-    for (int i_box = 0; i_box < n_boxes(); ++i_box) {
-        if (is_global_leaf[i_box] && !node_attr[i_box].Ghost && nlist1_[i_box] > 0)
-            direct_work.push_back(i_box);
-    }
-
-    // Sort by descending interaction cost so heaviest boxes get scheduled first
-    std::sort(direct_work.begin(), direct_work.end(), [&](int a, int b) {
-        long cost_a = 0, cost_b = 0;
-        for (auto j : list1(a))
-            cost_a += src_counts_with_halo[j];
-        for (auto j : list1(b))
-            cost_b += src_counts_with_halo[j];
-        return cost_a > cost_b;
-    });
-
     proxy_down_zeroed.resize(n_boxes());
+    std::tie(c2p, p2c) = dmk::chebyshev::get_c2p_p2c_matrices<Real>(DIM, n_order);
+    fourier_data = FourierData<Real>(params.kernel, DIM, params.eps, n_digits, n_pw, params.fparam, boxsize);
+    precompute_window_difference_data();
+    build_evaluators();
+
+    assert(n_pw == fourier_data.n_pw());
+    logger->debug("done generating tree traversal metadata and other constants");
 }
 
 /// @brief Fill out the proxy coefficients used in the upward pass
@@ -778,12 +775,10 @@ void DMKPtTree<T, DIM>::generate_metadata() {
 ///
 /// @tparam T Floating point format to use (float, double)
 /// @tparam DIM Spatial dimension tree lives in
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::upward_pass() {
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::upward_pass() {
     sctl::Profile::Scoped profile("upward_pass", &comm_);
     sctl::Profile::Tic("upward_pass_init", &comm_);
-    auto &logger = dmk::get_logger(comm_);
-    auto &rank_logger = dmk::get_rank_logger(comm_);
     const std::size_t n_coeffs = n_tables * sctl::pow<DIM>(n_order);
     logger->info("upward pass started");
 
@@ -808,12 +803,12 @@ void DMKPtTree<T, DIM>::upward_pass() {
         // charge2proxycharge
 #pragma omp parallel
         {
-            sctl::Vector<T> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
+            sctl::Vector<Real> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
 
 #pragma omp for schedule(static)
             for (int i = 0; i < charge2proxy_work.size(); ++i) {
                 const auto &w = charge2proxy_work[i];
-                proxy::charge2proxycharge<T, DIM>(r_src_owned_view(w.src_box), charge_owned_view(w.src_box),
+                proxy::charge2proxycharge<Real, DIM>(r_src_owned_view(w.src_box), charge_owned_view(w.src_box),
                                                   center_view(w.center_box), 2.0 / boxsize[w.level],
                                                   proxy_view_upward(w.center_box), workspace);
             }
@@ -823,7 +818,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
         sctl::Profile::Tic("tensorprod::transform", &comm_);
 #pragma omp parallel
         {
-            sctl::Vector<T> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
+            sctl::Vector<Real> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
 
             for (int i_level = n_levels() - 1; i_level >= 0; --i_level) {
 #pragma omp for schedule(static)
@@ -839,8 +834,8 @@ void DMKPtTree<T, DIM>::upward_pass() {
                         if (cb < 0 || !(src_counts_owned[cb] > 0 && ifpwexp[cb]))
                             continue;
 
-                        const ndview<T, 2> c2p_view({n_order, DIM}, &c2p[ic * DIM * n_order * n_order]);
-                        tensorprod::transform<T, DIM>(n_tables, true, proxy_view_upward(cb), c2p_view,
+                        const ndview<Real, 2> c2p_view({n_order, DIM}, &c2p[ic * DIM * n_order * n_order]);
+                        tensorprod::transform<Real, DIM>(n_tables, true, proxy_view_upward(cb), c2p_view,
                                                       proxy_view_upward(i_box), workspace);
                     }
                 }
@@ -856,7 +851,7 @@ void DMKPtTree<T, DIM>::upward_pass() {
     sctl::Profile::Tic("broadcast_proxy_coeffs", &comm_);
     logger->debug("Finished building proxy charges");
 
-    this->template ReduceBroadcast<T>("proxy_coeffs");
+    this->template ReduceBroadcast<Real>("proxy_coeffs");
     this->GetData(proxy_coeffs_upward, counts, "proxy_coeffs");
     long last_offset = 0;
     for (int box = 0; box < n_boxes(); ++box) {
@@ -871,8 +866,8 @@ void DMKPtTree<T, DIM>::upward_pass() {
     logger->info("upward pass finished");
 }
 
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::init_planewave_data() {
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::init_planewave_data() {
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const int n_pw_per_box = n_pw_modes * n_tables;
 
@@ -1049,7 +1044,7 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
 }
 
 template <typename Real, int DIM>
-void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, const Real *r_trg_t) {
+void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
     sctl::Profile::Scoped profile("evaluate_direct_interactions", &comm_);
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_mid = this->GetNodeMID();
@@ -1201,12 +1196,10 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
 ///
 /// @tparam T Floating point format to use (float, double)
 /// @tparam DIM Spatial dimension tree lives in
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::downward_pass() {
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::downward_pass() {
     sctl::Profile::Scoped prof("downward_pass", &comm_);
     sctl::Profile::Tic("downward_pass_init", &comm_);
-    auto &logger = dmk::get_logger(comm_);
-    auto &rank_logger = dmk::get_rank_logger(comm_);
     logger->info("downward pass started");
 
     pot_src_sorted.SetZero();
@@ -1220,8 +1213,8 @@ void DMKPtTree<T, DIM>::downward_pass() {
     form_outgoing_expansions();
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         auto &dfd = difference_fourier_data[i_level];
-        const ndview<std::complex<T>, 2> p2pw({n_pw, n_order}, &dfd.poly2pw[0]);
-        const ndview<std::complex<T>, 2> pw2p({n_pw, n_order}, &dfd.pw2poly[0]);
+        const ndview<std::complex<Real>, 2> p2pw({n_pw, n_order}, &dfd.poly2pw[0]);
+        const ndview<std::complex<Real>, 2> pw2p({n_pw, n_order}, &dfd.pw2poly[0]);
 
         if (!debug_omit_pw)
             form_eval_expansions(level_indices[i_level], dfd.wpwshift, boxsize[i_level], pw2p, p2c);
@@ -1229,7 +1222,7 @@ void DMKPtTree<T, DIM>::downward_pass() {
     sctl::Profile::Toc();
 
     if (!debug_omit_direct)
-        evaluate_direct_interactions(r_src_t.data(), r_trg_t.data());
+        evaluate_direct_interactions();
 
     logger->info("downward pass completed");
     if (debug_dump_tree)
@@ -1248,27 +1241,24 @@ void DMKPtTree<T, DIM>::downward_pass() {
 ///
 /// @tparam T Floating point format to use (float, double)
 /// @tparam DIM Spatial dimension tree lives in
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::eval() {
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::eval() {
     sctl::Profile::Scoped prof("pdmk_tree_eval", &comm_);
-    auto &logger = dmk::get_logger(comm_, params.log_level);
     logger->info("eval() started");
-
     upward_pass();
     downward_pass();
     logger->info("eval() completed");
 }
 
-template <typename T, int DIM>
-void DMKPtTree<T, DIM>::desort_potentials(T *pot_src, T *pot_trg) {
-    auto &logger = dmk::get_logger(comm_, params.log_level);
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::desort_potentials(Real *pot_src, Real *pot_trg) {
     logger->info("De-sorting potentials into user arrays");
     sctl::Profile::Tic("pdmk_tree_eval_sync", &comm_);
-    sctl::Vector<T> res;
+    sctl::Vector<Real> res;
     this->GetParticleData(res, "pdmk_pot_src");
-    sctl::Vector<T>(res.Dim(), pot_src, false) = res;
+    sctl::Vector<Real>(res.Dim(), pot_src, false) = res;
     this->GetParticleData(res, "pdmk_pot_trg");
-    sctl::Vector<T>(res.Dim(), pot_trg, false) = res;
+    sctl::Vector<Real>(res.Dim(), pot_trg, false) = res;
     sctl::Profile::Toc();
     logger->info("De-sort complete");
 }

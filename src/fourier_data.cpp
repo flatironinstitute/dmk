@@ -713,8 +713,9 @@ FourierData<T>::FourierData(dmk_ikernel kernel, int n_dim, T eps, int n_digits, 
         std::tie(n_pw_difference, difference_kernels_[i_level].hpw, difference_kernels_[i_level].ws) =
             get_PSWF_difference_kernel_pwterms(kernel_, n_dim, n_digits_, box_sizes_[i_level]);
 
-    n_pw_ = std::max(n_pw_windowed, n_pw_difference);
+    update_local_coeffs(eps);
 
+    n_pw_ = std::max(n_pw_windowed, n_pw_difference);
     assert(n_pw_windowed);
     assert(n_pw_difference);
     assert(n_pw_);
