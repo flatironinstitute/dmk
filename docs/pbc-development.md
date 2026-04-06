@@ -106,24 +106,66 @@ Ewald sum: erfc short-range + Fourier long-range, alpha=10).
 | 9        | 9.1e-10  |
 | 12       | 8.0e-13  |
 
+### 4. Tree integration: periodic pw2poly and downward pass (commit `37579c9`, `ec2b566`)
+
+**Changes to `precompute_fourier_data`:** When `pbc=true`, `window_fourier_data`
+is built with periodic grid parameters instead of free-space window parameters:
+- `dk = 2*pi/L` (periodic grid spacing)
+- `n_pw_periodic = 2*ceil(beta/pi)+3` modes per dimension (stored as tree member)
+- `radialft`: PSWF kernel evaluated at periodic k-points via `mk_tensor_product_fourier_transform`
+- `poly2pw`/`pw2poly`: built by `calc_planewave_coeff_matrices(boxsize[0], dk, n_pw_periodic, n_order)`
+
+**Changes to `downward_pass`:**
+- Root block: uses local PW temp sized for `n_pw_periodic` (not the tree's `n_pw`)
+- Level-0 `form_outgoing_expansions` skipped (D_0 already included in periodic root kernel)
+- Level-0 `form_eval_expansions` still runs (to propagate `proxy_downward(0)` to children)
+
+**Self-energy correction in `evaluate_direct_interactions`:**
+Computes periodic PSWF kernel self-interaction at r=0 via Fourier sum:
+`self_periodic = (1/V) * Σ_{k≠0} (4pi/psi_0(0)) * psi_0(|k|*sigma_1) / |k|^2`
+Adds `delta = self_periodic - w0_free[0]` to all w0 correction entries.
+
+### 5. Full pipeline verified (commit `d03ffd7`, `2c4af06`)
+
+**Test:** `[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald` — runs full
+`pdmk_tree_create`/`pdmk_tree_eval` with `pbc=true` at 3/6/9/12 digits,
+comparing potential and gradient for both sources and targets against Ewald.
+
+| n_digits | pot_trg  | grad_src | grad_trg | pot_src  |
+|----------|----------|----------|----------|----------|
+| 3        | 1.0e-3   | 6.5e-4   | 5.5e-4   | 3.0e-3   |
+| 6        | 1.4e-6   | 1.5e-6   | 1.3e-6   | 1.4e-3   |
+| 9        | 1.3e-9   | 1.8e-9   | 1.7e-9   | 7.7e-4   |
+| 12       | 1.3e-12  | 3.3e-12  | 2.5e-12  | 4.3e-4   |
+
+Target potential, source gradient, and target gradient all achieve eps-level
+accuracy. Source potential has ~1e-3 residual (see known issue below).
+
+## Known issue: PBC source potential self-energy
+
+Source potentials have a ~1e-3 relative error from the proxy→PW→proxy round-trip
+projection. The finite-rank Chebyshev-to-PW matrices don't exactly preserve
+the kernel self-interaction at r=0, so the w0 correction (computed from the
+theoretical Fourier sum) over-corrects by ~0.08 per unit charge.
+
+The source gradient is unaffected (the gradient of the smooth self-contribution
+is zero by symmetry at r=0).
+
+Possible fix: compute the proxy pipeline's actual self-energy by running a unit
+charge through the proxy→PW→kernel→PW→proxy round-trip, rather than using the
+theoretical Fourier sum.
+
 ## Not yet done
 
-### 4. Root level: tree integration
+### 6. Source potential self-energy refinement
 
-The PSWF kernel formula for W_0 + D_0 is validated. The remaining work is
-integrating it into the tree's downward pass:
+Fix the ~1e-3 source potential error by computing the proxy pipeline's actual
+self-energy rather than the theoretical Fourier sum.
 
-- Replace `neighbor != box` with `slot != center_slot` in `form_eval_expansions`
-  so root-level periodic self-neighbors are processed with their `wpwshift` phases
-- Replace the existing window kernel self-convolution at root with the periodic
-  PSWF kernel on the dk = 2*pi/L grid
-- Alternatively, compute root-level PW coefficients via direct summation (NUFFT)
-  on the periodic grid instead of the proxy-to-PW path
+### 7. MPI multi-rank support
 
-### 5. Full pipeline integration
-
-Once the root level tree integration is done, the full PBC evaluation can be
-tested end-to-end with `tree.downward_pass()` against the Ewald reference.
+Current PBC tests only work on a single rank. The Ewald reference and source/target
+gathering use `_owned` data without MPI reduction.
 
 ## Key code locations
 
