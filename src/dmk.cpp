@@ -45,26 +45,25 @@ void pdmk(dmk_communicator comm, const pdmk_params &params, int n_src, const T *
     sctl::Vector<T> charge_vec(n_src * kernel_input_dim, const_cast<T *>(charge), false);
 
     DMKPtTree<T, DIM> tree(sctl_comm, params, r_src_vec, r_trg_vec, charge_vec);
-    tree.upward_pass();
-    tree.downward_pass();
-
-    sctl::Vector<T> res;
-    tree.GetParticleData(res, "pdmk_pot_src");
-    sctl::Vector<T>(res.Dim(), pot_src, false) = res;
-    tree.GetParticleData(res, "pdmk_pot_trg");
-    sctl::Vector<T>(res.Dim(), pot_trg, false) = res;
-
-    auto dt = MY_OMP_GET_WTIME() - st;
-    int N = n_src + n_trg;
-#ifdef DMK_HAVE_MPI
-    if (sctl_comm.Rank() == 0)
-        MPI_Reduce(MPI_IN_PLACE, &N, 1, MPI_INT, MPI_SUM, 0, comm);
+    if (util::env_is_set("DMK_DEBUG_USE_PQ"))
+        tree.eval_pq();
     else
-        MPI_Reduce(&N, &N, 1, MPI_INT, MPI_SUM, 0, comm);
+        tree.eval();
+
+    tree.desort_potentials(pot_src, pot_trg);
+    if (params.log_level <= DMK_LOG_INFO)     {
+        auto dt = MY_OMP_GET_WTIME() - st;
+        int N = n_src + n_trg;
+#ifdef DMK_HAVE_MPI
+        if (sctl_comm.Rank() == 0)
+            MPI_Reduce(MPI_IN_PLACE, &N, 1, MPI_INT, MPI_SUM, 0, comm);
+        else
+            MPI_Reduce(&N, &N, 1, MPI_INT, MPI_SUM, 0, comm);
 #endif
 
-    logger->info("PDMK finished in {:.4f} seconds ({:.0f} pts/s, {:.0f} pts/s/rank)", dt, N / dt,
-                 N / dt / sctl_comm.Size());
+        logger->info("PDMK finished in {:.4f} seconds ({:.0f} pts/s, {:.0f} pts/s/rank)", dt, N / dt,
+                     N / dt / sctl_comm.Size());
+    }
 }
 
 TEST_CASE_GENERIC("[DMK] pdmk 3d float", 1) {
