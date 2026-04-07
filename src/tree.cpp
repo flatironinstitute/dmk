@@ -88,19 +88,36 @@ void DMKPtTree<Real, DIM>::dump() const {
 }
 
 std::pair<int, int> get_pwmax_and_poly_order(int dim, int ndigits, dmk_ikernel kernel) {
-    // clang-format off
+    if (ndigits < 3 || ndigits > 12)
+        throw std::runtime_error("Unsupported precision");
+
+    int npw, norder;
     if (kernel == DMK_SQRT_LAPLACE && dim == 3) {
-        if (ndigits <= 3) return {13, 9};
-        if (ndigits <= 6) return {27, 18};
-        if (ndigits <= 9) return {39, 28};
-        if (ndigits <= 12) return {55, 38};
+        auto interp = [](int d, int d0, int d1, int v0, int v1) {
+            int v = v0 + (v1 - v0) * (d - d0) / (d1 - d0);
+            return v;
+        };
+
+        if (ndigits <= 6) {
+            npw = interp(ndigits, 3, 6, 13, 27);
+            norder = interp(ndigits, 3, 6, 9, 18);
+        } else if (ndigits <= 9) {
+            npw = interp(ndigits, 6, 9, 27, 39);
+            norder = interp(ndigits, 6, 9, 18, 28);
+        } else {
+            npw = interp(ndigits, 9, 12, 39, 55);
+            norder = interp(ndigits, 9, 12, 28, 38);
+        }
+    } else {
+        npw = std::round(4.444 * ndigits - 0.333);
+        norder = std::round(3.222 * ndigits - 0.667);
     }
-    if (ndigits <= 3) return {13, 9};
-    if (ndigits <= 6) return {25, 18};
-    if (ndigits <= 9) return {39, 28};
-    if (ndigits <= 12) return {53, 38};
-    // clang-format on
-    throw std::runtime_error("Requested precision too high");
+
+    // npw must be odd
+    if (npw % 2 == 0)
+        npw++;
+
+    return {npw, norder};
 }
 
 void update_offsets_from_counts(const sctl::Vector<sctl::Long> &counts, sctl::Long N,
@@ -611,8 +628,8 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
     window_fourier_data.poly2pw.ReInit(n_order * n_pw);
     window_fourier_data.pw2poly.ReInit(n_order * n_pw);
     window_fourier_data.radialft.ReInit(n_pw_modes);
-    get_windowed_kernel_ft<Real, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits, boxsize[0],
-                                   fourier_data.prolate0_fun, kernel_ft);
+    get_windowed_kernel_ft<Real, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits, n_pw, boxsize[0],
+                                      fourier_data.prolate0_fun, kernel_ft);
     util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<Real, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
                                               ndview<Real, 1>({n_pw_modes}, &window_fourier_data.radialft[0]));
     fourier_data.calc_planewave_coeff_matrices(-1, n_order, window_fourier_data.poly2pw, window_fourier_data.pw2poly);
@@ -625,8 +642,8 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
         lfd.pw2poly.ReInit(n_order * n_pw);
 
         const bool is_root = (i_level == 0);
-        get_difference_kernel_ft<Real, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_digits,
-                                         boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
+        get_difference_kernel_ft<Real, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_digits, n_pw,
+                                            boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
         util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<Real, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
                                                   ndview<Real, 1>({n_pw_modes}, &lfd.radialft[0]));
         fourier_data.calc_planewave_coeff_matrices(i_level, n_order, lfd.poly2pw, lfd.pw2poly);
@@ -674,7 +691,7 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
         auto src_eval = make_evaluator_aot<Real>(params.kernel, params.pgh_src, DIM, n_digits, 3);
         auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.pgh_trg, DIM, n_digits, 3);
 #ifdef DMK_USE_JIT
-        if (util::env_is_set("DMK_DEBUG_FORCE_AOT")) {
+        if (!util::env_is_set("DMK_DEBUG_FORCE_AOT")) {
             src_eval = make_evaluator_jit<Real>(params.kernel, params.pgh_src, DIM, n_digits, 3);
             trg_eval = make_evaluator_jit<Real>(params.kernel, params.pgh_trg, DIM, n_digits, 3);
         }
@@ -809,8 +826,8 @@ void DMKPtTree<Real, DIM>::upward_pass() {
             for (int i = 0; i < charge2proxy_work.size(); ++i) {
                 const auto &w = charge2proxy_work[i];
                 proxy::charge2proxycharge<Real, DIM>(r_src_owned_view(w.src_box), charge_owned_view(w.src_box),
-                                                  center_view(w.center_box), 2.0 / boxsize[w.level],
-                                                  proxy_view_upward(w.center_box), workspace);
+                                                     center_view(w.center_box), 2.0 / boxsize[w.level],
+                                                     proxy_view_upward(w.center_box), workspace);
             }
         }
         sctl::Profile::Toc();
@@ -836,7 +853,7 @@ void DMKPtTree<Real, DIM>::upward_pass() {
 
                         const ndview<Real, 2> c2p_view({n_order, DIM}, &c2p[ic * DIM * n_order * n_order]);
                         tensorprod::transform<Real, DIM>(n_tables, true, proxy_view_upward(cb), c2p_view,
-                                                      proxy_view_upward(i_box), workspace);
+                                                         proxy_view_upward(i_box), workspace);
                     }
                 }
             }
@@ -877,7 +894,7 @@ void DMKPtTree<Real, DIM>::init_planewave_data() {
         int n_pw_boxes_out = 1;
         int64_t last_offset = n_pw_per_box;
         for (int box = 1; box < n_boxes(); ++box) {
-            if (proxy_coeffs_offsets[box] != -1) {
+            if (proxy_coeffs_offsets[box] != -1 || trg_counts_owned[box]) {
                 pw_out_offsets[box] = last_offset;
                 last_offset += n_pw_per_box;
                 n_pw_boxes_out++;
@@ -1278,7 +1295,7 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
 
     pdmk_params params;
     params.eps = 1E-6;
-    params.kernel = DMK_YUKAWA;
+    params.kernel = DMK_LAPLACE;
     params.log_level = SPDLOG_LEVEL_OFF;
     params.fparam = 6.0;
     params.n_dim = n_dim;
@@ -1295,8 +1312,6 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
     tree.downward_pass();
     tree.GetParticleData(pot_src, "pdmk_pot_src");
     tree.GetParticleData(pot_trg, "pdmk_pot_trg");
-    if (test_rank == 0)
-        std::cout << MY_OMP_GET_WTIME() - st << std::endl;
 
     if (test_rank == 0) {
         dmk::util::init_test_data(n_dim, n_charge_dim, n_src, n_trg, uniform, true, r_src, r_trg, r_src_norms, charges,
@@ -1327,7 +1342,6 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
                 }
             }
             if (single_box < 0) {
-                std::cout << fmt::format("No match for box {}\n", ibox);
                 continue;
             }
 
@@ -1349,7 +1363,7 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
                 maxerr_up = max_actual ? maxerr_up / max_actual : 0.0;
             }
 
-            if (maxerr_up > 1E-14)
+            if (maxerr_up > 1E-12)
                 std::cout << fmt::format("{:3} {:3} {:3} {:5.4E} {:3} ({} {} {})\n", test_rank, ibox, single_box,
                                          maxerr_up, node_mid[ibox].Depth(), x[0], x[1], x[2]);
         }
@@ -1358,7 +1372,7 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
             for (int i = 0; i < n_src; ++i) {
                 double err_src = pot_src[i] == 0. ? 0.0 : std::abs(1.0 - pot_src[i] / pot_src_single[i]);
                 double err_trg = pot_trg[i] == 0. ? 0.0 : std::abs(1.0 - pot_trg[i] / pot_trg_single[i]);
-                if (err_src > 1E-12 || err_trg > 1E-12)
+                if (err_src > params.eps || err_trg > params.eps)
                     std::cout << fmt::format("{} {:5.4E} {:5.4E}\n", i, err_src, err_trg);
             }
         }

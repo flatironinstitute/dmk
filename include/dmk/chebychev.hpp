@@ -90,10 +90,24 @@ template <typename T>
 inline auto get_polynomial_calculator(int order) {
     if (order == 9)
         return calc_polynomial<T, 9>;
+    if (order == 12)
+        return calc_polynomial<T, 12>;
+    if (order == 15)
+        return calc_polynomial<T, 15>;
     if (order == 18)
         return calc_polynomial<T, 18>;
+    if (order == 19)
+        return calc_polynomial<T, 19>;
+    if (order == 22)
+        return calc_polynomial<T, 22>;
+    if (order == 25)
+        return calc_polynomial<T, 25>;
     if (order == 28)
         return calc_polynomial<T, 28>;
+    if (order == 32)
+        return calc_polynomial<T, 32>;
+    if (order == 35)
+        return calc_polynomial<T, 35>;
     if (order == 38)
         return calc_polynomial<T, 38>;
     throw std::runtime_error("Unsupported order: " + std::to_string(order));
