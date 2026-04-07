@@ -1,0 +1,2 @@
+add_executable(generate_aot_kernels generate_aot_kernels.cpp)
+target_link_libraries(generate_aot_kernels dmk nda::nda_c)
