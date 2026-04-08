@@ -1304,6 +1304,93 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full vs Ewald", 1) {
     }
 }
 
+TEST_CASE_GENERIC("[DMK] Ewald alpha-independence check", 1) {
+    // Verify that the Ewald potential at source locations is independent of the
+    // splitting parameter α. Any α-dependence indicates a missing self-correction.
+    constexpr int n_dim = 3;
+    constexpr int n_src = 200;
+    constexpr int n_test = 10;
+
+    std::default_random_engine eng(42);
+    std::uniform_real_distribution<double> rng(0.01, 0.99);
+
+    std::vector<double> r_src(n_dim * n_src), charges(n_src);
+    for (int i = 0; i < n_src * n_dim; ++i) r_src[i] = rng(eng);
+    for (int i = 0; i < n_src; ++i) charges[i] = rng(eng) - 0.5;
+    { double sum = 0; for (int i = 0; i < n_src; ++i) sum += charges[i]; for (int i = 0; i < n_src; ++i) charges[i] -= sum / n_src; }
+
+    const double L = 1.0;
+    const double V_box = L * L * L;
+    const double dk = 2.0 * M_PI / L;
+    const double alphas[] = {5.0, 10.0, 20.0, 40.0};
+    const int n_ewald = 40; // enough modes for all α
+
+    // For each α, compute Ewald potential at n_test source points
+    for (double alpha : alphas) {
+        // Build rho(k)
+        const int d = 2 * n_ewald + 1;
+        std::vector<std::complex<double>> rho(d * d * d, {0, 0});
+        for (int is = 0; is < n_src; ++is) {
+            auto ex0 = std::exp(std::complex<double>(0, -dk * r_src[is * 3 + 0]));
+            auto ey0 = std::exp(std::complex<double>(0, -dk * r_src[is * 3 + 1]));
+            auto ez0 = std::exp(std::complex<double>(0, -dk * r_src[is * 3 + 2]));
+            std::vector<std::complex<double>> ex(d), ey(d), ez(d);
+            for (int a = -n_ewald; a <= n_ewald; ++a) { ex[a+n_ewald]=std::pow(ex0,a); ey[a+n_ewald]=std::pow(ey0,a); ez[a+n_ewald]=std::pow(ez0,a); }
+            for (int ix = 0; ix < d; ++ix)
+                for (int iy = 0; iy < d; ++iy) {
+                    auto t2 = charges[is] * ex[ix] * ey[iy];
+                    for (int iz = 0; iz < d; ++iz)
+                        rho[ix*d*d + iy*d + iz] += t2 * ez[iz];
+                }
+        }
+
+        // Ewald potential at source i
+        auto ewald_pot = [&](int i) {
+            const double *r = &r_src[i * 3];
+            double pot_short = 0;
+            // Short range
+            for (int is = 0; is < n_src; ++is)
+                for (int mx = -1; mx <= 1; ++mx)
+                    for (int my = -1; my <= 1; ++my)
+                        for (int mz = -1; mz <= 1; ++mz) {
+                            double dx = r[0] - r_src[is*3+0] - mx*L;
+                            double dy = r[1] - r_src[is*3+1] - my*L;
+                            double dz = r[2] - r_src[is*3+2] - mz*L;
+                            double r2 = dx*dx + dy*dy + dz*dz;
+                            double rr = std::sqrt(r2);
+                            if (rr > 1e-15) pot_short += charges[is] * std::erfc(alpha * rr) / rr;
+                        }
+            // Long range
+            double pot_long = 0;
+            auto etx0 = std::exp(std::complex<double>(0, dk*r[0]));
+            auto ety0 = std::exp(std::complex<double>(0, dk*r[1]));
+            auto etz0 = std::exp(std::complex<double>(0, dk*r[2]));
+            std::vector<std::complex<double>> etx(d), ety(d), etz(d);
+            for (int a = -n_ewald; a <= n_ewald; ++a) { etx[a+n_ewald]=std::pow(etx0,a); ety[a+n_ewald]=std::pow(ety0,a); etz[a+n_ewald]=std::pow(etz0,a); }
+            for (int nx = -n_ewald; nx <= n_ewald; ++nx)
+                for (int ny = -n_ewald; ny <= n_ewald; ++ny)
+                    for (int nz = -n_ewald; nz <= n_ewald; ++nz) {
+                        if (nx==0 && ny==0 && nz==0) continue;
+                        double k2 = (nx*nx+ny*ny+nz*nz)*dk*dk;
+                        double G = std::exp(-k2/(4*alpha*alpha)) / k2;
+                        auto eikr = etx[nx+n_ewald]*ety[ny+n_ewald]*etz[nz+n_ewald];
+                        pot_long += G * std::real(rho[((nx+n_ewald)*d+(ny+n_ewald))*d+(nz+n_ewald)] * eikr);
+                    }
+            pot_long *= 4.0 * M_PI / V_box;
+
+            // Self correction: -2α/√π · q_i
+            double pot_self = -charges[i] * 2.0 * alpha / std::sqrt(M_PI);
+
+            return pot_short + pot_long + pot_self;
+        };
+
+        fprintf(stderr, "alpha=%5.1f: ", alpha);
+        for (int i = 0; i < n_test; ++i)
+            fprintf(stderr, " V[%d]=%.10f", i, ewald_pot(i));
+        fprintf(stderr, "\n");
+    }
+}
+
 TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
     // Full pipeline test: pdmk_tree_create + pdmk_tree_eval with pbc=true
     // at 3/6/9/12 digits, pot and pot+grad for both sources and targets,
@@ -1440,18 +1527,23 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
         }
     };
 
+    // Ewald self-correction: the long-range erf(αr)/r → 2α/√π as r→0,
+    // contributing a spurious self-interaction at source locations. The short-range
+    // erfc(αr)/r skips r=0, so this artifact is uncompensated. Subtract it so the
+    // Ewald reference gives the physical periodic potential (images only, no self).
+    const double ewald_self_factor = 2.0 * alpha / std::sqrt(M_PI);
+
     struct PrecisionCase {
         int n_digits;
         double eps;
-        double tol_pot_trg;
-        double tol_pot_src; // looser: PBC self-energy correction has PSWF bandlimit residual
+        double tol_pot;
         double tol_grad;
     };
     const PrecisionCase cases[] = {
-        {3, 1e-3, 1e-2, 1e-2, 1e-1},
-        {6, 1e-6, 1e-4, 1e-2, 1e-3},
-        {9, 1e-9, 1e-7, 1e-2, 1e-6},
-        {12, 1e-12, 1e-10, 1e-2, 1e-9},
+        {3, 1e-3, 1e-2, 1e-1},
+        {6, 1e-6, 1e-4, 1e-3},
+        {9, 1e-9, 1e-7, 1e-6},
+        {12, 1e-12, 1e-10, 1e-9},
     };
 
     for (const auto &pc : cases) {
@@ -1479,21 +1571,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
                 pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
                 pdmk_tree_destroy(tree);
 
-                // Compare source potentials.
-                // Both DMK and Ewald include a self-energy at source locations that must be
-                // removed. DMK subtracts its w0 correction in evaluate_direct_interactions.
-                // For the Ewald reference, we subtract the long-range self-contribution
-                // (4pi/V) * Σ_{k≠0} exp(-k²/(4α²))/k² numerically.
-                double ewald_self_factor = 0;
-                for (int nx = -n_ewald; nx <= n_ewald; ++nx)
-                    for (int ny = -n_ewald; ny <= n_ewald; ++ny)
-                        for (int nz = -n_ewald; nz <= n_ewald; ++nz) {
-                            if (nx == 0 && ny == 0 && nz == 0) continue;
-                            const double k2 = (nx*nx + ny*ny + nz*nz) * dk * dk;
-                            ewald_self_factor += std::exp(-k2 / (4.0*alpha*alpha)) / k2;
-                        }
-                ewald_self_factor *= 4.0 * M_PI / V_box;
-
+                // Compare source potentials (subtract Ewald self-correction from reference)
                 const int n_test = std::min(n_src, 100);
                 double err2_pot_src = 0, ref2_pot_src = 0;
                 double err2_grad_src = 0, ref2_grad_src = 0;
@@ -1501,7 +1579,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
                     double ewald_pot;
                     double ewald_grad[3];
                     ewald_pot_grad(&r_src[i * n_dim], ewald_pot, with_grad ? ewald_grad : nullptr);
-                    ewald_pot -= charges[i] * ewald_self_factor; // subtract Ewald self-energy
+                    ewald_pot -= charges[i] * ewald_self_factor;
                     err2_pot_src += sctl::pow<2>(pot_src[i * odim] - ewald_pot);
                     ref2_pot_src += sctl::pow<2>(ewald_pot);
                     if (with_grad) {
@@ -1535,8 +1613,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
                 const double l2_pot_trg = safe_l2(err2_pot_trg, ref2_pot_trg);
 
                 MESSAGE("PBC pipeline: ", label, " pot_src=", l2_pot_src, " pot_trg=", l2_pot_trg);
-                CHECK(l2_pot_src < pc.tol_pot_src);
-                CHECK(l2_pot_trg < pc.tol_pot_trg);
+                CHECK(l2_pot_src < pc.tol_pot);
+                CHECK(l2_pot_trg < pc.tol_pot);
 
                 if (with_grad) {
                     const double l2_grad_src = safe_l2(err2_grad_src, ref2_grad_src);

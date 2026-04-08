@@ -1386,41 +1386,6 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
     for (int i_level = 0; i_level < n_levels(); ++i_level)
         w0[i_level] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
 
-    // PBC correction: the periodic PSWF kernel includes image contributions to the
-    // self-interaction that the free-space formula doesn't account for.
-    // Compute delta = periodic_self - free_space_self for W_0+D_0 and add to all levels.
-    if (params.use_periodic && params.kernel == DMK_LAPLACE && DIM == 3) {
-        const Real dk = 2.0 * M_PI / boxsize[0];
-        const Real sigma1 = boxsize[1] / fourier_data.beta();
-        const Real psi0_at_zero = fourier_data.prolate0_fun.eval_val(0.0);
-        const Real V_box = boxsize[0] * boxsize[0] * boxsize[0];
-        const int n_modes = n_pw_periodic / 2;
-
-        // Periodic self-energy: (1/V) Σ_{k≠0} kernel_hat(k)
-        Real self_periodic = 0;
-        for (int nx = -n_modes; nx <= n_modes; ++nx)
-            for (int ny = -n_modes; ny <= n_modes; ++ny)
-                for (int nz = -n_modes; nz <= n_modes; ++nz) {
-                    if (nx == 0 && ny == 0 && nz == 0)
-                        continue;
-                    const Real k2 = (nx * nx + ny * ny + nz * nz) * dk * dk;
-                    const Real kappa = std::sqrt(k2);
-                    const Real arg = kappa * sigma1;
-                    if (std::abs(arg) > 1.0)
-                        continue;
-                    const Real psi_val = fourier_data.prolate0_fun.eval_val(arg);
-                    self_periodic += (4.0 * M_PI / psi0_at_zero) * psi_val / k2;
-                }
-        self_periodic /= V_box;
-
-        // Free-space W_0+D_0 self-energy (same as w0[0] or w0[1])
-        const Real self_free = w0[0];
-        const Real delta = self_periodic - self_free;
-
-        for (int i_level = 0; i_level < n_levels(); ++i_level)
-            w0[i_level] += delta;
-    }
-
     // For PBC: precompute the periodic shift for each (trg_box, nbr_index) pair.
     // The nbr array index k encodes a direction (dx,dy,dz) ∈ {-1,0,+1}^DIM.
     // k = d0 + 3*d1 + 9*d2 where d ∈ {0,1,2} maps to offset {-1,0,+1}.
