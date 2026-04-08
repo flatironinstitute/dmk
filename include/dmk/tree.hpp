@@ -160,6 +160,7 @@ void multiply_kernelFT_cd2p(const sctl::Vector<T> &radialft, auto &&pwexp) {
     sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, n_flops);
 }
 
+#if defined(__AVX512F__) || defined(__AVX2__)
 template <typename Real, int VecLen>
 inline void shift_planewave_simd(int nexp, int nd, const Real *__restrict__ pw1, Real *__restrict__ pw2,
                                  const Real *__restrict__ shift_r, const Real *__restrict__ shift_i) {
@@ -206,6 +207,7 @@ inline void shift_planewave_simd(int nexp, int nd, const Real *__restrict__ pw1,
         }
     }
 }
+#endif
 
 template <typename Complex, int DIM>
 inline void shift_planewave(const ndview<Complex, DIM + 1> &pwexp1_, ndview<Complex, DIM + 1> &pwexp2_,
@@ -215,13 +217,26 @@ inline void shift_planewave(const ndview<Complex, DIM + 1> &pwexp1_, ndview<Comp
 
     const int nd = pwexp1_.extent(DIM);
     const int nexp = wpwshift.extent(0);
+
+#if defined(__AVX512F__) || defined(__AVX2__)
     const Real *shift_r = reinterpret_cast<const Real *>(wpwshift.data());
     const Real *shift_i = shift_r + nexp;
-
     const Real *pw1 = reinterpret_cast<const Real *>(pwexp1_.data());
     Real *pw2 = reinterpret_cast<Real *>(pwexp2_.data());
-
     shift_planewave_simd<Real, VecLen>(nexp, nd, pw1, pw2, shift_r, shift_i);
+#else
+    dmk::ndview<const Complex, 2> pwexp1({nexp, nd}, pwexp1_.data());
+    dmk::ndview<Complex, 2> pwexp2({nexp, nd}, pwexp2_.data());
+
+    using ArrayMap = ndview<Complex, 1>;
+    using ConstArrayMap = ndview<const Complex, 1>;
+    ConstArrayMap wpwshift_view({nexp}, &wpwshift(0));
+    for (int ind = 0; ind < nd; ++ind) {
+        ConstArrayMap pw1_view({nexp}, &pwexp1(0, ind));
+        ArrayMap pw2_view({nexp}, &pwexp2(0, ind));
+        pw2_view += pw1_view * wpwshift_view;
+    }
+#endif
 }
 
 template <typename Real>

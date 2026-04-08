@@ -98,7 +98,7 @@ std::pair<int, int> get_pwmax_and_poly_order(int dim, int ndigits, dmk_ikernel k
     if (ndigits <= 3) return {13, 9};
     if (ndigits <= 6) return {25, 18};
     if (ndigits <= 9) return {39, 28};
-    if (ndigits <= 12) return {53, 38};
+    if (ndigits <= 12) return {55, 38};
     // clang-format on
     throw std::runtime_error("Requested precision too high");
 }
@@ -612,7 +612,7 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
     window_fourier_data.pw2poly.ReInit(n_order * n_pw);
     window_fourier_data.radialft.ReInit(n_pw_modes);
     get_windowed_kernel_ft<Real, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits, boxsize[0],
-                                   fourier_data.prolate0_fun, kernel_ft);
+                                      fourier_data.prolate0_fun, kernel_ft);
     util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<Real, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
                                               ndview<Real, 1>({n_pw_modes}, &window_fourier_data.radialft[0]));
     fourier_data.calc_planewave_coeff_matrices(-1, n_order, window_fourier_data.poly2pw, window_fourier_data.pw2poly);
@@ -626,7 +626,7 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
 
         const bool is_root = (i_level == 0);
         get_difference_kernel_ft<Real, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_digits,
-                                         boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
+                                            boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
         util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<Real, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
                                                   ndview<Real, 1>({n_pw_modes}, &lfd.radialft[0]));
         fourier_data.calc_planewave_coeff_matrices(i_level, n_order, lfd.poly2pw, lfd.pw2poly);
@@ -809,8 +809,8 @@ void DMKPtTree<Real, DIM>::upward_pass() {
             for (int i = 0; i < charge2proxy_work.size(); ++i) {
                 const auto &w = charge2proxy_work[i];
                 proxy::charge2proxycharge<Real, DIM>(r_src_owned_view(w.src_box), charge_owned_view(w.src_box),
-                                                  center_view(w.center_box), 2.0 / boxsize[w.level],
-                                                  proxy_view_upward(w.center_box), workspace);
+                                                     center_view(w.center_box), 2.0 / boxsize[w.level],
+                                                     proxy_view_upward(w.center_box), workspace);
             }
         }
         sctl::Profile::Toc();
@@ -836,7 +836,7 @@ void DMKPtTree<Real, DIM>::upward_pass() {
 
                         const ndview<Real, 2> c2p_view({n_order, DIM}, &c2p[ic * DIM * n_order * n_order]);
                         tensorprod::transform<Real, DIM>(n_tables, true, proxy_view_upward(cb), c2p_view,
-                                                      proxy_view_upward(i_box), workspace);
+                                                         proxy_view_upward(i_box), workspace);
                     }
                 }
             }
