@@ -744,7 +744,10 @@ void DMKPtTree<T, DIM>::precompute_fourier_data() {
     if (params.use_periodic) {
         // Periodic grid: dk = 2*pi/L, n_pw_periodic modes per dimension
         const T dk = 2.0 * M_PI / boxsize[0];
-        const T sigma1 = boxsize[1] / fourier_data.beta();
+        // Multi-level trees use the first child scale for the root smooth kernel.
+        // For a single-level tree there is no level-1 box, so fall back to the root scale.
+        const int sigma_level = std::min(1, n_levels() - 1);
+        const T sigma1 = boxsize[sigma_level] / fourier_data.beta();
         const T psi0_at_zero = fourier_data.prolate0_fun.eval_val(0.0);
         const long n_pw_modes_periodic = sctl::pow<DIM - 1>(n_pw_periodic) * ((n_pw_periodic + 1) / 2);
         const int n_fourier = DIM * sctl::pow<2>(n_pw_periodic / 2) + 1;
@@ -1424,7 +1427,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions(const Real *r_src_t, con
                 int src_level = node_mid[src_box].Depth();
                 Real bsize = boxsize[src_level];
 
-                if (ifpwexp[src_box] && src_box == trg_box) {
+                if (ifpwexp[src_box] && src_box == trg_box && src_level + 1 < n_levels()) {
                     bsize /= Real{2.0};
                     src_level = src_level + 1;
                 } else if (src_level < trg_level) {
