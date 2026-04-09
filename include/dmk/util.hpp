@@ -63,7 +63,7 @@ class StackOrHeapBuffer {
     }
 };
 
-double calc_bandlimiting(dmk_ikernel kernel, int dim, double eps);
+double calc_bandlimiting(const pdmk_params &p);
 
 template <typename Real>
 void mesh_nd(int dim, Real *in, int size, Real *out);

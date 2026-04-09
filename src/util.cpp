@@ -9,38 +9,12 @@
 namespace dmk::util {
 using dmk::ndview;
 
-double calc_bandlimiting(dmk_ikernel kernel, int dim, double eps) {
-    double d = -std::log10(eps);
-    // double beta = -0.054 * d * d + 3.38 * d - 3.0;
-    double beta = -0.054 * d * d + 3.42 * d - 3.2;
-    return std::max(0.0, beta);
-
-    // // Effective digits, with kernel/dim-dependent safety margin
-    // double ndigits = -std::log10(eps);
-
-    // // Piecewise linear fit to the original prolate bandwidth table,
-    // // calibrated to match known good values at 3, 6, 9, 12 digits
-    // double beta;
-    // if (ndigits <= 6)
-    //     beta = 2.50 * ndigits + 2.5;
-    // else if (ndigits <= 9)
-    //     beta = 2.60 * ndigits + 1.9;
-    // else
-    //     beta = 2.37 * ndigits + 4.0;
-
-    // std::cout << "beta new, old: " << beta << " ";
-    // {
-    //     int scale;
-    //     if (eps >= 1e-3)
-    //         scale = 8;
-    //     else if (eps >= 1e-6)
-    //         scale = 20;
-    //     else
-    //         scale = 25;
-    //     double ndigits = -std::log10(scale * eps);
-    //     std::cout << 2.37 * ndigits + 2.84 << std::endl;
-    // }
-    // return std::max(0.0, beta);
+double calc_bandlimiting(const pdmk_params &p) {
+    if (p.debug_flags & DMK_DEBUG_OVERRIDE_BETA)
+        return p.debug_params[DMK_DEBUG_BETA_SLOT];
+    double d = -std::log10(p.eps);
+    const double beta = 2.664 * d + 0.306;
+    return beta;
 }
 
 template <typename Real>

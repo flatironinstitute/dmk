@@ -57,7 +57,7 @@ inline std::tuple<double, double, double> get_PSWF_windowed_kernel_pwterms(int d
 }
 
 template <typename Real, int DIM>
-void yukawa_windowed_kernel_ft(const double *rpars, Real beta, int ndigits, int npw, Real boxsize, Prolate0Fun &pf,
+void yukawa_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
                                sctl::Vector<Real> &windowed_ft) {
     auto [hpw, ws, rl] = get_PSWF_windowed_kernel_pwterms<DIM>(boxsize);
     const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
@@ -103,7 +103,7 @@ void yukawa_windowed_kernel_ft(const double *rpars, Real beta, int ndigits, int 
 }
 
 template <typename Real>
-void laplace_2d_windowed_kernel_ft(const double *rpars, Real beta, int ndigits, int npw, Real boxsize, Prolate0Fun &pf,
+void laplace_2d_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
                                    sctl::Vector<Real> &windowed_ft) {
     constexpr int DIM = 2;
     const auto [hpw, ws, rl] = get_PSWF_windowed_kernel_pwterms<DIM>(boxsize);
@@ -130,7 +130,7 @@ void laplace_2d_windowed_kernel_ft(const double *rpars, Real beta, int ndigits, 
 }
 
 template <typename Real>
-void laplace_3d_windowed_kernel_ft(const double *rpars, Real beta, int ndigits, int npw, Real boxsize, Prolate0Fun &pf,
+void laplace_3d_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
                                    sctl::Vector<Real> &windowed_ft) {
     constexpr int DIM = 3;
     const auto [hpw, ws, rl] = get_PSWF_windowed_kernel_pwterms<DIM>(boxsize);
@@ -169,17 +169,17 @@ void laplace_3d_windowed_kernel_ft(const double *rpars, Real beta, int ndigits, 
 }
 
 template <typename Real, int DIM>
-inline void laplace_windowed_kernel_ft(const double *rpars, Real beta, int ndigits, int npw, Real boxsize,
-                                       Prolate0Fun &pf, sctl::Vector<Real> &windowed_ft) {
+inline void laplace_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
+                                       sctl::Vector<Real> &windowed_ft) {
     if constexpr (DIM == 2)
-        return laplace_2d_windowed_kernel_ft<Real>(rpars, beta, ndigits, npw, boxsize, pf, windowed_ft);
+        return laplace_2d_windowed_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, windowed_ft);
     if constexpr (DIM == 3)
-        return laplace_3d_windowed_kernel_ft<Real>(rpars, beta, ndigits, npw, boxsize, pf, windowed_ft);
+        return laplace_3d_windowed_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, windowed_ft);
 }
 
 template <typename Real>
-inline void sqrt_laplace_2d_windowed_kernel_ft(const double *rpars, Real beta, int ndigits, int npw, Real boxsize,
-                                               Prolate0Fun &pf, sctl::Vector<Real> &windowed_ft) {
+inline void sqrt_laplace_2d_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
+                                               sctl::Vector<Real> &windowed_ft) {
     constexpr int DIM = 2;
     const auto [hpw, ws, rl] = get_PSWF_windowed_kernel_pwterms<2>(boxsize);
     const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
@@ -240,8 +240,8 @@ inline void sqrt_laplace_2d_windowed_kernel_ft(const double *rpars, Real beta, i
 }
 
 template <typename Real>
-inline void sqrt_laplace_3d_windowed_kernel_ft(const double *rpars, Real beta, int ndigits, int npw, Real boxsize,
-                                               Prolate0Fun &pf, sctl::Vector<Real> &windowed_ft) {
+inline void sqrt_laplace_3d_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
+                                               sctl::Vector<Real> &windowed_ft) {
     constexpr int DIM = 3;
     const auto [hpw, ws, rl] = get_PSWF_windowed_kernel_pwterms<3>(boxsize);
     const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
@@ -324,29 +324,29 @@ inline void sqrt_laplace_3d_windowed_kernel_ft(const double *rpars, Real beta, i
 }
 
 template <typename Real, int DIM>
-inline void sqrt_laplace_windowed_kernel_ft(const double *rpars, Real beta, int ndigits, int npw, Real boxsize,
-                                            Prolate0Fun &pf, sctl::Vector<Real> &windowed_ft) {
+inline void sqrt_laplace_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
+                                            sctl::Vector<Real> &windowed_ft) {
     if constexpr (DIM == 2)
-        return sqrt_laplace_2d_windowed_kernel_ft<Real>(rpars, beta, ndigits, npw, boxsize, pf, windowed_ft);
+        return sqrt_laplace_2d_windowed_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, windowed_ft);
     if constexpr (DIM == 3)
-        return sqrt_laplace_3d_windowed_kernel_ft<Real>(rpars, beta, ndigits, npw, boxsize, pf, windowed_ft);
+        return sqrt_laplace_3d_windowed_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, windowed_ft);
 }
 
 template <typename Real, int DIM>
-void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, int npw, Real boxsize,
-                            Prolate0Fun &pf, sctl::Vector<Real> &windowed_ft) {
+void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
+                            sctl::Vector<Real> &windowed_ft) {
     switch (kernel) {
     case dmk_ikernel::DMK_YUKAWA:
-        return yukawa_windowed_kernel_ft<Real, DIM>(rpars, beta, ndigits, npw, boxsize, pf, windowed_ft);
+        return yukawa_windowed_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, windowed_ft);
     case dmk_ikernel::DMK_LAPLACE:
-        return laplace_windowed_kernel_ft<Real, DIM>(rpars, beta, ndigits, npw, boxsize, pf, windowed_ft);
+        return laplace_windowed_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, windowed_ft);
     case dmk_ikernel::DMK_SQRT_LAPLACE:
-        return sqrt_laplace_windowed_kernel_ft<Real, DIM>(rpars, beta, ndigits, npw, boxsize, pf, windowed_ft);
+        return sqrt_laplace_windowed_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, windowed_ft);
     }
 }
 
 template <typename Real, int DIM>
-void yukawa_difference_kernel_ft(const double *rpars, Real beta, int ndigits, int npw, Real boxsize, Prolate0Fun &pf,
+void yukawa_difference_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
                                  sctl::Vector<Real> &diff_kernel_ft) {
     const Real bsizesmall = boxsize * 0.5;
     const Real bsizebig = boxsize;
@@ -388,8 +388,8 @@ void yukawa_difference_kernel_ft(const double *rpars, Real beta, int ndigits, in
 }
 
 template <typename Real>
-void laplace_2d_difference_kernel_ft(const double *rpars, Real beta, int ndigits, int npw, Real boxsize,
-                                     Prolate0Fun &pf, sctl::Vector<Real> &diff_kernel_ft) {
+void laplace_2d_difference_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
+                                     sctl::Vector<Real> &diff_kernel_ft) {
     constexpr int DIM = 2;
     const Real bsizesmall = boxsize * 0.5;
     const Real bsizebig = boxsize;
@@ -412,8 +412,8 @@ void laplace_2d_difference_kernel_ft(const double *rpars, Real beta, int ndigits
 }
 
 template <typename Real>
-void laplace_3d_difference_kernel_ft(const double *rpars, Real beta, int ndigits, int npw, Real boxsize,
-                                     Prolate0Fun &pf, sctl::Vector<Real> &diff_kernel_ft) {
+void laplace_3d_difference_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
+                                     sctl::Vector<Real> &diff_kernel_ft) {
     constexpr int DIM = 3;
     const Real bsizesmall = boxsize * 0.5;
     const Real bsizebig = boxsize;
@@ -462,17 +462,17 @@ void laplace_3d_difference_kernel_ft(const double *rpars, Real beta, int ndigits
 }
 
 template <typename Real, int DIM>
-void laplace_difference_kernel_ft(const double *rpars, Real beta, int ndigits, int npw, Real boxsize, Prolate0Fun &pf,
+void laplace_difference_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
                                   sctl::Vector<Real> &diff_kernel_ft) {
     if constexpr (DIM == 2)
-        return laplace_2d_difference_kernel_ft<Real>(rpars, beta, ndigits, npw, boxsize, pf, diff_kernel_ft);
+        return laplace_2d_difference_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, diff_kernel_ft);
     if constexpr (DIM == 3)
-        return laplace_3d_difference_kernel_ft<Real>(rpars, beta, ndigits, npw, boxsize, pf, diff_kernel_ft);
+        return laplace_3d_difference_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, diff_kernel_ft);
 }
 
 template <typename Real>
-void sqrt_laplace_2d_difference_kernel_ft(const double *rpars, Real beta, int ndigits, int npw, Real boxsize,
-                                          Prolate0Fun &pf, sctl::Vector<Real> &diff_kernel_ft) {
+void sqrt_laplace_2d_difference_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
+                                          sctl::Vector<Real> &diff_kernel_ft) {
     constexpr int DIM = 2;
     const auto [hpw, ws] = get_PSWF_difference_kernel_pwterms<2>(npw, beta, boxsize);
     const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
@@ -530,8 +530,8 @@ void sqrt_laplace_2d_difference_kernel_ft(const double *rpars, Real beta, int nd
 }
 
 template <typename Real>
-void sqrt_laplace_3d_difference_kernel_ft(const double *rpars, Real beta, int ndigits, int npw, Real boxsize,
-                                          Prolate0Fun &pf, sctl::Vector<Real> &diff_kernel_ft) {
+void sqrt_laplace_3d_difference_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
+                                          sctl::Vector<Real> &diff_kernel_ft) {
     constexpr int DIM = 3;
     const auto [hpw, ws] = get_PSWF_difference_kernel_pwterms<3>(npw, beta, boxsize);
     const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
@@ -601,25 +601,25 @@ void sqrt_laplace_3d_difference_kernel_ft(const double *rpars, Real beta, int nd
 }
 
 template <typename Real, int DIM>
-void sqrt_laplace_difference_kernel_ft(const double *rpars, Real beta, int ndigits, int npw, Real boxsize,
-                                       Prolate0Fun &pf, sctl::Vector<Real> &diff_kernel_ft) {
+void sqrt_laplace_difference_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
+                                       sctl::Vector<Real> &diff_kernel_ft) {
     if constexpr (DIM == 2)
-        return sqrt_laplace_2d_difference_kernel_ft<Real>(rpars, beta, ndigits, npw, boxsize, pf, diff_kernel_ft);
+        return sqrt_laplace_2d_difference_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, diff_kernel_ft);
     if constexpr (DIM == 3)
-        return sqrt_laplace_3d_difference_kernel_ft<Real>(rpars, beta, ndigits, npw, boxsize, pf, diff_kernel_ft);
+        return sqrt_laplace_3d_difference_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, diff_kernel_ft);
 }
 
 template <typename Real, int DIM>
-void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, int npw,
-                              Real boxsize, Prolate0Fun &pf, sctl::Vector<Real> &diff_kernel_ft) {
+void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars, Real beta, int npw, Real boxsize,
+                              Prolate0Fun &pf, sctl::Vector<Real> &diff_kernel_ft) {
     if (init || kernel == DMK_YUKAWA)
         switch (kernel) {
         case dmk_ikernel::DMK_YUKAWA:
-            return yukawa_difference_kernel_ft<Real, DIM>(rpars, beta, ndigits, npw, boxsize, pf, diff_kernel_ft);
+            return yukawa_difference_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, diff_kernel_ft);
         case dmk_ikernel::DMK_LAPLACE:
-            return laplace_difference_kernel_ft<Real, DIM>(rpars, beta, ndigits, npw, boxsize, pf, diff_kernel_ft);
+            return laplace_difference_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, diff_kernel_ft);
         case dmk_ikernel::DMK_SQRT_LAPLACE:
-            return sqrt_laplace_difference_kernel_ft<Real, DIM>(rpars, beta, ndigits, npw, boxsize, pf, diff_kernel_ft);
+            return sqrt_laplace_difference_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, diff_kernel_ft);
         default:
             throw std::runtime_error("Unsupported kernel " + std::to_string(kernel));
         }
@@ -642,10 +642,9 @@ void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars
 }
 
 template <typename T>
-FourierData<T>::FourierData(dmk_ikernel kernel, int n_dim, T eps, int n_digits, int n_pw_max, T fparam, double beta,
+FourierData<T>::FourierData(dmk_ikernel kernel, int n_dim, T eps, int n_pw_max, T fparam, double beta,
                             const sctl::Vector<T> &boxsize_)
-    : kernel_(kernel), n_dim_(n_dim), n_digits_(n_digits), fparam_(fparam), box_sizes_(boxsize_),
-      n_levels_(boxsize_.Dim()) {
+    : kernel_(kernel), n_dim_(n_dim), fparam_(fparam), box_sizes_(boxsize_), n_levels_(boxsize_.Dim()) {
 
     beta_ = beta;
     prolate0_fun = Prolate0Fun(beta_, 10000);
@@ -901,27 +900,25 @@ void FourierData<T>::calc_planewave_coeff_matrices(int i_level, int n_order, sct
 template struct FourierData<float>;
 template struct FourierData<double>;
 
-template void get_windowed_kernel_ft<float, 2>(dmk_ikernel kernel, const double *rpars, float beta, int ndigits,
-                                               int npw, float boxsize, Prolate0Fun &pf, sctl::Vector<float> &radialft);
-template void get_windowed_kernel_ft<float, 3>(dmk_ikernel kernel, const double *rpars, float beta, int ndigits,
-                                               int npw, float boxsize, Prolate0Fun &pf, sctl::Vector<float> &radialft);
-template void get_windowed_kernel_ft<double, 2>(dmk_ikernel kernel, const double *rpars, double beta, int ndigits,
-                                                int npw, double boxsize, Prolate0Fun &pf,
-                                                sctl::Vector<double> &radialft);
-template void get_windowed_kernel_ft<double, 3>(dmk_ikernel kernel, const double *rpars, double beta, int ndigits,
-                                                int npw, double boxsize, Prolate0Fun &pf,
-                                                sctl::Vector<double> &radialft);
+template void get_windowed_kernel_ft<float, 2>(dmk_ikernel kernel, const double *rpars, float beta, int npw,
+                                               float boxsize, Prolate0Fun &pf, sctl::Vector<float> &radialft);
+template void get_windowed_kernel_ft<float, 3>(dmk_ikernel kernel, const double *rpars, float beta, int npw,
+                                               float boxsize, Prolate0Fun &pf, sctl::Vector<float> &radialft);
+template void get_windowed_kernel_ft<double, 2>(dmk_ikernel kernel, const double *rpars, double beta, int npw,
+                                                double boxsize, Prolate0Fun &pf, sctl::Vector<double> &radialft);
+template void get_windowed_kernel_ft<double, 3>(dmk_ikernel kernel, const double *rpars, double beta, int npw,
+                                                double boxsize, Prolate0Fun &pf, sctl::Vector<double> &radialft);
 template void get_difference_kernel_ft<float, 2>(bool init, dmk_ikernel kernel, const double *rpars, float beta,
-                                                 int ndigits, int npw, float boxsize, Prolate0Fun &pf,
+                                                 int npw, float boxsize, Prolate0Fun &pf,
                                                  sctl::Vector<float> &diff_kernel_ft);
 template void get_difference_kernel_ft<float, 3>(bool init, dmk_ikernel kernel, const double *rpars, float beta,
-                                                 int ndigits, int npw, float boxsize, Prolate0Fun &pf,
+                                                 int npw, float boxsize, Prolate0Fun &pf,
                                                  sctl::Vector<float> &diff_kernel_ft);
 template void get_difference_kernel_ft<double, 2>(bool init, dmk_ikernel kernel, const double *rpars, double beta,
-                                                  int ndigits, int npw, double boxsize, Prolate0Fun &pf,
+                                                  int npw, double boxsize, Prolate0Fun &pf,
                                                   sctl::Vector<double> &diff_kernel_ft);
 template void get_difference_kernel_ft<double, 3>(bool init, dmk_ikernel kernel, const double *rpars, double beta,
-                                                  int ndigits, int npw, double boxsize, Prolate0Fun &pf,
+                                                  int npw, double boxsize, Prolate0Fun &pf,
                                                   sctl::Vector<double> &diff_kernel_ft);
 
 } // namespace dmk

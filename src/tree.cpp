@@ -87,39 +87,6 @@ void DMKPtTree<Real, DIM>::dump() const {
     dumper("dmk_morton_ids", morton_ids);
 }
 
-std::pair<int, int> get_pwmax_and_poly_order(int dim, int ndigits, dmk_ikernel kernel) {
-    if (ndigits < 3 || ndigits > 12)
-        throw std::runtime_error("Unsupported precision");
-
-    int npw, norder;
-    if (kernel == DMK_SQRT_LAPLACE && dim == 3) {
-        auto interp = [](int d, int d0, int d1, int v0, int v1) {
-            int v = v0 + (v1 - v0) * (d - d0) / (d1 - d0);
-            return v;
-        };
-
-        if (ndigits <= 6) {
-            npw = interp(ndigits, 3, 6, 13, 27);
-            norder = interp(ndigits, 3, 6, 9, 18);
-        } else if (ndigits <= 9) {
-            npw = interp(ndigits, 6, 9, 27, 39);
-            norder = interp(ndigits, 6, 9, 18, 28);
-        } else {
-            npw = interp(ndigits, 9, 12, 39, 55);
-            norder = interp(ndigits, 9, 12, 28, 38);
-        }
-    } else {
-        npw = std::round(4.444 * ndigits - 0.333);
-        norder = std::round(3.222 * ndigits - 0.667);
-    }
-
-    // npw must be odd
-    if (npw % 2 == 0)
-        npw++;
-
-    return {npw, norder};
-}
-
 void update_offsets_from_counts(const sctl::Vector<sctl::Long> &counts, sctl::Long N,
                                 sctl::Vector<sctl::Long> &offsets) {
     offsets.ReInit(counts.Dim());
@@ -142,13 +109,13 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
       kernel_output_dim_trg(get_kernel_output_dim(params.n_dim, params.kernel, params.pgh_trg)),
       kernel_output_dim_max(std::max(kernel_output_dim_src, kernel_output_dim_trg)),
       n_tables(1), // Placeholder for when we need more proxy coefficient tables
-      n_digits(std::round(log10(1.0 / params_.eps) - 0.1)),
-      expansion_constants(params.kernel, params.use_periodic, params.eps),
+      n_digits(std::round(log10(1.0 / params_.eps) - 0.1)), expansion_constants(params),
       logger(dmk::get_logger(comm, params.log_level)), rank_logger(dmk::get_rank_logger(comm, params.log_level)) {
     sctl::Profile::Scoped profile("DMKPtTree::DMKPtTree", &comm_);
-    debug_omit_pw = util::env_is_set("DMK_DEBUG_OMIT_PW");
-    debug_omit_direct = util::env_is_set("DMK_DEBUG_OMIT_DIRECT");
-    debug_dump_tree = util::env_is_set("DMK_DEBUG_DUMP_TREE");
+    debug_omit_pw = (params.debug_flags & DMK_DEBUG_OMIT_PW) || util::env_is_set("DMK_DEBUG_OMIT_PW");
+    debug_omit_direct = (params.debug_flags & DMK_DEBUG_OMIT_DIRECT) || util::env_is_set("DMK_DEBUG_OMIT_DIRECT");
+    debug_dump_tree = (params.debug_flags & DMK_DEBUG_DUMP_TREE) || util::env_is_set("DMK_DEBUG_DUMP_TREE");
+    debug_force_aot = (params.debug_flags & DMK_DEBUG_FORCE_AOT) || util::env_is_set("DMK_DEBUG_FORCE_AOT");
 
     logger->info("tree build started");
 
@@ -628,7 +595,7 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
     window_fourier_data.poly2pw.ReInit(n_order * n_pw);
     window_fourier_data.pw2poly.ReInit(n_order * n_pw);
     window_fourier_data.radialft.ReInit(n_pw_modes);
-    get_windowed_kernel_ft<Real, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits, n_pw, boxsize[0],
+    get_windowed_kernel_ft<Real, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_pw, boxsize[0],
                                       fourier_data.prolate0_fun, kernel_ft);
     util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<Real, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
                                               ndview<Real, 1>({n_pw_modes}, &window_fourier_data.radialft[0]));
@@ -642,7 +609,7 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
         lfd.pw2poly.ReInit(n_order * n_pw);
 
         const bool is_root = (i_level == 0);
-        get_difference_kernel_ft<Real, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_digits, n_pw,
+        get_difference_kernel_ft<Real, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_pw,
                                             boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
         util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<Real, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
                                                   ndview<Real, 1>({n_pw_modes}, &lfd.radialft[0]));
@@ -692,8 +659,10 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
         auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.pgh_trg, DIM, n_digits, 3);
 #ifdef DMK_USE_JIT
         if (!util::env_is_set("DMK_DEBUG_FORCE_AOT")) {
-            src_eval = make_evaluator_jit<Real>(params.kernel, params.pgh_src, DIM, n_digits, 3);
-            trg_eval = make_evaluator_jit<Real>(params.kernel, params.pgh_trg, DIM, n_digits, 3);
+            src_eval =
+                make_evaluator_jit<Real>(params.kernel, params.pgh_src, DIM, n_digits, expansion_constants.beta, 3);
+            trg_eval =
+                make_evaluator_jit<Real>(params.kernel, params.pgh_trg, DIM, n_digits, expansion_constants.beta, 3);
         }
 #endif
         // FIXME: assumes the same src/trg output configuration
@@ -779,8 +748,8 @@ void DMKPtTree<Real, DIM>::generate_metadata() {
     proxy_down_zeroed.resize(n_boxes());
     std::tie(c2p, p2c) = dmk::chebyshev::get_c2p_p2c_matrices<Real>(DIM, expansion_constants.n_order);
     // FIXME. pass in correct expansion constants
-    fourier_data = FourierData<Real>(params.kernel, DIM, params.eps, n_digits, expansion_constants.n_pw_win,
-                                     params.fparam, expansion_constants.beta, boxsize);
+    fourier_data = FourierData<Real>(params.kernel, DIM, params.eps, expansion_constants.n_pw_win, params.fparam,
+                                     expansion_constants.beta, boxsize);
     precompute_window_difference_data();
     build_evaluators();
 

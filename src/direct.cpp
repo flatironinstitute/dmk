@@ -64,14 +64,11 @@ std::vector<Real> make_polyfit_abs_error(int digits, Func &&f, Real a, Real b) {
 struct CoeffsCache {
   public:
     template <typename T, class FitFunction>
-    const std::vector<T> &get(int digits, FitFunction &fit_function) {
-        auto key = std::make_tuple(typeid(FitFunction).hash_code(), digits);
-
-        // Always fit in double first
+    const std::vector<T> &get(int digits, double beta, FitFunction &fit_function) {
+        auto key = std::make_tuple(typeid(FitFunction).hash_code(), digits, beta);
         if (!double_map.contains(key)) {
             double_map[key] = fit_function(digits);
         }
-
         if constexpr (std::is_same_v<T, double>) {
             return double_map[key];
         } else {
@@ -84,13 +81,13 @@ struct CoeffsCache {
     }
 
   private:
-    using CacheKey = std::tuple<std::size_t, int>;
+    using CacheKey = std::tuple<std::size_t, int, double>;
     struct hash_tuple {
-        template <typename T1, typename T2>
-        size_t operator()(const std::tuple<T1, T2> &x) const {
-            auto a = std::hash<T1>()(std::get<0>(x));
-            auto b = std::hash<T2>()(std::get<1>(x));
-            return a ^ (b << 32);
+        size_t operator()(const CacheKey &x) const {
+            auto a = std::hash<std::size_t>()(std::get<0>(x));
+            auto b = std::hash<int>()(std::get<1>(x));
+            auto c = std::hash<double>()(std::get<2>(x));
+            return a ^ (b << 16) ^ (c << 32);
         }
     };
     std::unordered_map<CacheKey, std::vector<double>, hash_tuple> double_map;
@@ -163,7 +160,7 @@ std::vector<Real> get_local_correction_coeffs(dmk_ikernel kernel, int n_dim, int
 
     auto fit = [&](auto func, double lo, double hi) -> std::vector<Real> {
         auto fit_func = [&](int digits) { return make_polyfit_abs_error<double>(digits, func, lo, hi); };
-        return coeffs_cache.get<Real>(n_digits, fit_func);
+        return coeffs_cache.get<Real>(n_digits, beta, fit_func);
     };
 
     switch (kernel) {
@@ -204,12 +201,11 @@ __attribute__((constructor)) void init() {
 
 template <typename Real>
 direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits,
-                                               int unroll_factor) {
+                                               double beta, int unroll_factor) {
     static std::mutex lock;
     std::lock_guard<std::mutex> lock_guard(lock);
     constexpr int VECWIDTH = sctl::DefaultVecLen<Real>();
     constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
-    const double beta = dmk::util::calc_bandlimiting(kernel, n_dim, std::pow(10., -n_digits));
 
     auto build_func_name = [&](const std::string &base_name) {
         return std::format("void {}<{}, {}, -1, -1, -1>", base_name, T_str, VECWIDTH);
@@ -241,9 +237,9 @@ direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_pgh eval_
 }
 
 template direct_evaluator_func<float> make_evaluator_jit<float>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
-                                                                int n_digits, int unroll_factor);
+                                                                int n_digits, double beta, int unroll_factor);
 template direct_evaluator_func<double> make_evaluator_jit<double>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
-                                                                  int n_digits, int unroll_factor);
+                                                                  int n_digits, double beta, int unroll_factor);
 #endif
 // (DMK_USE_JIT)
 

@@ -45,7 +45,7 @@ void pdmk(dmk_communicator comm, const pdmk_params &params, int n_src, const T *
     sctl::Vector<T> charge_vec(n_src * kernel_input_dim, const_cast<T *>(charge), false);
 
     DMKPtTree<T, DIM> tree(sctl_comm, params, r_src_vec, r_trg_vec, charge_vec);
-    if (util::env_is_set("DMK_DEBUG_USE_PQ"))
+    if ((params.debug_flags & DMK_DEBUG_USE_PQ) || util::env_is_set("DMK_DEBUG_USE_PQ"))
         tree.eval_pq();
     else
         tree.eval();
@@ -460,7 +460,7 @@ inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *pot_trg) {
                 const auto &comm = (*static_cast<TreeType *>(tree))->GetComm();
                 sctl::Profile::Scoped prof("pdmk_tree_eval", &comm);
 
-                if (util::env_is_set("DMK_DEBUG_USE_PQ"))
+                if ((t->params.debug_flags & DMK_DEBUG_USE_PQ) || util::env_is_set("DMK_DEBUG_USE_PQ"))
                     t->eval_pq();
                 else
                     t->eval();

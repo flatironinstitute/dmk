@@ -56,7 +56,7 @@ direct_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_pgh eval_
                                                int unroll_factor);
 template <typename Real>
 direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits,
-                                               int unroll_factor);
+                                               double beta, int unroll_factor);
 } // namespace dmk
 
 #endif

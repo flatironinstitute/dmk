@@ -7,41 +7,89 @@
 namespace dmk {
 constexpr int unroll_factor = 3;
 
-constexpr double laplace_2d_3[] = {2.56024812373876753e-01, -2.86702855259382383e-01, 3.07894905345502921e-02,
-                                   -1.25486877787345393e-03, 1.27010819658795869e-05};
+// beta: 5.634
+constexpr double laplace_2d_2[] = {3.13982699174314650e-01, -3.96433852452082069e-01, 9.92426154819550377e-02,
+                                   -1.90368403844127405e-02, 2.13177249723958250e-03};
 
-constexpr double laplace_2d_4[] = {2.88758533072985601e-01,  -3.11459796970033953e-01, 4.24422982971522714e-02,
-                                   -4.48267314627199924e-03, 4.76961773545513318e-04,  -3.86719758958271509e-05,
-                                   2.18952855337290719e-06,  -8.87477165744858529e-08};
+// beta: 8.298
+constexpr double laplace_2d_3[] = {3.34951846520722518e-01, -4.51425311660508977e-01, 1.58903913746138520e-01,
+                                   -5.64403577878143242e-02, 1.42225947874835106e-02};
 
-constexpr double laplace_2d_5[] = {2.99604586561240727e-01,  -3.73739552444638523e-01, 9.15453471236191280e-02,
-                                   -1.93459685782132185e-02, 2.81901597177355726e-03,  -2.65777593962264274e-04,
-                                   1.71600060879454740e-05,  -8.04847669765972978e-07, 2.87030370588980961e-08,
-                                   -8.00136636465699724e-10};
+// beta: 10.962
+constexpr double laplace_2d_4[] = {3.42281810696065336e-01,  -4.78096715201645150e-01, 1.97779137306704961e-01,
+                                   -8.64773139989030160e-02, 3.29622925119338744e-02,  -1.11027177029749714e-02,
+                                   2.66035143382815312e-03};
 
-constexpr double laplace_2d_6[] = {
-    3.19490369732046919e-01,  -4.08182167789759742e-01, 1.06491147423631985e-01, -2.09670023258909238e-02,
-    2.50182289824305536e-03,  -1.60904788729735457e-04, 3.96966798563163723e-06, 1.74454746020107835e-07,
-    -1.82883278739935325e-08, 5.85094275803735120e-10,  6.67600859211026297e-11, -1.51975718795580670e-11,
-    -1.11094660666468327e-10, 3.38448533845934895e-11,  1.30790163316386909e-10, -6.65585366135778104e-11,
-    -9.72716462644391703e-11, 7.76407254111542736e-11,  4.19339275731754599e-11, -4.70851055236950064e-11,
-    -8.02127609152222438e-12, 1.14980502595395408e-11};
+// beta: 13.626000000000001
+constexpr double laplace_2d_5[] = {3.44915842042819665e-01,  -4.89961369975528027e-01, 2.21480836889886956e-01,
+                                   -1.14394622555646933e-01, 5.37419473726064301e-02,  -2.20909817502120964e-02,
+                                   8.68893222440876058e-03,  -2.38434123821282566e-03};
 
-constexpr double laplace_2d_7[] = {};
+// beta: 16.29
+constexpr double laplace_2d_6[] = {3.45919386101466886e-01,  -4.95402969807283156e-01, 2.34698481783677582e-01,
+                                   -1.34144614252904887e-01, 7.44254544344874341e-02,  -3.68405773102182116e-02,
+                                   1.55070858412738963e-02,  -5.72102694789653789e-03, 2.10161274532129783e-03,
+                                   -5.43016405664242330e-04};
 
-constexpr double laplace_2d_8[] = {};
+// beta: 18.954
+constexpr double laplace_2d_7[] = {3.46309605610155224e-01,  -4.97894142081210078e-01, 2.42004772957524095e-01,
+                                   -1.47223285510184099e-01, 9.04992322165261154e-02,  -5.15970733773772269e-02,
+                                   2.62285491415453278e-02,  -1.16171240842201182e-02, 4.37704958272407043e-03,
+                                   -1.47657199336714384e-03, 5.16155202890721063e-04,  -1.27179066559064544e-04};
 
-constexpr double laplace_2d_9[] = {};
+// beta: 21.618000000000002
+constexpr double laplace_2d_8[] = {3.46465542185645459e-01,  -4.99035132663591008e-01, 2.45882072899040793e-01,
+                                   -1.55393224628365384e-01, 1.02514215430682176e-01,  -6.47292055179352205e-02,
+                                   3.73878506826006082e-02,  -1.93480188301886798e-02, 8.78913966227064594e-03,
+                                   -3.39457735346379097e-03, 1.21346253132454730e-03,  -4.78748932442096548e-04,
+                                   1.26630496274552024e-04};
 
-constexpr double laplace_2d_10[] = {};
+// beta: 24.282
+constexpr double laplace_2d_9[] = {3.46528846828475290e-01,  -4.99557977040003987e-01, 2.47905052833453571e-01,
+                                   -1.60284225913706196e-01, 1.10846135755074099e-01,  -7.54150698050898988e-02,
+                                   4.80865525877394173e-02,  -2.79232245364154502e-02, 1.45623181721780022e-02,
+                                   -6.79931168318733715e-03, 2.80441551454466446e-03,  -9.89738256485566499e-04,
+                                   3.29839686466982932e-04,  -1.25436314790291635e-04, 3.18225495247252316e-05};
 
-constexpr double laplace_2d_11[] = {};
+// beta: 26.946
+constexpr double laplace_2d_10[] = {3.46554885811630575e-01,  -4.99797464298173455e-01, 2.48944698681241722e-01,
+                                    -1.63125446206647234e-01, 1.16346774593003702e-01,  -8.34671988757569872e-02,
+                                    5.73882295658860106e-02,  -3.66610908749546716e-02, 2.13543038581039853e-02,
+                                    -1.12222679561388324e-02, 5.30517947282425906e-03,  -2.26374685941606269e-03,
+                                    8.61022869058034870e-04,  -2.81768838630406821e-04, 8.87191470372068481e-05,
+                                    -3.29018614557762698e-05, 8.07179489848754229e-06};
 
-constexpr double laplace_2d_12[] = {};
+// beta: 29.610000000000003
+constexpr double laplace_2d_11[] = {
+    3.46565709674464428e-01, -4.99907196210289839e-01, 2.49472734764018850e-01, -1.64733889213781792e-01,
+    1.19837338306038599e-01, -8.92269677062905442e-02, 6.49198653833157890e-02, -4.46941265869241558e-02,
+    2.85001358243681460e-02, -1.66176703156392692e-02, 8.79668798277245638e-03, -4.21256156538598117e-03,
+    1.82742664813772583e-03, -7.22659111899728260e-04, 2.56912723428001676e-04, -7.88574045760395340e-05,
+    2.37007778910783070e-05, -8.64819611048636306e-06, 2.06422790809902417e-06};
+
+// beta: 32.274
+constexpr double laplace_2d_12[] = {3.46570248057884389e-01,  -4.99957475122443762e-01, 2.49738364433143178e-01,
+                                    -1.65626336543615915e-01, 1.21983083621515789e-01,  -9.31667001765092706e-02,
+                                    7.06770768790406650e-02,  -5.15857979538693195e-02, 3.54026974664242433e-02,
+                                    -2.24978416961984090e-02, 1.31167910565566700e-02,  -6.98218022855232653e-03,
+                                    3.38578404329130389e-03,  -1.49440897266812575e-03, 6.02319291133440195e-04,
+                                    -2.23441579545037290e-04, 7.50610147733028798e-05,  -2.17998920378964566e-05,
+                                    6.30358375631785338e-06,  -2.27901245929962573e-06, 5.31730474006170036e-07};
 
 template <class Real, int MaxVecLen>
 direct_evaluator_func<Real> get_laplace_2d_kernel(dmk_pgh eval_level, int n_digits) {
     constexpr int UF = unroll_factor;
+    if (n_digits <= 2) {
+        constexpr int ND = 2, NC = 5;
+        std::array<Real, NC> coeffs;
+        std::copy_n(laplace_2d_2, NC, coeffs.data());
+        return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                    const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC>(eval_level, ND, rsc, cen, d2max, thresh2, NC,
+                                                               coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
+                                                               UF);
+        };
+    }
     if (n_digits <= 3) {
         constexpr int ND = 3, NC = 5;
         std::array<Real, NC> coeffs;
@@ -54,7 +102,7 @@ direct_evaluator_func<Real> get_laplace_2d_kernel(dmk_pgh eval_level, int n_digi
         };
     }
     if (n_digits <= 4) {
-        constexpr int ND = 4, NC = 8;
+        constexpr int ND = 4, NC = 7;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_2d_4, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -65,7 +113,7 @@ direct_evaluator_func<Real> get_laplace_2d_kernel(dmk_pgh eval_level, int n_digi
         };
     }
     if (n_digits <= 5) {
-        constexpr int ND = 5, NC = 10;
+        constexpr int ND = 5, NC = 8;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_2d_5, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -76,7 +124,7 @@ direct_evaluator_func<Real> get_laplace_2d_kernel(dmk_pgh eval_level, int n_digi
         };
     }
     if (n_digits <= 6) {
-        constexpr int ND = 6, NC = 22;
+        constexpr int ND = 6, NC = 10;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_2d_6, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -87,7 +135,7 @@ direct_evaluator_func<Real> get_laplace_2d_kernel(dmk_pgh eval_level, int n_digi
         };
     }
     if (n_digits <= 7) {
-        constexpr int ND = 7, NC = 0;
+        constexpr int ND = 7, NC = 12;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_2d_7, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -98,7 +146,7 @@ direct_evaluator_func<Real> get_laplace_2d_kernel(dmk_pgh eval_level, int n_digi
         };
     }
     if (n_digits <= 8) {
-        constexpr int ND = 8, NC = 0;
+        constexpr int ND = 8, NC = 13;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_2d_8, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -109,7 +157,7 @@ direct_evaluator_func<Real> get_laplace_2d_kernel(dmk_pgh eval_level, int n_digi
         };
     }
     if (n_digits <= 9) {
-        constexpr int ND = 9, NC = 0;
+        constexpr int ND = 9, NC = 15;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_2d_9, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -120,7 +168,7 @@ direct_evaluator_func<Real> get_laplace_2d_kernel(dmk_pgh eval_level, int n_digi
         };
     }
     if (n_digits <= 10) {
-        constexpr int ND = 10, NC = 0;
+        constexpr int ND = 10, NC = 17;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_2d_10, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -131,7 +179,7 @@ direct_evaluator_func<Real> get_laplace_2d_kernel(dmk_pgh eval_level, int n_digi
         };
     }
     if (n_digits <= 11) {
-        constexpr int ND = 11, NC = 0;
+        constexpr int ND = 11, NC = 19;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_2d_11, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -142,7 +190,7 @@ direct_evaluator_func<Real> get_laplace_2d_kernel(dmk_pgh eval_level, int n_digi
         };
     }
     if (n_digits <= 12) {
-        constexpr int ND = 12, NC = 0;
+        constexpr int ND = 12, NC = 21;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_2d_12, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -154,40 +202,99 @@ direct_evaluator_func<Real> get_laplace_2d_kernel(dmk_pgh eval_level, int n_digi
     }
     throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
 }
-constexpr double laplace_3d_3[] = {3.59352216489611631e-01, -5.29577278216261438e-01, 1.53806289663060758e-01,
-                                   3.08165315377173302e-02, -1.37719559094845907e-02, -1.23978813303763291e-03,
-                                   6.13723204886006861e-04};
+// beta: 5.634
+constexpr double laplace_3d_2[] = {2.17998183953000496e-01, -5.01498435116888963e-01, 3.38241507826899823e-01,
+                                   1.03815575056770545e-03, -5.66276391535132859e-02};
 
-constexpr double laplace_3d_4[] = {2.97080935255406964e-01, -5.26801212015735598e-01, 2.31920432432083989e-01,
-                                   2.73070147423109255e-02, -3.12129164069161781e-02, -4.69342348666627939e-04,
-                                   2.31676035861803518e-03, -3.92836098975129014e-05, -1.08495795458931577e-04,
-                                   2.82333457398634539e-06, 3.28423123826049806e-06};
+// beta: 8.298
+constexpr double laplace_3d_3[] = {1.35676693383068231e-01,  -4.22679758881918444e-01, 4.46694841556203426e-01,
+                                   -1.21102947058209454e-01, -8.26625453105883506e-02, 4.40644298701292625e-02};
 
-constexpr double laplace_3d_5[] = {2.45448106458190041e-01,  -5.12409643370177470e-01, 3.01787776619231174e-01,
-                                   8.56751810725959496e-03,  -5.21122086690222475e-02, 4.42825429099041185e-03,
-                                   5.20118992350946177e-03,  -6.29028086426284432e-04, -3.40009470824352220e-04,
-                                   4.49144087995459966e-05,  1.56655123863595172e-05,  -2.07862230105843786e-06,
-                                   -5.33363799291477824e-07, 6.32719527538486660e-08,  1.29903451790538712e-08};
+// beta: 10.962
+constexpr double laplace_3d_4[] = {8.61916042476558453e-02,  -3.39357689807749219e-01, 4.95769318253879487e-01,
+                                   -2.63353000669118043e-01, -7.92301496463873600e-02, 1.25856582628138036e-01,
+                                   -2.76665730002910318e-03, -2.31735239043814184e-02};
 
-constexpr double laplace_3d_6[] = {};
+// beta: 13.626000000000001
+constexpr double laplace_3d_5[] = {5.58390435893019663e-02,  -2.64586084955049261e-01, 4.87356384393162034e-01,
+                                   -3.84994597954706641e-01, 1.16315189240913750e-02,  1.85666658452653177e-01,
+                                   -8.23628275754923894e-02, -3.98393432987490456e-02, 3.31102704081132765e-02,
+                                   3.75332824122639758e-03,  -5.57532476536800898e-03};
 
-constexpr double laplace_3d_7[] = {};
+// beta: 16.29
+constexpr double laplace_3d_6[] = {3.65651153834013268e-02,  -2.02373828741634704e-01, 4.50680962873918789e-01,
+                                   -4.71259094659650657e-01, 1.31151290530008124e-01,  1.97006325911610741e-01,
+                                   -1.75941155471667859e-01, -1.49657566484197244e-02, 7.23405502287229746e-02,
+                                   -1.16581017499437639e-02, -1.68036765809427453e-02, 3.25068552699544610e-03,
+                                   2.00696867284461816e-03};
 
-constexpr double laplace_3d_8[] = {};
+// beta: 18.954
+constexpr double laplace_3d_7[] = {2.41435731559801123e-02,  -1.52729533229260889e-01, 3.98895426171370859e-01,
+                                   -5.19059925199433780e-01, 2.61759703204077210e-01,  1.53278369473923204e-01,
+                                   -2.67097148186365596e-01, 5.99652945526592748e-02,  1.00000753621406493e-01,
+                                   -5.88930498174368017e-02, -1.92963638496512387e-02, 2.06712499977083665e-02,
+                                   1.59403688932523418e-03,  -3.23248151527584038e-03};
 
-constexpr double laplace_3d_9[] = {};
+// beta: 21.618000000000002
+constexpr double laplace_3d_8[] = {1.60439437296675640e-02,  -1.14126073550636378e-01, 3.41987337192511121e-01,
+                                   -5.32522731286782625e-01, 3.82845035891724916e-01,  6.19184951923090338e-02,
+                                   -3.28185447928564689e-01, 1.72307149780891899e-01,  8.96059941698951201e-02,
+                                   -1.23461528598353215e-01, 7.59229237815524285e-03,  4.44741945776204600e-02,
+                                   -1.41898651813544500e-02, -9.64407308797441548e-03, 5.05118678882309890e-03,
+                                   1.05456872216903733e-03,  -7.50479469805201546e-04};
 
-constexpr double laplace_3d_10[] = {};
+// beta: 24.282
+constexpr double laplace_3d_9[] = {
+    1.07159462374928523e-02,  -8.46341160946152277e-02, 2.86172402632982548e-01,  -5.18876415012229586e-01,
+    4.81152338514268363e-01,  -6.26555153882026178e-02, -3.41806798659518574e-01, 3.02197463492700547e-01,
+    2.78618128968503437e-02,  -1.84360855208628632e-01, 6.88980134368040315e-02,  5.65882082276001064e-02,
+    -4.62859517784542374e-02, -8.22864098552431034e-03, 1.65706697984436407e-02,  -2.45712876778660994e-04,
+    -3.69762826634758429e-03, 2.15584244995764644e-04,  4.19195434991927001e-04};
 
-constexpr double laplace_3d_11[] = {};
+// beta: 26.946
+constexpr double laplace_3d_10[] = {
+    7.18708237059719791e-03,  -6.23865646673537194e-02, 2.34945455950023613e-01,  -4.86161809063531958e-01,
+    5.50172803263395238e-01,  -2.02350858567595993e-01, -3.00904600453594573e-01, 4.23072285773979484e-01,
+    -8.85142719163944380e-02, -2.14363943722174016e-01, 1.62465545958938223e-01,  3.54600844428899428e-02,
+    -8.91198361553773438e-02, 1.61613561954918085e-02,  2.92803322475974834e-02,  -1.34235174701271848e-02,
+    -6.29553570621151776e-03, 4.98393641198560753e-03,  8.34446597239230591e-04,  -1.11398751569548641e-03,
+    -5.14221535104267654e-05, 1.23018192605541074e-04};
 
-constexpr double laplace_3d_12[] = {};
+// beta: 29.610000000000003
+constexpr double laplace_3d_11[] = {
+    4.83699369429514345e-03,  -4.57629949245662096e-02, 1.89944134896976174e-01,  -4.41694820807374988e-01,
+    5.88938808524209989e-01,  -3.40295394858704248e-01, -2.09484233544280640e-01, 5.10379535704030496e-01,
+    -2.47274179951901069e-01, -1.90310301964979833e-01, 2.70493212718880660e-01,  -3.20750547444539069e-02,
+    -1.25666115771994574e-01, 6.59722816074232998e-02,  3.09799838816447737e-02,  -3.60662789129123224e-02,
+    -1.52631851038950955e-03, 1.24019732330262217e-02,  -1.83565084760144506e-03, -2.99799802313175561e-03,
+    6.85379511706281038e-04,  4.91463901760632997e-04,  -9.20146044351580157e-05, -4.24102106538326771e-05};
+
+// beta: 32.274
+constexpr double laplace_3d_12[] = {
+    3.26488932883790091e-03,  -3.34334184769561060e-02, 1.51628119161831165e-01,  -3.91438301385976573e-01,
+    6.00144886697036140e-01,  -4.63260754695098143e-01, -7.91094654958735960e-02, 5.46372213823562269e-01,
+    -4.25336253533089070e-01, -9.77574303076449019e-02, 3.64039081784227669e-01,  -1.51925312083628056e-01,
+    -1.30807301807728871e-01, 1.40036061648695781e-01,  5.66849557035009957e-03,  -6.42865124364210422e-02,
+    1.86967051122529301e-02,  1.88572407480448352e-02,  -1.12662015297383296e-02, -3.44125699098016269e-03,
+    3.78038404248679481e-03,  2.39078119218961082e-04,  -7.82727229555982935e-04, 4.93023050799382170e-05,
+    7.93878994049295519e-05,  -1.09102680236039761e-05};
 
 template <class Real, int MaxVecLen>
 direct_evaluator_func<Real> get_laplace_3d_kernel(dmk_pgh eval_level, int n_digits) {
     constexpr int UF = unroll_factor;
+    if (n_digits <= 2) {
+        constexpr int ND = 2, NC = 5;
+        std::array<Real, NC> coeffs;
+        std::copy_n(laplace_3d_2, NC, coeffs.data());
+        return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                    const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC>(eval_level, ND, rsc, cen, d2max, thresh2, NC,
+                                                               coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
+                                                               UF);
+        };
+    }
     if (n_digits <= 3) {
-        constexpr int ND = 3, NC = 7;
+        constexpr int ND = 3, NC = 6;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_3d_3, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -198,7 +305,7 @@ direct_evaluator_func<Real> get_laplace_3d_kernel(dmk_pgh eval_level, int n_digi
         };
     }
     if (n_digits <= 4) {
-        constexpr int ND = 4, NC = 11;
+        constexpr int ND = 4, NC = 8;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_3d_4, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -209,7 +316,7 @@ direct_evaluator_func<Real> get_laplace_3d_kernel(dmk_pgh eval_level, int n_digi
         };
     }
     if (n_digits <= 5) {
-        constexpr int ND = 5, NC = 15;
+        constexpr int ND = 5, NC = 11;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_3d_5, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -220,7 +327,7 @@ direct_evaluator_func<Real> get_laplace_3d_kernel(dmk_pgh eval_level, int n_digi
         };
     }
     if (n_digits <= 6) {
-        constexpr int ND = 6, NC = 0;
+        constexpr int ND = 6, NC = 13;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_3d_6, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -231,7 +338,7 @@ direct_evaluator_func<Real> get_laplace_3d_kernel(dmk_pgh eval_level, int n_digi
         };
     }
     if (n_digits <= 7) {
-        constexpr int ND = 7, NC = 0;
+        constexpr int ND = 7, NC = 14;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_3d_7, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -242,7 +349,7 @@ direct_evaluator_func<Real> get_laplace_3d_kernel(dmk_pgh eval_level, int n_digi
         };
     }
     if (n_digits <= 8) {
-        constexpr int ND = 8, NC = 0;
+        constexpr int ND = 8, NC = 17;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_3d_8, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -253,7 +360,7 @@ direct_evaluator_func<Real> get_laplace_3d_kernel(dmk_pgh eval_level, int n_digi
         };
     }
     if (n_digits <= 9) {
-        constexpr int ND = 9, NC = 0;
+        constexpr int ND = 9, NC = 19;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_3d_9, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -264,7 +371,7 @@ direct_evaluator_func<Real> get_laplace_3d_kernel(dmk_pgh eval_level, int n_digi
         };
     }
     if (n_digits <= 10) {
-        constexpr int ND = 10, NC = 0;
+        constexpr int ND = 10, NC = 22;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_3d_10, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -275,7 +382,7 @@ direct_evaluator_func<Real> get_laplace_3d_kernel(dmk_pgh eval_level, int n_digi
         };
     }
     if (n_digits <= 11) {
-        constexpr int ND = 11, NC = 0;
+        constexpr int ND = 11, NC = 24;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_3d_11, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -286,7 +393,7 @@ direct_evaluator_func<Real> get_laplace_3d_kernel(dmk_pgh eval_level, int n_digi
         };
     }
     if (n_digits <= 12) {
-        constexpr int ND = 12, NC = 0;
+        constexpr int ND = 12, NC = 26;
         std::array<Real, NC> coeffs;
         std::copy_n(laplace_3d_12, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -298,40 +405,99 @@ direct_evaluator_func<Real> get_laplace_3d_kernel(dmk_pgh eval_level, int n_digi
     }
     throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
 }
-constexpr double sqrt_laplace_2d_3[] = {3.59352216489611631e-01, -5.29577278216261438e-01, 1.53806289663060758e-01,
-                                        3.08165315377173302e-02, -1.37719559094845907e-02, -1.23978813303763291e-03,
-                                        6.13723204886006861e-04};
+// beta: 5.634
+constexpr double sqrt_laplace_2d_2[] = {2.17998183953000496e-01, -5.01498435116888963e-01, 3.38241507826899823e-01,
+                                        1.03815575056770545e-03, -5.66276391535132859e-02};
 
-constexpr double sqrt_laplace_2d_4[] = {2.97080935255406964e-01, -5.26801212015735598e-01, 2.31920432432083989e-01,
-                                        2.73070147423109255e-02, -3.12129164069161781e-02, -4.69342348666627939e-04,
-                                        2.31676035861803518e-03, -3.92836098975129014e-05, -1.08495795458931577e-04,
-                                        2.82333457398634539e-06, 3.28423123826049806e-06};
+// beta: 8.298
+constexpr double sqrt_laplace_2d_3[] = {1.35676693383068231e-01,  -4.22679758881918444e-01, 4.46694841556203426e-01,
+                                        -1.21102947058209454e-01, -8.26625453105883506e-02, 4.40644298701292625e-02};
 
-constexpr double sqrt_laplace_2d_5[] = {2.45448106458190041e-01,  -5.12409643370177470e-01, 3.01787776619231174e-01,
-                                        8.56751810725959496e-03,  -5.21122086690222475e-02, 4.42825429099041185e-03,
-                                        5.20118992350946177e-03,  -6.29028086426284432e-04, -3.40009470824352220e-04,
-                                        4.49144087995459966e-05,  1.56655123863595172e-05,  -2.07862230105843786e-06,
-                                        -5.33363799291477824e-07, 6.32719527538486660e-08,  1.29903451790538712e-08};
+// beta: 10.962
+constexpr double sqrt_laplace_2d_4[] = {8.61916042476558453e-02,  -3.39357689807749219e-01, 4.95769318253879487e-01,
+                                        -2.63353000669118043e-01, -7.92301496463873600e-02, 1.25856582628138036e-01,
+                                        -2.76665730002910318e-03, -2.31735239043814184e-02};
 
-constexpr double sqrt_laplace_2d_6[] = {};
+// beta: 13.626000000000001
+constexpr double sqrt_laplace_2d_5[] = {5.58390435893019663e-02,  -2.64586084955049261e-01, 4.87356384393162034e-01,
+                                        -3.84994597954706641e-01, 1.16315189240913750e-02,  1.85666658452653177e-01,
+                                        -8.23628275754923894e-02, -3.98393432987490456e-02, 3.31102704081132765e-02,
+                                        3.75332824122639758e-03,  -5.57532476536800898e-03};
 
-constexpr double sqrt_laplace_2d_7[] = {};
+// beta: 16.29
+constexpr double sqrt_laplace_2d_6[] = {3.65651153834013268e-02,  -2.02373828741634704e-01, 4.50680962873918789e-01,
+                                        -4.71259094659650657e-01, 1.31151290530008124e-01,  1.97006325911610741e-01,
+                                        -1.75941155471667859e-01, -1.49657566484197244e-02, 7.23405502287229746e-02,
+                                        -1.16581017499437639e-02, -1.68036765809427453e-02, 3.25068552699544610e-03,
+                                        2.00696867284461816e-03};
 
-constexpr double sqrt_laplace_2d_8[] = {};
+// beta: 18.954
+constexpr double sqrt_laplace_2d_7[] = {2.41435731559801123e-02,  -1.52729533229260889e-01, 3.98895426171370859e-01,
+                                        -5.19059925199433780e-01, 2.61759703204077210e-01,  1.53278369473923204e-01,
+                                        -2.67097148186365596e-01, 5.99652945526592748e-02,  1.00000753621406493e-01,
+                                        -5.88930498174368017e-02, -1.92963638496512387e-02, 2.06712499977083665e-02,
+                                        1.59403688932523418e-03,  -3.23248151527584038e-03};
 
-constexpr double sqrt_laplace_2d_9[] = {};
+// beta: 21.618000000000002
+constexpr double sqrt_laplace_2d_8[] = {1.60439437296675640e-02,  -1.14126073550636378e-01, 3.41987337192511121e-01,
+                                        -5.32522731286782625e-01, 3.82845035891724916e-01,  6.19184951923090338e-02,
+                                        -3.28185447928564689e-01, 1.72307149780891899e-01,  8.96059941698951201e-02,
+                                        -1.23461528598353215e-01, 7.59229237815524285e-03,  4.44741945776204600e-02,
+                                        -1.41898651813544500e-02, -9.64407308797441548e-03, 5.05118678882309890e-03,
+                                        1.05456872216903733e-03,  -7.50479469805201546e-04};
 
-constexpr double sqrt_laplace_2d_10[] = {};
+// beta: 24.282
+constexpr double sqrt_laplace_2d_9[] = {
+    1.07159462374928523e-02,  -8.46341160946152277e-02, 2.86172402632982548e-01,  -5.18876415012229586e-01,
+    4.81152338514268363e-01,  -6.26555153882026178e-02, -3.41806798659518574e-01, 3.02197463492700547e-01,
+    2.78618128968503437e-02,  -1.84360855208628632e-01, 6.88980134368040315e-02,  5.65882082276001064e-02,
+    -4.62859517784542374e-02, -8.22864098552431034e-03, 1.65706697984436407e-02,  -2.45712876778660994e-04,
+    -3.69762826634758429e-03, 2.15584244995764644e-04,  4.19195434991927001e-04};
 
-constexpr double sqrt_laplace_2d_11[] = {};
+// beta: 26.946
+constexpr double sqrt_laplace_2d_10[] = {
+    7.18708237059719791e-03,  -6.23865646673537194e-02, 2.34945455950023613e-01,  -4.86161809063531958e-01,
+    5.50172803263395238e-01,  -2.02350858567595993e-01, -3.00904600453594573e-01, 4.23072285773979484e-01,
+    -8.85142719163944380e-02, -2.14363943722174016e-01, 1.62465545958938223e-01,  3.54600844428899428e-02,
+    -8.91198361553773438e-02, 1.61613561954918085e-02,  2.92803322475974834e-02,  -1.34235174701271848e-02,
+    -6.29553570621151776e-03, 4.98393641198560753e-03,  8.34446597239230591e-04,  -1.11398751569548641e-03,
+    -5.14221535104267654e-05, 1.23018192605541074e-04};
 
-constexpr double sqrt_laplace_2d_12[] = {};
+// beta: 29.610000000000003
+constexpr double sqrt_laplace_2d_11[] = {
+    4.83699369429514345e-03,  -4.57629949245662096e-02, 1.89944134896976174e-01,  -4.41694820807374988e-01,
+    5.88938808524209989e-01,  -3.40295394858704248e-01, -2.09484233544280640e-01, 5.10379535704030496e-01,
+    -2.47274179951901069e-01, -1.90310301964979833e-01, 2.70493212718880660e-01,  -3.20750547444539069e-02,
+    -1.25666115771994574e-01, 6.59722816074232998e-02,  3.09799838816447737e-02,  -3.60662789129123224e-02,
+    -1.52631851038950955e-03, 1.24019732330262217e-02,  -1.83565084760144506e-03, -2.99799802313175561e-03,
+    6.85379511706281038e-04,  4.91463901760632997e-04,  -9.20146044351580157e-05, -4.24102106538326771e-05};
+
+// beta: 32.274
+constexpr double sqrt_laplace_2d_12[] = {
+    3.26488932883790091e-03,  -3.34334184769561060e-02, 1.51628119161831165e-01,  -3.91438301385976573e-01,
+    6.00144886697036140e-01,  -4.63260754695098143e-01, -7.91094654958735960e-02, 5.46372213823562269e-01,
+    -4.25336253533089070e-01, -9.77574303076449019e-02, 3.64039081784227669e-01,  -1.51925312083628056e-01,
+    -1.30807301807728871e-01, 1.40036061648695781e-01,  5.66849557035009957e-03,  -6.42865124364210422e-02,
+    1.86967051122529301e-02,  1.88572407480448352e-02,  -1.12662015297383296e-02, -3.44125699098016269e-03,
+    3.78038404248679481e-03,  2.39078119218961082e-04,  -7.82727229555982935e-04, 4.93023050799382170e-05,
+    7.93878994049295519e-05,  -1.09102680236039761e-05};
 
 template <class Real, int MaxVecLen>
 direct_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_pgh eval_level, int n_digits) {
     constexpr int UF = unroll_factor;
+    if (n_digits <= 2) {
+        constexpr int ND = 2, NC = 5;
+        std::array<Real, NC> coeffs;
+        std::copy_n(sqrt_laplace_2d_2, NC, coeffs.data());
+        return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                    const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+            sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC>(eval_level, ND, rsc, cen, d2max, thresh2, NC,
+                                                                    coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
+                                                                    pot, UF);
+        };
+    }
     if (n_digits <= 3) {
-        constexpr int ND = 3, NC = 7;
+        constexpr int ND = 3, NC = 6;
         std::array<Real, NC> coeffs;
         std::copy_n(sqrt_laplace_2d_3, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -342,7 +508,7 @@ direct_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_pgh eval_level, int n
         };
     }
     if (n_digits <= 4) {
-        constexpr int ND = 4, NC = 11;
+        constexpr int ND = 4, NC = 8;
         std::array<Real, NC> coeffs;
         std::copy_n(sqrt_laplace_2d_4, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -353,7 +519,7 @@ direct_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_pgh eval_level, int n
         };
     }
     if (n_digits <= 5) {
-        constexpr int ND = 5, NC = 15;
+        constexpr int ND = 5, NC = 11;
         std::array<Real, NC> coeffs;
         std::copy_n(sqrt_laplace_2d_5, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -364,7 +530,7 @@ direct_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_pgh eval_level, int n
         };
     }
     if (n_digits <= 6) {
-        constexpr int ND = 6, NC = 0;
+        constexpr int ND = 6, NC = 13;
         std::array<Real, NC> coeffs;
         std::copy_n(sqrt_laplace_2d_6, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -375,7 +541,7 @@ direct_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_pgh eval_level, int n
         };
     }
     if (n_digits <= 7) {
-        constexpr int ND = 7, NC = 0;
+        constexpr int ND = 7, NC = 14;
         std::array<Real, NC> coeffs;
         std::copy_n(sqrt_laplace_2d_7, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -386,7 +552,7 @@ direct_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_pgh eval_level, int n
         };
     }
     if (n_digits <= 8) {
-        constexpr int ND = 8, NC = 0;
+        constexpr int ND = 8, NC = 17;
         std::array<Real, NC> coeffs;
         std::copy_n(sqrt_laplace_2d_8, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -397,7 +563,7 @@ direct_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_pgh eval_level, int n
         };
     }
     if (n_digits <= 9) {
-        constexpr int ND = 9, NC = 0;
+        constexpr int ND = 9, NC = 19;
         std::array<Real, NC> coeffs;
         std::copy_n(sqrt_laplace_2d_9, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -408,7 +574,7 @@ direct_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_pgh eval_level, int n
         };
     }
     if (n_digits <= 10) {
-        constexpr int ND = 10, NC = 0;
+        constexpr int ND = 10, NC = 22;
         std::array<Real, NC> coeffs;
         std::copy_n(sqrt_laplace_2d_10, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -419,7 +585,7 @@ direct_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_pgh eval_level, int n
         };
     }
     if (n_digits <= 11) {
-        constexpr int ND = 11, NC = 0;
+        constexpr int ND = 11, NC = 24;
         std::array<Real, NC> coeffs;
         std::copy_n(sqrt_laplace_2d_11, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -430,7 +596,7 @@ direct_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_pgh eval_level, int n
         };
     }
     if (n_digits <= 12) {
-        constexpr int ND = 12, NC = 0;
+        constexpr int ND = 12, NC = 26;
         std::array<Real, NC> coeffs;
         std::copy_n(sqrt_laplace_2d_12, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -442,35 +608,92 @@ direct_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_pgh eval_level, int n
     }
     throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
 }
-constexpr double sqrt_laplace_3d_3[] = {3.44667773244710207e-01,  -4.78420518935334216e-01, 1.53666944699530905e-01,
-                                        -2.14983752220403689e-02, 1.66519714273249530e-03,  -8.11037704910181815e-05};
+// beta: 5.634
+constexpr double sqrt_laplace_3d_2[] = {1.70377350205786732e-01, -3.72069899729749132e-01, 2.99557895721420997e-01,
+                                        -1.27633186141294125e-01, 3.00319654889434559e-02};
 
-constexpr double sqrt_laplace_3d_4[] = {2.68133741640663337e-01,  -4.46979848587826689e-01, 2.24900790279250057e-01,
-                                        -5.24327277931292898e-02, 6.93107959843097549e-03,  -5.85952054481205182e-04,
-                                        3.43881059317416874e-05,  -1.47155489681260560e-06};
+// beta: 8.298
+constexpr double sqrt_laplace_3d_3[] = {7.91978589785346659e-02,  -2.45556231979947831e-01, 3.10542894094654409e-01,
+                                        -2.22210595880110412e-01, 1.10036966003753095e-01,  -3.21968345732795563e-02};
 
-constexpr double sqrt_laplace_3d_5[] = {2.03834919773978496e-01,  -4.04069323857741858e-01, 2.77548567421473324e-01,
-                                        -9.35645579732161115e-02, 1.84057472202968954e-02,  -2.35227564595155226e-03,
-                                        2.10068789565355719e-04,  -1.38147718785577730e-05, 6.95901913024476640e-07,
-                                        -2.77511892862249155e-08, 8.92771954606227010e-10};
+// beta: 10.962
+constexpr double sqrt_laplace_3d_4[] = {3.63330830581356859e-02,  -1.46897108702979756e-01, 2.58172198445237366e-01,
+                                        -2.62483939309452519e-01, 1.73229141234193473e-01,  -8.23021132783420262e-02,
+                                        3.22518135742099893e-02,  -8.31453182523136762e-03};
 
-constexpr double sqrt_laplace_3d_6[] = {};
+// beta: 13.626000000000001
+constexpr double sqrt_laplace_3d_5[] = {1.66949912633374414e-02,  -8.31192981790163099e-02, 1.85061254218017307e-01,
+                                        -2.46112910600663870e-01, 2.20740470450016241e-01,  -1.42387037970086672e-01,
+                                        6.84079736524102477e-02,  -2.62021156736557785e-02, 9.09443088932886286e-03,
+                                        -2.17848788786685968e-03};
 
-constexpr double sqrt_laplace_3d_7[] = {};
+// beta: 16.29
+constexpr double sqrt_laplace_3d_6[] = {7.66135334798236003e-03,  -4.53460064600191559e-02, 1.22365952894679164e-01,
+                                        -2.00806900680655515e-01, 2.26148637790386020e-01,  -1.87250798075070168e-01,
+                                        1.17935909173898776e-01,  -5.71933009584770294e-02, 2.33877256550076192e-02,
+                                        -9.40241516580353140e-03, 2.50030721515872613e-03};
 
-constexpr double sqrt_laplace_3d_8[] = {};
+// beta: 18.954
+constexpr double sqrt_laplace_3d_7[] = {3.51445342148692550e-03,  -2.41014381042033189e-02, 7.64127033167854852e-02,
+                                        -1.49397384737238348e-01, 2.02775460932299673e-01,  -2.04023245065494852e-01,
+                                        1.59015999180011691e-01,  -9.92026665073098696e-02, 5.01979960203051689e-02,
+                                        -2.05177759693448737e-02, 7.39125485298571579e-03,  -2.75745092701631771e-03,
+                                        6.92124748007945205e-04};
 
-constexpr double sqrt_laplace_3d_9[] = {};
+// beta: 21.618000000000002
+constexpr double sqrt_laplace_3d_8[] = {1.61174988202417505e-03,  -1.25691348601554235e-02, 4.57741335802777718e-02,
+                                        -1.03820899225845559e-01, 1.65091545579915067e-01,  -1.96508862202331797e-01,
+                                        1.82562132481562472e-01,  -1.36304342704379799e-01, 8.37388361173495577e-02,
+                                        -4.32045966025541017e-02, 1.87936207937851492e-02,  -6.79699829910315398e-03,
+                                        2.23671051124683289e-03,  -7.95163500146314436e-04, 1.91270551293962389e-04};
 
-constexpr double sqrt_laplace_3d_10[] = {};
+// beta: 24.282
+constexpr double sqrt_laplace_3d_9[] = {7.39035238548680241e-04,  -6.45859168795810852e-03, 2.65647508543220626e-02,
+                                        -6.85773817502468436e-02, 1.25051962795149518e-01,  -1.71923502217809804e-01,
+                                        1.85788609906626573e-01,  -1.62492820865026560e-01, 1.17529845523670379e-01,
+                                        -7.14785656307210387e-02, 3.71137792074310788e-02,  -1.66995500536824583e-02,
+                                        6.50031187391446764e-03,  -2.14254985626222919e-03, 6.58848022803448763e-04,
+                                        -2.27037761807801847e-04, 5.28565437249281289e-05};
 
-constexpr double sqrt_laplace_3d_11[] = {};
+// beta: 26.946
+constexpr double sqrt_laplace_3d_10[] = {
+    3.38831131733497099e-04, -3.27997311310871797e-03, 1.50363692967013275e-02, -4.35303625170772729e-02,
+    8.95567105551411946e-02, -1.39729373330694601e-01, 1.72326147835233229e-01, -1.72918552984859697e-01,
+    1.44243970824506990e-01, -1.01717326789266413e-01, 6.14446173599117879e-02, -3.21363795722774820e-02,
+    1.47140447911997471e-02, -5.97011247357320286e-03, 2.13403962133055375e-03, -6.53487318786446689e-04,
+    1.90651387895472024e-04, -6.44318883441207511e-05, 1.46171940583598262e-05};
 
-constexpr double sqrt_laplace_3d_12[] = {};
+// beta: 29.610000000000003
+constexpr double sqrt_laplace_3d_11[] = {
+    1.55333911424860509e-04, -1.64987197832693901e-03, 8.34085475287905595e-03, -2.67623570882231550e-02,
+    6.13251009959118812e-02, -1.07085208200108792e-01, 1.48499490336974321e-01, -1.68304846323130919e-01,
+    1.59248455975876974e-01, -1.27893284668800983e-01, 8.83498267678457377e-02, -5.30497478285679933e-02,
+    2.79177813322741726e-02, -1.30202312826225262e-02, 5.45558538824176056e-03, -2.02064852450546586e-03,
+    6.32850797393553870e-04, -1.95798117146164769e-04, 7.47197332259662988e-05, -1.80059869400571431e-05};
+
+// beta: 32.274
+constexpr double sqrt_laplace_3d_12[] = {
+    7.12071070677504559e-05, -8.23351155758915800e-04, 4.55031052690462248e-03, -1.60272607034530959e-02,
+    4.04822113467893513e-02, -7.82342839479691771e-02, 1.20541888710177097e-01, -1.52373450954484124e-01,
+    1.61393659233772108e-01, -1.45597045258188285e-01, 1.13336109429034798e-01, -7.69524387193569748e-02,
+    4.59924416706751285e-02, -2.43725255244627362e-02, 1.15167465681792619e-02, -4.89844488083774222e-03,
+    1.89990326484568367e-03, -6.58700423507349868e-04, 1.93914528233811239e-04, -5.74185615178931822e-05,
+    2.16076137692343146e-05, -5.07987035269845689e-06};
 
 template <class Real, int MaxVecLen>
 direct_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_pgh eval_level, int n_digits) {
     constexpr int UF = unroll_factor;
+    if (n_digits <= 2) {
+        constexpr int ND = 2, NC = 5;
+        std::array<Real, NC> coeffs;
+        std::copy_n(sqrt_laplace_3d_2, NC, coeffs.data());
+        return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                    const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+            sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC>(eval_level, ND, rsc, cen, d2max, thresh2, NC,
+                                                                    coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
+                                                                    pot, UF);
+        };
+    }
     if (n_digits <= 3) {
         constexpr int ND = 3, NC = 6;
         std::array<Real, NC> coeffs;
@@ -494,7 +717,7 @@ direct_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_pgh eval_level, int n
         };
     }
     if (n_digits <= 5) {
-        constexpr int ND = 5, NC = 11;
+        constexpr int ND = 5, NC = 10;
         std::array<Real, NC> coeffs;
         std::copy_n(sqrt_laplace_3d_5, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -505,7 +728,7 @@ direct_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_pgh eval_level, int n
         };
     }
     if (n_digits <= 6) {
-        constexpr int ND = 6, NC = 0;
+        constexpr int ND = 6, NC = 11;
         std::array<Real, NC> coeffs;
         std::copy_n(sqrt_laplace_3d_6, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -516,7 +739,7 @@ direct_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_pgh eval_level, int n
         };
     }
     if (n_digits <= 7) {
-        constexpr int ND = 7, NC = 0;
+        constexpr int ND = 7, NC = 13;
         std::array<Real, NC> coeffs;
         std::copy_n(sqrt_laplace_3d_7, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -527,7 +750,7 @@ direct_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_pgh eval_level, int n
         };
     }
     if (n_digits <= 8) {
-        constexpr int ND = 8, NC = 0;
+        constexpr int ND = 8, NC = 15;
         std::array<Real, NC> coeffs;
         std::copy_n(sqrt_laplace_3d_8, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -538,7 +761,7 @@ direct_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_pgh eval_level, int n
         };
     }
     if (n_digits <= 9) {
-        constexpr int ND = 9, NC = 0;
+        constexpr int ND = 9, NC = 17;
         std::array<Real, NC> coeffs;
         std::copy_n(sqrt_laplace_3d_9, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -549,7 +772,7 @@ direct_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_pgh eval_level, int n
         };
     }
     if (n_digits <= 10) {
-        constexpr int ND = 10, NC = 0;
+        constexpr int ND = 10, NC = 19;
         std::array<Real, NC> coeffs;
         std::copy_n(sqrt_laplace_3d_10, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -560,7 +783,7 @@ direct_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_pgh eval_level, int n
         };
     }
     if (n_digits <= 11) {
-        constexpr int ND = 11, NC = 0;
+        constexpr int ND = 11, NC = 20;
         std::array<Real, NC> coeffs;
         std::copy_n(sqrt_laplace_3d_11, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
@@ -571,7 +794,7 @@ direct_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_pgh eval_level, int n
         };
     }
     if (n_digits <= 12) {
-        constexpr int ND = 12, NC = 0;
+        constexpr int ND = 12, NC = 22;
         std::array<Real, NC> coeffs;
         std::copy_n(sqrt_laplace_3d_12, NC, coeffs.data());
         return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,

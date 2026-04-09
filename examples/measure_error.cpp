@@ -4,11 +4,18 @@
 // Compares against double-precision direct evaluation.
 //
 // Usage: ./measure_error [options]
-//   -N n_src          Number of source points (default: 100000)
+//   -N n_src          Number of source points (default: 10000)
 //   -n n_per_leaf     DMK leaf size (default: 250)
-//   -D n_direct       Number of points for direct comparison (default: 1000)
+//   -D n_direct       Number of points for direct comparison (default: 10000)
 //   -t f|d            Precision (default: f)
 //   -u                Uniform distribution (default: sphere)
+//   -k kernel         Kernel: laplace, sqrt_laplace, yukawa, all (default: all)
+//   -d dim            Dimension: 2, 3, or 0 for both (default: 0)
+//   --beta-sweep      Enable beta sweep mode
+//   --beta-min val    Min beta for sweep (default: 3.0)
+//   --beta-max val    Max beta for sweep (default: 40.0)
+//   --beta-step val   Beta step size (default: 0.5)
+//   --digits val      Digits for beta sweep (default: 6)
 
 #include <dmk.h>
 #include <dmk/omp_wrapper.hpp>
@@ -35,6 +42,17 @@ struct Config {
     int n_direct = 10'000;
     char prec = 'f';
     bool uniform = false;
+
+    // Kernel/dim filtering (-1 = all)
+    dmk_ikernel kernel_filter = static_cast<dmk_ikernel>(-1);
+    int dim_filter = 0; // 0 = both
+
+    // Beta sweep mode
+    bool beta_sweep = false;
+    double beta_min = 3.0;
+    double beta_max = 40.0;
+    double beta_step = 0.5;
+    int sweep_digits = 6;
 };
 
 void generate_points(int n_dim, int n_src, bool uniform, std::vector<double> &r_src, std::vector<double> &charges,
@@ -83,13 +101,7 @@ void compute_direct(int n_dim, int n_src, int n_test, const std::vector<double> 
 
 void compute_direct_dispatch(int n_dim, int n_src, int n_test, const std::vector<double> &r_src,
                              const std::vector<double> &charges, std::vector<double> &pot_direct, dmk_ikernel kernel) {
-    auto distance2 = [](const double *r_a, const double *r_b, int nd) {
-        double dr2 = 0.0;
-        for (int j = 0; j < nd; ++j)
-            dr2 += (r_a[j] - r_b[j]) * (r_a[j] - r_b[j]);
-        return dr2;
-    };
-    const double lambda = 6.0; // yukawa decay parameter
+    const double lambda = 6.0;
 
     auto run = [&](auto &&func) { compute_direct(n_dim, n_src, n_test, r_src, charges, pot_direct, func); };
 
@@ -153,11 +165,11 @@ struct ErrorMetrics {
 
 template <typename Real>
 ErrorMetrics run_one(int n_dim, dmk_ikernel kernel, int n_digits, const Config &cfg, const std::vector<double> &r_src_d,
-                     const std::vector<double> &charges_d, const std::vector<double> &pot_direct) {
+                     const std::vector<double> &charges_d, const std::vector<double> &pot_direct,
+                     double beta_override = -1.0) {
     const int n_src = cfg.n_src;
     const int n_test = std::min(cfg.n_direct, n_src);
 
-    // Convert to working precision
     std::vector<Real> r_src(r_src_d.begin(), r_src_d.end());
     std::vector<Real> charges(charges_d.begin(), charges_d.end());
 
@@ -174,7 +186,11 @@ ErrorMetrics run_one(int n_dim, dmk_ikernel kernel, int n_digits, const Config &
     if (kernel == DMK_YUKAWA)
         params.fparam = 6.0;
 
-    std::vector<Real> r_trg; // self-eval
+    if (beta_override > 0) {
+        params.debug_flags |= DMK_DEBUG_OVERRIDE_BETA;
+        params.debug_params[DMK_DEBUG_BETA_SLOT] = beta_override;
+    }
+
     pdmk_tree tree;
     if constexpr (std::is_same_v<Real, float>)
         tree = pdmk_tree_createf(MYCOMM, params, n_src, r_src.data(), charges.data(), nullptr, nullptr, 0, nullptr);
@@ -192,7 +208,6 @@ ErrorMetrics run_one(int n_dim, dmk_ikernel kernel, int n_digits, const Config &
 
     pdmk_tree_destroy(tree);
 
-    // Compute error against direct (first n_test points)
     double err2 = 0.0, ref2 = 0.0, maxre = 0.0;
     for (int i = 0; i < n_test; ++i) {
         double dmk = static_cast<double>(pot_dmk[i]);
@@ -220,22 +235,81 @@ const char *kernel_name(dmk_ikernel k) {
     }
 }
 
+dmk_ikernel parse_kernel(const char *s) {
+    std::string k(s);
+    if (k == "laplace")
+        return DMK_LAPLACE;
+    if (k == "sqrt_laplace")
+        return DMK_SQRT_LAPLACE;
+    if (k == "yukawa")
+        return DMK_YUKAWA;
+    if (k == "all")
+        return static_cast<dmk_ikernel>(-1);
+    throw std::runtime_error("Unknown kernel: " + k);
+}
+
+template <typename Real>
+void run_beta_sweep(const Config &cfg) {
+    std::vector<dmk_ikernel> kernels;
+    if (static_cast<int>(cfg.kernel_filter) == -1)
+        kernels = {DMK_LAPLACE, DMK_SQRT_LAPLACE, DMK_YUKAWA};
+    else
+        kernels = {cfg.kernel_filter};
+    std::vector<int> dims;
+    if (cfg.dim_filter == 0)
+        dims = {2, 3};
+    else
+        dims = {cfg.dim_filter};
+
+    std::cout << "kernel,dim,beta,L2_rel,max_rel,time\n";
+
+    for (auto kernel : kernels) {
+        for (auto n_dim : dims) {
+            std::vector<double> r_src, charges;
+            generate_points(n_dim, cfg.n_src, cfg.uniform, r_src, charges);
+            int n_test = std::min(cfg.n_direct, cfg.n_src);
+            std::vector<double> pot_direct;
+            compute_direct_dispatch(n_dim, cfg.n_src, n_test, r_src, charges, pot_direct, kernel);
+            for (double beta = cfg.beta_min; beta <= cfg.beta_max + 1e-9; beta += cfg.beta_step) {
+                try {
+                    auto err = run_one<Real>(n_dim, kernel, 12, cfg, r_src, charges, pot_direct, beta);
+                    std::cout << kernel_name(kernel) << "," << n_dim << "," << std::fixed << std::setprecision(1)
+                              << beta << "," << std::scientific << std::setprecision(6) << err.l2_rel << ","
+                              << err.max_rel << "," << std::fixed << std::setprecision(4) << err.time << "\n"
+                              << std::flush;
+                } catch (std::exception &e) {
+                    std::cout << kernel_name(kernel) << "," << n_dim << "," << std::fixed << std::setprecision(1)
+                              << beta << ",FAILED,FAILED,0\n";
+                }
+            }
+        }
+    }
+}
+
 template <typename Real>
 void run_all(const Config &cfg) {
-    constexpr dmk_ikernel kernels[] = {DMK_LAPLACE, DMK_SQRT_LAPLACE, DMK_YUKAWA};
-    constexpr int dims[] = {2, 3};
+    std::vector<dmk_ikernel> kernels;
+    if (static_cast<int>(cfg.kernel_filter) == -1)
+        kernels = {DMK_LAPLACE, DMK_SQRT_LAPLACE, DMK_YUKAWA};
+    else
+        kernels = {cfg.kernel_filter};
+
+    std::vector<int> dims;
+    if (cfg.dim_filter == 0)
+        dims = {2, 3};
+    else
+        dims = {cfg.dim_filter};
+
     constexpr int min_digits = 3;
     constexpr int max_digits = std::is_same_v<Real, float> ? 6 : 12;
 
     std::cout << std::setw(14) << "kernel" << std::setw(5) << "dim" << std::setw(8) << "digits" << std::setw(12)
               << "eps" << std::setw(14) << "L2_rel" << std::setw(14) << "max_rel" << std::setw(10) << "time(s)"
-              << std::setw(10) << "L2/eps"
-              << "\n";
+              << std::setw(10) << "L2/eps" << "\n";
     std::cout << std::string(87, '-') << "\n";
 
     for (auto kernel : kernels) {
         for (auto n_dim : dims) {
-            // Generate points once per kernel/dim
             std::vector<double> r_src, charges;
             generate_points(n_dim, cfg.n_src, cfg.uniform, r_src, charges);
 
@@ -264,8 +338,15 @@ void run_all(const Config &cfg) {
 
 Config parse_args(int argc, char *argv[]) {
     Config cfg;
+
+    static struct option long_opts[] = {
+        {"beta-sweep", no_argument, nullptr, 1001},     {"beta-min", required_argument, nullptr, 1002},
+        {"beta-max", required_argument, nullptr, 1003}, {"beta-step", required_argument, nullptr, 1004},
+        {"digits", required_argument, nullptr, 1005},   {nullptr, 0, nullptr, 0},
+    };
+
     int opt;
-    while ((opt = getopt(argc, argv, "N:n:D:t:uh")) != -1) {
+    while ((opt = getopt_long(argc, argv, "N:n:D:t:k:d:uh", long_opts, nullptr)) != -1) {
         switch (opt) {
         case 'N':
             cfg.n_src = static_cast<int>(std::atof(optarg));
@@ -275,6 +356,12 @@ Config parse_args(int argc, char *argv[]) {
             break;
         case 'D':
             cfg.n_direct = static_cast<int>(std::atof(optarg));
+            break;
+        case 'k':
+            cfg.kernel_filter = parse_kernel(optarg);
+            break;
+        case 'd':
+            cfg.dim_filter = std::atoi(optarg);
             break;
         case 't':
             if (optarg[0] == 'd')
@@ -289,14 +376,36 @@ Config parse_args(int argc, char *argv[]) {
         case 'u':
             cfg.uniform = true;
             break;
+        case 1001:
+            cfg.beta_sweep = true;
+            break;
+        case 1002:
+            cfg.beta_min = std::atof(optarg);
+            break;
+        case 1003:
+            cfg.beta_max = std::atof(optarg);
+            break;
+        case 1004:
+            cfg.beta_step = std::atof(optarg);
+            break;
+        case 1005:
+            cfg.sweep_digits = std::atoi(optarg);
+            break;
         case 'h':
         default:
             std::cout << "Usage: " << argv[0] << "\n"
-                      << "  -N n_src        Number of source points\n"
-                      << "  -n n_per_leaf   DMK leaf size\n"
-                      << "  -D n_direct     Points for direct comparison\n"
-                      << "  -t f|d          Precision\n"
-                      << "  -u              Uniform distribution\n";
+                      << "  -N n_src          Number of source points\n"
+                      << "  -n n_per_leaf     DMK leaf size\n"
+                      << "  -D n_direct       Points for direct comparison\n"
+                      << "  -t f|d            Precision\n"
+                      << "  -k kernel         laplace, sqrt_laplace, yukawa, all\n"
+                      << "  -d dim            2, 3, or 0 for both\n"
+                      << "  -u                Uniform distribution\n"
+                      << "  --beta-sweep      Enable beta sweep mode\n"
+                      << "  --beta-min val    Min beta (default: 3.0)\n"
+                      << "  --beta-max val    Max beta (default: 40.0)\n"
+                      << "  --beta-step val   Step size (default: 0.5)\n"
+                      << "  --digits val      Digits for sweep (default: 6)\n";
             exit(0);
         }
     }
@@ -320,13 +429,23 @@ int main(int argc, char *argv[]) {
     Config cfg = parse_args(argc, argv);
 
     std::cout << "# n_src=" << cfg.n_src << " n_per_leaf=" << cfg.n_per_leaf << " n_direct=" << cfg.n_direct
-              << " prec=" << cfg.prec << " uniform=" << cfg.uniform << " threads=" << MY_OMP_GET_MAX_THREADS()
-              << "\n\n";
+              << " prec=" << cfg.prec << " uniform=" << cfg.uniform << " threads=" << MY_OMP_GET_MAX_THREADS();
+    if (cfg.beta_sweep)
+        std::cout << " beta_sweep=[" << cfg.beta_min << "," << cfg.beta_max << "," << cfg.beta_step
+                  << "] digits=" << cfg.sweep_digits;
+    std::cout << "\n\n";
 
-    if (cfg.prec == 'd')
-        run_all<double>(cfg);
-    else
-        run_all<float>(cfg);
+    if (cfg.beta_sweep) {
+        if (cfg.prec == 'd')
+            run_beta_sweep<double>(cfg);
+        else
+            run_beta_sweep<float>(cfg);
+    } else {
+        if (cfg.prec == 'd')
+            run_all<double>(cfg);
+        else
+            run_all<float>(cfg);
+    }
 
 #ifdef DMK_HAVE_MPI
     MPI_Finalize();

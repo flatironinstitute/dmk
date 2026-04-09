@@ -27,14 +27,14 @@ struct ExpansionConstants {
     double hpw_win;       // planewave spacing for windowed kernel
     int n_order;          // linear number of proxy coefficients
 
-    ExpansionConstants(dmk_ikernel kernel, bool is_periodic, double eps) {
-        beta = util::calc_bandlimiting(kernel, DIM, eps);
+    ExpansionConstants(const pdmk_params &p) {
+        beta = util::calc_bandlimiting(p);
 
-        n_fourier_diff = std::ceil(3.0 * beta / M_PI * (1.0 - eps));
+        n_fourier_diff = std::ceil(3.0 * beta / M_PI * (1.0 - p.eps));
         hpw_diff = 2.0 * beta / n_fourier_diff;
         n_fourier_diff -= 1;
 
-        if (!is_periodic) {
+        if (!p.use_periodic) {
             hpw_win = 1.0;
             n_fourier_win = static_cast<int>(std::ceil(beta)) - 1;
         } else {
@@ -44,11 +44,15 @@ struct ExpansionConstants {
 
         n_pw_diff = 2 * n_fourier_diff + 1;
         n_exp_modes_diff = sctl::pow<DIM - 1>(n_pw_diff) * ((n_pw_diff + 1) / 2);
+        // FIXME: separate n_pw_win
         // n_pw_win = 2 * n_fourier_win + 1;
         n_pw_win = n_pw_diff;
         n_exp_modes_win = sctl::pow<DIM - 1>(n_pw_win) * ((n_pw_win + 1) / 2);
 
-        n_order = std::ceil(1.43 * beta - 3.26);
+        if (p.debug_flags & DMK_DEBUG_OVERRIDE_ORDER)
+            n_order = p.debug_params[DMK_DEBUG_ORDER_SLOT];
+        else
+            n_order = std::ceil(1.43 * beta - 3.26);
     }
 };
 
@@ -587,6 +591,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     bool debug_omit_pw = false;
     bool debug_omit_direct = false;
     bool debug_dump_tree = false;
+    bool debug_force_aot = false;
     std::shared_ptr<spdlog::logger> &logger;
     std::shared_ptr<spdlog::logger> &rank_logger;
 

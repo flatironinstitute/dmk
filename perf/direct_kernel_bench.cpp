@@ -181,9 +181,14 @@ void run_comparison(const Opts &opts) {
             throw std::runtime_error("Unknown evaluator");
         }
     }();
-    const double beta = dmk::util::calc_bandlimiting(opts.kernel, opts.n_dim, std::pow(10.0, -opts.digits));
+    pdmk_params pdmk_p;
+    pdmk_p.kernel = opts.kernel;
+    pdmk_p.n_dim = opts.n_dim;
+    pdmk_p.eps = std::pow(10, -opts.digits);
+    const double beta = dmk::util::calc_bandlimiting(pdmk_p);
+
     auto jit_evaluator =
-        dmk::make_evaluator_jit<Real>(opts.kernel, DMK_POTENTIAL, opts.n_dim, opts.digits, opts.unroll_factor);
+        dmk::make_evaluator_jit<Real>(opts.kernel, DMK_POTENTIAL, opts.n_dim, opts.digits, beta, opts.unroll_factor);
     auto aot_evaluator =
         dmk::make_evaluator_aot<Real>(opts.kernel, DMK_POTENTIAL, opts.n_dim, opts.digits, opts.unroll_factor);
 

@@ -13,7 +13,7 @@ namespace dmk {
 template <typename T>
 struct FourierData {
     FourierData() = default;
-    FourierData(dmk_ikernel kernel_, int n_dim_, T eps, int n_digits_, int n_pw_max, T fparam_, double beta,
+    FourierData(dmk_ikernel kernel_, int n_dim_, T eps, int n_pw_max, T fparam_, double beta,
                 const sctl::Vector<T> &boxsize_);
 
     T yukawa_windowed_kernel_value_at_zero(int i_level);
@@ -45,7 +45,6 @@ struct FourierData {
   private:
     dmk_ikernel kernel_;
     int n_dim_{0};
-    int n_digits_{0};
     int n_levels_{0};
     int n_pw_{0};
     T fparam_{0};
@@ -71,11 +70,11 @@ void calc_planewave_translation_matrix(int nmax, T xmin, int npw, const sctl::Ve
                                        sctl::Vector<std::complex<T>> &shift_vec);
 
 template <typename Real, int DIM>
-void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, int npw, Real boxsize,
-                            Prolate0Fun &pf, sctl::Vector<Real> &windowed_kernel);
+void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
+                            sctl::Vector<Real> &windowed_kernel);
 template <typename Real, int DIM>
-void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, int npw,
-                              Real boxsize, Prolate0Fun &pf, sctl::Vector<Real> &windowed_kernel);
+void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars, Real beta, int npw, Real boxsize,
+                              Prolate0Fun &pf, sctl::Vector<Real> &windowed_kernel);
 
 } // namespace dmk
 

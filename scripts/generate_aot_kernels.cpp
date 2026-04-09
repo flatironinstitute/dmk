@@ -28,10 +28,11 @@ static const std::vector<KernelDef> all_kernels = {
     {DMK_SQRT_LAPLACE, "DMK_SQRT_LAPLACE", 3, "sqrt_laplace_3d_poly_all_pairs", "get_sqrt_laplace_3d_kernel"},
 };
 
-constexpr int min_digits = 3;
+constexpr int min_digits = 2;
 constexpr int max_digits = 12;
 
-void emit_coeffs_array(const std::string &name, const std::vector<double> &c) {
+void emit_coeffs_array(const std::string &name, const std::vector<double> &c, double beta) {
+    std::cout << std::format("// beta: {}\n", beta);
     std::cout << std::format("constexpr double {}[] = {{", name);
     for (size_t i = 0; i < c.size(); ++i) {
         if (i > 0)
@@ -107,9 +108,14 @@ constexpr int unroll_factor = 3;
 
         for (int digits = min_digits; digits <= max_digits; ++digits) {
             try {
-                const double beta = dmk::util::calc_bandlimiting(k.kernel, 3, std::pow(10, -digits));
-                const auto coeffs = dmk::get_local_correction_coeffs<double>(k.kernel, k.dim, beta, digits);
-                emit_coeffs_array(coeff_name(k, digits), coeffs);
+                pdmk_params p;
+                p.kernel = k.kernel;
+                p.n_dim = 3;
+                p.eps = std::pow(10, -digits);
+                p.debug_flags = 0;
+                const double beta = dmk::util::calc_bandlimiting(p);
+                const auto coeffs = dmk::get_local_correction_coeffs<double>(k.kernel, k.dim, digits, beta);
+                emit_coeffs_array(coeff_name(k, digits), coeffs, beta);
                 digit_sizes.emplace_back(digits, coeffs.size());
             } catch (std::exception &e) {
                 std::cerr << std::format("// Skipped {} digits={}: {}\n", k.getter_name, digits, e.what());
