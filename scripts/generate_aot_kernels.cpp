@@ -7,6 +7,7 @@
 
 #include <dmk.h>
 #include <dmk/direct.hpp>
+#include <dmk/util.hpp>
 #include <format>
 #include <iostream>
 #include <string>
@@ -14,10 +15,10 @@
 
 struct KernelDef {
     dmk_ikernel kernel;
-    std::string kernel_enum;   // e.g. "DMK_LAPLACE"
+    std::string kernel_enum; // e.g. "DMK_LAPLACE"
     int dim;
-    std::string func_name;     // e.g. "laplace_3d_poly_all_pairs"
-    std::string getter_name;   // e.g. "get_laplace_3d_kernel"
+    std::string func_name;   // e.g. "laplace_3d_poly_all_pairs"
+    std::string getter_name; // e.g. "get_laplace_3d_kernel"
 };
 
 static const std::vector<KernelDef> all_kernels = {
@@ -33,31 +34,38 @@ constexpr int max_digits = 12;
 void emit_coeffs_array(const std::string &name, const std::vector<double> &c) {
     std::cout << std::format("constexpr double {}[] = {{", name);
     for (size_t i = 0; i < c.size(); ++i) {
-        if (i > 0) std::cout << ",";
-        if (i % 4 == 0) std::cout << "\n    ";
+        if (i > 0)
+            std::cout << ",";
+        if (i % 4 == 0)
+            std::cout << "\n    ";
         std::cout << std::format(" {:.17e}", c[i]);
     }
     std::cout << "\n};\n\n";
 }
 
 std::string coeff_name(const KernelDef &k, int digits) {
-    return std::format("{}_{}d_{}", [&] {
-        switch (k.kernel) {
-        case DMK_LAPLACE: return "laplace";
-        case DMK_SQRT_LAPLACE: return "sqrt_laplace";
-        default: return "unknown";
-        }
-    }(), k.dim, digits);
+    return std::format(
+        "{}_{}d_{}",
+        [&] {
+            switch (k.kernel) {
+            case DMK_LAPLACE:
+                return "laplace";
+            case DMK_SQRT_LAPLACE:
+                return "sqrt_laplace";
+            default:
+                return "unknown";
+            }
+        }(),
+        k.dim, digits);
 }
 
-void emit_getter(const KernelDef &k,
-                 const std::vector<std::pair<int, size_t>> &digit_sizes) {
+void emit_getter(const KernelDef &k, const std::vector<std::pair<int, size_t>> &digit_sizes) {
     std::cout << std::format(R"(
 template <class Real, int MaxVecLen>
 direct_evaluator_func<Real> {}(dmk_pgh eval_level, int n_digits) {{
     constexpr int UF = unroll_factor;
 )",
-        k.getter_name);
+                             k.getter_name);
 
     for (auto &[digits, nc] : digit_sizes) {
         auto cn = coeff_name(k, digits);
@@ -77,9 +85,8 @@ direct_evaluator_func<Real> {}(dmk_pgh eval_level, int n_digits) {{
             digits, digits, nc, cn, k.func_name);
     }
 
-    std::cout << std::format(
-        "    throw std::runtime_error(\"Unsupported n_digits: \" + std::to_string(n_digits));\n"
-        "}}\n");
+    std::cout << std::format("    throw std::runtime_error(\"Unsupported n_digits: \" + std::to_string(n_digits));\n"
+                             "}}\n");
 }
 
 int main() {
@@ -100,12 +107,12 @@ constexpr int unroll_factor = 3;
 
         for (int digits = min_digits; digits <= max_digits; ++digits) {
             try {
-                auto coeffs = dmk::get_local_correction_coeffs<double>(k.kernel, k.dim, digits);
+                const double beta = dmk::util::calc_bandlimiting(k.kernel, 3, std::pow(10, -digits));
+                const auto coeffs = dmk::get_local_correction_coeffs<double>(k.kernel, k.dim, beta, digits);
                 emit_coeffs_array(coeff_name(k, digits), coeffs);
                 digit_sizes.emplace_back(digits, coeffs.size());
             } catch (std::exception &e) {
-                std::cerr << std::format("// Skipped {} digits={}: {}\n",
-                                         k.getter_name, digits, e.what());
+                std::cerr << std::format("// Skipped {} digits={}: {}\n", k.getter_name, digits, e.what());
             }
         }
 
@@ -116,10 +123,9 @@ constexpr int unroll_factor = 3;
     std::cout << "\n// Explicit instantiations\n";
     for (auto &k : all_kernels) {
         for (auto type : {"float", "double"}) {
-            std::cout << std::format(
-                "template direct_evaluator_func<{0}>\n"
-                "{1}<{0}, sctl::DefaultVecLen<{0}>()>(dmk_pgh, int);\n",
-                type, k.getter_name);
+            std::cout << std::format("template direct_evaluator_func<{0}>\n"
+                                     "{1}<{0}, sctl::DefaultVecLen<{0}>()>(dmk_pgh, int);\n",
+                                     type, k.getter_name);
         }
     }
 

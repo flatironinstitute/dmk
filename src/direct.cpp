@@ -157,10 +157,9 @@ Real sl3d_local_kernel(Real r2, Real bsize, dmk::Prolate0Fun &prolate) {
 }
 
 template <typename Real>
-std::vector<Real> get_local_correction_coeffs(dmk_ikernel kernel, int n_dim, int n_digits) {
+std::vector<Real> get_local_correction_coeffs(dmk_ikernel kernel, int n_dim, int n_digits, double beta) {
     const double tol = std::pow(10.0, -n_digits);
-    const double c0 = procl180_rescale(tol);
-    dmk::Prolate0Fun prolate_fun(c0, 10000);
+    dmk::Prolate0Fun prolate_fun(beta, 10000);
 
     auto fit = [&](auto func, double lo, double hi) -> std::vector<Real> {
         auto fit_func = [&](int digits) { return make_polyfit_abs_error<double>(digits, func, lo, hi); };
@@ -170,7 +169,7 @@ std::vector<Real> get_local_correction_coeffs(dmk_ikernel kernel, int n_dim, int
     switch (kernel) {
     case DMK_LAPLACE:
         if (n_dim == 2) {
-            return fit([&](double x) { return -log_windowed_kernel<double>(std::sqrt(x), c0, 2, prolate_fun); }, 0.0,
+            return fit([&](double x) { return -log_windowed_kernel<double>(std::sqrt(x), beta, 2, prolate_fun); }, 0.0,
                        1.0);
         }
         if (n_dim == 3) {
@@ -210,6 +209,7 @@ direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_pgh eval_
     std::lock_guard<std::mutex> lock_guard(lock);
     constexpr int VECWIDTH = sctl::DefaultVecLen<Real>();
     constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
+    const double beta = dmk::util::calc_bandlimiting(kernel, n_dim, std::pow(10., -n_digits));
 
     auto build_func_name = [&](const std::string &base_name) {
         return std::format("void {}<{}, {}, -1, -1, -1>", base_name, T_str, VECWIDTH);
@@ -225,7 +225,7 @@ direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_pgh eval_
         }
     }();
 
-    const auto coeffs = get_local_correction_coeffs<Real>(kernel, n_dim, n_digits);
+    const auto coeffs = get_local_correction_coeffs<Real>(kernel, n_dim, n_digits, beta);
     auto jit_func = RS->compile<void (*)(Real, Real, Real, Real, const Real *, int, const Real *, const Real *, int,
                                          const Real *, Real *)>(func_name, {{"eval_level_rt", int(eval_level)},
                                                                             {"n_coeffs_rt", coeffs.size()},
@@ -267,8 +267,10 @@ direct_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_pgh eval_
     }
 }
 
-template std::vector<float> get_local_correction_coeffs<float>(dmk_ikernel kernel, int n_dim, int n_digits);
-template std::vector<double> get_local_correction_coeffs<double>(dmk_ikernel kernel, int n_dim, int n_digits);
+template std::vector<float> get_local_correction_coeffs<float>(dmk_ikernel kernel, int n_dim, int n_digits,
+                                                               double beta);
+template std::vector<double> get_local_correction_coeffs<double>(dmk_ikernel kernel, int n_dim, int n_digits,
+                                                                 double beta);
 template direct_evaluator_func<float> make_evaluator_aot<float>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
                                                                 int n_digits, int unroll_factor);
 template direct_evaluator_func<double> make_evaluator_aot<double>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,

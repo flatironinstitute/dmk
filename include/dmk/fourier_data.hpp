@@ -1,6 +1,7 @@
 #ifndef FOURIER_DATA_HPP
 #define FOURIER_DATA_HPP
 
+#include <cmath>
 #include <complex>
 #include <dmk.h>
 #include <dmk/prolate0_fun.hpp>
@@ -12,7 +13,7 @@ namespace dmk {
 template <typename T>
 struct FourierData {
     FourierData() = default;
-    FourierData(dmk_ikernel kernel_, int n_dim_, T eps, int n_digits_, int n_pw_max, T fparam_,
+    FourierData(dmk_ikernel kernel_, int n_dim_, T eps, int n_digits_, int n_pw_max, T fparam_, double beta,
                 const sctl::Vector<T> &boxsize_);
 
     T yukawa_windowed_kernel_value_at_zero(int i_level);
@@ -73,22 +74,8 @@ template <typename Real, int DIM>
 void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, int npw, Real boxsize,
                             Prolate0Fun &pf, sctl::Vector<Real> &windowed_kernel);
 template <typename Real, int DIM>
-void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, int npw, Real boxsize,
-                              Prolate0Fun &pf, sctl::Vector<Real> &windowed_kernel);
-
-template <typename T>
-inline T procl180_rescale(T eps) {
-    int scale;
-    if (eps >= 1e-3)
-        scale = 8;
-    else if (eps >= 1e-6)
-        scale = 20;
-    else
-        scale = 25;
-
-    double ndigits = -std::log10(scale * eps);
-    return std::max(0.0, 2.37 * ndigits + 2.84);
-}
+void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars, Real beta, int ndigits, int npw,
+                              Real boxsize, Prolate0Fun &pf, sctl::Vector<Real> &windowed_kernel);
 
 } // namespace dmk
 

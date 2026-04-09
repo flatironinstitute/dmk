@@ -50,11 +50,13 @@ inline int get_kernel_output_dim(int dim, dmk_ikernel kernel, dmk_pgh flags) {
 }
 
 template <typename Real>
-std::vector<Real> get_local_correction_coeffs(dmk_ikernel kernel, int n_dim, int n_digits);
+std::vector<Real> get_local_correction_coeffs(dmk_ikernel kernel, int n_dim, int n_digits, double beta);
 template <typename Real>
-direct_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits, int unroll_factor);
+direct_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits,
+                                               int unroll_factor);
 template <typename Real>
-direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits, int unroll_factor);
+direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits,
+                                               int unroll_factor);
 } // namespace dmk
 
 #endif

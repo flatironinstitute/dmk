@@ -14,6 +14,44 @@ namespace dmk {
 template <typename T>
 struct FourierData;
 
+template <int DIM>
+struct ExpansionConstants {
+    double beta;          // PSWF bandwidth parameter
+    int n_fourier_diff;   // number of fourier modes for difference kernel (half space)
+    int n_pw_diff;        // linear number of planewaves (2 * n_fourier + 1)
+    int n_exp_modes_diff; // number of planewave modes per box n_pw^(D-1)((n_pw+1) / 2);
+    int n_fourier_win;    // number of fourier modes for windowed kernel (half space)
+    int n_pw_win;         // linear number of planewaves for windowed kernel (PBC dependent)
+    int n_exp_modes_win;  // number of planewave modes per box n_pw^(D-1)((n_pw+1) / 2);
+    double hpw_diff;      // planewave spacing for difference kernel
+    double hpw_win;       // planewave spacing for windowed kernel
+    int n_order;          // linear number of proxy coefficients
+
+    ExpansionConstants(dmk_ikernel kernel, bool is_periodic, double eps) {
+        beta = util::calc_bandlimiting(kernel, DIM, eps);
+
+        n_fourier_diff = std::ceil(3.0 * beta / M_PI * (1.0 - eps));
+        hpw_diff = 2.0 * beta / n_fourier_diff;
+        n_fourier_diff -= 1;
+
+        if (!is_periodic) {
+            hpw_win = 1.0;
+            n_fourier_win = static_cast<int>(std::ceil(beta)) - 1;
+        } else {
+            hpw_win = 2.0 * M_PI;
+            n_fourier_win = std::ceil(2.0 * beta / hpw_win);
+        }
+
+        n_pw_diff = 2 * n_fourier_diff + 1;
+        n_exp_modes_diff = sctl::pow<DIM - 1>(n_pw_diff) * ((n_pw_diff + 1) / 2);
+        // n_pw_win = 2 * n_fourier_win + 1;
+        n_pw_win = n_pw_diff;
+        n_exp_modes_win = sctl::pow<DIM - 1>(n_pw_win) * ((n_pw_win + 1) / 2);
+
+        n_order = std::ceil(1.43 * beta - 3.26);
+    }
+};
+
 // Contact geometry between two adjacent boxes.
 //
 // Two boxes can share a face, edge, or corner. In each spatial dimension,
@@ -370,9 +408,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     const int kernel_output_dim_max;
     const int n_tables;
     const int n_digits;
-    const int n_order;
-    const int n_pw;
 
+    ExpansionConstants<DIM> expansion_constants;
     FourierData<Real> fourier_data;
     sctl::Vector<Real> c2p;
     sctl::Vector<Real> p2c;
@@ -512,6 +549,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     std::complex<Real> *pw_out_ptr(int i_box) { return &pw_out[pw_out_offsets[i_box]]; }
     const std::complex<Real> *pw_out_ptr(int i_box) const { return &pw_out[pw_out_offsets[i_box]]; }
     ndview<std::complex<Real>, DIM + 1> pw_out_view(int i_box) {
+        // FIXME: windowed vs diff
+        const int n_pw = expansion_constants.n_pw_diff;
         if constexpr (DIM == 2)
             return ndview<std::complex<Real>, DIM + 1>({n_pw, (n_pw + 1) / 2, n_tables}, pw_out_ptr(i_box));
         else if constexpr (DIM == 3)
@@ -550,6 +589,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     bool debug_dump_tree = false;
     std::shared_ptr<spdlog::logger> &logger;
     std::shared_ptr<spdlog::logger> &rank_logger;
+
+    const int &n_order = expansion_constants.n_order;
 };
 
 } // namespace dmk

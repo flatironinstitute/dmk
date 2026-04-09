@@ -18,8 +18,7 @@ namespace dmk {
 
 template <int DIM>
 std::tuple<double, double> get_PSWF_difference_kernel_pwterms(int npw, double beta, double boxsize) {
-    const int nf = (npw - 1) / 2 + 1;
-    constexpr double scale_factor = 2 * M_PI / 3.0;
+    const int nf = (npw - 1) / 2;
     const double hpw = 2 * beta / nf / boxsize;
 
     constexpr double factor = 0.5 / sctl::pow<DIM - 1>(M_PI);
@@ -643,12 +642,12 @@ void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars
 }
 
 template <typename T>
-FourierData<T>::FourierData(dmk_ikernel kernel, int n_dim, T eps, int n_digits, int n_pw_max, T fparam,
+FourierData<T>::FourierData(dmk_ikernel kernel, int n_dim, T eps, int n_digits, int n_pw_max, T fparam, double beta,
                             const sctl::Vector<T> &boxsize_)
     : kernel_(kernel), n_dim_(n_dim), n_digits_(n_digits), fparam_(fparam), box_sizes_(boxsize_),
       n_levels_(boxsize_.Dim()) {
 
-    beta_ = procl180_rescale(eps);
+    beta_ = beta;
     prolate0_fun = Prolate0Fun(beta_, 10000);
     difference_kernels_.ReInit(n_levels_);
 
