@@ -1,6 +1,7 @@
 #include <dmk.h>
 #include <dmk/direct.hpp>
 #include <dmk/fourier_data.hpp>
+#include <dmk/util.hpp>
 #include <dmk/vector_kernels_deprecated.hpp>
 
 #include <nanobench.h>
@@ -180,8 +181,14 @@ void run_comparison(const Opts &opts) {
             throw std::runtime_error("Unknown evaluator");
         }
     }();
+    pdmk_params pdmk_p;
+    pdmk_p.kernel = opts.kernel;
+    pdmk_p.n_dim = opts.n_dim;
+    pdmk_p.eps = std::pow(10, -opts.digits);
+    const double beta = dmk::util::calc_bandlimiting(pdmk_p);
+
     auto jit_evaluator =
-        dmk::make_evaluator_jit<Real>(opts.kernel, DMK_POTENTIAL, opts.n_dim, opts.digits, opts.unroll_factor);
+        dmk::make_evaluator_jit<Real>(opts.kernel, DMK_POTENTIAL, opts.n_dim, opts.digits, beta, opts.unroll_factor);
     auto aot_evaluator =
         dmk::make_evaluator_aot<Real>(opts.kernel, DMK_POTENTIAL, opts.n_dim, opts.digits, opts.unroll_factor);
 

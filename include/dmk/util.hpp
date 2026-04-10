@@ -63,6 +63,8 @@ class StackOrHeapBuffer {
     }
 };
 
+double calc_bandlimiting(const pdmk_params &p);
+
 template <typename Real>
 void mesh_nd(int dim, Real *in, int size, Real *out);
 
@@ -85,18 +87,19 @@ inline Real dot_product(Real *a, Real *b) {
     return res;
 }
 
+template <typename T, int... Is>
+inline auto get_opt_dot_impl(int n_order, std::integer_sequence<int, Is...>) {
+    using fn_t = decltype(&dmk::util::dot_product<T, 0>);
+    fn_t result = nullptr;
+    (void)((Is + 5 == n_order ? (result = &dmk::util::dot_product<T, Is + 5>, true) : false) || ...);
+    if (!result)
+        throw std::runtime_error("Invalid order " + std::to_string(n_order));
+    return result;
+}
+
 template <typename T>
 inline auto get_opt_dot(int n_order) {
-    if (n_order == 9)
-        return dmk::util::dot_product<T, 9>;
-    else if (n_order == 18)
-        return dmk::util::dot_product<T, 18>;
-    else if (n_order == 28)
-        return dmk::util::dot_product<T, 28>;
-    else if (n_order == 38)
-        return dmk::util::dot_product<T, 38>;
-    else
-        throw std::runtime_error("Invalid order " + std::to_string(n_order) + " provided");
+    return get_opt_dot_impl<T>(n_order, std::make_integer_sequence<int, 41>{});
 }
 
 template <typename T>

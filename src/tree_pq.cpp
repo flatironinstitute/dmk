@@ -124,6 +124,8 @@ void DMKPtTree<T, DIM>::eval_pq() {
     const auto &node_mid = this->GetNodeMID();
     const std::size_t n_coeffs = n_tables * sctl::pow<DIM>(n_order);
     constexpr int n_children = 1u << DIM;
+    // FIXME: windowed vs diff
+    const int n_pw = expansion_constants.n_pw_diff;
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const int n_pw_per_box = n_pw_modes * n_tables;
 
@@ -690,4 +692,3 @@ template void DMKPtTree<double, 2>::eval_pq();
 template void DMKPtTree<double, 3>::eval_pq();
 
 } // namespace dmk
-

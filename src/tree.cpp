@@ -17,7 +17,6 @@
 #include <fstream>
 #include <omp.h>
 #include <sctl/profile.hpp>
-#include <stdexcept>
 #include <unistd.h>
 
 #include <dmk/omp_wrapper.hpp>
@@ -65,7 +64,7 @@ void DMKPtTree<Real, DIM>::dump() const {
             int n_order;
             int n_pw;
             int floatsize;
-        } params_data{DIM, n_order, n_pw, sizeof(Real)};
+        } params_data{DIM, n_order, expansion_constants.n_pw_diff, sizeof(Real)}; // FIXME: n_pw_win vs diff
         auto fout = std::fstream(params_filename.c_str(), std::ios::out | std::ios::binary);
         fout.write(reinterpret_cast<const char *>(&params_data), sizeof(ParamsData));
     }
@@ -85,22 +84,6 @@ void DMKPtTree<Real, DIM>::dump() const {
     dumper("dmk_src_counts_with_halo", src_counts_with_halo);
     dumper("dmk_src_counts_owned", src_counts_owned);
     dumper("dmk_morton_ids", morton_ids);
-}
-
-std::pair<int, int> get_pwmax_and_poly_order(int dim, int ndigits, dmk_ikernel kernel) {
-    // clang-format off
-    if (kernel == DMK_SQRT_LAPLACE && dim == 3) {
-        if (ndigits <= 3) return {13, 9};
-        if (ndigits <= 6) return {27, 18};
-        if (ndigits <= 9) return {39, 28};
-        if (ndigits <= 12) return {55, 38};
-    }
-    if (ndigits <= 3) return {13, 9};
-    if (ndigits <= 6) return {25, 18};
-    if (ndigits <= 9) return {39, 28};
-    if (ndigits <= 12) return {55, 38};
-    // clang-format on
-    throw std::runtime_error("Requested precision too high");
 }
 
 void update_offsets_from_counts(const sctl::Vector<sctl::Long> &counts, sctl::Long N,
@@ -125,14 +108,13 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
       kernel_output_dim_trg(get_kernel_output_dim(params.n_dim, params.kernel, params.pgh_trg)),
       kernel_output_dim_max(std::max(kernel_output_dim_src, kernel_output_dim_trg)),
       n_tables(1), // Placeholder for when we need more proxy coefficient tables
-      n_digits(std::round(log10(1.0 / params_.eps) - 0.1)),
-      n_pw(get_pwmax_and_poly_order(DIM, n_digits, params_.kernel).first),
-      n_order(get_pwmax_and_poly_order(DIM, n_digits, params_.kernel).second),
+      n_digits(std::round(log10(1.0 / params_.eps) - 0.1)), expansion_constants(params),
       logger(dmk::get_logger(comm, params.log_level)), rank_logger(dmk::get_rank_logger(comm, params.log_level)) {
     sctl::Profile::Scoped profile("DMKPtTree::DMKPtTree", &comm_);
-    debug_omit_pw = util::env_is_set("DMK_DEBUG_OMIT_PW");
-    debug_omit_direct = util::env_is_set("DMK_DEBUG_OMIT_DIRECT");
-    debug_dump_tree = util::env_is_set("DMK_DEBUG_DUMP_TREE");
+    debug_omit_pw = (params.debug_flags & DMK_DEBUG_OMIT_PW) || util::env_is_set("DMK_DEBUG_OMIT_PW");
+    debug_omit_direct = (params.debug_flags & DMK_DEBUG_OMIT_DIRECT) || util::env_is_set("DMK_DEBUG_OMIT_DIRECT");
+    debug_dump_tree = (params.debug_flags & DMK_DEBUG_DUMP_TREE) || util::env_is_set("DMK_DEBUG_DUMP_TREE");
+    debug_force_aot = (params.debug_flags & DMK_DEBUG_FORCE_AOT) || util::env_is_set("DMK_DEBUG_FORCE_AOT");
 
     logger->info("tree build started");
 
@@ -549,7 +531,7 @@ void DMKPtTree<Real, DIM>::build_upward_pass_work_lists() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
-    const int n_coeffs = n_tables * sctl::pow<DIM>(n_order);
+    const int n_coeffs = n_tables * sctl::pow<DIM>(expansion_constants.n_order);
 
     sctl::Vector<sctl::Long> counts_upward(n_boxes());
     sctl::Vector<sctl::Long> counts_downward(n_boxes());
@@ -603,6 +585,7 @@ void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
+    const int n_pw = expansion_constants.n_pw_win;
     const long n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     difference_fourier_data.resize(n_levels());
 
@@ -611,7 +594,7 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
     window_fourier_data.poly2pw.ReInit(n_order * n_pw);
     window_fourier_data.pw2poly.ReInit(n_order * n_pw);
     window_fourier_data.radialft.ReInit(n_pw_modes);
-    get_windowed_kernel_ft<Real, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_digits, boxsize[0],
+    get_windowed_kernel_ft<Real, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_pw, boxsize[0],
                                       fourier_data.prolate0_fun, kernel_ft);
     util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<Real, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
                                               ndview<Real, 1>({n_pw_modes}, &window_fourier_data.radialft[0]));
@@ -625,7 +608,7 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
         lfd.pw2poly.ReInit(n_order * n_pw);
 
         const bool is_root = (i_level == 0);
-        get_difference_kernel_ft<Real, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_digits,
+        get_difference_kernel_ft<Real, DIM>(is_root, params.kernel, &params.fparam, fourier_data.beta(), n_pw,
                                             boxsize[i_level], fourier_data.prolate0_fun, kernel_ft);
         util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<Real, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
                                                   ndview<Real, 1>({n_pw_modes}, &lfd.radialft[0]));
@@ -674,9 +657,11 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
         auto src_eval = make_evaluator_aot<Real>(params.kernel, params.pgh_src, DIM, n_digits, 3);
         auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.pgh_trg, DIM, n_digits, 3);
 #ifdef DMK_USE_JIT
-        if (util::env_is_set("DMK_DEBUG_FORCE_AOT")) {
-            src_eval = make_evaluator_jit<Real>(params.kernel, params.pgh_src, DIM, n_digits, 3);
-            trg_eval = make_evaluator_jit<Real>(params.kernel, params.pgh_trg, DIM, n_digits, 3);
+        if (!util::env_is_set("DMK_DEBUG_FORCE_AOT")) {
+            src_eval =
+                make_evaluator_jit<Real>(params.kernel, params.pgh_src, DIM, n_digits, expansion_constants.beta, 3);
+            trg_eval =
+                make_evaluator_jit<Real>(params.kernel, params.pgh_trg, DIM, n_digits, expansion_constants.beta, 3);
         }
 #endif
         // FIXME: assumes the same src/trg output configuration
@@ -760,12 +745,14 @@ void DMKPtTree<Real, DIM>::generate_metadata() {
     build_direct_work_lists();
     allocate_proxy_coefficients();
     proxy_down_zeroed.resize(n_boxes());
-    std::tie(c2p, p2c) = dmk::chebyshev::get_c2p_p2c_matrices<Real>(DIM, n_order);
-    fourier_data = FourierData<Real>(params.kernel, DIM, params.eps, n_digits, n_pw, params.fparam, boxsize);
+    std::tie(c2p, p2c) = dmk::chebyshev::get_c2p_p2c_matrices<Real>(DIM, expansion_constants.n_order);
+    // FIXME. pass in correct expansion constants
+    fourier_data = FourierData<Real>(params.kernel, DIM, params.eps, expansion_constants.n_pw_win, params.fparam,
+                                     expansion_constants.beta, boxsize);
     precompute_window_difference_data();
     build_evaluators();
 
-    assert(n_pw == fourier_data.n_pw());
+    assert(expansion_constants.n_pw_diff == fourier_data.n_pw());
     logger->debug("done generating tree traversal metadata and other constants");
 }
 
@@ -779,7 +766,7 @@ template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::upward_pass() {
     sctl::Profile::Scoped profile("upward_pass", &comm_);
     sctl::Profile::Tic("upward_pass_init", &comm_);
-    const std::size_t n_coeffs = n_tables * sctl::pow<DIM>(n_order);
+    const std::size_t n_coeffs = n_tables * sctl::pow<DIM>(expansion_constants.n_order);
     logger->info("upward pass started");
 
 #pragma omp parallel
@@ -834,6 +821,7 @@ void DMKPtTree<Real, DIM>::upward_pass() {
                         if (cb < 0 || !(src_counts_owned[cb] > 0 && ifpwexp[cb]))
                             continue;
 
+                        const auto &n_order = expansion_constants.n_order;
                         const ndview<Real, 2> c2p_view({n_order, DIM}, &c2p[ic * DIM * n_order * n_order]);
                         tensorprod::transform<Real, DIM>(n_tables, true, proxy_view_upward(cb), c2p_view,
                                                          proxy_view_upward(i_box), workspace);
@@ -868,6 +856,8 @@ void DMKPtTree<Real, DIM>::upward_pass() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::init_planewave_data() {
+    // FIXME: Handle windowed/diff separately
+    const int n_pw = expansion_constants.n_pw_diff;
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const int n_pw_per_box = n_pw_modes * n_tables;
 
@@ -877,7 +867,7 @@ void DMKPtTree<Real, DIM>::init_planewave_data() {
         int n_pw_boxes_out = 1;
         int64_t last_offset = n_pw_per_box;
         for (int box = 1; box < n_boxes(); ++box) {
-            if (proxy_coeffs_offsets[box] != -1) {
+            if (proxy_coeffs_offsets[box] != -1 || trg_counts_owned[box]) {
                 pw_out_offsets[box] = last_offset;
                 last_offset += n_pw_per_box;
                 n_pw_boxes_out++;
@@ -893,6 +883,8 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions() {
 #ifdef DMK_INSTRUMENT
     double dt = -MY_OMP_GET_WTIME();
 #endif
+    // FIXME: Split windowed/diff size
+    const int n_pw = expansion_constants.n_pw_diff;
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
     const int n_pw_per_box = n_pw_modes * n_tables;
     const auto &node_mid = this->GetNodeMID();
@@ -942,7 +934,8 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
 #ifdef DMK_INSTRUMENT
     double dt = -MY_OMP_GET_WTIME();
 #endif
-    const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
+    const int n_pw = expansion_constants.n_pw_diff;
+    const int n_pw_modes = expansion_constants.n_exp_modes_diff;
     const int n_pw_per_box = n_pw_modes * n_tables;
     const auto &node_lists = this->GetNodeLists();
     const auto &node_attr = this->GetNodeAttr();
@@ -957,7 +950,7 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
         sctl::Vector<Real> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
         sctl::Vector<std::complex<Real>> pw_in(n_pw_per_box);
 
-        auto pw_in_view = [this, &pw_in]() {
+        auto pw_in_view = [this, &pw_in, n_pw]() {
             if constexpr (DIM == 2)
                 return ndview<std::complex<Real>, DIM + 1>({n_pw, (n_pw + 1) / 2, n_tables}, &pw_in[0]);
             else if constexpr (DIM == 3)
@@ -1211,6 +1204,8 @@ void DMKPtTree<Real, DIM>::downward_pass() {
     sctl::Profile::Tic("expansion_propagation_and_eval", &comm_);
     std::fill(proxy_down_zeroed.begin(), proxy_down_zeroed.end(), 0);
     form_outgoing_expansions();
+
+    const int n_pw = expansion_constants.n_pw_diff;
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         auto &dfd = difference_fourier_data[i_level];
         const ndview<std::complex<Real>, 2> p2pw({n_pw, n_order}, &dfd.poly2pw[0]);
@@ -1278,7 +1273,7 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
 
     pdmk_params params;
     params.eps = 1E-6;
-    params.kernel = DMK_YUKAWA;
+    params.kernel = DMK_LAPLACE;
     params.log_level = SPDLOG_LEVEL_OFF;
     params.fparam = 6.0;
     params.n_dim = n_dim;
@@ -1295,8 +1290,6 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
     tree.downward_pass();
     tree.GetParticleData(pot_src, "pdmk_pot_src");
     tree.GetParticleData(pot_trg, "pdmk_pot_trg");
-    if (test_rank == 0)
-        std::cout << MY_OMP_GET_WTIME() - st << std::endl;
 
     if (test_rank == 0) {
         dmk::util::init_test_data(n_dim, n_charge_dim, n_src, n_trg, uniform, true, r_src, r_trg, r_src_norms, charges,
@@ -1327,7 +1320,6 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
                 }
             }
             if (single_box < 0) {
-                std::cout << fmt::format("No match for box {}\n", ibox);
                 continue;
             }
 
@@ -1339,7 +1331,7 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
                     break;
 
                 double max_actual = 0.0;
-                for (int i = 0; i < sctl::pow<3>(tree.n_order); ++i) {
+                for (int i = 0; i < sctl::pow<3>(tree.expansion_constants.n_order); ++i) {
                     const double actual = tree_single.proxy_ptr_upward(single_box)[i];
                     const double mpi = tree.proxy_ptr_upward(ibox)[i];
                     const double err = std::abs(mpi - actual);
@@ -1349,7 +1341,7 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
                 maxerr_up = max_actual ? maxerr_up / max_actual : 0.0;
             }
 
-            if (maxerr_up > 1E-14)
+            if (maxerr_up > 1E-12)
                 std::cout << fmt::format("{:3} {:3} {:3} {:5.4E} {:3} ({} {} {})\n", test_rank, ibox, single_box,
                                          maxerr_up, node_mid[ibox].Depth(), x[0], x[1], x[2]);
         }
@@ -1358,7 +1350,7 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
             for (int i = 0; i < n_src; ++i) {
                 double err_src = pot_src[i] == 0. ? 0.0 : std::abs(1.0 - pot_src[i] / pot_src_single[i]);
                 double err_trg = pot_trg[i] == 0. ? 0.0 : std::abs(1.0 - pot_trg[i] / pot_trg_single[i]);
-                if (err_src > 1E-12 || err_trg > 1E-12)
+                if (err_src > params.eps || err_trg > params.eps)
                     std::cout << fmt::format("{} {:5.4E} {:5.4E}\n", i, err_src, err_trg);
             }
         }

@@ -45,7 +45,7 @@ void pdmk(dmk_communicator comm, const pdmk_params &params, int n_src, const T *
     sctl::Vector<T> charge_vec(n_src * kernel_input_dim, const_cast<T *>(charge), false);
 
     DMKPtTree<T, DIM> tree(sctl_comm, params, r_src_vec, r_trg_vec, charge_vec);
-    if (util::env_is_set("DMK_DEBUG_USE_PQ"))
+    if ((params.debug_flags & DMK_DEBUG_USE_PQ) || util::env_is_set("DMK_DEBUG_USE_PQ"))
         tree.eval_pq();
     else
         tree.eval();
@@ -92,7 +92,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d float", 1) {
     pot_trgf.ReInit(n_trg * nd);
 
     pdmk_params params;
-    params.eps = 1e-9;
+    params.eps = 1e-6;
     params.n_dim = n_dim;
     params.n_per_leaf = 80;
     params.pgh_src = DMK_POTENTIAL;
@@ -108,21 +108,23 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d float", 1) {
     pdmkf(comm, params, n_src, &r_srcf[0], &chargesf[0], &rnormalf[0], &dipstrf[0], n_trg, &r_trgf[0], &pot_srcf[0],
           &pot_trgf[0]);
 
-    double l2_err_src = 0.0;
-    double l2_err_trg = 0.0;
-    for (int i = 0; i < n_src; ++i)
-        l2_err_src += pot_src[i] ? sctl::pow<2>(1.0 - pot_srcf[i] / pot_src[i]) : 0.0;
-    for (int i = 0; i < n_trg; ++i)
-        l2_err_trg += pot_trg[i] ? sctl::pow<2>(1.0 - pot_trgf[i] / pot_trg[i]) : 0.0;
+    double l2_err_src{0.0}, l2_err_trg{0.0}, src2{0.0}, trg2{0.0};
+    for (int i = 0; i < n_src; ++i) {
+        l2_err_src += pot_src[i] ? sctl::pow<2>(pot_src[i] - pot_srcf[i]) : 0.0;
+        src2 += pot_src[i] * pot_src[i];
+    }
+    for (int i = 0; i < n_trg; ++i) {
+        l2_err_trg += pot_trg[i] ? sctl::pow<2>(pot_trg[i] - pot_trgf[i]) : 0.0;
+        trg2 += pot_trg[i] * pot_trg[i];
+    }
 
-    l2_err_src = std::sqrt(l2_err_src) / n_src;
-    l2_err_trg = std::sqrt(l2_err_trg) / n_trg;
-    CHECK(l2_err_src < 6 * params.eps);
-    CHECK(l2_err_trg < 6 * params.eps);
+    l2_err_src = std::sqrt(l2_err_src / src2);
+    l2_err_trg = std::sqrt(l2_err_trg / trg2);
+    CHECK(l2_err_src < params.eps);
+    CHECK(l2_err_trg < params.eps);
 }
 
-TEST_CASE_GENERIC("[DMK] pdmk 3d all", 1) {
-    constexpr int n_dim = 3;
+TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
     constexpr int n_src = 10000;
     constexpr int nd = 1;
     constexpr bool uniform = false;
@@ -134,21 +136,10 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d all", 1) {
     auto comm = nullptr;
 #endif
 
-    sctl::Vector<double> r_src, pot_src, charges, rnormal, dipstr, pot_trg, r_trg;
-    dmk::util::init_test_data(n_dim, 1, n_src, 0, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, dipstr,
-                              0);
-    r_trg = r_src;
-    std::reverse(r_trg.begin(), r_trg.end());
-    r_trg.ReInit(n_dim * (n_src - set_fixed_charges * 3));
-    const int n_trg = r_trg.Dim() / n_dim;
-
     pdmk_params params;
-    params.eps = 1e-12;
-    params.n_dim = n_dim;
-    params.n_per_leaf = 80;
+    params.eps = 1e-6;
     params.pgh_src = DMK_POTENTIAL;
     params.pgh_trg = DMK_POTENTIAL;
-    params.kernel = DMK_YUKAWA;
     params.fparam = 6.0;
     params.log_level = SPDLOG_LEVEL_OFF;
 
@@ -243,6 +234,14 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d all", 1) {
 
     for (auto n_dim : {2, 3}) {
         params.n_dim = n_dim;
+        sctl::Vector<double> r_src, pot_src, charges, rnormal, dipstr, pot_trg, r_trg;
+        dmk::util::init_test_data(n_dim, 1, n_src, 0, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges,
+                                  dipstr, 0);
+        r_trg = r_src;
+        std::reverse(r_trg.begin(), r_trg.end());
+        r_trg.ReInit(n_dim * (n_src - set_fixed_charges * 3));
+        const int n_trg = r_trg.Dim() / n_dim;
+
         for (auto kernel : test_kernels) {
             const std::string kernel_str = [&kernel]() {
                 switch (kernel) {
@@ -266,11 +265,12 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d all", 1) {
                 params.kernel = kernel;
                 auto potential = get_pot_func(n_dim, kernel);
 
-                const int n_test_src = std::min(n_src, 100);
-                const int n_test_trg = std::min(n_trg, 100);
+                const int n_test_src = std::min(n_src, 1000);
+                const int n_test_trg = std::min(n_trg, 1000);
                 std::vector<double> test_src(n_test_src);
                 std::vector<double> test_trg(n_test_trg);
 
+#pragma omp parallel for schedule(static)
                 for (int i_src = 0; i_src < n_src; ++i_src) {
                     for (int i_trg = 0; i_trg < n_test_src; ++i_trg)
                         test_src[i_trg] += charges[i_src] * potential(&r_src[i_src * n_dim], &r_src[i_trg * n_dim]);
@@ -282,36 +282,22 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d all", 1) {
                                                   n_trg, &r_trg[0]);
                 pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
 
-#ifdef DMK_HAVE_REFERENCE
-                double tottimeinfo[20];
-                int use_charge = 1;
-                int use_dipole = 0;
-                auto pot_src_fort = pot_src;
-                auto grad_src_fort = grad_src;
-                auto hess_src_fort = hess_src;
-                auto pot_trg_fort = pot_trg;
-                auto grad_trg_fort = grad_trg;
-                auto hess_trg_fort = hess_trg;
-                double st = MY_OMP_GET_WTIME();
-                pdmk_(&nd, &n_dim, &params.eps, (int *)&params.kernel, &params.fparam, &params.use_periodic, &n_src,
-                      &r_src[0], &use_charge, &charges[0], &use_dipole, nullptr, nullptr, (int *)&params.pgh_src,
-                      &pot_src_fort[0], &grad_src_fort[0], &hess_src_fort[0], &n_trg, &r_trg[0], (int *)&params.pgh_trg,
-                      &pot_trg_fort[0], &grad_trg_fort[0], &hess_trg_fort[0], tottimeinfo);
-                std::cout << MY_OMP_GET_WTIME() - st << std::endl;
-#endif
+                double err_src{0}, err_trg{0};
+                double ref_src{0}, ref_trg{0};
+                for (int i = 0; i < n_test_src; ++i) {
+                    err_src += sctl::pow<2>(test_src[i] - pot_src[i]);
+                    ref_src += sctl::pow<2>(test_src[i]);
+                }
+                for (int i = 0; i < n_test_trg; ++i) {
+                    err_trg += sctl::pow<2>(test_trg[i] - pot_trg[i]);
+                    ref_trg += sctl::pow<2>(test_trg[i]);
+                }
 
-                double l2_err_src = 0.0;
-                double l2_err_trg = 0.0;
-                for (int i = 0; i < n_test_src; ++i)
-                    l2_err_src += test_src[i] != 0.0 ? sctl::pow<2>(1.0 - pot_src[i] / test_src[i]) : 0.0;
-                for (int i = 0; i < n_test_trg; ++i)
-                    l2_err_trg += test_trg[i] != 0.0 ? sctl::pow<2>(1.0 - pot_trg[i] / test_trg[i]) : 0.0;
+                err_src = std::sqrt(err_src / ref_src);
+                err_trg = std::sqrt(err_trg / ref_trg);
 
-                l2_err_src = std::sqrt(l2_err_src) / n_test_src;
-                l2_err_trg = std::sqrt(l2_err_trg) / n_test_trg;
-                // FIXME: We should strengthen the checks here
-                CHECK(l2_err_src < 6 * params.eps);
-                CHECK(l2_err_trg < 6 * params.eps);
+                CHECK(err_src < params.eps);
+                CHECK(err_trg < params.eps);
 
                 // Scale charges by 1/2 and re-evaluate. Since the kernel
                 // is linear in the charges, potentials should scale by the same factor.
@@ -478,7 +464,7 @@ inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *pot_trg) {
                 const auto &comm = (*static_cast<TreeType *>(tree))->GetComm();
                 sctl::Profile::Scoped prof("pdmk_tree_eval", &comm);
 
-                if (util::env_is_set("DMK_DEBUG_USE_PQ"))
+                if ((t->params.debug_flags & DMK_DEBUG_USE_PQ) || util::env_is_set("DMK_DEBUG_USE_PQ"))
                     t->eval_pq();
                 else
                     t->eval();

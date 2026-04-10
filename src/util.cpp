@@ -8,6 +8,15 @@
 
 namespace dmk::util {
 using dmk::ndview;
+
+double calc_bandlimiting(const pdmk_params &p) {
+    if (p.debug_flags & DMK_DEBUG_OVERRIDE_BETA)
+        return p.debug_params[DMK_DEBUG_BETA_SLOT];
+    double d = -std::log10(p.eps);
+    const double beta = 2.664 * d + 0.306;
+    return beta;
+}
+
 template <typename Real>
 void mesh_2d(const ndview<const Real, 1> &x, const ndview<const Real, 1> &y, const ndview<Real, 2> &xy) {
     int nx = x.extent(0);
@@ -160,9 +169,9 @@ void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool 
     for (int i = 0; i < n_src; ++i) {
         if (!uniform) {
             if (n_dim == 2) {
-                double phi = rng(eng) * 2 * M_PI;
-                r_src[i * 3 + 0] = cos(phi);
-                r_src[i * 3 + 1] = sin(phi);
+                const double phi = rng(eng) * 2 * M_PI;
+                r_src[i * 2 + 0] = 0.5 * (cos(phi) + 1.0);
+                r_src[i * 2 + 1] = 0.5 * (sin(phi) + 1.0);
             }
             if (n_dim == 3) {
                 double theta = rng(eng) * M_PI;
@@ -195,8 +204,8 @@ void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool 
         if (!uniform) {
             if (n_dim == 2) {
                 double phi = rng(eng) * 2 * M_PI;
-                r_trg[i_trg * 3 + 0] = cos(phi);
-                r_trg[i_trg * 3 + 1] = sin(phi);
+                r_trg[i_trg * 2 + 0] = 0.5 * (cos(phi) + 1.0);
+                r_trg[i_trg * 2 + 1] = 0.5 * (sin(phi) + 1.0);
             }
             if (n_dim == 3) {
                 double theta = rng(eng) * M_PI;

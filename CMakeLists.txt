@@ -82,6 +82,18 @@ set(DMK_INCLUDES
   ${PROJECT_SOURCE_DIR}/extern/SCTL/include
 )
 
+include(FetchContent)
+FetchContent_Declare(
+  polyfit
+  GIT_REPOSITORY https://github.com/DiamonDinoia/polyfit.git
+  GIT_TAG        a2994771155ed4cd22c2b792b463c42eefca3067
+)
+set(Build_Tests OFF CACHE BOOL "" FORCE) # gtest... tests
+set(MONOFIT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(MONOFIT_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(polyfit)
+
+
 add_subdirectory(extern/spdlog EXCLUDE_FROM_ALL)
 add_subdirectory(extern/nanobench EXCLUDE_FROM_ALL)
 add_subdirectory(extern/doctest)
@@ -92,17 +104,6 @@ if (DMK_USE_JIT)
   set(RUFUS_LINK_LLVM_SHARED ON CACHE BOOL "" FORCE)
   set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
   add_subdirectory(extern/RuFuS)
-
-  include(FetchContent)
-  FetchContent_Declare(
-    polyfit
-    GIT_REPOSITORY https://github.com/DiamonDinoia/polyfit.git
-    GIT_TAG        a2994771155ed4cd22c2b792b463c42eefca3067
-  )
-  set(Build_Tests OFF CACHE BOOL "" FORCE) # gtest... tests
-  set(MONOFIT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-  set(MONOFIT_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-  FetchContent_MakeAvailable(polyfit)
 
   rufus_embed_ir_as_header(jit_kernels src/jit_kernels.cpp
     INCLUDES ${DMK_INCLUDES}
@@ -151,8 +152,8 @@ add_library(DMKOBJS OBJECT ${DMK_SRC})
 set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES})
 target_link_libraries(DMKOBJS PUBLIC ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET}
-  nda::nda_c spdlog::spdlog_header_only doctest::doctest BLAS::BLAS 
-  $<$<BOOL:${DMK_USE_JIT}>:RuFuS::rufus jit_kernels polyfit::polyfit>
+  nda::nda_c spdlog::spdlog_header_only doctest::doctest BLAS::BLAS polyfit::polyfit
+  $<$<BOOL:${DMK_USE_JIT}>:RuFuS::rufus jit_kernels>
 )
 target_compile_options(DMKOBJS PUBLIC "${DMK_CXX_FLAGS}")
 
@@ -164,7 +165,7 @@ target_compile_options(${PROJECT_NAME} PUBLIC "${DMK_CXX_FLAGS}")
 add_library(dmk_shared SHARED)
 set_target_properties(${PROJECT_NAME}_shared PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
 target_link_libraries(${PROJECT_NAME}_shared PRIVATE DMKOBJS
-  $<$<BOOL:${DMK_USE_JIT}>:RuFuS::rufus jit_kernels polyfit::polyfit>
+  $<$<BOOL:${DMK_USE_JIT}>:RuFuS::rufus jit_kernels>
 )
 target_include_directories(${PROJECT_NAME}_shared PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_compile_options(${PROJECT_NAME}_shared PUBLIC "${DMK_CXX_FLAGS}")
@@ -175,6 +176,7 @@ endif()
 
 if(${DMK_BUILD_EXAMPLES})
   add_subdirectory(examples)
+  add_subdirectory(scripts)
 endif()
 
 add_subdirectory(perf)
