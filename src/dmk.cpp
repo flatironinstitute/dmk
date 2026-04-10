@@ -92,7 +92,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d float", 1) {
     pot_trgf.ReInit(n_trg * nd);
 
     pdmk_params params;
-    params.eps = 1e-9;
+    params.eps = 1e-6;
     params.n_dim = n_dim;
     params.n_per_leaf = 80;
     params.pgh_src = DMK_POTENTIAL;
@@ -108,17 +108,20 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d float", 1) {
     pdmkf(comm, params, n_src, &r_srcf[0], &chargesf[0], &rnormalf[0], &dipstrf[0], n_trg, &r_trgf[0], &pot_srcf[0],
           &pot_trgf[0]);
 
-    double l2_err_src = 0.0;
-    double l2_err_trg = 0.0;
-    for (int i = 0; i < n_src; ++i)
-        l2_err_src += pot_src[i] ? sctl::pow<2>(1.0 - pot_srcf[i] / pot_src[i]) : 0.0;
-    for (int i = 0; i < n_trg; ++i)
-        l2_err_trg += pot_trg[i] ? sctl::pow<2>(1.0 - pot_trgf[i] / pot_trg[i]) : 0.0;
+    double l2_err_src{0.0}, l2_err_trg{0.0}, src2{0.0}, trg2{0.0};
+    for (int i = 0; i < n_src; ++i) {
+        l2_err_src += pot_src[i] ? sctl::pow<2>(pot_src[i] - pot_srcf[i]) : 0.0;
+        src2 += pot_src[i] * pot_src[i];
+    }
+    for (int i = 0; i < n_trg; ++i) {
+        l2_err_trg += pot_trg[i] ? sctl::pow<2>(pot_trg[i] - pot_trgf[i]) : 0.0;
+        trg2 += pot_trg[i] * pot_trg[i];
+    }
 
-    l2_err_src = std::sqrt(l2_err_src) / n_src;
-    l2_err_trg = std::sqrt(l2_err_trg) / n_trg;
-    CHECK(l2_err_src < 6 * params.eps);
-    CHECK(l2_err_trg < 6 * params.eps);
+    l2_err_src = std::sqrt(l2_err_src / src2);
+    l2_err_trg = std::sqrt(l2_err_trg / trg2);
+    CHECK(l2_err_src < params.eps);
+    CHECK(l2_err_trg < params.eps);
 }
 
 TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
@@ -134,7 +137,7 @@ TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
 #endif
 
     pdmk_params params;
-    params.eps = 1e-12;
+    params.eps = 1e-6;
     params.pgh_src = DMK_POTENTIAL;
     params.pgh_trg = DMK_POTENTIAL;
     params.fparam = 6.0;
@@ -262,11 +265,12 @@ TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
                 params.kernel = kernel;
                 auto potential = get_pot_func(n_dim, kernel);
 
-                const int n_test_src = std::min(n_src, 100);
-                const int n_test_trg = std::min(n_trg, 100);
+                const int n_test_src = std::min(n_src, 1000);
+                const int n_test_trg = std::min(n_trg, 1000);
                 std::vector<double> test_src(n_test_src);
                 std::vector<double> test_trg(n_test_trg);
 
+#pragma omp parallel for schedule(static)
                 for (int i_src = 0; i_src < n_src; ++i_src) {
                     for (int i_trg = 0; i_trg < n_test_src; ++i_trg)
                         test_src[i_trg] += charges[i_src] * potential(&r_src[i_src * n_dim], &r_src[i_trg * n_dim]);

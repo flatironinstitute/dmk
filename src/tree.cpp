@@ -17,7 +17,6 @@
 #include <fstream>
 #include <omp.h>
 #include <sctl/profile.hpp>
-#include <stdexcept>
 #include <unistd.h>
 
 #include <dmk/omp_wrapper.hpp>
