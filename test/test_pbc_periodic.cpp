@@ -1,3 +1,4 @@
+#include "dmk/util.hpp"
 #include <algorithm>
 #include <complex>
 #include <cstdio>
@@ -6,10 +7,11 @@
 #include <vector>
 
 #include <dmk.h>
+#include <dmk/direct.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/tensorprod.hpp>
-#include <dmk/tree.hpp>
 #include <dmk/testing.hpp>
+#include <dmk/tree.hpp>
 #include <sctl.hpp>
 
 TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC direct verification", 1) {
@@ -44,42 +46,27 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC direct verification", 1) {
             charges[i] -= sum / n_src;
     }
 
-    const double coeffs_3[] = {1.627823522210361e-01, -4.553645597616490e-01, 4.171687104204163e-01,
-                               -7.073638602709915e-02, -8.957845614474928e-02, 2.617986644718201e-02,
-                               9.633427876507601e-03};
-    const double coeffs_6[] = {5.482525801351582e-02, -2.616592110444692e-01, 4.862652666337138e-01,
-                               -3.894296348642919e-01, 1.638587821812791e-02, 1.870328434198821e-01,
-                               -8.714171086568978e-02, -3.927020727017803e-02, 3.728187607052319e-02,
-                               3.153734425831139e-03, -8.651313377285847e-03, 1.725110090795567e-04,
-                               1.034762385284044e-03};
-    const double coeffs_9[] = {1.835718730962269e-02, -1.258015846164503e-01, 3.609487248584408e-01,
-                               -5.314579651112283e-01, 3.447559412892380e-01, 9.664692318551721e-02,
-                               -3.124274531849053e-01, 1.322460720579388e-01, 9.773007866584822e-02,
-                               -1.021958831082768e-01, -3.812847450976566e-03, 3.858117355875043e-02,
-                               -8.728545924521301e-03, -9.401196355382909e-03, 4.024549377076924e-03,
-                               1.512806105865091e-03, -9.576734877247042e-04, -1.303457547418901e-04,
-                               1.100385844683190e-04};
-    const double coeffs_12[] = {6.262472576363448e-03, -5.605742936112479e-02, 2.185890864792949e-01,
-                                -4.717350304955679e-01, 5.669680214206270e-01, -2.511606878849214e-01,
-                                -2.744523658778361e-01, 4.582527599363415e-01, -1.397724810121539e-01,
-                                -2.131762135835757e-01, 1.995489373508990e-01, 1.793390341864239e-02,
-                                -1.035055132403432e-01, 3.035606831075176e-02, 3.153931762550532e-02,
-                                -2.033178627450288e-02, -5.406682731236552e-03, 7.543645573618463e-03,
-                                1.437788047407851e-05, -1.928370882351732e-03, 2.891658777328665e-04,
-                                3.332996162099811e-04, -8.397699195938912e-05, -3.015837377517983e-05,
-                                9.640642701924662e-06};
+    using dmk::util::calc_bandlimiting;
+    const auto coeffs_3 = dmk::get_local_correction_coeffs<double>(
+        DMK_LAPLACE, 3, 3, calc_bandlimiting({.n_dim = 3, .eps = 1e-3, .kernel = DMK_LAPLACE, .debug_flags = 0}));
+    const auto coeffs_6 = dmk::get_local_correction_coeffs<double>(
+        DMK_LAPLACE, 3, 6, calc_bandlimiting({.n_dim = 3, .eps = 1e-6, .kernel = DMK_LAPLACE, .debug_flags = 0}));
+    const auto coeffs_9 = dmk::get_local_correction_coeffs<double>(
+        DMK_LAPLACE, 3, 9, calc_bandlimiting({.n_dim = 3, .eps = 1e-9, .kernel = DMK_LAPLACE, .debug_flags = 0}));
+    const auto coeffs_12 = dmk::get_local_correction_coeffs<double>(
+        DMK_LAPLACE, 3, 12, calc_bandlimiting({.n_dim = 3, .eps = 1e-12, .kernel = DMK_LAPLACE, .debug_flags = 0}));
 
     struct PrecisionCase {
         int n_digits;
         double eps;
         const double *coeffs;
-        int n_coeffs;
+        size_t n_coeffs;
     };
     const PrecisionCase cases[] = {
-        {3, 1e-3, coeffs_3, (int)(sizeof(coeffs_3) / sizeof(double))},
-        {6, 1e-6, coeffs_6, (int)(sizeof(coeffs_6) / sizeof(double))},
-        {9, 1e-9, coeffs_9, (int)(sizeof(coeffs_9) / sizeof(double))},
-        {12, 1e-12, coeffs_12, (int)(sizeof(coeffs_12) / sizeof(double))},
+        {3, 1e-3, coeffs_3.data(), coeffs_3.size()},
+        {6, 1e-6, coeffs_6.data(), coeffs_6.size()},
+        {9, 1e-9, coeffs_9.data(), coeffs_9.size()},
+        {12, 1e-12, coeffs_12.data(), coeffs_12.size()},
     };
 
     auto horner_eval = [](double x, const double *c, int n) {
@@ -105,7 +92,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC direct verification", 1) {
 
             tree.pot_src_sorted.SetZero();
             tree.pot_trg_sorted.SetZero();
-            tree.evaluate_direct_interactions(tree.r_src_t.data(), tree.r_trg_t.data());
+            tree.evaluate_direct_interactions();
 
             const auto &node_mid = tree.GetNodeMID();
             const auto &node_attr = tree.GetNodeAttr();
@@ -142,8 +129,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC direct verification", 1) {
                     continue;
                 const double *rp = tree.r_trg_owned_ptr(box);
                 for (int i = 0; i < n; ++i)
-                    targets.push_back({{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]},
-                                       (int)tree.pot_trg_offsets[box] + i});
+                    targets.push_back({{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, (int)tree.pot_trg_offsets[box] + i});
             }
 
             std::vector<double> ref_pot(targets.size(), 0.0);
@@ -178,8 +164,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC direct verification", 1) {
                 ref2 += sctl::pow<2>(ref_pot[i]);
             }
             const double l2_err = (ref2 > 0) ? std::sqrt(err2 / ref2) : std::sqrt(err2);
-            MESSAGE("n_digits=", pc.n_digits, " eps=", pc.eps, " l2_err=", l2_err,
-                    " n_levels=", tree.n_levels(), " n_boxes=", tree.n_boxes());
+            MESSAGE("n_digits=", pc.n_digits, " eps=", pc.eps, " l2_err=", l2_err, " n_levels=", tree.n_levels(),
+                    " n_boxes=", tree.n_boxes());
             const double tol = (pc.n_digits <= 3) ? 1e-3 : 1e-6;
             CHECK(l2_err < tol);
         }
@@ -309,10 +295,9 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
                         if (r > 1e-15 && r <= r_c) {
                             pot_out += charges[is] * std::erfc(alpha * r) / r;
                             if (grad_out) {
-                                const double scale =
-                                    -charges[is] * (std::erfc(alpha * r) / (r * r2) +
-                                                    2.0 * alpha * std::exp(-alpha * alpha * r2) /
-                                                        (std::sqrt(M_PI) * r2));
+                                const double scale = -charges[is] * (std::erfc(alpha * r) / (r * r2) +
+                                                                     2.0 * alpha * std::exp(-alpha * alpha * r2) /
+                                                                         (std::sqrt(M_PI) * r2));
                                 grad_out[0] += scale * dx;
                                 grad_out[1] += scale * dy;
                                 grad_out[2] += scale * dz;
@@ -384,8 +369,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
         for (int with_grad = 0; with_grad <= 1; ++with_grad) {
             const auto pgh = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
             const int odim = with_grad ? 1 + n_dim : 1;
-            const std::string label =
-                "n_digits=" + std::to_string(pc.n_digits) + (with_grad ? " pot+grad" : " pot");
+            const std::string label = "n_digits=" + std::to_string(pc.n_digits) + (with_grad ? " pot+grad" : " pot");
 
             SUBCASE(label.c_str()) {
                 pdmk_params params;

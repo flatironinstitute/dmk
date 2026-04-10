@@ -86,17 +86,19 @@ inline void calc_polynomial(T x, T *poly) {
         poly[i] = T{2} * x * poly[i - 1] - poly[i - 2];
 }
 
+template <typename T, int... Is>
+inline auto get_polynomial_calculator_impl(int order, std::integer_sequence<int, Is...>) {
+    using fn_t = decltype(&calc_polynomial<T, 0>);
+    fn_t result = nullptr;
+    (void)((Is + 5 == order ? (result = &calc_polynomial<T, Is + 5>, true) : false) || ...);
+    if (!result)
+        throw std::runtime_error("Unsupported order: " + std::to_string(order));
+    return result;
+}
+
 template <typename T>
 inline auto get_polynomial_calculator(int order) {
-    if (order == 9)
-        return calc_polynomial<T, 9>;
-    if (order == 18)
-        return calc_polynomial<T, 18>;
-    if (order == 28)
-        return calc_polynomial<T, 28>;
-    if (order == 38)
-        return calc_polynomial<T, 38>;
-    throw std::runtime_error("Unsupported order: " + std::to_string(order));
+    return get_polynomial_calculator_impl<T>(order, std::make_integer_sequence<int, 41>{});
 }
 
 template <typename T>

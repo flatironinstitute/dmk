@@ -3,6 +3,7 @@
 
 #include <complex>
 #include <dmk.h>
+#include <dmk/logger.h>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
 #include <nda/nda.hpp>
@@ -12,6 +13,344 @@
 namespace dmk {
 template <typename T>
 struct FourierData;
+
+template <int DIM>
+struct ExpansionConstants {
+    double beta;           // PSWF bandwidth parameter
+    int n_fourier_diff;    // number of fourier modes for difference kernel (half space)
+    int n_pw_diff;         // linear number of planewaves (2 * n_fourier + 1)
+    int n_exp_modes_diff;  // number of planewave modes per box n_pw^(D-1)((n_pw+1) / 2);
+    int n_fourier_win;     // number of fourier modes for windowed kernel (half space)
+    int n_pw_win;          // linear number of planewaves for windowed kernel (PBC dependent)
+    int n_exp_modes_win;   // number of planewave modes per box n_pw^(D-1)((n_pw+1) / 2);
+    int n_pw_periodic = 0; // PW modes per dim for periodic root grid (0 if free-space)
+    double hpw_diff;       // planewave spacing for difference kernel
+    double hpw_win;        // planewave spacing for windowed kernel
+    int n_order;           // linear number of proxy coefficients
+
+    ExpansionConstants(const pdmk_params &p) {
+        beta = util::calc_bandlimiting(p);
+
+        n_fourier_diff = std::ceil(3.0 * beta / M_PI * (1.0 - p.eps));
+        hpw_diff = 2.0 * beta / n_fourier_diff;
+        n_fourier_diff -= 1;
+
+        if (!p.use_periodic) {
+            hpw_win = 1.0;
+            n_fourier_win = static_cast<int>(std::ceil(beta)) - 1;
+        } else {
+            hpw_win = 2.0 * M_PI;
+            n_fourier_win = std::ceil(2.0 * beta / hpw_win);
+        }
+
+        n_pw_diff = 2 * n_fourier_diff + 1;
+        n_exp_modes_diff = sctl::pow<DIM - 1>(n_pw_diff) * ((n_pw_diff + 1) / 2);
+        // FIXME: separate n_pw_win
+        // n_pw_win = 2 * n_fourier_win + 1;
+        n_pw_win = n_pw_diff;
+        n_exp_modes_win = sctl::pow<DIM - 1>(n_pw_win) * ((n_pw_win + 1) / 2);
+
+        if (p.use_periodic) {
+            n_pw_periodic = 2 * (int)std::ceil(beta / M_PI) + 3;
+            if (n_pw_periodic % 2 == 0)
+                n_pw_periodic++;
+        } else {
+            n_pw_periodic = 0;
+        }
+
+        if (p.debug_flags & DMK_DEBUG_OVERRIDE_ORDER)
+            n_order = p.debug_params[DMK_DEBUG_ORDER_SLOT];
+        else
+            n_order = std::ceil(1.43 * beta - 3.26);
+    }
+};
+
+// Contact geometry between two adjacent boxes.
+//
+// Two boxes can share a face, edge, or corner. In each spatial dimension,
+// the boxes either "touch" (share a boundary plane) or "overlap" (have a
+// shared extent in that dimension).
+//
+// The contact feature between two adjacent boxes:
+//
+//   2D:
+//     - Edge:   1 touch dim, 1 overlap dim → a line segment
+//     - Corner: 2 touch dims               → a point
+//
+//   3D:
+//     - Face:   1 touch dim,  2 overlap dims → a rectangle
+//     - Edge:   2 touch dims, 1 overlap dim  → a line segment
+//     - Corner: 3 touch dims                 → a point
+//
+//   In general: n_touch = DIM is always a corner,
+//               n_touch = 1 is the codimension-1 feature (edge in 2D, face in 3D)
+template <typename Real, int DIM>
+struct ContactGeometry {
+    int touch_dims[DIM];
+    Real touch_coords[DIM];
+    int overlap_dims[DIM];
+    Real overlap_lo[DIM];
+    Real overlap_hi[DIM];
+    int n_touch = 0;
+    int n_overlap = 0;
+    Real d2max;
+
+    inline ContactGeometry(const Real *corner_a, const Real *corner_b, Real size_a, Real size_b, Real d2max_)
+        : d2max(d2max_) {
+        for (int d = 0; d < DIM; d++) {
+            Real a = corner_a[d], b = corner_b[d];
+            Real sa = size_a, sb = size_b;
+            if (a + sa == b) {
+                touch_dims[n_touch] = d;
+                touch_coords[n_touch] = b;
+                n_touch++;
+            } else if (b + sb == a) {
+                touch_dims[n_touch] = d;
+                touch_coords[n_touch] = a;
+                n_touch++;
+            } else {
+                overlap_dims[n_overlap] = d;
+                overlap_lo[n_overlap] = std::max(a, b);
+                overlap_hi[n_overlap] = std::min(a + sa, b + sb);
+                n_overlap++;
+            }
+        }
+    }
+
+    // To check if a particle is within interaction range of the target box,
+    // we compute its distance to the nearest point on the contact feature.
+    //   - In touch dimensions, the contact is a fixed coordinate (the shared plane),
+    //     so distance is just |p - contact_coord|.
+    //   - In overlap dimensions, the contact spans an interval [lo, hi]. The nearest
+    //     point is obtained by clamping p to that interval. If p is inside the
+    //     interval, its contribution to the distance is zero. If p is outside, the
+    //     contribution is the distance to the nearest endpoint. This produces a rounded
+    //     corner at the edge of the overlap intervals. half-diskorectangles,
+    //     quarter-spherocylinders, faces with quarter-circle bevels, 1/8th spheres, 1/4
+    //     circles. yadayada.
+    inline Real dist2_to_contact(const Real *p) const {
+        Real dist2 = 0;
+        for (int t = 0; t < n_touch; t++) {
+            Real delta = p[touch_dims[t]] - touch_coords[t];
+            dist2 += delta * delta;
+        }
+        for (int t = 0; t < n_overlap; t++) {
+            Real coord = p[overlap_dims[t]];
+            Real clamped = std::min(std::max(coord, overlap_lo[t]), overlap_hi[t]);
+            Real delta = coord - clamped;
+            dist2 += delta * delta;
+        }
+        return dist2;
+    }
+
+    inline bool in_range(const Real *p) const { return dist2_to_contact(p) < d2max; }
+};
+
+// Filter source particles by distance to contact feature.
+// Returns the number of particles that passed the filter.
+// Filtered positions and charges are written contiguously into the provided buffers.
+template <typename Real, int DIM>
+int filter_sources(const ContactGeometry<Real, DIM> &geom, int n_src, const Real *r_src, const Real *charge,
+                   int n_charge_components, Real *r_src_out, Real *charge_out) {
+    int n_filtered = 0;
+    for (int i = 0; i < n_src; ++i) {
+        const Real *p = r_src + DIM * i;
+        if (geom.in_range(p)) {
+            for (int d = 0; d < DIM; ++d)
+                r_src_out[DIM * n_filtered + d] = p[d];
+            for (int j = 0; j < n_charge_components; ++j)
+                charge_out[n_filtered * n_charge_components + j] = charge[i * n_charge_components + j];
+            n_filtered++;
+        }
+    }
+    return n_filtered;
+}
+
+// Filter evaluation target points by distance to contact feature.
+// Returns the number of points that passed the filter.
+// Filtered positions are written contiguously into r_trg_out.
+// index_map[k] = original index of the k-th filtered point, used to scatter results back.
+template <typename Real, int DIM>
+int filter_targets(const ContactGeometry<Real, DIM> &geom, int n_trg, const Real *r_trg, Real *r_trg_out,
+                   int *index_map) {
+    int n_filtered = 0;
+    for (int i = 0; i < n_trg; ++i) {
+        const Real *p = r_trg + DIM * i;
+        if (geom.in_range(p)) {
+            for (int d = 0; d < DIM; ++d)
+                r_trg_out[DIM * n_filtered + d] = p[d];
+            index_map[n_filtered] = i;
+            n_filtered++;
+        }
+    }
+    return n_filtered;
+}
+
+// Scatter-add filtered potential values back to the original potential array.
+template <typename Real>
+void scatter_add_potential(const Real *pot_filtered, Real *pot, const int *index_map, int n_filtered,
+                           int n_components) {
+    for (int i = 0; i < n_filtered; ++i)
+        for (int j = 0; j < n_components; ++j)
+            pot[index_map[i] * n_components + j] += pot_filtered[i * n_components + j];
+}
+
+template <typename T, int DIM>
+void multiply_kernelFT_cd2p(const sctl::Vector<T> &radialft, auto &&pwexp) {
+    const int nd = pwexp.extent(DIM);
+    const int nexp = radialft.Dim();
+    ndview<std::complex<T>, 2> pwexp_flat({nexp, nd}, pwexp.data());
+
+    ndview<const T, 1> radialft_view({nexp}, &radialft[0]);
+    for (int ind = 0; ind < nd; ++ind) {
+        ndview<std::complex<T>, 1> pwexp_view({nexp}, &pwexp_flat(0, ind));
+        pwexp_view *= radialft_view;
+    }
+    // Real * complex is two multiplies and two adds
+    const unsigned long n_flops = 4 * nd * nexp;
+    sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, n_flops);
+}
+
+#if defined(__AVX512F__) || defined(__AVX2__)
+template <typename Real, int VecLen>
+inline void shift_planewave_simd(int nexp, int nd, const Real *__restrict__ pw1, Real *__restrict__ pw2,
+                                 const Real *__restrict__ shift_r, const Real *__restrict__ shift_i) {
+    using Vec = sctl::Vec<Real, VecLen>;
+    constexpr int N = VecLen;
+    using dmk::util::complex_deinterleave;
+    using dmk::util::complex_interleave;
+
+    for (int ind = 0; ind < nd; ++ind) {
+        const Real *s1 = pw1 + ind * nexp * 2;
+        Real *s2 = pw2 + ind * nexp * 2;
+
+        int i = 0;
+        for (; i + N <= nexp; i += N) {
+            Vec ar, ai;
+            Vec lo1 = Vec::Load(s1 + 2 * i);
+            Vec hi1 = Vec::Load(s1 + 2 * i + N);
+            complex_deinterleave(lo1.get().v, hi1.get().v, ar.get().v, ai.get().v);
+
+            Vec dr, di;
+            Vec lo2 = Vec::Load(s2 + 2 * i);
+            Vec hi2 = Vec::Load(s2 + 2 * i + N);
+            complex_deinterleave(lo2.get().v, hi2.get().v, dr.get().v, di.get().v);
+
+            Vec cr = Vec::Load(shift_r + i);
+            Vec ci = Vec::Load(shift_i + i);
+
+            dr = FMA(ar, cr, dr);
+            dr = FMA(-ai, ci, dr);
+            di = FMA(ar, ci, di);
+            di = FMA(ai, cr, di);
+
+            Vec out_lo, out_hi;
+            complex_interleave(dr.get().v, di.get().v, out_lo.get().v, out_hi.get().v);
+            out_lo.Store(s2 + 2 * i);
+            out_hi.Store(s2 + 2 * i + N);
+        }
+
+        for (; i < nexp; ++i) {
+            Real ar = s1[2 * i], ai = s1[2 * i + 1];
+            Real cr = shift_r[i], ci = shift_i[i];
+            s2[2 * i] += ar * cr - ai * ci;
+            s2[2 * i + 1] += ar * ci + ai * cr;
+        }
+    }
+}
+#endif
+
+template <typename Complex, int DIM>
+inline void shift_planewave(const ndview<Complex, DIM + 1> &pwexp1_, ndview<Complex, DIM + 1> &pwexp2_,
+                            const ndview<const Complex, 1> &wpwshift) {
+    using Real = typename Complex::value_type;
+    constexpr int VecLen = sctl::DefaultVecLen<Real>();
+
+    const int nd = pwexp1_.extent(DIM);
+    const int nexp = wpwshift.extent(0);
+
+#if defined(__AVX512F__) || defined(__AVX2__)
+    const Real *shift_r = reinterpret_cast<const Real *>(wpwshift.data());
+    const Real *shift_i = shift_r + nexp;
+    const Real *pw1 = reinterpret_cast<const Real *>(pwexp1_.data());
+    Real *pw2 = reinterpret_cast<Real *>(pwexp2_.data());
+    shift_planewave_simd<Real, VecLen>(nexp, nd, pw1, pw2, shift_r, shift_i);
+#else
+    dmk::ndview<const Complex, 2> pwexp1({nexp, nd}, pwexp1_.data());
+    dmk::ndview<Complex, 2> pwexp2({nexp, nd}, pwexp2_.data());
+
+    using ArrayMap = ndview<Complex, 1>;
+    using ConstArrayMap = ndview<const Complex, 1>;
+    ConstArrayMap wpwshift_view({nexp}, &wpwshift(0));
+    for (int ind = 0; ind < nd; ++ind) {
+        ConstArrayMap pw1_view({nexp}, &pwexp1(0, ind));
+        ArrayMap pw2_view({nexp}, &pwexp2(0, ind));
+        pw2_view += pw1_view * wpwshift_view;
+    }
+#endif
+}
+
+template <typename Real>
+Real calc_log_windowed_kernel_value_at_zero(int dim, const FourierData<Real> &fourier_data, Real boxsize) {
+    const Real psi0 = fourier_data.prolate0_fun.eval_val(0.0);
+    const Real beta = fourier_data.beta();
+    constexpr int n_quad = 100;
+    std::array<Real, n_quad> xs, whts;
+    legerts(1, n_quad, xs.data(), whts.data());
+    for (int i = 0; i < n_quad; ++i) {
+        xs[i] = 0.5 * (xs[i] + Real{1.0}) * beta / boxsize;
+        whts[i] *= 0.5 * beta / boxsize;
+    }
+
+    const Real rl = boxsize * sqrt(dim * 1.0) * 2;
+    const Real dfac = rl * std::log(rl);
+
+    Real fval = 0.0;
+    for (int i = 0; i < n_quad; ++i) {
+        const Real xval = xs[i] * boxsize / beta;
+        const Real fval0 = fourier_data.prolate0_fun.eval_val(xval);
+        const Real z = rl * xs[i];
+        const Real dj0 = util::cyl_bessel_j(0, z);
+        const Real dj1 = util::cyl_bessel_j(1, z);
+        const Real tker = -(1 - dj0) / (xs[i] * xs[i]) + dfac * dj1 / xs[i];
+        const Real fhat = tker * fval0 / psi0;
+        fval += fhat * whts[i] * xs[i];
+    }
+
+    return fval;
+}
+
+template <typename Real, int DIM>
+Real get_self_interaction_constant(FourierData<Real> &fourier_data, dmk_ikernel kernel, int i_level, Real boxsize) {
+    const double bsize = i_level == 0 ? 0.5 * boxsize : boxsize;
+    const double w0 = [&]() -> Real {
+        if (kernel == DMK_YUKAWA)
+            return fourier_data.yukawa_windowed_kernel_value_at_zero(i_level);
+        else if (kernel == DMK_LAPLACE) {
+            const Real psi0 = fourier_data.prolate0_fun.eval_val(0.0);
+            const auto c = fourier_data.prolate0_fun.intvals(fourier_data.beta());
+            if constexpr (DIM == 2) {
+                const auto log_windowed_kernel_at_zero =
+                    calc_log_windowed_kernel_value_at_zero(DIM, fourier_data, Real{1.0});
+                return log_windowed_kernel_at_zero - i_level * std::log(2.0);
+            } else if constexpr (DIM == 3)
+                return psi0 / (c[0] * bsize);
+            else
+                throw std::runtime_error("Unsupported kernel DMK_LAPLACE, DIM = " + std::to_string(DIM));
+        } else if (kernel == DMK_SQRT_LAPLACE) {
+            const Real psi0 = fourier_data.prolate0_fun.eval_val(0.0);
+            const auto c = fourier_data.prolate0_fun.intvals(fourier_data.beta());
+            if constexpr (DIM == 2)
+                return psi0 / (c[0] * bsize);
+            if constexpr (DIM == 3)
+                return psi0 / (2 * c[1] * bsize * bsize);
+
+        } else
+            throw std::runtime_error("Unsupported kernel");
+    }();
+
+    return w0;
+}
 
 template <typename Real, int DIM>
 struct DMKPtTree : public sctl::PtTree<Real, DIM> {
@@ -70,8 +409,6 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<bool> ifpwexp;
     sctl::Vector<bool> iftensprodeval;
 
-    // FIXME: I really hate these.
-    ndamatrix<Real> r_src_t, r_trg_t;
     std::vector<int> direct_work;
 
     sctl::Vector<bool> has_proxy_from_children;
@@ -99,11 +436,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     const int kernel_output_dim_max;
     const int n_tables;
     const int n_digits;
-    const int n_pw_max;
-    const int n_order;
 
-    int n_pw; // FIXME: Assigned well after construction, dangerous hack
-    int n_pw_periodic = 0; // PW modes per dim for periodic root grid (0 if free-space)
+    ExpansionConstants<DIM> expansion_constants;
     FourierData<Real> fourier_data;
     sctl::Vector<Real> c2p;
     sctl::Vector<Real> p2c;
@@ -126,21 +460,22 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void build_plane_wave_interaction_lists();
     void build_direct_interaction_lists();
     void build_upward_pass_work_lists();
+    void build_direct_work_lists();
     void allocate_proxy_coefficients();
-    void precompute_fourier_data();
+    void precompute_window_difference_data();
+    void build_evaluators();
     void generate_metadata();
     void init_planewave_data();
 
     // Subtasks for downward pass
-    void form_outgoing_expansions(const sctl::Vector<int> &boxes, const ndview<std::complex<Real>, 2> &poly2pw_view,
-                                  const sctl::Vector<Real> &radialft);
+    void form_outgoing_expansions();
     void form_incoming_expansions(const sctl::Vector<int> &boxes, const sctl::Vector<std::complex<Real>> &wpwshift);
     void form_local_expansions(const sctl::Vector<int> &boxes, Real boxsize,
                                const ndview<std::complex<Real>, 2> &pw2poly_view, const sctl::Vector<Real> &p2c);
     void form_eval_expansions(const sctl::Vector<int> &boxes, const sctl::Vector<std::complex<Real>> &wpwshift,
                               Real boxsize, const ndview<std::complex<Real>, 2> &pw2poly_view,
                               const sctl::Vector<Real> &p2c);
-    void evaluate_direct_interactions(const Real *r_src_t, const Real *r_trg_t);
+    void evaluate_direct_interactions();
 
     // User calls
     int update_charges(const Real *charge, const Real *normal, const Real *dipole_str);
@@ -242,6 +577,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     std::complex<Real> *pw_out_ptr(int i_box) { return &pw_out[pw_out_offsets[i_box]]; }
     const std::complex<Real> *pw_out_ptr(int i_box) const { return &pw_out[pw_out_offsets[i_box]]; }
     ndview<std::complex<Real>, DIM + 1> pw_out_view(int i_box) {
+        // FIXME: windowed vs diff
+        const int n_pw = expansion_constants.n_pw_diff;
         if constexpr (DIM == 2)
             return ndview<std::complex<Real>, DIM + 1>({n_pw, (n_pw + 1) / 2, n_tables}, pw_out_ptr(i_box));
         else if constexpr (DIM == 3)
@@ -251,8 +588,11 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     }
 
     void dump() const;
+    void eval();
+    void eval_pq();
     void upward_pass();
     void downward_pass();
+    void desort_potentials(Real *pot_src, Real *pot_trg);
 
   private:
     static constexpr int nlist1_max_ = sctl::pow<DIM>(4) - sctl::pow<DIM>(2) + 1;
@@ -279,6 +619,11 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     bool debug_omit_pw = false;
     bool debug_omit_direct = false;
     bool debug_dump_tree = false;
+    bool debug_force_aot = false;
+    std::shared_ptr<spdlog::logger> &logger;
+    std::shared_ptr<spdlog::logger> &rank_logger;
+
+    const int &n_order = expansion_constants.n_order;
 };
 
 } // namespace dmk
