@@ -172,6 +172,202 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC direct verification", 1) {
     }
 }
 
+// Regression test for PBC + asymmetric-depth list-1 interactions.
+// When source particles are shifted by a periodic image vector but the
+// ContactGeometry used for filtering still references the unshifted source-box
+// corner, `filter_sources`/`filter_targets` test points against a geometry in a
+// different coordinate frame. This only manifests when a list-1 pair has
+// unequal depths (src_larger or trg_larger) AND crosses a periodic face, so a
+// uniform distribution (where all leaves are same depth) cannot catch it.
+//
+// This test forces non-uniform refinement by clustering most sources tightly
+// into one corner of the unit box. The deep cluster leaves at x~0 have list-1
+// PBC neighbors at x~1 living in shallower leaves, triggering the buggy code
+// path. Reference is computed by direct summation over 3x3x3 periodic images
+// of the cluster sources only (the sparse filler sources have zero charge so
+// contribute nothing); tree result must match within eps.
+TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC asymmetric-depth shift", 1) {
+    constexpr int n_dim = 3;
+    constexpr int n_cluster = 2000;
+    constexpr int n_filler = 400;
+    constexpr int n_src = n_cluster + n_filler;
+    constexpr int n_trg = 400;
+    constexpr double thresh2 = 1e-30;
+
+#ifdef DMK_HAVE_MPI
+    auto sctl_comm = sctl::Comm(test_comm);
+#else
+    auto sctl_comm = sctl::Comm::Self();
+#endif
+
+    std::default_random_engine eng(7);
+    // Sources: all clustered in x ∈ [0, 0.04] — forces deep refinement there.
+    std::uniform_real_distribution<double> src_x(0.001, 0.04);
+    std::uniform_real_distribution<double> src_yz(0.001, 0.999);
+    // Filler sources scattered across the domain (zero charge) to keep the
+    // uniform-side boxes from being pruned.
+    std::uniform_real_distribution<double> filler(0.06, 0.999);
+    // Targets: confined to x ∈ [0.7, 0.99] — far from cluster in direct sense,
+    // but the PBC wrap brings the cluster (shifted by +1 in x) to x ∈ [1, 1.04]
+    // which is adjacent to the target slab. This is exactly the buggy regime:
+    // the trg_box (shallow) sees src_box (deep) via a nonzero periodic shift.
+    std::uniform_real_distribution<double> trg_x(0.7, 0.99);
+    std::uniform_real_distribution<double> trg_yz(0.001, 0.999);
+
+    sctl::Vector<double> r_src(n_dim * n_src), r_trg(n_dim * n_trg);
+    sctl::Vector<double> charges(n_src);
+
+    for (int i = 0; i < n_cluster; ++i) {
+        r_src[i * n_dim + 0] = src_x(eng);
+        r_src[i * n_dim + 1] = src_yz(eng);
+        r_src[i * n_dim + 2] = src_yz(eng);
+    }
+    for (int i = n_cluster; i < n_src; ++i)
+        for (int d = 0; d < n_dim; ++d)
+            r_src[i * n_dim + d] = filler(eng);
+    for (int i = 0; i < n_trg; ++i) {
+        r_trg[i * n_dim + 0] = trg_x(eng);
+        r_trg[i * n_dim + 1] = trg_yz(eng);
+        r_trg[i * n_dim + 2] = trg_yz(eng);
+    }
+    std::uniform_real_distribution<double> chg(0.0, 1.0);
+    for (int i = 0; i < n_cluster; ++i)
+        charges[i] = chg(eng) - 0.5;
+    for (int i = n_cluster; i < n_src; ++i)
+        charges[i] = 0.0;
+    {
+        double sum = 0.0;
+        for (int i = 0; i < n_cluster; ++i)
+            sum += charges[i];
+        for (int i = 0; i < n_cluster; ++i)
+            charges[i] -= sum / n_cluster;
+    }
+
+    using dmk::util::calc_bandlimiting;
+    const auto coeffs_6 = dmk::get_local_correction_coeffs<double>(
+        DMK_LAPLACE, 3, 6, calc_bandlimiting({.n_dim = 3, .eps = 1e-6, .kernel = DMK_LAPLACE, .debug_flags = 0}));
+
+    auto horner_eval = [](double x, const double *c, int n) {
+        double val = c[n - 1];
+        for (int i = n - 2; i >= 0; --i)
+            val = val * x + c[i];
+        return val;
+    };
+
+    pdmk_params params;
+    params.eps = 1e-6;
+    params.n_dim = n_dim;
+    params.n_per_leaf = 40;
+    params.pgh_src = DMK_POTENTIAL;
+    params.pgh_trg = DMK_POTENTIAL;
+    params.kernel = DMK_LAPLACE;
+    params.use_periodic = true;
+    params.log_level = 6;
+
+    dmk::DMKPtTree<double, n_dim> tree(sctl_comm, params, r_src, r_trg, charges);
+
+    tree.pot_src_sorted.SetZero();
+    tree.pot_trg_sorted.SetZero();
+    tree.evaluate_direct_interactions();
+
+    const auto &node_mid = tree.GetNodeMID();
+    const auto &node_attr = tree.GetNodeAttr();
+
+    struct SourceInfo {
+        double r[3];
+        double charge;
+        int level;
+    };
+    std::vector<SourceInfo> sources;
+    for (int box = 0; box < tree.n_boxes(); ++box) {
+        if (!node_attr[box].Leaf || node_attr[box].Ghost)
+            continue;
+        const int n = tree.r_src_cnt_owned[box];
+        if (!n)
+            continue;
+        const int level = node_mid[box].Depth();
+        const double *rp = tree.r_src_owned_ptr(box);
+        const double *cp = tree.charge_owned_ptr(box);
+        for (int i = 0; i < n; ++i)
+            sources.push_back({{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, cp[i], level});
+    }
+
+    struct TargetInfo {
+        double r[3];
+        int pot_offset;
+        int level;
+    };
+    std::vector<TargetInfo> targets;
+    for (int box = 0; box < tree.n_boxes(); ++box) {
+        if (node_attr[box].Ghost)
+            continue;
+        const int n = tree.r_trg_cnt_owned[box];
+        if (!n)
+            continue;
+        const int level = node_mid[box].Depth();
+        const double *rp = tree.r_trg_owned_ptr(box);
+        for (int i = 0; i < n; ++i)
+            targets.push_back(
+                {{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, (int)tree.pot_trg_offsets[box] + i, level});
+    }
+
+    // Confirm the distribution actually produced multi-depth leaves (otherwise
+    // we aren't exercising the asymmetric code path).
+    int min_level = 1 << 30, max_level = 0;
+    for (const auto &s : sources) {
+        min_level = std::min(min_level, s.level);
+        max_level = std::max(max_level, s.level);
+    }
+    for (const auto &t : targets) {
+        min_level = std::min(min_level, t.level);
+        max_level = std::max(max_level, t.level);
+    }
+    MESSAGE("non-uniform tree: min_leaf_level=", min_level, " max_leaf_level=", max_level,
+            " n_levels=", tree.n_levels(), " n_boxes=", tree.n_boxes());
+    REQUIRE(max_level > min_level); // if this fails, tune cluster/filler to force asymmetry
+
+    std::vector<double> ref_pot(targets.size(), 0.0);
+    for (int i_trg = 0; i_trg < (int)targets.size(); ++i_trg) {
+        const auto &trg = targets[i_trg];
+        for (const auto &src : sources) {
+            // d2max uses the finer (deeper) of the two leaf depths — see
+            // tree.cpp:1199 where bsize = boxsize[max(src_level,trg_level)].
+            const int level = std::max(src.level, trg.level);
+            const double bsize = tree.boxsize[level];
+            const double d2max = bsize * bsize;
+            const double rsc = 2.0 / bsize;
+            const double cen = -bsize / 2.0;
+            for (int mx = -1; mx <= 1; ++mx)
+                for (int my = -1; my <= 1; ++my)
+                    for (int mz = -1; mz <= 1; ++mz) {
+                        double dx = trg.r[0] - (src.r[0] + mx);
+                        double dy = trg.r[1] - (src.r[1] + my);
+                        double dz = trg.r[2] - (src.r[2] + mz);
+                        double r2 = dx * dx + dy * dy + dz * dz;
+                        if (r2 < thresh2 || r2 >= d2max)
+                            continue;
+                        const double r = std::sqrt(r2);
+                        const double x = (r + cen) * rsc;
+                        ref_pot[i_trg] += src.charge * horner_eval(x, coeffs_6.data(), coeffs_6.size()) / r;
+                    }
+        }
+    }
+
+    const int n_test = (int)targets.size();
+    double err2 = 0.0, ref2 = 0.0;
+    double max_abs_err = 0.0;
+    for (int i = 0; i < n_test; ++i) {
+        const double tree_val = tree.pot_trg_sorted[targets[i].pot_offset];
+        const double diff = tree_val - ref_pot[i];
+        err2 += diff * diff;
+        ref2 += ref_pot[i] * ref_pot[i];
+        max_abs_err = std::max(max_abs_err, std::abs(diff));
+    }
+    const double l2_err = (ref2 > 0) ? std::sqrt(err2 / ref2) : std::sqrt(err2);
+    MESSAGE("asymmetric-depth PBC: l2_err=", l2_err, " max_abs_err=", max_abs_err);
+    CHECK(l2_err < 1e-5);
+}
+
 TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level public API", 1) {
     constexpr int n_dim = 3;
     constexpr int n_src = 8;
