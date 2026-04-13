@@ -1230,7 +1230,13 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                 const Real *r_src_ptr = r_src_with_halo_ptr(src_box);
                 const Real *charge_ptr = charge_with_halo_ptr(src_box);
 
-                // For PBC: apply the precomputed periodic shift to source positions
+                // For PBC: apply the periodic image shift to source positions. The shift
+                // for each list-1 pair was computed in build_direct_interaction_lists()
+                // and stored in list1_shift_; this routine only applies it. The source-
+                // box corner used by ContactGeometry must be shifted by the same vector
+                // so source particles and source-box stay in one frame — otherwise
+                // asymmetric-depth filtering (src_larger/trg_larger) rejects valid
+                // periodic-image interactions at boundary-crossing list-1 pairs.
                 if (params.use_periodic) {
                     const auto &shift = list1_shift_[trg_box][list1_idx];
                     bool needs_shift = false;
@@ -1244,6 +1250,8 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                             for (int d = 0; d < DIM; ++d)
                                 r_src_shifted[i * DIM + d] = r_src_ptr[i * DIM + d] + shift[d];
                         r_src_ptr = r_src_shifted.data();
+                        for (int d = 0; d < DIM; ++d)
+                            corner_a[d] += shift[d];
                     }
                 }
 
