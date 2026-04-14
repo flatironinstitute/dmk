@@ -15,10 +15,10 @@
 
 struct KernelDef {
     dmk_ikernel kernel;
-    std::string kernel_enum; // e.g. "DMK_LAPLACE"
+    std::string kernel_enum;
     int dim;
-    std::string func_name;   // e.g. "laplace_3d_poly_all_pairs"
-    std::string getter_name; // e.g. "get_laplace_3d_kernel"
+    std::string func_name;
+    std::string getter_name;
 };
 
 static const std::vector<KernelDef> all_kernels = {
@@ -26,20 +26,33 @@ static const std::vector<KernelDef> all_kernels = {
     {DMK_LAPLACE, "DMK_LAPLACE", 3, "laplace_3d_poly_all_pairs", "get_laplace_3d_kernel"},
     {DMK_SQRT_LAPLACE, "DMK_SQRT_LAPLACE", 2, "sqrt_laplace_2d_poly_all_pairs", "get_sqrt_laplace_2d_kernel"},
     {DMK_SQRT_LAPLACE, "DMK_SQRT_LAPLACE", 3, "sqrt_laplace_3d_poly_all_pairs", "get_sqrt_laplace_3d_kernel"},
+    // {DMK_STOKES, "DMK_STOKES", 2, "stokeslet_2d_poly_all_pairs", "get_stokeslet_2d_kernel"},
+    {DMK_STOKES, "DMK_STOKES", 3, "stokeslet_3d_poly_all_pairs", "get_stokeslet_3d_kernel"},
 };
 
 constexpr int min_digits = 2;
 constexpr int max_digits = 12;
 
-void emit_coeffs_array(const std::string &name, const std::vector<double> &c, double beta) {
+struct CoeffsInfo {
+    int digits;
+    double beta;
+    std::vector<size_t> sub_sizes; // size of each sub-array
+    size_t total_size;             // sum of sub_sizes
+};
+
+void emit_coeffs_array(const std::string &name, const std::vector<std::vector<double>> &coeffs, double beta) {
     std::cout << std::format("// beta: {}\n", beta);
     std::cout << std::format("constexpr double {}[] = {{", name);
-    for (size_t i = 0; i < c.size(); ++i) {
-        if (i > 0)
-            std::cout << ",";
-        if (i % 4 == 0)
-            std::cout << "\n    ";
-        std::cout << std::format(" {:.17e}", c[i]);
+    int count = 0;
+    for (const auto &cvec : coeffs) {
+        for (size_t i = 0; i < cvec.size(); ++i) {
+            if (count > 0)
+                std::cout << ",";
+            if (count % 4 == 0)
+                std::cout << "\n    ";
+            std::cout << std::format(" {:.17e}", cvec[i]);
+            count++;
+        }
     }
     std::cout << "\n};\n\n";
 }
@@ -53,6 +66,8 @@ std::string coeff_name(const KernelDef &k, int digits) {
                 return "laplace";
             case DMK_SQRT_LAPLACE:
                 return "sqrt_laplace";
+            case DMK_STOKES:
+                return "stokeslet";
             default:
                 return "unknown";
             }
@@ -60,7 +75,7 @@ std::string coeff_name(const KernelDef &k, int digits) {
         k.dim, digits);
 }
 
-void emit_getter(const KernelDef &k, const std::vector<std::pair<int, size_t>> &digit_sizes) {
+void emit_getter(const KernelDef &k, const std::vector<CoeffsInfo> &infos) {
     std::cout << std::format(R"(
 template <class Real, int MaxVecLen>
 direct_evaluator_func<Real> {}(dmk_pgh eval_level, int n_digits) {{
@@ -68,22 +83,37 @@ direct_evaluator_func<Real> {}(dmk_pgh eval_level, int n_digits) {{
 )",
                              k.getter_name);
 
-    for (auto &[digits, nc] : digit_sizes) {
-        auto cn = coeff_name(k, digits);
-        std::cout << std::format(
-            "    if (n_digits <= {}) {{\n"
-            "        constexpr int ND = {}, NC = {};\n"
-            "        std::array<Real, NC> coeffs;\n"
-            "        std::copy_n({}, NC, coeffs.data());\n"
-            "        return [coeffs, eval_level](Real rsc, Real cen, Real d2max, Real thresh2,\n"
-            "                                    int n_src, const Real *r_src, const Real *charge,\n"
-            "                                    int n_trg, const Real *r_trg, Real *pot) {{\n"
-            "            {}<Real, MaxVecLen, ND, NC>(\n"
-            "                eval_level, ND, rsc, cen, d2max, thresh2, NC,\n"
-            "                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot, UF);\n"
-            "        }};\n"
-            "    }}\n",
-            digits, digits, nc, cn, k.func_name);
+    for (const auto &info : infos) {
+        auto cn = coeff_name(k, info.digits);
+
+        // Build the n_coeffs_rt template args string
+        // e.g. for 1 sub-array: "NC0"
+        // for 2 sub-arrays: "NC0, NC1"
+        std::string nc_decls, nc_args;
+        for (size_t i = 0; i < info.sub_sizes.size(); ++i) {
+            if (i > 0) {
+                nc_decls += "\n";
+                nc_args += ", ";
+            }
+            nc_decls += std::format("        constexpr int NC{} = {};", i, info.sub_sizes[i]);
+            nc_args += std::format("NC{}", i);
+        }
+
+        std::cout << std::format("    if (n_digits <= {}) {{\n"
+                                 "        constexpr int ND = {}, NC_TOTAL = {};\n"
+                                 "{}\n"
+                                 "        std::array<Real, NC_TOTAL> coeffs;\n"
+                                 "        std::copy_n({}, NC_TOTAL, coeffs.data());\n"
+                                 "        return [=](Real rsc, Real cen, Real d2max, Real thresh2,\n"
+                                 "                   int n_src, const Real *r_src, const Real *charge,\n"
+                                 "                   int n_trg, const Real *r_trg, Real *pot) {{\n"
+                                 "            {}<Real, MaxVecLen, ND, {}>(\n"
+                                 "                eval_level, ND, rsc, cen, d2max, thresh2, {},\n"
+                                 "                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot, UF);\n"
+                                 "        }};\n"
+                                 "    }}\n",
+                                 info.digits, info.digits, info.total_size, nc_decls, cn, k.func_name, nc_args,
+                                 nc_args);
     }
 
     std::cout << std::format("    throw std::runtime_error(\"Unsupported n_digits: \" + std::to_string(n_digits));\n"
@@ -102,27 +132,36 @@ constexpr int unroll_factor = 3;
 
 )";
 
-    // For each kernel/dim, compute coefficients for all digit counts and emit
     for (auto &k : all_kernels) {
-        std::vector<std::pair<int, size_t>> digit_sizes;
+        std::vector<CoeffsInfo> infos;
 
         for (int digits = min_digits; digits <= max_digits; ++digits) {
             try {
                 pdmk_params p;
                 p.kernel = k.kernel;
-                p.n_dim = 3;
+                p.n_dim = k.dim;
                 p.eps = std::pow(10, -digits);
                 p.debug_flags = 0;
                 const double beta = dmk::util::calc_bandlimiting(p);
                 const auto coeffs = dmk::get_local_correction_coeffs<double>(k.kernel, k.dim, digits, beta);
+
+                CoeffsInfo info;
+                info.digits = digits;
+                info.beta = beta;
+                info.total_size = 0;
+                for (const auto &cvec : coeffs) {
+                    info.sub_sizes.push_back(cvec.size());
+                    info.total_size += cvec.size();
+                }
+
                 emit_coeffs_array(coeff_name(k, digits), coeffs, beta);
-                digit_sizes.emplace_back(digits, coeffs.size());
+                infos.push_back(std::move(info));
             } catch (std::exception &e) {
                 std::cerr << std::format("// Skipped {} digits={}: {}\n", k.getter_name, digits, e.what());
             }
         }
 
-        emit_getter(k, digit_sizes);
+        emit_getter(k, infos);
     }
 
     // Emit explicit instantiations

@@ -48,13 +48,13 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC direct verification", 1) {
 
     using dmk::util::calc_bandlimiting;
     const auto coeffs_3 = dmk::get_local_correction_coeffs<double>(
-        DMK_LAPLACE, 3, 3, calc_bandlimiting({.n_dim = 3, .eps = 1e-3, .kernel = DMK_LAPLACE, .debug_flags = 0}));
+        DMK_LAPLACE, 3, 3, calc_bandlimiting({.n_dim = 3, .eps = 1e-3, .kernel = DMK_LAPLACE, .debug_flags = 0}))[0];
     const auto coeffs_6 = dmk::get_local_correction_coeffs<double>(
-        DMK_LAPLACE, 3, 6, calc_bandlimiting({.n_dim = 3, .eps = 1e-6, .kernel = DMK_LAPLACE, .debug_flags = 0}));
+        DMK_LAPLACE, 3, 6, calc_bandlimiting({.n_dim = 3, .eps = 1e-6, .kernel = DMK_LAPLACE, .debug_flags = 0}))[0];
     const auto coeffs_9 = dmk::get_local_correction_coeffs<double>(
-        DMK_LAPLACE, 3, 9, calc_bandlimiting({.n_dim = 3, .eps = 1e-9, .kernel = DMK_LAPLACE, .debug_flags = 0}));
+        DMK_LAPLACE, 3, 9, calc_bandlimiting({.n_dim = 3, .eps = 1e-9, .kernel = DMK_LAPLACE, .debug_flags = 0}))[0];
     const auto coeffs_12 = dmk::get_local_correction_coeffs<double>(
-        DMK_LAPLACE, 3, 12, calc_bandlimiting({.n_dim = 3, .eps = 1e-12, .kernel = DMK_LAPLACE, .debug_flags = 0}));
+        DMK_LAPLACE, 3, 12, calc_bandlimiting({.n_dim = 3, .eps = 1e-12, .kernel = DMK_LAPLACE, .debug_flags = 0}))[0];
 
     struct PrecisionCase {
         int n_digits;
@@ -245,7 +245,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC asymmetric-depth shift", 1) {
 
     using dmk::util::calc_bandlimiting;
     const auto coeffs_6 = dmk::get_local_correction_coeffs<double>(
-        DMK_LAPLACE, 3, 6, calc_bandlimiting({.n_dim = 3, .eps = 1e-6, .kernel = DMK_LAPLACE, .debug_flags = 0}));
+        DMK_LAPLACE, 3, 6, calc_bandlimiting({.n_dim = 3, .eps = 1e-6, .kernel = DMK_LAPLACE, .debug_flags = 0}))[0];
 
     auto horner_eval = [](double x, const double *c, int n) {
         double val = c[n - 1];
@@ -307,8 +307,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC asymmetric-depth shift", 1) {
         const int level = node_mid[box].Depth();
         const double *rp = tree.r_trg_owned_ptr(box);
         for (int i = 0; i < n; ++i)
-            targets.push_back(
-                {{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, (int)tree.pot_trg_offsets[box] + i, level});
+            targets.push_back({{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, (int)tree.pot_trg_offsets[box] + i, level});
     }
 
     // Confirm the distribution actually produced multi-depth leaves (otherwise

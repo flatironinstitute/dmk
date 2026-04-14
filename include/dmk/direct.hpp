@@ -3,6 +3,7 @@
 
 #include <dmk.h>
 #include <dmk/types.hpp>
+#include <stdexcept>
 
 namespace dmk {
 template <typename Real, int DIM>
@@ -18,6 +19,8 @@ inline int get_kernel_input_dim(int dim, dmk_ikernel kernel) {
         return 1;
     case DMK_SQRT_LAPLACE:
         return 1;
+    case DMK_STOKES:
+        return dim;
     }
     throw std::runtime_error("Invalid kernel");
 }
@@ -45,12 +48,19 @@ inline int get_kernel_output_dim(int dim, dmk_ikernel kernel, dmk_pgh flags) {
             return 1 + dim;
         if (flags == DMK_POTENTIAL_GRAD_HESSIAN)
             return 1 + dim + dim * dim;
+    case DMK_STOKES:
+        if (flags == DMK_VELOCITY)
+            return dim;
+        if (flags == DMK_VELOCITY_PRESSURE) {
+            throw std::runtime_error("DMK_VELOCITY_PRESSURE not implemented");
+            // return dim + 1;
+        }
     }
     throw std::runtime_error("Invalid kernel");
 }
 
 template <typename Real>
-std::vector<Real> get_local_correction_coeffs(dmk_ikernel kernel, int n_dim, int n_digits, double beta);
+std::vector<std::vector<Real>> get_local_correction_coeffs(dmk_ikernel kernel, int n_dim, int n_digits, double beta);
 template <typename Real>
 direct_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits,
                                                int unroll_factor);

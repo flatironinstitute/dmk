@@ -7,12 +7,15 @@ typedef enum : int {
     DMK_YUKAWA = 0,
     DMK_LAPLACE = 1,
     DMK_SQRT_LAPLACE = 2,
+    DMK_STOKES = 3,
 } dmk_ikernel;
 
 typedef enum : int {
     DMK_POTENTIAL = 1,
     DMK_POTENTIAL_GRAD = 2,
     DMK_POTENTIAL_GRAD_HESSIAN = 3,
+    DMK_VELOCITY = 4,
+    DMK_VELOCITY_PRESSURE = 5,
 } dmk_pgh;
 
 typedef enum : int {

@@ -466,13 +466,52 @@ struct SqrtLaplacePolyEvaluator3D {
     }
 };
 
+template <typename Real, int MaxVecLen>
+struct StokesletPolyEvaluator3D {
+    using scalar_type = Real;
+    using vector_type = sctl::Vec<Real, MaxVecLen>;
+    static constexpr int KERNEL_INPUT_DIM = 3;
+    static constexpr int KERNEL_OUTPUT_DIM = 3;
+    static constexpr int SPATIAL_DIM = 3;
+    static constexpr int NORMAL_DIM = 0;
+    static constexpr Real scale_factor = 1.0;
+
+    vector_type thresh2_vec, d2max_vec, rsc_vec, cen_vec;
+    const Real *coeffs_diag;
+    const Real *coeffs_offdiag;
+    int n_coeffs_diag;
+    int n_coeffs_offdiag;
+    int n_digits;
+
+    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM],
+                                      const vector_type (&dX)[SPATIAL_DIM]) const {
+        const vector_type R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
+        const auto mask = (R2 > thresh2_vec) & (R2 < d2max_vec);
+        const vector_type half = Real{0.5};
+        const vector_type Rinv = my_approx_rsqrt(R2, n_digits);
+        const vector_type Rinv3 = Rinv * Rinv * Rinv;
+        const vector_type xtmp = FMA(R2, Rinv, cen_vec) * rsc_vec;
+        const vector_type fdiag = (half - horner(xtmp, coeffs_diag, n_coeffs_diag)) * Rinv;
+        const vector_type foffd = (half - horner(xtmp, coeffs_offdiag, n_coeffs_offdiag)) * Rinv3;
+
+        for (int i = 0; i < KERNEL_INPUT_DIM; ++i) {
+            for (int j = 0; j < KERNEL_OUTPUT_DIM; ++j) {
+                vector_type val = foffd * dX[j] * dX[i];
+                if (i == j)
+                    val = val + fdiag;
+                u[i][j] = select(mask, val, vector_type::Zero());
+            }
+        }
+    }
+};
+
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
 void laplace_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
-                               int n_coeffs_rt, const Real *coeffs, int n_src, const Real *r_src, const Real *charge,
+                               int n_coeffs_rt_0, const Real *coeffs, int n_src, const Real *r_src, const Real *charge,
                                int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
-    const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt;
+    const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
     const int eval_level = (EVAL_LEVEL > 0) ? EVAL_LEVEL : eval_level_rt;
 
     std::array<Real, 64> coeffs_mod;
@@ -494,11 +533,11 @@ void laplace_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Rea
 
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
 void laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
-                               int n_coeffs_rt, const Real *coeffs, int n_src, const Real *r_src, const Real *charge,
+                               int n_coeffs_rt_0, const Real *coeffs, int n_src, const Real *r_src, const Real *charge,
                                int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
-    const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt;
+    const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
     const int eval_level = (EVAL_LEVEL > 0) ? EVAL_LEVEL : eval_level_rt;
     const int transform_poly = n_digits < 6;
 
@@ -534,11 +573,11 @@ void laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Rea
 
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
 void sqrt_laplace_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
-                                    int n_coeffs_rt, const Real *coeffs, int n_src, const Real *r_src,
+                                    int n_coeffs_rt_0, const Real *coeffs, int n_src, const Real *r_src,
                                     const Real *charge, int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
-    const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt;
+    const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
 
     SqrtLaplacePolyEvaluator2D<Real, MaxVecLen> evaluator{thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits};
 
@@ -548,11 +587,11 @@ void sqrt_laplace_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc
 
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
 void sqrt_laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
-                                    int n_coeffs_rt, const Real *coeffs, int n_src, const Real *r_src,
+                                    int n_coeffs_rt_0, const Real *coeffs, int n_src, const Real *r_src,
                                     const Real *charge, int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
-    const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt;
+    const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
 
     std::array<Real, 64> coeffs_mod;
     shift_scale_polynomial(coeffs, rsc, cen, coeffs_mod.data(), n_coeffs);
@@ -561,6 +600,29 @@ void sqrt_laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc
                                                           coeffs_mod.data(), n_coeffs, n_digits};
 
     constexpr int KERNEL_OUTPUT_DIM = 1;
+    EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);
+}
+
+template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
+void stokes_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
+                              int n_coeffs_rt_0, int n_coeffs_rt_1, const Real *coeffs, int n_src, const Real *r_src,
+                              const Real *charge, int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {}
+
+template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS_0 = -1, int N_COEFFS_1 = -1, int EVAL_LEVEL = -1>
+void stokeslet_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
+                                 int n_coeffs_rt_0, int n_coeffs_rt_1, const Real *coeffs, int n_src, const Real *r_src,
+                                 const Real *charge, int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
+    constexpr bool is_static = (N_DIGITS > 0);
+    const int n_digits = is_static ? N_DIGITS : n_digits_rt;
+    const int n_coeffs_diag = is_static ? N_COEFFS_0 : n_coeffs_rt_0;
+    const int n_coeffs_offdiag = is_static ? N_COEFFS_1 : n_coeffs_rt_1;
+    const Real *coeffs_diag = coeffs;
+    const Real *coeffs_offdiag = coeffs + n_coeffs_diag;
+
+    StokesletPolyEvaluator3D<Real, MaxVecLen> evaluator{
+        thresh2, d2max, rsc, cen, coeffs_diag, coeffs_offdiag, n_coeffs_diag, n_coeffs_offdiag, n_digits};
+
+    constexpr int KERNEL_OUTPUT_DIM = 3;
     EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);
 }
 

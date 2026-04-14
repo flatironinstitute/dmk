@@ -19,7 +19,7 @@ namespace dmk {
 template <int DIM>
 std::tuple<double, double> get_PSWF_difference_kernel_pwterms(int npw, double beta, double boxsize) {
     const int nf = (npw - 1) / 2;
-    const double hpw = 2 * beta / nf / boxsize;
+    const double hpw = 2 * beta / (nf + 1) / boxsize;
 
     constexpr double factor = 0.5 / sctl::pow<DIM - 1>(M_PI);
     const double ws = sctl::pow<DIM>(hpw) * factor;
@@ -332,6 +332,92 @@ inline void sqrt_laplace_windowed_kernel_ft(const double *rpars, Real beta, int 
         return sqrt_laplace_3d_windowed_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, windowed_ft);
 }
 
+template <typename Real>
+inline void stokes_2d_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
+                                         sctl::Vector<Real> &windowed_ft) {
+    const Real psi0 = pf.eval_val(0.0);
+    const Real rl = boxsize * (std::sqrt(2.0) + 1.0);
+    const Real rl4 = rl * rl * rl * rl;
+    const Real hpw = 1.0 / boxsize;
+    const int nfourier = 2 * (npw / 2) * (npw / 2);
+
+    windowed_ft.ReInit(nfourier + 1);
+    for (int i = 0; i <= nfourier; ++i) {
+        const Real xi = i * hpw;
+        const Real xval = xi * boxsize / beta;
+
+        Real fval = 0.0;
+        if (xval <= 1.0) {
+            auto [psi, dpsi] = pf.eval_val_derivative(xval);
+            fval = (psi - 0.5 * xval * dpsi) / psi0;
+        }
+
+        const Real x = rl * xi;
+        Real tker;
+        if (i == 0) {
+            tker = -rl4 / 64.0;
+        } else if (x > 0.2) {
+            Real j0 = util::cyl_bessel_j(0, x);
+            Real j1 = util::cyl_bessel_j(1, x);
+            tker = (-1.0 + j0 + 0.5 * x * j1) / (xi * xi * xi * xi);
+        } else {
+            Real x2 = x * x, x4 = x2 * x2, x6 = x2 * x4, x8 = x2 * x6, x10 = x2 * x8;
+            tker =
+                (-1.0 / 64 + x2 / 1152 - x4 / 49152 + x6 / 3686400.0 - x8 / 4.24673280e8 + x10 / 6.9363302400e10) * rl4;
+        }
+
+        windowed_ft[i] = fval * tker;
+    }
+}
+
+template <typename Real>
+inline void stokes_3d_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
+                                         sctl::Vector<Real> &windowed_ft) {
+    const Real psi0 = pf.eval_val(0.0);
+    const Real rl = boxsize * (std::sqrt(3.0) + 1.0);
+    const auto [hpw, ws, _] = get_PSWF_windowed_kernel_pwterms<3>(boxsize);
+    const double rl4 = sctl::pow<4>(rl);
+    const int nfourier = 3 * (npw / 2) * (npw / 2);
+
+    windowed_ft.ReInit(nfourier + 1);
+    for (int i = 0; i <= nfourier; ++i) {
+        const Real xi = sqrt(Real(i)) * hpw;
+        const Real xval = xi * boxsize / beta;
+
+        const Real fval = [&]() {
+            if (xval <= 1.0) {
+                auto [psi, dpsi] = pf.eval_val_derivative(xval);
+                return (psi - 0.5 * xval * dpsi) / psi0;
+            } else
+                return 0.0;
+        }();
+
+        const Real tker = [&]() {
+            const Real x = rl * xi;
+
+            if (x > 0.2) {
+                return -(1.0 + 0.5 * cos(x) - 1.5 * sin(x) / x) / (xi * xi * xi * xi);
+            } else {
+                Real x2 = x * x, x4 = x2 * x2, x6 = x2 * x4, x8 = x2 * x6, x10 = x2 * x8;
+                return -(1.0 / 120 - x2 / 2520 + x4 / 120960 - x6 / 9979200.0 + x8 / 1.245404160e9 -
+                         x10 / 2.17945728e11) *
+                       rl4;
+            }
+        }();
+
+        windowed_ft[i] = fval * tker * ws;
+    }
+}
+
+template <typename Real, int DIM>
+inline void stokes_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
+                                      sctl::Vector<Real> &windowed_ft) {
+    if constexpr (DIM == 2)
+        return stokes_2d_windowed_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, windowed_ft);
+    if constexpr (DIM == 3)
+        return stokes_3d_windowed_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, windowed_ft);
+}
+
 template <typename Real, int DIM>
 void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
                             sctl::Vector<Real> &windowed_ft) {
@@ -342,6 +428,8 @@ void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, 
         return laplace_windowed_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, windowed_ft);
     case dmk_ikernel::DMK_SQRT_LAPLACE:
         return sqrt_laplace_windowed_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, windowed_ft);
+    case dmk_ikernel::DMK_STOKES:
+        return stokes_windowed_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, windowed_ft);
     }
 }
 
@@ -610,16 +698,56 @@ void sqrt_laplace_difference_kernel_ft(const double *rpars, Real beta, int npw, 
 }
 
 template <typename Real, int DIM>
+inline void stokes_difference_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
+                                        sctl::Vector<Real> &diff_kernel_ft) {
+    const Real psi0 = pf.eval_val(0.0);
+    const auto intvals = pf.intvals(beta);
+    const Real c0 = intvals[0], c4 = intvals[3];
+    const Real bsizesmall = boxsize / 2.0;
+    const Real bsizebig = boxsize;
+    const auto [hpw, ws] = get_PSWF_difference_kernel_pwterms<3>(npw, beta, boxsize);
+    const int nfourier = DIM * (npw / 2) * (npw / 2);
+
+    diff_kernel_ft.ReInit(nfourier + 1);
+    for (int i = 0; i <= nfourier; ++i) {
+        const Real xi = sqrt(Real(i)) * hpw;
+
+        if (xi < 1e-10) {
+            diff_kernel_ft[i] = ws * c4 / c0 * (sctl::pow<4>(bsizesmall) - sctl::pow<4>(bsizebig)) / Real{24};
+            continue;
+        }
+
+        const Real xval_small = xi * bsizesmall / beta;
+        Real f1 = 0.0;
+        if (xval_small < 1.0) {
+            auto [psi, dpsi] = pf.eval_val_derivative(xval_small);
+            f1 = psi - 0.5 * xval_small * dpsi;
+        }
+
+        const Real xval_big = xi * bsizebig / beta;
+        Real f2 = 0.0;
+        if (xval_big < 1.0) {
+            auto [psi, dpsi] = pf.eval_val_derivative(xval_big);
+            f2 = psi - 0.5 * xval_big * dpsi;
+        }
+
+        diff_kernel_ft[i] = ws * (f2 - f1) / psi0 / sctl::pow<4>(xi);
+    }
+}
+
+template <typename Real, int DIM>
 void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars, Real beta, int npw, Real boxsize,
                               Prolate0Fun &pf, sctl::Vector<Real> &diff_kernel_ft) {
     if (init || kernel == DMK_YUKAWA)
         switch (kernel) {
-        case dmk_ikernel::DMK_YUKAWA:
+        case DMK_YUKAWA:
             return yukawa_difference_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, diff_kernel_ft);
-        case dmk_ikernel::DMK_LAPLACE:
+        case DMK_LAPLACE:
             return laplace_difference_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, diff_kernel_ft);
-        case dmk_ikernel::DMK_SQRT_LAPLACE:
+        case DMK_SQRT_LAPLACE:
             return sqrt_laplace_difference_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, diff_kernel_ft);
+        case DMK_STOKES:
+            return stokes_difference_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, diff_kernel_ft);
         default:
             throw std::runtime_error("Unsupported kernel " + std::to_string(kernel));
         }
@@ -630,6 +758,8 @@ void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars
             return DIM == 2 ? Real(1.0) : Real(2.0);
         case DMK_SQRT_LAPLACE:
             return DIM == 2 ? Real(2.0) : Real(4.0);
+        case DMK_STOKES:
+            return DIM == 2 ? Real(0.25) : Real(0.5);
         default:
             throw std::runtime_error("Invalid kernel type: " + std::to_string(kernel));
         }
@@ -642,7 +772,7 @@ void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars
 }
 
 template <typename T>
-FourierData<T>::FourierData(dmk_ikernel kernel, int n_dim, T eps, int n_pw_max, T fparam, double beta,
+FourierData<T>::FourierData(dmk_ikernel kernel, int n_dim, T eps, int n_pw_win, int n_pw_diff, T fparam, double beta,
                             const sctl::Vector<T> &boxsize_)
     : kernel_(kernel), n_dim_(n_dim), fparam_(fparam), box_sizes_(boxsize_), n_levels_(boxsize_.Dim()) {
 
@@ -650,7 +780,6 @@ FourierData<T>::FourierData(dmk_ikernel kernel, int n_dim, T eps, int n_pw_max, 
     prolate0_fun = Prolate0Fun(beta_, 10000);
     difference_kernels_.ReInit(n_levels_);
 
-    auto n_pw_windowed = n_pw_max, n_pw_difference = n_pw_max;
     std::tie(windowed_kernel_.hpw, windowed_kernel_.ws, windowed_kernel_.rl) =
         get_PSWF_windowed_kernel_pwterms(n_dim_, box_sizes_[0]);
 
@@ -660,14 +789,9 @@ FourierData<T>::FourierData(dmk_ikernel kernel, int n_dim, T eps, int n_pw_max, 
 
     for (int i_level = 0; i_level < n_levels_; ++i_level)
         std::tie(difference_kernels_[i_level].hpw, difference_kernels_[i_level].ws) =
-            get_PSWF_difference_kernel_pwterms(n_dim, n_pw_max, beta_, box_sizes_[i_level]);
+            get_PSWF_difference_kernel_pwterms(n_dim, n_pw_diff, beta_, box_sizes_[i_level]);
 
     update_local_coeffs(eps);
-
-    n_pw_ = std::max(n_pw_windowed, n_pw_difference);
-    assert(n_pw_windowed);
-    assert(n_pw_difference);
-    assert(n_pw_);
 }
 
 template <typename Real>
@@ -884,17 +1008,20 @@ void FourierData<T>::update_local_coeffs(T eps) {
         return update_local_coeffs_laplace(eps);
     case dmk_ikernel::DMK_SQRT_LAPLACE:
         return; // No coefficients for sqrt Laplace kernel
+    case dmk_ikernel::DMK_STOKES:
+        return;
     default:
         throw std::runtime_error("Kernel not supported yet: " + std::to_string(kernel_));
     }
 }
 
 template <typename T>
-void FourierData<T>::calc_planewave_coeff_matrices(int i_level, int n_order, sctl::Vector<std::complex<T>> &prox2pw_vec,
+void FourierData<T>::calc_planewave_coeff_matrices(int i_level, int n_order, int n_pw,
+                                                   sctl::Vector<std::complex<T>> &prox2pw_vec,
                                                    sctl::Vector<std::complex<T>> &pw2poly_vec) const {
     auto hpw = (i_level + 1) ? difference_kernels_[i_level].hpw : windowed_kernel_.hpw;
     auto bsize = box_sizes_[std::max(i_level, 0)];
-    dmk::calc_planewave_coeff_matrices(bsize, hpw, n_pw_, n_order, prox2pw_vec, pw2poly_vec);
+    dmk::calc_planewave_coeff_matrices(bsize, hpw, n_pw, n_order, prox2pw_vec, pw2poly_vec);
 }
 
 template struct FourierData<float>;

@@ -19,6 +19,14 @@
 #include <dmk/omp_wrapper.hpp>
 #include <dmk/testing.hpp>
 
+extern "C" {
+void stokesdmk_(const int *nd, const int *dim, const double *eps, const int *iperiod, const double *rbsize,
+                const double *rbcenter, const int *ns, const double *sources, const int *ifstoklet,
+                const double *stoklet, const int *ifstrslet, const double *strslet, const double *strsvec,
+                const int *ifppreg, double *pot, double *pre, double *grad, const int *nt, const double *targ,
+                const int *ifppregtarg, double *pottarg, double *pretarg, double *gradtarg, double *tottimeinfo);
+}
+
 using pdmk_tree_impl =
     std::variant<std::unique_ptr<dmk::DMKPtTree<float, 2>>, std::unique_ptr<dmk::DMKPtTree<float, 3>>,
                  std::unique_ptr<dmk::DMKPtTree<double, 2>>, std::unique_ptr<dmk::DMKPtTree<double, 3>>>;
@@ -331,6 +339,101 @@ TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
             }
         }
     }
+}
+
+TEST_CASE_GENERIC("[DMK] pdmk 3d stokeslet velocity", 1) {
+    constexpr int n_dim = 3;
+    constexpr int n_src = 2000;
+    constexpr int n_trg = 2000;
+    constexpr bool uniform = false;
+    constexpr bool set_fixed_charges = true;
+    constexpr double thresh2 = 1e-30;
+    constexpr int output_dim = n_dim;
+
+#ifdef DMK_HAVE_MPI
+    auto comm = test_comm;
+#else
+    auto comm = nullptr;
+#endif
+
+    sctl::Vector<double> r_src, charges, rnormal, dipstr, r_trg;
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges,
+                              dipstr, 0);
+    charges.ReInit(n_src * n_dim);
+    for (auto &c : charges)
+        c = 2 * drand48() - 1.0;
+
+    sctl::Vector<double> pot_src(n_src * output_dim), pot_trg(n_trg * output_dim);
+    pot_src.SetZero();
+    pot_trg.SetZero();
+
+    pdmk_params params;
+    params.eps = 1e-3;
+    params.n_dim = n_dim;
+    params.n_per_leaf = 280;
+    params.pgh_src = DMK_VELOCITY;
+    params.pgh_trg = DMK_VELOCITY;
+    params.kernel = DMK_STOKES;
+    params.log_level = SPDLOG_LEVEL_OFF;
+    params.debug_flags = 0;
+
+    pdmk_tree tree =
+        pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0]);
+    pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
+    pdmk_tree_destroy(tree);
+
+    const int n_test_src = std::min(n_src, 64);
+    const int n_test_trg = std::min(n_trg, 64);
+    std::vector<double> direct_stokes_vel_src(n_test_src * n_dim, 0.0);
+    std::vector<double> direct_stokes_vel_trg(n_test_trg * n_dim, 0.0);
+
+    const auto vel_index = [n_dim](int i_pt, int i_dim) { return i_dim + n_dim * i_pt; };
+    const auto accumulate_stokes_vel = [&](const double *target, int i_out, std::vector<double> &out) {
+        double *u = &out[i_out * n_dim];
+        for (int i_src = 0; i_src < n_src; ++i_src) {
+            double dx[n_dim];
+            double dr2 = 0.0;
+            for (int i_dim = 0; i_dim < n_dim; ++i_dim) {
+                dx[i_dim] = target[i_dim] - r_src[i_src * n_dim + i_dim];
+                dr2 += dx[i_dim] * dx[i_dim];
+            }
+            if (dr2 <= thresh2)
+                continue;
+
+            const double rinv = 1.0 / std::sqrt(dr2);
+            const double rinv2 = rinv * rinv;
+
+            double *f = &charges[n_dim * i_src];
+            double inner_prod = (f[0] * dx[0] + f[1] * dx[1] + f[2] * dx[2]) * rinv2;
+            u[0] += rinv * (f[0] + dx[0] * inner_prod);
+            u[1] += rinv * (f[1] + dx[1] * inner_prod);
+            u[2] += rinv * (f[2] + dx[2] * inner_prod);
+        }
+        u[0] *= 0.5;
+        u[1] *= 0.5;
+        u[2] *= 0.5;
+    };
+
+    for (int i = 0; i < n_test_src; ++i)
+        accumulate_stokes_vel(&r_src[i * n_dim], i, direct_stokes_vel_src);
+    for (int i = 0; i < n_test_trg; ++i)
+        accumulate_stokes_vel(&r_trg[i * n_dim], i, direct_stokes_vel_trg);
+
+    auto relative_l2_error = [](const auto &approx, const auto &exact) {
+        double err2 = 0.0;
+        double ref2 = 0.0;
+        for (int i = 0; i < exact.size(); ++i) {
+            err2 += sctl::pow<2>(approx[i] - exact[i]);
+            ref2 += sctl::pow<2>(exact[i]);
+        }
+        return std::sqrt(err2 / ref2);
+    };
+
+    const double l2_err_src = relative_l2_error(pot_src, direct_stokes_vel_src);
+    const double l2_err_trg = relative_l2_error(pot_trg, direct_stokes_vel_trg);
+
+    CHECK(l2_err_src < params.eps);
+    CHECK(l2_err_trg < params.eps);
 }
 
 TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace gradient", 1) {
