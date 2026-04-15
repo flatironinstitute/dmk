@@ -412,6 +412,73 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level public API", 1) {
     CHECK(pot_trg.Dim() == n_trg);
 }
 
+TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level root pw_out must be zeroed", 1) {
+    constexpr int n_dim = 3;
+    constexpr int n_src = 8;
+    constexpr int n_trg = 4;
+
+#ifdef DMK_HAVE_MPI
+    auto sctl_comm = sctl::Comm(test_comm);
+#else
+    auto sctl_comm = sctl::Comm::Self();
+#endif
+
+    sctl::Vector<double> r_src({0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 0.3, 0.3, 0.3, 0.4, 0.4, 0.4,
+                                0.6, 0.6, 0.6, 0.7, 0.7, 0.7, 0.8, 0.8, 0.8, 0.9, 0.9, 0.9});
+    sctl::Vector<double> r_trg({0.15, 0.15, 0.15, 0.35, 0.35, 0.35, 0.65, 0.65, 0.65, 0.85, 0.85, 0.85});
+    sctl::Vector<double> charges(n_src);
+    for (int i = 0; i < n_src; ++i)
+        charges[i] = (i % 2 == 0 ? 1.0 : -1.0) / n_src;
+
+    pdmk_params params;
+    params.eps = 1e-6;
+    params.n_dim = n_dim;
+    params.n_per_leaf = 1000000;
+    params.pgh_src = DMK_POTENTIAL;
+    params.pgh_trg = DMK_POTENTIAL;
+    params.kernel = DMK_LAPLACE;
+    params.use_periodic = true;
+    params.log_level = 6;
+
+    dmk::DMKPtTree<double, n_dim> clean_tree(sctl_comm, params, r_src, r_trg, charges);
+    clean_tree.eval();
+
+    dmk::DMKPtTree<double, n_dim> poisoned_tree(sctl_comm, params, r_src, r_trg, charges);
+    REQUIRE(poisoned_tree.n_boxes() == 1);
+    REQUIRE(poisoned_tree.n_levels() == 1);
+
+    poisoned_tree.upward_pass();
+    poisoned_tree.pot_src_sorted.SetZero();
+    poisoned_tree.pot_trg_sorted.SetZero();
+    poisoned_tree.init_planewave_data();
+    REQUIRE(poisoned_tree.pw_out.Dim() > 0);
+
+    const std::complex<double> poison(1.25, -0.75);
+    std::fill(poisoned_tree.pw_out.begin(), poisoned_tree.pw_out.end(), poison);
+
+    poisoned_tree.form_outgoing_expansions();
+
+    const int n_pw = poisoned_tree.expansion_constants.n_pw_diff;
+    const int n_order = poisoned_tree.expansion_constants.n_order;
+    auto &dfd = poisoned_tree.difference_fourier_data[0];
+    const dmk::ndview<std::complex<double>, 2> pw2p({n_pw, n_order}, &dfd.pw2poly[0]);
+    poisoned_tree.form_eval_expansions(poisoned_tree.level_indices[0], dfd.wpwshift, poisoned_tree.boxsize[0], pw2p,
+                                       poisoned_tree.p2c);
+    poisoned_tree.evaluate_direct_interactions();
+
+    double max_trg_diff = 0.0;
+    for (int i = 0; i < poisoned_tree.pot_trg_sorted.Dim(); ++i)
+        max_trg_diff = std::max(max_trg_diff, std::abs(poisoned_tree.pot_trg_sorted[i] - clean_tree.pot_trg_sorted[i]));
+
+    double max_src_diff = 0.0;
+    for (int i = 0; i < poisoned_tree.pot_src_sorted.Dim(); ++i)
+        max_src_diff = std::max(max_src_diff, std::abs(poisoned_tree.pot_src_sorted[i] - clean_tree.pot_src_sorted[i]));
+
+    MESSAGE("single-level periodic root sensitivity: max_src_diff=", max_src_diff, " max_trg_diff=", max_trg_diff);
+    CHECK(max_src_diff == doctest::Approx(0.0).epsilon(1e-12));
+    CHECK(max_trg_diff == doctest::Approx(0.0).epsilon(1e-12));
+}
+
 TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
     constexpr int n_dim = 3;
     constexpr int n_src = 2000;

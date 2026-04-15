@@ -988,6 +988,7 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions() {
             dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(0), p2pw, pw_root_view, workspaces_[0]);
             multiply_kernelFT_cd2p<Real, DIM>(window_fourier_data.radialft, pw_root_view);
 
+            pw_out_view(0) = 0;
             proxy_view_downward(0) = 0;
             proxy_down_zeroed[0] = true;
             dmk::planewave_to_proxy_potential<Real, DIM>(pw_root_view, pw2p, proxy_view_downward(0), workspaces_[0]);
