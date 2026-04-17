@@ -305,6 +305,9 @@ std::vector<std::vector<Real>> get_stokes_local_correction_coeffs(int dim, int n
 
 template <typename Real>
 std::vector<std::vector<Real>> get_local_correction_coeffs(dmk_ikernel kernel, int n_dim, int n_digits, double beta) {
+    static std::mutex lock;
+    std::lock_guard<std::mutex> lock_guard(lock);
+
     const double tol = std::pow(10.0, -n_digits);
     dmk::Prolate0Fun prolate_fun(beta, 10000);
 

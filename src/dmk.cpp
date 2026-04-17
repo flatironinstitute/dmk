@@ -279,12 +279,14 @@ TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
                 std::vector<double> test_trg(n_test_trg);
 
 #pragma omp parallel for schedule(static)
-                for (int i_src = 0; i_src < n_src; ++i_src) {
-                    for (int i_trg = 0; i_trg < n_test_src; ++i_trg)
+                for (int i_trg = 0; i_trg < n_test_src; ++i_trg)
+                    for (int i_src = 0; i_src < n_src; ++i_src)
                         test_src[i_trg] += charges[i_src] * potential(&r_src[i_src * n_dim], &r_src[i_trg * n_dim]);
-                    for (int i_trg = 0; i_trg < n_test_trg; ++i_trg)
+
+#pragma omp parallel for schedule(static)
+                for (int i_trg = 0; i_trg < n_test_trg; ++i_trg)
+                    for (int i_src = 0; i_src < n_src; ++i_src)
                         test_trg[i_trg] += charges[i_src] * potential(&r_src[i_src * n_dim], &r_trg[i_trg * n_dim]);
-                }
 
                 pdmk_tree tree = pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0],
                                                   n_trg, &r_trg[0]);
