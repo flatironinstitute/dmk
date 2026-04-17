@@ -169,6 +169,7 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 
     logger->debug("base tree build completed");
     generate_metadata();
+
     logger->info("tree build completed");
 }
 
@@ -427,14 +428,41 @@ void DMKPtTree<Real, DIM>::build_plane_wave_interaction_lists() {
     }
 }
 
+// Compute the periodic shift for a neighbor at nbr slot index k.
+// The slot k = d0 + 3*d1 + 9*d2 (for DIM=3) where d ∈ {0,1,2} maps to offset {-1,0,+1}.
+// The expected neighbor center is center[box] + offset * boxsize.
+// The shift is the difference between expected and actual positions, rounded to int.
+template <typename T, int DIM>
+static std::array<int, DIM> compute_periodic_shift_from_slot(int k, T bsize, const T *center_box, const T *center_nbr) {
+    std::array<int, DIM> shift{};
+    for (int d = 0; d < DIM; ++d) {
+        int dir = (k % 3) - 1; // -1, 0, or +1
+        k /= 3;
+        T expected = center_box[d] + dir * bsize;
+        shift[d] = (int)std::round(expected - center_nbr[d]);
+    }
+    return shift;
+}
+
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_direct_interaction_lists() {
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_lists = this->GetNodeLists();
     list1_.resize(n_boxes());
     nlist1_.resize(n_boxes());
+    list1_shift_.resize(n_boxes());
+
+    auto add_list1_entry = [&](int box, int neighb_box, const std::array<int, DIM> &shift) {
+        const int k = nlist1_[box];
+        list1_[box][k] = neighb_box;
+        list1_shift_[box][k] = shift;
+        nlist1_[box]++;
+    };
+
+    const std::array<int, DIM> zero_shift{};
 
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
+        const Real bsize_level = boxsize[i_level];
         // Loop through target boxes at this level (boxes where we loop through neighbors for direct eval)
         for (int box : level_indices[i_level]) {
             if (!is_global_leaf[box] || node_attr[box].Ghost)
@@ -442,13 +470,20 @@ void DMKPtTree<Real, DIM>::build_direct_interaction_lists() {
 
             // (boxsize + 0.5 boxsize) / 2 is the max distance from center of box to center of child neighbor box
             const double cutoff_child = 1.05 * 0.75 * boxsize[i_level];
-            for (auto neighb : node_lists[box].nbr) {
+            constexpr int MAX_NBRS = sctl::pow<DIM>(3);
+            for (int nbr_k = 0; nbr_k < MAX_NBRS; ++nbr_k) {
+                const auto neighb = node_lists[box].nbr[nbr_k];
                 if (neighb < 0)
                     continue;
 
+                // Compute periodic shift from the nbr slot index
+                const auto nbr_shift = params.use_periodic
+                                           ? compute_periodic_shift_from_slot<Real, DIM>(
+                                                 nbr_k, bsize_level, center_ptr(box), center_ptr(neighb))
+                                           : zero_shift;
+
                 if (is_global_leaf[neighb] && src_counts_with_halo[neighb]) {
-                    list1_[box][nlist1_[box]] = neighb;
-                    nlist1_[box]++;
+                    add_list1_entry(box, neighb, nbr_shift);
                     continue;
                 }
 
@@ -456,18 +491,18 @@ void DMKPtTree<Real, DIM>::build_direct_interaction_lists() {
                     if (child < 0 || !src_counts_with_halo[child])
                         continue;
 
+                    // For PBC: apply the parent's periodic shift when checking child distance
                     bool inrange = true;
                     for (int k = 0; k < DIM; ++k) {
-                        const double distance = std::abs(center_ptr(box)[k] - center_ptr(child)[k]);
+                        const double child_center = center_ptr(child)[k] + nbr_shift[k];
+                        const double distance = std::abs(center_ptr(box)[k] - child_center);
                         if (distance > cutoff_child) {
                             inrange = false;
                             break;
                         }
                     }
-                    if (inrange) {
-                        list1_[box][nlist1_[box]] = child;
-                        nlist1_[box]++;
-                    }
+                    if (inrange)
+                        add_list1_entry(box, child, nbr_shift);
                 }
             }
 
@@ -476,22 +511,27 @@ void DMKPtTree<Real, DIM>::build_direct_interaction_lists() {
                 continue;
 
             // Search the colleagues of parent for neighboring leaves
-            // (boxsize + 2 * boxsize) / 2 is the max distance from center of box to center of parent neighbor box
+            const int parent = node_lists[box].parent;
+            const Real bsize_parent = boxsize[i_level - 1];
             const double cutoff = 1.5 * 1.05 * boxsize[i_level];
-            for (auto neighb : node_lists[node_lists[box].parent].nbr) {
+            for (int nbr_k = 0; nbr_k < MAX_NBRS; ++nbr_k) {
+                const auto neighb = node_lists[parent].nbr[nbr_k];
                 if (neighb < 0 || !is_global_leaf[neighb] || !src_counts_with_halo[neighb])
                     continue;
 
+                const auto nbr_shift = params.use_periodic
+                                           ? compute_periodic_shift_from_slot<Real, DIM>(
+                                                 nbr_k, bsize_parent, center_ptr(parent), center_ptr(neighb))
+                                           : zero_shift;
+
                 bool inrange = true;
                 for (int k = 0; k < DIM; ++k) {
-                    const double distance = std::abs(center_ptr(box)[k] - center_ptr(neighb)[k]);
+                    const double distance = std::abs(center_ptr(box)[k] - (center_ptr(neighb)[k] + nbr_shift[k]));
                     if (distance > cutoff)
                         inrange = false;
                 }
-                if (inrange) {
-                    list1_[box][nlist1_[box]] = neighb;
-                    nlist1_[box]++;
-                }
+                if (inrange)
+                    add_list1_entry(box, neighb, nbr_shift);
             }
         }
     }
@@ -591,14 +631,48 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
 
     sctl::Vector<Real> kernel_ft;
 
-    window_fourier_data.poly2pw.ReInit(n_order * n_pw);
-    window_fourier_data.pw2poly.ReInit(n_order * n_pw);
-    window_fourier_data.radialft.ReInit(n_pw_modes);
-    get_windowed_kernel_ft<Real, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_pw, boxsize[0],
-                                      fourier_data.prolate0_fun, kernel_ft);
-    util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<Real, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
-                                              ndview<Real, 1>({n_pw_modes}, &window_fourier_data.radialft[0]));
-    fourier_data.calc_planewave_coeff_matrices(-1, n_order, window_fourier_data.poly2pw, window_fourier_data.pw2poly);
+    if (params.use_periodic) {
+        const int n_pw_periodic = expansion_constants.n_pw_periodic;
+        // Periodic grid: dk = 2*pi/L, n_pw_periodic modes per dimension
+        const Real dk = 2.0 * M_PI / boxsize[0];
+        // Multi-level trees use the first child scale for the root smooth kernel.
+        // For a single-level tree there is no level-1 box, so fall back to the root scale.
+        const int sigma_level = std::min(1, n_levels() - 1);
+        const Real sigma1 = boxsize[sigma_level] / fourier_data.beta();
+        const Real psi0_at_zero = fourier_data.prolate0_fun.eval_val(0.0);
+        const long n_pw_modes_periodic = sctl::pow<DIM - 1>(n_pw_periodic) * ((n_pw_periodic + 1) / 2);
+        const int n_fourier = DIM * sctl::pow<2>(n_pw_periodic / 2) + 1;
+
+        // Build periodic radialft: PSWF kernel (4pi/psi0(0)) * psi0(kappa*sigma1) / kappa^2
+        kernel_ft.ReInit(n_fourier);
+        kernel_ft[0] = 0; // k=0 excluded (charge neutrality)
+        for (int i = 1; i < n_fourier; ++i) {
+            const Real kappa = std::sqrt(Real(i)) * dk;
+            const Real arg = kappa * sigma1;
+            const Real psi_val = (std::abs(arg) <= 1.0) ? fourier_data.prolate0_fun.eval_val(arg) : Real(0);
+            kernel_ft[i] = (4.0 * M_PI / psi0_at_zero) * psi_val / (Real(i) * dk * dk);
+        }
+
+        window_fourier_data.radialft.ReInit(n_pw_modes_periodic);
+        util::mk_tensor_product_fourier_transform(
+            DIM, n_pw_periodic, ndview<Real, 1>({n_fourier}, &kernel_ft[0]),
+            ndview<Real, 1>({n_pw_modes_periodic}, &window_fourier_data.radialft[0]));
+
+        window_fourier_data.poly2pw.ReInit(n_order * n_pw_periodic);
+        window_fourier_data.pw2poly.ReInit(n_order * n_pw_periodic);
+        dmk::calc_planewave_coeff_matrices(boxsize[0], dk, n_pw_periodic, n_order, window_fourier_data.poly2pw,
+                                           window_fourier_data.pw2poly);
+    } else {
+        window_fourier_data.poly2pw.ReInit(n_order * n_pw);
+        window_fourier_data.pw2poly.ReInit(n_order * n_pw);
+        window_fourier_data.radialft.ReInit(n_pw_modes);
+        get_windowed_kernel_ft<Real, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_pw, boxsize[0],
+                                          fourier_data.prolate0_fun, kernel_ft);
+        util::mk_tensor_product_fourier_transform(DIM, n_pw, ndview<Real, 1>({kernel_ft.Dim()}, &kernel_ft[0]),
+                                                  ndview<Real, 1>({n_pw_modes}, &window_fourier_data.radialft[0]));
+        fourier_data.calc_planewave_coeff_matrices(-1, n_order, window_fourier_data.poly2pw,
+                                                   window_fourier_data.pw2poly);
+    }
 
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
         auto &lfd = difference_fourier_data[i_level];
@@ -890,22 +964,57 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions() {
     const auto &node_mid = this->GetNodeMID();
 
     // Root box: uses windowed kernel fourier data
-    {
-        const ndview<std::complex<Real>, 2> p2pw({n_pw, n_order}, &window_fourier_data.poly2pw[0]);
-        const ndview<std::complex<Real>, 2> pw2p({n_pw, n_order}, &window_fourier_data.pw2poly[0]);
-        dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(0), p2pw, pw_out_view(0), workspaces_[0]);
-        multiply_kernelFT_cd2p<Real, DIM>(window_fourier_data.radialft, pw_out_view(0));
-        proxy_view_downward(0) = 0;
-        proxy_down_zeroed[0] = true;
-        dmk::planewave_to_proxy_potential<Real, DIM>(pw_out_view(0), pw2p, proxy_view_downward(0), workspaces_[0]);
+    { // Windowed kernel for root (or periodic PSWF kernel for PBC)
+        std::fill(proxy_down_zeroed.begin(), proxy_down_zeroed.end(), 0);
+
+        if (params.use_periodic) {
+            const int n_pw_periodic = expansion_constants.n_pw_periodic;
+            const int npw_root = n_pw_periodic;
+            const long n_pw_modes_root = sctl::pow<DIM - 1>(npw_root) * ((npw_root + 1) / 2);
+            const int n_pw_per_box_root = n_pw_modes_root * n_tables;
+
+            sctl::Vector<std::complex<Real>> pw_root(n_pw_per_box_root);
+            auto pw_root_view = [&]() {
+                if constexpr (DIM == 2)
+                    return ndview<std::complex<Real>, DIM + 1>({npw_root, (npw_root + 1) / 2, n_tables}, &pw_root[0]);
+                else if constexpr (DIM == 3)
+                    return ndview<std::complex<Real>, DIM + 1>({npw_root, npw_root, (npw_root + 1) / 2, n_tables},
+                                                               &pw_root[0]);
+            }();
+
+            const ndview<std::complex<Real>, 2> p2pw({npw_root, n_order}, &window_fourier_data.poly2pw[0]);
+            const ndview<std::complex<Real>, 2> pw2p({npw_root, n_order}, &window_fourier_data.pw2poly[0]);
+
+            dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(0), p2pw, pw_root_view, workspaces_[0]);
+            multiply_kernelFT_cd2p<Real, DIM>(window_fourier_data.radialft, pw_root_view);
+
+            pw_out_view(0) = 0;
+            proxy_view_downward(0) = 0;
+            proxy_down_zeroed[0] = true;
+            dmk::planewave_to_proxy_potential<Real, DIM>(pw_root_view, pw2p, proxy_view_downward(0), workspaces_[0]);
+        } else {
+            const ndview<std::complex<Real>, 2> p2pw({n_pw, n_order}, &window_fourier_data.poly2pw[0]);
+            const ndview<std::complex<Real>, 2> pw2p({n_pw, n_order}, &window_fourier_data.pw2poly[0]);
+            dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(0), p2pw, pw_out_view(0), workspaces_[0]);
+            multiply_kernelFT_cd2p<Real, DIM>(window_fourier_data.radialft, pw_out_view(0));
+
+            proxy_view_downward(0) = 0;
+            proxy_down_zeroed[0] = true;
+            dmk::planewave_to_proxy_potential<Real, DIM>(pw_out_view(0), pw2p, proxy_view_downward(0), workspaces_[0]);
+        }
     }
 
 #pragma omp parallel
     {
         sctl::Vector<Real> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
 
+        // When use_periodic, skip form_outgoing at level 0: the periodic root kernel
+        // already includes W_0+D_0, so D_0 must not be computed again. pw_out(0) stays
+        // zero from init_planewave_data, so form_eval's self-interaction adds nothing.
+        // We still run form_eval at level 0 to propagate proxy_downward(0) to children.
+        const int start_box = params.use_periodic ? 1 : 0;
 #pragma omp for schedule(dynamic)
-        for (int i_box = 0; i_box < n_boxes(); ++i_box) {
+        for (int i_box = start_box; i_box < n_boxes(); ++i_box) {
             if (ifpwexp[i_box] && proxy_coeffs_offsets[i_box] != -1) {
                 const int level = node_mid[i_box].Depth();
                 auto &dfd = difference_fourier_data[level];
@@ -1047,6 +1156,19 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
     for (int i_level = 0; i_level < n_levels(); ++i_level)
         w0[i_level] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
 
+    // For PBC: precompute the periodic shift for each (trg_box, nbr_index) pair.
+    // The nbr array index k encodes a direction (dx,dy,dz) ∈ {-1,0,+1}^DIM.
+    // k = d0 + 3*d1 + 9*d2 where d ∈ {0,1,2} maps to offset {-1,0,+1}.
+    // When the neighbor wraps around the periodic boundary, the source
+    // positions must be shifted by ±1 in the wrapped dimension.
+    //
+    // We detect the shift by comparing the actual center difference with
+    // the expected neighbor direction. For a box at level L with boxsize B:
+    //   expected offset in dim i = (d_i - 1) * B
+    //   actual offset = center[nbr][i] - center[box][i]
+    //   shift[i] = expected - actual = round(expected - actual)
+    // This is nonzero only when the neighbor wraps periodically.
+
 #pragma omp parallel
     {
         // Thread-local buffers for filtered particles
@@ -1059,16 +1181,20 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
         util::StackOrHeapBuffer<Real, MAX_OUTPUT_DIM * MAX_PTS> pot_buf(kernel_output_dim_max * params.n_per_leaf);
         util::StackOrHeapBuffer<int, MAX_PTS> index_map(params.n_per_leaf);
 
+        // Buffer for periodically shifted source positions
+        std::vector<Real> r_src_shifted;
+
 #pragma omp for schedule(dynamic)
         for (int idx = 0; idx < direct_work.size(); ++idx) {
             const int trg_box = direct_work[idx];
             const int trg_level = node_mid[trg_box].Depth();
 
-            for (auto src_box : list1(trg_box)) {
+            for (int list1_idx = 0; list1_idx < nlist1_[trg_box]; ++list1_idx) {
+                const int src_box = list1_[trg_box][list1_idx];
                 int src_level = node_mid[src_box].Depth();
                 Real bsize = boxsize[src_level];
 
-                if (ifpwexp[src_box] && src_box == trg_box) {
+                if (ifpwexp[src_box] && src_box == trg_box && src_level + 1 < n_levels()) {
                     bsize /= Real{2.0};
                     src_level = src_level + 1;
                 } else if (src_level < trg_level) {
@@ -1104,6 +1230,31 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                 int n_src = src_counts_with_halo[src_box];
                 const Real *r_src_ptr = r_src_with_halo_ptr(src_box);
                 const Real *charge_ptr = charge_with_halo_ptr(src_box);
+
+                // For PBC: apply the periodic image shift to source positions. The shift
+                // for each list-1 pair was computed in build_direct_interaction_lists()
+                // and stored in list1_shift_; this routine only applies it. The source-
+                // box corner used by ContactGeometry must be shifted by the same vector
+                // so source particles and source-box stay in one frame — otherwise
+                // asymmetric-depth filtering (src_larger/trg_larger) rejects valid
+                // periodic-image interactions at boundary-crossing list-1 pairs.
+                if (params.use_periodic) {
+                    const auto &shift = list1_shift_[trg_box][list1_idx];
+                    bool needs_shift = false;
+                    for (int d = 0; d < DIM; ++d)
+                        if (shift[d] != 0)
+                            needs_shift = true;
+
+                    if (needs_shift) {
+                        r_src_shifted.resize(DIM * n_src);
+                        for (int i = 0; i < n_src; ++i)
+                            for (int d = 0; d < DIM; ++d)
+                                r_src_shifted[i * DIM + d] = r_src_ptr[i * DIM + d] + shift[d];
+                        r_src_ptr = r_src_shifted.data();
+                        for (int d = 0; d < DIM; ++d)
+                            corner_a[d] += shift[d];
+                    }
+                }
 
                 // Remove points outside sqrt(d2max) range from shared box boundary
                 if (src_larger) {

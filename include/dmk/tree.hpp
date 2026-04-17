@@ -16,16 +16,17 @@ struct FourierData;
 
 template <int DIM>
 struct ExpansionConstants {
-    double beta;          // PSWF bandwidth parameter
-    int n_fourier_diff;   // number of fourier modes for difference kernel (half space)
-    int n_pw_diff;        // linear number of planewaves (2 * n_fourier + 1)
-    int n_exp_modes_diff; // number of planewave modes per box n_pw^(D-1)((n_pw+1) / 2);
-    int n_fourier_win;    // number of fourier modes for windowed kernel (half space)
-    int n_pw_win;         // linear number of planewaves for windowed kernel (PBC dependent)
-    int n_exp_modes_win;  // number of planewave modes per box n_pw^(D-1)((n_pw+1) / 2);
-    double hpw_diff;      // planewave spacing for difference kernel
-    double hpw_win;       // planewave spacing for windowed kernel
-    int n_order;          // linear number of proxy coefficients
+    double beta;           // PSWF bandwidth parameter
+    int n_fourier_diff;    // number of fourier modes for difference kernel (half space)
+    int n_pw_diff;         // linear number of planewaves (2 * n_fourier + 1)
+    int n_exp_modes_diff;  // number of planewave modes per box n_pw^(D-1)((n_pw+1) / 2);
+    int n_fourier_win;     // number of fourier modes for windowed kernel (half space)
+    int n_pw_win;          // linear number of planewaves for windowed kernel (PBC dependent)
+    int n_exp_modes_win;   // number of planewave modes per box n_pw^(D-1)((n_pw+1) / 2);
+    int n_pw_periodic = 0; // PW modes per dim for periodic root grid (0 if free-space)
+    double hpw_diff;       // planewave spacing for difference kernel
+    double hpw_win;        // planewave spacing for windowed kernel
+    int n_order;           // linear number of proxy coefficients
 
     ExpansionConstants(const pdmk_params &p) {
         beta = util::calc_bandlimiting(p);
@@ -48,6 +49,14 @@ struct ExpansionConstants {
         // n_pw_win = 2 * n_fourier_win + 1;
         n_pw_win = n_pw_diff;
         n_exp_modes_win = sctl::pow<DIM - 1>(n_pw_win) * ((n_pw_win + 1) / 2);
+
+        if (p.use_periodic) {
+            n_pw_periodic = 2 * (int)std::ceil(beta / M_PI) + 3;
+            if (n_pw_periodic % 2 == 0)
+                n_pw_periodic++;
+        } else {
+            n_pw_periodic = 0;
+        }
 
         if (p.debug_flags & DMK_DEBUG_OVERRIDE_ORDER)
             n_order = p.debug_params[DMK_DEBUG_ORDER_SLOT];
@@ -590,6 +599,10 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     // list1 contains boxes that are neighbors for direct interaction
     std::vector<std::array<int, nlist1_max_>> list1_;
     std::vector<int> nlist1_;
+    // For PBC: periodic shift (in units of the domain size) for each list1 entry.
+    // list1_shift_[box][k][d] = shift in dimension d for the k-th list1 neighbor.
+    // Zero for non-periodic trees.
+    std::vector<std::array<std::array<int, DIM>, nlist1_max_>> list1_shift_;
 
     static constexpr int nlistpw_max_ = sctl::pow<DIM>(3);
     // listpw_ contains source boxes in the pw interaction
