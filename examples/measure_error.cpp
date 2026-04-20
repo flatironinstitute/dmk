@@ -18,6 +18,7 @@
 //   --digits val      Digits for beta sweep (default: 6)
 
 #include <dmk.h>
+#include <dmk/direct.hpp>
 #include <dmk/omp_wrapper.hpp>
 #include <dmk/util.hpp>
 
@@ -84,6 +85,20 @@ void generate_points(int n_dim, int n_src, bool uniform, std::vector<double> &r_
     }
 }
 
+template <typename Real>
+void parallel_direct_eval(const dmk::direct_evaluator_func<Real> &func, int n_src, const Real *r_src,
+                          const Real *charge, int n_trg, const Real *r_trg, Real *pot, int spatial_dim,
+                          int charge_dim) {
+#pragma omp parallel
+    {
+        const int nt = MY_OMP_GET_NUM_THREADS();
+        const int tid = MY_OMP_GET_THREAD_NUM();
+        const int lo = (tid * n_trg) / nt;
+        const int hi = ((tid + 1) * n_trg) / nt;
+        if (hi > lo)
+            func(n_src, r_src, charge, hi - lo, r_trg + lo * spatial_dim, pot + lo * charge_dim);
+    }
+}
 template <typename PotFunc>
 void compute_direct(int n_dim, int n_src, int n_test, const std::vector<double> &r_src,
                     const std::vector<double> &charges, std::vector<double> &pot_direct, PotFunc &&pot_func) {
@@ -102,59 +117,10 @@ void compute_direct(int n_dim, int n_src, int n_test, const std::vector<double> 
 void compute_direct_dispatch(int n_dim, int n_src, int n_test, const std::vector<double> &r_src,
                              const std::vector<double> &charges, std::vector<double> &pot_direct, dmk_ikernel kernel) {
     const double lambda = 6.0;
-
-    auto run = [&](auto &&func) { compute_direct(n_dim, n_src, n_test, r_src, charges, pot_direct, func); };
-
-    switch (kernel) {
-    case DMK_LAPLACE:
-        if (n_dim == 2)
-            return run([](const double *a, const double *b) {
-                double dr2 = (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]);
-                return dr2 ? 0.5 * std::log(dr2) : 0.0;
-            });
-        if (n_dim == 3)
-            return run([](const double *a, const double *b) {
-                double dr2 =
-                    (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]);
-                return dr2 ? 1.0 / std::sqrt(dr2) : 0.0;
-            });
-        break;
-    case DMK_SQRT_LAPLACE:
-        if (n_dim == 2)
-            return run([](const double *a, const double *b) {
-                double dr2 = (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]);
-                return dr2 ? 1.0 / std::sqrt(dr2) : 0.0;
-            });
-        if (n_dim == 3)
-            return run([](const double *a, const double *b) {
-                double dr2 =
-                    (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]);
-                return dr2 ? 1.0 / dr2 : 0.0;
-            });
-        break;
-    case DMK_YUKAWA:
-        if (n_dim == 2)
-            return run([lambda](const double *a, const double *b) {
-                double dr2 = (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]);
-                if (!dr2)
-                    return 0.0;
-                double dr = std::sqrt(dr2);
-                return dmk::util::cyl_bessel_k(0, lambda * dr);
-            });
-        if (n_dim == 3)
-            return run([lambda](const double *a, const double *b) {
-                double dr2 =
-                    (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]);
-                if (!dr2)
-                    return 0.0;
-                double dr = std::sqrt(dr2);
-                return std::exp(-lambda * dr) / dr;
-            });
-        break;
-    default:
-        break;
-    }
-    throw std::runtime_error("Unknown kernel/dim");
+    pot_direct.resize(n_test);
+    auto potfunc = dmk::get_direct_evaluator<double>(kernel, DMK_POTENTIAL, n_dim, lambda);
+    parallel_direct_eval(potfunc, n_src, r_src.data(), charges.data(), n_test, r_src.data(), pot_direct.data(), n_dim,
+                         1);
 }
 
 struct ErrorMetrics {

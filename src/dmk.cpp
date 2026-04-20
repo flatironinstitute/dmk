@@ -19,14 +19,6 @@
 #include <dmk/omp_wrapper.hpp>
 #include <dmk/testing.hpp>
 
-extern "C" {
-void stokesdmk_(const int *nd, const int *dim, const double *eps, const int *iperiod, const double *rbsize,
-                const double *rbcenter, const int *ns, const double *sources, const int *ifstoklet,
-                const double *stoklet, const int *ifstrslet, const double *strslet, const double *strsvec,
-                const int *ifppreg, double *pot, double *pre, double *grad, const int *nt, const double *targ,
-                const int *ifppregtarg, double *pottarg, double *pretarg, double *gradtarg, double *tottimeinfo);
-}
-
 using pdmk_tree_impl =
     std::variant<std::unique_ptr<dmk::DMKPtTree<float, 2>>, std::unique_ptr<dmk::DMKPtTree<float, 3>>,
                  std::unique_ptr<dmk::DMKPtTree<double, 2>>, std::unique_ptr<dmk::DMKPtTree<double, 3>>>;
@@ -150,88 +142,6 @@ TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
     params.pgh_trg = DMK_POTENTIAL;
     params.fparam = 6.0;
     params.log_level = SPDLOG_LEVEL_OFF;
-
-    auto get_pot_func = [&params](int n_dim, dmk_ikernel kernel) -> std::function<double(double *, double *)> {
-        auto distance2 = [](double *r_a, double *r_b, int n_dim) {
-            double dr2 = 0.0;
-            for (int j = 0; j < n_dim; ++j)
-                dr2 += sctl::pow<2>(r_a[j] - r_b[j]);
-
-            return dr2;
-        };
-
-        switch (kernel) {
-        case DMK_YUKAWA:
-            if (n_dim == 2)
-                return [distance2, &params](double *r_a, double *r_b) {
-                    double dr = distance2(r_a, r_b, 2);
-                    if (!dr)
-                        return 0.0;
-
-                    dr = std::sqrt(dr);
-                    return util::cyl_bessel_k(0, params.fparam * dr);
-                };
-            if (n_dim == 3)
-                return [distance2, &params](double *r_a, double *r_b) {
-                    double dr = distance2(r_a, r_b, 3);
-                    if (!dr)
-                        return 0.0;
-
-                    dr = std::sqrt(dr);
-                    return std::exp(-params.fparam * dr) / dr;
-                };
-        case DMK_LAPLACE:
-            if (n_dim == 2)
-                return [](double *r_a, double *r_b) {
-                    double dr2 = 0.0;
-                    for (int j = 0; j < 2; ++j)
-                        dr2 += sctl::pow<2>(r_a[j] - r_b[j]);
-
-                    if (!dr2)
-                        return 0.0;
-
-                    return 0.5 * std::log(dr2);
-                };
-            if (n_dim == 3)
-                return [](double *r_a, double *r_b) {
-                    double dr2 = 0.0;
-                    for (int j = 0; j < 3; ++j)
-                        dr2 += sctl::pow<2>(r_a[j] - r_b[j]);
-
-                    if (!dr2)
-                        return 0.0;
-
-                    return 1.0 / std::sqrt(dr2);
-                };
-        case DMK_SQRT_LAPLACE:
-            if (n_dim == 2)
-                return [](double *r_a, double *r_b) {
-                    double dr2 = 0.0;
-                    for (int j = 0; j < 2; ++j)
-                        dr2 += sctl::pow<2>(r_a[j] - r_b[j]);
-
-                    if (!dr2)
-                        return 0.0;
-
-                    return 1.0 / std::sqrt(dr2);
-                };
-            if (n_dim == 3) {
-                return [](double *r_a, double *r_b) {
-                    double dr2 = 0.0;
-                    for (int j = 0; j < 3; ++j)
-                        dr2 += sctl::pow<2>(r_a[j] - r_b[j]);
-
-                    if (!dr2)
-                        return 0.0;
-
-                    return 1.0 / dr2;
-                };
-            }
-
-        default:
-            throw std::runtime_error("Unknown kernel");
-        }
-    };
     int ndiv[3] = {80, 280, 280};
 
     const auto test_kernels = {
@@ -271,22 +181,15 @@ TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
                 params.n_per_leaf = ndiv[int(kernel)];
 
                 params.kernel = kernel;
-                auto potential = get_pot_func(n_dim, kernel);
+                auto potential = get_direct_evaluator<double>(kernel, DMK_POTENTIAL, n_dim, params.fparam);
 
                 const int n_test_src = std::min(n_src, 1000);
                 const int n_test_trg = std::min(n_trg, 1000);
-                std::vector<double> test_src(n_test_src);
-                std::vector<double> test_trg(n_test_trg);
+                std::vector<double> test_src(n_test_src, 0);
+                std::vector<double> test_trg(n_test_trg, 0);
 
-#pragma omp parallel for schedule(static)
-                for (int i_trg = 0; i_trg < n_test_src; ++i_trg)
-                    for (int i_src = 0; i_src < n_src; ++i_src)
-                        test_src[i_trg] += charges[i_src] * potential(&r_src[i_src * n_dim], &r_src[i_trg * n_dim]);
-
-#pragma omp parallel for schedule(static)
-                for (int i_trg = 0; i_trg < n_test_trg; ++i_trg)
-                    for (int i_src = 0; i_src < n_src; ++i_src)
-                        test_trg[i_trg] += charges[i_src] * potential(&r_src[i_src * n_dim], &r_trg[i_trg * n_dim]);
+                potential(n_src, &r_src[0], &charges[0], n_test_src, &r_src[0], &test_src[0]);
+                potential(n_src, &r_src[0], &charges[0], n_test_trg, &r_trg[0], &test_trg[0]);
 
                 pdmk_tree tree = pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0],
                                                   n_trg, &r_trg[0]);

@@ -14,10 +14,12 @@
 // runtime dispatch of the rsqrt function, when a template is right there. Or passing
 // performance critical parameters as runtime arguments (like n_digits, n_coeffs).
 
+#include "sctl/vec.hpp"
 #include <dmk.h>
 #include <dmk/util.hpp>
 
 #include <sctl.hpp>
+#include <stdexcept>
 
 #define DMK_ALWAYS_INLINE __attribute__((always_inline)) inline
 
@@ -133,7 +135,7 @@ DMK_ALWAYS_INLINE void EvalPairs(int Ns, const typename uKernelEvaluator::scalar
                                  const typename uKernelEvaluator::scalar_type *__restrict__ src_normals, int Nt,
                                  const typename uKernelEvaluator::scalar_type *__restrict__ r_trg,
                                  typename uKernelEvaluator::scalar_type *__restrict__ v_trg, uKernelEvaluator uKernel,
-                                 int unroll_factor, int digits) {
+                                 int unroll_factor) {
     using namespace sctl;
     using Real = typename uKernelEvaluator::scalar_type;
     using RealVec = typename uKernelEvaluator::vector_type;
@@ -306,6 +308,83 @@ DMK_ALWAYS_INLINE void EvalPairs(int Ns, const typename uKernelEvaluator::scalar
 }
 
 template <class Real, int MaxVecLen>
+struct YukawaEvaluator3D {
+    using scalar_type = Real;
+    using vector_type = sctl::Vec<Real, MaxVecLen>;
+    static constexpr int SPATIAL_DIM = 3;
+    static constexpr int KERNEL_INPUT_DIM = 1;
+    static constexpr int NORMAL_DIM = 0;
+    static constexpr Real scale_factor = 1.0;
+    static constexpr int KERNEL_OUTPUT_DIM = 1;
+
+    vector_type lambda;
+
+    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[1][KERNEL_OUTPUT_DIM],
+                                      const vector_type (&dX)[SPATIAL_DIM]) const {
+        constexpr bool has_grad = (KERNEL_OUTPUT_DIM == 4);
+        const vector_type R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
+        const auto mask = R2 > vector_type::Zero();
+        const vector_type Rinv = sctl::approx_rsqrt<-1>(R2, mask);
+        const vector_type R = Rinv * R2;
+
+        u[0][0] = Rinv * sctl::exp(-lambda * R);
+    }
+};
+
+template <class Real, int MaxVecLen, int EVAL_LEVEL>
+struct LaplaceEvaluator2D {
+    using scalar_type = Real;
+    using vector_type = sctl::Vec<Real, MaxVecLen>;
+    static constexpr int SPATIAL_DIM = 2;
+    static constexpr int KERNEL_INPUT_DIM = 1;
+    static constexpr int NORMAL_DIM = 0;
+    static constexpr Real scale_factor = 1.0;
+    static constexpr int KERNEL_OUTPUT_DIM = EVAL_LEVEL == DMK_POTENTIAL ? 1 : 3;
+
+    template <int KERNEL_OUTPUT_DIM>
+    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[1][KERNEL_OUTPUT_DIM],
+                                      const vector_type (&dX)[SPATIAL_DIM]) const {
+        constexpr bool has_grad = (KERNEL_OUTPUT_DIM == 3);
+        const vector_type R2 = FMA(dX[0], dX[0], dX[1] * dX[1]);
+        const auto mask = R2 > vector_type::Zero();
+        const vector_type half = Real{0.5};
+
+        u[0][0] = select(mask, half * sctl::log(R2), vector_type::Zero());
+        if constexpr (has_grad) {
+            const vector_type Rinv = sctl::approx_rsqrt<-1>(R2, mask);
+            for (int i = 0; i < 2; i++)
+                u[0][1 + i] = dX[i] * Rinv;
+        }
+    }
+};
+
+template <class Real, int MaxVecLen, int EVAL_LEVEL>
+struct LaplaceEvaluator3D {
+    using scalar_type = Real;
+    using vector_type = sctl::Vec<Real, MaxVecLen>;
+    static constexpr int SPATIAL_DIM = 3;
+    static constexpr int KERNEL_INPUT_DIM = 1;
+    static constexpr int NORMAL_DIM = 0;
+    static constexpr Real scale_factor = 1.0;
+    static constexpr int KERNEL_OUTPUT_DIM = EVAL_LEVEL == DMK_POTENTIAL ? 1 : 4;
+
+    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[1][KERNEL_OUTPUT_DIM],
+                                      const vector_type (&dX)[SPATIAL_DIM]) const {
+        constexpr bool has_grad = (KERNEL_OUTPUT_DIM == 4);
+        const vector_type R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
+        const auto mask = R2 > vector_type::Zero();
+        const vector_type Rinv = sctl::approx_rsqrt<-1>(R2, mask);
+
+        u[0][0] = Rinv;
+        if constexpr (has_grad) {
+            const vector_type Rinv2 = Rinv * Rinv;
+            for (int i = 0; i < 3; i++)
+                u[0][1 + i] = -dX[i] * Rinv2;
+        }
+    }
+};
+
+template <class Real, int MaxVecLen>
 struct LaplacePolyEvaluator2D {
     using scalar_type = Real;
     using vector_type = sctl::Vec<Real, MaxVecLen>;
@@ -421,6 +500,42 @@ struct LaplacePolyEvaluator3D {
 };
 
 template <typename Real, int MaxVecLen>
+struct SqrtLaplaceEvaluator2D {
+    using scalar_type = Real;
+    using vector_type = sctl::Vec<Real, MaxVecLen>;
+    static constexpr int SPATIAL_DIM = 2;
+    static constexpr int KERNEL_INPUT_DIM = 1;
+    static constexpr int NORMAL_DIM = 0;
+    static constexpr Real scale_factor = 1.0;
+    static constexpr int KERNEL_OUTPUT_DIM = 1;
+
+    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[1][1], const vector_type (&dX)[SPATIAL_DIM]) const {
+        const vector_type R2 = FMA(dX[0], dX[0], dX[1] * dX[1]);
+        const auto mask = R2 > vector_type::Zero();
+        u[0][0] = sctl::approx_rsqrt<-1>(R2, mask);
+    }
+};
+
+template <typename Real, int MaxVecLen>
+struct SqrtLaplaceEvaluator3D {
+    using scalar_type = Real;
+    using vector_type = sctl::Vec<Real, MaxVecLen>;
+    static constexpr int KERNEL_INPUT_DIM = 1;
+    static constexpr int SPATIAL_DIM = 3;
+    static constexpr int NORMAL_DIM = 0;
+    static constexpr Real scale_factor = 1.0;
+    static constexpr int KERNEL_OUTPUT_DIM = 1;
+
+    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[1][1], const vector_type (&dX)[SPATIAL_DIM]) const {
+        const vector_type R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
+        const auto mask = R2 > vector_type::Zero();
+        const vector_type Rinv = sctl::approx_rsqrt<-1>(R2, mask);
+        const vector_type Rinv2 = Rinv * Rinv;
+        u[0][0] = Rinv2;
+    }
+};
+
+template <typename Real, int MaxVecLen>
 struct SqrtLaplacePolyEvaluator2D {
     using scalar_type = Real;
     using vector_type = sctl::Vec<Real, MaxVecLen>;
@@ -463,6 +578,34 @@ struct SqrtLaplacePolyEvaluator3D {
         const vector_type Rinv = my_approx_rsqrt(R2, n_digits);
         const vector_type R2inv = Rinv * Rinv;
         u[0][0] = sctl::select(mask, R2inv * horner(R2, coeffs, n_coeffs), vector_type::Zero());
+    }
+};
+
+template <typename Real, int MaxVecLen>
+struct StokesletEvaluator3D {
+    using scalar_type = Real;
+    using vector_type = sctl::Vec<Real, MaxVecLen>;
+    static constexpr int KERNEL_INPUT_DIM = 3;
+    static constexpr int KERNEL_OUTPUT_DIM = 3;
+    static constexpr int SPATIAL_DIM = 3;
+    static constexpr int NORMAL_DIM = 0;
+    static constexpr Real scale_factor = 0.5;
+
+    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM],
+                                      const vector_type (&dX)[SPATIAL_DIM]) const {
+        const vector_type R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
+        const auto mask = (R2 > vector_type::Zero());
+        const vector_type Rinv = sctl::approx_rsqrt<-1>(R2, mask);
+        const vector_type Rinv3 = Rinv * Rinv * Rinv;
+
+        for (int i = 0; i < KERNEL_INPUT_DIM; ++i) {
+            for (int j = 0; j < KERNEL_OUTPUT_DIM; ++j) {
+                vector_type val = dX[j] * dX[i] * Rinv3;
+                if (i == j)
+                    val += Rinv;
+                u[i][j] = val;
+            }
+        }
     }
 };
 
@@ -522,12 +665,10 @@ void laplace_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Rea
 
     if (eval_level == 1) {
         constexpr int KERNEL_OUTPUT_DIM = 1;
-        EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor,
-                                     n_digits);
+        EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
     } else {
         constexpr int KERNEL_OUTPUT_DIM = 3;
-        EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor,
-                                     n_digits);
+        EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
     }
 }
 
@@ -562,12 +703,10 @@ void laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Rea
 
     if (eval_level == 1) {
         constexpr int KERNEL_OUTPUT_DIM = 1;
-        EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor,
-                                     n_digits);
+        EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
     } else {
         constexpr int KERNEL_OUTPUT_DIM = 4;
-        EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor,
-                                     n_digits);
+        EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
     }
 }
 
@@ -582,7 +721,7 @@ void sqrt_laplace_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc
     SqrtLaplacePolyEvaluator2D<Real, MaxVecLen> evaluator{thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits};
 
     constexpr int KERNEL_OUTPUT_DIM = 1;
-    EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);
+    EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
 }
 
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
@@ -600,7 +739,7 @@ void sqrt_laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc
                                                           coeffs_mod.data(), n_coeffs, n_digits};
 
     constexpr int KERNEL_OUTPUT_DIM = 1;
-    EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);
+    EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
 }
 
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
@@ -618,12 +757,76 @@ void stokeslet_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, R
     const int n_coeffs_offdiag = is_static ? N_COEFFS_1 : n_coeffs_rt_1;
     const Real *coeffs_diag = coeffs;
     const Real *coeffs_offdiag = coeffs + n_coeffs_diag;
+    using Evaluator = StokesletPolyEvaluator3D<Real, MaxVecLen>;
 
-    StokesletPolyEvaluator3D<Real, MaxVecLen> evaluator{
-        thresh2, d2max, rsc, cen, coeffs_diag, coeffs_offdiag, n_coeffs_diag, n_coeffs_offdiag, n_digits};
+    Evaluator evaluator{thresh2,          d2max,   rsc, cen, coeffs_diag, coeffs_offdiag, n_coeffs_diag,
+                        n_coeffs_offdiag, n_digits};
 
-    constexpr int KERNEL_OUTPUT_DIM = 3;
-    EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor, n_digits);
+    EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
+}
+
+template <class Real, int MaxVecLen>
+inline void yukawa_3d_all_pairs_direct(int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg,
+                                       Real *pot, int unroll_factor, Real lambda) {
+    using Evaluator = YukawaEvaluator3D<Real, MaxVecLen>;
+    EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{lambda},
+                                            unroll_factor);
+}
+
+template <class Real, int MaxVecLen>
+inline void laplace_2d_all_pairs_direct(int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg,
+                                        Real *pot, int unroll_factor, int eval_level) {
+    if (eval_level == DMK_POTENTIAL) {
+        using Evaluator = LaplaceEvaluator2D<Real, MaxVecLen, DMK_POTENTIAL>;
+        return EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
+                                                       unroll_factor);
+    }
+    if (eval_level == DMK_POTENTIAL_GRAD) {
+        using Evaluator = LaplaceEvaluator2D<Real, MaxVecLen, DMK_POTENTIAL_GRAD>;
+        return EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
+                                                       unroll_factor);
+    }
+    throw std::runtime_error("Direct Laplace evaluator only supports DMK_POTENTIAL/DMK_POTENTIAL_GRAD");
+}
+
+template <class Real, int MaxVecLen>
+inline void laplace_3d_all_pairs_direct(int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg,
+                                        Real *pot, int unroll_factor, int eval_level) {
+    if (eval_level == DMK_POTENTIAL) {
+        using Evaluator = LaplaceEvaluator3D<Real, MaxVecLen, DMK_POTENTIAL>;
+        return EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
+                                                       unroll_factor);
+    }
+    if (eval_level == DMK_POTENTIAL_GRAD) {
+        using Evaluator = LaplaceEvaluator3D<Real, MaxVecLen, DMK_POTENTIAL_GRAD>;
+        return EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
+                                                       unroll_factor);
+    }
+    throw std::runtime_error("Direct Laplace evaluator only supports DMK_POTENTIAL/DMK_POTENTIAL_GRAD");
+}
+
+template <class Real, int MaxVecLen>
+inline void sqrt_laplace_2d_all_pairs_direct(int n_src, const Real *r_src, const Real *charge, int n_trg,
+                                             const Real *r_trg, Real *pot, int unroll_factor) {
+    using Evaluator = SqrtLaplaceEvaluator2D<Real, MaxVecLen>;
+    EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
+                                            unroll_factor);
+}
+
+template <class Real, int MaxVecLen>
+inline void sqrt_laplace_3d_all_pairs_direct(int n_src, const Real *r_src, const Real *charge, int n_trg,
+                                             const Real *r_trg, Real *pot, int unroll_factor) {
+    using Evaluator = SqrtLaplaceEvaluator3D<Real, MaxVecLen>;
+    EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
+                                            unroll_factor);
+}
+
+template <class Real, int MaxVecLen>
+inline void stokeslet_3d_all_pairs_direct(int n_src, const Real *r_src, const Real *charge, int n_trg,
+                                          const Real *r_trg, Real *pot, int unroll_factor) {
+    using Evaluator = StokesletEvaluator3D<Real, MaxVecLen>;
+    EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
+                                            unroll_factor);
 }
 
 #undef DMK_ALWAYS_INLINE

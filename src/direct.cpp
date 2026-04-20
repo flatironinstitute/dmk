@@ -5,6 +5,7 @@
 #include <dmk/legeexps.hpp>
 #include <dmk/prolate0_fun.hpp>
 #include <dmk/util.hpp>
+#include <dmk/vector_kernels.hpp>
 
 #include <format>
 #include <mutex>
@@ -355,8 +356,8 @@ __attribute__((constructor)) void init() {
 } // namespace
 
 template <typename Real>
-direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits,
-                                               double beta, int unroll_factor) {
+residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits,
+                                                 double beta, int unroll_factor) {
     static std::mutex lock;
     std::lock_guard<std::mutex> lock_guard(lock);
     constexpr int VECWIDTH = sctl::DefaultVecLen<Real>();
@@ -404,16 +405,16 @@ direct_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_pgh eval_
     };
 }
 
-template direct_evaluator_func<float> make_evaluator_jit<float>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
-                                                                int n_digits, double beta, int unroll_factor);
-template direct_evaluator_func<double> make_evaluator_jit<double>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
+template residual_evaluator_func<float> make_evaluator_jit<float>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
                                                                   int n_digits, double beta, int unroll_factor);
+template residual_evaluator_func<double> make_evaluator_jit<double>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
+                                                                    int n_digits, double beta, int unroll_factor);
 #endif
 // (DMK_USE_JIT)
 
 template <typename Real>
-direct_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits,
-                                               int unroll_factor) {
+residual_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits,
+                                                 int unroll_factor) {
     constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
     switch (kernel) {
     case dmk_ikernel::DMK_LAPLACE:
@@ -430,6 +431,64 @@ direct_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_pgh eval_
         if (n_dim == 3)
             return get_stokeslet_3d_kernel<Real, MaxVecLen>(eval_level, n_digits);
     default:
+        throw std::runtime_error("Unsupported kernel for local evaluator");
+    }
+}
+
+template <typename Real>
+direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, Real lambda) {
+    constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
+    constexpr int unroll_factor = 3;
+    switch (kernel) {
+    case dmk_ikernel::DMK_YUKAWA:
+        if (n_dim == 2)
+            return [lambda](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+                for (int i = 0; i < n_trg; ++i) {
+                    for (int j = 0; j < n_src; ++j) {
+                        const double dr2 = sctl::pow<2>(r_src[j * 2] - r_trg[i * 2]) +
+                                           sctl::pow<2>(r_src[j * 2 + 1] - r_trg[i * 2 + 1]);
+                        if (!dr2)
+                            continue;
+                        pot[i] += charge[j] * util::cyl_bessel_k(0, lambda * std::sqrt(dr2));
+                    }
+                }
+            };
+        if (n_dim == 3)
+            return [lambda](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor,
+                                                            lambda);
+            };
+
+    case dmk_ikernel::DMK_LAPLACE:
+        if (n_dim == 2)
+            return [eval_level](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg,
+                                Real *pot) {
+                laplace_2d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor,
+                                                             eval_level);
+            };
+        if (n_dim == 3)
+            return [eval_level](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg,
+                                Real *pot) {
+                laplace_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor,
+                                                             eval_level);
+            };
+    case dmk_ikernel::DMK_SQRT_LAPLACE:
+        if (n_dim == 2)
+            return [](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot,
+                                                                  unroll_factor);
+            };
+        if (n_dim == 3)
+            return [](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot,
+                                                                  unroll_factor);
+            };
+    case dmk_ikernel::DMK_STOKES:
+        if (n_dim == 3)
+            return [](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor);
+            };
+    default:
         throw std::runtime_error("Unsupported kernel for direct evaluator");
     }
 }
@@ -438,8 +497,13 @@ template std::vector<std::vector<float>> get_local_correction_coeffs<float>(dmk_
                                                                             double beta);
 template std::vector<std::vector<double>> get_local_correction_coeffs<double>(dmk_ikernel kernel, int n_dim,
                                                                               int n_digits, double beta);
-template direct_evaluator_func<float> make_evaluator_aot<float>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
-                                                                int n_digits, int unroll_factor);
-template direct_evaluator_func<double> make_evaluator_aot<double>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
+template residual_evaluator_func<float> make_evaluator_aot<float>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
                                                                   int n_digits, int unroll_factor);
+template residual_evaluator_func<double> make_evaluator_aot<double>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
+                                                                    int n_digits, int unroll_factor);
+
+template direct_evaluator_func<float> get_direct_evaluator(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
+                                                           float lambda);
+template direct_evaluator_func<double> get_direct_evaluator(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
+                                                            double lambda);
 } // namespace dmk
