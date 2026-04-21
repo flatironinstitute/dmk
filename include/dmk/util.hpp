@@ -197,11 +197,12 @@ inline void parallel_direct_eval(const dmk::direct_evaluator_func<Real> &func, i
     }
 }
 
-inline void compute_direct(int n_dim, int n_src, int n_test, const std::vector<double> &r_src,
-                           const std::vector<double> &charges, std::vector<double> &pot_direct, dmk_ikernel kernel) {
+template <typename Real>
+inline void compute_direct(int n_dim, int n_src, int n_test, const std::vector<Real> &r_src,
+                           const std::vector<Real> &charges, std::vector<Real> &pot_direct, dmk_ikernel kernel) {
     const double lambda = 6.0;
-    pot_direct.resize(n_test);
-    auto potfunc = dmk::get_direct_evaluator<double>(kernel, DMK_POTENTIAL, n_dim, lambda);
+    pot_direct.assign(n_test, 0);
+    auto potfunc = dmk::get_direct_evaluator<Real>(kernel, DMK_POTENTIAL, n_dim, lambda);
     parallel_direct_eval(potfunc, n_src, r_src.data(), charges.data(), n_test, r_src.data(), pot_direct.data(), n_dim,
                          1);
 }

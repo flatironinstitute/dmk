@@ -352,8 +352,9 @@ struct LaplaceEvaluator2D {
         u[0][0] = select(mask, half * sctl::log(R2), vector_type::Zero());
         if constexpr (has_grad) {
             const vector_type Rinv = sctl::approx_rsqrt<-1>(R2, mask);
+            const vector_type Rinv2 = Rinv * Rinv;
             for (int i = 0; i < 2; i++)
-                u[0][1 + i] = dX[i] * Rinv;
+                u[0][1 + i] = dX[i] * Rinv2;
         }
     }
 };
@@ -377,9 +378,9 @@ struct LaplaceEvaluator3D {
 
         u[0][0] = Rinv;
         if constexpr (has_grad) {
-            const vector_type Rinv2 = Rinv * Rinv;
+            const vector_type Rinv3 = Rinv * Rinv * Rinv;
             for (int i = 0; i < 3; i++)
-                u[0][1 + i] = -dX[i] * Rinv2;
+                u[0][1 + i] = -dX[i] * Rinv3;
         }
     }
 };

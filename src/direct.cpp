@@ -297,11 +297,7 @@ std::vector<std::vector<Real>> get_stokes_local_correction_coeffs(int dim, int n
             digits, [&](double x) { return stokes_residual_at_point(dim, x, beta, bsize, prolate).second; }, 0.0, 1.0);
     };
 
-    return {
-        coeffs_cache.get<Real>(n_digits, beta, fit_diag),
-        coeffs_cache.get<Real>(n_digits, beta + 1e-5,
-                               fit_offd) // offset beta to get distinct cache key
-    };
+    return {coeffs_cache.get<Real>(n_digits, beta, fit_diag), coeffs_cache.get<Real>(n_digits, beta, fit_offd)};
 }
 
 template <typename Real>

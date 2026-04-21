@@ -216,7 +216,7 @@ int DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal,
     // Recompute charge offsets (owned)
     charge_offsets_owned[0] = 0;
     for (std::size_t i = 1; i < n_boxes(); ++i)
-        charge_offsets_owned[i] = charge_offsets_owned[i - 1] + kernel_input_dim * charge_cnt_owned[i - 1];
+        charge_offsets_owned[i] = charge_offsets_owned[i - 1] + charge_cnt_owned[i - 1];
 
     // Broadcast to halo/ghost nodes and retrieve
     this->template Broadcast<Real>("pdmk_charge");
@@ -225,7 +225,7 @@ int DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal,
     // Recompute charge offsets (with halo)
     charge_offsets_with_halo[0] = 0;
     for (std::size_t i = 1; i < n_boxes(); ++i)
-        charge_offsets_with_halo[i] = charge_offsets_with_halo[i - 1] + kernel_input_dim * charge_cnt_with_halo[i - 1];
+        charge_offsets_with_halo[i] = charge_offsets_with_halo[i - 1] + charge_cnt_with_halo[i - 1];
 
     logger->info("update_charges completed");
     return 0;
