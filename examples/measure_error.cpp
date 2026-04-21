@@ -85,44 +85,6 @@ void generate_points(int n_dim, int n_src, bool uniform, std::vector<double> &r_
     }
 }
 
-template <typename Real>
-void parallel_direct_eval(const dmk::direct_evaluator_func<Real> &func, int n_src, const Real *r_src,
-                          const Real *charge, int n_trg, const Real *r_trg, Real *pot, int spatial_dim,
-                          int charge_dim) {
-#pragma omp parallel
-    {
-        const int nt = MY_OMP_GET_NUM_THREADS();
-        const int tid = MY_OMP_GET_THREAD_NUM();
-        const int lo = (tid * n_trg) / nt;
-        const int hi = ((tid + 1) * n_trg) / nt;
-        if (hi > lo)
-            func(n_src, r_src, charge, hi - lo, r_trg + lo * spatial_dim, pot + lo * charge_dim);
-    }
-}
-template <typename PotFunc>
-void compute_direct(int n_dim, int n_src, int n_test, const std::vector<double> &r_src,
-                    const std::vector<double> &charges, std::vector<double> &pot_direct, PotFunc &&pot_func) {
-    pot_direct.resize(n_test, 0.0);
-
-#pragma omp parallel for schedule(static)
-    for (int i = 0; i < n_test; ++i) {
-        double val = 0.0;
-        for (int j = 0; j < n_src; ++j) {
-            val += charges[j] * pot_func(&r_src[i * n_dim], &r_src[j * n_dim]);
-        }
-        pot_direct[i] = val;
-    }
-}
-
-void compute_direct_dispatch(int n_dim, int n_src, int n_test, const std::vector<double> &r_src,
-                             const std::vector<double> &charges, std::vector<double> &pot_direct, dmk_ikernel kernel) {
-    const double lambda = 6.0;
-    pot_direct.resize(n_test);
-    auto potfunc = dmk::get_direct_evaluator<double>(kernel, DMK_POTENTIAL, n_dim, lambda);
-    parallel_direct_eval(potfunc, n_src, r_src.data(), charges.data(), n_test, r_src.data(), pot_direct.data(), n_dim,
-                         1);
-}
-
 struct ErrorMetrics {
     double l2_rel;
     double max_rel;
@@ -235,7 +197,7 @@ void run_beta_sweep(const Config &cfg) {
             generate_points(n_dim, cfg.n_src, cfg.uniform, r_src, charges);
             int n_test = std::min(cfg.n_direct, cfg.n_src);
             std::vector<double> pot_direct;
-            compute_direct_dispatch(n_dim, cfg.n_src, n_test, r_src, charges, pot_direct, kernel);
+            dmk::util::compute_direct(n_dim, cfg.n_src, n_test, r_src, charges, pot_direct, kernel);
             for (double beta = cfg.beta_min; beta <= cfg.beta_max + 1e-9; beta += cfg.beta_step) {
                 try {
                     auto err = run_one<Real>(n_dim, kernel, 12, cfg, r_src, charges, pot_direct, beta);
@@ -281,7 +243,7 @@ void run_all(const Config &cfg) {
 
             int n_test = std::min(cfg.n_direct, cfg.n_src);
             std::vector<double> pot_direct;
-            compute_direct_dispatch(n_dim, cfg.n_src, n_test, r_src, charges, pot_direct, kernel);
+            dmk::util::compute_direct(n_dim, cfg.n_src, n_test, r_src, charges, pot_direct, kernel);
 
             for (int digits = min_digits; digits <= max_digits; ++digits) {
                 try {

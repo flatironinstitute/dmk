@@ -2,6 +2,8 @@
 #define UTIL_HPP
 
 #include <cmath>
+#include <dmk/direct.hpp>
+#include <dmk/omp_wrapper.hpp>
 #include <dmk/types.hpp>
 #include <sctl.hpp>
 #include <type_traits>
@@ -178,6 +180,30 @@ inline void vec_fma_3(T *__restrict__ dst, const T *__restrict__ a, const T *__r
     }
     for (; i < n; ++i)
         dst[i] += a[i] * b[i] * c[i];
+}
+
+template <typename Real>
+inline void parallel_direct_eval(const dmk::direct_evaluator_func<Real> &func, int n_src, const Real *r_src,
+                                 const Real *charge, int n_trg, const Real *r_trg, Real *pot, int spatial_dim,
+                                 int charge_dim) {
+#pragma omp parallel
+    {
+        const int nt = MY_OMP_GET_NUM_THREADS();
+        const int tid = MY_OMP_GET_THREAD_NUM();
+        const int lo = (tid * n_trg) / nt;
+        const int hi = ((tid + 1) * n_trg) / nt;
+        if (hi > lo)
+            func(n_src, r_src, charge, hi - lo, r_trg + lo * spatial_dim, pot + lo * charge_dim);
+    }
+}
+
+inline void compute_direct(int n_dim, int n_src, int n_test, const std::vector<double> &r_src,
+                           const std::vector<double> &charges, std::vector<double> &pot_direct, dmk_ikernel kernel) {
+    const double lambda = 6.0;
+    pot_direct.resize(n_test);
+    auto potfunc = dmk::get_direct_evaluator<double>(kernel, DMK_POTENTIAL, n_dim, lambda);
+    parallel_direct_eval(potfunc, n_src, r_src.data(), charges.data(), n_test, r_src.data(), pot_direct.data(), n_dim,
+                         1);
 }
 
 // Fused inner kernel: computes all 4 accumulations in a single pass over n elements,
