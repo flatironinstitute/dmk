@@ -334,7 +334,7 @@ std::vector<std::vector<Real>> get_local_correction_coeffs(dmk_ikernel kernel, i
             return {fit([&](double x) { return sl3d_local_kernel<double>(x, 1.0, prolate_fun); }, 0.0, 1.0)};
         }
         break;
-    case DMK_STOKES:
+    case DMK_STOKESLET:
         return get_stokes_local_correction_coeffs<Real>(n_dim, n_digits, beta);
     default:
         break;
@@ -373,7 +373,7 @@ residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_pgh eva
             return build_func_name(std::format("laplace_{}d_poly_all_pairs", n_dim), 1);
         case dmk_ikernel::DMK_SQRT_LAPLACE:
             return build_func_name(std::format("sqrt_laplace_{}d_poly_all_pairs", n_dim), 1);
-        case dmk_ikernel::DMK_STOKES:
+        case dmk_ikernel::DMK_STOKESLET:
             return build_func_name(std::format("stokeslet_{}d_poly_all_pairs", n_dim), 2);
         default:
             throw std::runtime_error("Unsupported kernel for direct evaluator");
@@ -423,7 +423,7 @@ residual_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_pgh eva
             return get_sqrt_laplace_2d_kernel<Real, MaxVecLen>(eval_level, n_digits);
         if (n_dim == 3)
             return get_sqrt_laplace_3d_kernel<Real, MaxVecLen>(eval_level, n_digits);
-    case dmk_ikernel::DMK_STOKES:
+    case dmk_ikernel::DMK_STOKESLET:
         if (n_dim == 3)
             return get_stokeslet_3d_kernel<Real, MaxVecLen>(eval_level, n_digits);
     default:
@@ -479,7 +479,7 @@ direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_pgh eva
                 sqrt_laplace_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot,
                                                                   unroll_factor);
             };
-    case dmk_ikernel::DMK_STOKES:
+    case dmk_ikernel::DMK_STOKESLET:
         if (n_dim == 3)
             return [](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
                 stokeslet_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor);

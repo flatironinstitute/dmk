@@ -27,7 +27,7 @@ static const std::vector<KernelDef> all_kernels = {
     {DMK_SQRT_LAPLACE, "DMK_SQRT_LAPLACE", 2, "sqrt_laplace_2d_poly_all_pairs", "get_sqrt_laplace_2d_kernel"},
     {DMK_SQRT_LAPLACE, "DMK_SQRT_LAPLACE", 3, "sqrt_laplace_3d_poly_all_pairs", "get_sqrt_laplace_3d_kernel"},
     // {DMK_STOKES, "DMK_STOKES", 2, "stokeslet_2d_poly_all_pairs", "get_stokeslet_2d_kernel"},
-    {DMK_STOKES, "DMK_STOKES", 3, "stokeslet_3d_poly_all_pairs", "get_stokeslet_3d_kernel"},
+    {DMK_STOKESLET, "DMK_STOKES", 3, "stokeslet_3d_poly_all_pairs", "get_stokeslet_3d_kernel"},
 };
 
 constexpr int min_digits = 2;
@@ -66,7 +66,7 @@ std::string coeff_name(const KernelDef &k, int digits) {
                 return "laplace";
             case DMK_SQRT_LAPLACE:
                 return "sqrt_laplace";
-            case DMK_STOKES:
+            case DMK_STOKESLET:
                 return "stokeslet";
             default:
                 return "unknown";

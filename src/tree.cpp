@@ -100,7 +100,7 @@ void update_offsets_from_counts(const sctl::Vector<sctl::Long> &counts, sctl::Lo
 }
 template <int DIM>
 inline int get_table_count(dmk_ikernel kernel) {
-    if (kernel == DMK_STOKES)
+    if (kernel == DMK_STOKESLET)
         return DIM;
     else
         return 1;
@@ -1030,7 +1030,7 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions() {
             }();
 
             dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(0), p2pw, pw_out_win_view, workspaces_[0]);
-            if (params.kernel == DMK_STOKES)
+            if (params.kernel == DMK_STOKESLET)
                 stokes_multiply_kernelFT<Real, DIM, true>(window_fourier_data.radialft, pw_out_win_view,
                                                           expansion_constants.hpw_win);
             else
@@ -1057,7 +1057,7 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions() {
 
                 dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(i_box), poly2pw_view, pw_out_view(i_box),
                                                       workspace);
-                if (params.kernel == DMK_STOKES)
+                if (params.kernel == DMK_STOKESLET)
                     stokes_multiply_kernelFT<Real, DIM, false>(difference_fourier_data[level].radialft,
                                                                pw_out_view(i_box),
                                                                expansion_constants.hpw_diff / boxsize[level]);
@@ -1369,7 +1369,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
             auto pot = pot_src_view(trg_box);
             auto charge = charge_with_halo_view(trg_box);
             const auto correction_factor = [&]() -> Real {
-                if (params.kernel == DMK_STOKES) {
+                if (params.kernel == DMK_STOKESLET) {
                     const auto depth = node_mid[trg_box].Depth();
                     return ifpwexp[trg_box] ? 2 * w0[depth] : w0[depth];
                 }

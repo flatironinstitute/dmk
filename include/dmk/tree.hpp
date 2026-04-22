@@ -440,7 +440,7 @@ Real get_self_interaction_constant(FourierData<Real> &fourier_data, dmk_ikernel 
             if constexpr (DIM == 3)
                 return psi0 / (2 * c[1] * bsize * bsize);
 
-        } else if (kernel == DMK_STOKES) {
+        } else if (kernel == DMK_STOKESLET) {
             const Real psi0 = fourier_data.prolate0_fun.eval_val(0.0);
             const auto c = fourier_data.prolate0_fun.intvals(fourier_data.beta());
             if constexpr (DIM == 2)

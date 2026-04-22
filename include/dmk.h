@@ -7,7 +7,7 @@ typedef enum : int {
     DMK_YUKAWA = 0,
     DMK_LAPLACE = 1,
     DMK_SQRT_LAPLACE = 2,
-    DMK_STOKES = 3,
+    DMK_STOKESLET = 3,
 } dmk_ikernel;
 
 typedef enum : int {

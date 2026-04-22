@@ -196,7 +196,7 @@ void run_direct(const Config &cfg, int n_dim, int charge_dim, const std::vector<
     std::vector<double> r_trg_d(r_trg.begin(), r_trg.end());
 
     // Evaluate: each rank handles its own local targets
-    const auto eval_level = cfg.kernel == DMK_STOKES ? DMK_VELOCITY : DMK_POTENTIAL;
+    const auto eval_level = cfg.kernel == DMK_STOKESLET ? DMK_VELOCITY : DMK_POTENTIAL;
     const int kdim = dmk::get_kernel_output_dim(n_dim, cfg.kernel, eval_level);
     std::vector<double> pot_d(n_trg_local * kdim, 0.0);
 
@@ -236,7 +236,7 @@ void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ost
             return "sqrt_laplace";
         case DMK_YUKAWA:
             return "yukawa";
-        case DMK_STOKES:
+        case DMK_STOKESLET:
             return "stokes";
         default:
             return "unknown";
@@ -279,7 +279,7 @@ dmk_ikernel parse_kernel(const char *s) {
     if (k == "yukawa")
         return DMK_YUKAWA;
     if (k == "stokes")
-        return DMK_STOKES;
+        return DMK_STOKESLET;
     throw std::runtime_error("Unknown kernel: " + k);
 }
 
@@ -306,7 +306,7 @@ void run_benchmark(const Config &cfg) {
     params.kernel = cfg.kernel;
     if (cfg.kernel == DMK_YUKAWA)
         params.fparam = cfg.fparam;
-    if (cfg.kernel == DMK_STOKES) {
+    if (cfg.kernel == DMK_STOKESLET) {
         params.pgh_src = DMK_VELOCITY;
         params.pgh_trg = DMK_VELOCITY;
     }

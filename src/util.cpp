@@ -13,7 +13,7 @@ double calc_bandlimiting(const pdmk_params &p) {
     if (p.debug_flags & DMK_DEBUG_OVERRIDE_BETA)
         return p.debug_params[DMK_DEBUG_BETA_SLOT];
     double d = -std::log10(p.eps);
-    if (p.kernel == DMK_STOKES) {
+    if (p.kernel == DMK_STOKESLET) {
         return M_PI / 3.0 * std::ceil(3.0 / M_PI * (0.69 + d) / 0.39);
     }
     const double beta = 2.664 * d + 0.306;

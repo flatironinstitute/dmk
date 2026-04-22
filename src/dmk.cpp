@@ -278,7 +278,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d stokeslet velocity", 1) {
     params.n_per_leaf = 280;
     params.pgh_src = DMK_VELOCITY;
     params.pgh_trg = DMK_VELOCITY;
-    params.kernel = DMK_STOKES;
+    params.kernel = DMK_STOKESLET;
     params.log_level = SPDLOG_LEVEL_OFF;
     params.debug_flags = 0;
 

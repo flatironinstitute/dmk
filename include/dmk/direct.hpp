@@ -19,7 +19,7 @@ inline int get_kernel_input_dim(int dim, dmk_ikernel kernel) {
         return 1;
     case DMK_SQRT_LAPLACE:
         return 1;
-    case DMK_STOKES:
+    case DMK_STOKESLET:
         return dim;
     }
     throw std::runtime_error("Invalid kernel");
@@ -48,7 +48,7 @@ inline int get_kernel_output_dim(int dim, dmk_ikernel kernel, dmk_pgh flags) {
             return 1 + dim;
         if (flags == DMK_POTENTIAL_GRAD_HESSIAN)
             return 1 + dim + dim * dim;
-    case DMK_STOKES:
+    case DMK_STOKESLET:
         if (flags == DMK_VELOCITY)
             return dim;
         if (flags == DMK_VELOCITY_PRESSURE) {
