@@ -184,9 +184,9 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 }
 
 template <typename Real, int DIM>
-int DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal, const Real *dipole_str) {
-    if (normal || dipole_str) {
-        std::cerr << "normal updates and dipoles not supported yet\n";
+int DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal) {
+    if (normal) {
+        std::cerr << "normal updates not supported yet\n";
         return 1;
     }
     auto &logger = dmk::get_logger(comm_, params.log_level);
@@ -1467,10 +1467,10 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
     constexpr int n_charge_dim = 1;
     constexpr bool uniform = false;
 
-    sctl::Vector<double> r_src, r_trg, r_src_norms, charges, dipoles, pot_src, pot_trg;
+    sctl::Vector<double> r_src, r_trg, r_src_norms, charges, pot_src, pot_trg;
     if (test_rank == 0)
         dmk::util::init_test_data(n_dim, n_charge_dim, n_src, n_trg, uniform, true, r_src, r_trg, r_src_norms, charges,
-                                  dipoles, 0);
+                                  0);
 
     pdmk_params params;
     params.eps = 1E-6;
@@ -1494,7 +1494,7 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
 
     if (test_rank == 0) {
         dmk::util::init_test_data(n_dim, n_charge_dim, n_src, n_trg, uniform, true, r_src, r_trg, r_src_norms, charges,
-                                  dipoles, 0);
+                                  0);
 
         DMKPtTree<double, n_dim> tree_single(sctl::Comm::Self(), params, r_src, r_trg, charges);
         tree_single.upward_pass();

@@ -584,7 +584,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void evaluate_direct_interactions();
 
     // User calls
-    int update_charges(const Real *charge, const Real *normal, const Real *dipole_str);
+    int update_charges(const Real *charge, const Real *normal);
 
     // Internal data accessors
     std::span<const int> list1(int i_box) const { return std::span<const int>(list1_[i_box].data(), nlist1_[i_box]); }

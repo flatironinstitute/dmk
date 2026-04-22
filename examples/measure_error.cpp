@@ -121,9 +121,9 @@ ErrorMetrics run_one(int n_dim, dmk_ikernel kernel, int n_digits, const Config &
 
     pdmk_tree tree;
     if constexpr (std::is_same_v<Real, float>)
-        tree = pdmk_tree_createf(MYCOMM, params, n_src, r_src.data(), charges.data(), nullptr, nullptr, 0, nullptr);
+        tree = pdmk_tree_createf(MYCOMM, params, n_src, r_src.data(), charges.data(), nullptr, 0, nullptr);
     else
-        tree = pdmk_tree_create(MYCOMM, params, n_src, r_src.data(), charges.data(), nullptr, nullptr, 0, nullptr);
+        tree = pdmk_tree_create(MYCOMM, params, n_src, r_src.data(), charges.data(), nullptr, 0, nullptr);
 
     std::vector<Real> pot_dmk(n_src);
 

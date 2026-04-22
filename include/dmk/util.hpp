@@ -120,7 +120,7 @@ inline bool env_is_set(const char *name) {
 template <typename Real>
 void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
                     sctl::Vector<Real> &r_src, sctl::Vector<Real> &r_trg, sctl::Vector<Real> &rnormal,
-                    sctl::Vector<Real> &charges, sctl::Vector<Real> &dipstr, long seed);
+                    sctl::Vector<Real> &charges, long seed);
 
 template <typename T>
 inline void vec_mul(T *__restrict__ dst, const T *__restrict__ a, const T *__restrict__ b, int n) {

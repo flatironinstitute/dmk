@@ -383,12 +383,10 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level public API", 1) {
     sctl::Vector<double> r_trg({0.15, 0.15, 0.15, 0.35, 0.35, 0.35, 0.65, 0.65, 0.65, 0.85, 0.85, 0.85});
     sctl::Vector<double> charges(n_src);
     sctl::Vector<double> normal(n_src * n_dim);
-    sctl::Vector<double> dipstr(n_src);
     sctl::Vector<double> pot_src(n_src);
     sctl::Vector<double> pot_trg(n_trg);
 
     normal.SetZero();
-    dipstr.SetZero();
     for (int i = 0; i < n_src; ++i)
         charges[i] = (i % 2 == 0 ? 1.0 : -1.0) / n_src;
 
@@ -402,8 +400,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level public API", 1) {
     params.use_periodic = true;
     params.log_level = 6;
 
-    pdmk_tree tree =
-        pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &normal[0], &dipstr[0], n_trg, &r_trg[0]);
+    pdmk_tree tree = pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &normal[0], n_trg, &r_trg[0]);
     pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
     pdmk_tree_destroy(tree);
 
@@ -646,8 +643,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
 
                 sctl::Vector<double> pot_src(n_src * odim), pot_trg(n_trg * odim);
 
-                pdmk_tree tree = pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0],
-                                                  n_trg, &r_trg[0]);
+                pdmk_tree tree =
+                    pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
                 pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
                 pdmk_tree_destroy(tree);
 

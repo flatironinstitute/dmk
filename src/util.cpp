@@ -155,12 +155,11 @@ void mk_tensor_product_fourier_transform(int dim, int npw, int nfourier, Real *f
 template <typename Real>
 void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
                     sctl::Vector<Real> &r_src, sctl::Vector<Real> &r_trg, sctl::Vector<Real> &rnormal,
-                    sctl::Vector<Real> &charges, sctl::Vector<Real> &dipstr, long seed) {
+                    sctl::Vector<Real> &charges, long seed) {
     r_src.ReInit(n_dim * n_src);
     r_trg.ReInit(n_dim * n_trg);
     charges.ReInit(nd * n_src);
     rnormal.ReInit(n_dim * n_src);
-    dipstr.ReInit(nd * n_src);
 
     double rin = 0.45;
     double wrig = 0.12;
@@ -199,7 +198,6 @@ void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool 
 
         for (int j = 0; j < nd; ++j) {
             charges[i * nd + j] = rng(eng) - 0.5;
-            dipstr[i * nd + j] = rng(eng);
         }
     }
 
@@ -242,13 +240,11 @@ void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool 
 
 template void init_test_data<float>(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
                                     sctl::Vector<float> &r_src, sctl::Vector<float> &r_trg,
-                                    sctl::Vector<float> &rnormal, sctl::Vector<float> &charges,
-                                    sctl::Vector<float> &dipstr, long seed);
+                                    sctl::Vector<float> &rnormal, sctl::Vector<float> &charges, long seed);
 
 template void init_test_data<double>(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
                                      sctl::Vector<double> &r_src, sctl::Vector<double> &r_trg,
-                                     sctl::Vector<double> &rnormal, sctl::Vector<double> &charges,
-                                     sctl::Vector<double> &dipstr, long seed);
+                                     sctl::Vector<double> &rnormal, sctl::Vector<double> &charges, long seed);
 
 template void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<float, 1> &fhat,
                                                   ndview<float, 1> pswfft);

@@ -8,9 +8,6 @@ if (DMK_HAVE_MPI AND DMK_HAVE_OPENMP)
 endif()
 
 if (DMK_HAVE_MPI AND DMK_BUILD_PVFMM)
-    add_executable(debug_mpi debug_mpi.cpp)
-    target_link_libraries(debug_mpi dmk pvfmmStatic ${DMK_MPI_TARGET} ${DMK_OPENMP_TARGET} ${DMK_REFERENCE_TARGET})
-
     add_executable(compare_dmk_pvfmm compare_dmk_pvfmm.cpp)
     target_link_libraries(compare_dmk_pvfmm dmk pvfmmStatic ${DMK_MPI_TARGET} ${DMK_OPENMP_TARGET} ${DMK_REFERENCE_TARGET})
 endif()

@@ -27,7 +27,7 @@ namespace dmk {
 
 template <typename T, int DIM>
 void pdmk(dmk_communicator comm, const pdmk_params &params, int n_src, const T *r_src, const T *charge, const T *normal,
-          const T *dipole_str, int n_trg, const T *r_trg, T *pot_src, T *pot_trg) {
+          int n_trg, const T *r_trg, T *pot_src, T *pot_trg) {
 #ifdef DMK_HAVE_MPI
     const auto &sctl_comm = sctl::Comm(MPI_Comm(comm));
 #else
@@ -80,12 +80,11 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d float", 1) {
     auto comm = nullptr;
 #endif
 
-    sctl::Vector<double> r_src, pot_src, charges, rnormal, dipstr, pot_trg, r_trg;
-    sctl::Vector<float> r_srcf, pot_srcf, chargesf, rnormalf, dipstrf, pot_trgf, r_trgf;
-    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges,
-                              dipstr, 0);
+    sctl::Vector<double> r_src, pot_src, charges, rnormal, pot_trg, r_trg;
+    sctl::Vector<float> r_srcf, pot_srcf, chargesf, rnormalf, pot_trgf, r_trgf;
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, 0);
     dmk::util::init_test_data(n_dim, 1, n_src, n_trg, uniform, set_fixed_charges, r_srcf, r_trgf, rnormalf, chargesf,
-                              dipstrf, 0);
+                              0);
     pot_src.ReInit(n_src * nd);
     pot_trg.ReInit(n_trg * nd);
     pot_srcf.ReInit(n_src * nd);
@@ -101,12 +100,10 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d float", 1) {
     params.fparam = 6.0;
     params.log_level = SPDLOG_LEVEL_OFF;
 
-    pdmk(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0], &pot_src[0],
-         &pot_trg[0]);
+    pdmk(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0], &pot_src[0], &pot_trg[0]);
 
     params.eps = 1e-3;
-    pdmkf(comm, params, n_src, &r_srcf[0], &chargesf[0], &rnormalf[0], &dipstrf[0], n_trg, &r_trgf[0], &pot_srcf[0],
-          &pot_trgf[0]);
+    pdmkf(comm, params, n_src, &r_srcf[0], &chargesf[0], &rnormalf[0], n_trg, &r_trgf[0], &pot_srcf[0], &pot_trgf[0]);
 
     double l2_err_src{0.0}, l2_err_trg{0.0}, src2{0.0}, trg2{0.0};
     for (int i = 0; i < n_src; ++i) {
@@ -152,9 +149,8 @@ TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
 
     for (auto n_dim : {2, 3}) {
         params.n_dim = n_dim;
-        sctl::Vector<double> r_src, pot_src, charges, rnormal, dipstr, pot_trg, r_trg;
-        dmk::util::init_test_data(n_dim, 1, n_src, 0, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges,
-                                  dipstr, 0);
+        sctl::Vector<double> r_src, pot_src, charges, rnormal, pot_trg, r_trg;
+        dmk::util::init_test_data(n_dim, 1, n_src, 0, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, 0);
         r_trg = r_src;
         std::reverse(r_trg.begin(), r_trg.end());
         r_trg.ReInit(n_dim * (n_src - set_fixed_charges * 3));
@@ -191,8 +187,8 @@ TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
                 potential(n_src, &r_src[0], &charges[0], n_test_src, &r_src[0], &test_src[0]);
                 potential(n_src, &r_src[0], &charges[0], n_test_trg, &r_trg[0], &test_trg[0]);
 
-                pdmk_tree tree = pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0],
-                                                  n_trg, &r_trg[0]);
+                pdmk_tree tree =
+                    pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
                 pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
 
                 double err_src{0}, err_trg{0};
@@ -220,7 +216,7 @@ TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
                     for (sctl::Long i = 0; i < charges.Dim(); ++i)
                         scaled_charges[i] = charges[i] * scale;
 
-                    int rc = pdmk_tree_update_charges(tree, &scaled_charges[0], nullptr, nullptr);
+                    int rc = pdmk_tree_update_charges(tree, &scaled_charges[0], nullptr);
                     CHECK(rc == 0);
 
                     sctl::Vector<double> pot_src_updated(n_src * nd), pot_trg_updated(n_trg * nd);
@@ -261,9 +257,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d stokeslet velocity", 1) {
     auto comm = nullptr;
 #endif
 
-    sctl::Vector<double> r_src, charges, rnormal, dipstr, r_trg;
-    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges,
-                              dipstr, 0);
+    sctl::Vector<double> r_src, charges, rnormal, r_trg;
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, 0);
     charges.ReInit(n_src * n_dim);
     for (auto &c : charges)
         c = 2 * drand48() - 1.0;
@@ -282,8 +277,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d stokeslet velocity", 1) {
     params.log_level = SPDLOG_LEVEL_OFF;
     params.debug_flags = 0;
 
-    pdmk_tree tree =
-        pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0]);
+    pdmk_tree tree = pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
     pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
     pdmk_tree_destroy(tree);
 
@@ -357,9 +351,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace gradient", 1) {
     auto comm = nullptr;
 #endif
 
-    sctl::Vector<double> r_src, charges, rnormal, dipstr, r_trg;
-    dmk::util::init_test_data(n_dim, nd, n_src, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges,
-                              dipstr, 0);
+    sctl::Vector<double> r_src, charges, rnormal, r_trg;
+    dmk::util::init_test_data(n_dim, nd, n_src, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, 0);
 
     sctl::Vector<double> pot_src(n_src * output_dim), pot_trg(n_trg * output_dim);
     pot_src.SetZero();
@@ -374,8 +367,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace gradient", 1) {
     params.kernel = DMK_LAPLACE;
     params.log_level = SPDLOG_LEVEL_OFF;
 
-    pdmk_tree tree =
-        pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0]);
+    pdmk_tree tree = pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
     pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
     pdmk_tree_destroy(tree);
 
@@ -436,8 +428,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace gradient", 1) {
 
 template <typename Real>
 inline pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src, const Real *r_src,
-                                  const Real *charge, const Real *normal, const Real *dipole_str, int n_trg,
-                                  const Real *r_trg) {
+                                  const Real *charge, const Real *normal, int n_trg, const Real *r_trg) {
     sctl::Profile::reset();
     sctl::Profile::Enable(true);
 #ifdef DMK_HAVE_MPI
@@ -484,14 +475,14 @@ inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *pot_trg) {
 }
 
 template <typename Real>
-inline int pdmk_tree_update_charges(pdmk_tree tree, const Real *charge, const Real *normal, const Real *dipole_str) {
+inline int pdmk_tree_update_charges(pdmk_tree tree, const Real *charge, const Real *normal) {
     int rc = 1;
     std::visit(
         [&](auto &t) {
             using TreeType = std::decay_t<decltype(t)>;
             if constexpr (std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 2>>> ||
                           std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 3>>>) {
-                rc = t->update_charges(charge, normal, dipole_str);
+                rc = t->update_charges(charge, normal);
             }
         },
         *static_cast<pdmk_tree_impl *>(tree));
@@ -543,15 +534,13 @@ void pdmk_print_profile_data(dmk_communicator comm, char type) {
 }
 
 pdmk_tree pdmk_tree_createf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src,
-                            const float *charge, const float *normal, const float *dipole_str, int n_trg,
-                            const float *r_trg) {
-    return dmk::pdmk_tree_create(comm, params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg);
+                            const float *charge, const float *normal, int n_trg, const float *r_trg) {
+    return dmk::pdmk_tree_create(comm, params, n_src, r_src, charge, normal, n_trg, r_trg);
 }
 
 pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src,
-                           const double *charge, const double *normal, const double *dipole_str, int n_trg,
-                           const double *r_trg) {
-    return dmk::pdmk_tree_create(comm, params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg);
+                           const double *charge, const double *normal, int n_trg, const double *r_trg) {
+    return dmk::pdmk_tree_create(comm, params, n_src, r_src, charge, normal, n_trg, r_trg);
 }
 
 void pdmk_tree_destroy(pdmk_tree tree) {
@@ -559,12 +548,12 @@ void pdmk_tree_destroy(pdmk_tree tree) {
         delete static_cast<pdmk_tree_impl *>(tree);
 }
 
-int pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const double *normal, const double *dipole_str) {
-    return dmk::pdmk_tree_update_charges(tree, charge, normal, dipole_str);
+int pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const double *normal) {
+    return dmk::pdmk_tree_update_charges(tree, charge, normal);
 }
 
-int pdmk_tree_update_chargesf(pdmk_tree tree, const float *charge, const float *normal, const float *dipole_str) {
-    return dmk::pdmk_tree_update_charges(tree, charge, normal, dipole_str);
+int pdmk_tree_update_chargesf(pdmk_tree tree, const float *charge, const float *normal) {
+    return dmk::pdmk_tree_update_charges(tree, charge, normal);
 }
 
 void pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *pot_trg) { dmk::pdmk_tree_eval(tree, pot_src, pot_trg); }
@@ -572,24 +561,18 @@ void pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *pot_trg) { dmk::pdmk
 void pdmk_tree_eval(pdmk_tree tree, double *pot_src, double *pot_trg) { dmk::pdmk_tree_eval(tree, pot_src, pot_trg); }
 
 void pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
-           const float *normal, const float *dipole_str, int n_trg, const float *r_trg, float *pot_src,
-           float *pot_trg) {
+           const float *normal, int n_trg, const float *r_trg, float *pot_src, float *pot_trg) {
     if (params.n_dim == 2)
-        return dmk::pdmk<float, 2>(comm, params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot_src,
-                                   pot_trg);
+        return dmk::pdmk<float, 2>(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg);
     if (params.n_dim == 3)
-        return dmk::pdmk<float, 3>(comm, params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot_src,
-                                   pot_trg);
+        return dmk::pdmk<float, 3>(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg);
 }
 
 void pdmk(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
-          const double *normal, const double *dipole_str, int n_trg, const double *r_trg, double *pot_src,
-          double *pot_trg) {
+          const double *normal, int n_trg, const double *r_trg, double *pot_src, double *pot_trg) {
     if (params.n_dim == 2)
-        return dmk::pdmk<double, 2>(comm, params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot_src,
-                                    pot_trg);
+        return dmk::pdmk<double, 2>(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg);
     if (params.n_dim == 3)
-        return dmk::pdmk<double, 3>(comm, params, n_src, r_src, charge, normal, dipole_str, n_trg, r_trg, pot_src,
-                                    pot_trg);
+        return dmk::pdmk<double, 3>(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg);
 }
 }

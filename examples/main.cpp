@@ -12,12 +12,11 @@
 template <typename Real>
 void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
                     std::vector<Real> &r_src, std::vector<Real> &r_trg, std::vector<Real> &rnormal,
-                    std::vector<Real> &charges, std::vector<Real> &dipstr, long seed) {
+                    std::vector<Real> &charges, long seed) {
     r_src.resize(n_dim * n_src);
     r_trg.resize(n_dim * n_trg);
     charges.resize(nd * n_src);
     rnormal.resize(n_dim * n_src);
-    dipstr.resize(nd * n_src);
 
     double rin = 0.45;
     double wrig = 0.12;
@@ -56,7 +55,6 @@ void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool 
 
         for (int j = 0; j < nd; ++j) {
             charges[i * nd + j] = rng(eng) - 0.5;
-            dipstr[i * nd + j] = rng(eng);
         }
     }
 
@@ -112,9 +110,8 @@ void run_example(const pdmk_params &params, int n_src_per_rank, int n_runs, bool
     n_threads = omp_get_num_threads();
 
     // Build random sources + 3 fixed charges
-    std::vector<Real> r_src, charges, rnormal, dipstr, r_trg;
-    init_test_data(n_dim, 1, n_src_per_rank, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, dipstr,
-                   rank);
+    std::vector<Real> r_src, charges, rnormal, r_trg;
+    init_test_data(n_dim, 1, n_src_per_rank, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, rank);
 
     std::vector<Real> pot_src(n_src_per_rank * nd), pot_trg(n_src_per_rank * nd);
     // FIXME: No way to update charges so completely worthless API right now :)
@@ -122,11 +119,11 @@ void run_example(const pdmk_params &params, int n_src_per_rank, int n_runs, bool
 
     pdmk_tree tree;
     if constexpr (std::is_same_v<Real, float>)
-        tree = pdmk_tree_createf(MPI_COMM_WORLD, params, n_src_per_rank, &r_src[0], &charges[0], &rnormal[0],
-                                 &dipstr[0], n_trg, &r_trg[0]);
+        tree = pdmk_tree_createf(MPI_COMM_WORLD, params, n_src_per_rank, &r_src[0], &charges[0], &rnormal[0], n_trg,
+                                 &r_trg[0]);
     else
-        tree = pdmk_tree_create(MPI_COMM_WORLD, params, n_src_per_rank, &r_src[0], &charges[0], &rnormal[0], &dipstr[0],
-                                n_trg, &r_trg[0]);
+        tree = pdmk_tree_create(MPI_COMM_WORLD, params, n_src_per_rank, &r_src[0], &charges[0], &rnormal[0], n_trg,
+                                &r_trg[0]);
 
     for (int i = 0; i < n_runs; ++i) {
         const auto st = omp_get_wtime();

@@ -319,11 +319,9 @@ void run_benchmark(const Config &cfg) {
 
     pdmk_tree tree;
     if constexpr (std::is_same_v<Real, float>)
-        tree = pdmk_tree_createf(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), nullptr, nullptr, 0,
-                                 nullptr);
+        tree = pdmk_tree_createf(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), nullptr, 0, nullptr);
     else
-        tree = pdmk_tree_create(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), nullptr, nullptr, 0,
-                                nullptr);
+        tree = pdmk_tree_create(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), nullptr, 0, nullptr);
 
     // Direct reference
     std::vector<Real> pot_direct;
