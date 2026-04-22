@@ -948,7 +948,7 @@ void DMKPtTree<Real, DIM>::init_planewave_data() {
             } else
                 pw_out_offsets[box] = -1;
         }
-        pw_out.ReInit(n_pw_per_box * n_pw_boxes_out);
+        pw_out.ReInit(last_offset);
     }
 }
 
