@@ -1201,13 +1201,9 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                     bsize = boxsize[trg_level];
                     src_level = trg_level;
                 }
-                // evaluator_by_level_src is sized n_levels() for Laplace;
-                // the self-pair branch above bumps src_level to n_levels(),
-                // which is OOB. Cap the index (all entries for Laplace are
-                // the same evaluator). For Yukawa the vector is extended to
-                // 2*n_levels() so the cap is a no-op.
-                if (src_level >= (int)evaluator_by_level_src.size())
-                    src_level = (int)evaluator_by_level_src.size() - 1;
+                // evaluator_by_level_src is sized n_levels()
+                // This fix is essentially for when there is *only* a root box.
+                src_level = std::min(src_level, n_levels() - 1);
 
                 const Real d2max = bsize * bsize;
                 const Real bsizeinv = Real{1} / bsize;
