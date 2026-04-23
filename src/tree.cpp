@@ -861,17 +861,36 @@ void DMKPtTree<Real, DIM>::upward_pass() {
         sctl::Profile::Scoped profile("charge2proxy", &comm_);
         sctl::Profile::Tic("charge2proxy", &comm_);
 
-        // charge2proxycharge
+        // charge2proxycharge: several work items can share the same
+        // center_box (a parent whose multiple !ifpwexp children with
+        // sources each contribute a {child_box, parent_box} work item —
+        // see build_upward_pass_work_lists). charge2proxycharge
+        // accumulates into its output, so those same-center items must be
+        // serialized to avoid a write race on proxy_view_upward(center).
+        // Group work items by center_box first, then parallelize over
+        // groups so each center is entirely handled by a single thread.
+        std::vector<std::vector<int>> c2p_groups_by_center(n_boxes());
+        for (int i = 0; i < charge2proxy_work.size(); ++i)
+            c2p_groups_by_center[charge2proxy_work[i].center_box].push_back(i);
+        std::vector<int> c2p_active_centers;
+        c2p_active_centers.reserve(n_boxes());
+        for (int b = 0; b < n_boxes(); ++b)
+            if (!c2p_groups_by_center[b].empty())
+                c2p_active_centers.push_back(b);
+
 #pragma omp parallel
         {
             sctl::Vector<Real> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
 
-#pragma omp for schedule(static)
-            for (int i = 0; i < charge2proxy_work.size(); ++i) {
-                const auto &w = charge2proxy_work[i];
-                proxy::charge2proxycharge<Real, DIM>(r_src_owned_view(w.src_box), charge_owned_view(w.src_box),
-                                                     center_view(w.center_box), 2.0 / boxsize[w.level],
-                                                     proxy_view_upward(w.center_box), workspace);
+#pragma omp for schedule(dynamic)
+            for (int gi = 0; gi < (int)c2p_active_centers.size(); ++gi) {
+                const int cb = c2p_active_centers[gi];
+                for (int i : c2p_groups_by_center[cb]) {
+                    const auto &w = charge2proxy_work[i];
+                    proxy::charge2proxycharge<Real, DIM>(r_src_owned_view(w.src_box), charge_owned_view(w.src_box),
+                                                         center_view(w.center_box), 2.0 / boxsize[w.level],
+                                                         proxy_view_upward(w.center_box), workspace);
+                }
             }
         }
         sctl::Profile::Toc();
