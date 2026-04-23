@@ -1155,6 +1155,15 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
     Real w0[SCTL_MAX_DEPTH];
     for (int i_level = 0; i_level < n_levels(); ++i_level)
         w0[i_level] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
+    // Leaves with ifpwexp=1 use depth = box_depth + 1, which can reach
+    // n_levels() when a max-depth leaf has ifpwexp=1 (see the depth
+    // computation near the self-correction step). Initialize that extra
+    // slot with the self-interaction constant at boxsize/2 of the deepest
+    // level; otherwise w0[n_levels()] is read uninitialized.
+    if (n_levels() > 0 && n_levels() < SCTL_MAX_DEPTH) {
+        const Real bs_extra = boxsize[n_levels() - 1] / Real(2);
+        w0[n_levels()] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, n_levels(), bs_extra);
+    }
 
     // For PBC: precompute the periodic shift for each (trg_box, nbr_index) pair.
     // The nbr array index k encodes a direction (dx,dy,dz) ∈ {-1,0,+1}^DIM.
