@@ -354,6 +354,9 @@ Real get_self_interaction_constant(FourierData<Real> &fourier_data, dmk_ikernel 
 
 template <typename Real, int DIM>
 struct DMKPtTree : public sctl::PtTree<Real, DIM> {
+    static constexpr int NCHILD = sctl::pow<DIM>(2);
+    static constexpr int NCOLLEAGUE = sctl::pow<DIM>(3);
+
     sctl::Vector<sctl::Vector<int>> level_indices;
     sctl::Vector<Real> boxsize;
     sctl::Vector<Real> centers;
@@ -412,12 +415,13 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     std::vector<int> direct_work;
 
     sctl::Vector<bool> has_proxy_from_children;
-    struct C2PWork {
-        int src_box;
+    struct Charge2ProxyGroup {
         int center_box;
         int level;
+        std::array<int, NCHILD> src_boxes;
+        int n_src_boxes;
     };
-    std::vector<C2PWork> charge2proxy_work;
+    std::vector<Charge2ProxyGroup> charge2proxy_groups;
 
     struct LevelFourierData {
         sctl::Vector<std::complex<Real>> poly2pw;
