@@ -1160,7 +1160,8 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
     const auto &node_lists = this->GetNodeLists();
 
     Real w0[SCTL_MAX_DEPTH];
-    for (int i_level = 0; i_level < n_levels(); ++i_level)
+    // Fill for n_levels+1, note boxsize is already n_levels+1 in size
+    for (int i_level = 0; i_level < std::min(SCTL_MAX_DEPTH, n_levels() + 1); ++i_level)
         w0[i_level] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
 
     // For PBC: precompute the periodic shift for each (trg_box, nbr_index) pair.
