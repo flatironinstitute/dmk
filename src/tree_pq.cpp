@@ -132,28 +132,11 @@ void DMKPtTree<T, DIM>::eval_pq() {
     // =================================================================
     // Build upward pass task dependency graph
     // =================================================================
-    // Group charge2proxy work items by center_box to avoid write races.
-    // Each group becomes one task.
-    struct C2PGroup {
-        int center_box;
-        int level;
-        std::vector<int> src_boxes;
-    };
-    std::vector<C2PGroup> c2p_groups;
-    {
-        std::vector<int> center_to_group(n_boxes(), -1);
-        for (auto &w : charge2proxy_work) {
-            if (center_to_group[w.center_box] == -1) {
-                center_to_group[w.center_box] = (int)c2p_groups.size();
-                c2p_groups.push_back({w.center_box, w.level, {w.src_box}});
-            } else {
-                c2p_groups[center_to_group[w.center_box]].src_boxes.push_back(w.src_box);
-            }
-        }
-    }
+    const auto &c2p_groups = charge2proxy_groups;
+
     // Map center_box -> index into c2p_groups (for dependency wiring)
     std::vector<int> box_to_c2p_group(n_boxes(), -1);
-    for (int g = 0; g < (int)c2p_groups.size(); ++g)
+    for (int g = 0; g < c2p_groups.size(); ++g)
         box_to_c2p_group[c2p_groups[g].center_box] = g;
     t_c2p = MY_OMP_GET_WTIME() - t_start;
 

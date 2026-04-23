@@ -541,12 +541,11 @@ template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_upward_pass_work_lists() {
     const auto &node_lists = this->GetNodeLists();
     has_proxy_from_children.ReInit(n_boxes());
-    charge2proxy_work.clear();
+    charge2proxy_groups.clear();
 
     for (int i_level = n_levels() - 1; i_level >= 0; --i_level) {
         for (auto i_box : level_indices[i_level]) {
             has_proxy_from_children[i_box] = false;
-
             if (!(src_counts_owned[i_box] > 0 && ifpwexp[i_box]))
                 continue;
 
@@ -557,14 +556,19 @@ void DMKPtTree<Real, DIM>::build_upward_pass_work_lists() {
                 }
             }
 
+            Charge2ProxyGroup g{.center_box = i_box, .level = i_level, .n_src_boxes = 0};
             if (has_proxy_from_children[i_box]) {
                 for (auto cb : node_lists[i_box].child) {
                     if (cb >= 0 && src_counts_owned[cb] > 0 && !ifpwexp[cb])
-                        charge2proxy_work.push_back({(int)cb, i_box, i_level});
+                        g.src_boxes[g.n_src_boxes++] = cb;
                 }
+                if (g.n_src_boxes == 0)
+                    continue;
             } else {
-                charge2proxy_work.push_back({i_box, i_box, i_level});
+                g.src_boxes[g.n_src_boxes++] = i_box;
             }
+
+            charge2proxy_groups.push_back(g);
         }
     }
 }
@@ -861,35 +865,19 @@ void DMKPtTree<Real, DIM>::upward_pass() {
         sctl::Profile::Scoped profile("charge2proxy", &comm_);
         sctl::Profile::Tic("charge2proxy", &comm_);
 
-        // charge2proxycharge: several work items can share the same
-        // center_box (a parent whose multiple !ifpwexp children with
-        // sources each contribute a {child_box, parent_box} work item —
-        // see build_upward_pass_work_lists). charge2proxycharge
-        // accumulates into its output, so those same-center items must be
-        // serialized to avoid a write race on proxy_view_upward(center).
-        // Group work items by center_box first, then parallelize over
-        // groups so each center is entirely handled by a single thread.
-        std::vector<std::vector<int>> c2p_groups_by_center(n_boxes());
-        for (int i = 0; i < charge2proxy_work.size(); ++i)
-            c2p_groups_by_center[charge2proxy_work[i].center_box].push_back(i);
-        std::vector<int> c2p_active_centers;
-        c2p_active_centers.reserve(n_boxes());
-        for (int b = 0; b < n_boxes(); ++b)
-            if (!c2p_groups_by_center[b].empty())
-                c2p_active_centers.push_back(b);
-
 #pragma omp parallel
         {
             sctl::Vector<Real> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
 
 #pragma omp for schedule(dynamic)
-            for (int gi = 0; gi < (int)c2p_active_centers.size(); ++gi) {
-                const int cb = c2p_active_centers[gi];
-                for (int i : c2p_groups_by_center[cb]) {
-                    const auto &w = charge2proxy_work[i];
-                    proxy::charge2proxycharge<Real, DIM>(r_src_owned_view(w.src_box), charge_owned_view(w.src_box),
-                                                         center_view(w.center_box), 2.0 / boxsize[w.level],
-                                                         proxy_view_upward(w.center_box), workspace);
+            for (int gi = 0; gi < (int)charge2proxy_groups.size(); ++gi) {
+                const auto &g = charge2proxy_groups[gi];
+                const Real scale = 2.0 / boxsize[g.level];
+                for (int k = 0; k < g.n_src_boxes; ++k) {
+                    const int sb = g.src_boxes[k];
+                    proxy::charge2proxycharge<Real, DIM>(r_src_owned_view(sb), charge_owned_view(sb),
+                                                         center_view(g.center_box), scale,
+                                                         proxy_view_upward(g.center_box), workspace);
                 }
             }
         }
