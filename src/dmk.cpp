@@ -149,12 +149,12 @@ TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
 
     for (auto n_dim : {2, 3}) {
         params.n_dim = n_dim;
-        sctl::Vector<double> r_src, pot_src, charges, rnormal, pot_trg, r_trg;
+        std::vector<double> r_src, pot_src, charges, rnormal, pot_trg, r_trg;
         dmk::util::init_test_data(n_dim, 1, n_src, 0, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, 0);
         r_trg = r_src;
         std::reverse(r_trg.begin(), r_trg.end());
-        r_trg.ReInit(n_dim * (n_src - set_fixed_charges * 3));
-        const int n_trg = r_trg.Dim() / n_dim;
+        r_trg.resize(n_dim * (n_src - set_fixed_charges * 3));
+        const int n_trg = r_trg.size() / n_dim;
 
         for (auto kernel : test_kernels) {
             const std::string kernel_str = [&kernel]() {
@@ -171,21 +171,23 @@ TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
             }();
 
             SUBCASE((kernel_str + "_" + std::to_string(n_dim)).c_str()) {
-                sctl::Vector<double> pot_src(n_src * nd), grad_src(n_src * nd * n_dim),
+                std::vector<double> pot_src(n_src * nd), grad_src(n_src * nd * n_dim),
                     hess_src(n_src * nd * n_dim * n_dim), pot_trg(n_src * nd), grad_trg(n_trg * nd * n_dim),
                     hess_trg(n_trg * nd * n_dim * n_dim);
                 params.n_per_leaf = ndiv[int(kernel)];
 
                 params.kernel = kernel;
-                auto potential = get_direct_evaluator<double>(kernel, DMK_POTENTIAL, n_dim, params.fparam);
 
                 const int n_test_src = std::min(n_src, 1000);
                 const int n_test_trg = std::min(n_trg, 1000);
                 std::vector<double> test_src(n_test_src, 0);
                 std::vector<double> test_trg(n_test_trg, 0);
+                std::vector<double> r_src_trunc, r_trg_trunc;
+                r_src_trunc.assign(r_src.begin(), r_src.begin() + n_test_src * n_dim);
+                r_trg_trunc.assign(r_trg.begin(), r_trg.begin() + n_test_trg * n_dim);
 
-                potential(n_src, &r_src[0], &charges[0], n_test_src, &r_src[0], &test_src[0]);
-                potential(n_src, &r_src[0], &charges[0], n_test_trg, &r_trg[0], &test_trg[0]);
+                dmk::util::compute_direct(n_dim, r_src, charges, r_src_trunc, test_src, kernel, DMK_POTENTIAL);
+                dmk::util::compute_direct(n_dim, r_src, charges, r_trg_trunc, test_trg, kernel, DMK_POTENTIAL);
 
                 pdmk_tree tree =
                     pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
@@ -212,8 +214,8 @@ TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
                 // is linear in the charges, potentials should scale by the same factor.
                 {
                     const double scale = 2.0;
-                    sctl::Vector<double> scaled_charges(charges.Dim());
-                    for (sctl::Long i = 0; i < charges.Dim(); ++i)
+                    sctl::Vector<double> scaled_charges(charges.size());
+                    for (sctl::Long i = 0; i < charges.size(); ++i)
                         scaled_charges[i] = charges[i] * scale;
 
                     int rc = pdmk_tree_update_charges(tree, &scaled_charges[0], nullptr);

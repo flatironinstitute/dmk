@@ -117,10 +117,100 @@ inline bool env_is_set(const char *name) {
     return val != nullptr && val[0] != '\0' && std::string_view(val) != "0";
 }
 
-template <typename Real>
-void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
-                    sctl::Vector<Real> &r_src, sctl::Vector<Real> &r_trg, sctl::Vector<Real> &rnormal,
-                    sctl::Vector<Real> &charges, long seed);
+template <typename T>
+concept HasResize = requires(T t, size_t n) { t.resize(n); };
+
+inline auto size_to = [](auto &v, size_t n) {
+    if constexpr (HasResize<decltype(v)>)
+        v.resize(n);
+    else
+        v.ReInit(n);
+};
+
+inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges, auto &r_src,
+                           auto &r_trg, auto &rnormal, auto &charges, long seed) {
+    using Real = std::decay_t<decltype(r_src)>::value_type;
+    size_to(r_src, n_dim * n_src);
+    size_to(r_trg, n_dim * n_trg);
+    size_to(charges, nd * n_src);
+    size_to(rnormal, n_dim * n_src);
+
+    double rin = 0.45;
+    double wrig = 0.12;
+    double rwig = 0;
+    int nwig = 6;
+    std::default_random_engine eng(seed);
+    std::uniform_real_distribution<double> rng;
+
+    for (int i = 0; i < n_src; ++i) {
+        if (!uniform) {
+            if (n_dim == 2) {
+                const double phi = rng(eng) * 2 * M_PI;
+                r_src[i * 2 + 0] = 0.5 * (cos(phi) + 1.0);
+                r_src[i * 2 + 1] = 0.5 * (sin(phi) + 1.0);
+            }
+            if (n_dim == 3) {
+                double theta = rng(eng) * M_PI;
+                double rr = rin + rwig * cos(nwig * theta);
+                double ct = cos(theta);
+                double st = sin(theta);
+                double phi = rng(eng) * 2 * M_PI;
+                double cp = cos(phi);
+                double sp = sin(phi);
+
+                r_src[i * 3 + 0] = rr * st * cp + 0.5;
+                r_src[i * 3 + 1] = rr * st * sp + 0.5;
+                r_src[i * 3 + 2] = rr * ct + 0.5;
+            }
+        } else {
+            for (int j = 0; j < n_dim; ++j)
+                r_src[i * n_dim + j] = rng(eng);
+        }
+
+        for (int j = 0; j < n_dim; ++j)
+            rnormal[i * n_dim + j] = rng(eng);
+
+        for (int j = 0; j < nd; ++j) {
+            charges[i * nd + j] = rng(eng) - 0.5;
+        }
+    }
+
+    for (int i_trg = 0; i_trg < n_trg; ++i_trg) {
+        if (!uniform) {
+            if (n_dim == 2) {
+                double phi = rng(eng) * 2 * M_PI;
+                r_trg[i_trg * 2 + 0] = 0.5 * (cos(phi) + 1.0);
+                r_trg[i_trg * 2 + 1] = 0.5 * (sin(phi) + 1.0);
+            }
+            if (n_dim == 3) {
+                double theta = rng(eng) * M_PI;
+                double rr = rin + rwig * cos(nwig * theta);
+                double ct = cos(theta);
+                double st = sin(theta);
+                double phi = rng(eng) * 2 * M_PI;
+                double cp = cos(phi);
+                double sp = sin(phi);
+
+                r_trg[i_trg * 3 + 0] = rr * st * cp + 0.5;
+                r_trg[i_trg * 3 + 1] = rr * st * sp + 0.5;
+                r_trg[i_trg * 3 + 2] = rr * ct + 0.5;
+            }
+        } else {
+            for (int j = 0; j < n_dim; ++j)
+                r_trg[i_trg * n_dim + j] = rng(eng);
+        }
+    }
+
+    if (set_fixed_charges && n_src > 0)
+        for (int i = 0; i < n_dim; ++i)
+            r_src[i] = 0.0;
+    if (set_fixed_charges && n_src > 1)
+        for (int i = n_dim; i < 2 * n_dim; ++i)
+            r_src[i] = 1 - std::numeric_limits<Real>::epsilon();
+    if (set_fixed_charges && n_src > 2)
+        for (int i = 2 * n_dim; i < 3 * n_dim; ++i)
+            r_src[i] = 0.05;
+}
 
 template <typename T>
 inline void vec_mul(T *__restrict__ dst, const T *__restrict__ a, const T *__restrict__ b, int n) {
@@ -197,13 +287,16 @@ inline void parallel_direct_eval(const dmk::direct_evaluator_func<Real> &func, i
     }
 }
 
-template <typename Real>
-inline void compute_direct(int n_dim, int n_src, int n_test, const std::vector<Real> &r_src,
-                           const std::vector<Real> &charges, std::vector<Real> &pot_direct, dmk_ikernel kernel) {
+inline void compute_direct(int n_dim, const auto &r_src, const auto &charges, const auto &r_trg, auto &pot_direct,
+                           dmk_ikernel kernel, dmk_pgh eval_level) {
+    using Real = std::decay_t<decltype(r_src)>::value_type;
+    const int n_src = r_src.size() / n_dim;
+    const int n_trg = r_trg.size() / n_dim;
+    const int out_dim = get_kernel_output_dim(n_dim, kernel, eval_level);
     const double lambda = 6.0;
-    pot_direct.assign(n_test, 0);
-    auto potfunc = dmk::get_direct_evaluator<Real>(kernel, DMK_POTENTIAL, n_dim, lambda);
-    parallel_direct_eval(potfunc, n_src, r_src.data(), charges.data(), n_test, r_src.data(), pot_direct.data(), n_dim,
+    pot_direct.assign(n_trg * out_dim, 0);
+    auto potfunc = dmk::get_direct_evaluator<Real>(kernel, eval_level, n_dim, lambda);
+    parallel_direct_eval(potfunc, n_src, r_src.data(), charges.data(), n_trg, r_trg.data(), pot_direct.data(), n_dim,
                          1);
 }
 
