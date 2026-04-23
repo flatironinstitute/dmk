@@ -1194,13 +1194,20 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                 int src_level = node_mid[src_box].Depth();
                 Real bsize = boxsize[src_level];
 
-                if (ifpwexp[src_box] && src_box == trg_box && src_level + 1 < n_levels()) {
+                if (ifpwexp[src_box] && src_box == trg_box) {
                     bsize /= Real{2.0};
                     src_level = src_level + 1;
                 } else if (src_level < trg_level) {
                     bsize = boxsize[trg_level];
                     src_level = trg_level;
                 }
+                // evaluator_by_level_src is sized n_levels() for Laplace;
+                // the self-pair branch above bumps src_level to n_levels(),
+                // which is OOB. Cap the index (all entries for Laplace are
+                // the same evaluator). For Yukawa the vector is extended to
+                // 2*n_levels() so the cap is a no-op.
+                if (src_level >= (int)evaluator_by_level_src.size())
+                    src_level = (int)evaluator_by_level_src.size() - 1;
 
                 const Real d2max = bsize * bsize;
                 const Real bsizeinv = Real{1} / bsize;
