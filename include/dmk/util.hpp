@@ -67,11 +67,8 @@ class StackOrHeapBuffer {
     }
 };
 
-constexpr std::array<std::string_view, 4> ikernel_names = {
-    "DMK_YUKAWA",
-    "DMK_LAPLACE",
-    "DMK_SQRT_LAPLACE",
-    "DMK_STOKESLET",
+constexpr std::array<std::string_view, 5> ikernel_names = {
+    "DMK_YUKAWA", "DMK_LAPLACE", "DMK_SQRT_LAPLACE", "DMK_STOKESLET", "DMK_STRESSLET",
 };
 
 constexpr std::array<std::string_view, 5> return_names = {

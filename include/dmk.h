@@ -3,7 +3,13 @@
 
 #include <stdint.h>
 
-typedef enum : int { DMK_YUKAWA = 0, DMK_LAPLACE = 1, DMK_SQRT_LAPLACE = 2, DMK_STOKESLET = 3 } dmk_ikernel;
+typedef enum : int {
+    DMK_YUKAWA = 0,
+    DMK_LAPLACE = 1,
+    DMK_SQRT_LAPLACE = 2,
+    DMK_STOKESLET = 3,
+    DMK_STRESSLET = 4,
+} dmk_ikernel;
 
 typedef enum : int {
     DMK_POTENTIAL = 1,

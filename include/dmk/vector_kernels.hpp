@@ -648,6 +648,38 @@ struct StokesletPolyEvaluator3D {
     }
 };
 
+template <typename Real, int MaxVecLen>
+struct StressletEvaluator3D {
+    using scalar_type = Real;
+    using vector_type = sctl::Vec<Real, MaxVecLen>;
+    static constexpr int KERNEL_INPUT_DIM = 3;
+    static constexpr int KERNEL_OUTPUT_DIM = 3;
+    static constexpr int SPATIAL_DIM = 3;
+    static constexpr int NORMAL_DIM = 3;
+    static constexpr Real scale_factor = -3.0;
+
+    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM],
+                                      const vector_type (&dX)[SPATIAL_DIM], const vector_type (&ns)[NORMAL_DIM]) const {
+        const vector_type R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
+        const auto mask = (R2 > vector_type::Zero());
+        const vector_type Rinv = sctl::approx_rsqrt<-1>(R2, mask);
+        const vector_type Rinv2 = Rinv * Rinv;
+        const vector_type Rinv5 = Rinv2 * Rinv2 * Rinv;
+        const vector_type rdotn = FMA(dX[0], ns[0], FMA(dX[1], ns[1], dX[2] * ns[2]));
+
+        // T_{ijk} = -3 r_i r_j r_k / r^5
+        // U[j][i] = sum_k T_{ijk} * nu_k = r_i r_j (r . nu) / r^5
+        // scale_factor supplies the -3
+        const vector_type common = rdotn * Rinv5;
+        for (int j = 0; j < KERNEL_INPUT_DIM; ++j) {
+            const vector_type cj = common * dX[j];
+            for (int i = 0; i < KERNEL_OUTPUT_DIM; ++i) {
+                u[j][i] = cj * dX[i];
+            }
+        }
+    }
+};
+
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
 void laplace_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
                                int n_coeffs_rt_0, const Real *coeffs, int n_src, const Real *r_src, const Real *charge,
@@ -826,6 +858,14 @@ inline void stokeslet_3d_all_pairs_direct(int n_src, const Real *r_src, const Re
                                           const Real *r_trg, Real *pot, int unroll_factor) {
     using Evaluator = StokesletEvaluator3D<Real, MaxVecLen>;
     EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
+                                            unroll_factor);
+}
+
+template <class Real, int MaxVecLen>
+inline void stresslet_3d_all_pairs_direct(int n_src, const Real *r_src, const Real *charge, const Real *normals,
+                                          int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
+    using Evaluator = StressletEvaluator3D<Real, MaxVecLen>;
+    EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, normals, n_trg, r_trg, pot, Evaluator{},
                                             unroll_factor);
 }
 

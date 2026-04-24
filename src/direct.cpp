@@ -440,7 +440,8 @@ direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_ty
     switch (kernel) {
     case dmk_ikernel::DMK_YUKAWA:
         if (n_dim == 2)
-            return [lambda](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+            return [lambda](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                            const Real *r_trg, Real *pot) {
                 for (int i = 0; i < n_trg; ++i) {
                     for (int j = 0; j < n_src; ++j) {
                         const double dr2 = sctl::pow<2>(r_src[j * 2] - r_trg[i * 2]) +
@@ -452,39 +453,50 @@ direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_ty
                 }
             };
         if (n_dim == 3)
-            return [lambda](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+            return [lambda](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                            const Real *r_trg, Real *pot) {
                 yukawa_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor,
                                                             lambda);
             };
 
     case dmk_ikernel::DMK_LAPLACE:
         if (n_dim == 2)
-            return [eval_level](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg,
-                                Real *pot) {
+            return [eval_level](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                                const Real *r_trg, Real *pot) {
                 laplace_2d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor,
                                                              eval_level);
             };
         if (n_dim == 3)
-            return [eval_level](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg,
-                                Real *pot) {
+            return [eval_level](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                                const Real *r_trg, Real *pot) {
                 laplace_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor,
                                                              eval_level);
             };
     case dmk_ikernel::DMK_SQRT_LAPLACE:
         if (n_dim == 2)
-            return [](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+            return [](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                      const Real *r_trg, Real *pot) {
                 sqrt_laplace_2d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot,
                                                                   unroll_factor);
             };
         if (n_dim == 3)
-            return [](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+            return [](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                      const Real *r_trg, Real *pot) {
                 sqrt_laplace_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot,
                                                                   unroll_factor);
             };
     case dmk_ikernel::DMK_STOKESLET:
         if (n_dim == 3)
-            return [](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+            return [](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                      const Real *r_trg, Real *pot) {
                 stokeslet_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor);
+            };
+    case dmk_ikernel::DMK_STRESSLET:
+        if (n_dim == 3)
+            return [](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                      const Real *r_trg, Real *pot) {
+                stresslet_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, normals, n_trg, r_trg, pot,
+                                                               unroll_factor);
             };
     default:
         throw std::runtime_error("Unsupported kernel for direct evaluator");

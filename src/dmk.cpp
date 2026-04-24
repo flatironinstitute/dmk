@@ -186,8 +186,10 @@ TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
                 std::span<const double> r_src_trunc(r_src.data(), n_test_src * n_dim);
                 std::span<const double> r_trg_trunc(r_trg.data(), n_test_trg * n_dim);
 
-                compute_direct(n_dim, r_src, charges, r_src_trunc, test_src, kernel, DMK_POTENTIAL);
-                compute_direct(n_dim, r_src, charges, r_trg_trunc, test_trg, kernel, DMK_POTENTIAL);
+                compute_direct(n_dim, r_src, charges, std::vector<double>{}, r_src_trunc, test_src, kernel,
+                               DMK_POTENTIAL);
+                compute_direct(n_dim, r_src, charges, std::vector<double>{}, r_trg_trunc, test_trg, kernel,
+                               DMK_POTENTIAL);
 
                 pdmk_tree tree =
                     pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);

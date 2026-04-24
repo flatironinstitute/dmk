@@ -201,8 +201,8 @@ void run_direct(const Config &cfg, int n_dim, int charge_dim, const std::vector<
     std::vector<double> pot_d(n_trg_local * kdim, 0.0);
 
     const auto eval = dmk::get_direct_evaluator<double>(cfg.kernel, eval_level, n_dim, cfg.fparam);
-    dmk::parallel_direct_eval<double>(eval, n_src_global, r_src_d.data(), charges_d.data(), n_trg_local, r_trg_d.data(),
-                                      pot_d.data(), n_dim, kdim);
+    dmk::parallel_direct_eval<double>(eval, n_src_global, r_src_d.data(), charges_d.data(), nullptr, n_trg_local,
+                                      r_trg_d.data(), pot_d.data(), n_dim, kdim);
 
     pot.resize(n_trg_local * kdim);
     for (size_t i = 0; i < pot_d.size(); ++i)

@@ -1,4 +1,4 @@
-add_executable(test_all test_all.cpp test_pbc_periodic.cpp)
+add_executable(test_all test_all.cpp test_pbc_periodic.cpp test_direct.cpp)
 target_link_libraries(test_all dmk_shared ${DMK_REFERENCE_TARGET} doctest::doctest ${DMK_MPI_TARGET} ${DMK_OPENMP_TARGET} BLAS::BLAS spdlog::spdlog_header_only)
 target_include_directories(test_all PRIVATE ${DMK_INCLUDES} ${PROJECT_SOURCE_DIR}/extern/nda/c++
   ${PROJECT_BINARY_DIR}/extern/nda/deps/itertools_src/c++)
