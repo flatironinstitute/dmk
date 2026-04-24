@@ -69,6 +69,8 @@ std::string coeff_name(const KernelDef &k, int digits) {
                 return "sqrt_laplace";
             case DMK_STOKESLET:
                 return "stokeslet";
+            case DMK_STRESSLET:
+                return "stresslet";
             default:
                 return "unknown";
             }

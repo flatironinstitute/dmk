@@ -189,9 +189,8 @@ inline double biharmonic_ft(int dim, double rl, double k) {
     }
 }
 
-inline std::pair<double, double> stokes_residual_at_point(int dim, double rval, double beta, double bsize,
-                                                          const Prolate0Fun &prolate) {
-
+inline std::pair<double, double> stokeslet_residual_at_point(int dim, double rval, double beta, double bsize,
+                                                             const Prolate0Fun &prolate) {
     if (rval < 1e-15)
         return {0.0, 0.0};
 
@@ -281,20 +280,131 @@ inline std::pair<double, double> stokes_residual_at_point(int dim, double rval, 
     return {g_diag, g_offd};
 }
 
-template <typename Real>
-std::vector<std::vector<Real>> get_stokes_local_correction_coeffs(int dim, int n_digits, double beta,
-                                                                  double bsize = 1.0) {
+inline std::pair<double, double> stresslet_residual_at_point(int dim, double rval, double beta, double bsize,
+                                                             const Prolate0Fun &prolate) {
+    if (std::fabs(rval) < 1e-15)
+        return {0.0, -0.5};
 
+    const double psi0 = prolate.eval_val(0.0);
+    const double rl = bsize * (std::sqrt(double(dim)) + 1.0);
+    const double twooverpi = 2.0 / M_PI;
+    const double cval = (dim == 2) ? 0.5 * (1.0 - std::log(rl)) : 1.0 / (2.0 * rl);
+
+    // Step 1: Legendre quadrature on [0, beta/bsize]
+    constexpr int n_quad = 200;
+    std::array<double, n_quad> rks, whts, fhat;
+    legerts(1, n_quad, rks.data(), whts.data());
+    for (int i = 0; i < n_quad; ++i) {
+        rks[i] = 0.5 * (rks[i] + 1.0) * beta / bsize;
+        whts[i] *= 0.5 * beta / bsize;
+    }
+
+    // Step 2: Evaluate windowed kernel FT at quadrature nodes
+    for (int i = 0; i < n_quad; ++i) {
+        double xi = rks[i];
+        double xval = xi * bsize / beta;
+
+        double fval = 0.0;
+        if (xval <= 1.0) {
+            auto [psi, dpsi] = prolate.eval_val_derivative(xval);
+            fval = (psi - 0.5 * xval * dpsi) / psi0;
+        }
+
+        fhat[i] = fval * biharmonic_ft(dim, rl, xi);
+    }
+
+    // Step 3: Weight by quadrature weights and k factors
+    for (int i = 0; i < n_quad; ++i) {
+        if (dim == 2)
+            fhat[i] *= whts[i] * rks[i];
+        else
+            fhat[i] *= whts[i] * rks[i] * rks[i] * twooverpi;
+    }
+
+    // Step 4: Compute f'(r) and f''(r) at the given point
+    double r = (dim == 2) ? std::sqrt(rval) : rval;
+    double df{0.0}, d2f{0.0}, d3f{0.0};
+
+    for (int i = 0; i < n_quad; ++i) {
+        const double dk = rks[i];
+        const double dd = r * dk;
+        const double dd2 = dd * dd;
+
+        double drft, d2rft, d3rft;
+
+        if (dim == 2) {
+            const double dj0 = util::cyl_bessel_j(0, dd);
+            const double dj1 = util::cyl_bessel_j(1, dd);
+            drft = -dk * dj1;
+            d2rft = -dk * dk * (dj0 - dj1 / dd);
+            d3rft = dk * dk * dk * ((dd2 - 2) * dj1 + dd * dj0) / dd2;
+        } else {
+            const double dd3 = dd2 * dd;
+            const double dd4 = dd3 * dd;
+            const double crk = cos(dd);
+            const double srk = sin(dd);
+            drft = (dd * crk - srk) * dk / dd2;
+            d2rft = ((2 - dd2) * srk - 2 * dd * crk) * dk * dk / dd3;
+            d3rft = ((6 * dd - dd3) * crk + (3 * dd2 - 6) * srk) * dk * dk * dk / dd4;
+        }
+
+        df += drft * fhat[i];
+        d2f += d2rft * fhat[i];
+        d3f += d3rft * fhat[i];
+    }
+
+    // Step 5: Biharmonic correction
+    df += cval * r - ((dim == 3) ? 0.5 : 0.0);
+    d2f += cval;
+
+    // Step 6: Combine
+    double g_diag, g_offd;
+    if (dim == 3) {
+        g_diag = r * r * d3f;
+        g_offd = df - r * d2f + r * r * d3f / 3.0;
+    } else {
+        g_diag = df / r - d2f + r * d3f;
+        g_offd = 3 * df / r - 3 * d2f + r * d3f - 1.0;
+    }
+
+    return {g_diag, g_offd};
+}
+
+template <typename Real>
+std::vector<std::vector<Real>> get_stokeslet_local_correction_coeffs(int dim, int n_digits, double beta,
+                                                                     double bsize = 1.0) {
     Prolate0Fun prolate(beta, 10000);
 
     auto fit_diag = [&](int digits) {
         return make_polyfit_abs_error<double>(
-            digits, [&](double x) { return stokes_residual_at_point(dim, x, beta, bsize, prolate).first; }, 0.0, 1.0);
+            digits, [&](double x) { return stokeslet_residual_at_point(dim, x, beta, bsize, prolate).first; }, 0.0,
+            1.0);
     };
 
     auto fit_offd = [&](int digits) {
         return make_polyfit_abs_error<double>(
-            digits, [&](double x) { return stokes_residual_at_point(dim, x, beta, bsize, prolate).second; }, 0.0, 1.0);
+            digits, [&](double x) { return stokeslet_residual_at_point(dim, x, beta, bsize, prolate).second; }, 0.0,
+            1.0);
+    };
+
+    return {coeffs_cache.get<Real>(n_digits, beta, fit_diag), coeffs_cache.get<Real>(n_digits, beta, fit_offd)};
+}
+
+template <typename Real>
+std::vector<std::vector<Real>> get_stresslet_local_correction_coeffs(int dim, int n_digits, double beta,
+                                                                     double bsize = 1.0) {
+    Prolate0Fun prolate(beta, 10000);
+
+    auto fit_diag = [&](int digits) {
+        return make_polyfit_abs_error<double>(
+            digits, [&](double x) { return stresslet_residual_at_point(dim, x, beta, bsize, prolate).first; }, 0.0,
+            1.0);
+    };
+
+    auto fit_offd = [&](int digits) {
+        return make_polyfit_abs_error<double>(
+            digits, [&](double x) { return stresslet_residual_at_point(dim, x, beta, bsize, prolate).second; }, 0.0,
+            1.0);
     };
 
     return {coeffs_cache.get<Real>(n_digits, beta, fit_diag), coeffs_cache.get<Real>(n_digits, beta, fit_offd)};
@@ -335,7 +445,9 @@ std::vector<std::vector<Real>> get_local_correction_coeffs(dmk_ikernel kernel, i
         }
         break;
     case DMK_STOKESLET:
-        return get_stokes_local_correction_coeffs<Real>(n_dim, n_digits, beta);
+        return get_stokeslet_local_correction_coeffs<Real>(n_dim, n_digits, beta);
+    case DMK_STRESSLET:
+        return get_stresslet_local_correction_coeffs<Real>(n_dim, n_digits, beta);
     default:
         break;
     }

@@ -3,7 +3,6 @@
 #include <dmk/types.hpp>
 #include <dmk/vector_kernels.hpp>
 #include <sctl.hpp>
-#include <stdexcept>
 
 namespace dmk {
 constexpr int unroll_factor = 3;
@@ -1126,10 +1125,288 @@ residual_evaluator_func<Real> get_stokeslet_3d_kernel(dmk_eval_type eval_level, 
     }
     throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
 }
+// beta: 7.330382858376184
+constexpr double stresslet_3d_2[] = {-4.16204699764625152e-01, -6.04264155268749770e-01, 5.28850164523664179e-01,
+                                     8.78755988128362420e-01,  -1.94947076077764236e-01, -3.57648685485067008e-01,
+                                     -4.47344763353390240e-01, 2.31628621076223840e-01,  2.77407251192390181e-01,
+                                     -9.07859118406483499e-03, -1.11338845618492499e-01};
+
+// beta: 10.471975511965976
+constexpr double stresslet_3d_3[] = {
+    -4.91085066317952901e-01, -2.63643632895059932e-01, 1.43102610884093107e+00, 5.10726003944930507e-01,
+    -1.71281297968425927e+00, -3.23687472789660313e-01, 1.00829054938074325e+00, 6.64915302855536849e-02,
+    -2.45793704540756164e-01, -3.87611908034877217e-01, 4.00897592487451937e-01, 3.57133903678194031e-01,
+    -2.12354254586355873e-01, -3.50275910258909196e-01, 5.80858202313804806e-02, 1.27911306999798108e-01};
+
+// beta: 12.566370614359172
+constexpr double stresslet_3d_4[] = {-4.94652564695905295e-01, 3.14907038059517794e-02,  1.70965189099022097e+00,
+                                     -3.19739199343181013e-01, -2.39495733527934096e+00, 6.53526817811645344e-01,
+                                     1.73480077540123223e+00,  -5.05105423696310618e-01, -6.81313899424385139e-01,
+                                     1.37630018908988794e-01,  1.24252704444913875e-01,  -3.44427522740028969e-01,
+                                     5.05327544180735444e-01,  3.03979560806886373e-01,  -5.03481715340017177e-01,
+                                     -3.99966918518655346e-01, 4.04972580464559861e-01,  2.57682772126790083e-01,
+                                     -2.07428094140584940e-01, -6.80894951116618186e-02, 4.98581000380637351e-02};
+
+// beta: 14.660765716752367
+constexpr double stresslet_3d_5[] = {
+    -4.75726589328531790e-01, 3.17476851067920063e-01,  1.73033622662750086e+00,  -1.35203187055482266e+00,
+    -2.47847728478193252e+00, 2.28489823291960947e+00,  1.77825622068339317e+00,  -2.01385151358343162e+00,
+    -6.84467760478567500e-01, 1.03449473009329984e+00,  1.42836510776023023e-01,  -3.19965818347235698e-01,
+    -1.31965656163588445e-02, 4.85412198760137095e-02,  -3.01673816672587525e-01, 5.81545550426067703e-01,
+    1.80203321102449465e-01,  -7.62591772972363691e-01, -2.54164638262633968e-01, 7.94185208020978806e-01,
+    1.81635212829414500e-01,  -5.49491220350536547e-01, -6.58418792181105772e-02, 2.31746651008051585e-01,
+    9.69159003023067900e-03,  -4.55502617992340694e-02};
+
+// beta: 17.80235837034216
+constexpr double stresslet_3d_6[] = {
+    -4.22400502219173524e-01, 6.63949529304095343e-01, 1.36293721985524741e+00,  -2.73839396088193565e+00,
+    -1.35428797526978406e+00, 4.60707897515222786e+00, -7.74176457858334749e-02, -4.15653680038142692e+00,
+    1.11845008070391883e+00,  2.26603946446304683e+00, -9.30723076618889977e-01, -8.05488463845373648e-01,
+    3.65581671473559577e-01,  1.85457139852960251e-01, -6.21750104108193188e-02, -2.21407202245635648e-02,
+    -2.41596787940864061e-01, 6.43711867958816075e-01, -8.88831434765173234e-02, -1.00480099116091681e+00,
+    3.02647966214144304e-01,  1.20146188618352889e+00, -5.18888154852656158e-01, -9.43510759367019114e-01,
+    5.20259379474203087e-01,  4.80513636918967202e-01, -3.20446800505381824e-01, -1.49929700773214269e-01,
+    1.16637785671195621e-01,  2.25424710055287837e-02, -1.97424007195010597e-02};
+
+// beta: 19.896753472735355
+constexpr double stresslet_3d_7[] = {
+    -3.78954773558962399e-01, 8.24338608929578442e-01,  9.46571008448101603e-01,  -3.35297182133979099e+00,
+    4.10522667803363064e-02,  5.50144778840421189e+00,  -2.48117744216424407e+00, -4.70618173928989858e+00,
+    3.61269363151551337e+00,  2.26596358883996540e+00,  -2.64944769868514030e+00, -5.87896524900204276e-01,
+    1.19898748063802607e+00,  3.66319280503028810e-02,  -3.35388759191686314e-01, 2.47008250358558314e-02,
+    4.56582861691487082e-02,  -6.03874324938414621e-03, -2.05709286043797929e-01, 6.53734877223986377e-01,
+    -2.86126885183130286e-01, -1.03210934093659712e+00, 7.87828928827199682e-01,  1.20670923490370363e+00,
+    -1.22175527926667749e+00, -8.78685709544596794e-01, 1.18952834217269054e+00,  3.76293283872285889e-01,
+    -7.68243548044653668e-01, -7.75502794726923572e-02, 3.35558906296532011e-01,  -1.13715598366321354e-03,
+    -9.42046342723299179e-02, 2.74306457432451105e-03,  1.31214443479037591e-02};
+
+// beta: 23.03834612632515
+constexpr double stresslet_3d_8[] = {
+    -3.11817968514464638e-01, 9.60677369806450909e-01,  2.24858517978243133e-01,  -3.66459898705409026e+00,
+    2.52930858862507035e+00,  5.21697240148801988e+00,  -6.77059961594726456e+00, -2.93892464075596305e+00,
+    7.96138367556943294e+00,  -4.89596966057200156e-01, -5.48554753030222209e+00, 1.82132067670353259e+00,
+    2.48135408934238999e+00,  -1.35322324504778546e+00, -7.73364854819571845e-01, 5.79322760741110332e-01,
+    1.65282309211599698e-01,  -1.50854252921592241e-01, -2.22857210395596694e-02, 1.89044867076021868e-02,
+    1.42810943262056947e-03,  -1.59100262665966719e-01, 6.32043727639679864e-01,  -5.61294721807390151e-01,
+    -8.72318862165873621e-01, 1.49733965232123278e+00,  7.09703656323520393e-01,  -2.26859983026776879e+00,
+    -2.04647226070742627e-03, 2.16565604795898370e+00,  -6.15365284763985332e-01, -1.37232832774699687e+00,
+    6.95281864061452981e-01,  5.94129241604106295e-01,  -4.34438040397783998e-01, -1.76338004219759953e-01,
+    1.77225381308415419e-01,  3.37974892792311590e-02,  -4.59331165054983476e-02, -3.26142029745158258e-03,
+    5.84701376616699083e-03};
+
+// beta: 25.132741228718345
+constexpr double stresslet_3d_9[] = {
+    -2.69206248562092854e-01, 9.91975211769262177e-01,  -2.47527668722514027e-01, -3.48304819226536866e+00,
+    4.11045062969357389e+00,  3.90231158566534653e+00,  -9.28160284286009762e+00, 1.40007394293998028e-01,
+    1.00586729557474293e+01,  -4.43121543242281124e+00, -6.25159365157605329e+00, 5.06721045758107724e+00,
+    2.26629513588377529e+00,  -3.24206454425680590e+00, -3.32782178249442784e-01, 1.41013235865179620e+00,
+    -1.20697662071861889e-01, -4.35972026403936175e-01, 9.12970874093179258e-02,  9.01796091128005128e-02,
+    -2.66876414506041146e-02, -9.51648862749292744e-03, 3.38201845017249356e-03,  -1.32862382778673044e-01,
+    5.99864649172095588e-01,  -7.13100078663336467e-01, -6.58112775215190515e-01, 1.86373992445294911e+00,
+    8.38072113477054681e-02,  -2.73019742548725075e+00, 1.06088380138772376e+00,  2.44860125217162938e+00,
+    -1.79065220614577014e+00, -1.36156502820707348e+00, 1.59922676122520913e+00,  4.24416489450495482e-01,
+    -9.44151509421849333e-01, -2.28189625382691358e-02, 3.98916375270592871e-01,  -4.15942936340494562e-02,
+    -1.22606567905275105e-01, 1.81833134959032139e-02,  2.55726569505173550e-02,  -2.80283107200844216e-03,
+    -2.74841928170661658e-03};
+
+// beta: 28.274333882308134
+constexpr double stresslet_3d_10[] = {
+    -2.11678730168907786e-01, 9.71795506848312618e-01,  -8.60458807648499802e-01, -2.76019369279560589e+00,
+    5.92226293768438961e+00,  6.39558598644854093e-01,  -1.13321770208724963e+01, 6.82130895051047847e+00,
+    1.00034720014280758e+01,  -1.23339095716308762e+01, -3.42223833187025095e+00, 1.10483657383432252e+01,
+    -1.55960250761072960e+00, -6.27891851243571075e+00, 2.62142315525983527e+00,  2.44596694424759598e+00,
+    -1.71326897797472033e+00, -6.58418818077986634e-01, 7.35048984947334949e-01,  1.14452372646565603e-01,
+    -2.23372988314888027e-01, -1.00638031468931466e-02, 4.52217483796490544e-02,  5.62828284213398217e-05,
+    -4.63146728253177684e-03, -1.00250316457626346e-01, 5.35610565759842450e-01,  -8.78556721470509450e-01,
+    -2.38753546959004082e-01, 2.15315282609792025e+00,  -1.11451858577191887e+00, -2.77756515436773288e+00,
+    3.03565796542241095e+00,  1.81517829280207788e+00,  -3.87230405652096810e+00, -1.22474227084891876e-01,
+    3.06821401053403831e+00,  -8.77133581267303342e-01, -1.64325343931221046e+00, 9.04537822281768156e-01,
+    6.11928347241891935e-01,  -5.33017157407620124e-01, -1.54564471561358635e-01, 2.20018556289690553e-01,
+    2.31553886352643470e-02,  -6.57537346666480782e-02, -9.96505007213810455e-04, 1.32118391562927005e-02,
+    -1.75673811722793795e-04, -1.34844526177238066e-03};
+
+// beta: 30.36872898470133
+constexpr double stresslet_3d_11[] = {
+    -1.78351138746256188e-01, 9.26543511098677275e-01,  -1.18040197688064286e+00, -2.08077648351970401e+00,
+    6.61293898416919923e+00,  -2.01050132330106957e+00, -1.11518150072339886e+01, 1.17513791058806767e+01,
+    7.14765691091395627e+00,  -1.74780327503378707e+01, 1.88577046211033084e+00,  1.40629477272611414e+01,
+    -7.03599364761831048e+00, -6.89290989901022932e+00, 6.42201632258244270e+00,  1.88103142097896647e+00,
+    -3.64067411928908058e+00, 1.04952548751805989e-02,  1.48784196248283518e+00,  -2.87017314471068263e-01,
+    -4.60398736130718966e-01, 1.59216551716845317e-01,  1.07235103586075090e-01,  -5.18531692271675670e-02,
+    -1.72798192571436901e-02, 1.05189828044118701e-02,  1.45469869375339624e-03,  -1.04161536938991196e-03,
+    -8.25446250765221878e-02, 4.87198975644872079e-01,  -9.45914650365101362e-01, 6.81733972060055565e-02,
+    2.15318294844977887e+00,  -1.95185145199264176e+00, -2.31411807452174356e+00, 4.30754949945566246e+00,
+    5.72015347144110509e-01,  -5.01092111290896103e+00, 1.64275045211261328e+00,  3.59479470146287783e+00,
+    -2.51506096627600639e+00, -1.60184731330967445e+00, 1.98528645041060714e+00,  3.49537057362983017e-01,
+    -1.06642404921206935e+00, 6.87438433139214849e-02,  4.25030798156203538e-01,  -9.33819631393349864e-02,
+    -1.29829397377180689e-01, 4.07382208953016994e-02,  3.00607929145505597e-02,  -9.82740719033838549e-03,
+    -4.84579177235908067e-03, 1.09355299532316115e-03,  4.10765206007309357e-04};
+
+// beta: 33.510321638291124
+constexpr double stresslet_3d_12[] = {
+    -1.36068382632040019e-01, 8.30206663514010845e-01,  -1.51492871813114438e+00, -9.38161731679668320e-01,
+    6.81371900885790716e+00,  -5.98886386329479059e+00, -8.47250818086918578e+00, 1.80974147359075346e+01,
+    -1.27353252176920551e+00, -2.20361156131437212e+01, 1.43959718912688448e+01,  1.35219326406985303e+01,
+    -1.84739354442709001e+01, -2.44492107609423615e+00, 1.34202436784636507e+01,  -3.07394173611456978e+00,
+    -6.52803236221760130e+00, 3.39530629009284146e+00,  2.19573400711340527e+00,  -1.97213541430062644e+00,
+    -4.70416030102116911e-01, 8.13087237720465095e-01,  3.22988004424934194e-02,  -2.55438052531020809e-01,
+    1.69538475357311168e-02,  6.07577487914693348e-02,  -6.26726435164908814e-03, -9.97434907897546373e-03,
+    7.67670626394760416e-04,  8.46519477241623069e-04,  -6.11507944910260545e-02, 4.12803937136142662e-01,
+    -9.88113762453371125e-01, 5.14347344280230212e-01,  1.88547916169623697e+00,  -3.05042335312181967e+00,
+    -9.47579259804225860e-01, 5.63432412407424899e+00,  -2.33830851447116705e+00, -5.50271545724852196e+00,
+    5.34387667869330407e+00,  2.70293690603821268e+00,  -5.63078788803793984e+00, 1.19439080008556173e-01,
+    3.78034491933946892e+00,  -1.27239595926929594e+00, -1.75151091431009642e+00, 1.11608523419285377e+00,
+    5.57849478448433023e-01,  -6.07791533305840348e-01, -1.04925278872826697e-01, 2.43734056081953088e-01,
+    -5.58136197206675019e-04, -7.54926424650251143e-02, 7.36565035941283506e-03,  1.78115945261800579e-02,
+    -2.24202640239685785e-03, -2.90945558305993413e-03, 2.60686491503111422e-04,  2.46124643278450327e-04};
 
 template <class Real, int MaxVecLen>
 residual_evaluator_func<Real> get_stresslet_3d_kernel(dmk_eval_type eval_level, int n_digits) {
-    throw std::runtime_error("Stresslet unimplemented");
+    constexpr int UF = unroll_factor;
+    if (n_digits <= 2) {
+        constexpr int ND = 2, NC_TOTAL = 11;
+        constexpr int NC0 = 6;
+        constexpr int NC1 = 5;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(stresslet_3d_2, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 3) {
+        constexpr int ND = 3, NC_TOTAL = 16;
+        constexpr int NC0 = 9;
+        constexpr int NC1 = 7;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(stresslet_3d_3, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 4) {
+        constexpr int ND = 4, NC_TOTAL = 21;
+        constexpr int NC0 = 11;
+        constexpr int NC1 = 10;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(stresslet_3d_4, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 5) {
+        constexpr int ND = 5, NC_TOTAL = 26;
+        constexpr int NC0 = 14;
+        constexpr int NC1 = 12;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(stresslet_3d_5, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 6) {
+        constexpr int ND = 6, NC_TOTAL = 31;
+        constexpr int NC0 = 16;
+        constexpr int NC1 = 15;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(stresslet_3d_6, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 7) {
+        constexpr int ND = 7, NC_TOTAL = 35;
+        constexpr int NC0 = 18;
+        constexpr int NC1 = 17;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(stresslet_3d_7, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 8) {
+        constexpr int ND = 8, NC_TOTAL = 41;
+        constexpr int NC0 = 21;
+        constexpr int NC1 = 20;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(stresslet_3d_8, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 9) {
+        constexpr int ND = 9, NC_TOTAL = 45;
+        constexpr int NC0 = 23;
+        constexpr int NC1 = 22;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(stresslet_3d_9, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 10) {
+        constexpr int ND = 10, NC_TOTAL = 50;
+        constexpr int NC0 = 25;
+        constexpr int NC1 = 25;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(stresslet_3d_10, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 11) {
+        constexpr int ND = 11, NC_TOTAL = 55;
+        constexpr int NC0 = 28;
+        constexpr int NC1 = 27;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(stresslet_3d_11, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 12) {
+        constexpr int ND = 12, NC_TOTAL = 60;
+        constexpr int NC0 = 30;
+        constexpr int NC1 = 30;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(stresslet_3d_12, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
+        };
+    }
+    throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
 }
 
 // Explicit instantiations
