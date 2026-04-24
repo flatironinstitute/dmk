@@ -656,25 +656,83 @@ struct StressletEvaluator3D {
     static constexpr int KERNEL_OUTPUT_DIM = 3;
     static constexpr int SPATIAL_DIM = 3;
     static constexpr int NORMAL_DIM = 3;
-    static constexpr Real scale_factor = -3.0;
+    static constexpr Real scale_factor = 1.0;
 
     DMK_ALWAYS_INLINE void operator()(vector_type (&u)[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM],
                                       const vector_type (&dX)[SPATIAL_DIM], const vector_type (&ns)[NORMAL_DIM]) const {
         const vector_type R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
         const auto mask = (R2 > vector_type::Zero());
         const vector_type Rinv = sctl::approx_rsqrt<-1>(R2, mask);
-        const vector_type Rinv2 = Rinv * Rinv;
-        const vector_type Rinv5 = Rinv2 * Rinv2 * Rinv;
+        const vector_type Rinv3 = Rinv * Rinv * Rinv;
+        const vector_type Rinv5 = Rinv3 * Rinv * Rinv;
         const vector_type rdotn = FMA(dX[0], ns[0], FMA(dX[1], ns[1], dX[2] * ns[2]));
 
-        // T_{ijk} = -3 r_i r_j r_k / r^5
-        // U[j][i] = sum_k T_{ijk} * nu_k = r_i r_j (r . nu) / r^5
-        // scale_factor supplies the -3
-        const vector_type common = rdotn * Rinv5;
+        const vector_type neg3 = Real{-3.0};
+        const vector_type offd = neg3 * rdotn * Rinv5;
+        const vector_type diag_rdotn = rdotn * Rinv3;
         for (int j = 0; j < KERNEL_INPUT_DIM; ++j) {
-            const vector_type cj = common * dX[j];
+            const vector_type offd_rj = dX[j] * offd;
+            const vector_type diag_nj = ns[j] * Rinv3;
+            const vector_type diag_rj = dX[j] * Rinv3;
+            for (int i = 0; i < KERNEL_OUTPUT_DIM; ++i)
+                u[j][i] = offd_rj * dX[i] + diag_nj * dX[i] + diag_rj * ns[i];
+            u[j][j] += diag_rdotn;
+        }
+    }
+};
+
+template <typename Real, int MaxVecLen>
+struct StressletPolyEvaluator3D {
+    using scalar_type = Real;
+    using vector_type = sctl::Vec<Real, MaxVecLen>;
+    static constexpr int KERNEL_INPUT_DIM = 3;
+    static constexpr int KERNEL_OUTPUT_DIM = 3;
+    static constexpr int SPATIAL_DIM = 3;
+    static constexpr int NORMAL_DIM = 3;
+    static constexpr Real scale_factor = 1.0;
+
+    vector_type thresh2_vec, d2max_vec, rsc_vec, cen_vec;
+    const Real *coeffs_diag;
+    const Real *coeffs_offdiag;
+    int n_coeffs_diag;
+    int n_coeffs_offdiag;
+    int n_digits;
+
+    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM],
+                                      const vector_type (&dX)[SPATIAL_DIM], const vector_type (&ns)[NORMAL_DIM]) const {
+        const vector_type R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
+        const auto mask = (R2 > thresh2_vec) & (R2 < d2max_vec);
+        const vector_type Rinv = my_approx_rsqrt(R2, n_digits);
+        const vector_type Rinv3 = Rinv * Rinv * Rinv;
+        const vector_type Rinv5 = Rinv3 * Rinv * Rinv;
+        const vector_type xtmp = FMA(R2, Rinv, cen_vec) * rsc_vec;
+
+        const vector_type Fdiag = -horner(xtmp, coeffs_diag, n_coeffs_diag) * Rinv3;
+        const vector_type six = Real{6.0};
+        const vector_type Foffd = six * horner(xtmp, coeffs_offdiag, n_coeffs_offdiag) * Rinv5;
+
+        const vector_type rdotn = FMA(dX[0], ns[0], FMA(dX[1], ns[1], dX[2] * ns[2]));
+
+        // Stresslet residual kernel (3D):
+        //   u_i += Foffd * (r.mu) * (r.nu) * r_i
+        //        + Fdiag * (r_i * (mu.nu) + mu_i * (r.nu) + nu_i * (r.mu))
+        //
+        // Since EvalPairs contracts: pot[i] += sum_j U[j][i] * mu[j],
+        // we pre-contract over nu (the normal) and build U[j][i] so that:
+        //   sum_j U[j][i] * mu[j] = above expression
+        //
+        // U[j][i] = Foffd * dX[j] * rdotn * dX[i]
+        //         + Fdiag * (dX[i] * ns[j] + ns[i] * dX[j] + rdotn * delta_{ij})
+        const vector_type Fdiag_rdotn = Fdiag * rdotn;
+        for (int j = 0; j < KERNEL_INPUT_DIM; ++j) {
+            const vector_type foffd_rj_rdotn = Foffd * dX[j] * rdotn;
+            const vector_type fdiag_nj = Fdiag * ns[j];
+            const vector_type fdiag_rj = Fdiag * dX[j];
             for (int i = 0; i < KERNEL_OUTPUT_DIM; ++i) {
-                u[j][i] = cj * dX[i];
+                vector_type val = foffd_rj_rdotn * dX[i] + fdiag_nj * dX[i] + fdiag_rj * ns[i];
+                if (i == j)
+                    val = val + Fdiag_rdotn;
+                u[j][i] = select(mask, val, vector_type::Zero());
             }
         }
     }
