@@ -22,8 +22,9 @@ using direct_evaluator_func = std::function<void(int n_src, const T *r_src, cons
                                                  int n_trg, const T *r_trg, T *pot)>;
 
 template <typename T>
-using residual_evaluator_func = std::function<void(T rsc, T cen, T d2max, T thresh2, int n_src, const T *r_src,
-                                                   const T *charge, int n_trg, const T *r_trg, T *pot)>;
+using residual_evaluator_func =
+    std::function<void(T rsc, T cen, T d2max, T thresh2, int n_src, const T *r_src, const T *charge, const T *normals,
+                       int n_trg, const T *r_trg, T *pot)>;
 } // namespace dmk
 
 #endif

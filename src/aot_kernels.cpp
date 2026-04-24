@@ -3,6 +3,7 @@
 #include <dmk/types.hpp>
 #include <dmk/vector_kernels.hpp>
 #include <sctl.hpp>
+#include <stdexcept>
 
 namespace dmk {
 constexpr int unroll_factor = 3;
@@ -85,10 +86,10 @@ residual_evaluator_func<Real> get_laplace_2d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_2d_2, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 3) {
@@ -97,10 +98,10 @@ residual_evaluator_func<Real> get_laplace_2d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_2d_3, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 4) {
@@ -109,10 +110,10 @@ residual_evaluator_func<Real> get_laplace_2d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_2d_4, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 5) {
@@ -121,10 +122,10 @@ residual_evaluator_func<Real> get_laplace_2d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_2d_5, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 6) {
@@ -133,10 +134,10 @@ residual_evaluator_func<Real> get_laplace_2d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_2d_6, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 7) {
@@ -145,10 +146,10 @@ residual_evaluator_func<Real> get_laplace_2d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_2d_7, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 8) {
@@ -157,10 +158,10 @@ residual_evaluator_func<Real> get_laplace_2d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_2d_8, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 9) {
@@ -169,10 +170,10 @@ residual_evaluator_func<Real> get_laplace_2d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_2d_9, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 10) {
@@ -181,10 +182,10 @@ residual_evaluator_func<Real> get_laplace_2d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_2d_10, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 11) {
@@ -193,10 +194,10 @@ residual_evaluator_func<Real> get_laplace_2d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_2d_11, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 12) {
@@ -205,10 +206,10 @@ residual_evaluator_func<Real> get_laplace_2d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_2d_12, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
@@ -299,10 +300,10 @@ residual_evaluator_func<Real> get_laplace_3d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_3d_2, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 3) {
@@ -311,10 +312,10 @@ residual_evaluator_func<Real> get_laplace_3d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_3d_3, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 4) {
@@ -323,10 +324,10 @@ residual_evaluator_func<Real> get_laplace_3d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_3d_4, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 5) {
@@ -335,10 +336,10 @@ residual_evaluator_func<Real> get_laplace_3d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_3d_5, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 6) {
@@ -347,10 +348,10 @@ residual_evaluator_func<Real> get_laplace_3d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_3d_6, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 7) {
@@ -359,10 +360,10 @@ residual_evaluator_func<Real> get_laplace_3d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_3d_7, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 8) {
@@ -371,10 +372,10 @@ residual_evaluator_func<Real> get_laplace_3d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_3d_8, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 9) {
@@ -383,10 +384,10 @@ residual_evaluator_func<Real> get_laplace_3d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_3d_9, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 10) {
@@ -395,10 +396,10 @@ residual_evaluator_func<Real> get_laplace_3d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_3d_10, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 11) {
@@ -407,10 +408,10 @@ residual_evaluator_func<Real> get_laplace_3d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_3d_11, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     if (n_digits <= 12) {
@@ -419,10 +420,10 @@ residual_evaluator_func<Real> get_laplace_3d_kernel(dmk_eval_type eval_level, in
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(laplace_3d_12, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                UF);
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
         };
     }
     throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
@@ -513,10 +514,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_2d_2, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 3) {
@@ -525,10 +526,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_2d_3, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 4) {
@@ -537,10 +538,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_2d_4, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 5) {
@@ -549,10 +550,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_2d_5, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 6) {
@@ -561,10 +562,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_2d_6, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 7) {
@@ -573,10 +574,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_2d_7, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 8) {
@@ -585,10 +586,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_2d_8, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 9) {
@@ -597,10 +598,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_2d_9, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 10) {
@@ -609,10 +610,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_2d_10, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 11) {
@@ -621,10 +622,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_2d_11, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 12) {
@@ -633,10 +634,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_2d_12, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
@@ -722,10 +723,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_3d_2, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 3) {
@@ -734,10 +735,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_3d_3, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 4) {
@@ -746,10 +747,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_3d_4, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 5) {
@@ -758,10 +759,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_3d_5, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 6) {
@@ -770,10 +771,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_3d_6, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 7) {
@@ -782,10 +783,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_3d_7, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 8) {
@@ -794,10 +795,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_3d_8, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 9) {
@@ -806,10 +807,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_3d_9, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 10) {
@@ -818,10 +819,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_3d_10, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 11) {
@@ -830,10 +831,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_3d_11, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 12) {
@@ -842,10 +843,10 @@ residual_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_eval_type eval_leve
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(sqrt_laplace_3d_12, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, n_trg, r_trg,
-                                                                     pot, UF);
+                                                                     coeffs.data(), n_src, r_src, charge, normals,
+                                                                     n_trg, r_trg, pot, UF);
         };
     }
     throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
@@ -987,10 +988,10 @@ residual_evaluator_func<Real> get_stokeslet_3d_kernel(dmk_eval_type eval_level, 
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(stokeslet_3d_2, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge, n_trg,
-                                                                       r_trg, pot, UF);
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 3) {
@@ -1000,10 +1001,10 @@ residual_evaluator_func<Real> get_stokeslet_3d_kernel(dmk_eval_type eval_level, 
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(stokeslet_3d_3, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge, n_trg,
-                                                                       r_trg, pot, UF);
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 4) {
@@ -1013,10 +1014,10 @@ residual_evaluator_func<Real> get_stokeslet_3d_kernel(dmk_eval_type eval_level, 
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(stokeslet_3d_4, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge, n_trg,
-                                                                       r_trg, pot, UF);
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 5) {
@@ -1026,10 +1027,10 @@ residual_evaluator_func<Real> get_stokeslet_3d_kernel(dmk_eval_type eval_level, 
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(stokeslet_3d_5, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge, n_trg,
-                                                                       r_trg, pot, UF);
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 6) {
@@ -1039,10 +1040,10 @@ residual_evaluator_func<Real> get_stokeslet_3d_kernel(dmk_eval_type eval_level, 
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(stokeslet_3d_6, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge, n_trg,
-                                                                       r_trg, pot, UF);
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 7) {
@@ -1052,10 +1053,10 @@ residual_evaluator_func<Real> get_stokeslet_3d_kernel(dmk_eval_type eval_level, 
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(stokeslet_3d_7, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge, n_trg,
-                                                                       r_trg, pot, UF);
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 8) {
@@ -1065,10 +1066,10 @@ residual_evaluator_func<Real> get_stokeslet_3d_kernel(dmk_eval_type eval_level, 
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(stokeslet_3d_8, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge, n_trg,
-                                                                       r_trg, pot, UF);
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 9) {
@@ -1078,10 +1079,10 @@ residual_evaluator_func<Real> get_stokeslet_3d_kernel(dmk_eval_type eval_level, 
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(stokeslet_3d_9, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge, n_trg,
-                                                                       r_trg, pot, UF);
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 10) {
@@ -1091,10 +1092,10 @@ residual_evaluator_func<Real> get_stokeslet_3d_kernel(dmk_eval_type eval_level, 
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(stokeslet_3d_10, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge, n_trg,
-                                                                       r_trg, pot, UF);
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 11) {
@@ -1104,10 +1105,10 @@ residual_evaluator_func<Real> get_stokeslet_3d_kernel(dmk_eval_type eval_level, 
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(stokeslet_3d_11, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge, n_trg,
-                                                                       r_trg, pot, UF);
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
         };
     }
     if (n_digits <= 12) {
@@ -1117,13 +1118,18 @@ residual_evaluator_func<Real> get_stokeslet_3d_kernel(dmk_eval_type eval_level, 
         std::array<Real, NC_TOTAL> coeffs;
         std::copy_n(stokeslet_3d_12, NC_TOTAL, coeffs.data());
         return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   int n_trg, const Real *r_trg, Real *pot) {
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
             stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge, n_trg,
-                                                                       r_trg, pot, UF);
+                                                                       NC1, coeffs.data(), n_src, r_src, charge,
+                                                                       normals, n_trg, r_trg, pot, UF);
         };
     }
     throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
+}
+
+template <class Real, int MaxVecLen>
+residual_evaluator_func<Real> get_stresslet_3d_kernel(dmk_eval_type eval_level, int n_digits) {
+    throw std::runtime_error("Stresslet unimplemented");
 }
 
 // Explicit instantiations
@@ -1144,6 +1150,10 @@ get_sqrt_laplace_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type,
 template residual_evaluator_func<float> get_stokeslet_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type,
                                                                                                      int);
 template residual_evaluator_func<double> get_stokeslet_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type,
+                                                                                                        int);
+template residual_evaluator_func<float> get_stresslet_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type,
+                                                                                                     int);
+template residual_evaluator_func<double> get_stresslet_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type,
                                                                                                         int);
 
 } // namespace dmk

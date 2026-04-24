@@ -772,43 +772,43 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
             const int kernel_input_dim = this->kernel_input_dim;
             const int kernel_output_dim = kernel_output_dim_trg;
             // FIXME: assumes the same src/trg output configuration
-            evaluator_by_level_src.push_back(
-                [coeffs, lambda, kernel_input_dim](Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
-                                                   const Real *r_src_ptr, const Real *charge_ptr, int n_trg,
-                                                   const Real *r_trg_ptr, Real *pot) {
-                    constexpr Real threshq = 1e-30;
-                    ndview<Real, 2> u({1, n_trg}, pot);
-                    ndview<const Real, 2> charges({kernel_input_dim, n_src}, charge_ptr);
-                    ndview<const Real, 2> r_src({DIM, n_src}, r_src_ptr);
-                    ndview<const Real, 2> r_trg({DIM, n_trg}, r_trg_ptr);
-                    for (int i_trg = 0; i_trg < n_trg; i_trg++) {
-                        for (int i_src = 0; i_src < n_src; i_src++) {
-                            const Real dx = r_trg(0, i_trg) - r_src(0, i_src);
-                            const Real dy = r_trg(1, i_trg) - r_src(1, i_src);
-                            Real dd = dx * dx + dy * dy;
-                            if constexpr (DIM == 3) {
-                                Real dz = r_trg(2, i_trg) - r_src(2, i_src);
-                                dd += dz * dz;
-                            }
-
-                            if (dd < threshq || dd > d2max)
-                                continue;
-
-                            const Real r = sqrt(dd);
-                            const Real xval = r * rsc + cen;
-                            const Real fval = chebyshev::evaluate(xval, coeffs.size() + 1, coeffs.data());
-                            Real dkval;
-                            if constexpr (DIM == 2)
-                                dkval = util::cyl_bessel_k(0, lambda * r);
-                            if constexpr (DIM == 3)
-                                dkval = std::exp(-lambda * r) / r;
-
-                            const Real factor = dkval + fval;
-                            for (int i = 0; i < kernel_input_dim; ++i)
-                                u(i, i_trg) += charges(i, i_src) * factor;
+            evaluator_by_level_src.push_back([coeffs, lambda, kernel_input_dim](
+                                                 Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
+                                                 const Real *r_src_ptr, const Real *charge_ptr, const Real *normal_ptr,
+                                                 int n_trg, const Real *r_trg_ptr, Real *pot) {
+                constexpr Real threshq = 1e-30;
+                ndview<Real, 2> u({1, n_trg}, pot);
+                ndview<const Real, 2> charges({kernel_input_dim, n_src}, charge_ptr);
+                ndview<const Real, 2> r_src({DIM, n_src}, r_src_ptr);
+                ndview<const Real, 2> r_trg({DIM, n_trg}, r_trg_ptr);
+                for (int i_trg = 0; i_trg < n_trg; i_trg++) {
+                    for (int i_src = 0; i_src < n_src; i_src++) {
+                        const Real dx = r_trg(0, i_trg) - r_src(0, i_src);
+                        const Real dy = r_trg(1, i_trg) - r_src(1, i_src);
+                        Real dd = dx * dx + dy * dy;
+                        if constexpr (DIM == 3) {
+                            Real dz = r_trg(2, i_trg) - r_src(2, i_src);
+                            dd += dz * dz;
                         }
+
+                        if (dd < threshq || dd > d2max)
+                            continue;
+
+                        const Real r = sqrt(dd);
+                        const Real xval = r * rsc + cen;
+                        const Real fval = chebyshev::evaluate(xval, coeffs.size() + 1, coeffs.data());
+                        Real dkval;
+                        if constexpr (DIM == 2)
+                            dkval = util::cyl_bessel_k(0, lambda * r);
+                        if constexpr (DIM == 3)
+                            dkval = std::exp(-lambda * r) / r;
+
+                        const Real factor = dkval + fval;
+                        for (int i = 0; i < kernel_input_dim; ++i)
+                            u(i, i_trg) += charges(i, i_src) * factor;
                     }
-                });
+                }
+            });
         }
         // FIXME: assumes the same src/trg output configuration
         evaluator_by_level_trg = evaluator_by_level_src;
@@ -1274,6 +1274,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                 int n_src = src_counts_with_halo[src_box];
                 const Real *r_src_ptr = r_src_with_halo_ptr(src_box);
                 const Real *charge_ptr = charge_with_halo_ptr(src_box);
+                const Real *normal_ptr = nullptr; // FIXME: BUILD HACK
 
                 // For PBC: apply the periodic image shift to source positions. The shift
                 // for each list-1 pair was computed in build_direct_interaction_lists()
@@ -1329,7 +1330,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                     if (n_eval_trg > 0) {
                         if (evaluator_by_level_src[src_level])
                             evaluator_by_level_src[src_level](rsc, cen, d2max, 1e-30, n_src, r_src_ptr, charge_ptr,
-                                                              n_eval_trg, eval_r_trg, eval_pot);
+                                                              normal_ptr, n_eval_trg, eval_r_trg, eval_pot);
                         if (trg_larger)
                             scatter_add_potential(pot_buf.data(), pot_src_ptr(trg_box), index_map.data(), n_eval_trg,
                                                   kernel_output_dim_src);
@@ -1353,7 +1354,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
 
                     if (n_eval_trg > 0) {
                         evaluator_by_level_trg[src_level](rsc, cen, d2max, 1e-30, n_src, r_src_ptr, charge_ptr,
-                                                          n_eval_trg, eval_r_trg, eval_pot);
+                                                          normal_ptr, n_eval_trg, eval_r_trg, eval_pot);
 
                         if (trg_larger)
                             scatter_add_potential(pot_buf.data(), pot_trg_ptr(trg_box), index_map.data(), n_eval_trg,

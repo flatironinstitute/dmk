@@ -578,6 +578,7 @@ void DMKPtTree<T, DIM>::eval_pq() {
                     int n_src = src_counts_with_halo[src_box];
                     const T *r_src_ptr = r_src_with_halo_ptr(src_box);
                     const T *charge_ptr = charge_with_halo_ptr(src_box);
+                    const T *normal_ptr = nullptr; // FIXME: BUILD HACK
 
                     if (src_larger) {
                         ContactGeometry<T, DIM> geom(corner_a.data(), corner_b.data(), size_a, size_b, d2max);
@@ -605,7 +606,7 @@ void DMKPtTree<T, DIM>::eval_pq() {
                         if (n_eval > 0) {
                             if (evaluator_by_level_src[src_level])
                                 evaluator_by_level_src[src_level](rsc, cen, d2max, 1e-30, n_src, r_src_ptr, charge_ptr,
-                                                                  n_eval, eval_r, eval_pot);
+                                                                  normal_ptr, n_eval, eval_r, eval_pot);
                             if (trg_larger)
                                 scatter_add_potential(pot_buf.data(), &pot_src_direct[pot_src_offsets[trg_box]],
                                                       index_map.data(), n_eval, kernel_output_dim_src);
@@ -627,7 +628,7 @@ void DMKPtTree<T, DIM>::eval_pq() {
                         }
                         if (n_eval > 0) {
                             evaluator_by_level_trg[src_level](rsc, cen, d2max, 1e-30, n_src, r_src_ptr, charge_ptr,
-                                                              n_eval, eval_r, eval_pot);
+                                                              normal_ptr, n_eval, eval_r, eval_pot);
                             if (trg_larger)
                                 scatter_add_potential(pot_buf.data(), &pot_trg_direct[pot_trg_offsets[trg_box]],
                                                       index_map.data(), n_eval, kernel_output_dim_trg);

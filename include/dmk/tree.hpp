@@ -447,6 +447,8 @@ Real get_self_interaction_constant(FourierData<Real> &fourier_data, dmk_ikernel 
                 throw std::runtime_error("2D self interaction not implemented");
             if constexpr (DIM == 3)
                 return psi0 / (c[0] * bsize);
+        } else if (kernel == DMK_STRESSLET) {
+            throw std::runtime_error("Stresslet self interaction not implemented");
         } else
             throw std::runtime_error("Unsupported kernel");
     }();

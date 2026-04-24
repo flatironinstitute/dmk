@@ -358,8 +358,6 @@ residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_ty
     std::lock_guard<std::mutex> lock_guard(lock);
     constexpr int VECWIDTH = sctl::DefaultVecLen<Real>();
     constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
-    using ft =
-        void (*)(Real, Real, Real, Real, const Real *, int, const Real *, const Real *, int, const Real *, Real *);
 
     auto build_func_name = [&](const std::string &base_name, int n_polynomials = 1) {
         std::string args = std::format("void {}<{}, {}, -1, -1", base_name, T_str, VECWIDTH);
@@ -375,6 +373,8 @@ residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_ty
             return build_func_name(std::format("sqrt_laplace_{}d_poly_all_pairs", n_dim), 1);
         case dmk_ikernel::DMK_STOKESLET:
             return build_func_name(std::format("stokeslet_{}d_poly_all_pairs", n_dim), 2);
+        case dmk_ikernel::DMK_STRESSLET:
+            return build_func_name(std::format("stresslet_{}d_poly_all_pairs", n_dim), 2);
         default:
             throw std::runtime_error("Unsupported kernel for direct evaluator");
         }
@@ -386,8 +386,10 @@ residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_ty
     for (int i = 0; i < coeffs.size(); ++i)
         args_to_consume["n_coeffs_rt_" + std::to_string(i)] = coeffs[i].size();
 
-    ft jit_func = RS->compile<void (*)(Real, Real, Real, Real, const Real *, int, const Real *, const Real *, int,
-                                       const Real *, Real *)>(func_name, args_to_consume);
+    using ft = void (*)(Real, Real, Real, Real, const Real *, int, const Real *, const Real *, const Real *, int,
+                        const Real *, Real *);
+    ft jit_func = RS->compile<void (*)(Real, Real, Real, Real, const Real *, int, const Real *, const Real *,
+                                       const Real *, int, const Real *, Real *)>(func_name, args_to_consume);
     if (!jit_func)
         throw std::runtime_error("Error compiling direct kernel");
 
@@ -396,8 +398,8 @@ residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_ty
         coeffs_cat.insert(coeffs_cat.end(), cvec.begin(), cvec.end());
 
     return [jit_func, coeffs_cat](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
-                                  const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
-        jit_func(rsc, cen, d2max, thresh2, coeffs_cat.data(), n_src, r_src, charge, n_trg, r_trg, pot);
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+        jit_func(rsc, cen, d2max, thresh2, coeffs_cat.data(), n_src, r_src, charge, normals, n_trg, r_trg, pot);
     };
 }
 
@@ -428,6 +430,9 @@ residual_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_eval_ty
     case dmk_ikernel::DMK_STOKESLET:
         if (n_dim == 3)
             return get_stokeslet_3d_kernel<Real, MaxVecLen>(eval_level, n_digits);
+    case dmk_ikernel::DMK_STRESSLET:
+        if (n_dim == 3)
+            return get_stresslet_3d_kernel<Real, MaxVecLen>(eval_level, n_digits);
     default:
         throw std::runtime_error("Unsupported kernel for local evaluator");
     }

@@ -204,14 +204,14 @@ void run_comparison(const Opts &opts) {
         };
         auto jit_res = res;
         jit_res = 0;
-        jit_evaluator(p.rsc, p.cen, p.d2max, p.thresh2, opts.n_src, &r_src_base[0], &charges[0], opts.n_trg, &r_trg[0],
-                      &jit_res[0]);
+        jit_evaluator(p.rsc, p.cen, p.d2max, p.thresh2, opts.n_src, &r_src_base[0], &charges[0], nullptr, opts.n_trg,
+                      &r_trg[0], &jit_res[0]);
         print_16("jit          ", jit_res);
 
         auto aot_res = res;
         aot_res = 0;
-        aot_evaluator(p.rsc, p.cen, p.d2max, p.thresh2, opts.n_src, &r_src_base[0], &charges[0], opts.n_trg, &r_trg[0],
-                      &aot_res[0]);
+        aot_evaluator(p.rsc, p.cen, p.d2max, p.thresh2, opts.n_src, &r_src_base[0], &charges[0], nullptr, opts.n_trg,
+                      &r_trg[0], &aot_res[0]);
         print_16("aot          ", aot_res);
 
         res = 0;
@@ -231,14 +231,14 @@ void run_comparison(const Opts &opts) {
     });
     ankerl::nanobench::Bench().batch(n_pairs).unit("pair").run("JIT", [&] {
         for (int i = 0; i < n_images; ++i)
-            jit_evaluator(p.rsc, p.cen, p.d2max, p.thresh2, opts.n_src, &r_src_all[i][0], &charges[0], opts.n_trg,
-                          &r_trg[0], &res[0]);
+            jit_evaluator(p.rsc, p.cen, p.d2max, p.thresh2, opts.n_src, &r_src_all[i][0], &charges[0], nullptr,
+                          opts.n_trg, &r_trg[0], &res[0]);
         ankerl::nanobench::doNotOptimizeAway(res);
     });
     ankerl::nanobench::Bench().batch(n_pairs).unit("pair").run("AoT", [&] {
         for (int i = 0; i < n_images; ++i)
-            aot_evaluator(p.rsc, p.cen, p.d2max, p.thresh2, opts.n_src, &r_src_all[i][0], &charges[0], opts.n_trg,
-                          &r_trg[0], &res[0]);
+            aot_evaluator(p.rsc, p.cen, p.d2max, p.thresh2, opts.n_src, &r_src_all[i][0], &charges[0], nullptr,
+                          opts.n_trg, &r_trg[0], &res[0]);
         ankerl::nanobench::doNotOptimizeAway(res);
     });
 }

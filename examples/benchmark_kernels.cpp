@@ -196,7 +196,7 @@ void run_direct(const Config &cfg, int n_dim, int charge_dim, const std::vector<
     std::vector<double> r_trg_d(r_trg.begin(), r_trg.end());
 
     // Evaluate: each rank handles its own local targets
-    const auto eval_level = cfg.kernel == DMK_STOKESLET ? DMK_VELOCITY : DMK_POTENTIAL;
+    const auto eval_level = (cfg.kernel == DMK_STOKESLET || cfg.kernel == DMK_STRESSLET) ? DMK_VELOCITY : DMK_POTENTIAL;
     const int kdim = dmk::get_kernel_output_dim(n_dim, cfg.kernel, eval_level);
     std::vector<double> pot_d(n_trg_local * kdim, 0.0);
 
@@ -237,7 +237,9 @@ void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ost
         case DMK_YUKAWA:
             return "yukawa";
         case DMK_STOKESLET:
-            return "stokes";
+            return "stokeslet";
+        case DMK_STRESSLET:
+            return "stresslet";
         default:
             return "unknown";
         }
@@ -278,8 +280,10 @@ dmk_ikernel parse_kernel(const char *s) {
         return DMK_SQRT_LAPLACE;
     if (k == "yukawa")
         return DMK_YUKAWA;
-    if (k == "stokes")
+    if (k == "stokeslet")
         return DMK_STOKESLET;
+    if (k == "stresslet")
+        return DMK_STRESSLET;
     throw std::runtime_error("Unknown kernel: " + k);
 }
 
@@ -306,7 +310,7 @@ void run_benchmark(const Config &cfg) {
     params.kernel = cfg.kernel;
     if (cfg.kernel == DMK_YUKAWA)
         params.fparam = cfg.fparam;
-    if (cfg.kernel == DMK_STOKESLET) {
+    if (cfg.kernel == DMK_STOKESLET || cfg.kernel == DMK_STRESSLET) {
         params.eval_src = DMK_VELOCITY;
         params.eval_trg = DMK_VELOCITY;
     }
@@ -450,7 +454,7 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -n n_per_leaf      DMK leaf size\n"
                       << "  -e eps             Tolerance\n"
                       << "  -t f|d             Precision\n"
-                      << "  -k kernel          laplace, sqrt_laplace, yukawa, stokes\n"
+                      << "  -k kernel          laplace, sqrt_laplace, yukawa, stokeslet, stresslet\n"
                       << "  -d dim             2 or 3\n"
                       << "  -f fparam          Yukawa parameter (default: 6.0)\n"
                       << "  -r n_runs          Benchmark iterations\n"
