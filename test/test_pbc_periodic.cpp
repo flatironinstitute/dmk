@@ -82,8 +82,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC direct verification", 1) {
             params.eps = pc.eps;
             params.n_dim = n_dim;
             params.n_per_leaf = 280;
-            params.pgh_src = DMK_POTENTIAL;
-            params.pgh_trg = DMK_POTENTIAL;
+            params.eval_src = DMK_POTENTIAL;
+            params.eval_trg = DMK_POTENTIAL;
             params.kernel = DMK_LAPLACE;
             params.use_periodic = true;
             params.log_level = 6;
@@ -258,8 +258,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC asymmetric-depth shift", 1) {
     params.eps = 1e-6;
     params.n_dim = n_dim;
     params.n_per_leaf = 40;
-    params.pgh_src = DMK_POTENTIAL;
-    params.pgh_trg = DMK_POTENTIAL;
+    params.eval_src = DMK_POTENTIAL;
+    params.eval_trg = DMK_POTENTIAL;
     params.kernel = DMK_LAPLACE;
     params.use_periodic = true;
     params.log_level = 6;
@@ -394,8 +394,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level public API", 1) {
     params.eps = 1e-6;
     params.n_dim = n_dim;
     params.n_per_leaf = 1000000;
-    params.pgh_src = DMK_POTENTIAL;
-    params.pgh_trg = DMK_POTENTIAL;
+    params.eval_src = DMK_POTENTIAL;
+    params.eval_trg = DMK_POTENTIAL;
     params.kernel = DMK_LAPLACE;
     params.use_periodic = true;
     params.log_level = 6;
@@ -430,8 +430,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level root pw_out must be ze
     params.eps = 1e-6;
     params.n_dim = n_dim;
     params.n_per_leaf = 1000000;
-    params.pgh_src = DMK_POTENTIAL;
-    params.pgh_trg = DMK_POTENTIAL;
+    params.eval_src = DMK_POTENTIAL;
+    params.eval_trg = DMK_POTENTIAL;
     params.kernel = DMK_LAPLACE;
     params.use_periodic = true;
     params.log_level = 6;
@@ -626,7 +626,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
 
     for (const auto &pc : cases) {
         for (int with_grad = 0; with_grad <= 1; ++with_grad) {
-            const auto pgh = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
+            const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
             const int odim = with_grad ? 1 + n_dim : 1;
             const std::string label = "n_digits=" + std::to_string(pc.n_digits) + (with_grad ? " pot+grad" : " pot");
 
@@ -635,8 +635,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
                 params.eps = pc.eps;
                 params.n_dim = n_dim;
                 params.n_per_leaf = 50;
-                params.pgh_src = pgh;
-                params.pgh_trg = pgh;
+                params.eval_src = eval;
+                params.eval_trg = eval;
                 params.kernel = DMK_LAPLACE;
                 params.use_periodic = true;
                 params.log_level = 6;

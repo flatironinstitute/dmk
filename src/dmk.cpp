@@ -95,8 +95,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d float", 1) {
     params.eps = 1e-6;
     params.n_dim = n_dim;
     params.n_per_leaf = 80;
-    params.pgh_src = DMK_POTENTIAL;
-    params.pgh_trg = DMK_POTENTIAL;
+    params.eval_src = DMK_POTENTIAL;
+    params.eval_trg = DMK_POTENTIAL;
     params.kernel = DMK_YUKAWA;
     params.fparam = 6.0;
     params.log_level = SPDLOG_LEVEL_OFF;
@@ -136,8 +136,8 @@ TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
 
     pdmk_params params;
     params.eps = 1e-6;
-    params.pgh_src = DMK_POTENTIAL;
-    params.pgh_trg = DMK_POTENTIAL;
+    params.eval_src = DMK_POTENTIAL;
+    params.eval_trg = DMK_POTENTIAL;
     params.fparam = 6.0;
     params.log_level = SPDLOG_LEVEL_OFF;
     int ndiv[3] = {80, 280, 280};
@@ -275,8 +275,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d stokeslet velocity", 1) {
     params.eps = 1e-3;
     params.n_dim = n_dim;
     params.n_per_leaf = 280;
-    params.pgh_src = DMK_VELOCITY;
-    params.pgh_trg = DMK_VELOCITY;
+    params.eval_src = DMK_VELOCITY;
+    params.eval_trg = DMK_VELOCITY;
     params.kernel = DMK_STOKESLET;
     params.log_level = SPDLOG_LEVEL_OFF;
     params.debug_flags = 0;
@@ -366,8 +366,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace gradient", 1) {
     params.eps = 1e-7;
     params.n_dim = n_dim;
     params.n_per_leaf = 280;
-    params.pgh_src = DMK_POTENTIAL_GRAD;
-    params.pgh_trg = DMK_POTENTIAL_GRAD;
+    params.eval_src = DMK_POTENTIAL_GRAD;
+    params.eval_trg = DMK_POTENTIAL_GRAD;
     params.kernel = DMK_LAPLACE;
     params.log_level = SPDLOG_LEVEL_OFF;
 

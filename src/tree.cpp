@@ -111,8 +111,8 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
                                 const sctl::Vector<Real> &r_trg, const sctl::Vector<Real> &charge)
     : sctl::PtTree<Real, DIM>(comm), comm_(comm), params(params_),
       kernel_input_dim(get_kernel_input_dim(params.n_dim, params.kernel)),
-      kernel_output_dim_src(get_kernel_output_dim(params.n_dim, params.kernel, params.pgh_src)),
-      kernel_output_dim_trg(get_kernel_output_dim(params.n_dim, params.kernel, params.pgh_trg)),
+      kernel_output_dim_src(get_kernel_output_dim(params.n_dim, params.kernel, params.eval_src)),
+      kernel_output_dim_trg(get_kernel_output_dim(params.n_dim, params.kernel, params.eval_trg)),
       kernel_output_dim_max(std::max(kernel_output_dim_src, kernel_output_dim_trg)),
       n_tables(get_table_count<DIM>(params.kernel)), n_digits(std::round(log10(1.0 / params_.eps) - 0.1)),
       expansion_constants(params), logger(dmk::get_logger(comm, params.log_level)),
@@ -747,14 +747,14 @@ void DMKPtTree<Real, DIM>::build_direct_work_lists() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_evaluators() {
     try {
-        auto src_eval = make_evaluator_aot<Real>(params.kernel, params.pgh_src, DIM, n_digits, 3);
-        auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.pgh_trg, DIM, n_digits, 3);
+        auto src_eval = make_evaluator_aot<Real>(params.kernel, params.eval_src, DIM, n_digits, 3);
+        auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.eval_trg, DIM, n_digits, 3);
 #ifdef DMK_USE_JIT
         if (!util::env_is_set("DMK_DEBUG_FORCE_AOT")) {
             src_eval =
-                make_evaluator_jit<Real>(params.kernel, params.pgh_src, DIM, n_digits, expansion_constants.beta, 3);
+                make_evaluator_jit<Real>(params.kernel, params.eval_src, DIM, n_digits, expansion_constants.beta, 3);
             trg_eval =
-                make_evaluator_jit<Real>(params.kernel, params.pgh_trg, DIM, n_digits, expansion_constants.beta, 3);
+                make_evaluator_jit<Real>(params.kernel, params.eval_trg, DIM, n_digits, expansion_constants.beta, 3);
         }
 #endif
         // FIXME: assumes the same src/trg output configuration
@@ -1090,8 +1090,8 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
     const auto &node_attr = this->GetNodeAttr();
     const Real sc = 2.0 / boxsize;
     const int nd = n_tables;
-    const bool need_grad_src = params.kernel == DMK_LAPLACE && params.pgh_src >= DMK_POTENTIAL_GRAD;
-    const bool need_grad_trg = params.kernel == DMK_LAPLACE && params.pgh_trg >= DMK_POTENTIAL_GRAD;
+    const bool need_grad_src = params.kernel == DMK_LAPLACE && params.eval_src >= DMK_POTENTIAL_GRAD;
+    const bool need_grad_trg = params.kernel == DMK_LAPLACE && params.eval_trg >= DMK_POTENTIAL_GRAD;
 
     unsigned long n_shifts{0};
 #pragma omp parallel

@@ -505,18 +505,18 @@ void DMKPtTree<T, DIM>::eval_pq() {
                 // Evaluate at targets
                 if (iftensprodeval[box]) {
                     if (src_counts_owned[box]) {
-                        if (params.pgh_src == DMK_POTENTIAL)
+                        if (params.eval_src == DMK_POTENTIAL)
                             proxy::eval_targets<T, DIM, 1>(proxy_view_downward(box), r_src_owned_view(box),
                                                            center_view(box), sc, pot_src_view(box), workspace);
-                        else if (params.pgh_src == DMK_POTENTIAL_GRAD)
+                        else if (params.eval_src == DMK_POTENTIAL_GRAD)
                             proxy::eval_targets<T, DIM, 2>(proxy_view_downward(box), r_src_owned_view(box),
                                                            center_view(box), sc, pot_src_view(box), workspace);
                     }
                     if (trg_counts_owned[box]) {
-                        if (params.pgh_trg == DMK_POTENTIAL)
+                        if (params.eval_trg == DMK_POTENTIAL)
                             proxy::eval_targets<T, DIM, 1>(proxy_view_downward(box), r_trg_owned_view(box),
                                                            center_view(box), sc, pot_trg_view(box), workspace);
-                        else if (params.pgh_trg == DMK_POTENTIAL_GRAD)
+                        else if (params.eval_trg == DMK_POTENTIAL_GRAD)
                             proxy::eval_targets<T, DIM, 2>(proxy_view_downward(box), r_trg_owned_view(box),
                                                            center_view(box), sc, pot_trg_view(box), workspace);
                     }

@@ -301,18 +301,18 @@ void run_benchmark(const Config &cfg) {
     params.n_dim = n_dim;
     params.n_per_leaf = cfg.n_per_leaf;
     params.log_level = cfg.log_level;
-    params.pgh_src = DMK_POTENTIAL;
-    params.pgh_trg = DMK_POTENTIAL;
+    params.eval_src = DMK_POTENTIAL;
+    params.eval_trg = DMK_POTENTIAL;
     params.kernel = cfg.kernel;
     if (cfg.kernel == DMK_YUKAWA)
         params.fparam = cfg.fparam;
     if (cfg.kernel == DMK_STOKESLET) {
-        params.pgh_src = DMK_VELOCITY;
-        params.pgh_trg = DMK_VELOCITY;
+        params.eval_src = DMK_VELOCITY;
+        params.eval_trg = DMK_VELOCITY;
     }
 
     const int charge_dim = dmk::get_kernel_input_dim(n_dim, cfg.kernel);
-    const int pot_dim = dmk::get_kernel_output_dim(n_dim, cfg.kernel, params.pgh_src);
+    const int pot_dim = dmk::get_kernel_output_dim(n_dim, cfg.kernel, params.eval_src);
 
     std::vector<Real> r_src, charges;
     generate_and_scatter<Real>(n_dim, charge_dim, n_src, cfg.uniform, true, r_src, charges, 0, rank, np);

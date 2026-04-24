@@ -299,8 +299,8 @@ void run_comparison(const Config &cfg) {
     params.n_dim = n_dim;
     params.n_per_leaf = cfg.n_per_leaf_dmk;
     params.log_level = cfg.log_level;
-    params.pgh_src = DMK_POTENTIAL;
-    params.pgh_trg = DMK_POTENTIAL;
+    params.eval_src = DMK_POTENTIAL;
+    params.eval_trg = DMK_POTENTIAL;
     params.kernel = DMK_LAPLACE;
 
     pdmk_tree dmk_tree;
