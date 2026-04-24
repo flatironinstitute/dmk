@@ -13,6 +13,9 @@ double calc_bandlimiting(const pdmk_params &p) {
     if (p.debug_flags & DMK_DEBUG_OVERRIDE_BETA)
         return p.debug_params[DMK_DEBUG_BETA_SLOT];
     double d = -std::log10(p.eps);
+    if (p.kernel == DMK_STOKESLET) {
+        return M_PI / 3.0 * std::ceil(3.0 / M_PI * (0.69 + d) / 0.39);
+    }
     const double beta = 2.664 * d + 0.306;
     return beta;
 }
@@ -151,13 +154,12 @@ void mk_tensor_product_fourier_transform(int dim, int npw, int nfourier, Real *f
 
 template <typename Real>
 void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
-                    sctl::Vector<Real> &r_src, sctl::Vector<Real> &r_trg, sctl::Vector<Real> &rnormal,
-                    sctl::Vector<Real> &charges, sctl::Vector<Real> &dipstr, long seed) {
-    r_src.ReInit(n_dim * n_src);
-    r_trg.ReInit(n_dim * n_trg);
-    charges.ReInit(nd * n_src);
-    rnormal.ReInit(n_dim * n_src);
-    dipstr.ReInit(nd * n_src);
+                    std::vector<Real> &r_src, std::vector<Real> &r_trg, std::vector<Real> &rnormal,
+                    std::vector<Real> &charges, long seed) {
+    r_src.resize(n_dim * n_src);
+    r_trg.resize(n_dim * n_trg);
+    charges.resize(nd * n_src);
+    rnormal.resize(n_dim * n_src);
 
     double rin = 0.45;
     double wrig = 0.12;
@@ -196,7 +198,6 @@ void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool 
 
         for (int j = 0; j < nd; ++j) {
             charges[i * nd + j] = rng(eng) - 0.5;
-            dipstr[i * nd + j] = rng(eng);
         }
     }
 
@@ -236,16 +237,6 @@ void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool 
         for (int i = 2 * n_dim; i < 3 * n_dim; ++i)
             r_src[i] = 0.05;
 }
-
-template void init_test_data<float>(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
-                                    sctl::Vector<float> &r_src, sctl::Vector<float> &r_trg,
-                                    sctl::Vector<float> &rnormal, sctl::Vector<float> &charges,
-                                    sctl::Vector<float> &dipstr, long seed);
-
-template void init_test_data<double>(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
-                                     sctl::Vector<double> &r_src, sctl::Vector<double> &r_trg,
-                                     sctl::Vector<double> &rnormal, sctl::Vector<double> &charges,
-                                     sctl::Vector<double> &dipstr, long seed);
 
 template void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<float, 1> &fhat,
                                                   ndview<float, 1> pswfft);

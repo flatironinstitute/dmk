@@ -49,7 +49,7 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
     constexpr double thresh2 = 1e-30;
 
     sctl::Vector<Real> r_src, r_trg, rnormal, charges, dipstr;
-    dmk::util::init_test_data(n_dim, nd, n_src, n_trg, false, false, r_src, r_trg, rnormal, charges, dipstr, 0);
+    dmk::util::init_test_data(n_dim, nd, n_src, n_trg, false, false, r_src, r_trg, rnormal, charges, 0);
 
     const int output_dim = with_grad ? 1 + n_dim : 1;
     sctl::Vector<Real> pot_src(n_src * output_dim), pot_trg(n_trg * output_dim);
@@ -67,8 +67,7 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
 
     // Tree build
     double t0 = MY_OMP_GET_WTIME();
-    pdmk_tree tree =
-        pdmk_tree_create(MYCOMM, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0], n_trg, &r_trg[0]);
+    pdmk_tree tree = pdmk_tree_create(MYCOMM, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
     result.tree_build_time = MY_OMP_GET_WTIME() - t0;
 
     // Eval
@@ -120,8 +119,7 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
         compute_direct(&r_trg[i * n_dim], n_dim, i, direct_trg);
 
     // Relative L2 errors over a strided subset of the interleaved arrays
-    auto rel_l2 = [](const auto &approx, const std::vector<double> &exact,
-                     int n, int stride, int offset) {
+    auto rel_l2 = [](const auto &approx, const std::vector<double> &exact, int n, int stride, int offset) {
         double err2 = 0.0, ref2 = 0.0;
         for (int i = 0; i < n; ++i) {
             double diff = (double)approx[i * stride + offset] - exact[i * stride + offset];
@@ -131,8 +129,7 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
         return ref2 > 0 ? std::sqrt(err2 / ref2) : 0.0;
     };
 
-    auto max_rel = [](const auto &approx, const std::vector<double> &exact,
-                      int n, int stride, int offset) {
+    auto max_rel = [](const auto &approx, const std::vector<double> &exact, int n, int stride, int offset) {
         double maxe = 0.0;
         for (int i = 0; i < n; ++i) {
             double ref = std::abs(exact[i * stride + offset]);
@@ -145,8 +142,7 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
     };
 
     // Gradient: L2 over all components together
-    auto rel_l2_grad = [](const auto &approx, const std::vector<double> &exact,
-                          int n, int n_dim, int stride) {
+    auto rel_l2_grad = [](const auto &approx, const std::vector<double> &exact, int n, int n_dim, int stride) {
         double err2 = 0.0, ref2 = 0.0;
         for (int i = 0; i < n; ++i) {
             for (int d = 0; d < n_dim; ++d) {
@@ -158,8 +154,7 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
         return ref2 > 0 ? std::sqrt(err2 / ref2) : 0.0;
     };
 
-    auto max_rel_grad = [](const auto &approx, const std::vector<double> &exact,
-                           int n, int n_dim, int stride) {
+    auto max_rel_grad = [](const auto &approx, const std::vector<double> &exact, int n, int n_dim, int stride) {
         double maxe = 0.0;
         for (int i = 0; i < n; ++i) {
             for (int d = 0; d < n_dim; ++d) {

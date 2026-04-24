@@ -13,12 +13,12 @@ namespace dmk {
 template <typename T>
 struct FourierData {
     FourierData() = default;
-    FourierData(dmk_ikernel kernel_, int n_dim_, T eps, int n_pw_max, T fparam_, double beta,
+    FourierData(dmk_ikernel kernel_, int n_dim_, T eps, int n_pw_win, int n_pw_diff, T fparam_, double beta,
                 const sctl::Vector<T> &boxsize_);
 
     T yukawa_windowed_kernel_value_at_zero(int i_level);
     void update_local_coeffs(T eps);
-    void calc_planewave_coeff_matrices(int i_level, int n_order, sctl::Vector<std::complex<T>> &prox2pw,
+    void calc_planewave_coeff_matrices(int i_level, int n_order, int n_pw, sctl::Vector<std::complex<T>> &prox2pw,
                                        sctl::Vector<std::complex<T>> &pw2poly) const;
 
     ndview<T, 1> cheb_coeffs(int i_level) {
@@ -28,7 +28,6 @@ struct FourierData {
             return ndview<T, 1>({0}, nullptr);
     };
 
-    int n_pw() const { return n_pw_; };
     T beta() const { return beta_; }
 
     struct kernel_params {
@@ -46,7 +45,6 @@ struct FourierData {
     dmk_ikernel kernel_;
     int n_dim_{0};
     int n_levels_{0};
-    int n_pw_{0};
     T fparam_{0};
     T beta_{0};
 

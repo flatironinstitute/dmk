@@ -18,6 +18,7 @@
 //   --digits val      Digits for beta sweep (default: 6)
 
 #include <dmk.h>
+#include <dmk/direct.hpp>
 #include <dmk/omp_wrapper.hpp>
 #include <dmk/util.hpp>
 
@@ -84,79 +85,6 @@ void generate_points(int n_dim, int n_src, bool uniform, std::vector<double> &r_
     }
 }
 
-template <typename PotFunc>
-void compute_direct(int n_dim, int n_src, int n_test, const std::vector<double> &r_src,
-                    const std::vector<double> &charges, std::vector<double> &pot_direct, PotFunc &&pot_func) {
-    pot_direct.resize(n_test, 0.0);
-
-#pragma omp parallel for schedule(static)
-    for (int i = 0; i < n_test; ++i) {
-        double val = 0.0;
-        for (int j = 0; j < n_src; ++j) {
-            val += charges[j] * pot_func(&r_src[i * n_dim], &r_src[j * n_dim]);
-        }
-        pot_direct[i] = val;
-    }
-}
-
-void compute_direct_dispatch(int n_dim, int n_src, int n_test, const std::vector<double> &r_src,
-                             const std::vector<double> &charges, std::vector<double> &pot_direct, dmk_ikernel kernel) {
-    const double lambda = 6.0;
-
-    auto run = [&](auto &&func) { compute_direct(n_dim, n_src, n_test, r_src, charges, pot_direct, func); };
-
-    switch (kernel) {
-    case DMK_LAPLACE:
-        if (n_dim == 2)
-            return run([](const double *a, const double *b) {
-                double dr2 = (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]);
-                return dr2 ? 0.5 * std::log(dr2) : 0.0;
-            });
-        if (n_dim == 3)
-            return run([](const double *a, const double *b) {
-                double dr2 =
-                    (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]);
-                return dr2 ? 1.0 / std::sqrt(dr2) : 0.0;
-            });
-        break;
-    case DMK_SQRT_LAPLACE:
-        if (n_dim == 2)
-            return run([](const double *a, const double *b) {
-                double dr2 = (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]);
-                return dr2 ? 1.0 / std::sqrt(dr2) : 0.0;
-            });
-        if (n_dim == 3)
-            return run([](const double *a, const double *b) {
-                double dr2 =
-                    (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]);
-                return dr2 ? 1.0 / dr2 : 0.0;
-            });
-        break;
-    case DMK_YUKAWA:
-        if (n_dim == 2)
-            return run([lambda](const double *a, const double *b) {
-                double dr2 = (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]);
-                if (!dr2)
-                    return 0.0;
-                double dr = std::sqrt(dr2);
-                return dmk::util::cyl_bessel_k(0, lambda * dr);
-            });
-        if (n_dim == 3)
-            return run([lambda](const double *a, const double *b) {
-                double dr2 =
-                    (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]);
-                if (!dr2)
-                    return 0.0;
-                double dr = std::sqrt(dr2);
-                return std::exp(-lambda * dr) / dr;
-            });
-        break;
-    default:
-        break;
-    }
-    throw std::runtime_error("Unknown kernel/dim");
-}
-
 struct ErrorMetrics {
     double l2_rel;
     double max_rel;
@@ -193,9 +121,9 @@ ErrorMetrics run_one(int n_dim, dmk_ikernel kernel, int n_digits, const Config &
 
     pdmk_tree tree;
     if constexpr (std::is_same_v<Real, float>)
-        tree = pdmk_tree_createf(MYCOMM, params, n_src, r_src.data(), charges.data(), nullptr, nullptr, 0, nullptr);
+        tree = pdmk_tree_createf(MYCOMM, params, n_src, r_src.data(), charges.data(), nullptr, 0, nullptr);
     else
-        tree = pdmk_tree_create(MYCOMM, params, n_src, r_src.data(), charges.data(), nullptr, nullptr, 0, nullptr);
+        tree = pdmk_tree_create(MYCOMM, params, n_src, r_src.data(), charges.data(), nullptr, 0, nullptr);
 
     std::vector<Real> pot_dmk(n_src);
 
@@ -268,8 +196,10 @@ void run_beta_sweep(const Config &cfg) {
             std::vector<double> r_src, charges;
             generate_points(n_dim, cfg.n_src, cfg.uniform, r_src, charges);
             int n_test = std::min(cfg.n_direct, cfg.n_src);
-            std::vector<double> pot_direct;
-            compute_direct_dispatch(n_dim, cfg.n_src, n_test, r_src, charges, pot_direct, kernel);
+            std::vector<double> pot_direct, r_src_trunc;
+            r_src_trunc.assign(r_src.begin(), r_src.begin() + n_test * n_dim);
+
+            dmk::util::compute_direct(n_dim, r_src, charges, r_src_trunc, pot_direct, kernel, DMK_POTENTIAL);
             for (double beta = cfg.beta_min; beta <= cfg.beta_max + 1e-9; beta += cfg.beta_step) {
                 try {
                     auto err = run_one<Real>(n_dim, kernel, 12, cfg, r_src, charges, pot_direct, beta);
@@ -314,8 +244,9 @@ void run_all(const Config &cfg) {
             generate_points(n_dim, cfg.n_src, cfg.uniform, r_src, charges);
 
             int n_test = std::min(cfg.n_direct, cfg.n_src);
-            std::vector<double> pot_direct;
-            compute_direct_dispatch(n_dim, cfg.n_src, n_test, r_src, charges, pot_direct, kernel);
+            std::vector<double> pot_direct, r_src_trunc;
+            r_src_trunc.assign(r_src.begin(), r_src.begin() + n_test * n_dim);
+            dmk::util::compute_direct(n_dim, r_src, charges, r_src_trunc, pot_direct, kernel, DMK_POTENTIAL);
 
             for (int digits = min_digits; digits <= max_digits; ++digits) {
                 try {

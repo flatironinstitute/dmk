@@ -158,7 +158,7 @@ target_link_libraries(DMKOBJS PUBLIC ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET}
 target_compile_options(DMKOBJS PUBLIC "${DMK_CXX_FLAGS}")
 
 add_library(dmk STATIC)
-target_link_libraries(${PROJECT_NAME} PRIVATE ${DMK_OPENMP_TARGET} DMKOBJS)
+target_link_libraries(${PROJECT_NAME} PUBLIC ${DMK_OPENMP_TARGET} DMKOBJS)
 target_include_directories(${PROJECT_NAME} PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_compile_options(${PROJECT_NAME} PUBLIC "${DMK_CXX_FLAGS}")
 

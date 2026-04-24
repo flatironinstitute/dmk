@@ -48,13 +48,13 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC direct verification", 1) {
 
     using dmk::util::calc_bandlimiting;
     const auto coeffs_3 = dmk::get_local_correction_coeffs<double>(
-        DMK_LAPLACE, 3, 3, calc_bandlimiting({.n_dim = 3, .eps = 1e-3, .kernel = DMK_LAPLACE, .debug_flags = 0}));
+        DMK_LAPLACE, 3, 3, calc_bandlimiting({.n_dim = 3, .eps = 1e-3, .kernel = DMK_LAPLACE, .debug_flags = 0}))[0];
     const auto coeffs_6 = dmk::get_local_correction_coeffs<double>(
-        DMK_LAPLACE, 3, 6, calc_bandlimiting({.n_dim = 3, .eps = 1e-6, .kernel = DMK_LAPLACE, .debug_flags = 0}));
+        DMK_LAPLACE, 3, 6, calc_bandlimiting({.n_dim = 3, .eps = 1e-6, .kernel = DMK_LAPLACE, .debug_flags = 0}))[0];
     const auto coeffs_9 = dmk::get_local_correction_coeffs<double>(
-        DMK_LAPLACE, 3, 9, calc_bandlimiting({.n_dim = 3, .eps = 1e-9, .kernel = DMK_LAPLACE, .debug_flags = 0}));
+        DMK_LAPLACE, 3, 9, calc_bandlimiting({.n_dim = 3, .eps = 1e-9, .kernel = DMK_LAPLACE, .debug_flags = 0}))[0];
     const auto coeffs_12 = dmk::get_local_correction_coeffs<double>(
-        DMK_LAPLACE, 3, 12, calc_bandlimiting({.n_dim = 3, .eps = 1e-12, .kernel = DMK_LAPLACE, .debug_flags = 0}));
+        DMK_LAPLACE, 3, 12, calc_bandlimiting({.n_dim = 3, .eps = 1e-12, .kernel = DMK_LAPLACE, .debug_flags = 0}))[0];
 
     struct PrecisionCase {
         int n_digits;
@@ -245,7 +245,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC asymmetric-depth shift", 1) {
 
     using dmk::util::calc_bandlimiting;
     const auto coeffs_6 = dmk::get_local_correction_coeffs<double>(
-        DMK_LAPLACE, 3, 6, calc_bandlimiting({.n_dim = 3, .eps = 1e-6, .kernel = DMK_LAPLACE, .debug_flags = 0}));
+        DMK_LAPLACE, 3, 6, calc_bandlimiting({.n_dim = 3, .eps = 1e-6, .kernel = DMK_LAPLACE, .debug_flags = 0}))[0];
 
     auto horner_eval = [](double x, const double *c, int n) {
         double val = c[n - 1];
@@ -307,8 +307,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC asymmetric-depth shift", 1) {
         const int level = node_mid[box].Depth();
         const double *rp = tree.r_trg_owned_ptr(box);
         for (int i = 0; i < n; ++i)
-            targets.push_back(
-                {{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, (int)tree.pot_trg_offsets[box] + i, level});
+            targets.push_back({{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, (int)tree.pot_trg_offsets[box] + i, level});
     }
 
     // Confirm the distribution actually produced multi-depth leaves (otherwise
@@ -384,12 +383,10 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level public API", 1) {
     sctl::Vector<double> r_trg({0.15, 0.15, 0.15, 0.35, 0.35, 0.35, 0.65, 0.65, 0.65, 0.85, 0.85, 0.85});
     sctl::Vector<double> charges(n_src);
     sctl::Vector<double> normal(n_src * n_dim);
-    sctl::Vector<double> dipstr(n_src);
     sctl::Vector<double> pot_src(n_src);
     sctl::Vector<double> pot_trg(n_trg);
 
     normal.SetZero();
-    dipstr.SetZero();
     for (int i = 0; i < n_src; ++i)
         charges[i] = (i % 2 == 0 ? 1.0 : -1.0) / n_src;
 
@@ -403,8 +400,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level public API", 1) {
     params.use_periodic = true;
     params.log_level = 6;
 
-    pdmk_tree tree =
-        pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &normal[0], &dipstr[0], n_trg, &r_trg[0]);
+    pdmk_tree tree = pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &normal[0], n_trg, &r_trg[0]);
     pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
     pdmk_tree_destroy(tree);
 
@@ -647,8 +643,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
 
                 sctl::Vector<double> pot_src(n_src * odim), pot_trg(n_trg * odim);
 
-                pdmk_tree tree = pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], &dipstr[0],
-                                                  n_trg, &r_trg[0]);
+                pdmk_tree tree =
+                    pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
                 pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
                 pdmk_tree_destroy(tree);
 

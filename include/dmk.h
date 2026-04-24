@@ -7,12 +7,15 @@ typedef enum : int {
     DMK_YUKAWA = 0,
     DMK_LAPLACE = 1,
     DMK_SQRT_LAPLACE = 2,
+    DMK_STOKESLET = 3,
 } dmk_ikernel;
 
 typedef enum : int {
     DMK_POTENTIAL = 1,
     DMK_POTENTIAL_GRAD = 2,
     DMK_POTENTIAL_GRAD_HESSIAN = 3,
+    DMK_VELOCITY = 4,
+    DMK_VELOCITY_PRESSURE = 5,
 } dmk_pgh;
 
 typedef enum : int {
@@ -68,25 +71,22 @@ extern "C" {
 #endif
 
 pdmk_tree pdmk_tree_createf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src,
-                            const float *charge, const float *normal, const float *dipole_str, int n_trg,
-                            const float *r_trg);
+                            const float *charge, const float *normal, int n_trg, const float *r_trg);
 void pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *pot_trg);
 pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src,
-                           const double *charge, const double *normal, const double *dipole_str, int n_trg,
-                           const double *r_trg);
+                           const double *charge, const double *normal, int n_trg, const double *r_trg);
 
-int pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const double *normal, const double *dipole_str);
-int pdmk_tree_update_chargesf(pdmk_tree tree, const float *charge, const float *normal, const float *dipole_str);
+int pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const double *normal);
+int pdmk_tree_update_chargesf(pdmk_tree tree, const float *charge, const float *normal);
 
 void pdmk_tree_destroy(pdmk_tree tree);
 void pdmk_tree_eval(pdmk_tree tree, double *pot_src, double *pot_trg);
 void pdmk_print_profile_data(dmk_communicator comm, char type);
 
 void pdmk(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
-          const double *normal, const double *dipole_str, int n_trg, const double *r_trg, double *pot_src,
-          double *pot_trg);
+          const double *normal, int n_trg, const double *r_trg, double *pot_src, double *pot_trg);
 void pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
-           const float *normal, const float *dipole_str, int n_trg, const float *r_trg, float *pot_src, float *pot_trg);
+           const float *normal, int n_trg, const float *r_trg, float *pot_src, float *pot_trg);
 #ifdef __cplusplus
 }
 #endif

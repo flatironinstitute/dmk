@@ -1,6 +1,7 @@
 #ifndef TREE_HPP
 #define TREE_HPP
 
+#include <cmath>
 #include <complex>
 #include <dmk.h>
 #include <dmk/logger.h>
@@ -9,6 +10,7 @@
 #include <nda/nda.hpp>
 #include <sctl.hpp>
 #include <span>
+#include <stdexcept>
 
 namespace dmk {
 template <typename T>
@@ -45,9 +47,8 @@ struct ExpansionConstants {
 
         n_pw_diff = 2 * n_fourier_diff + 1;
         n_exp_modes_diff = sctl::pow<DIM - 1>(n_pw_diff) * ((n_pw_diff + 1) / 2);
-        // FIXME: separate n_pw_win
-        // n_pw_win = 2 * n_fourier_win + 1;
-        n_pw_win = n_pw_diff;
+
+        n_pw_win = 2 * n_fourier_win + 1;
         n_exp_modes_win = sctl::pow<DIM - 1>(n_pw_win) * ((n_pw_win + 1) / 2);
 
         if (p.use_periodic) {
@@ -211,6 +212,100 @@ void multiply_kernelFT_cd2p(const sctl::Vector<T> &radialft, auto &&pwexp) {
     sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, n_flops);
 }
 
+template <typename Real, bool is_windowed>
+void stokes_2d_multiply_kernelFT(const sctl::Vector<Real> &radialft, auto &&pwexp, Real hpw) {
+    const Real rl = std::sqrt(Real{2}) + 1;
+    const int n_pw = pwexp.extent(0);
+    const int n_pw2 = pwexp.extent(1);
+    const int n_exp = radialft.Dim();
+
+    using Complex = std::complex<Real>;
+    Complex *pw = reinterpret_cast<Complex *>(pwexp.data());
+
+    auto ts = [&](int i) -> Real { return Real(i - n_pw2) * hpw; };
+
+    const int n0 = n_pw2 + n_pw * n_pw2;
+
+    std::array<Complex, 2> cvec;
+    if constexpr (is_windowed)
+        for (int i = 0; i < 2; ++i)
+            cvec[i] = pw[n0 + n_exp * i];
+
+    int n = 0;
+    for (int iy = 0; iy <= n_pw2; ++iy) {
+        Real ky = ts(iy);
+        for (int ix = 0; ix < n_pw; ++ix, ++n) {
+            Real kx = ts(ix);
+            Real f = radialft[n];
+            Real dd = (kx * kx + ky * ky) * f;
+
+            Complex p0 = pw[n], p1 = pw[n + n_exp];
+            Complex dot = p0 * kx + p1 * ky;
+
+            pw[n] = dot * (kx * f) - p0 * dd;
+            pw[n + n_exp] = dot * (ky * f) - p1 * dd;
+        }
+    }
+
+    if constexpr (is_windowed) {
+        const Real cval = Real(0.5) * (1 - std::log(rl));
+        for (int i = 0; i < 2; ++i)
+            pw[n0 + n_exp * i] += cval * cvec[i];
+    }
+}
+
+template <typename Real, bool is_windowed>
+void stokes_3d_multiply_kernelFT(const sctl::Vector<Real> &radialft, auto &&pwexp, Real hpw) {
+    const Real rl = std::sqrt(Real(3)) + 1;
+    const int n_pw = pwexp.extent(0);
+    const int nexp = radialft.Dim();
+    const int npw2 = n_pw / 2;
+    using Complex = std::complex<Real>;
+    Complex *pw = reinterpret_cast<Complex *>(pwexp.data());
+
+    auto ts = [&](int i) -> Real { return Real(i - npw2) * hpw; };
+
+    const int n0 = npw2 + n_pw * npw2 + n_pw * n_pw * npw2;
+    std::array<Complex, 3> cvec;
+    if constexpr (is_windowed)
+        for (int i = 0; i < 3; ++i)
+            cvec[i] = pw[n0 + nexp * i];
+
+    int n = 0;
+    for (int iz = 0; iz <= npw2; ++iz) {
+        const Real kz = ts(iz);
+        for (int iy = 0; iy < n_pw; ++iy) {
+            const Real ky = ts(iy);
+            for (int ix = 0; ix < n_pw; ++ix, ++n) {
+                const Real kx = ts(ix);
+                const Real f = radialft[n];
+                const Real dd = (kx * kx + ky * ky + kz * kz) * f;
+
+                const Complex p0 = pw[n], p1 = pw[n + nexp], p2 = pw[n + 2 * nexp];
+                const Complex dot = p0 * kx + p1 * ky + p2 * kz;
+
+                pw[n] = dot * (kx * f) - p0 * dd;
+                pw[n + nexp] = dot * (ky * f) - p1 * dd;
+                pw[n + 2 * nexp] = dot * (kz * f) - p2 * dd;
+            }
+        }
+    }
+
+    if constexpr (is_windowed) {
+        const Real cval = Real(1) / rl;
+        for (int i = 0; i < 3; ++i)
+            pw[n0 + nexp * i] += cval * cvec[i];
+    }
+}
+
+template <typename Real, int DIM, bool is_windowed>
+void stokes_multiply_kernelFT(const sctl::Vector<Real> &radialft, auto &&pwexp, Real hpw) {
+    if constexpr (DIM == 2)
+        stokes_2d_multiply_kernelFT<Real, is_windowed>(radialft, pwexp, hpw);
+    else
+        stokes_3d_multiply_kernelFT<Real, is_windowed>(radialft, pwexp, hpw);
+}
+
 #if defined(__AVX512F__) || defined(__AVX2__)
 template <typename Real, int VecLen>
 inline void shift_planewave_simd(int nexp, int nd, const Real *__restrict__ pw1, Real *__restrict__ pw2,
@@ -345,6 +440,13 @@ Real get_self_interaction_constant(FourierData<Real> &fourier_data, dmk_ikernel 
             if constexpr (DIM == 3)
                 return psi0 / (2 * c[1] * bsize * bsize);
 
+        } else if (kernel == DMK_STOKESLET) {
+            const Real psi0 = fourier_data.prolate0_fun.eval_val(0.0);
+            const auto c = fourier_data.prolate0_fun.intvals(fourier_data.beta());
+            if constexpr (DIM == 2)
+                throw std::runtime_error("2D self interaction not implemented");
+            if constexpr (DIM == 3)
+                return psi0 / (c[0] * bsize);
         } else
             throw std::runtime_error("Unsupported kernel");
     }();
@@ -482,7 +584,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void evaluate_direct_interactions();
 
     // User calls
-    int update_charges(const Real *charge, const Real *normal, const Real *dipole_str);
+    int update_charges(const Real *charge, const Real *normal);
 
     // Internal data accessors
     std::span<const int> list1(int i_box) const { return std::span<const int>(list1_[i_box].data(), nlist1_[i_box]); }
@@ -617,8 +719,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     std::vector<int> proxy_down_zeroed;
 
     sctl::Vector<sctl::Vector<Real>> workspaces_;
-    std::vector<direct_evaluator_func<Real>> evaluator_by_level_src;
-    std::vector<direct_evaluator_func<Real>> evaluator_by_level_trg;
+    std::vector<residual_evaluator_func<Real>> evaluator_by_level_src;
+    std::vector<residual_evaluator_func<Real>> evaluator_by_level_trg;
     const sctl::Comm comm_;
     bool debug_omit_pw = false;
     bool debug_omit_direct = false;
