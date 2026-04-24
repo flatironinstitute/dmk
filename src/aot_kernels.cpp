@@ -77,7 +77,7 @@ constexpr double laplace_2d_12[] = {3.46570248057884389e-01,  -4.999574751224437
                                     6.30358375631785338e-06,  -2.27901245929962573e-06, 5.31730474006170036e-07};
 
 template <class Real, int MaxVecLen>
-residual_evaluator_func<Real> get_laplace_2d_kernel(dmk_pgh eval_level, int n_digits) {
+residual_evaluator_func<Real> get_laplace_2d_kernel(dmk_eval_type eval_level, int n_digits) {
     constexpr int UF = unroll_factor;
     if (n_digits <= 2) {
         constexpr int ND = 2, NC_TOTAL = 5;
@@ -291,7 +291,7 @@ constexpr double laplace_3d_12[] = {
     7.93878994049295519e-05,  -1.09102680236039761e-05};
 
 template <class Real, int MaxVecLen>
-residual_evaluator_func<Real> get_laplace_3d_kernel(dmk_pgh eval_level, int n_digits) {
+residual_evaluator_func<Real> get_laplace_3d_kernel(dmk_eval_type eval_level, int n_digits) {
     constexpr int UF = unroll_factor;
     if (n_digits <= 2) {
         constexpr int ND = 2, NC_TOTAL = 5;
@@ -505,7 +505,7 @@ constexpr double sqrt_laplace_2d_12[] = {
     7.93878994049295519e-05,  -1.09102680236039761e-05};
 
 template <class Real, int MaxVecLen>
-residual_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_pgh eval_level, int n_digits) {
+residual_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_eval_type eval_level, int n_digits) {
     constexpr int UF = unroll_factor;
     if (n_digits <= 2) {
         constexpr int ND = 2, NC_TOTAL = 5;
@@ -714,7 +714,7 @@ constexpr double sqrt_laplace_3d_12[] = {
     2.16076137692343146e-05, -5.07987035269845689e-06};
 
 template <class Real, int MaxVecLen>
-residual_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_pgh eval_level, int n_digits) {
+residual_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_eval_type eval_level, int n_digits) {
     constexpr int UF = unroll_factor;
     if (n_digits <= 2) {
         constexpr int ND = 2, NC_TOTAL = 5;
@@ -978,7 +978,7 @@ constexpr double stokeslet_3d_12[] = {
     1.61066970302873170e-03,  -1.64953195374007182e-03, -1.19549414199069361e-04, 1.62541947678353720e-04};
 
 template <class Real, int MaxVecLen>
-residual_evaluator_func<Real> get_stokeslet_3d_kernel(dmk_pgh eval_level, int n_digits) {
+residual_evaluator_func<Real> get_stokeslet_3d_kernel(dmk_eval_type eval_level, int n_digits) {
     constexpr int UF = unroll_factor;
     if (n_digits <= 2) {
         constexpr int ND = 2, NC_TOTAL = 10;
@@ -1127,17 +1127,23 @@ residual_evaluator_func<Real> get_stokeslet_3d_kernel(dmk_pgh eval_level, int n_
 }
 
 // Explicit instantiations
-template residual_evaluator_func<float> get_laplace_2d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_pgh, int);
-template residual_evaluator_func<double> get_laplace_2d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_pgh, int);
-template residual_evaluator_func<float> get_laplace_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_pgh, int);
-template residual_evaluator_func<double> get_laplace_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_pgh, int);
-template residual_evaluator_func<float> get_sqrt_laplace_2d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_pgh, int);
-template residual_evaluator_func<double> get_sqrt_laplace_2d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_pgh,
-                                                                                                           int);
-template residual_evaluator_func<float> get_sqrt_laplace_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_pgh, int);
-template residual_evaluator_func<double> get_sqrt_laplace_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_pgh,
-                                                                                                           int);
-template residual_evaluator_func<float> get_stokeslet_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_pgh, int);
-template residual_evaluator_func<double> get_stokeslet_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_pgh, int);
+template residual_evaluator_func<float> get_laplace_2d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type, int);
+template residual_evaluator_func<double> get_laplace_2d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type,
+                                                                                                      int);
+template residual_evaluator_func<float> get_laplace_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type, int);
+template residual_evaluator_func<double> get_laplace_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type,
+                                                                                                      int);
+template residual_evaluator_func<float> get_sqrt_laplace_2d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type,
+                                                                                                        int);
+template residual_evaluator_func<double>
+get_sqrt_laplace_2d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int);
+template residual_evaluator_func<float> get_sqrt_laplace_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type,
+                                                                                                        int);
+template residual_evaluator_func<double>
+get_sqrt_laplace_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int);
+template residual_evaluator_func<float> get_stokeslet_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type,
+                                                                                                     int);
+template residual_evaluator_func<double> get_stokeslet_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type,
+                                                                                                        int);
 
 } // namespace dmk

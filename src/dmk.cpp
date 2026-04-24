@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <limits>
+#include <span>
 #include <string>
 #include <variant>
 
@@ -182,12 +183,11 @@ TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
                 const int n_test_trg = std::min(n_trg, 1000);
                 std::vector<double> test_src(n_test_src, 0);
                 std::vector<double> test_trg(n_test_trg, 0);
-                std::vector<double> r_src_trunc, r_trg_trunc;
-                r_src_trunc.assign(r_src.begin(), r_src.begin() + n_test_src * n_dim);
-                r_trg_trunc.assign(r_trg.begin(), r_trg.begin() + n_test_trg * n_dim);
+                std::span<const double> r_src_trunc(r_src.data(), n_test_src * n_dim);
+                std::span<const double> r_trg_trunc(r_trg.data(), n_test_trg * n_dim);
 
-                dmk::util::compute_direct(n_dim, r_src, charges, r_src_trunc, test_src, kernel, DMK_POTENTIAL);
-                dmk::util::compute_direct(n_dim, r_src, charges, r_trg_trunc, test_trg, kernel, DMK_POTENTIAL);
+                compute_direct(n_dim, r_src, charges, r_src_trunc, test_src, kernel, DMK_POTENTIAL);
+                compute_direct(n_dim, r_src, charges, r_trg_trunc, test_trg, kernel, DMK_POTENTIAL);
 
                 pdmk_tree tree =
                     pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);

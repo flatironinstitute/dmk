@@ -3,6 +3,9 @@
 
 #include <dmk.h>
 #include <dmk/types.hpp>
+#include <dmk/util.hpp>
+
+#include <format>
 #include <stdexcept>
 
 namespace dmk {
@@ -25,7 +28,7 @@ inline int get_kernel_input_dim(int dim, dmk_ikernel kernel) {
     throw std::runtime_error("Invalid kernel");
 }
 
-inline int get_kernel_output_dim(int dim, dmk_ikernel kernel, dmk_pgh flags) {
+inline int get_kernel_output_dim(int dim, dmk_ikernel kernel, dmk_eval_type flags) {
     switch (kernel) {
     case DMK_YUKAWA:
         if (flags == DMK_POTENTIAL)
@@ -34,6 +37,7 @@ inline int get_kernel_output_dim(int dim, dmk_ikernel kernel, dmk_pgh flags) {
             return 1 + dim;
         if (flags == DMK_POTENTIAL_GRAD_HESSIAN)
             return 1 + dim + dim * dim;
+        break;
     case DMK_LAPLACE:
         if (flags == DMK_POTENTIAL)
             return 1;
@@ -41,6 +45,7 @@ inline int get_kernel_output_dim(int dim, dmk_ikernel kernel, dmk_pgh flags) {
             return 1 + dim;
         if (flags == DMK_POTENTIAL_GRAD_HESSIAN)
             return 1 + dim + dim * dim;
+        break;
     case DMK_SQRT_LAPLACE:
         if (flags == DMK_POTENTIAL)
             return 1;
@@ -48,27 +53,55 @@ inline int get_kernel_output_dim(int dim, dmk_ikernel kernel, dmk_pgh flags) {
             return 1 + dim;
         if (flags == DMK_POTENTIAL_GRAD_HESSIAN)
             return 1 + dim + dim * dim;
+        break;
     case DMK_STOKESLET:
         if (flags == DMK_VELOCITY)
             return dim;
-        if (flags == DMK_VELOCITY_PRESSURE) {
-            throw std::runtime_error("DMK_VELOCITY_PRESSURE not implemented");
-            // return dim + 1;
-        }
+        break;
     }
-    throw std::runtime_error("Invalid kernel");
+    using dmk::util::to_string;
+    throw std::runtime_error(
+        std::format("Invalid kernel/output combination {} + {}\n", to_string(kernel), to_string(flags)));
 }
 
 template <typename Real>
-direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, Real lambda);
+direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim, Real lambda);
+
+template <typename Real>
+inline void parallel_direct_eval(const dmk::direct_evaluator_func<Real> &func, int n_src, const Real *r_src,
+                                 const Real *charge, int n_trg, const Real *r_trg, Real *pot, int spatial_dim,
+                                 int charge_dim) {
+#pragma omp parallel
+    {
+        const int nt = MY_OMP_GET_NUM_THREADS();
+        const int tid = MY_OMP_GET_THREAD_NUM();
+        const int lo = (tid * n_trg) / nt;
+        const int hi = ((tid + 1) * n_trg) / nt;
+        if (hi > lo)
+            func(n_src, r_src, charge, hi - lo, r_trg + lo * spatial_dim, pot + lo * charge_dim);
+    }
+}
+
+inline void compute_direct(int n_dim, const auto &r_src, const auto &charges, const auto &r_trg, auto &pot_direct,
+                           dmk_ikernel kernel, dmk_eval_type eval_level) {
+    using Real = std::decay_t<decltype(r_src)>::value_type;
+    const int n_src = r_src.size() / n_dim;
+    const int n_trg = r_trg.size() / n_dim;
+    const int out_dim = get_kernel_output_dim(n_dim, kernel, eval_level);
+    const double lambda = 6.0;
+    pot_direct.assign(n_trg * out_dim, 0);
+    auto potfunc = dmk::get_direct_evaluator<Real>(kernel, eval_level, n_dim, lambda);
+    parallel_direct_eval(potfunc, n_src, r_src.data(), charges.data(), n_trg, r_trg.data(), pot_direct.data(), n_dim,
+                         1);
+}
 
 template <typename Real>
 std::vector<std::vector<Real>> get_local_correction_coeffs(dmk_ikernel kernel, int n_dim, int n_digits, double beta);
 template <typename Real>
-residual_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits,
+residual_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim, int n_digits,
                                                  int unroll_factor);
 template <typename Real>
-residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits,
+residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim, int n_digits,
                                                  double beta, int unroll_factor);
 } // namespace dmk
 

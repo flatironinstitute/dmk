@@ -1,11 +1,13 @@
 #ifndef UTIL_HPP
 #define UTIL_HPP
 
-#include <cmath>
-#include <dmk/direct.hpp>
 #include <dmk/omp_wrapper.hpp>
 #include <dmk/types.hpp>
 #include <sctl.hpp>
+
+#include <array>
+#include <cmath>
+#include <string_view>
 #include <type_traits>
 
 #ifndef __cpp_lib_math_special_functions
@@ -64,6 +66,31 @@ class StackOrHeapBuffer {
         }
     }
 };
+
+constexpr std::array<std::string_view, 4> ikernel_names = {
+    "DMK_YUKAWA",
+    "DMK_LAPLACE",
+    "DMK_SQRT_LAPLACE",
+    "DMK_STOKESLET",
+};
+
+constexpr std::array<std::string_view, 5> return_names = {
+    "DMK_POTENTIAL", "DMK_POTENTIAL_GRAD", "DMK_POTENTIAL_GRAD_HESSIAN", "DMK_VELOCITY", "DMK_VELOCITY_PRESSURE",
+};
+
+constexpr std::string_view to_string(dmk_ikernel k) noexcept {
+    auto idx = static_cast<int>(k);
+    if (idx >= 0 && idx < static_cast<int>(ikernel_names.size()))
+        return ikernel_names[idx];
+    return "DMK_IKERNEL_UNKNOWN";
+}
+
+constexpr std::string_view to_string(dmk_eval_type k) noexcept {
+    auto idx = static_cast<int>(k) - 1;
+    if (idx >= 0 && idx < static_cast<int>(ikernel_names.size()))
+        return return_names[idx];
+    return "DMK_RETURN_TYPE_UNKNOWN";
+}
 
 double calc_bandlimiting(const pdmk_params &p);
 
@@ -270,34 +297,6 @@ inline void vec_fma_3(T *__restrict__ dst, const T *__restrict__ a, const T *__r
     }
     for (; i < n; ++i)
         dst[i] += a[i] * b[i] * c[i];
-}
-
-template <typename Real>
-inline void parallel_direct_eval(const dmk::direct_evaluator_func<Real> &func, int n_src, const Real *r_src,
-                                 const Real *charge, int n_trg, const Real *r_trg, Real *pot, int spatial_dim,
-                                 int charge_dim) {
-#pragma omp parallel
-    {
-        const int nt = MY_OMP_GET_NUM_THREADS();
-        const int tid = MY_OMP_GET_THREAD_NUM();
-        const int lo = (tid * n_trg) / nt;
-        const int hi = ((tid + 1) * n_trg) / nt;
-        if (hi > lo)
-            func(n_src, r_src, charge, hi - lo, r_trg + lo * spatial_dim, pot + lo * charge_dim);
-    }
-}
-
-inline void compute_direct(int n_dim, const auto &r_src, const auto &charges, const auto &r_trg, auto &pot_direct,
-                           dmk_ikernel kernel, dmk_pgh eval_level) {
-    using Real = std::decay_t<decltype(r_src)>::value_type;
-    const int n_src = r_src.size() / n_dim;
-    const int n_trg = r_trg.size() / n_dim;
-    const int out_dim = get_kernel_output_dim(n_dim, kernel, eval_level);
-    const double lambda = 6.0;
-    pot_direct.assign(n_trg * out_dim, 0);
-    auto potfunc = dmk::get_direct_evaluator<Real>(kernel, eval_level, n_dim, lambda);
-    parallel_direct_eval(potfunc, n_src, r_src.data(), charges.data(), n_trg, r_trg.data(), pot_direct.data(), n_dim,
-                         1);
 }
 
 // Fused inner kernel: computes all 4 accumulations in a single pass over n elements,

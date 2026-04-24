@@ -78,7 +78,7 @@ std::string coeff_name(const KernelDef &k, int digits) {
 void emit_getter(const KernelDef &k, const std::vector<CoeffsInfo> &infos) {
     std::cout << std::format(R"(
 template <class Real, int MaxVecLen>
-residual_evaluator_func<Real> {}(dmk_pgh eval_level, int n_digits) {{
+residual_evaluator_func<Real> {}(dmk_eval_type eval_level, int n_digits) {{
     constexpr int UF = unroll_factor;
 )",
                              k.getter_name);
@@ -169,7 +169,7 @@ constexpr int unroll_factor = 3;
     for (auto &k : all_kernels) {
         for (auto type : {"float", "double"}) {
             std::cout << std::format("template residual_evaluator_func<{0}>\n"
-                                     "{1}<{0}, sctl::DefaultVecLen<{0}>()>(dmk_pgh, int);\n",
+                                     "{1}<{0}, sctl::DefaultVecLen<{0}>()>(dmk_eval_type, int);\n",
                                      type, k.getter_name);
         }
     }

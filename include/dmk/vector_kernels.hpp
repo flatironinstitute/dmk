@@ -14,7 +14,6 @@
 // runtime dispatch of the rsqrt function, when a template is right there. Or passing
 // performance critical parameters as runtime arguments (like n_digits, n_coeffs).
 
-#include "sctl/vec.hpp"
 #include <dmk.h>
 #include <dmk/util.hpp>
 

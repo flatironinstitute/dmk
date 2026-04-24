@@ -352,7 +352,7 @@ __attribute__((constructor)) void init() {
 } // namespace
 
 template <typename Real>
-residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits,
+residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim, int n_digits,
                                                  double beta, int unroll_factor) {
     static std::mutex lock;
     std::lock_guard<std::mutex> lock_guard(lock);
@@ -401,15 +401,17 @@ residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_pgh eva
     };
 }
 
-template residual_evaluator_func<float> make_evaluator_jit<float>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
-                                                                  int n_digits, double beta, int unroll_factor);
-template residual_evaluator_func<double> make_evaluator_jit<double>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
-                                                                    int n_digits, double beta, int unroll_factor);
+template residual_evaluator_func<float> make_evaluator_jit<float>(dmk_ikernel kernel, dmk_eval_type eval_level,
+                                                                  int n_dim, int n_digits, double beta,
+                                                                  int unroll_factor);
+template residual_evaluator_func<double> make_evaluator_jit<double>(dmk_ikernel kernel, dmk_eval_type eval_level,
+                                                                    int n_dim, int n_digits, double beta,
+                                                                    int unroll_factor);
 #endif
 // (DMK_USE_JIT)
 
 template <typename Real>
-residual_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, int n_digits,
+residual_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim, int n_digits,
                                                  int unroll_factor) {
     constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
     switch (kernel) {
@@ -432,7 +434,7 @@ residual_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_pgh eva
 }
 
 template <typename Real>
-direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim, Real lambda) {
+direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim, Real lambda) {
     constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
     constexpr int unroll_factor = 3;
     switch (kernel) {
@@ -493,13 +495,13 @@ template std::vector<std::vector<float>> get_local_correction_coeffs<float>(dmk_
                                                                             double beta);
 template std::vector<std::vector<double>> get_local_correction_coeffs<double>(dmk_ikernel kernel, int n_dim,
                                                                               int n_digits, double beta);
-template residual_evaluator_func<float> make_evaluator_aot<float>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
-                                                                  int n_digits, int unroll_factor);
-template residual_evaluator_func<double> make_evaluator_aot<double>(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
-                                                                    int n_digits, int unroll_factor);
+template residual_evaluator_func<float> make_evaluator_aot<float>(dmk_ikernel kernel, dmk_eval_type eval_level,
+                                                                  int n_dim, int n_digits, int unroll_factor);
+template residual_evaluator_func<double> make_evaluator_aot<double>(dmk_ikernel kernel, dmk_eval_type eval_level,
+                                                                    int n_dim, int n_digits, int unroll_factor);
 
-template direct_evaluator_func<float> get_direct_evaluator(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
+template direct_evaluator_func<float> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim,
                                                            float lambda);
-template direct_evaluator_func<double> get_direct_evaluator(dmk_ikernel kernel, dmk_pgh eval_level, int n_dim,
+template direct_evaluator_func<double> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim,
                                                             double lambda);
 } // namespace dmk
