@@ -25,6 +25,7 @@ struct Config {
     bool uniform = false;
     bool enable_pvfmm = true;
     bool enable_direct = true;
+    bool pbc = false;
     int n_direct = -1; // -1 means "same as n_src"
     int n_runs = 100;
     int log_level = DMK_LOG_OFF; // 6: off, 5: critical, 4: err, 3: warn, 2: info, 1: debug, 0: trace
@@ -83,7 +84,8 @@ void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ost
        << "# m_pvfmm:              " << cfg.m_pvfmm << "\n"
        << "# direct_enabled:       " << cfg.enable_direct << "\n"
        << "# n_direct:             " << cfg.n_direct << "\n"
-       << "# log_level:            " << cfg.log_level << "\n";
+       << "# log_level:            " << cfg.log_level << "\n"
+       << "# pbc:                  " << cfg.pbc << "\n";
 }
 
 void print_csv_header(std::ostream &os) {
@@ -302,6 +304,7 @@ void run_comparison(const Config &cfg) {
     params.pgh_src = DMK_POTENTIAL;
     params.pgh_trg = DMK_POTENTIAL;
     params.kernel = DMK_LAPLACE;
+    params.use_periodic = cfg.pbc ? 1 : 0;
 
     pdmk_tree dmk_tree;
     if constexpr (std::is_same_v<Real, float>)
@@ -412,6 +415,7 @@ Config parse_args(int argc, char *argv[]) {
         {"no-pvfmm", no_argument, nullptr, 1002},
         {"direct",   no_argument, nullptr, 1003},
         {"no-direct",no_argument, nullptr, 1004},
+        {"pbc",      no_argument, nullptr, 1005},
         {nullptr, 0, nullptr, 0}
     };
 
@@ -436,6 +440,7 @@ Config parse_args(int argc, char *argv[]) {
         case 1002:   cfg.enable_pvfmm  = false; break;
         case 1003:   cfg.enable_direct = true;  break;
         case 1004:   cfg.enable_direct = false; break;
+        case 1005:   cfg.pbc           = true;  break;
         case 'h':
         case '?':
         default:
@@ -453,6 +458,7 @@ Config parse_args(int argc, char *argv[]) {
                 << "  -u                     Uniform random distribution\n"
                 << "  --pvfmm / --no-pvfmm   Enable/disable PVFMM comparison\n"
                 << "  --direct / --no-direct Enable/disable all-pairs reference\n"
+                << "  --pbc                  Enable periodic boundary conditions (default: free-space)\n"
                 << "  -h                     This help message\n";
             std::exit(0);
         }
