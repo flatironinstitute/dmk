@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
@@ -98,9 +100,22 @@ void update_offsets_from_counts(const sctl::Vector<sctl::Long> &counts, sctl::Lo
             offsets[i] = -1;
     }
 }
+
 template <int DIM>
-inline int get_table_count(dmk_ikernel kernel) {
+inline int get_table_count_up(dmk_ikernel kernel) {
     if (kernel == DMK_STOKESLET)
+        return DIM;
+    if (kernel == DMK_STRESSLET)
+        return DIM * DIM;
+    else
+        return 1;
+}
+
+template <int DIM>
+inline int get_table_count_down(dmk_ikernel kernel) {
+    if (kernel == DMK_STOKESLET)
+        return DIM;
+    if (kernel == DMK_STRESSLET)
         return DIM;
     else
         return 1;
@@ -108,15 +123,16 @@ inline int get_table_count(dmk_ikernel kernel) {
 
 template <typename Real, int DIM>
 DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, const sctl::Vector<Real> &r_src,
-                                const sctl::Vector<Real> &r_trg, const sctl::Vector<Real> &charge)
+                                const sctl::Vector<Real> &charge, const sctl::Vector<Real> &normal,
+                                const sctl::Vector<Real> &r_trg)
     : sctl::PtTree<Real, DIM>(comm), comm_(comm), params(params_),
       kernel_input_dim(get_kernel_input_dim(params.n_dim, params.kernel)),
       kernel_output_dim_src(get_kernel_output_dim(params.n_dim, params.kernel, params.eval_src)),
       kernel_output_dim_trg(get_kernel_output_dim(params.n_dim, params.kernel, params.eval_trg)),
       kernel_output_dim_max(std::max(kernel_output_dim_src, kernel_output_dim_trg)),
-      n_tables(get_table_count<DIM>(params.kernel)), n_digits(std::round(log10(1.0 / params_.eps) - 0.1)),
-      expansion_constants(params), logger(dmk::get_logger(comm, params.log_level)),
-      rank_logger(dmk::get_rank_logger(comm, params.log_level)) {
+      n_tables_up(get_table_count_up<DIM>(params.kernel)), n_tables_down(get_table_count_down<DIM>(params.kernel)),
+      n_digits(std::round(log10(1.0 / params_.eps) - 0.1)), expansion_constants(params),
+      logger(dmk::get_logger(comm, params.log_level)), rank_logger(dmk::get_rank_logger(comm, params.log_level)) {
     sctl::Profile::Scoped profile("DMKPtTree::DMKPtTree", &comm_);
     debug_omit_pw = (params.debug_flags & DMK_DEBUG_OMIT_PW) || util::env_is_set("DMK_DEBUG_OMIT_PW");
     debug_omit_direct = (params.debug_flags & DMK_DEBUG_OMIT_DIRECT) || util::env_is_set("DMK_DEBUG_OMIT_DIRECT");
@@ -144,7 +160,21 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     // All data that needs to be tree sorted
     this->AddParticles("pdmk_src", r_src);
     this->AddParticles("pdmk_trg", r_trg);
-    this->AddParticleData("pdmk_charge", "pdmk_src", charge);
+
+    if (params.kernel == DMK_STRESSLET) {
+        sctl::Vector<Real> charge_normal(n_src * kernel_input_dim);
+        for (int i = 0; i < n_src; ++i)
+            for (int k = 0; k < DIM; ++k)
+                for (int j = 0; j < DIM; ++j)
+                    charge_normal[i * DIM * DIM + k * DIM + j] = charge[i * DIM + k] * normal[i * DIM + j];
+        this->AddParticleData("pdmk_charge", "pdmk_src", charge_normal);
+        assert(normal.Dim() == DIM * n_src);
+        assert(charge.Dim() == DIM * n_src);
+        this->AddParticleData("pdmk_normal", "pdmk_src", normal);
+        this->AddParticleData("pdmk_density", "pdmk_src", charge);
+    } else {
+        this->AddParticleData("pdmk_charge", "pdmk_src", charge);
+    }
     this->AddParticleData("pdmk_pot_src", "pdmk_src", pot_vec_src);
     this->AddParticleData("pdmk_pot_trg", "pdmk_trg", pot_vec_trg);
     this->UpdateRefinement(r_src, params.n_per_leaf, balance21, params.use_periodic, halo);
@@ -175,6 +205,21 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     this->template Broadcast<Real>("pdmk_src");
     this->template Broadcast<Real>("pdmk_charge");
     this->GetData(charge_sorted_with_halo, charge_cnt_with_halo, "pdmk_charge");
+    if (params.kernel == DMK_STRESSLET) {
+        this->template Broadcast<Real>("pdmk_normal");
+        this->template Broadcast<Real>("pdmk_density");
+        this->GetData(normal_sorted_with_halo, normal_cnt_with_halo, "pdmk_normal");
+        this->GetData(density_sorted_with_halo, density_cnt_with_halo, "pdmk_density");
+
+        normal_offsets_with_halo.ReInit(n_boxes());
+        density_offsets_with_halo.ReInit(n_boxes());
+        normal_offsets_with_halo[0] = 0;
+        density_offsets_with_halo[0] = 0;
+        for (std::size_t i = 1; i < n_boxes(); ++i) {
+            normal_offsets_with_halo[i] = normal_offsets_with_halo[i - 1] + DIM * normal_cnt_with_halo[i - 1];
+            density_offsets_with_halo[i] = density_offsets_with_halo[i - 1] + DIM * density_cnt_with_halo[i - 1];
+        }
+    }
     this->GetData(r_src_sorted_with_halo, r_src_cnt_with_halo, "pdmk_src");
 
     logger->debug("base tree build completed");
@@ -585,7 +630,8 @@ void DMKPtTree<Real, DIM>::build_upward_pass_work_lists() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
-    const int n_coeffs = n_tables * sctl::pow<DIM>(expansion_constants.n_order);
+    const int n_coeffs_up = n_tables_up * sctl::pow<DIM>(expansion_constants.n_order);
+    const int n_coeffs_down = n_tables_down * sctl::pow<DIM>(expansion_constants.n_order);
 
     sctl::Vector<sctl::Long> counts_upward(n_boxes());
     sctl::Vector<sctl::Long> counts_downward(n_boxes());
@@ -593,22 +639,22 @@ void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
     long n_proxy_boxes_downward = 0;
     for (int i = 0; i < n_boxes(); ++i) {
         if (ifpwexp[i] && src_counts_with_halo[i] > 0) {
-            counts_upward[i] = n_coeffs;
+            counts_upward[i] = n_coeffs_up;
             n_proxy_boxes_upward++;
         } else {
             counts_upward[i] = 0;
         }
 
         if ((ifpwexp[i] || iftensprodeval[i]) && (src_counts_owned[i] + trg_counts_owned[i])) {
-            counts_downward[i] = n_coeffs;
+            counts_downward[i] = n_coeffs_down;
             n_proxy_boxes_downward++;
         } else {
             counts_downward[i] = 0;
         }
     }
 
-    proxy_coeffs_upward.ReInit(n_coeffs * n_proxy_boxes_upward);
-    proxy_coeffs_downward.ReInit(n_coeffs * n_proxy_boxes_downward);
+    proxy_coeffs_upward.ReInit(n_coeffs_up * n_proxy_boxes_upward);
+    proxy_coeffs_downward.ReInit(n_coeffs_down * n_proxy_boxes_downward);
 
     this->AddData("proxy_coeffs", proxy_coeffs_upward, counts_upward);
     this->GetData(proxy_coeffs_upward, counts_upward, "proxy_coeffs");
@@ -620,7 +666,7 @@ void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
     for (int box = 0; box < n_boxes(); ++box) {
         if (counts_upward[box]) {
             proxy_coeffs_offsets[box] = last_offset;
-            last_offset += n_coeffs;
+            last_offset += n_coeffs_up;
         } else {
             proxy_coeffs_offsets[box] = -1;
         }
@@ -630,7 +676,7 @@ void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
     for (int box = 0; box < n_boxes(); ++box) {
         if (counts_downward[box]) {
             proxy_coeffs_offsets_downward[box] = last_offset;
-            last_offset += n_coeffs;
+            last_offset += n_coeffs_down;
         } else {
             proxy_coeffs_offsets_downward[box] = -1;
         }
@@ -857,7 +903,7 @@ template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::upward_pass() {
     sctl::Profile::Scoped profile("upward_pass", &comm_);
     sctl::Profile::Tic("upward_pass_init", &comm_);
-    const std::size_t n_coeffs = n_tables * sctl::pow<DIM>(expansion_constants.n_order);
+    const std::size_t n_coeffs = n_tables_up * sctl::pow<DIM>(expansion_constants.n_order);
     logger->info("upward pass started");
 
 #pragma omp parallel
@@ -917,7 +963,7 @@ void DMKPtTree<Real, DIM>::upward_pass() {
 
                         const auto &n_order = expansion_constants.n_order;
                         const ndview<Real, 2> c2p_view({n_order, DIM}, &c2p[ic * DIM * n_order * n_order]);
-                        tensorprod::transform<Real, DIM>(n_tables, true, proxy_view_upward(cb), c2p_view,
+                        tensorprod::transform<Real, DIM>(n_tables_up, true, proxy_view_upward(cb), c2p_view,
                                                          proxy_view_upward(i_box), workspace);
                     }
                 }
@@ -953,7 +999,7 @@ void DMKPtTree<Real, DIM>::init_planewave_data() {
     // Only care about diff, windowed is in a temp data structure
     const int n_pw = expansion_constants.n_pw_diff;
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
-    const int n_pw_per_box = n_pw_modes * n_tables;
+    const int n_pw_per_box = n_pw_modes * n_tables_down;
 
     if (!pw_out_offsets.Dim()) {
         pw_out_offsets.ReInit(n_boxes());
@@ -981,9 +1027,16 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions() {
     const int n_pw_diff = expansion_constants.n_pw_diff;
     const int n_pw_modes_win = sctl::pow<DIM - 1>(n_pw_win) * ((n_pw_win + 1) / 2);
     const int n_pw_modes_diff = sctl::pow<DIM - 1>(n_pw_diff) * ((n_pw_diff + 1) / 2);
-    const int n_pw_per_box_win = n_pw_modes_win * n_tables;
-    const int n_pw_per_box_diff = n_pw_modes_diff * n_tables;
+    const int n_pw_per_box_win = n_pw_modes_win * n_tables_down;
+    const int n_pw_per_box_diff = n_pw_modes_diff * n_tables_down;
     const auto &node_mid = this->GetNodeMID();
+
+    auto pw_view = [](int n_pw, int n_tables, auto &pw_vec) {
+        if constexpr (DIM == 2)
+            return ndview<std::complex<Real>, DIM + 1>({n_pw, (n_pw + 1) / 2, n_tables}, pw_vec.data());
+        else if constexpr (DIM == 3)
+            return ndview<std::complex<Real>, DIM + 1>({n_pw, n_pw, (n_pw + 1) / 2, n_tables}, pw_vec.data());
+    };
 
     // Root box: uses windowed kernel fourier data
     { // Windowed kernel for root (or periodic PSWF kernel for PBC)
@@ -994,16 +1047,10 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions() {
             const int n_pw_periodic = expansion_constants.n_pw_periodic;
             const int npw_root = n_pw_periodic;
             const long n_pw_modes_root = sctl::pow<DIM - 1>(npw_root) * ((npw_root + 1) / 2);
-            const int n_pw_per_box_root = n_pw_modes_root * n_tables;
+            const int n_pw_per_box_root = n_pw_modes_root * n_tables_down;
 
-            sctl::Vector<std::complex<Real>> pw_root(n_pw_per_box_root);
-            auto pw_root_view = [&]() {
-                if constexpr (DIM == 2)
-                    return ndview<std::complex<Real>, DIM + 1>({npw_root, (npw_root + 1) / 2, n_tables}, &pw_root[0]);
-                else if constexpr (DIM == 3)
-                    return ndview<std::complex<Real>, DIM + 1>({npw_root, npw_root, (npw_root + 1) / 2, n_tables},
-                                                               &pw_root[0]);
-            }();
+            std::vector<std::complex<Real>> pw_root(n_pw_per_box_root);
+            auto pw_root_view = pw_view(npw_root, n_tables_up, pw_root);
 
             const ndview<std::complex<Real>, 2> p2pw({npw_root, n_order}, &window_fourier_data.poly2pw[0]);
             const ndview<std::complex<Real>, 2> pw2p({npw_root, n_order}, &window_fourier_data.pw2poly[0]);
@@ -1020,28 +1067,35 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions() {
             const ndview<std::complex<Real>, 2> p2pw({n_pw_win, n_order}, &window_fourier_data.poly2pw[0]);
             const ndview<std::complex<Real>, 2> pw2p({n_pw_win, n_order}, &window_fourier_data.pw2poly[0]);
 
-            ndview<std::complex<Real>, DIM + 1> pw_out_win_view = [&]() {
-                if constexpr (DIM == 2)
-                    return ndview<std::complex<Real>, DIM + 1>({n_pw_win, (n_pw_win + 1) / 2, n_tables},
-                                                               pw_out_win.data());
-                else if constexpr (DIM == 3)
-                    return ndview<std::complex<Real>, DIM + 1>({n_pw_win, n_pw_win, (n_pw_win + 1) / 2, n_tables},
-                                                               pw_out_win.data());
-            }();
+            auto pw_out_win_view_eval = pw_view(n_pw_win, n_tables_down, pw_out_win);
 
-            dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(0), p2pw, pw_out_win_view, workspaces_[0]);
-            if (params.kernel == DMK_STOKESLET)
-                stokes_multiply_kernelFT<Real, DIM, true>(window_fourier_data.radialft, pw_out_win_view,
-                                                          expansion_constants.hpw_win);
-            else
-                multiply_kernelFT_cd2p<Real, DIM>(window_fourier_data.radialft, pw_out_win_view);
-            dmk::planewave_to_proxy_potential<Real, DIM>(pw_out_win_view, pw2p, proxy_view_downward(0), workspaces_[0]);
+            if (params.kernel == DMK_STRESSLET) {
+                std::vector<std::complex<Real>> pw_in_win(n_pw_modes_win * n_tables_up);
+                auto pw_in_win_view = pw_view(n_pw_win, n_tables_up, pw_in_win);
+                dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(0), p2pw, pw_in_win_view, workspaces_[0]);
+                stresslet_multiply_kernelFT<Real, DIM>(window_fourier_data.radialft, pw_in_win_view,
+                                                       pw_out_win_view_eval, expansion_constants.hpw_win);
+            } else {
+                auto pw_out_win_view_form = pw_view(n_pw_win, n_tables_up, pw_out_win);
+                dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(0), p2pw, pw_out_win_view_form, workspaces_[0]);
+                if (params.kernel == DMK_STOKESLET)
+                    stokeslet_multiply_kernelFT<Real, DIM, true>(window_fourier_data.radialft, pw_out_win_view_form,
+                                                                 expansion_constants.hpw_win);
+                else
+                    multiply_kernelFT_cd2p<Real, DIM>(window_fourier_data.radialft, pw_out_win_view_form);
+            }
+            dmk::planewave_to_proxy_potential<Real, DIM>(pw_out_win_view_eval, pw2p, proxy_view_downward(0),
+                                                         workspaces_[0]);
         }
     }
 
 #pragma omp parallel
     {
         sctl::Vector<Real> &workspace = workspaces_[MY_OMP_GET_THREAD_NUM()];
+        const int n_pw_per_box_form = n_pw_modes_diff * n_tables_up;
+        const int n_pw_per_box_eval = n_pw_modes_diff * n_tables_down;
+        std::vector<std::complex<Real>> pw_form(n_pw_per_box_form);
+        auto pw_form_view = pw_view(n_pw_diff, n_tables_up, pw_form);
 
         // When use_periodic, skip form_outgoing at level 0: the periodic root kernel
         // already includes W_0+D_0, so D_0 must not be computed again. pw_out(0) stays
@@ -1055,14 +1109,20 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions() {
                 auto &dfd = difference_fourier_data[level];
                 const ndview<std::complex<Real>, 2> poly2pw_view({n_pw_diff, n_order}, &dfd.poly2pw[0]);
 
-                dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(i_box), poly2pw_view, pw_out_view(i_box),
-                                                      workspace);
-                if (params.kernel == DMK_STOKESLET)
-                    stokes_multiply_kernelFT<Real, DIM, false>(difference_fourier_data[level].radialft,
-                                                               pw_out_view(i_box),
-                                                               expansion_constants.hpw_diff / boxsize[level]);
-                else
-                    multiply_kernelFT_cd2p<Real, DIM>(dfd.radialft, pw_out_view(i_box));
+                dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(i_box), poly2pw_view, pw_form_view, workspace);
+                if (params.kernel == DMK_STRESSLET) {
+                    stresslet_multiply_kernelFT<Real, DIM>(difference_fourier_data[level].radialft, pw_form_view,
+                                                           pw_out_view(i_box),
+                                                           expansion_constants.hpw_diff / boxsize[level]);
+                } else {
+                    if (params.kernel == DMK_STOKESLET)
+                        stokeslet_multiply_kernelFT<Real, DIM, false>(difference_fourier_data[level].radialft,
+                                                                      pw_form_view,
+                                                                      expansion_constants.hpw_diff / boxsize[level]);
+                    else
+                        multiply_kernelFT_cd2p<Real, DIM>(dfd.radialft, pw_form_view);
+                    std::copy(pw_form.data(), pw_form.data() + n_pw_per_box_eval, pw_out_ptr(i_box));
+                }
             } else if (pw_out_offsets[i_box] != -1) {
                 pw_out_view(i_box) = 0;
             }
@@ -1085,11 +1145,10 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
 #endif
     const int n_pw_diff = expansion_constants.n_pw_diff;
     const int n_pw_modes = expansion_constants.n_exp_modes_diff;
-    const int n_pw_per_box = n_pw_modes * n_tables;
+    const int n_pw_per_box = n_pw_modes * n_tables_down;
     const auto &node_lists = this->GetNodeLists();
     const auto &node_attr = this->GetNodeAttr();
     const Real sc = 2.0 / boxsize;
-    const int nd = n_tables;
     const bool need_grad_src = params.kernel == DMK_LAPLACE && params.eval_src >= DMK_POTENTIAL_GRAD;
     const bool need_grad_trg = params.kernel == DMK_LAPLACE && params.eval_trg >= DMK_POTENTIAL_GRAD;
 
@@ -1101,9 +1160,9 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
 
         auto pw_in_view = [this, &pw_in, n_pw_diff]() {
             if constexpr (DIM == 2)
-                return ndview<std::complex<Real>, DIM + 1>({n_pw_diff, (n_pw_diff + 1) / 2, n_tables}, &pw_in[0]);
+                return ndview<std::complex<Real>, DIM + 1>({n_pw_diff, (n_pw_diff + 1) / 2, n_tables_down}, &pw_in[0]);
             else if constexpr (DIM == 3)
-                return ndview<std::complex<Real>, DIM + 1>({n_pw_diff, n_pw_diff, (n_pw_diff + 1) / 2, n_tables},
+                return ndview<std::complex<Real>, DIM + 1>({n_pw_diff, n_pw_diff, (n_pw_diff + 1) / 2, n_tables_down},
                                                            &pw_in[0]);
         }();
 
@@ -1148,8 +1207,9 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
                             continue;
                         const ndview<Real, 2> p2c_view({n_order, DIM},
                                                        const_cast<Real *>(&p2c[i_child * DIM * n_order * n_order]));
-                        tensorprod::transform<Real, DIM>(nd, proxy_down_zeroed[child], proxy_view_downward(box),
-                                                         p2c_view, proxy_view_downward(child), workspace);
+                        tensorprod::transform<Real, DIM>(n_tables_down, proxy_down_zeroed[child],
+                                                         proxy_view_downward(box), p2c_view, proxy_view_downward(child),
+                                                         workspace);
                         proxy_down_zeroed[child] = true;
                     }
                 }
@@ -1216,8 +1276,13 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
         constexpr int MAX_CHARGE_DIM = 3;
         constexpr int MAX_OUTPUT_DIM = 9;
         constexpr int MAX_PTS = 1000;
+        const bool is_stresslet = params.kernel == DMK_STRESSLET;
+        const int normal_dim = is_stresslet ? DIM : 0;
+        const int direct_charge_dim = is_stresslet ? DIM : kernel_input_dim;
+
         util::StackOrHeapBuffer<Real, DIM * MAX_PTS> r_buf(DIM * params.n_per_leaf);
-        util::StackOrHeapBuffer<Real, MAX_CHARGE_DIM * MAX_PTS> charge_buf(kernel_input_dim * params.n_per_leaf);
+        util::StackOrHeapBuffer<Real, MAX_CHARGE_DIM * MAX_PTS> charge_buf(direct_charge_dim * params.n_per_leaf);
+        util::StackOrHeapBuffer<Real, DIM * MAX_PTS> normal_buf(DIM * params.n_per_leaf);
         util::StackOrHeapBuffer<Real, DIM * MAX_PTS> r_trg_buf(DIM * params.n_per_leaf);
         util::StackOrHeapBuffer<Real, MAX_OUTPUT_DIM * MAX_PTS> pot_buf(kernel_output_dim_max * params.n_per_leaf);
         util::StackOrHeapBuffer<int, MAX_PTS> index_map(params.n_per_leaf);
@@ -1233,15 +1298,14 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
             for (int list1_idx = 0; list1_idx < nlist1_[trg_box]; ++list1_idx) {
                 const int src_box = list1_[trg_box][list1_idx];
                 int src_level = node_mid[src_box].Depth();
-                Real bsize = boxsize[src_level];
 
                 if (ifpwexp[src_box] && src_box == trg_box) {
-                    bsize /= Real{2.0};
                     src_level = src_level + 1;
                 } else if (src_level < trg_level) {
-                    bsize = boxsize[trg_level];
                     src_level = trg_level;
                 }
+                const Real bsize = boxsize[src_level];
+
                 // evaluator_by_level_src is sized n_levels()
                 // This fix is essentially for when there is *only* a root box.
                 src_level = std::min(src_level, n_levels() - 1);
@@ -1262,7 +1326,6 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                 // Determine if we should filter, and on which side
                 const bool src_larger = node_mid[src_box].Depth() < node_mid[trg_box].Depth();
                 const bool trg_larger = node_mid[src_box].Depth() > node_mid[trg_box].Depth();
-                const bool should_filter = src_larger || trg_larger;
 
                 // Precompute contact geometry once per box pair (only if asymmetric)
                 auto corner_a = node_mid[src_box].template Coord<Real>();
@@ -1273,8 +1336,8 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                 // Resolve source data: either filtered or original
                 int n_src = src_counts_with_halo[src_box];
                 const Real *r_src_ptr = r_src_with_halo_ptr(src_box);
-                const Real *charge_ptr = charge_with_halo_ptr(src_box);
-                const Real *normal_ptr = nullptr; // FIXME: BUILD HACK
+                const Real *charge_ptr = is_stresslet ? density_with_halo_ptr(src_box) : charge_with_halo_ptr(src_box);
+                const Real *normal_ptr = is_stresslet ? normal_with_halo_ptr(src_box) : nullptr;
 
                 // For PBC: apply the periodic image shift to source positions. The shift
                 // for each list-1 pair was computed in build_direct_interaction_lists()
@@ -1304,10 +1367,11 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                 // Remove points outside sqrt(d2max) range from shared box boundary
                 if (src_larger) {
                     ContactGeometry<Real, DIM> geom(corner_a.data(), corner_b.data(), size_a, size_b, d2max);
-                    n_src = filter_sources(geom, n_src, r_src_ptr, charge_ptr, kernel_input_dim, r_buf.data(),
-                                           charge_buf.data());
+                    n_src = filter_sources(geom, n_src, r_src_ptr, charge_ptr, direct_charge_dim, normal_ptr,
+                                           normal_dim, r_buf.data(), charge_buf.data(), normal_buf.data());
                     r_src_ptr = r_buf.data();
                     charge_ptr = charge_buf.data();
+                    normal_ptr = normal_buf.data();
                 }
                 if (!n_src)
                     continue;
@@ -1328,9 +1392,8 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                     }
 
                     if (n_eval_trg > 0) {
-                        if (evaluator_by_level_src[src_level])
-                            evaluator_by_level_src[src_level](rsc, cen, d2max, 1e-30, n_src, r_src_ptr, charge_ptr,
-                                                              normal_ptr, n_eval_trg, eval_r_trg, eval_pot);
+                        evaluator_by_level_src[src_level](rsc, cen, d2max, 1e-30, n_src, r_src_ptr, charge_ptr,
+                                                          normal_ptr, n_eval_trg, eval_r_trg, eval_pot);
                         if (trg_larger)
                             scatter_add_potential(pot_buf.data(), pot_src_ptr(trg_box), index_map.data(), n_eval_trg,
                                                   kernel_output_dim_src);
@@ -1364,6 +1427,9 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
             }
 
             if (!src_counts_owned[trg_box])
+                continue;
+
+            if (params.kernel == DMK_STRESSLET)
                 continue;
 
             // Correct for self-evaluations
@@ -1468,7 +1534,7 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
     constexpr int n_charge_dim = 1;
     constexpr bool uniform = false;
 
-    sctl::Vector<double> r_src, r_trg, r_src_norms, charges, pot_src, pot_trg;
+    sctl::Vector<double> r_src, r_trg, r_src_norms, charges, normals, pot_src, pot_trg;
     if (test_rank == 0)
         dmk::util::init_test_data(n_dim, n_charge_dim, n_src, n_trg, uniform, true, r_src, r_trg, r_src_norms, charges,
                                   0);
@@ -1487,7 +1553,7 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
 #else
     auto comm = sctl::Comm::Self();
 #endif
-    DMKPtTree<double, n_dim> tree(comm, params, r_src, r_trg, charges);
+    DMKPtTree<double, n_dim> tree(comm, params, r_src, charges, normals, r_trg);
     tree.upward_pass();
     tree.downward_pass();
     tree.GetParticleData(pot_src, "pdmk_pot_src");
@@ -1497,7 +1563,7 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
         dmk::util::init_test_data(n_dim, n_charge_dim, n_src, n_trg, uniform, true, r_src, r_trg, r_src_norms, charges,
                                   0);
 
-        DMKPtTree<double, n_dim> tree_single(sctl::Comm::Self(), params, r_src, r_trg, charges);
+        DMKPtTree<double, n_dim> tree_single(sctl::Comm::Self(), params, r_src, charges, normals, r_trg);
         tree_single.upward_pass();
         tree_single.downward_pass();
         sctl::Vector<double> pot_src_single, pot_trg_single;

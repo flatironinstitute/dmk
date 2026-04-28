@@ -122,12 +122,12 @@ void DMKPtTree<T, DIM>::eval_pq() {
     const auto &node_lists = this->GetNodeLists();
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_mid = this->GetNodeMID();
-    const std::size_t n_coeffs = n_tables * sctl::pow<DIM>(n_order);
+    const std::size_t n_coeffs = n_tables_up * sctl::pow<DIM>(n_order);
     constexpr int n_children = 1u << DIM;
     // FIXME: windowed vs diff
     const int n_pw = expansion_constants.n_pw_diff;
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
-    const int n_pw_per_box = n_pw_modes * n_tables;
+    const int n_pw_per_box = n_pw_modes * n_tables_up;
 
     // =================================================================
     // Build upward pass task dependency graph
@@ -306,9 +306,9 @@ void DMKPtTree<T, DIM>::eval_pq() {
         sctl::Vector<std::complex<T>> pw_in(n_pw_per_box);
         auto pw_in_view = [&]() {
             if constexpr (DIM == 2)
-                return ndview<std::complex<T>, DIM + 1>({n_pw, (n_pw + 1) / 2, n_tables}, &pw_in[0]);
+                return ndview<std::complex<T>, DIM + 1>({n_pw, (n_pw + 1) / 2, n_tables_up}, &pw_in[0]);
             else if constexpr (DIM == 3)
-                return ndview<std::complex<T>, DIM + 1>({n_pw, n_pw, (n_pw + 1) / 2, n_tables}, &pw_in[0]);
+                return ndview<std::complex<T>, DIM + 1>({n_pw, n_pw, (n_pw + 1) / 2, n_tables_up}, &pw_in[0]);
         }();
 
         while (true) {
@@ -419,7 +419,7 @@ void DMKPtTree<T, DIM>::eval_pq() {
                         if (cb < 0 || !(src_counts_owned[cb] > 0 && ifpwexp[cb]))
                             continue;
                         const ndview<T, 2> c2p_view({n_order, DIM}, &c2p[ic * DIM * n_order * n_order]);
-                        tensorprod::transform<T, DIM>(n_tables, true, proxy_view_upward(cb), c2p_view,
+                        tensorprod::transform<T, DIM>(n_tables_up, true, proxy_view_upward(cb), c2p_view,
                                                       proxy_view_upward(box), workspace);
                     }
                     signal_upward_complete(box);
@@ -495,8 +495,9 @@ void DMKPtTree<T, DIM>::eval_pq() {
                                 continue;
                             const ndview<T, 2> p2c_view({n_order, DIM},
                                                         const_cast<T *>(&p2c[ic * DIM * n_order * n_order]));
-                            tensorprod::transform<T, DIM>(n_tables, proxy_down_zeroed[child], proxy_view_downward(box),
-                                                          p2c_view, proxy_view_downward(child), workspace);
+                            tensorprod::transform<T, DIM>(n_tables_up, proxy_down_zeroed[child],
+                                                          proxy_view_downward(box), p2c_view,
+                                                          proxy_view_downward(child), workspace);
                             proxy_down_zeroed[child] = true;
                         }
                     }

@@ -668,15 +668,11 @@ struct StressletEvaluator3D {
         const vector_type rdotn = FMA(dX[0], ns[0], FMA(dX[1], ns[1], dX[2] * ns[2]));
 
         const vector_type neg3 = Real{-3.0};
-        const vector_type offd = neg3 * rdotn * Rinv5;
-        const vector_type diag_rdotn = rdotn * Rinv3;
+        const vector_type factor = neg3 * rdotn * Rinv5;
         for (int j = 0; j < KERNEL_INPUT_DIM; ++j) {
-            const vector_type offd_rj = dX[j] * offd;
-            const vector_type diag_nj = ns[j] * Rinv3;
-            const vector_type diag_rj = dX[j] * Rinv3;
+            const vector_type fj = dX[j] * factor;
             for (int i = 0; i < KERNEL_OUTPUT_DIM; ++i)
-                u[j][i] = offd_rj * dX[i] + diag_nj * dX[i] + diag_rj * ns[i];
-            u[j][j] += diag_rdotn;
+                u[j][i] = fj * dX[i];
         }
     }
 };
@@ -713,13 +709,9 @@ struct StressletPolyEvaluator3D {
 
         const vector_type rdotn = FMA(dX[0], ns[0], FMA(dX[1], ns[1], dX[2] * ns[2]));
 
-        // Stresslet residual kernel (3D):
-        //   u_i += Foffd * (r.mu) * (r.nu) * r_i
-        //        + Fdiag * (r_i * (mu.nu) + mu_i * (r.nu) + nu_i * (r.mu))
-        //
-        // Since EvalPairs contracts: pot[i] += sum_j U[j][i] * mu[j],
-        // we pre-contract over nu (the normal) and build U[j][i] so that:
-        //   sum_j U[j][i] * mu[j] = above expression
+        // Stresslet residual kernel (3D), matching Fortran stokes_dmk:
+        //   pot_i += Foffd * (r.mu) * (r.nu) * r_i
+        //          + Fdiag * (r_i * (mu.nu) + mu_i * (r.nu) + nu_i * (r.mu))
         //
         // U[j][i] = Foffd * dX[j] * rdotn * dX[i]
         //         + Fdiag * (dX[i] * ns[j] + ns[i] * dX[j] + rdotn * delta_{ij})

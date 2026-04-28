@@ -31,6 +31,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC direct verification", 1) {
 
     sctl::Vector<double> r_src(n_dim * n_src), r_trg(n_dim * n_trg);
     sctl::Vector<double> charges(n_src);
+    sctl::Vector<double> normals;
 
     for (int i = 0; i < n_src * n_dim; ++i)
         r_src[i] = rng(eng);
@@ -88,7 +89,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC direct verification", 1) {
             params.use_periodic = true;
             params.log_level = 6;
 
-            dmk::DMKPtTree<double, n_dim> tree(sctl_comm, params, r_src, r_trg, charges);
+            dmk::DMKPtTree<double, n_dim> tree(sctl_comm, params, r_src, charges, normals, r_trg);
 
             tree.pot_src_sorted.SetZero();
             tree.pot_trg_sorted.SetZero();
@@ -216,6 +217,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC asymmetric-depth shift", 1) {
 
     sctl::Vector<double> r_src(n_dim * n_src), r_trg(n_dim * n_trg);
     sctl::Vector<double> charges(n_src);
+    sctl::Vector<double> normals;
 
     for (int i = 0; i < n_cluster; ++i) {
         r_src[i * n_dim + 0] = src_x(eng);
@@ -264,7 +266,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC asymmetric-depth shift", 1) {
     params.use_periodic = true;
     params.log_level = 6;
 
-    dmk::DMKPtTree<double, n_dim> tree(sctl_comm, params, r_src, r_trg, charges);
+    dmk::DMKPtTree<double, n_dim> tree(sctl_comm, params, r_src, charges, normals, r_trg);
 
     tree.pot_src_sorted.SetZero();
     tree.pot_trg_sorted.SetZero();
@@ -423,6 +425,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level root pw_out must be ze
                                 0.6, 0.6, 0.6, 0.7, 0.7, 0.7, 0.8, 0.8, 0.8, 0.9, 0.9, 0.9});
     sctl::Vector<double> r_trg({0.15, 0.15, 0.15, 0.35, 0.35, 0.35, 0.65, 0.65, 0.65, 0.85, 0.85, 0.85});
     sctl::Vector<double> charges(n_src);
+    sctl::Vector<double> normals;
     for (int i = 0; i < n_src; ++i)
         charges[i] = (i % 2 == 0 ? 1.0 : -1.0) / n_src;
 
@@ -436,10 +439,10 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level root pw_out must be ze
     params.use_periodic = true;
     params.log_level = 6;
 
-    dmk::DMKPtTree<double, n_dim> clean_tree(sctl_comm, params, r_src, r_trg, charges);
+    dmk::DMKPtTree<double, n_dim> clean_tree(sctl_comm, params, r_src, charges, normals, r_trg);
     clean_tree.eval();
 
-    dmk::DMKPtTree<double, n_dim> poisoned_tree(sctl_comm, params, r_src, r_trg, charges);
+    dmk::DMKPtTree<double, n_dim> poisoned_tree(sctl_comm, params, r_src, charges, normals, r_trg);
     REQUIRE(poisoned_tree.n_boxes() == 1);
     REQUIRE(poisoned_tree.n_levels() == 1);
 

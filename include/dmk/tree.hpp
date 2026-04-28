@@ -152,7 +152,8 @@ struct ContactGeometry {
 // Filtered positions and charges are written contiguously into the provided buffers.
 template <typename Real, int DIM>
 int filter_sources(const ContactGeometry<Real, DIM> &geom, int n_src, const Real *r_src, const Real *charge,
-                   int n_charge_components, Real *r_src_out, Real *charge_out) {
+                   int n_charge_components, const Real *normal, int n_normal_components, Real *r_src_out,
+                   Real *charge_out, Real *normal_out) {
     int n_filtered = 0;
     for (int i = 0; i < n_src; ++i) {
         const Real *p = r_src + DIM * i;
@@ -161,6 +162,8 @@ int filter_sources(const ContactGeometry<Real, DIM> &geom, int n_src, const Real
                 r_src_out[DIM * n_filtered + d] = p[d];
             for (int j = 0; j < n_charge_components; ++j)
                 charge_out[n_filtered * n_charge_components + j] = charge[i * n_charge_components + j];
+            for (int j = 0; j < n_normal_components; ++j)
+                normal_out[n_filtered * n_normal_components + j] = normal[i * n_normal_components + j];
             n_filtered++;
         }
     }
@@ -213,7 +216,7 @@ void multiply_kernelFT_cd2p(const sctl::Vector<T> &radialft, auto &&pwexp) {
 }
 
 template <typename Real, bool is_windowed>
-void stokes_2d_multiply_kernelFT(const sctl::Vector<Real> &radialft, auto &&pwexp, Real hpw) {
+void stokeslet_2d_multiply_kernelFT(const sctl::Vector<Real> &radialft, auto &&pwexp, Real hpw) {
     const Real rl = std::sqrt(Real{2}) + 1;
     const int n_pw = pwexp.extent(0);
     const int n_pw2 = pwexp.extent(1);
@@ -255,7 +258,7 @@ void stokes_2d_multiply_kernelFT(const sctl::Vector<Real> &radialft, auto &&pwex
 }
 
 template <typename Real, bool is_windowed>
-void stokes_3d_multiply_kernelFT(const sctl::Vector<Real> &radialft, auto &&pwexp, Real hpw) {
+void stokeslet_3d_multiply_kernelFT(const sctl::Vector<Real> &radialft, auto &&pwexp, Real hpw) {
     const Real rl = std::sqrt(Real(3)) + 1;
     const int n_pw = pwexp.extent(0);
     const int nexp = radialft.Dim();
@@ -299,11 +302,77 @@ void stokes_3d_multiply_kernelFT(const sctl::Vector<Real> &radialft, auto &&pwex
 }
 
 template <typename Real, int DIM, bool is_windowed>
-void stokes_multiply_kernelFT(const sctl::Vector<Real> &radialft, auto &&pwexp, Real hpw) {
+void stokeslet_multiply_kernelFT(const sctl::Vector<Real> &radialft, auto &&pwexp, Real hpw) {
     if constexpr (DIM == 2)
-        stokes_2d_multiply_kernelFT<Real, is_windowed>(radialft, pwexp, hpw);
+        stokeslet_2d_multiply_kernelFT<Real, is_windowed>(radialft, pwexp, hpw);
     else
-        stokes_3d_multiply_kernelFT<Real, is_windowed>(radialft, pwexp, hpw);
+        stokeslet_3d_multiply_kernelFT<Real, is_windowed>(radialft, pwexp, hpw);
+}
+
+template <typename Real>
+void stresslet_3d_multiply_kernelFT(const sctl::Vector<Real> &radialft, const auto &pwexp_in, auto &&uhat_out,
+                                    Real hpw) {
+    constexpr int DIM = 3;
+    const int n_pw = pwexp_in.extent(0);
+    const int nexp = radialft.Dim();
+    const int npw2 = n_pw / 2;
+    using Complex = std::complex<Real>;
+    const Complex *pw_in = reinterpret_cast<const Complex *>(pwexp_in.data());
+    Complex *u_out = reinterpret_cast<Complex *>(uhat_out.data());
+
+    auto ts = [&](int i) -> Real { return Real(i - npw2) * hpw; };
+
+    int n = 0;
+    for (int iz = 0; iz <= npw2; ++iz) {
+        const Real kz = ts(iz);
+        for (int iy = 0; iy < n_pw; ++iy) {
+            const Real ky = ts(iy);
+            for (int ix = 0; ix < n_pw; ++ix, ++n) {
+                const Real kx = ts(ix);
+                const Real f = radialft[n];
+                const Real rksq = kx * kx + ky * ky + kz * kz;
+                const std::array<Real, DIM> k = {kx, ky, kz};
+
+                // Read tensor P_{ij} = pw_in[n + nexp*(i + DIM*j)]
+                std::array<std::array<Complex, DIM>, DIM> P;
+                for (int j = 0; j < DIM; ++j)
+                    for (int i = 0; i < DIM; ++i)
+                        P[i][j] = pw_in[n + nexp * (i + DIM * j)];
+
+                // k^T P k
+                Complex double_product{0};
+                for (int j = 0; j < DIM; ++j)
+                    for (int i = 0; i < DIM; ++i)
+                        double_product += P[i][j] * (k[i] * k[j]);
+
+                // tr(P)
+                Complex trace{0};
+                for (int i = 0; i < DIM; ++i)
+                    trace += P[i][i];
+
+                // (P + P^T) k
+                std::array<Complex, DIM> products{};
+                for (int i = 0; i < DIM; ++i)
+                    for (int j = 0; j < DIM; ++j)
+                        products[i] += (P[i][j] + P[j][i]) * k[j];
+
+                // u_i = -i * f * (k_i * (|k|^2 * tr(P) - 2 k^T P k) + |k|^2 * ((P+P^T)k)_i)
+                const Complex ztmp(0, -f);
+                const Complex zz = rksq * trace - Real(2) * double_product;
+
+                for (int i = 0; i < DIM; ++i)
+                    u_out[n + nexp * i] = ztmp * (k[i] * zz + rksq * products[i]);
+            }
+        }
+    }
+}
+
+template <typename Real, int DIM>
+void stresslet_multiply_kernelFT(const sctl::Vector<Real> &radialft, const auto &pwexp_in, auto &&uhat_out, Real hpw) {
+    if constexpr (DIM == 2)
+        throw std::runtime_error("stresslet_multiply_kernelFT unimplemented in 2d");
+    else
+        stresslet_3d_multiply_kernelFT<Real>(radialft, pwexp_in, uhat_out, hpw);
 }
 
 #if defined(__AVX512F__) || defined(__AVX2__)
@@ -448,7 +517,7 @@ Real get_self_interaction_constant(FourierData<Real> &fourier_data, dmk_ikernel 
             if constexpr (DIM == 3)
                 return psi0 / (c[0] * bsize);
         } else if (kernel == DMK_STRESSLET) {
-            throw std::runtime_error("Stresslet self interaction not implemented");
+            return 0.0;
         } else
             throw std::runtime_error("Unsupported kernel");
     }();
@@ -505,6 +574,14 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> charge_cnt_with_halo;
     sctl::Vector<sctl::Long> charge_offsets_with_halo;
 
+    sctl::Vector<Real> normal_sorted_with_halo;
+    sctl::Vector<sctl::Long> normal_cnt_with_halo;
+    sctl::Vector<sctl::Long> normal_offsets_with_halo;
+
+    sctl::Vector<Real> density_sorted_with_halo;
+    sctl::Vector<sctl::Long> density_cnt_with_halo;
+    sctl::Vector<sctl::Long> density_offsets_with_halo;
+
     sctl::Vector<Real> proxy_coeffs_upward;
     sctl::Vector<sctl::Long> proxy_coeffs_offsets;
     sctl::Vector<Real> proxy_coeffs_downward;
@@ -542,7 +619,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     const int kernel_output_dim_src;
     const int kernel_output_dim_trg;
     const int kernel_output_dim_max;
-    const int n_tables;
+    const int n_tables_up;
+    const int n_tables_down;
     const int n_digits;
 
     ExpansionConstants<DIM> expansion_constants;
@@ -551,7 +629,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<Real> p2c;
 
     DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, const sctl::Vector<Real> &r_src,
-              const sctl::Vector<Real> &r_trg, const sctl::Vector<Real> &charge);
+              const sctl::Vector<Real> &charge, const sctl::Vector<Real> &normals, const sctl::Vector<Real> &r_trg);
 
     int n_levels() const { return level_indices.Dim(); }
     std::size_t n_boxes() const { return this->GetNodeMID().Dim(); }
@@ -651,6 +729,19 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
         return ndview<Real, 2>({kernel_input_dim, src_counts_with_halo[i_node]}, charge_with_halo_ptr(i_node));
     }
 
+    Real *normal_with_halo_ptr(int i_node) {
+        assert(src_counts_with_halo[i_node]);
+        return &normal_sorted_with_halo[normal_offsets_with_halo[i_node]];
+    }
+    ndview<Real, 2> normal_with_halo_view(int i_node) {
+        return ndview<Real, 2>({kernel_input_dim, src_counts_with_halo[i_node]}, normal_with_halo_ptr(i_node));
+    }
+
+    Real *density_with_halo_ptr(int i_node) {
+        assert(src_counts_with_halo[i_node]);
+        return &density_sorted_with_halo[density_offsets_with_halo[i_node]];
+    }
+
     Real *center_ptr(int i_node) { return &centers[i_node * DIM]; }
     const Real *center_ptr(int i_node) const { return &centers[i_node * DIM]; }
     ndview<Real, 1> center_view(int i_node) { return ndview<Real, 1>({DIM}, center_ptr(i_node)); }
@@ -662,9 +753,9 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     }
     ndview<Real, DIM + 1> proxy_view_upward(int i_box) {
         if constexpr (DIM == 2)
-            return ndview<Real, DIM + 1>({n_order, n_order, n_tables}, proxy_ptr_upward(i_box));
+            return ndview<Real, DIM + 1>({n_order, n_order, n_tables_up}, proxy_ptr_upward(i_box));
         else if constexpr (DIM == 3)
-            return ndview<Real, DIM + 1>({n_order, n_order, n_order, n_tables}, proxy_ptr_upward(i_box));
+            return ndview<Real, DIM + 1>({n_order, n_order, n_order, n_tables_up}, proxy_ptr_upward(i_box));
         else
             static_assert(dmk::util::always_false<Real>, "Invalid DIM supplied");
     }
@@ -675,9 +766,9 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     }
     ndview<Real, DIM + 1> proxy_view_downward(int i_box) {
         if constexpr (DIM == 2)
-            return ndview<Real, DIM + 1>({n_order, n_order, n_tables}, proxy_ptr_downward(i_box));
+            return ndview<Real, DIM + 1>({n_order, n_order, n_tables_down}, proxy_ptr_downward(i_box));
         else if constexpr (DIM == 3)
-            return ndview<Real, DIM + 1>({n_order, n_order, n_order, n_tables}, proxy_ptr_downward(i_box));
+            return ndview<Real, DIM + 1>({n_order, n_order, n_order, n_tables_down}, proxy_ptr_downward(i_box));
         else
             static_assert(dmk::util::always_false<Real>, "Invalid DIM supplied");
     }
@@ -688,9 +779,9 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
         // FIXME: windowed vs diff
         const int n_pw = expansion_constants.n_pw_diff;
         if constexpr (DIM == 2)
-            return ndview<std::complex<Real>, DIM + 1>({n_pw, (n_pw + 1) / 2, n_tables}, pw_out_ptr(i_box));
+            return ndview<std::complex<Real>, DIM + 1>({n_pw, (n_pw + 1) / 2, n_tables_down}, pw_out_ptr(i_box));
         else if constexpr (DIM == 3)
-            return ndview<std::complex<Real>, DIM + 1>({n_pw, n_pw, (n_pw + 1) / 2, n_tables}, pw_out_ptr(i_box));
+            return ndview<std::complex<Real>, DIM + 1>({n_pw, n_pw, (n_pw + 1) / 2, n_tables_down}, pw_out_ptr(i_box));
         else
             static_assert(dmk::util::always_false<std::complex<Real>>, "Invalid DIM supplied");
     }

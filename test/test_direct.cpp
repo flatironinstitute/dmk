@@ -135,16 +135,13 @@ void naive_stresslet_3d(const TestData &td, std::vector<double> &pot) {
                 continue;
             double r = std::sqrt(r2);
             double r5 = r2 * r2 * r;
-            double r3 = r2 * r;
             double mudotr = mu[0] * dx + mu[1] * dy + mu[2] * dz;
             double nudotr = nu[0] * dx + nu[1] * dy + nu[2] * dz;
-            double mudotnu = mu[0] * nu[0] + mu[1] * nu[1] + mu[2] * nu[2];
-            // u_i = -3 r_i (r.mu)(r.nu)/r^5 + (r_i(mu.nu) + mu_i(r.nu) + nu_i(r.mu))/r^3
+            // u_i = -3 r_i (r.mu)(r.nu)/r^5
             double offd = -3.0 * mudotr * nudotr / r5;
-            double diag = 1.0 / r3;
-            pot[t * 3 + 0] += dx * offd + diag * (dx * mudotnu + mu[0] * nudotr + nu[0] * mudotr);
-            pot[t * 3 + 1] += dy * offd + diag * (dy * mudotnu + mu[1] * nudotr + nu[1] * mudotr);
-            pot[t * 3 + 2] += dz * offd + diag * (dz * mudotnu + mu[2] * nudotr + nu[2] * mudotr);
+            pot[t * 3 + 0] += dx * offd;
+            pot[t * 3 + 1] += dy * offd;
+            pot[t * 3 + 2] += dz * offd;
         }
     }
 }
