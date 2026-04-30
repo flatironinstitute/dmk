@@ -733,9 +733,6 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
         assert(src_counts_with_halo[i_node]);
         return &normal_sorted_with_halo[normal_offsets_with_halo[i_node]];
     }
-    ndview<Real, 2> normal_with_halo_view(int i_node) {
-        return ndview<Real, 2>({kernel_input_dim, src_counts_with_halo[i_node]}, normal_with_halo_ptr(i_node));
-    }
 
     Real *density_with_halo_ptr(int i_node) {
         assert(src_counts_with_halo[i_node]);

@@ -162,16 +162,15 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     this->AddParticles("pdmk_trg", r_trg);
 
     if (params.kernel == DMK_STRESSLET) {
+        this->AddParticleData("pdmk_normal", "pdmk_src", normal);
+        this->AddParticleData("pdmk_density", "pdmk_src", charge);
+
         sctl::Vector<Real> charge_normal(n_src * kernel_input_dim);
         for (int i = 0; i < n_src; ++i)
             for (int k = 0; k < DIM; ++k)
                 for (int j = 0; j < DIM; ++j)
                     charge_normal[i * DIM * DIM + k * DIM + j] = charge[i * DIM + k] * normal[i * DIM + j];
         this->AddParticleData("pdmk_charge", "pdmk_src", charge_normal);
-        assert(normal.Dim() == DIM * n_src);
-        assert(charge.Dim() == DIM * n_src);
-        this->AddParticleData("pdmk_normal", "pdmk_src", normal);
-        this->AddParticleData("pdmk_density", "pdmk_src", charge);
     } else {
         this->AddParticleData("pdmk_charge", "pdmk_src", charge);
     }
@@ -204,22 +203,13 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     // Now grab sorted particle data with the halo, so we have it for direct evaluations
     this->template Broadcast<Real>("pdmk_src");
     this->template Broadcast<Real>("pdmk_charge");
-    this->GetData(charge_sorted_with_halo, charge_cnt_with_halo, "pdmk_charge");
     if (params.kernel == DMK_STRESSLET) {
         this->template Broadcast<Real>("pdmk_normal");
         this->template Broadcast<Real>("pdmk_density");
         this->GetData(normal_sorted_with_halo, normal_cnt_with_halo, "pdmk_normal");
         this->GetData(density_sorted_with_halo, density_cnt_with_halo, "pdmk_density");
-
-        normal_offsets_with_halo.ReInit(n_boxes());
-        density_offsets_with_halo.ReInit(n_boxes());
-        normal_offsets_with_halo[0] = 0;
-        density_offsets_with_halo[0] = 0;
-        for (std::size_t i = 1; i < n_boxes(); ++i) {
-            normal_offsets_with_halo[i] = normal_offsets_with_halo[i - 1] + DIM * normal_cnt_with_halo[i - 1];
-            density_offsets_with_halo[i] = density_offsets_with_halo[i - 1] + DIM * density_cnt_with_halo[i - 1];
-        }
     }
+    this->GetData(charge_sorted_with_halo, charge_cnt_with_halo, "pdmk_charge");
     this->GetData(r_src_sorted_with_halo, r_src_cnt_with_halo, "pdmk_src");
 
     logger->debug("base tree build completed");
@@ -286,17 +276,28 @@ void DMKPtTree<Real, DIM>::compute_data_offsets() {
     pot_trg_offsets.ReInit(n_boxes());
     charge_offsets_owned.ReInit(n_boxes());
     charge_offsets_with_halo.ReInit(n_boxes());
+    normal_offsets_with_halo.ReInit(n_boxes());
+    density_offsets_with_halo.ReInit(n_boxes());
 
     r_src_offsets_with_halo[0] = r_src_offsets_owned[0] = r_trg_offsets_owned[0] = pot_src_offsets[0] =
-        pot_trg_offsets[0] = charge_offsets_owned[0] = charge_offsets_with_halo[0] = 0;
+        pot_trg_offsets[0] = charge_offsets_owned[0] = charge_offsets_with_halo[0] = normal_offsets_with_halo[0] =
+            density_offsets_with_halo[0] = 0;
 
     for (int i = 1; i < n_boxes(); ++i) {
+        r_src_offsets_owned[i] = r_src_offsets_owned[i - 1] + DIM * r_src_cnt_owned[i - 1];
         r_src_offsets_with_halo[i] = r_src_offsets_with_halo[i - 1] + DIM * r_src_cnt_with_halo[i - 1];
         r_trg_offsets_owned[i] = r_trg_offsets_owned[i - 1] + DIM * r_trg_cnt_owned[i - 1];
         pot_src_offsets[i] = pot_src_offsets[i - 1] + kernel_output_dim_src * pot_src_cnt[i - 1];
         pot_trg_offsets[i] = pot_trg_offsets[i - 1] + kernel_output_dim_trg * pot_trg_cnt[i - 1];
         charge_offsets_owned[i] = charge_offsets_owned[i - 1] + kernel_input_dim * charge_cnt_owned[i - 1];
         charge_offsets_with_halo[i] = charge_offsets_with_halo[i - 1] + kernel_input_dim * charge_cnt_with_halo[i - 1];
+    }
+
+    if (params.kernel == DMK_STRESSLET) {
+        for (int i = 1; i < n_boxes(); ++i) {
+            normal_offsets_with_halo[i] = normal_offsets_with_halo[i - 1] + DIM * normal_cnt_with_halo[i - 1];
+            density_offsets_with_halo[i] = density_offsets_with_halo[i - 1] + DIM * density_cnt_with_halo[i - 1];
+        }
     }
 }
 
@@ -905,7 +906,6 @@ void DMKPtTree<Real, DIM>::upward_pass() {
     sctl::Profile::Tic("upward_pass_init", &comm_);
     const std::size_t n_coeffs = n_tables_up * sctl::pow<DIM>(expansion_constants.n_order);
     logger->info("upward pass started");
-
 #pragma omp parallel
 #pragma omp single
     workspaces_.ReInit(MY_OMP_GET_NUM_THREADS());
