@@ -12,6 +12,11 @@
 #include <span>
 #include <stdexcept>
 
+#ifdef DMK_GPU_OFFLOAD
+#include <dmk/cuda_direct.hpp>
+#include <memory>
+#endif
+
 namespace dmk {
 template <typename T>
 struct FourierData;
@@ -534,6 +539,10 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<Real> boxsize;
     sctl::Vector<Real> centers;
 
+    sctl::Vector<Real> direct_rsc;
+    sctl::Vector<Real> direct_cen;
+    sctl::Vector<Real> direct_d2max;
+
     sctl::Vector<int> src_counts_owned;
     sctl::Vector<int> trg_counts_owned;
     sctl::Vector<int> src_counts_with_halo;
@@ -662,6 +671,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
                               Real boxsize, const ndview<std::complex<Real>, 2> &pw2poly_view,
                               const sctl::Vector<Real> &p2c);
     void evaluate_direct_interactions();
+    void correct_for_self_interactions();
 
     // User calls
     int update_charges(const Real *charge, const Real *normal);
@@ -788,6 +798,10 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void upward_pass();
     void downward_pass();
     void desort_potentials(Real *pot_src, Real *pot_trg);
+
+#ifdef DMK_GPU_OFFLOAD
+    std::unique_ptr<CudaDirectContext<Real, DIM>> cuda_direct_ctx_;
+#endif
 
   private:
     static constexpr int nlist1_max_ = sctl::pow<DIM>(4) - sctl::pow<DIM>(2) + 1;

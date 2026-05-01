@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.21)
 
 project(dmk LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
@@ -12,6 +12,7 @@ option(DMK_HAVE_MPI "Use MPI for parallelism" ON)
 option(DMK_HAVE_OPENMP "Use OpenMP for parallelism" ON)
 option(DMK_BUILD_REFERENCE "Build reference Fortran implementation" OFF)
 option(DMK_USE_JIT "Use JIT compilation where supported (requires LLVM)" OFF)
+option(DMK_GPU_OFFLOAD "Enable GPU offloading via CUDA" OFF)
 
 if (DMK_BUILD_REFERENCE)
   enable_language(Fortran)
@@ -61,6 +62,18 @@ if (DMK_HAVE_MPI)
 else()
   set(MPISupport OFF CACHE BOOL "" FORCE)
 endif()
+
+set(DMK_GPU_TARGET "")
+if (DMK_GPU_OFFLOAD)
+  enable_language(CUDA)
+  set(CMAKE_CUDA_STANDARD 20)
+  set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+  set(CMAKE_CUDA_EXTENSIONS OFF)
+  find_package(CUDAToolkit REQUIRED)
+  set(DMK_GPU_TARGET CUDA::cudart)
+  list(APPEND DMK_CXX_FLAGS "-DDMK_GPU_OFFLOAD")
+endif()
+
 find_package(BLAS REQUIRED)
 
 if (DMK_BUILD_PVFMM)
@@ -149,7 +162,7 @@ set(DMK_AOT_SRC src/aot_evaluator.cpp src/aot_kernels.cpp)
 add_library(DMKOBJS_BOOTSTRAP OBJECT ${DMK_BOOTSTRAP_SRC})
 set_target_properties(DMKOBJS_BOOTSTRAP PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(DMKOBJS_BOOTSTRAP PUBLIC ${DMK_INCLUDES})
-target_link_libraries(DMKOBJS_BOOTSTRAP PUBLIC ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET}
+target_link_libraries(DMKOBJS_BOOTSTRAP PUBLIC ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET} ${DMK_GPU_TARGET}
   nda::nda_c spdlog::spdlog_header_only doctest::doctest BLAS::BLAS polyfit::polyfit
 )
 if (DMK_USE_JIT)
@@ -161,17 +174,29 @@ add_library(DMKOBJS_AOT OBJECT ${DMK_AOT_SRC})
 set_target_properties(DMKOBJS_AOT PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(DMKOBJS_AOT PUBLIC DMKOBJS_BOOTSTRAP)
 
-# Builds without src/aot_kernels.cpp; used by generate_aot_kernels to break the
-# bootstrap loop (so the generator can be rebuilt even when aot_kernels.cpp is stale/missing).
 add_library(dmk_bootstrap STATIC)
 target_link_libraries(dmk_bootstrap PUBLIC DMKOBJS_BOOTSTRAP)
 
+if (DMK_GPU_OFFLOAD)
+  add_library(DMKOBJS_CUDA OBJECT src/cuda_kernels.cu src/cuda_direct.cpp)
+  set_target_properties(DMKOBJS_CUDA PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_include_directories(DMKOBJS_CUDA PUBLIC ${DMK_INCLUDES})
+  target_link_libraries(DMKOBJS_CUDA PUBLIC ${DMK_GPU_TARGET} ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET}
+    nda::nda_c spdlog::spdlog_header_only)
+  target_compile_options(DMKOBJS_CUDA PUBLIC "${DMK_CXX_FLAGS}")
+endif()
+
+set(DMK_GPU_OBJS "")
+if (DMK_GPU_OFFLOAD)
+  list(APPEND DMK_GPU_OBJS DMKOBJS_CUDA)
+endif()
+
 add_library(dmk STATIC)
-target_link_libraries(dmk PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT)
+target_link_libraries(dmk PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT ${DMK_GPU_OBJS})
 
 add_library(dmk_shared SHARED)
 set_target_properties(dmk_shared PROPERTIES OUTPUT_NAME dmk)
-target_link_libraries(dmk_shared PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT)
+target_link_libraries(dmk_shared PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT ${DMK_GPU_OBJS})
 
 if (DMK_BUILD_TESTS)
   add_subdirectory(test)

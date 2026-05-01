@@ -794,6 +794,26 @@ void DMKPtTree<Real, DIM>::build_direct_work_lists() {
 /// @tparam DIM Spatial dimension tree lives in
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_evaluators() {
+    const int n_lvl = n_levels();
+    direct_rsc.ReInit(n_lvl);
+    direct_cen.ReInit(n_lvl);
+    direct_d2max.ReInit(n_lvl);
+    for (int lvl = 0; lvl < n_lvl; ++lvl) {
+        const Real bsize = boxsize[lvl];
+        const Real bsizeinv = Real{1} / bsize;
+        Real rsc = Real{2} * bsizeinv;
+        Real cen = -bsize / Real{2};
+        if ((params.kernel == DMK_SQRT_LAPLACE && DIM == 3) || (params.kernel == DMK_LAPLACE && DIM == 2)) {
+            rsc = Real{2} * bsizeinv * bsizeinv;
+            cen = Real{-1.0};
+        } else if (params.kernel == DMK_YUKAWA) {
+            cen = Real{-1.0};
+        }
+        direct_rsc[lvl] = rsc;
+        direct_cen[lvl] = cen;
+        direct_d2max[lvl] = bsize * bsize;
+    }
+
     try {
         auto src_eval = make_evaluator_aot<Real>(params.kernel, params.eval_src, DIM, n_digits, 3);
         auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.eval_trg, DIM, n_digits, 3);
@@ -904,6 +924,17 @@ void DMKPtTree<Real, DIM>::generate_metadata() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::upward_pass() {
     sctl::Profile::Scoped profile("upward_pass", &comm_);
+#ifdef DMK_GPU_OFFLOAD
+    if (!debug_omit_direct && !debug_force_aot) {
+        try {
+            cuda_direct_ctx_ = std::make_unique<CudaDirectContext<Real, DIM>>(*this);
+            cuda_direct_ctx_->launch();
+        } catch (const std::exception &e) {
+            logger->error("CUDA direct launch failed: {}; falling back to CPU direct", e.what());
+            cuda_direct_ctx_.reset();
+        }
+    }
+#endif
     sctl::Profile::Tic("upward_pass_init", &comm_);
     const std::size_t n_coeffs = n_tables_up * sctl::pow<DIM>(expansion_constants.n_order);
     logger->info("upward pass started");
@@ -1247,16 +1278,54 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
 }
 
 template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::correct_for_self_interactions() {
+    sctl::Profile::Scoped profile("correct_for_self");
+    Real w0[SCTL_MAX_DEPTH];
+    // Fill for n_levels+1, note boxsize is already n_levels+1 in size
+    for (int i_level = 0; i_level < std::min(SCTL_MAX_DEPTH, n_levels() + 1); ++i_level)
+        w0[i_level] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
+
+    const auto &node_mid = this->GetNodeMID();
+
+#pragma omp for schedule(dynamic)
+    for (int idx = 0; idx < direct_work.size(); ++idx) {
+        const int trg_box = direct_work[idx];
+        const int trg_level = node_mid[trg_box].Depth();
+
+        if (!src_counts_owned[trg_box])
+            continue;
+
+        if (params.kernel == DMK_STRESSLET)
+            continue;
+
+        // Correct for self-evaluations
+        auto pot = pot_src_view(trg_box);
+        auto charge = charge_with_halo_view(trg_box);
+        const auto correction_factor = [&]() -> Real {
+            if (params.kernel == DMK_STOKESLET) {
+                const auto depth = node_mid[trg_box].Depth();
+                return ifpwexp[trg_box] ? 2 * w0[depth] : w0[depth];
+            }
+            const auto depth = node_mid[trg_box].Depth() + ifpwexp[trg_box];
+            return w0[depth];
+        }();
+
+        // FIXME: This needs to deal with correction factors where
+        // kernel_input_dim != kernel_output_dim (like grad, which
+        // needs only a correction factor on the potential, not
+        // the gradient. That's why kernel_input_dim here works)
+        for (int i_src = 0; i_src < r_src_cnt_with_halo[trg_box]; ++i_src)
+            for (int i = 0; i < kernel_input_dim; ++i)
+                pot(i, i_src) -= correction_factor * charge(i, i_src);
+    }
+}
+
+template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
     sctl::Profile::Scoped profile("evaluate_direct_interactions", &comm_);
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_mid = this->GetNodeMID();
     const auto &node_lists = this->GetNodeLists();
-
-    Real w0[SCTL_MAX_DEPTH];
-    // Fill for n_levels+1, note boxsize is already n_levels+1 in size
-    for (int i_level = 0; i_level < std::min(SCTL_MAX_DEPTH, n_levels() + 1); ++i_level)
-        w0[i_level] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
 
     // For PBC: precompute the periodic shift for each (trg_box, nbr_index) pair.
     // The nbr array index k encodes a direction (dx,dy,dz) ∈ {-1,0,+1}^DIM.
@@ -1305,24 +1374,15 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                 } else if (src_level < trg_level) {
                     src_level = trg_level;
                 }
-                const Real bsize = boxsize[src_level];
 
                 // evaluator_by_level_src is sized n_levels()
                 // This fix is essentially for when there is *only* a root box.
                 src_level = std::min(src_level, n_levels() - 1);
 
-                const Real d2max = bsize * bsize;
-                const Real bsizeinv = Real{1} / bsize;
-
-                Real rsc = 2 * bsizeinv;
-                Real cen = -bsize / Real{2};
+                const Real rsc = direct_rsc[src_level];
+                const Real cen = direct_cen[src_level];
+                const Real d2max = direct_d2max[src_level];
                 const auto &cheb_coeffs = fourier_data.cheb_coeffs(src_level);
-
-                if ((params.kernel == DMK_SQRT_LAPLACE && DIM == 3) || (params.kernel == DMK_LAPLACE && DIM == 2)) {
-                    rsc = 2 * bsizeinv * bsizeinv;
-                    cen = Real{-1.0};
-                } else if (params.kernel == DMK_YUKAWA)
-                    cen = Real{-1.0};
 
                 // Determine if we should filter, and on which side
                 const bool src_larger = node_mid[src_box].Depth() < node_mid[trg_box].Depth();
@@ -1426,32 +1486,6 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                     }
                 }
             }
-
-            if (!src_counts_owned[trg_box])
-                continue;
-
-            if (params.kernel == DMK_STRESSLET)
-                continue;
-
-            // Correct for self-evaluations
-            auto pot = pot_src_view(trg_box);
-            auto charge = charge_with_halo_view(trg_box);
-            const auto correction_factor = [&]() -> Real {
-                if (params.kernel == DMK_STOKESLET) {
-                    const auto depth = node_mid[trg_box].Depth();
-                    return ifpwexp[trg_box] ? 2 * w0[depth] : w0[depth];
-                }
-                const auto depth = node_mid[trg_box].Depth() + ifpwexp[trg_box];
-                return w0[depth];
-            }();
-
-            // FIXME: This needs to deal with correction factors where
-            // kernel_input_dim != kernel_output_dim (like grad, which
-            // needs only a correction factor on the potential, not
-            // the gradient. That's why kernel_input_dim here works)
-            for (int i_src = 0; i_src < r_src_cnt_with_halo[trg_box]; ++i_src)
-                for (int i = 0; i < kernel_input_dim; ++i)
-                    pot(i, i_src) -= correction_factor * charge(i, i_src);
         }
     }
 }
@@ -1489,8 +1523,21 @@ void DMKPtTree<Real, DIM>::downward_pass() {
     }
     sctl::Profile::Toc();
 
-    if (!debug_omit_direct)
+    if (!debug_omit_direct) {
+#ifdef DMK_GPU_OFFLOAD
+        if (cuda_direct_ctx_ && !debug_force_aot) {
+            sctl::Profile::Scoped p("cuda_direct_merge", &comm_);
+            cuda_direct_ctx_->merge_into_host();
+            cuda_direct_ctx_.reset();
+        } else {
+            evaluate_direct_interactions();
+        }
+#else
         evaluate_direct_interactions();
+#endif
+    }
+
+    correct_for_self_interactions();
 
     logger->info("downward pass completed");
     if (debug_dump_tree)
