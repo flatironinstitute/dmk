@@ -44,12 +44,10 @@ void pdmk(dmk_communicator comm, const pdmk_params &params, int n_src, const T *
     sctl::Vector<T> r_src_vec(n_src * params.n_dim, const_cast<T *>(r_src), false);
     sctl::Vector<T> r_trg_vec(n_trg * params.n_dim, const_cast<T *>(r_trg), false);
     sctl::Vector<T> charge_vec(n_src * kernel_input_dim, const_cast<T *>(charge), false);
+    sctl::Vector<T> normal_vec(n_src * params.n_dim, const_cast<T *>(normal), false);
 
-    DMKPtTree<T, DIM> tree(sctl_comm, params, r_src_vec, r_trg_vec, charge_vec);
-    if ((params.debug_flags & DMK_DEBUG_USE_PQ) || util::env_is_set("DMK_DEBUG_USE_PQ"))
-        tree.eval_pq();
-    else
-        tree.eval();
+    DMKPtTree<T, DIM> tree(sctl_comm, params, r_src_vec, charge_vec, normal_vec, r_trg_vec);
+    tree.eval();
 
     tree.desort_potentials(pot_src, pot_trg);
     if (params.log_level <= DMK_LOG_INFO) {
@@ -95,8 +93,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d float", 1) {
     params.eps = 1e-6;
     params.n_dim = n_dim;
     params.n_per_leaf = 80;
-    params.pgh_src = DMK_POTENTIAL;
-    params.pgh_trg = DMK_POTENTIAL;
+    params.eval_src = DMK_POTENTIAL;
+    params.eval_trg = DMK_POTENTIAL;
     params.kernel = DMK_YUKAWA;
     params.fparam = 6.0;
     params.log_level = SPDLOG_LEVEL_OFF;
@@ -136,8 +134,8 @@ TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
 
     pdmk_params params;
     params.eps = 1e-6;
-    params.pgh_src = DMK_POTENTIAL;
-    params.pgh_trg = DMK_POTENTIAL;
+    params.eval_src = DMK_POTENTIAL;
+    params.eval_trg = DMK_POTENTIAL;
     params.fparam = 6.0;
     params.log_level = SPDLOG_LEVEL_OFF;
     int ndiv[3] = {80, 280, 280};
@@ -186,8 +184,10 @@ TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
                 std::span<const double> r_src_trunc(r_src.data(), n_test_src * n_dim);
                 std::span<const double> r_trg_trunc(r_trg.data(), n_test_trg * n_dim);
 
-                compute_direct(n_dim, r_src, charges, r_src_trunc, test_src, kernel, DMK_POTENTIAL);
-                compute_direct(n_dim, r_src, charges, r_trg_trunc, test_trg, kernel, DMK_POTENTIAL);
+                compute_direct(n_dim, r_src, charges, std::vector<double>{}, r_src_trunc, test_src, kernel,
+                               DMK_POTENTIAL);
+                compute_direct(n_dim, r_src, charges, std::vector<double>{}, r_trg_trunc, test_trg, kernel,
+                               DMK_POTENTIAL);
 
                 pdmk_tree tree =
                     pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
@@ -259,70 +259,39 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d stokeslet velocity", 1) {
     auto comm = nullptr;
 #endif
 
-    sctl::Vector<double> r_src, charges, rnormal, r_trg;
+    std::vector<double> r_src, charges, rnormal, r_trg;
     dmk::util::init_test_data(n_dim, 1, n_src, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, 0);
-    charges.ReInit(n_src * n_dim);
+    charges.resize(n_src * n_dim);
     for (auto &c : charges)
         c = 2 * drand48() - 1.0;
 
-    sctl::Vector<double> pot_src(n_src * output_dim), pot_trg(n_trg * output_dim);
-    pot_src.SetZero();
-    pot_trg.SetZero();
+    std::vector<double> vel_src(n_src * output_dim, 0), vel_trg(n_trg * output_dim, 0);
 
     pdmk_params params;
     params.eps = 1e-3;
     params.n_dim = n_dim;
     params.n_per_leaf = 280;
-    params.pgh_src = DMK_VELOCITY;
-    params.pgh_trg = DMK_VELOCITY;
+    params.eval_src = DMK_VELOCITY;
+    params.eval_trg = DMK_VELOCITY;
     params.kernel = DMK_STOKESLET;
     params.log_level = SPDLOG_LEVEL_OFF;
     params.debug_flags = 0;
 
     pdmk_tree tree = pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
-    pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
+    pdmk_tree_eval(tree, &vel_src[0], &vel_trg[0]);
     pdmk_tree_destroy(tree);
 
     const int n_test_src = std::min(n_src, 64);
     const int n_test_trg = std::min(n_trg, 64);
-    std::vector<double> direct_stokes_vel_src(n_test_src * n_dim, 0.0);
-    std::vector<double> direct_stokes_vel_trg(n_test_trg * n_dim, 0.0);
+    std::vector<double> vel_src_direct, vel_trg_direct;
 
-    const auto vel_index = [n_dim](int i_pt, int i_dim) { return i_dim + n_dim * i_pt; };
-    const auto accumulate_stokes_vel = [&](const double *target, int i_out, std::vector<double> &out) {
-        double *u = &out[i_out * n_dim];
-        for (int i_src = 0; i_src < n_src; ++i_src) {
-            double dx[n_dim];
-            double dr2 = 0.0;
-            for (int i_dim = 0; i_dim < n_dim; ++i_dim) {
-                dx[i_dim] = target[i_dim] - r_src[i_src * n_dim + i_dim];
-                dr2 += dx[i_dim] * dx[i_dim];
-            }
-            if (dr2 <= thresh2)
-                continue;
-
-            const double rinv = 1.0 / std::sqrt(dr2);
-            const double rinv2 = rinv * rinv;
-
-            double *f = &charges[n_dim * i_src];
-            double inner_prod = (f[0] * dx[0] + f[1] * dx[1] + f[2] * dx[2]) * rinv2;
-            u[0] += rinv * (f[0] + dx[0] * inner_prod);
-            u[1] += rinv * (f[1] + dx[1] * inner_prod);
-            u[2] += rinv * (f[2] + dx[2] * inner_prod);
-        }
-        u[0] *= 0.5;
-        u[1] *= 0.5;
-        u[2] *= 0.5;
-    };
-
-    for (int i = 0; i < n_test_src; ++i)
-        accumulate_stokes_vel(&r_src[i * n_dim], i, direct_stokes_vel_src);
-    for (int i = 0; i < n_test_trg; ++i)
-        accumulate_stokes_vel(&r_trg[i * n_dim], i, direct_stokes_vel_trg);
+    compute_direct(n_dim, r_src, charges, std::vector<double>{}, std::span<double>(r_src.data(), n_test_src * n_dim),
+                   vel_src_direct, params.kernel, params.eval_trg);
+    compute_direct(n_dim, r_src, charges, std::vector<double>{}, std::span<double>(r_trg.data(), n_test_trg * n_dim),
+                   vel_trg_direct, params.kernel, params.eval_trg);
 
     auto relative_l2_error = [](const auto &approx, const auto &exact) {
-        double err2 = 0.0;
-        double ref2 = 0.0;
+        double err2{0.0}, ref2{0.0};
         for (int i = 0; i < exact.size(); ++i) {
             err2 += sctl::pow<2>(approx[i] - exact[i]);
             ref2 += sctl::pow<2>(exact[i]);
@@ -330,8 +299,71 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d stokeslet velocity", 1) {
         return std::sqrt(err2 / ref2);
     };
 
-    const double l2_err_src = relative_l2_error(pot_src, direct_stokes_vel_src);
-    const double l2_err_trg = relative_l2_error(pot_trg, direct_stokes_vel_trg);
+    const double l2_err_src = relative_l2_error(vel_src, vel_src_direct);
+    const double l2_err_trg = relative_l2_error(vel_trg, vel_trg_direct);
+
+    CHECK(l2_err_src < params.eps);
+    CHECK(l2_err_trg < params.eps);
+}
+
+TEST_CASE_GENERIC("[DMK] pdmk 3d stresslet velocity", 1) {
+    constexpr int n_dim = 3;
+    constexpr int n_src = 2000;
+    constexpr int n_trg = 2000;
+    constexpr bool uniform = false;
+    constexpr bool set_fixed_charges = true;
+    constexpr double thresh2 = 1e-30;
+    constexpr int output_dim = n_dim;
+
+#ifdef DMK_HAVE_MPI
+    auto comm = test_comm;
+#else
+    auto comm = nullptr;
+#endif
+
+    std::vector<double> r_src, charges, rnormal, r_trg;
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, 0);
+    charges.resize(n_src * n_dim);
+    for (auto &c : charges)
+        c = 2 * drand48() - 1.0;
+
+    std::vector<double> vel_src(n_src * output_dim, 0), vel_trg(n_trg * output_dim, 0);
+
+    pdmk_params params;
+    params.eps = 1e-6;
+    params.n_dim = n_dim;
+    params.n_per_leaf = 280;
+    params.eval_src = DMK_VELOCITY;
+    params.eval_trg = DMK_VELOCITY;
+    params.kernel = DMK_STRESSLET;
+    params.log_level = SPDLOG_LEVEL_OFF;
+    params.debug_flags = 0;
+    params.use_periodic = false;
+
+    pdmk_tree tree = pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
+    pdmk_tree_eval(tree, &vel_src[0], &vel_trg[0]);
+    pdmk_tree_destroy(tree);
+
+    const int n_test_src = std::min(n_src, 64);
+    const int n_test_trg = std::min(n_trg, 64);
+    std::vector<double> vel_src_direct, vel_trg_direct;
+
+    compute_direct(n_dim, r_src, charges, rnormal, std::span<double>(r_src.data(), n_test_src * n_dim), vel_src_direct,
+                   params.kernel, params.eval_trg);
+    compute_direct(n_dim, r_src, charges, rnormal, std::span<double>(r_trg.data(), n_test_trg * n_dim), vel_trg_direct,
+                   params.kernel, params.eval_trg);
+
+    auto relative_l2_error = [](const auto &approx, const auto &exact) {
+        double err2{0.0}, ref2{0.0};
+        for (int i = 0; i < exact.size(); ++i) {
+            err2 += sctl::pow<2>(approx[i] - exact[i]);
+            ref2 += sctl::pow<2>(exact[i]);
+        }
+        return std::sqrt(err2 / ref2);
+    };
+
+    const double l2_err_src = relative_l2_error(vel_src, vel_src_direct);
+    const double l2_err_trg = relative_l2_error(vel_trg, vel_trg_direct);
 
     CHECK(l2_err_src < params.eps);
     CHECK(l2_err_trg < params.eps);
@@ -364,8 +396,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace gradient", 1) {
     params.eps = 1e-7;
     params.n_dim = n_dim;
     params.n_per_leaf = 280;
-    params.pgh_src = DMK_POTENTIAL_GRAD;
-    params.pgh_trg = DMK_POTENTIAL_GRAD;
+    params.eval_src = DMK_POTENTIAL_GRAD;
+    params.eval_trg = DMK_POTENTIAL_GRAD;
     params.kernel = DMK_LAPLACE;
     params.log_level = SPDLOG_LEVEL_OFF;
 
@@ -439,20 +471,22 @@ inline pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int
     const sctl::Comm sctl_comm;
 #endif
     sctl::Profile::Scoped profile("pdmk_tree_create", &sctl_comm);
-    const int kernel_input_dim = get_kernel_input_dim(params.n_dim, params.kernel);
+    const int charge_dim =
+        params.kernel == DMK_STRESSLET ? params.n_dim : get_kernel_input_dim(params.n_dim, params.kernel);
 
     sctl::Vector<Real> r_src_vec(n_src * params.n_dim, const_cast<Real *>(r_src), false);
     sctl::Vector<Real> r_trg_vec(n_trg * params.n_dim, const_cast<Real *>(r_trg), false);
-    sctl::Vector<Real> charge_vec(n_src * kernel_input_dim, const_cast<Real *>(charge), false);
+    sctl::Vector<Real> charge_vec(n_src * charge_dim, const_cast<Real *>(charge), false);
+    sctl::Vector<Real> normal_vec(n_src * params.n_dim, const_cast<Real *>(normal), false);
 
     if (params.n_dim != 2 && params.n_dim != 3)
         throw std::runtime_error("Invalid dimension: " + std::to_string(params.n_dim));
     if (params.n_dim == 2) {
         return new pdmk_tree_impl(std::unique_ptr<dmk::DMKPtTree<Real, 2>>(
-            new dmk::DMKPtTree<Real, 2>(sctl_comm, params, r_src_vec, r_trg_vec, charge_vec)));
+            new dmk::DMKPtTree<Real, 2>(sctl_comm, params, r_src_vec, charge_vec, normal_vec, r_trg_vec)));
     } else
         return new pdmk_tree_impl(std::unique_ptr<dmk::DMKPtTree<Real, 3>>(
-            new dmk::DMKPtTree<Real, 3>(sctl_comm, params, r_src_vec, r_trg_vec, charge_vec)));
+            new dmk::DMKPtTree<Real, 3>(sctl_comm, params, r_src_vec, charge_vec, normal_vec, r_trg_vec)));
 }
 
 template <typename Real>
@@ -465,11 +499,7 @@ inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *pot_trg) {
                 const auto &comm = (*static_cast<TreeType *>(tree))->GetComm();
                 sctl::Profile::Scoped prof("pdmk_tree_eval", &comm);
 
-                if ((t->params.debug_flags & DMK_DEBUG_USE_PQ) || util::env_is_set("DMK_DEBUG_USE_PQ"))
-                    t->eval_pq();
-                else
-                    t->eval();
-
+                t->eval();
                 t->desort_potentials(pot_src, pot_trg);
             }
         },

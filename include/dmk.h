@@ -3,7 +3,13 @@
 
 #include <stdint.h>
 
-typedef enum : int { DMK_YUKAWA = 0, DMK_LAPLACE = 1, DMK_SQRT_LAPLACE = 2, DMK_STOKESLET = 3 } dmk_ikernel;
+typedef enum : int {
+    DMK_YUKAWA = 0,
+    DMK_LAPLACE = 1,
+    DMK_SQRT_LAPLACE = 2,
+    DMK_STOKESLET = 3,
+    DMK_STRESSLET = 4,
+} dmk_ikernel;
 
 typedef enum : int {
     DMK_POTENTIAL = 1,
@@ -48,17 +54,17 @@ typedef void *dmk_communicator;
 #endif
 
 typedef struct pdmk_params {
-    int n_dim = 0;                         // dimension of system
-    double eps = 1e-3;                     // target precision
-    dmk_ikernel kernel = DMK_YUKAWA;       // evaluation kernel
-    dmk_eval_type pgh_src = DMK_POTENTIAL; // level to compute at sources (potential, pot+grad, pot+grad+hess)
-    dmk_eval_type pgh_trg = DMK_POTENTIAL; // level to compute at sources (potential, pot+grad, pot+grad+hess)
-    double fparam = 6.0;                   // param for selected potential (FIXME: make more flexible)
-    int use_periodic = false;              // use periodic boundary conditions (in all dimensions, currently)
-    int n_per_leaf = 200;                  // tuning: number of particles per leaf in N-tree
-    int log_level = 6;                     // 0: trace, 1: debug, 2: info, 3: warn, 4: err, 5: critical, 6: off
-    uint32_t debug_flags = 0;              // Debug params bit field, see above
-    double debug_params[8] = {0};          // 0: beta, 1: order, rest: placeholders
+    int n_dim = 0;                          // dimension of system
+    double eps = 1e-3;                      // target precision
+    dmk_ikernel kernel = DMK_YUKAWA;        // evaluation kernel
+    dmk_eval_type eval_src = DMK_POTENTIAL; // level to compute at sources (potential, pot+grad, pot+grad+hess)
+    dmk_eval_type eval_trg = DMK_POTENTIAL; // level to compute at sources (potential, pot+grad, pot+grad+hess)
+    double fparam = 6.0;                    // param for selected potential (FIXME: make more flexible)
+    int use_periodic = false;               // use periodic boundary conditions (in all dimensions, currently)
+    int n_per_leaf = 200;                   // tuning: number of particles per leaf in N-tree
+    int log_level = 6;                      // 0: trace, 1: debug, 2: info, 3: warn, 4: err, 5: critical, 6: off
+    uint32_t debug_flags = 0;               // Debug params bit field, see above
+    double debug_params[8] = {0};           // 0: beta, 1: order, rest: placeholders
 } pdmk_params;
 
 #ifdef __cplusplus

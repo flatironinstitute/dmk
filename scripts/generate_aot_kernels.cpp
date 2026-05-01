@@ -28,6 +28,7 @@ static const std::vector<KernelDef> all_kernels = {
     {DMK_SQRT_LAPLACE, "DMK_SQRT_LAPLACE", 3, "sqrt_laplace_3d_poly_all_pairs", "get_sqrt_laplace_3d_kernel"},
     // {DMK_STOKES, "DMK_STOKES", 2, "stokeslet_2d_poly_all_pairs", "get_stokeslet_2d_kernel"},
     {DMK_STOKESLET, "DMK_STOKESLET", 3, "stokeslet_3d_poly_all_pairs", "get_stokeslet_3d_kernel"},
+    {DMK_STRESSLET, "DMK_STRESSLET", 3, "stresslet_3d_poly_all_pairs", "get_stresslet_3d_kernel"},
 };
 
 constexpr int min_digits = 2;
@@ -68,6 +69,8 @@ std::string coeff_name(const KernelDef &k, int digits) {
                 return "sqrt_laplace";
             case DMK_STOKESLET:
                 return "stokeslet";
+            case DMK_STRESSLET:
+                return "stresslet";
             default:
                 return "unknown";
             }
@@ -99,21 +102,21 @@ residual_evaluator_func<Real> {}(dmk_eval_type eval_level, int n_digits) {{
             nc_args += std::format("NC{}", i);
         }
 
-        std::cout << std::format("    if (n_digits <= {}) {{\n"
-                                 "        constexpr int ND = {}, NC_TOTAL = {};\n"
-                                 "{}\n"
-                                 "        std::array<Real, NC_TOTAL> coeffs;\n"
-                                 "        std::copy_n({}, NC_TOTAL, coeffs.data());\n"
-                                 "        return [=](Real rsc, Real cen, Real d2max, Real thresh2,\n"
-                                 "                   int n_src, const Real *r_src, const Real *charge,\n"
-                                 "                   int n_trg, const Real *r_trg, Real *pot) {{\n"
-                                 "            {}<Real, MaxVecLen, ND, {}>(\n"
-                                 "                eval_level, ND, rsc, cen, d2max, thresh2, {},\n"
-                                 "                coeffs.data(), n_src, r_src, charge, n_trg, r_trg, pot, UF);\n"
-                                 "        }};\n"
-                                 "    }}\n",
-                                 info.digits, info.digits, info.total_size, nc_decls, cn, k.func_name, nc_args,
-                                 nc_args);
+        std::cout << std::format(
+            "    if (n_digits <= {}) {{\n"
+            "        constexpr int ND = {}, NC_TOTAL = {};\n"
+            "{}\n"
+            "        std::array<Real, NC_TOTAL> coeffs;\n"
+            "        std::copy_n({}, NC_TOTAL, coeffs.data());\n"
+            "        return [=](Real rsc, Real cen, Real d2max, Real thresh2,\n"
+            "                   int n_src, const Real *r_src, const Real *charge,\n"
+            "                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {{\n"
+            "            {}<Real, MaxVecLen, ND, {}>(\n"
+            "                eval_level, ND, rsc, cen, d2max, thresh2, {},\n"
+            "                coeffs.data(), n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);\n"
+            "        }};\n"
+            "    }}\n",
+            info.digits, info.digits, info.total_size, nc_decls, cn, k.func_name, nc_args, nc_args);
     }
 
     std::cout << std::format("    throw std::runtime_error(\"Unsupported n_digits: \" + std::to_string(n_digits));\n"

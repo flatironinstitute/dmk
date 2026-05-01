@@ -430,6 +430,8 @@ void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, 
         return sqrt_laplace_windowed_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, windowed_ft);
     case dmk_ikernel::DMK_STOKESLET:
         return stokes_windowed_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, windowed_ft);
+    case dmk_ikernel::DMK_STRESSLET:
+        return stokes_windowed_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, windowed_ft);
     }
 }
 
@@ -719,14 +721,14 @@ inline void stokes_difference_kernel_ft(const double *rpars, Real beta, int npw,
 
         const Real xval_small = xi * bsizesmall / beta;
         Real f1 = 0.0;
-        if (xval_small < 1.0) {
+        if (xval_small <= 1.0) {
             auto [psi, dpsi] = pf.eval_val_derivative(xval_small);
             f1 = psi - 0.5 * xval_small * dpsi;
         }
 
         const Real xval_big = xi * bsizebig / beta;
         Real f2 = 0.0;
-        if (xval_big < 1.0) {
+        if (xval_big <= 1.0) {
             auto [psi, dpsi] = pf.eval_val_derivative(xval_big);
             f2 = psi - 0.5 * xval_big * dpsi;
         }
@@ -748,6 +750,8 @@ void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars
             return sqrt_laplace_difference_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, diff_kernel_ft);
         case DMK_STOKESLET:
             return stokes_difference_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, diff_kernel_ft);
+        case DMK_STRESSLET:
+            return stokes_difference_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, diff_kernel_ft);
         default:
             throw std::runtime_error("Unsupported kernel " + std::to_string(kernel));
         }
@@ -759,6 +763,8 @@ void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars
         case DMK_SQRT_LAPLACE:
             return DIM == 2 ? Real(2.0) : Real(4.0);
         case DMK_STOKESLET:
+            return DIM == 2 ? Real(0.25) : Real(0.5);
+        case DMK_STRESSLET:
             return DIM == 2 ? Real(0.25) : Real(0.5);
         default:
             throw std::runtime_error("Invalid kernel type: " + std::to_string(kernel));
@@ -1009,6 +1015,8 @@ void FourierData<T>::update_local_coeffs(T eps) {
     case dmk_ikernel::DMK_SQRT_LAPLACE:
         return; // No coefficients for sqrt Laplace kernel
     case dmk_ikernel::DMK_STOKESLET:
+        return;
+    case dmk_ikernel::DMK_STRESSLET:
         return;
     default:
         throw std::runtime_error("Kernel not supported yet: " + std::to_string(kernel_));

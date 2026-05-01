@@ -78,15 +78,17 @@ ErrorMetrics compute_error(const std::vector<Real> &computed, const std::vector<
 }
 
 template <typename Real>
-void generate_and_scatter(int n_dim, int nd, int n_src, bool uniform, bool set_fixed_charges, std::vector<Real> &r_src,
-                          std::vector<Real> &charges, long seed, int rank, int np) {
+void generate_and_scatter(int n_dim, int nd, size_t n_src, bool uniform, bool set_fixed_charges,
+                          std::vector<Real> &r_src, std::vector<Real> &charges, std::vector<Real> &normals, long seed,
+                          int rank, int np) {
     const int n_local = local_count(n_src, np, rank);
 
-    std::vector<Real> r_all, c_all;
+    std::vector<Real> r_all, c_all, n_all;
 
     if (rank == 0) {
-        r_all.resize(size_t(n_dim) * n_src);
-        c_all.resize(size_t(nd) * n_src);
+        r_all.resize(n_dim * n_src);
+        c_all.resize(nd * n_src);
+        n_all.resize(n_dim * n_src);
 
         const double rin = 0.45;
         std::default_random_engine eng(seed);
@@ -110,6 +112,20 @@ void generate_and_scatter(int n_dim, int nd, int n_src, bool uniform, bool set_f
             }
             for (int j = 0; j < nd; ++j)
                 c_all[i * nd + j] = Real(rng(eng) - 0.5);
+
+            if (n_dim == 2) {
+                double phi = rng(eng) * 2.0 * M_PI;
+                n_all[i * n_dim + 0] = std::cos(phi);
+                n_all[i * n_dim + 1] = std::sin(phi);
+            } else if (n_dim == 3) {
+                double theta = rng(eng) * M_PI;
+                double ct = std::cos(theta), st = std::sin(theta);
+                double phi = rng(eng) * 2.0 * M_PI;
+
+                n_all[i * n_dim + 0] = st * std::cos(phi);
+                n_all[i * n_dim + 1] = st * std::sin(phi);
+                n_all[i * n_dim + 2] = ct;
+            }
         }
 
         if (set_fixed_charges && n_src > 0)
@@ -126,34 +142,41 @@ void generate_and_scatter(int n_dim, int nd, int n_src, bool uniform, bool set_f
 #ifdef DMK_HAVE_MPI
     std::vector<int> sendcounts_r(np), displs_r(np);
     std::vector<int> sendcounts_c(np), displs_c(np);
+    std::vector<int> sendcounts_n(np), displs_n(np);
     for (int i = 0; i < np; ++i) {
         int ni = local_count(n_src, np, i);
         sendcounts_r[i] = ni * n_dim;
         sendcounts_c[i] = ni * nd;
+        sendcounts_n[i] = ni * n_dim;
     }
-    displs_r[0] = displs_c[0] = 0;
+    displs_r[0] = displs_c[0] = displs_n[0] = 0;
     for (int i = 1; i < np; ++i) {
         displs_r[i] = displs_r[i - 1] + sendcounts_r[i - 1];
         displs_c[i] = displs_c[i - 1] + sendcounts_c[i - 1];
+        displs_n[i] = displs_n[i - 1] + sendcounts_n[i - 1];
     }
 
     auto mpi_t = std::is_same_v<Real, float> ? MPI_FLOAT : MPI_DOUBLE;
     r_src.resize(size_t(n_dim) * n_local);
     charges.resize(size_t(nd) * n_local);
+    normals.resize(size_t(n_dim) * n_local);
     MPI_Scatterv(rank == 0 ? r_all.data() : nullptr, sendcounts_r.data(), displs_r.data(), mpi_t, r_src.data(),
                  n_local * n_dim, mpi_t, 0, MYCOMM);
     MPI_Scatterv(rank == 0 ? c_all.data() : nullptr, sendcounts_c.data(), displs_c.data(), mpi_t, charges.data(),
                  n_local * nd, mpi_t, 0, MYCOMM);
+    MPI_Scatterv(rank == 0 ? n_all.data() : nullptr, sendcounts_n.data(), displs_n.data(), mpi_t, normals.data(),
+                 n_local * n_dim, mpi_t, 0, MYCOMM);
 #else
     r_src = std::move(r_all);
     charges = std::move(c_all);
+    normals = std::move(n_all);
 #endif
 }
 
 template <typename Real>
 void run_direct(const Config &cfg, int n_dim, int charge_dim, const std::vector<Real> &r_src,
-                const std::vector<Real> &charges, const std::vector<Real> &r_trg, std::vector<Real> &pot, int rank,
-                int np) {
+                const std::vector<Real> &charges, const std::vector<Real> &normals, const std::vector<Real> &r_trg,
+                std::vector<Real> &pot, int rank, int np) {
     const int n_src_local = r_src.size() / n_dim;
     int n_trg_local = r_trg.size() / n_dim;
 
@@ -166,43 +189,52 @@ void run_direct(const Config &cfg, int n_dim, int charge_dim, const std::vector<
 
     std::vector<int> recv_cnts_r(np), recv_disp_r(np);
     std::vector<int> recv_cnts_c(np), recv_disp_c(np);
+    std::vector<int> recv_cnts_n(np), recv_disp_n(np);
     {
         int send_cnt_r = n_src_local * n_dim;
+        int send_cnt_n = n_src_local * n_dim;
         int send_cnt_c = n_src_local * charge_dim;
         MPI_Allgather(&send_cnt_r, 1, MPI_INT, recv_cnts_r.data(), 1, MPI_INT, MYCOMM);
+        MPI_Allgather(&send_cnt_n, 1, MPI_INT, recv_cnts_n.data(), 1, MPI_INT, MYCOMM);
         MPI_Allgather(&send_cnt_c, 1, MPI_INT, recv_cnts_c.data(), 1, MPI_INT, MYCOMM);
-        recv_disp_r[0] = recv_disp_c[0] = 0;
+        recv_disp_r[0] = recv_disp_c[0] = recv_disp_n[0] = 0;
         for (int i = 1; i < np; ++i) {
             recv_disp_r[i] = recv_disp_r[i - 1] + recv_cnts_r[i - 1];
+            recv_disp_n[i] = recv_disp_n[i - 1] + recv_cnts_n[i - 1];
             recv_disp_c[i] = recv_disp_c[i - 1] + recv_cnts_c[i - 1];
         }
     }
 
     std::vector<Real> glb_r_src(n_src_global * n_dim);
+    std::vector<Real> glb_normals(n_src_global * n_dim);
     std::vector<Real> glb_charges(n_src_global * charge_dim);
     MPI_Allgatherv(r_src.data(), n_src_local * n_dim, mpi_t, glb_r_src.data(), recv_cnts_r.data(), recv_disp_r.data(),
                    mpi_t, MYCOMM);
+    MPI_Allgatherv(normals.data(), n_src_local * n_dim, mpi_t, glb_normals.data(), recv_cnts_n.data(),
+                   recv_disp_n.data(), mpi_t, MYCOMM);
     MPI_Allgatherv(charges.data(), n_src_local * charge_dim, mpi_t, glb_charges.data(), recv_cnts_c.data(),
                    recv_disp_c.data(), mpi_t, MYCOMM);
 #else
     int n_src_global = n_src_local;
     const auto &glb_r_src = r_src;
     const auto &glb_charges = charges;
+    const auto &glb_normals = normals;
 #endif
 
     // Convert sources to double for reference evaluation
     std::vector<double> r_src_d(glb_r_src.begin(), glb_r_src.end());
+    std::vector<double> normals_d(glb_normals.begin(), glb_normals.end());
     std::vector<double> charges_d(glb_charges.begin(), glb_charges.end());
     std::vector<double> r_trg_d(r_trg.begin(), r_trg.end());
 
     // Evaluate: each rank handles its own local targets
-    const auto eval_level = cfg.kernel == DMK_STOKESLET ? DMK_VELOCITY : DMK_POTENTIAL;
+    const auto eval_level = (cfg.kernel == DMK_STOKESLET || cfg.kernel == DMK_STRESSLET) ? DMK_VELOCITY : DMK_POTENTIAL;
     const int kdim = dmk::get_kernel_output_dim(n_dim, cfg.kernel, eval_level);
     std::vector<double> pot_d(n_trg_local * kdim, 0.0);
 
     const auto eval = dmk::get_direct_evaluator<double>(cfg.kernel, eval_level, n_dim, cfg.fparam);
-    dmk::parallel_direct_eval<double>(eval, n_src_global, r_src_d.data(), charges_d.data(), n_trg_local, r_trg_d.data(),
-                                      pot_d.data(), n_dim, kdim);
+    dmk::parallel_direct_eval<double>(eval, n_src_global, r_src_d.data(), charges_d.data(), normals_d.data(),
+                                      n_trg_local, r_trg_d.data(), pot_d.data(), n_dim, kdim);
 
     pot.resize(n_trg_local * kdim);
     for (size_t i = 0; i < pot_d.size(); ++i)
@@ -237,7 +269,9 @@ void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ost
         case DMK_YUKAWA:
             return "yukawa";
         case DMK_STOKESLET:
-            return "stokes";
+            return "stokeslet";
+        case DMK_STRESSLET:
+            return "stresslet";
         default:
             return "unknown";
         }
@@ -278,8 +312,10 @@ dmk_ikernel parse_kernel(const char *s) {
         return DMK_SQRT_LAPLACE;
     if (k == "yukawa")
         return DMK_YUKAWA;
-    if (k == "stokes")
+    if (k == "stokeslet")
         return DMK_STOKESLET;
+    if (k == "stresslet")
+        return DMK_STRESSLET;
     throw std::runtime_error("Unknown kernel: " + k);
 }
 
@@ -301,27 +337,29 @@ void run_benchmark(const Config &cfg) {
     params.n_dim = n_dim;
     params.n_per_leaf = cfg.n_per_leaf;
     params.log_level = cfg.log_level;
-    params.pgh_src = DMK_POTENTIAL;
-    params.pgh_trg = DMK_POTENTIAL;
+    params.eval_src = DMK_POTENTIAL;
+    params.eval_trg = DMK_POTENTIAL;
     params.kernel = cfg.kernel;
     if (cfg.kernel == DMK_YUKAWA)
         params.fparam = cfg.fparam;
-    if (cfg.kernel == DMK_STOKESLET) {
-        params.pgh_src = DMK_VELOCITY;
-        params.pgh_trg = DMK_VELOCITY;
+    if (cfg.kernel == DMK_STOKESLET || cfg.kernel == DMK_STRESSLET) {
+        params.eval_src = DMK_VELOCITY;
+        params.eval_trg = DMK_VELOCITY;
     }
 
-    const int charge_dim = dmk::get_kernel_input_dim(n_dim, cfg.kernel);
-    const int pot_dim = dmk::get_kernel_output_dim(n_dim, cfg.kernel, params.pgh_src);
+    const int charge_dim = dmk::get_kernel_input_dim(n_dim, params.kernel);
+    const int pot_dim = dmk::get_kernel_output_dim(n_dim, cfg.kernel, params.eval_src);
 
-    std::vector<Real> r_src, charges;
-    generate_and_scatter<Real>(n_dim, charge_dim, n_src, cfg.uniform, true, r_src, charges, 0, rank, np);
+    std::vector<Real> r_src, charges, normals;
+    generate_and_scatter<Real>(n_dim, charge_dim, n_src, cfg.uniform, true, r_src, charges, normals, 0, rank, np);
 
     pdmk_tree tree;
     if constexpr (std::is_same_v<Real, float>)
-        tree = pdmk_tree_createf(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), nullptr, 0, nullptr);
+        tree =
+            pdmk_tree_createf(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), normals.data(), 0, nullptr);
     else
-        tree = pdmk_tree_create(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), nullptr, 0, nullptr);
+        tree =
+            pdmk_tree_create(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), normals.data(), 0, nullptr);
 
     // Direct reference
     std::vector<Real> pot_direct;
@@ -330,10 +368,10 @@ void run_benchmark(const Config &cfg) {
         int n_direct_per_rank = local_count(n_direct_global, np, rank);
 
         if (n_direct_global == n_src) {
-            run_direct(cfg, n_dim, charge_dim, r_src, charges, r_src, pot_direct, rank, np);
+            run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_src, pot_direct, rank, np);
         } else {
             std::vector<Real> r_trg(r_src.begin(), r_src.begin() + n_direct_per_rank * n_dim);
-            run_direct(cfg, n_dim, charge_dim, r_src, charges, r_trg, pot_direct, rank, np);
+            run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_trg, pot_direct, rank, np);
         }
     }
 
@@ -450,7 +488,7 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -n n_per_leaf      DMK leaf size\n"
                       << "  -e eps             Tolerance\n"
                       << "  -t f|d             Precision\n"
-                      << "  -k kernel          laplace, sqrt_laplace, yukawa, stokes\n"
+                      << "  -k kernel          laplace, sqrt_laplace, yukawa, stokeslet, stresslet\n"
                       << "  -d dim             2 or 3\n"
                       << "  -f fparam          Yukawa parameter (default: 6.0)\n"
                       << "  -r n_runs          Benchmark iterations\n"

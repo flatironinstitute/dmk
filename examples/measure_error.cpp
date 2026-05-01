@@ -108,8 +108,8 @@ ErrorMetrics run_one(int n_dim, dmk_ikernel kernel, int n_digits, const Config &
     params.n_dim = n_dim;
     params.n_per_leaf = cfg.n_per_leaf;
     params.log_level = DMK_LOG_OFF;
-    params.pgh_src = DMK_POTENTIAL;
-    params.pgh_trg = DMK_POTENTIAL;
+    params.eval_src = DMK_POTENTIAL;
+    params.eval_trg = DMK_POTENTIAL;
     params.kernel = kernel;
     if (kernel == DMK_YUKAWA)
         params.fparam = 6.0;
@@ -199,7 +199,8 @@ void run_beta_sweep(const Config &cfg) {
             std::vector<double> pot_direct, r_src_trunc;
             r_src_trunc.assign(r_src.begin(), r_src.begin() + n_test * n_dim);
 
-            dmk::compute_direct(n_dim, r_src, charges, r_src_trunc, pot_direct, kernel, DMK_POTENTIAL);
+            dmk::compute_direct(n_dim, r_src, charges, std::vector<double>{}, r_src_trunc, pot_direct, kernel,
+                                DMK_POTENTIAL);
             for (double beta = cfg.beta_min; beta <= cfg.beta_max + 1e-9; beta += cfg.beta_step) {
                 try {
                     auto err = run_one<Real>(n_dim, kernel, 12, cfg, r_src, charges, pot_direct, beta);
@@ -246,7 +247,8 @@ void run_all(const Config &cfg) {
             int n_test = std::min(cfg.n_direct, cfg.n_src);
             std::vector<double> pot_direct, r_src_trunc;
             r_src_trunc.assign(r_src.begin(), r_src.begin() + n_test * n_dim);
-            dmk::compute_direct(n_dim, r_src, charges, r_src_trunc, pot_direct, kernel, DMK_POTENTIAL);
+            dmk::compute_direct(n_dim, r_src, charges, std::vector<double>{}, r_src_trunc, pot_direct, kernel,
+                                DMK_POTENTIAL);
 
             for (int digits = min_digits; digits <= max_digits; ++digits) {
                 try {

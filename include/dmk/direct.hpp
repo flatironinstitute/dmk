@@ -24,6 +24,8 @@ inline int get_kernel_input_dim(int dim, dmk_ikernel kernel) {
         return 1;
     case DMK_STOKESLET:
         return dim;
+    case DMK_STRESSLET:
+        return dim;
     }
     throw std::runtime_error("Invalid kernel");
 }
@@ -58,6 +60,10 @@ inline int get_kernel_output_dim(int dim, dmk_ikernel kernel, dmk_eval_type flag
         if (flags == DMK_VELOCITY)
             return dim;
         break;
+    case DMK_STRESSLET:
+        if (flags == DMK_VELOCITY)
+            return dim;
+        break;
     }
     using dmk::util::to_string;
     throw std::runtime_error(
@@ -69,8 +75,8 @@ direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_ty
 
 template <typename Real>
 inline void parallel_direct_eval(const dmk::direct_evaluator_func<Real> &func, int n_src, const Real *r_src,
-                                 const Real *charge, int n_trg, const Real *r_trg, Real *pot, int spatial_dim,
-                                 int charge_dim) {
+                                 const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot,
+                                 int spatial_dim, int out_dim) {
 #pragma omp parallel
     {
         const int nt = MY_OMP_GET_NUM_THREADS();
@@ -78,21 +84,21 @@ inline void parallel_direct_eval(const dmk::direct_evaluator_func<Real> &func, i
         const int lo = (tid * n_trg) / nt;
         const int hi = ((tid + 1) * n_trg) / nt;
         if (hi > lo)
-            func(n_src, r_src, charge, hi - lo, r_trg + lo * spatial_dim, pot + lo * charge_dim);
+            func(n_src, r_src, charge, normals, hi - lo, r_trg + lo * spatial_dim, pot + lo * out_dim);
     }
 }
 
-inline void compute_direct(int n_dim, const auto &r_src, const auto &charges, const auto &r_trg, auto &pot_direct,
-                           dmk_ikernel kernel, dmk_eval_type eval_level) {
+inline void compute_direct(int n_dim, const auto &r_src, const auto &charges, const auto &normals, const auto &r_trg,
+                           auto &pot_direct, dmk_ikernel kernel, dmk_eval_type eval_level) {
     using Real = std::decay_t<decltype(r_src)>::value_type;
-    const int n_src = r_src.size() / n_dim;
-    const int n_trg = r_trg.size() / n_dim;
-    const int out_dim = get_kernel_output_dim(n_dim, kernel, eval_level);
+    const long n_src = r_src.size() / n_dim;
+    const long n_trg = r_trg.size() / n_dim;
+    const long out_dim = get_kernel_output_dim(n_dim, kernel, eval_level);
     const double lambda = 6.0;
     pot_direct.assign(n_trg * out_dim, 0);
     auto potfunc = dmk::get_direct_evaluator<Real>(kernel, eval_level, n_dim, lambda);
-    parallel_direct_eval(potfunc, n_src, r_src.data(), charges.data(), n_trg, r_trg.data(), pot_direct.data(), n_dim,
-                         1);
+    parallel_direct_eval(potfunc, n_src, r_src.data(), charges.data(), normals.data(), n_trg, r_trg.data(),
+                         pot_direct.data(), n_dim, out_dim);
 }
 
 template <typename Real>

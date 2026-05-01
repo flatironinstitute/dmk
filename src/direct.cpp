@@ -1,5 +1,4 @@
 #include <dmk.h>
-#include <dmk/aot_kernels.hpp>
 #include <dmk/direct.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/legeexps.hpp>
@@ -189,9 +188,8 @@ inline double biharmonic_ft(int dim, double rl, double k) {
     }
 }
 
-inline std::pair<double, double> stokes_residual_at_point(int dim, double rval, double beta, double bsize,
-                                                          const Prolate0Fun &prolate) {
-
+inline std::pair<double, double> stokeslet_residual_at_point(int dim, double rval, double beta, double bsize,
+                                                             const Prolate0Fun &prolate) {
     if (rval < 1e-15)
         return {0.0, 0.0};
 
@@ -281,20 +279,131 @@ inline std::pair<double, double> stokes_residual_at_point(int dim, double rval, 
     return {g_diag, g_offd};
 }
 
-template <typename Real>
-std::vector<std::vector<Real>> get_stokes_local_correction_coeffs(int dim, int n_digits, double beta,
-                                                                  double bsize = 1.0) {
+inline std::pair<double, double> stresslet_residual_at_point(int dim, double rval, double beta, double bsize,
+                                                             const Prolate0Fun &prolate) {
+    if (std::fabs(rval) < 1e-15)
+        return {0.0, -0.5};
 
+    const double psi0 = prolate.eval_val(0.0);
+    const double rl = bsize * (std::sqrt(double(dim)) + 1.0);
+    const double twooverpi = 2.0 / M_PI;
+    const double cval = (dim == 2) ? 0.5 * (1.0 - std::log(rl)) : 1.0 / (2.0 * rl);
+
+    // Step 1: Legendre quadrature on [0, beta/bsize]
+    constexpr int n_quad = 200;
+    std::array<double, n_quad> rks, whts, fhat;
+    legerts(1, n_quad, rks.data(), whts.data());
+    for (int i = 0; i < n_quad; ++i) {
+        rks[i] = 0.5 * (rks[i] + 1.0) * beta / bsize;
+        whts[i] *= 0.5 * beta / bsize;
+    }
+
+    // Step 2: Evaluate windowed kernel FT at quadrature nodes
+    for (int i = 0; i < n_quad; ++i) {
+        double xi = rks[i];
+        double xval = xi * bsize / beta;
+
+        double fval = 0.0;
+        if (xval <= 1.0) {
+            auto [psi, dpsi] = prolate.eval_val_derivative(xval);
+            fval = (psi - 0.5 * xval * dpsi) / psi0;
+        }
+
+        fhat[i] = fval * biharmonic_ft(dim, rl, xi);
+    }
+
+    // Step 3: Weight by quadrature weights and k factors
+    for (int i = 0; i < n_quad; ++i) {
+        if (dim == 2)
+            fhat[i] *= whts[i] * rks[i];
+        else
+            fhat[i] *= whts[i] * rks[i] * rks[i] * twooverpi;
+    }
+
+    // Step 4: Compute f'(r) and f''(r) at the given point
+    double r = (dim == 2) ? std::sqrt(rval) : rval;
+    double df{0.0}, d2f{0.0}, d3f{0.0};
+
+    for (int i = 0; i < n_quad; ++i) {
+        const double dk = rks[i];
+        const double dd = r * dk;
+        const double dd2 = dd * dd;
+
+        double drft, d2rft, d3rft;
+
+        if (dim == 2) {
+            const double dj0 = util::cyl_bessel_j(0, dd);
+            const double dj1 = util::cyl_bessel_j(1, dd);
+            drft = -dk * dj1;
+            d2rft = -dk * dk * (dj0 - dj1 / dd);
+            d3rft = dk * dk * dk * ((dd2 - 2) * dj1 + dd * dj0) / dd2;
+        } else {
+            const double dd3 = dd2 * dd;
+            const double dd4 = dd3 * dd;
+            const double crk = cos(dd);
+            const double srk = sin(dd);
+            drft = (dd * crk - srk) * dk / dd2;
+            d2rft = ((2 - dd2) * srk - 2 * dd * crk) * dk * dk / dd3;
+            d3rft = ((6 * dd - dd3) * crk + (3 * dd2 - 6) * srk) * dk * dk * dk / dd4;
+        }
+
+        df += drft * fhat[i];
+        d2f += d2rft * fhat[i];
+        d3f += d3rft * fhat[i];
+    }
+
+    // Step 5: Biharmonic correction
+    df += cval * r - ((dim == 3) ? 0.5 : 0.0);
+    d2f += cval;
+
+    // Step 6: Combine
+    double g_diag, g_offd;
+    if (dim == 3) {
+        g_diag = r * r * d3f;
+        g_offd = df - r * d2f + r * r * d3f / 3.0;
+    } else {
+        g_diag = df / r - d2f + r * d3f;
+        g_offd = 3 * df / r - 3 * d2f + r * d3f - 1.0;
+    }
+
+    return {g_diag, g_offd};
+}
+
+template <typename Real>
+std::vector<std::vector<Real>> get_stokeslet_local_correction_coeffs(int dim, int n_digits, double beta,
+                                                                     double bsize = 1.0) {
     Prolate0Fun prolate(beta, 10000);
 
     auto fit_diag = [&](int digits) {
         return make_polyfit_abs_error<double>(
-            digits, [&](double x) { return stokes_residual_at_point(dim, x, beta, bsize, prolate).first; }, 0.0, 1.0);
+            digits, [&](double x) { return stokeslet_residual_at_point(dim, x, beta, bsize, prolate).first; }, 0.0,
+            1.0);
     };
 
     auto fit_offd = [&](int digits) {
         return make_polyfit_abs_error<double>(
-            digits, [&](double x) { return stokes_residual_at_point(dim, x, beta, bsize, prolate).second; }, 0.0, 1.0);
+            digits, [&](double x) { return stokeslet_residual_at_point(dim, x, beta, bsize, prolate).second; }, 0.0,
+            1.0);
+    };
+
+    return {coeffs_cache.get<Real>(n_digits, beta, fit_diag), coeffs_cache.get<Real>(n_digits, beta, fit_offd)};
+}
+
+template <typename Real>
+std::vector<std::vector<Real>> get_stresslet_local_correction_coeffs(int dim, int n_digits, double beta,
+                                                                     double bsize = 1.0) {
+    Prolate0Fun prolate(beta, 10000);
+
+    auto fit_diag = [&](int digits) {
+        return make_polyfit_abs_error<double>(
+            digits, [&](double x) { return stresslet_residual_at_point(dim, x, beta, bsize, prolate).first; }, 0.0,
+            1.0);
+    };
+
+    auto fit_offd = [&](int digits) {
+        return make_polyfit_abs_error<double>(
+            digits, [&](double x) { return stresslet_residual_at_point(dim, x, beta, bsize, prolate).second; }, 0.0,
+            1.0);
     };
 
     return {coeffs_cache.get<Real>(n_digits, beta, fit_diag), coeffs_cache.get<Real>(n_digits, beta, fit_offd)};
@@ -335,7 +444,9 @@ std::vector<std::vector<Real>> get_local_correction_coeffs(dmk_ikernel kernel, i
         }
         break;
     case DMK_STOKESLET:
-        return get_stokes_local_correction_coeffs<Real>(n_dim, n_digits, beta);
+        return get_stokeslet_local_correction_coeffs<Real>(n_dim, n_digits, beta);
+    case DMK_STRESSLET:
+        return get_stresslet_local_correction_coeffs<Real>(n_dim, n_digits, beta);
     default:
         break;
     }
@@ -358,8 +469,6 @@ residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_ty
     std::lock_guard<std::mutex> lock_guard(lock);
     constexpr int VECWIDTH = sctl::DefaultVecLen<Real>();
     constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
-    using ft =
-        void (*)(Real, Real, Real, Real, const Real *, int, const Real *, const Real *, int, const Real *, Real *);
 
     auto build_func_name = [&](const std::string &base_name, int n_polynomials = 1) {
         std::string args = std::format("void {}<{}, {}, -1, -1", base_name, T_str, VECWIDTH);
@@ -375,6 +484,8 @@ residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_ty
             return build_func_name(std::format("sqrt_laplace_{}d_poly_all_pairs", n_dim), 1);
         case dmk_ikernel::DMK_STOKESLET:
             return build_func_name(std::format("stokeslet_{}d_poly_all_pairs", n_dim), 2);
+        case dmk_ikernel::DMK_STRESSLET:
+            return build_func_name(std::format("stresslet_{}d_poly_all_pairs", n_dim), 2);
         default:
             throw std::runtime_error("Unsupported kernel for direct evaluator");
         }
@@ -386,8 +497,10 @@ residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_ty
     for (int i = 0; i < coeffs.size(); ++i)
         args_to_consume["n_coeffs_rt_" + std::to_string(i)] = coeffs[i].size();
 
-    ft jit_func = RS->compile<void (*)(Real, Real, Real, Real, const Real *, int, const Real *, const Real *, int,
-                                       const Real *, Real *)>(func_name, args_to_consume);
+    using ft = void (*)(Real, Real, Real, Real, const Real *, int, const Real *, const Real *, const Real *, int,
+                        const Real *, Real *);
+    ft jit_func = RS->compile<void (*)(Real, Real, Real, Real, const Real *, int, const Real *, const Real *,
+                                       const Real *, int, const Real *, Real *)>(func_name, args_to_consume);
     if (!jit_func)
         throw std::runtime_error("Error compiling direct kernel");
 
@@ -396,8 +509,8 @@ residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_ty
         coeffs_cat.insert(coeffs_cat.end(), cvec.begin(), cvec.end());
 
     return [jit_func, coeffs_cat](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
-                                  const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
-        jit_func(rsc, cen, d2max, thresh2, coeffs_cat.data(), n_src, r_src, charge, n_trg, r_trg, pot);
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+        jit_func(rsc, cen, d2max, thresh2, coeffs_cat.data(), n_src, r_src, charge, normals, n_trg, r_trg, pot);
     };
 }
 
@@ -411,36 +524,14 @@ template residual_evaluator_func<double> make_evaluator_jit<double>(dmk_ikernel 
 // (DMK_USE_JIT)
 
 template <typename Real>
-residual_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim, int n_digits,
-                                                 int unroll_factor) {
-    constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
-    switch (kernel) {
-    case dmk_ikernel::DMK_LAPLACE:
-        if (n_dim == 2)
-            return get_laplace_2d_kernel<Real, MaxVecLen>(eval_level, n_digits);
-        if (n_dim == 3)
-            return get_laplace_3d_kernel<Real, MaxVecLen>(eval_level, n_digits);
-    case dmk_ikernel::DMK_SQRT_LAPLACE:
-        if (n_dim == 2)
-            return get_sqrt_laplace_2d_kernel<Real, MaxVecLen>(eval_level, n_digits);
-        if (n_dim == 3)
-            return get_sqrt_laplace_3d_kernel<Real, MaxVecLen>(eval_level, n_digits);
-    case dmk_ikernel::DMK_STOKESLET:
-        if (n_dim == 3)
-            return get_stokeslet_3d_kernel<Real, MaxVecLen>(eval_level, n_digits);
-    default:
-        throw std::runtime_error("Unsupported kernel for local evaluator");
-    }
-}
-
-template <typename Real>
 direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim, Real lambda) {
     constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
     constexpr int unroll_factor = 3;
     switch (kernel) {
     case dmk_ikernel::DMK_YUKAWA:
         if (n_dim == 2)
-            return [lambda](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+            return [lambda](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                            const Real *r_trg, Real *pot) {
                 for (int i = 0; i < n_trg; ++i) {
                     for (int j = 0; j < n_src; ++j) {
                         const double dr2 = sctl::pow<2>(r_src[j * 2] - r_trg[i * 2]) +
@@ -452,39 +543,50 @@ direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_ty
                 }
             };
         if (n_dim == 3)
-            return [lambda](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+            return [lambda](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                            const Real *r_trg, Real *pot) {
                 yukawa_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor,
                                                             lambda);
             };
 
     case dmk_ikernel::DMK_LAPLACE:
         if (n_dim == 2)
-            return [eval_level](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg,
-                                Real *pot) {
+            return [eval_level](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                                const Real *r_trg, Real *pot) {
                 laplace_2d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor,
                                                              eval_level);
             };
         if (n_dim == 3)
-            return [eval_level](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg,
-                                Real *pot) {
+            return [eval_level](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                                const Real *r_trg, Real *pot) {
                 laplace_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor,
                                                              eval_level);
             };
     case dmk_ikernel::DMK_SQRT_LAPLACE:
         if (n_dim == 2)
-            return [](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+            return [](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                      const Real *r_trg, Real *pot) {
                 sqrt_laplace_2d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot,
                                                                   unroll_factor);
             };
         if (n_dim == 3)
-            return [](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+            return [](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                      const Real *r_trg, Real *pot) {
                 sqrt_laplace_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot,
                                                                   unroll_factor);
             };
     case dmk_ikernel::DMK_STOKESLET:
         if (n_dim == 3)
-            return [](int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg, Real *pot) {
+            return [](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                      const Real *r_trg, Real *pot) {
                 stokeslet_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor);
+            };
+    case dmk_ikernel::DMK_STRESSLET:
+        if (n_dim == 3)
+            return [](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                      const Real *r_trg, Real *pot) {
+                stresslet_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, normals, n_trg, r_trg, pot,
+                                                               unroll_factor);
             };
     default:
         throw std::runtime_error("Unsupported kernel for direct evaluator");
@@ -495,10 +597,6 @@ template std::vector<std::vector<float>> get_local_correction_coeffs<float>(dmk_
                                                                             double beta);
 template std::vector<std::vector<double>> get_local_correction_coeffs<double>(dmk_ikernel kernel, int n_dim,
                                                                               int n_digits, double beta);
-template residual_evaluator_func<float> make_evaluator_aot<float>(dmk_ikernel kernel, dmk_eval_type eval_level,
-                                                                  int n_dim, int n_digits, int unroll_factor);
-template residual_evaluator_func<double> make_evaluator_aot<double>(dmk_ikernel kernel, dmk_eval_type eval_level,
-                                                                    int n_dim, int n_digits, int unroll_factor);
 
 template direct_evaluator_func<float> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim,
                                                            float lambda);

@@ -648,10 +648,92 @@ struct StokesletPolyEvaluator3D {
     }
 };
 
+template <typename Real, int MaxVecLen>
+struct StressletEvaluator3D {
+    using scalar_type = Real;
+    using vector_type = sctl::Vec<Real, MaxVecLen>;
+    static constexpr int KERNEL_INPUT_DIM = 3;
+    static constexpr int KERNEL_OUTPUT_DIM = 3;
+    static constexpr int SPATIAL_DIM = 3;
+    static constexpr int NORMAL_DIM = 3;
+    static constexpr Real scale_factor = 1.0;
+
+    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM],
+                                      const vector_type (&dX)[SPATIAL_DIM], const vector_type (&ns)[NORMAL_DIM]) const {
+        const vector_type R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
+        const auto mask = (R2 > vector_type::Zero());
+        const vector_type Rinv = sctl::approx_rsqrt<-1>(R2, mask);
+        const vector_type Rinv3 = Rinv * Rinv * Rinv;
+        const vector_type Rinv5 = Rinv3 * Rinv * Rinv;
+        const vector_type rdotn = FMA(dX[0], ns[0], FMA(dX[1], ns[1], dX[2] * ns[2]));
+
+        const vector_type neg3 = Real{-3.0};
+        const vector_type factor = neg3 * rdotn * Rinv5;
+        for (int j = 0; j < KERNEL_INPUT_DIM; ++j) {
+            const vector_type fj = dX[j] * factor;
+            for (int i = 0; i < KERNEL_OUTPUT_DIM; ++i)
+                u[j][i] = fj * dX[i];
+        }
+    }
+};
+
+template <typename Real, int MaxVecLen>
+struct StressletPolyEvaluator3D {
+    using scalar_type = Real;
+    using vector_type = sctl::Vec<Real, MaxVecLen>;
+    static constexpr int KERNEL_INPUT_DIM = 3;
+    static constexpr int KERNEL_OUTPUT_DIM = 3;
+    static constexpr int SPATIAL_DIM = 3;
+    static constexpr int NORMAL_DIM = 3;
+    static constexpr Real scale_factor = 1.0;
+
+    vector_type thresh2_vec, d2max_vec, rsc_vec, cen_vec;
+    const Real *coeffs_diag;
+    const Real *coeffs_offdiag;
+    int n_coeffs_diag;
+    int n_coeffs_offdiag;
+    int n_digits;
+
+    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM],
+                                      const vector_type (&dX)[SPATIAL_DIM], const vector_type (&ns)[NORMAL_DIM]) const {
+        const vector_type R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
+        const auto mask = (R2 > thresh2_vec) & (R2 < d2max_vec);
+        const vector_type Rinv = my_approx_rsqrt(R2, n_digits);
+        const vector_type Rinv3 = Rinv * Rinv * Rinv;
+        const vector_type Rinv5 = Rinv3 * Rinv * Rinv;
+        const vector_type xtmp = FMA(R2, Rinv, cen_vec) * rsc_vec;
+
+        const vector_type Fdiag = -horner(xtmp, coeffs_diag, n_coeffs_diag) * Rinv3;
+        const vector_type six = Real{6.0};
+        const vector_type Foffd = six * horner(xtmp, coeffs_offdiag, n_coeffs_offdiag) * Rinv5;
+
+        const vector_type rdotn = FMA(dX[0], ns[0], FMA(dX[1], ns[1], dX[2] * ns[2]));
+
+        // Stresslet residual kernel (3D), matching Fortran stokes_dmk:
+        //   pot_i += Foffd * (r.mu) * (r.nu) * r_i
+        //          + Fdiag * (r_i * (mu.nu) + mu_i * (r.nu) + nu_i * (r.mu))
+        //
+        // U[j][i] = Foffd * dX[j] * rdotn * dX[i]
+        //         + Fdiag * (dX[i] * ns[j] + ns[i] * dX[j] + rdotn * delta_{ij})
+        const vector_type Fdiag_rdotn = Fdiag * rdotn;
+        for (int j = 0; j < KERNEL_INPUT_DIM; ++j) {
+            const vector_type foffd_rj_rdotn = Foffd * dX[j] * rdotn;
+            const vector_type fdiag_nj = Fdiag * ns[j];
+            const vector_type fdiag_rj = Fdiag * dX[j];
+            for (int i = 0; i < KERNEL_OUTPUT_DIM; ++i) {
+                vector_type val = foffd_rj_rdotn * dX[i] + fdiag_nj * dX[i] + fdiag_rj * ns[i];
+                if (i == j)
+                    val = val + Fdiag_rdotn;
+                u[j][i] = select(mask, val, vector_type::Zero());
+            }
+        }
+    }
+};
+
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
 void laplace_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
                                int n_coeffs_rt_0, const Real *coeffs, int n_src, const Real *r_src, const Real *charge,
-                               int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
+                               const Real *normals, int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
@@ -675,7 +757,7 @@ void laplace_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Rea
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
 void laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
                                int n_coeffs_rt_0, const Real *coeffs, int n_src, const Real *r_src, const Real *charge,
-                               int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
+                               const Real *normals, int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
@@ -713,7 +795,8 @@ void laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Rea
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
 void sqrt_laplace_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
                                     int n_coeffs_rt_0, const Real *coeffs, int n_src, const Real *r_src,
-                                    const Real *charge, int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
+                                    const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot,
+                                    int unroll_factor) {
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
@@ -727,7 +810,8 @@ void sqrt_laplace_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
 void sqrt_laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
                                     int n_coeffs_rt_0, const Real *coeffs, int n_src, const Real *r_src,
-                                    const Real *charge, int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
+                                    const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot,
+                                    int unroll_factor) {
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
@@ -745,12 +829,14 @@ void sqrt_laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
 void stokes_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
                               int n_coeffs_rt_0, int n_coeffs_rt_1, const Real *coeffs, int n_src, const Real *r_src,
-                              const Real *charge, int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {}
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot,
+                              int unroll_factor) {}
 
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS_0 = -1, int N_COEFFS_1 = -1, int EVAL_LEVEL = -1>
 void stokeslet_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
                                  int n_coeffs_rt_0, int n_coeffs_rt_1, const Real *coeffs, int n_src, const Real *r_src,
-                                 const Real *charge, int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
+                                 const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot,
+                                 int unroll_factor) {
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs_diag = is_static ? N_COEFFS_0 : n_coeffs_rt_0;
@@ -763,6 +849,25 @@ void stokeslet_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, R
                         n_coeffs_offdiag, n_digits};
 
     EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
+}
+
+template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS_0 = -1, int N_COEFFS_1 = -1, int EVAL_LEVEL = -1>
+void stresslet_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
+                                 int n_coeffs_rt_0, int n_coeffs_rt_1, const Real *coeffs, int n_src, const Real *r_src,
+                                 const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot,
+                                 int unroll_factor) {
+    constexpr bool is_static = (N_DIGITS > 0);
+    const int n_digits = is_static ? N_DIGITS : n_digits_rt;
+    const int n_coeffs_diag = is_static ? N_COEFFS_0 : n_coeffs_rt_0;
+    const int n_coeffs_offdiag = is_static ? N_COEFFS_1 : n_coeffs_rt_1;
+    const Real *coeffs_diag = coeffs;
+    const Real *coeffs_offdiag = coeffs + n_coeffs_diag;
+    using Evaluator = StressletPolyEvaluator3D<Real, MaxVecLen>;
+
+    Evaluator evaluator{thresh2,          d2max,   rsc, cen, coeffs_diag, coeffs_offdiag, n_coeffs_diag,
+                        n_coeffs_offdiag, n_digits};
+
+    EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, normals, n_trg, r_trg, pot, evaluator, unroll_factor);
 }
 
 template <class Real, int MaxVecLen>
@@ -826,6 +931,14 @@ inline void stokeslet_3d_all_pairs_direct(int n_src, const Real *r_src, const Re
                                           const Real *r_trg, Real *pot, int unroll_factor) {
     using Evaluator = StokesletEvaluator3D<Real, MaxVecLen>;
     EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
+                                            unroll_factor);
+}
+
+template <class Real, int MaxVecLen>
+inline void stresslet_3d_all_pairs_direct(int n_src, const Real *r_src, const Real *charge, const Real *normals,
+                                          int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
+    using Evaluator = StressletEvaluator3D<Real, MaxVecLen>;
+    EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, normals, n_trg, r_trg, pot, Evaluator{},
                                             unroll_factor);
 }
 
