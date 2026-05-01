@@ -375,10 +375,12 @@ void stresslet_multiply_kernelFT(const sctl::Vector<Real> &radialft, const auto 
         stresslet_3d_multiply_kernelFT<Real>(radialft, pwexp_in, uhat_out, hpw);
 }
 
-#if defined(__AVX512F__) || defined(__AVX2__)
 template <typename Real, int VecLen>
-inline void shift_planewave_simd(int nexp, int nd, const Real *__restrict__ pw1, Real *__restrict__ pw2,
+inline void shift_planewave_impl(int nexp, int nd, const Real *__restrict__ pw1, Real *__restrict__ pw2,
                                  const Real *__restrict__ shift_r, const Real *__restrict__ shift_i) {
+    // Vector implementation
+    // FIXME: X86-64-v3+ only
+#if defined(__AVX512F__) || defined(__AVX2__)
     using Vec = sctl::Vec<Real, VecLen>;
     constexpr int N = VecLen;
     using dmk::util::complex_deinterleave;
@@ -421,8 +423,20 @@ inline void shift_planewave_simd(int nexp, int nd, const Real *__restrict__ pw1,
             s2[2 * i + 1] += ar * ci + ai * cr;
         }
     }
-}
+#else
+    // Scalar implementation
+    for (int ind = 0; ind < nd; ++ind) {
+        const Real *s1 = pw1 + ind * nexp * 2;
+        Real *s2 = pw2 + ind * nexp * 2;
+        for (int i = 0; i < nexp; ++i) {
+            const Real ar = s1[2 * i], ai = s1[2 * i + 1];
+            const Real cr = shift_r[i], ci = shift_i[i];
+            s2[2 * i] += ar * cr - ai * ci;
+            s2[2 * i + 1] += ar * ci + ai * cr;
+        }
+    }
 #endif
+}
 
 template <typename Complex, int DIM>
 inline void shift_planewave(const ndview<Complex, DIM + 1> &pwexp1_, ndview<Complex, DIM + 1> &pwexp2_,
@@ -433,25 +447,11 @@ inline void shift_planewave(const ndview<Complex, DIM + 1> &pwexp1_, ndview<Comp
     const int nd = pwexp1_.extent(DIM);
     const int nexp = wpwshift.extent(0);
 
-#if defined(__AVX512F__) || defined(__AVX2__)
     const Real *shift_r = reinterpret_cast<const Real *>(wpwshift.data());
     const Real *shift_i = shift_r + nexp;
     const Real *pw1 = reinterpret_cast<const Real *>(pwexp1_.data());
     Real *pw2 = reinterpret_cast<Real *>(pwexp2_.data());
-    shift_planewave_simd<Real, VecLen>(nexp, nd, pw1, pw2, shift_r, shift_i);
-#else
-    dmk::ndview<const Complex, 2> pwexp1({nexp, nd}, pwexp1_.data());
-    dmk::ndview<Complex, 2> pwexp2({nexp, nd}, pwexp2_.data());
-
-    using ArrayMap = ndview<Complex, 1>;
-    using ConstArrayMap = ndview<const Complex, 1>;
-    ConstArrayMap wpwshift_view({nexp}, &wpwshift(0));
-    for (int ind = 0; ind < nd; ++ind) {
-        ConstArrayMap pw1_view({nexp}, &pwexp1(0, ind));
-        ArrayMap pw2_view({nexp}, &pwexp2(0, ind));
-        pw2_view += pw1_view * wpwshift_view;
-    }
-#endif
+    shift_planewave_impl<Real, VecLen>(nexp, nd, pw1, pw2, shift_r, shift_i);
 }
 
 template <typename Real>
