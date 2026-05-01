@@ -15,7 +15,7 @@ pipeline {
             environment {
                 HOME = "${WORKSPACE}"
                 LC_ALL = "C"
-                OMP_NUM_THREADS = "1"
+                OMP_NUM_THREADS = "2"
 				OPENBLAS_NUM_THREADS = "1"
             }
             steps {
