@@ -1,6 +1,2 @@
-if (DMK_USE_JIT)
-  add_executable(direct_kernel_bench direct_kernel_bench.cpp)
-
-  target_include_directories(direct_kernel_bench PRIVATE ${DMK_INCLUDES})
-  target_link_libraries(direct_kernel_bench dmk nanobench polyfit::polyfit RuFuS::rufus nda::nda_c)
-endif()
+add_executable(direct_kernel_bench direct_kernel_bench.cpp)
+target_link_libraries(direct_kernel_bench PRIVATE dmk nanobench)

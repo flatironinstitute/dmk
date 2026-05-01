@@ -1,3 +1,6 @@
 add_executable(generate_aot_kernels generate_aot_kernels.cpp)
-target_link_libraries(generate_aot_kernels dmk nda::nda_c spdlog::spdlog_header_only)
-target_include_directories(generate_aot_kernels PUBLIC ${DMK_INCLUDES})
+target_link_libraries(generate_aot_kernels PRIVATE dmk)
+
+add_executable(benchmark_gradient benchmark_gradient.cpp)
+target_link_libraries(benchmark_gradient PRIVATE dmk_shared)
+target_compile_definitions(benchmark_gradient PRIVATE DOCTEST_CONFIG_DISABLE SCTL_PROFILE=-1)
