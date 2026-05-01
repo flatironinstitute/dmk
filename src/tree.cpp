@@ -1044,16 +1044,16 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions() {
         proxy_down_zeroed[0] = true;
 
         if (params.use_periodic) {
-            const int n_pw_periodic = expansion_constants.n_pw_periodic;
-            const int npw_root = n_pw_periodic;
-            const long n_pw_modes_root = sctl::pow<DIM - 1>(npw_root) * ((npw_root + 1) / 2);
+            // FIXME: When adding periodic for Stresslet, this will crash due to up/down asymmetry
+            const int n_pw_root = expansion_constants.n_pw_periodic;
+            const long n_pw_modes_root = sctl::pow<DIM - 1>(n_pw_root) * ((n_pw_root + 1) / 2);
             const int n_pw_per_box_root = n_pw_modes_root * n_tables_down;
 
             std::vector<std::complex<Real>> pw_root(n_pw_per_box_root);
-            auto pw_root_view = pw_view(npw_root, n_tables_up, pw_root);
+            auto pw_root_view = pw_view(n_pw_root, n_tables_up, pw_root);
 
-            const ndview<std::complex<Real>, 2> p2pw({npw_root, n_order}, &window_fourier_data.poly2pw[0]);
-            const ndview<std::complex<Real>, 2> pw2p({npw_root, n_order}, &window_fourier_data.pw2poly[0]);
+            const ndview<std::complex<Real>, 2> p2pw({n_pw_root, n_order}, &window_fourier_data.poly2pw[0]);
+            const ndview<std::complex<Real>, 2> pw2p({n_pw_root, n_order}, &window_fourier_data.pw2poly[0]);
 
             dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(0), p2pw, pw_root_view, workspaces_[0]);
             multiply_kernelFT_cd2p<Real, DIM>(window_fourier_data.radialft, pw_root_view);

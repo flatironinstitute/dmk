@@ -116,7 +116,7 @@ void generate_and_scatter(int n_dim, int nd, size_t n_src, bool uniform, bool se
             if (n_dim == 2) {
                 double phi = rng(eng) * 2.0 * M_PI;
                 n_all[i * n_dim + 0] = std::cos(phi);
-                n_all[i * n_dim + 0] = std::sin(phi);
+                n_all[i * n_dim + 1] = std::sin(phi);
             } else if (n_dim == 3) {
                 double theta = rng(eng) * M_PI;
                 double ct = std::cos(theta), st = std::sin(theta);
@@ -197,7 +197,7 @@ void run_direct(const Config &cfg, int n_dim, int charge_dim, const std::vector<
         MPI_Allgather(&send_cnt_r, 1, MPI_INT, recv_cnts_r.data(), 1, MPI_INT, MYCOMM);
         MPI_Allgather(&send_cnt_n, 1, MPI_INT, recv_cnts_n.data(), 1, MPI_INT, MYCOMM);
         MPI_Allgather(&send_cnt_c, 1, MPI_INT, recv_cnts_c.data(), 1, MPI_INT, MYCOMM);
-        recv_disp_r[0] = recv_disp_c[0] = 0;
+        recv_disp_r[0] = recv_disp_c[0] = recv_disp_n[0] = 0;
         for (int i = 1; i < np; ++i) {
             recv_disp_r[i] = recv_disp_r[i - 1] + recv_cnts_r[i - 1];
             recv_disp_n[i] = recv_disp_n[i - 1] + recv_cnts_n[i - 1];
@@ -218,6 +218,7 @@ void run_direct(const Config &cfg, int n_dim, int charge_dim, const std::vector<
     int n_src_global = n_src_local;
     const auto &glb_r_src = r_src;
     const auto &glb_charges = charges;
+    const auto &glb_normals = normals;
 #endif
 
     // Convert sources to double for reference evaluation

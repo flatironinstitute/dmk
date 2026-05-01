@@ -39,7 +39,8 @@ void pdmk(dmk_communicator comm, const pdmk_params &params, int n_src, const T *
     logger->info("PDMK called");
     auto st = MY_OMP_GET_WTIME();
 
-    const int kernel_input_dim = get_kernel_input_dim(params.n_dim, params.kernel);
+    const int kernel_input_dim =
+        params.kernel == DMK_STRESSLET ? DIM : get_kernel_input_dim(params.n_dim, params.kernel);
 
     sctl::Vector<T> r_src_vec(n_src * params.n_dim, const_cast<T *>(r_src), false);
     sctl::Vector<T> r_trg_vec(n_trg * params.n_dim, const_cast<T *>(r_trg), false);
