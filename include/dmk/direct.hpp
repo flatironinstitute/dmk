@@ -25,7 +25,7 @@ inline int get_kernel_input_dim(int dim, dmk_ikernel kernel) {
     case DMK_STOKESLET:
         return dim;
     case DMK_STRESSLET:
-        return dim * dim;
+        return dim;
     }
     throw std::runtime_error("Invalid kernel");
 }

@@ -718,7 +718,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
         return &charge_sorted_owned[charge_offsets_owned[i_node]];
     }
     ndview<Real, 2> charge_owned_view(int i_node) {
-        return ndview<Real, 2>({kernel_input_dim, src_counts_owned[i_node]}, charge_owned_ptr(i_node));
+        return ndview<Real, 2>({n_tables_up, src_counts_owned[i_node]}, charge_owned_ptr(i_node));
     }
 
     Real *charge_with_halo_ptr(int i_node) {
@@ -726,7 +726,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
         return &charge_sorted_with_halo[charge_offsets_with_halo[i_node]];
     }
     ndview<Real, 2> charge_with_halo_view(int i_node) {
-        return ndview<Real, 2>({kernel_input_dim, src_counts_with_halo[i_node]}, charge_with_halo_ptr(i_node));
+        return ndview<Real, 2>({n_tables_up, src_counts_with_halo[i_node]}, charge_with_halo_ptr(i_node));
     }
 
     Real *normal_with_halo_ptr(int i_node) {

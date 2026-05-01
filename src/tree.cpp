@@ -165,7 +165,8 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
         this->AddParticleData("pdmk_normal", "pdmk_src", normal);
         this->AddParticleData("pdmk_density", "pdmk_src", charge);
 
-        sctl::Vector<Real> charge_normal(n_src * kernel_input_dim);
+        // Stresslet has (force .outer. normal) proxy charges
+        sctl::Vector<Real> charge_normal(n_src * DIM * DIM);
         for (int i = 0; i < n_src; ++i)
             for (int k = 0; k < DIM; ++k)
                 for (int j = 0; j < DIM; ++j)
@@ -230,7 +231,7 @@ int DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal)
     const int n_src = r_src_sorted_owned.Dim() / DIM;
 
     // Wrap the incoming (unsorted) charge data in a Vector without owning it
-    sctl::Vector<Real> charge_vec(n_src * kernel_input_dim, const_cast<Real *>(charge), false);
+    sctl::Vector<Real> charge_vec(n_src * n_tables_up, const_cast<Real *>(charge), false);
 
     // Delete the old charge data and re-register with the new values.
     // The PtTree already knows the sort permutation from the "pdmk_src"
@@ -289,8 +290,8 @@ void DMKPtTree<Real, DIM>::compute_data_offsets() {
         r_trg_offsets_owned[i] = r_trg_offsets_owned[i - 1] + DIM * r_trg_cnt_owned[i - 1];
         pot_src_offsets[i] = pot_src_offsets[i - 1] + kernel_output_dim_src * pot_src_cnt[i - 1];
         pot_trg_offsets[i] = pot_trg_offsets[i - 1] + kernel_output_dim_trg * pot_trg_cnt[i - 1];
-        charge_offsets_owned[i] = charge_offsets_owned[i - 1] + kernel_input_dim * charge_cnt_owned[i - 1];
-        charge_offsets_with_halo[i] = charge_offsets_with_halo[i - 1] + kernel_input_dim * charge_cnt_with_halo[i - 1];
+        charge_offsets_owned[i] = charge_offsets_owned[i - 1] + n_tables_up * charge_cnt_owned[i - 1];
+        charge_offsets_with_halo[i] = charge_offsets_with_halo[i - 1] + n_tables_up * charge_cnt_with_halo[i - 1];
     }
 
     if (params.kernel == DMK_STRESSLET) {
@@ -816,16 +817,16 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
         for (int level = 0; level < n_levels(); ++level) {
             const auto coeffs = fourier_data.cheb_coeffs(level);
             const Real lambda = params.fparam;
-            const int kernel_input_dim = this->kernel_input_dim;
+            const int n_charge_dim = n_tables_up;
             const int kernel_output_dim = kernel_output_dim_trg;
             // FIXME: assumes the same src/trg output configuration
-            evaluator_by_level_src.push_back([coeffs, lambda, kernel_input_dim](
+            evaluator_by_level_src.push_back([coeffs, lambda, n_charge_dim, kernel_output_dim](
                                                  Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
                                                  const Real *r_src_ptr, const Real *charge_ptr, const Real *normal_ptr,
                                                  int n_trg, const Real *r_trg_ptr, Real *pot) {
                 constexpr Real threshq = 1e-30;
                 ndview<Real, 2> u({1, n_trg}, pot);
-                ndview<const Real, 2> charges({kernel_input_dim, n_src}, charge_ptr);
+                ndview<const Real, 2> charges({n_charge_dim, n_src}, charge_ptr);
                 ndview<const Real, 2> r_src({DIM, n_src}, r_src_ptr);
                 ndview<const Real, 2> r_trg({DIM, n_trg}, r_trg_ptr);
                 for (int i_trg = 0; i_trg < n_trg; i_trg++) {
@@ -851,7 +852,7 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
                             dkval = std::exp(-lambda * r) / r;
 
                         const Real factor = dkval + fval;
-                        for (int i = 0; i < kernel_input_dim; ++i)
+                        for (int i = 0; i < kernel_output_dim; ++i)
                             u(i, i_trg) += charges(i, i_src) * factor;
                     }
                 }
@@ -1278,7 +1279,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
         constexpr int MAX_PTS = 1000;
         const bool is_stresslet = params.kernel == DMK_STRESSLET;
         const int normal_dim = is_stresslet ? DIM : 0;
-        const int direct_charge_dim = is_stresslet ? DIM : kernel_input_dim;
+        const int direct_charge_dim = kernel_input_dim;
 
         util::StackOrHeapBuffer<Real, DIM * MAX_PTS> r_buf(DIM * params.n_per_leaf);
         util::StackOrHeapBuffer<Real, MAX_CHARGE_DIM * MAX_PTS> charge_buf(direct_charge_dim * params.n_per_leaf);
@@ -1444,6 +1445,10 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                 return w0[depth];
             }();
 
+            // FIXME: This needs to deal with correction factors where
+            // kernel_input_dim != kernel_output_dim (like grad, which
+            // needs only a correction factor on the potential, not
+            // the gradient. That's why kernel_input_dim here works)
             for (int i_src = 0; i_src < r_src_cnt_with_halo[trg_box]; ++i_src)
                 for (int i = 0; i < kernel_input_dim; ++i)
                     pot(i, i_src) -= correction_factor * charge(i, i_src);

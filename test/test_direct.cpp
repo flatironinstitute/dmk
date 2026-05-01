@@ -18,7 +18,6 @@ struct TestData {
     std::vector<double> r_src, r_trg, charges, normals;
 
     TestData(int n_dim_, int charge_dim, long seed) : n_dim(n_dim_) {
-        std::vector<double> unused_trg, unused_normal;
         dmk::util::init_test_data(n_dim, charge_dim, N_SRC, N_TRG, /*uniform=*/true,
                                   /*set_fixed_charges=*/false, r_src, r_trg, normals, charges, seed);
     }

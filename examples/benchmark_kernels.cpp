@@ -347,7 +347,7 @@ void run_benchmark(const Config &cfg) {
         params.eval_trg = DMK_VELOCITY;
     }
 
-    const int charge_dim = params.kernel == DMK_STRESSLET ? n_dim : dmk::get_kernel_input_dim(n_dim, params.kernel);
+    const int charge_dim = dmk::get_kernel_input_dim(n_dim, params.kernel);
     const int pot_dim = dmk::get_kernel_output_dim(n_dim, cfg.kernel, params.eval_src);
 
     std::vector<Real> r_src, charges, normals;
