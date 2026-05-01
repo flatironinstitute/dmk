@@ -139,28 +139,39 @@ if (DMK_BUILD_REFERENCE)
     $<TARGET_OBJECTS:dmk_ref_bdmk>)
 endif()
 
-set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp src/legeexps.cpp
+set(DMK_BOOTSTRAP_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp src/legeexps.cpp
   src/fourier_data.cpp src/tensorprod.cpp src/planewave.cpp src/direct.cpp src/prolate.cpp src/prolate0_eval.cpp
-  src/timing.cpp src/aot_kernels.cpp
+  src/timing.cpp
   ${DMK_TEST_SRC}
 )
-add_library(DMKOBJS OBJECT ${DMK_SRC})
-set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES})
-target_link_libraries(DMKOBJS PUBLIC ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET}
+set(DMK_AOT_SRC src/aot_evaluator.cpp src/aot_kernels.cpp)
+
+add_library(DMKOBJS_BOOTSTRAP OBJECT ${DMK_BOOTSTRAP_SRC})
+set_target_properties(DMKOBJS_BOOTSTRAP PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(DMKOBJS_BOOTSTRAP PUBLIC ${DMK_INCLUDES})
+target_link_libraries(DMKOBJS_BOOTSTRAP PUBLIC ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET}
   nda::nda_c spdlog::spdlog_header_only doctest::doctest BLAS::BLAS polyfit::polyfit
 )
 if (DMK_USE_JIT)
-  target_link_libraries(DMKOBJS PUBLIC RuFuS::rufus jit_kernels)
+  target_link_libraries(DMKOBJS_BOOTSTRAP PUBLIC RuFuS::rufus jit_kernels)
 endif()
-target_compile_options(DMKOBJS PUBLIC "${DMK_CXX_FLAGS}")
+target_compile_options(DMKOBJS_BOOTSTRAP PUBLIC "${DMK_CXX_FLAGS}")
+
+add_library(DMKOBJS_AOT OBJECT ${DMK_AOT_SRC})
+set_target_properties(DMKOBJS_AOT PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(DMKOBJS_AOT PUBLIC DMKOBJS_BOOTSTRAP)
+
+# Builds without src/aot_kernels.cpp; used by generate_aot_kernels to break the
+# bootstrap loop (so the generator can be rebuilt even when aot_kernels.cpp is stale/missing).
+add_library(dmk_bootstrap STATIC)
+target_link_libraries(dmk_bootstrap PUBLIC DMKOBJS_BOOTSTRAP)
 
 add_library(dmk STATIC)
-target_link_libraries(dmk PUBLIC DMKOBJS)
+target_link_libraries(dmk PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT)
 
 add_library(dmk_shared SHARED)
 set_target_properties(dmk_shared PROPERTIES OUTPUT_NAME dmk)
-target_link_libraries(dmk_shared PUBLIC DMKOBJS)
+target_link_libraries(dmk_shared PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT)
 
 if (DMK_BUILD_TESTS)
   add_subdirectory(test)

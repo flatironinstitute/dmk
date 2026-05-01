@@ -785,7 +785,6 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     void dump() const;
     void eval();
-    void eval_pq();
     void upward_pass();
     void downward_pass();
     void desort_potentials(Real *pot_src, Real *pot_trg);
