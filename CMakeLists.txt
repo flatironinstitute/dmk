@@ -178,7 +178,8 @@ add_library(dmk_bootstrap STATIC)
 target_link_libraries(dmk_bootstrap PUBLIC DMKOBJS_BOOTSTRAP)
 
 if (DMK_GPU_OFFLOAD)
-  add_library(DMKOBJS_CUDA OBJECT src/cuda_kernels.cu src/cuda_direct.cpp src/cuda_shared_state.cpp)
+  add_library(DMKOBJS_CUDA OBJECT src/cuda_kernels.cu src/cuda_direct.cpp src/cuda_shared_state.cpp
+              src/cuda_eval_targets.cpp src/cuda_eval_targets_kernels.cu)
   set_target_properties(DMKOBJS_CUDA PROPERTIES POSITION_INDEPENDENT_CODE ON)
   target_include_directories(DMKOBJS_CUDA PUBLIC ${DMK_INCLUDES})
   target_link_libraries(DMKOBJS_CUDA PUBLIC ${DMK_GPU_TARGET} ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET}

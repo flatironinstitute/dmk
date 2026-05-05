@@ -14,6 +14,7 @@
 
 #ifdef DMK_GPU_OFFLOAD
 #include <dmk/cuda_direct.hpp>
+#include <dmk/cuda_eval_targets.hpp>
 #include <dmk/cuda_shared_state.hpp>
 #include <memory>
 #endif
@@ -605,6 +606,12 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     std::vector<int> direct_work;
 
+    // Boxes with iftensprodeval[b] == true, in tree order. Each entry is a
+    // leaf-of-eval where proxy::eval_targets runs on the proxy expansion.
+    // Precomputed once in build_evaluators(); consumed by the GPU eval_targets
+    // path (CPU path still iterates all boxes and checks the flag inline).
+    std::vector<int> eval_targets_box_list;
+
     sctl::Vector<bool> has_proxy_from_children;
     struct Charge2ProxyGroup {
         int center_box;
@@ -807,6 +814,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     // contexts borrow pointers from it.
     std::unique_ptr<CudaSharedDeviceState<Real, DIM>> cuda_shared_state_;
     std::unique_ptr<CudaDirectContext<Real, DIM>> cuda_direct_ctx_;
+    std::unique_ptr<CudaEvalTargetsContext<Real, DIM>> cuda_eval_targets_ctx_;
 #endif
 
   private:

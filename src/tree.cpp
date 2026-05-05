@@ -814,6 +814,12 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
         direct_d2max[lvl] = bsize * bsize;
     }
 
+    eval_targets_box_list.clear();
+    eval_targets_box_list.reserve(n_boxes());
+    for (int b = 0; b < (int)n_boxes(); ++b)
+        if (iftensprodeval[b])
+            eval_targets_box_list.push_back(b);
+
     try {
         auto src_eval = make_evaluator_aot<Real>(params.kernel, params.eval_src, DIM, n_digits, 3);
         auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.eval_trg, DIM, n_digits, 3);
@@ -930,9 +936,25 @@ void DMKPtTree<Real, DIM>::upward_pass() {
             cuda_shared_state_ = std::make_unique<CudaSharedDeviceState<Real, DIM>>(*this);
             cuda_direct_ctx_ = std::make_unique<CudaDirectContext<Real, DIM>>(*this, *cuda_shared_state_);
             cuda_direct_ctx_->launch();
+            // Eval_targets GPU offload is opt-in for now: it's a regression
+            // until proxy_coeffs_downward is also produced GPU-side
+            // (next migration stage). The CPU eval_targets calls are
+            // already parallelized by OMP inside form_eval_expansions, so
+            // there's nothing useful to overlap GPU eval_targets with until
+            // tensorprod-transform also moves to the GPU.
+            if (util::env_is_set("DMK_GPU_EVAL_TARGETS")) {
+                try {
+                    cuda_eval_targets_ctx_ =
+                        std::make_unique<CudaEvalTargetsContext<Real, DIM>>(*this, *cuda_shared_state_);
+                } catch (const std::exception &e) {
+                    logger->warn("CUDA eval_targets construction failed: {}; running CPU eval_targets", e.what());
+                    cuda_eval_targets_ctx_.reset();
+                }
+            }
         } catch (const std::exception &e) {
             logger->error("CUDA direct launch failed: {}; falling back to CPU direct", e.what());
             cuda_direct_ctx_.reset();
+            cuda_eval_targets_ctx_.reset();
             cuda_shared_state_.reset();
         }
     }
@@ -1250,21 +1272,27 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
             }
 
             if (iftensprodeval[box]) {
-                if (src_counts_owned[box]) {
-                    if (need_grad_src)
-                        proxy::eval_targets<Real, DIM, 2>(proxy_view_downward(box), r_src_owned_view(box),
-                                                          center_view(box), sc, pot_src_view(box), workspace);
-                    else
-                        proxy::eval_targets<Real, DIM, 1>(proxy_view_downward(box), r_src_owned_view(box),
-                                                          center_view(box), sc, pot_src_view(box), workspace);
-                }
-                if (trg_counts_owned[box]) {
-                    if (need_grad_trg)
-                        proxy::eval_targets<Real, DIM, 2>(proxy_view_downward(box), r_trg_owned_view(box),
-                                                          center_view(box), sc, pot_trg_view(box), workspace);
-                    else
-                        proxy::eval_targets<Real, DIM, 1>(proxy_view_downward(box), r_trg_owned_view(box),
-                                                          center_view(box), sc, pot_trg_view(box), workspace);
+                bool eval_on_gpu = false;
+#ifdef DMK_GPU_OFFLOAD
+                eval_on_gpu = (cuda_eval_targets_ctx_ != nullptr);
+#endif
+                if (!eval_on_gpu) {
+                    if (src_counts_owned[box]) {
+                        if (need_grad_src)
+                            proxy::eval_targets<Real, DIM, 2>(proxy_view_downward(box), r_src_owned_view(box),
+                                                              center_view(box), sc, pot_src_view(box), workspace);
+                        else
+                            proxy::eval_targets<Real, DIM, 1>(proxy_view_downward(box), r_src_owned_view(box),
+                                                              center_view(box), sc, pot_src_view(box), workspace);
+                    }
+                    if (trg_counts_owned[box]) {
+                        if (need_grad_trg)
+                            proxy::eval_targets<Real, DIM, 2>(proxy_view_downward(box), r_trg_owned_view(box),
+                                                              center_view(box), sc, pot_trg_view(box), workspace);
+                        else
+                            proxy::eval_targets<Real, DIM, 1>(proxy_view_downward(box), r_trg_owned_view(box),
+                                                              center_view(box), sc, pot_trg_view(box), workspace);
+                    }
                 }
             }
         }
@@ -1525,13 +1553,53 @@ void DMKPtTree<Real, DIM>::downward_pass() {
     }
     sctl::Profile::Toc();
 
+#ifdef DMK_GPU_OFFLOAD
+    // proxy_coeffs_downward is now finalized on the host. Kick off the GPU
+    // eval_targets work; it overlaps with the direct work still in flight.
+    if (cuda_eval_targets_ctx_) {
+        sctl::Profile::Scoped p("cuda_eval_targets_launch", &comm_);
+        try {
+            cuda_eval_targets_ctx_->launch();
+        } catch (const std::exception &e) {
+            logger->error("CUDA eval_targets launch failed: {}; running CPU eval_targets fallback", e.what());
+            cuda_eval_targets_ctx_.reset();
+            // CPU fallback: re-run the level loop's eval_targets-only branch.
+            // proxy_coeffs_downward is already populated, so this is just the
+            // per-iftensprodeval-box eval_targets calls.
+            for (int b : eval_targets_box_list) {
+                const int lvl = this->GetNodeMID()[b].Depth();
+                const Real bsize = boxsize[lvl];
+                const Real sc = Real{2} / bsize;
+                sctl::Vector<Real> ws;
+                const bool need_grad_src = params.kernel == DMK_LAPLACE && params.eval_src >= DMK_POTENTIAL_GRAD;
+                const bool need_grad_trg = params.kernel == DMK_LAPLACE && params.eval_trg >= DMK_POTENTIAL_GRAD;
+                if (src_counts_owned[b]) {
+                    if (need_grad_src)
+                        proxy::eval_targets<Real, DIM, 2>(proxy_view_downward(b), r_src_owned_view(b), center_view(b),
+                                                          sc, pot_src_view(b), ws);
+                    else
+                        proxy::eval_targets<Real, DIM, 1>(proxy_view_downward(b), r_src_owned_view(b), center_view(b),
+                                                          sc, pot_src_view(b), ws);
+                }
+                if (trg_counts_owned[b]) {
+                    if (need_grad_trg)
+                        proxy::eval_targets<Real, DIM, 2>(proxy_view_downward(b), r_trg_owned_view(b), center_view(b),
+                                                          sc, pot_trg_view(b), ws);
+                    else
+                        proxy::eval_targets<Real, DIM, 1>(proxy_view_downward(b), r_trg_owned_view(b), center_view(b),
+                                                          sc, pot_trg_view(b), ws);
+                }
+            }
+        }
+    }
+#endif
+
     if (!debug_omit_direct) {
 #ifdef DMK_GPU_OFFLOAD
         if (cuda_direct_ctx_ && !debug_force_aot) {
             sctl::Profile::Scoped p("cuda_direct_merge", &comm_);
             cuda_direct_ctx_->merge_into_host();
             cuda_direct_ctx_.reset();
-            cuda_shared_state_.reset();
         } else {
             evaluate_direct_interactions();
         }
@@ -1539,6 +1607,15 @@ void DMKPtTree<Real, DIM>::downward_pass() {
         evaluate_direct_interactions();
 #endif
     }
+
+#ifdef DMK_GPU_OFFLOAD
+    if (cuda_eval_targets_ctx_) {
+        sctl::Profile::Scoped p("cuda_eval_targets_merge", &comm_);
+        cuda_eval_targets_ctx_->merge_into_host();
+        cuda_eval_targets_ctx_.reset();
+    }
+    cuda_shared_state_.reset();
+#endif
 
     correct_for_self_interactions();
 
