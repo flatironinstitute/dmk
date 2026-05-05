@@ -927,11 +927,13 @@ void DMKPtTree<Real, DIM>::upward_pass() {
 #ifdef DMK_GPU_OFFLOAD
     if (!debug_omit_direct && !debug_force_aot) {
         try {
-            cuda_direct_ctx_ = std::make_unique<CudaDirectContext<Real, DIM>>(*this);
+            cuda_shared_state_ = std::make_unique<CudaSharedDeviceState<Real, DIM>>(*this);
+            cuda_direct_ctx_ = std::make_unique<CudaDirectContext<Real, DIM>>(*this, *cuda_shared_state_);
             cuda_direct_ctx_->launch();
         } catch (const std::exception &e) {
             logger->error("CUDA direct launch failed: {}; falling back to CPU direct", e.what());
             cuda_direct_ctx_.reset();
+            cuda_shared_state_.reset();
         }
     }
 #endif
@@ -1529,6 +1531,7 @@ void DMKPtTree<Real, DIM>::downward_pass() {
             sctl::Profile::Scoped p("cuda_direct_merge", &comm_);
             cuda_direct_ctx_->merge_into_host();
             cuda_direct_ctx_.reset();
+            cuda_shared_state_.reset();
         } else {
             evaluate_direct_interactions();
         }

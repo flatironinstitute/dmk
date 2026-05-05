@@ -14,6 +14,7 @@
 
 #ifdef DMK_GPU_OFFLOAD
 #include <dmk/cuda_direct.hpp>
+#include <dmk/cuda_shared_state.hpp>
 #include <memory>
 #endif
 
@@ -800,6 +801,11 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void desort_potentials(Real *pot_src, Real *pot_trg);
 
 #ifdef DMK_GPU_OFFLOAD
+    // GPU offload state. Constructed at the start of upward_pass() and
+    // consumed at the end of downward_pass(). Shared state holds the
+    // device-side inputs/topology used by every per-operation context;
+    // contexts borrow pointers from it.
+    std::unique_ptr<CudaSharedDeviceState<Real, DIM>> cuda_shared_state_;
     std::unique_ptr<CudaDirectContext<Real, DIM>> cuda_direct_ctx_;
 #endif
 
