@@ -145,6 +145,17 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
     pot_trg_size = tree.pot_trg_sorted.Dim();
     d_pot_src_offsets = device_upload((const long *)&tree.pot_src_offsets[0], tree.pot_src_offsets.Dim());
     d_pot_trg_offsets = device_upload((const long *)&tree.pot_trg_offsets[0], tree.pot_trg_offsets.Dim());
+
+    // Downward proxy buffer: allocated zero-initialized; populated later (by
+    // host upload from eval_targets, or by GPU planewave_to_proxy / tensorprod
+    // kernels once those are in place).
+    proxy_size = tree.proxy_coeffs_downward.Dim();
+    if (proxy_size) {
+        d_proxy_coeffs_downward = device_alloc<Real>(proxy_size);
+        DMK_CHECK_CUDA(cudaMemset(d_proxy_coeffs_downward, 0, proxy_size * sizeof(Real)));
+    }
+    d_proxy_offsets_downward =
+        device_upload((const long *)&tree.proxy_coeffs_offsets_downward[0], tree.proxy_coeffs_offsets_downward.Dim());
 }
 
 template <typename Real, int DIM>
@@ -172,6 +183,8 @@ CudaSharedDeviceState<Real, DIM>::~CudaSharedDeviceState() {
     device_free(d_trg_counts_owned);
     device_free(d_pot_src_offsets);
     device_free(d_pot_trg_offsets);
+    device_free(d_proxy_coeffs_downward);
+    device_free(d_proxy_offsets_downward);
 }
 
 template struct CudaSharedDeviceState<float, 2>;

@@ -612,6 +612,17 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     // path (CPU path still iterates all boxes and checks the flag inline).
     std::vector<int> eval_targets_box_list;
 
+    // Per-level list of (parent, child, child_octant) tuples for the
+    // tensorprod transforms: parent at level L, child at level L+1. Matches
+    // the per-box conditions in form_eval_expansions's CPU loop. One GPU
+    // tensorprod batch kernel per level consumes this list.
+    struct TensorprodPair {
+        int parent;
+        int child;
+        int child_octant; // 0..(2^DIM - 1); selects p2c slab
+    };
+    std::vector<std::vector<TensorprodPair>> tensorprod_pairs_per_level;
+
     sctl::Vector<bool> has_proxy_from_children;
     struct Charge2ProxyGroup {
         int center_box;

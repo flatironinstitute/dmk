@@ -820,6 +820,30 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
         if (iftensprodeval[b])
             eval_targets_box_list.push_back(b);
 
+    // Per-level tensorprod pairs. Mirrors form_eval_expansions's CPU loop
+    // gating: parent must do PW work (ifpwexp && nboxpts) and not be an
+    // iftensprodeval leaf; child must be a real, non-empty box.
+    {
+        constexpr int n_children = 1u << DIM;
+        const auto &node_mid_local = this->GetNodeMID();
+        const auto &node_lists_local = this->GetNodeLists();
+        tensorprod_pairs_per_level.assign(n_levels(), {});
+        for (int b = 0; b < (int)n_boxes(); ++b) {
+            const int nboxpts = src_counts_owned[b] + trg_counts_owned[b];
+            if (!ifpwexp[b] || !nboxpts || iftensprodeval[b])
+                continue;
+            const int level = node_mid_local[b].Depth();
+            for (int i_child = 0; i_child < n_children; ++i_child) {
+                const int child = node_lists_local[b].child[i_child];
+                if (child < 0)
+                    continue;
+                if (!(src_counts_owned[child] + trg_counts_owned[child]))
+                    continue;
+                tensorprod_pairs_per_level[level].push_back({b, child, i_child});
+            }
+        }
+    }
+
     try {
         auto src_eval = make_evaluator_aot<Real>(params.kernel, params.eval_src, DIM, n_digits, 3);
         auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.eval_trg, DIM, n_digits, 3);

@@ -76,6 +76,14 @@ struct CudaSharedDeviceState {
     std::size_t pot_src_size = 0;
     std::size_t pot_trg_size = 0;
 
+    // Downward-pass proxy expansion. Allocated zero-initialized at construction;
+    // populated either by host upload (current eval_targets path) or by GPU
+    // kernels writing to it directly (future tensorprod / planewave_to_proxy
+    // offload). Read by eval_targets.
+    Real *d_proxy_coeffs_downward = nullptr;
+    long *d_proxy_offsets_downward = nullptr;
+    std::size_t proxy_size = 0;
+
     // Streams. Direct stays on the default stream for now; eval_targets etc.
     // will get non-blocking streams here when they come online.
     cudaStream_t direct_stream = 0;

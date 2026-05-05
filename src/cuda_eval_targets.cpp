@@ -89,8 +89,9 @@ struct CudaEvalTargetsContext<Real, DIM>::Impl {
     CudaSharedDeviceState<Real, DIM> &shared;
 
     // Constructed once at upward_pass start; reused by launch().
-    Real *d_proxy_coeffs_downward = nullptr;
-    long *d_proxy_offsets = nullptr;
+    // Note: d_proxy_coeffs_downward + offsets now live in shared state (so
+    // future GPU planewave_to_proxy / tensorprod can write to them directly
+    // and eval_targets just reads).
     Real *d_centers = nullptr;
     int *d_eval_targets_box_list = nullptr;
     Real *d_sc_per_level = nullptr;
@@ -102,7 +103,6 @@ struct CudaEvalTargetsContext<Real, DIM>::Impl {
     cudaStream_t stream = nullptr;
     int n_eval_boxes = 0;
     int n_order = 0;
-    std::size_t proxy_size = 0;
     bool launched = false;
 
     Impl(DMKPtTree<Real, DIM> &t, CudaSharedDeviceState<Real, DIM> &s) : tree(t), shared(s) {
@@ -141,19 +141,10 @@ struct CudaEvalTargetsContext<Real, DIM>::Impl {
             d_eval_targets_box_list =
                 device_upload(tree.eval_targets_box_list.data(), tree.eval_targets_box_list.size());
 
-        // proxy_coeffs_offsets_downward holds sctl::Long (= int64_t = long on Linux).
-        d_proxy_offsets = device_upload((const long *)&tree.proxy_coeffs_offsets_downward[0],
-                                        tree.proxy_coeffs_offsets_downward.Dim());
-
-        proxy_size = tree.proxy_coeffs_downward.Dim();
-        d_proxy_coeffs_downward = device_alloc<Real>(proxy_size);
-
         n_order = tree.expansion_constants.n_order;
     }
 
     ~Impl() {
-        device_free(d_proxy_coeffs_downward);
-        device_free(d_proxy_offsets);
         device_free(d_centers);
         device_free(d_eval_targets_box_list);
         device_free(d_sc_per_level);
@@ -181,10 +172,12 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
     if (im.n_eval_boxes == 0)
         return;
 
-    // Upload host proxy_coeffs_downward (filled by CPU's form_eval_expansions).
-    if (im.proxy_size)
-        DMK_CHECK_CUDA(cudaMemcpyAsync(im.d_proxy_coeffs_downward, &t.proxy_coeffs_downward[0],
-                                       im.proxy_size * sizeof(Real), cudaMemcpyHostToDevice, im.stream));
+    // Upload host proxy_coeffs_downward into shared buffer. Once the GPU
+    // tensorprod / planewave_to_proxy stages are wired in, this upload goes
+    // away — the buffer will already be populated GPU-side.
+    if (shared.proxy_size)
+        DMK_CHECK_CUDA(cudaMemcpyAsync(shared.d_proxy_coeffs_downward, &t.proxy_coeffs_downward[0],
+                                       shared.proxy_size * sizeof(Real), cudaMemcpyHostToDevice, im.stream));
 
     im.d_pot_src_eval = device_alloc<Real>(shared.pot_src_size);
     im.d_pot_trg_eval = device_alloc<Real>(shared.pot_trg_size);
@@ -203,8 +196,8 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
     args.eval_targets_box_list = im.d_eval_targets_box_list;
     args.box_levels = shared.d_box_levels;
     args.sc_per_level = im.d_sc_per_level;
-    args.proxy_flat = im.d_proxy_coeffs_downward;
-    args.proxy_offsets = im.d_proxy_offsets;
+    args.proxy_flat = shared.d_proxy_coeffs_downward;
+    args.proxy_offsets = shared.d_proxy_offsets_downward;
     args.centers = im.d_centers;
 
     // pot_src side
