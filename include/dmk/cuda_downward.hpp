@@ -29,10 +29,6 @@ class CudaDownwardContext {
     CudaDownwardContext(const CudaDownwardContext &) = delete;
     CudaDownwardContext &operator=(const CudaDownwardContext &) = delete;
 
-    /// Upload pw_out (now populated by form_outgoing_expansions). Must be
-    /// called once per downward_pass before run_level().
-    void upload_pw_out();
-
     /// Issue the three GPU kernels for one level on the downward stream.
     /// Caller is responsible for invoking levels in order 0..n_levels-1.
     void run_level(int level);

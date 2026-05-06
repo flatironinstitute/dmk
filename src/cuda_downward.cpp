@@ -27,11 +27,6 @@ CudaDownwardContext<Real, DIM>::CudaDownwardContext(DMKPtTree<Real, DIM> &tree,
 }
 
 template <typename Real, int DIM>
-void CudaDownwardContext<Real, DIM>::upload_pw_out() {
-    shared_.upload_pw_out(tree_);
-}
-
-template <typename Real, int DIM>
 void CudaDownwardContext<Real, DIM>::run_level(int level) {
     auto &s = shared_;
     const int n_pw_eval = s.pw_eval_box_count_h[level];

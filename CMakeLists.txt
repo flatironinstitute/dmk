@@ -183,7 +183,10 @@ if (DMK_GPU_OFFLOAD)
               src/cuda_tensorprod_kernels.cu
               src/cuda_shift_pw_kernels.cu
               src/cuda_pw_to_proxy_kernels.cu
-              src/cuda_downward.cpp)
+              src/cuda_proxy2pw_kernels.cu
+              src/cuda_multiply_kernelft_kernels.cu
+              src/cuda_downward.cpp
+              src/cuda_form_outgoing.cpp)
   set_target_properties(DMKOBJS_CUDA PROPERTIES POSITION_INDEPENDENT_CODE ON)
   target_include_directories(DMKOBJS_CUDA PUBLIC ${DMK_INCLUDES})
   target_link_libraries(DMKOBJS_CUDA PUBLIC ${DMK_GPU_TARGET} ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET}

@@ -969,6 +969,7 @@ void DMKPtTree<Real, DIM>::upward_pass() {
     cuda_eval_targets_ctx_.reset();
     cuda_direct_ctx_.reset();
     cuda_downward_ctx_.reset();
+    cuda_form_outgoing_ctx_.reset();
     cuda_shared_state_.reset();
 
     const bool want_gpu = (params.eval_path == DMK_EVAL_PATH_GPU || params.eval_path == DMK_EVAL_PATH_BOTH);
@@ -978,6 +979,7 @@ void DMKPtTree<Real, DIM>::upward_pass() {
         cuda_direct_ctx_->launch();
         cuda_eval_targets_ctx_ = std::make_unique<CudaEvalTargetsContext<Real, DIM>>(*this, *cuda_shared_state_);
         cuda_downward_ctx_ = std::make_unique<CudaDownwardContext<Real, DIM>>(*this, *cuda_shared_state_);
+        cuda_form_outgoing_ctx_ = std::make_unique<CudaFormOutgoingContext<Real, DIM>>(*this, *cuda_shared_state_);
     }
 #else
     if (params.eval_path != DMK_EVAL_PATH_CPU)
@@ -1332,6 +1334,7 @@ void DMKPtTree<Real, DIM>::correct_for_self_interactions() {
     sctl::Profile::Scoped profile("correct_for_self");
     Real w0[SCTL_MAX_DEPTH];
     // Fill for n_levels+1, note boxsize is already n_levels+1 in size
+#pragma omp parallel for schedule(dynamic)
     for (int i_level = 0; i_level < std::min(SCTL_MAX_DEPTH, n_levels() + 1); ++i_level)
         w0[i_level] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
 
@@ -1560,7 +1563,6 @@ void DMKPtTree<Real, DIM>::downward_pass() {
 
     sctl::Profile::Tic("expansion_propagation_and_eval", &comm_);
     std::fill(proxy_down_zeroed.begin(), proxy_down_zeroed.end(), 0);
-    form_outgoing_expansions();
 
     // params.eval_path drives both upward (above) and downward. Booleans here
     // make the branch logic readable; both can be true (BOTH mode).
@@ -1571,11 +1573,14 @@ void DMKPtTree<Real, DIM>::downward_pass() {
     constexpr bool run_gpu = false;
 #endif
 
-    // ---- GPU downward (writes to device proxy + pot buffers) ----
+    if (run_cpu)
+        form_outgoing_expansions();
+
+    // ---- GPU form_outgoing + downward (writes to device proxy + pot buffers) ----
 #ifdef DMK_GPU_OFFLOAD
     if (run_gpu && !debug_omit_pw) {
         sctl::Profile::Scoped p("cuda_downward", &comm_);
-        cuda_downward_ctx_->upload_pw_out();
+        cuda_form_outgoing_ctx_->run();
         for (int i_level = 0; i_level < n_levels(); ++i_level)
             cuda_downward_ctx_->run_level(i_level);
         cuda_downward_ctx_->mark_proxy_resident();
@@ -1637,6 +1642,7 @@ void DMKPtTree<Real, DIM>::downward_pass() {
         cuda_eval_targets_ctx_.reset();
         cuda_direct_ctx_.reset();
         cuda_downward_ctx_.reset();
+        cuda_form_outgoing_ctx_.reset();
         cuda_shared_state_.reset();
     }
     // BOTH mode: contexts stay alive past eval() so debugging code can reach in.
