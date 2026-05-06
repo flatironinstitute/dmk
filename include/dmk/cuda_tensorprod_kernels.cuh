@@ -5,29 +5,32 @@
 //   sum_{ix, jy, kz} parent_proxy[ix, jy, kz]
 //                  * umat_x[i_x, ix] * umat_y[j_y, jy] * umat_z[k_z, kz]
 //
-// Decomposed into 3 sequential axis transforms with shared-memory ping-pong
-// buffers (ff and ff2). For n_order=10, ff/ff2 are 8KB each (16KB total) —
-// comfortable in 48KB shared mem. Block size 128, threads stride over the
-// n_order^DIM output cells.
+// Decomposed into 3 sequential axis transforms with ping-pong buffers ff/ff2
+// in a per-block slab of TensorprodArgs::scratch (global memory; the buffers
+// are too large for shared at typical n_order). Block size 128, threads
+// stride over the n_order^DIM output cells.
 
 #include <dmk/cuda_tensorprod_kernels.hpp>
 
 #include <cuda_runtime.h>
 
+#include <stdexcept>
+#include <string>
+
 namespace dmk::cuda {
 
 template <typename Real>
 __global__ void TensorprodByPair3DKernel(TensorprodArgs<Real> a) {
-    extern __shared__ unsigned char shared_raw[];
-    Real *ff = reinterpret_cast<Real *>(shared_raw);
     const int N = a.n_order;
     const int N2 = N * N;
     const int N3 = N * N * N;
-    Real *ff2 = ff + N3;
 
     const int pair_idx = blockIdx.x;
     if (pair_idx >= a.n_pairs)
         return;
+
+    Real *ff = a.scratch + (long)pair_idx * a.scratch_stride;
+    Real *ff2 = ff + N3;
 
     const int parent = a.parents[pair_idx];
     const int child = a.children[pair_idx];
@@ -88,8 +91,10 @@ inline void launch_tensorprod_3d(const TensorprodArgs<Real> &args, cudaStream_t 
     if (args.n_pairs == 0)
         return;
     constexpr int block_size = 128;
-    const std::size_t shared_bytes = 2 * args.n_order * args.n_order * args.n_order * sizeof(Real);
-    TensorprodByPair3DKernel<Real><<<args.n_pairs, block_size, shared_bytes, stream>>>(args);
+    TensorprodByPair3DKernel<Real><<<args.n_pairs, block_size, 0, stream>>>(args);
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess)
+        throw std::runtime_error(std::string("launch_tensorprod_3d: ") + cudaGetErrorString(err));
 }
 
 } // namespace dmk::cuda

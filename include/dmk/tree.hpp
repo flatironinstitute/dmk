@@ -14,6 +14,7 @@
 
 #ifdef DMK_GPU_OFFLOAD
 #include <dmk/cuda_direct.hpp>
+#include <dmk/cuda_downward.hpp>
 #include <dmk/cuda_eval_targets.hpp>
 #include <dmk/cuda_shared_state.hpp>
 #include <memory>
@@ -812,7 +813,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
             static_assert(dmk::util::always_false<std::complex<Real>>, "Invalid DIM supplied");
     }
 
-    void dump() const;
+    void dump(const std::string &prefix = "") const;
+    const sctl::Comm &comm() const { return comm_; }
     void eval();
     void upward_pass();
     void downward_pass();
@@ -826,6 +828,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     std::unique_ptr<CudaSharedDeviceState<Real, DIM>> cuda_shared_state_;
     std::unique_ptr<CudaDirectContext<Real, DIM>> cuda_direct_ctx_;
     std::unique_ptr<CudaEvalTargetsContext<Real, DIM>> cuda_eval_targets_ctx_;
+    std::unique_ptr<CudaDownwardContext<Real, DIM>> cuda_downward_ctx_;
 #endif
 
   private:

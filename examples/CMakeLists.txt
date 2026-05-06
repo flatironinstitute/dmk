@@ -13,3 +13,4 @@ endif()
 
 add_executable(benchmark_kernels benchmark_kernels.cpp)
 target_link_libraries(benchmark_kernels PRIVATE dmk)
+

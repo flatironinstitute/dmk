@@ -4,6 +4,7 @@
 
 #include <dmk/cuda_eval_targets.hpp>
 #include <dmk/cuda_eval_targets_kernels.hpp>
+#include <dmk/cuda_helpers.hpp>
 #include <dmk/cuda_shared_state.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/tree.hpp>
@@ -16,44 +17,11 @@
 
 namespace dmk {
 
+using cuda_helpers::device_alloc;
+using cuda_helpers::device_free;
+using cuda_helpers::device_upload;
+
 namespace {
-
-#define DMK_CHECK_CUDA(expr)                                                                                           \
-    do {                                                                                                               \
-        cudaError_t _e = (expr);                                                                                       \
-        if (_e != cudaSuccess)                                                                                         \
-            throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(_e));                            \
-    } while (0)
-
-template <typename T>
-T *device_alloc(std::size_t n) {
-    if (n == 0)
-        return nullptr;
-    T *d = nullptr;
-    DMK_CHECK_CUDA(cudaMalloc(&d, n * sizeof(T)));
-    return d;
-}
-
-template <typename T>
-T *device_alloc_and_zero(std::size_t n) {
-    T *d = device_alloc<T>(n);
-    if (d)
-        DMK_CHECK_CUDA(cudaMemsetAsync(d, 0, n * sizeof(T)));
-    return d;
-}
-
-template <typename T>
-T *device_upload(const T *src_host, std::size_t n) {
-    T *d = device_alloc<T>(n);
-    if (d)
-        DMK_CHECK_CUDA(cudaMemcpy(d, src_host, n * sizeof(T), cudaMemcpyHostToDevice));
-    return d;
-}
-
-void device_free(void *p) {
-    if (p)
-        cudaFree(p);
-}
 
 int n_charge_dim_for(dmk_ikernel kernel) {
     switch (kernel) {
@@ -172,12 +140,22 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
     if (im.n_eval_boxes == 0)
         return;
 
-    // Upload host proxy_coeffs_downward into shared buffer. Once the GPU
-    // tensorprod / planewave_to_proxy stages are wired in, this upload goes
-    // away — the buffer will already be populated GPU-side.
-    if (shared.proxy_size)
+    // If the GPU downward pass already populated d_proxy_coeffs_downward, we
+    // skip the host→device upload entirely. Otherwise (eval_targets-only
+    // path) we upload the CPU-built proxy_coeffs_downward into the shared
+    // buffer.
+    if (!shared.proxy_resident_on_device && shared.proxy_size) {
         DMK_CHECK_CUDA(cudaMemcpyAsync(shared.d_proxy_coeffs_downward, &t.proxy_coeffs_downward[0],
                                        shared.proxy_size * sizeof(Real), cudaMemcpyHostToDevice, im.stream));
+    } else if (shared.proxy_resident_on_device) {
+        // Downward kernels wrote to d_proxy on shared.downward_stream. Make
+        // eval_targets' stream wait for downward to complete before reading.
+        cudaEvent_t evt;
+        DMK_CHECK_CUDA(cudaEventCreateWithFlags(&evt, cudaEventDisableTiming));
+        DMK_CHECK_CUDA(cudaEventRecord(evt, shared.downward_stream));
+        DMK_CHECK_CUDA(cudaStreamWaitEvent(im.stream, evt, 0));
+        cudaEventDestroy(evt);
+    }
 
     im.d_pot_src_eval = device_alloc<Real>(shared.pot_src_size);
     im.d_pot_trg_eval = device_alloc<Real>(shared.pot_trg_size);

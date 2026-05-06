@@ -32,6 +32,7 @@ struct Config {
     dmk_ikernel kernel = DMK_LAPLACE;
     int n_dim = 3;
     double fparam = 6.0;
+    dmk_eval_path eval_path = DMK_EVAL_PATH_CPU;
 };
 
 struct TimingResult {
@@ -288,7 +289,8 @@ void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ost
        << "# n_runs:               " << cfg.n_runs << "\n"
        << "# direct_enabled:       " << cfg.enable_direct << "\n"
        << "# n_direct:             " << cfg.n_direct << "\n"
-       << "# log_level:            " << cfg.log_level << "\n";
+       << "# log_level:            " << cfg.log_level << "\n"
+       << "# eval_path:            " << cfg.eval_path << "\n";
 }
 
 void print_csv_header(std::ostream &os) {
@@ -340,6 +342,7 @@ void run_benchmark(const Config &cfg) {
     params.eval_src = DMK_POTENTIAL;
     params.eval_trg = DMK_POTENTIAL;
     params.kernel = cfg.kernel;
+    params.eval_path = cfg.eval_path;
     if (cfg.kernel == DMK_YUKAWA)
         params.fparam = cfg.fparam;
     if (cfg.kernel == DMK_STOKESLET || cfg.kernel == DMK_STRESSLET) {
@@ -432,7 +435,7 @@ Config parse_args(int argc, char *argv[]) {
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "N:n:e:t:r:D:l:k:d:f:uh?", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "N:n:e:t:r:D:l:k:d:f:p:uh?", long_opts, nullptr)) != -1) {
         switch (opt) {
         case 'N':
             cfg.n_src = int(std::atof(optarg));
@@ -480,6 +483,18 @@ Config parse_args(int argc, char *argv[]) {
         case 1002:
             cfg.enable_direct = false;
             break;
+        case 'p':
+            if (optarg[0] == 'b')
+                cfg.eval_path = DMK_EVAL_PATH_BOTH;
+            else if (optarg[0] == 'c')
+                cfg.eval_path = DMK_EVAL_PATH_CPU;
+            else if (optarg[0] == 'g')
+                cfg.eval_path = DMK_EVAL_PATH_GPU;
+            else {
+                std::cerr << "Unknown eval_path: " << optarg << "\n";
+                exit(1);
+            }
+            break;
         case 'h':
         case '?':
         default:
@@ -494,6 +509,7 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -r n_runs          Benchmark iterations\n"
                       << "  -D n_direct        Points for direct comparison\n"
                       << "  -l log_level       DMK log verbosity\n"
+                      << "  -p                 Evaluation path (c)pu, (g)pu, or (b)oth\n"
                       << "  -u                 Uniform distribution\n"
                       << "  --direct/--no-direct  Enable/disable reference\n"
                       << "  -h                 Help\n";

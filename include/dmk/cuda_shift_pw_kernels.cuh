@@ -13,6 +13,9 @@
 
 #include <cuda_runtime.h>
 
+#include <stdexcept>
+#include <string>
+
 namespace dmk::cuda {
 
 template <typename Real>
@@ -80,6 +83,9 @@ inline void launch_shift_pw_3d(const ShiftPwArgs<Real> &args, cudaStream_t strea
         return;
     constexpr int block_size = 128;
     ShiftPwByBoxKernel<Real><<<args.n_boxes_at_level, block_size, 0, stream>>>(args);
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess)
+        throw std::runtime_error(std::string("launch_shift_pw_3d: ") + cudaGetErrorString(err));
 }
 
 } // namespace dmk::cuda

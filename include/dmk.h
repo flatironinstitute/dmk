@@ -19,6 +19,21 @@ typedef enum : int {
     DMK_VELOCITY_PRESSURE = 5,
 } dmk_eval_type;
 
+// Selects which compute path eval() uses. The CPU path is always available.
+// GPU and BOTH require the library to be built with -DDMK_GPU_OFFLOAD=ON; if
+// not built that way, GPU/BOTH throw at eval time.
+//
+//   CPU:  CPU only (default).
+//   GPU:  GPU only — host pot is overwritten with the GPU result at merge.
+//   BOTH: run both paths to completion. Host pot holds the CPU result;
+//         device buffers (proxy_coeffs_downward, pot_*_direct, pot_*_eval)
+//         remain populated for diffing / cuda-gdb. Useful for debugging.
+typedef enum : int {
+    DMK_EVAL_PATH_CPU = 0,
+    DMK_EVAL_PATH_GPU = 1,
+    DMK_EVAL_PATH_BOTH = 2,
+} dmk_eval_path;
+
 typedef enum : int {
     DMK_LOG_TRACE = 0,
     DMK_LOG_DEBUG = 1,
@@ -54,17 +69,18 @@ typedef void *dmk_communicator;
 #endif
 
 typedef struct pdmk_params {
-    int n_dim = 0;                          // dimension of system
-    double eps = 1e-3;                      // target precision
-    dmk_ikernel kernel = DMK_YUKAWA;        // evaluation kernel
-    dmk_eval_type eval_src = DMK_POTENTIAL; // level to compute at sources (potential, pot+grad, pot+grad+hess)
-    dmk_eval_type eval_trg = DMK_POTENTIAL; // level to compute at sources (potential, pot+grad, pot+grad+hess)
-    double fparam = 6.0;                    // param for selected potential (FIXME: make more flexible)
-    int use_periodic = false;               // use periodic boundary conditions (in all dimensions, currently)
-    int n_per_leaf = 200;                   // tuning: number of particles per leaf in N-tree
-    int log_level = 6;                      // 0: trace, 1: debug, 2: info, 3: warn, 4: err, 5: critical, 6: off
-    uint32_t debug_flags = 0;               // Debug params bit field, see above
-    double debug_params[8] = {0};           // 0: beta, 1: order, rest: placeholders
+    int n_dim = 0;                               // dimension of system
+    double eps = 1e-3;                           // target precision
+    dmk_ikernel kernel = DMK_YUKAWA;             // evaluation kernel
+    dmk_eval_type eval_src = DMK_POTENTIAL;      // level to compute at sources (potential, pot+grad, pot+grad+hess)
+    dmk_eval_type eval_trg = DMK_POTENTIAL;      // level to compute at sources (potential, pot+grad, pot+grad+hess)
+    double fparam = 6.0;                         // param for selected potential (FIXME: make more flexible)
+    int use_periodic = false;                    // use periodic boundary conditions (in all dimensions, currently)
+    int n_per_leaf = 200;                        // tuning: number of particles per leaf in N-tree
+    int log_level = 6;                           // 0: trace, 1: debug, 2: info, 3: warn, 4: err, 5: critical, 6: off
+    uint32_t debug_flags = 0;                    // Debug params bit field, see above
+    double debug_params[8] = {0};                // 0: beta, 1: order, rest: placeholders
+    dmk_eval_path eval_path = DMK_EVAL_PATH_CPU; // CPU / GPU / BOTH
 } pdmk_params;
 
 #ifdef __cplusplus

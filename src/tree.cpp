@@ -16,6 +16,7 @@
 #include <dmk/tree.hpp>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
+#include <filesystem>
 #include <fstream>
 #include <omp.h>
 #include <sctl/profile.hpp>
@@ -26,11 +27,16 @@
 namespace dmk {
 
 template <typename Real, int DIM>
-void DMKPtTree<Real, DIM>::dump() const {
-    rank_logger->info("Dumping DMKPtTree data on rank {} of comm size {}", comm_.Rank(), comm_.Size());
+void DMKPtTree<Real, DIM>::dump(const std::string &prefix) const {
+    rank_logger->info("Dumping DMKPtTree data on rank {} of comm size {} (prefix='{}')", comm_.Rank(), comm_.Size(),
+                      prefix);
 
-    auto dumper = [this](const std::string &name, const auto &data) {
-        std::string filename = name + "." + std::to_string(comm_.Size()) + "." + std::to_string(comm_.Rank()) + ".dat";
+    if (!prefix.empty())
+        std::filesystem::create_directories(prefix);
+
+    auto dumper = [this, &prefix](const std::string &name, const auto &data) {
+        std::string filename =
+            prefix + name + "." + std::to_string(comm_.Size()) + "." + std::to_string(comm_.Rank()) + ".dat";
         if constexpr (requires { data.Write(filename.c_str()); })
             data.Write(filename.c_str());
         else {
@@ -60,7 +66,7 @@ void DMKPtTree<Real, DIM>::dump() const {
         morton_ids[i] = node_mid[i];
 
     if (comm_.Rank() == 0) {
-        std::string params_filename = "dmk_params." + std::to_string(comm_.Size()) + ".dat";
+        std::string params_filename = prefix + "dmk_params." + std::to_string(comm_.Size()) + ".dat";
         struct ParamsData {
             int n_dim;
             int n_order;
@@ -954,34 +960,28 @@ void DMKPtTree<Real, DIM>::generate_metadata() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::upward_pass() {
     sctl::Profile::Scoped profile("upward_pass", &comm_);
+    // GPU contexts are constructed when params.eval_path is GPU or BOTH.
+    // No fallback path: if any GPU op throws (unsupported config, runtime
+    // error, etc.) the exception escapes upward_pass unchanged. Always reset
+    // first so a prior BOTH-mode call's lingering contexts don't leak into a
+    // later CPU-only call.
 #ifdef DMK_GPU_OFFLOAD
-    if (!debug_omit_direct && !debug_force_aot) {
-        try {
-            cuda_shared_state_ = std::make_unique<CudaSharedDeviceState<Real, DIM>>(*this);
-            cuda_direct_ctx_ = std::make_unique<CudaDirectContext<Real, DIM>>(*this, *cuda_shared_state_);
-            cuda_direct_ctx_->launch();
-            // Eval_targets GPU offload is opt-in for now: it's a regression
-            // until proxy_coeffs_downward is also produced GPU-side
-            // (next migration stage). The CPU eval_targets calls are
-            // already parallelized by OMP inside form_eval_expansions, so
-            // there's nothing useful to overlap GPU eval_targets with until
-            // tensorprod-transform also moves to the GPU.
-            if (util::env_is_set("DMK_GPU_EVAL_TARGETS")) {
-                try {
-                    cuda_eval_targets_ctx_ =
-                        std::make_unique<CudaEvalTargetsContext<Real, DIM>>(*this, *cuda_shared_state_);
-                } catch (const std::exception &e) {
-                    logger->warn("CUDA eval_targets construction failed: {}; running CPU eval_targets", e.what());
-                    cuda_eval_targets_ctx_.reset();
-                }
-            }
-        } catch (const std::exception &e) {
-            logger->error("CUDA direct launch failed: {}; falling back to CPU direct", e.what());
-            cuda_direct_ctx_.reset();
-            cuda_eval_targets_ctx_.reset();
-            cuda_shared_state_.reset();
-        }
+    cuda_eval_targets_ctx_.reset();
+    cuda_direct_ctx_.reset();
+    cuda_downward_ctx_.reset();
+    cuda_shared_state_.reset();
+
+    const bool want_gpu = (params.eval_path == DMK_EVAL_PATH_GPU || params.eval_path == DMK_EVAL_PATH_BOTH);
+    if (want_gpu && !debug_omit_direct && !debug_force_aot) {
+        cuda_shared_state_ = std::make_unique<CudaSharedDeviceState<Real, DIM>>(*this);
+        cuda_direct_ctx_ = std::make_unique<CudaDirectContext<Real, DIM>>(*this, *cuda_shared_state_);
+        cuda_direct_ctx_->launch();
+        cuda_eval_targets_ctx_ = std::make_unique<CudaEvalTargetsContext<Real, DIM>>(*this, *cuda_shared_state_);
+        cuda_downward_ctx_ = std::make_unique<CudaDownwardContext<Real, DIM>>(*this, *cuda_shared_state_);
     }
+#else
+    if (params.eval_path != DMK_EVAL_PATH_CPU)
+        throw std::runtime_error("DMK was built without DMK_GPU_OFFLOAD; only DMK_EVAL_PATH_CPU is available");
 #endif
     sctl::Profile::Tic("upward_pass_init", &comm_);
     const std::size_t n_coeffs = n_tables_up * sctl::pow<DIM>(expansion_constants.n_order);
@@ -1295,28 +1295,24 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
                 }
             }
 
+            // form_eval_expansions only runs on the CPU path; the GPU path
+            // uses CudaEvalTargetsContext after the per-level kernels complete.
             if (iftensprodeval[box]) {
-                bool eval_on_gpu = false;
-#ifdef DMK_GPU_OFFLOAD
-                eval_on_gpu = (cuda_eval_targets_ctx_ != nullptr);
-#endif
-                if (!eval_on_gpu) {
-                    if (src_counts_owned[box]) {
-                        if (need_grad_src)
-                            proxy::eval_targets<Real, DIM, 2>(proxy_view_downward(box), r_src_owned_view(box),
-                                                              center_view(box), sc, pot_src_view(box), workspace);
-                        else
-                            proxy::eval_targets<Real, DIM, 1>(proxy_view_downward(box), r_src_owned_view(box),
-                                                              center_view(box), sc, pot_src_view(box), workspace);
-                    }
-                    if (trg_counts_owned[box]) {
-                        if (need_grad_trg)
-                            proxy::eval_targets<Real, DIM, 2>(proxy_view_downward(box), r_trg_owned_view(box),
-                                                              center_view(box), sc, pot_trg_view(box), workspace);
-                        else
-                            proxy::eval_targets<Real, DIM, 1>(proxy_view_downward(box), r_trg_owned_view(box),
-                                                              center_view(box), sc, pot_trg_view(box), workspace);
-                    }
+                if (src_counts_owned[box]) {
+                    if (need_grad_src)
+                        proxy::eval_targets<Real, DIM, 2>(proxy_view_downward(box), r_src_owned_view(box),
+                                                          center_view(box), sc, pot_src_view(box), workspace);
+                    else
+                        proxy::eval_targets<Real, DIM, 1>(proxy_view_downward(box), r_src_owned_view(box),
+                                                          center_view(box), sc, pot_src_view(box), workspace);
+                }
+                if (trg_counts_owned[box]) {
+                    if (need_grad_trg)
+                        proxy::eval_targets<Real, DIM, 2>(proxy_view_downward(box), r_trg_owned_view(box),
+                                                          center_view(box), sc, pot_trg_view(box), workspace);
+                    else
+                        proxy::eval_targets<Real, DIM, 1>(proxy_view_downward(box), r_trg_owned_view(box),
+                                                          center_view(box), sc, pot_trg_view(box), workspace);
                 }
             }
         }
@@ -1566,82 +1562,85 @@ void DMKPtTree<Real, DIM>::downward_pass() {
     std::fill(proxy_down_zeroed.begin(), proxy_down_zeroed.end(), 0);
     form_outgoing_expansions();
 
-    const int n_pw = expansion_constants.n_pw_diff;
-    for (int i_level = 0; i_level < n_levels(); ++i_level) {
-        auto &dfd = difference_fourier_data[i_level];
-        const ndview<std::complex<Real>, 2> p2pw({n_pw, n_order}, &dfd.poly2pw[0]);
-        const ndview<std::complex<Real>, 2> pw2p({n_pw, n_order}, &dfd.pw2poly[0]);
+    // params.eval_path drives both upward (above) and downward. Booleans here
+    // make the branch logic readable; both can be true (BOTH mode).
+    const bool run_cpu = (params.eval_path == DMK_EVAL_PATH_CPU || params.eval_path == DMK_EVAL_PATH_BOTH);
+#ifdef DMK_GPU_OFFLOAD
+    const bool run_gpu = (cuda_shared_state_ != nullptr); // set by upward_pass for GPU/BOTH
+#else
+    constexpr bool run_gpu = false;
+#endif
 
-        if (!debug_omit_pw)
+    // ---- GPU downward (writes to device proxy + pot buffers) ----
+#ifdef DMK_GPU_OFFLOAD
+    if (run_gpu && !debug_omit_pw) {
+        sctl::Profile::Scoped p("cuda_downward", &comm_);
+        cuda_downward_ctx_->upload_pw_out();
+        for (int i_level = 0; i_level < n_levels(); ++i_level)
+            cuda_downward_ctx_->run_level(i_level);
+        cuda_downward_ctx_->mark_proxy_resident();
+    }
+#endif
+
+    // ---- CPU downward (writes to host proxy + pot buffers) ----
+    if (run_cpu && !debug_omit_pw) {
+        const int n_pw = expansion_constants.n_pw_diff;
+        for (int i_level = 0; i_level < n_levels(); ++i_level) {
+            auto &dfd = difference_fourier_data[i_level];
+            const ndview<std::complex<Real>, 2> p2pw({n_pw, n_order}, &dfd.poly2pw[0]);
+            const ndview<std::complex<Real>, 2> pw2p({n_pw, n_order}, &dfd.pw2poly[0]);
             form_eval_expansions(level_indices[i_level], dfd.wpwshift, boxsize[i_level], pw2p, p2c);
+        }
     }
     sctl::Profile::Toc();
 
+    // ---- GPU eval_targets (proxy is GPU-resident) ----
 #ifdef DMK_GPU_OFFLOAD
-    // proxy_coeffs_downward is now finalized on the host. Kick off the GPU
-    // eval_targets work; it overlaps with the direct work still in flight.
-    if (cuda_eval_targets_ctx_) {
+    if (run_gpu) {
         sctl::Profile::Scoped p("cuda_eval_targets_launch", &comm_);
-        try {
-            cuda_eval_targets_ctx_->launch();
-        } catch (const std::exception &e) {
-            logger->error("CUDA eval_targets launch failed: {}; running CPU eval_targets fallback", e.what());
-            cuda_eval_targets_ctx_.reset();
-            // CPU fallback: re-run the level loop's eval_targets-only branch.
-            // proxy_coeffs_downward is already populated, so this is just the
-            // per-iftensprodeval-box eval_targets calls.
-            for (int b : eval_targets_box_list) {
-                const int lvl = this->GetNodeMID()[b].Depth();
-                const Real bsize = boxsize[lvl];
-                const Real sc = Real{2} / bsize;
-                sctl::Vector<Real> ws;
-                const bool need_grad_src = params.kernel == DMK_LAPLACE && params.eval_src >= DMK_POTENTIAL_GRAD;
-                const bool need_grad_trg = params.kernel == DMK_LAPLACE && params.eval_trg >= DMK_POTENTIAL_GRAD;
-                if (src_counts_owned[b]) {
-                    if (need_grad_src)
-                        proxy::eval_targets<Real, DIM, 2>(proxy_view_downward(b), r_src_owned_view(b), center_view(b),
-                                                          sc, pot_src_view(b), ws);
-                    else
-                        proxy::eval_targets<Real, DIM, 1>(proxy_view_downward(b), r_src_owned_view(b), center_view(b),
-                                                          sc, pot_src_view(b), ws);
-                }
-                if (trg_counts_owned[b]) {
-                    if (need_grad_trg)
-                        proxy::eval_targets<Real, DIM, 2>(proxy_view_downward(b), r_trg_owned_view(b), center_view(b),
-                                                          sc, pot_trg_view(b), ws);
-                    else
-                        proxy::eval_targets<Real, DIM, 1>(proxy_view_downward(b), r_trg_owned_view(b), center_view(b),
-                                                          sc, pot_trg_view(b), ws);
-                }
-            }
-        }
+        cuda_eval_targets_ctx_->launch();
     }
 #endif
 
-    if (!debug_omit_direct) {
-#ifdef DMK_GPU_OFFLOAD
-        if (cuda_direct_ctx_ && !debug_force_aot) {
-            sctl::Profile::Scoped p("cuda_direct_merge", &comm_);
-            cuda_direct_ctx_->merge_into_host();
-            cuda_direct_ctx_.reset();
-        } else {
-            evaluate_direct_interactions();
-        }
-#else
+    // ---- CPU direct (writes host pot) ----
+    // In BOTH mode we need the CPU answer to be complete in host pot buffers,
+    // so we run CPU direct too. In GPU-only mode we skip — the GPU pot
+    // buffers are about to replace the host arrays at merge.
+    if (run_cpu && !debug_omit_direct)
         evaluate_direct_interactions();
-#endif
+
+    // ---- Merge GPU results into host pot (GPU-only mode) ----
+    // CPU/BOTH: host pot is already canonical (= CPU result).
+    // GPU only: host pot is currently zero. Download device pot to host so
+    //           subsequent self-correction + the eval() caller see the
+    //           GPU answer. In BOTH mode, device buffers stay populated for
+    //           debugging; host pot remains the CPU result.
+#ifdef DMK_GPU_OFFLOAD
+    if (params.eval_path == DMK_EVAL_PATH_GPU) {
+        sctl::Profile::Scoped p("cuda_merge", &comm_);
+        cuda_direct_ctx_->merge_into_host();
+        cuda_eval_targets_ctx_->merge_into_host();
     }
+#endif
+
+    // Self-correction operates on the host pot — applies to whatever path
+    // wrote it last (CPU result in CPU/BOTH, downloaded GPU result in GPU).
+    correct_for_self_interactions();
 
 #ifdef DMK_GPU_OFFLOAD
-    if (cuda_eval_targets_ctx_) {
-        sctl::Profile::Scoped p("cuda_eval_targets_merge", &comm_);
-        cuda_eval_targets_ctx_->merge_into_host();
-        cuda_eval_targets_ctx_.reset();
-    }
-    cuda_shared_state_.reset();
-#endif
+    // GPU dump (into "gpu/") must run before teardown so the device buffers
+    // are still alive; the CPU-side dump (below) writes to cwd.
+    if (debug_dump_tree && cuda_shared_state_)
+        cuda_shared_state_->dump(*this);
 
-    correct_for_self_interactions();
+    if (params.eval_path == DMK_EVAL_PATH_GPU) {
+        cuda_eval_targets_ctx_.reset();
+        cuda_direct_ctx_.reset();
+        cuda_downward_ctx_.reset();
+        cuda_shared_state_.reset();
+    }
+    // BOTH mode: contexts stay alive past eval() so debugging code can reach in.
+#endif
 
     logger->info("downward pass completed");
     if (debug_dump_tree)

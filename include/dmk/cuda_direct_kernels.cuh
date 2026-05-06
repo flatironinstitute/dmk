@@ -27,6 +27,9 @@
 
 #include <cuda_runtime.h>
 
+#include <stdexcept>
+#include <string>
+
 namespace dmk::cuda {
 
 template <typename Evaluator>
@@ -129,6 +132,9 @@ inline void launch_direct_by_box(const DirectByBoxArgs<Real> &args, cudaStream_t
         return;
     constexpr int block_size = 128;
     DirectResidualByBoxKernel<Evaluator><<<args.n_work, block_size, 0, stream>>>(args);
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess)
+        throw std::runtime_error(std::string("launch_direct_by_box: ") + cudaGetErrorString(err));
 }
 
 } // namespace dmk::cuda

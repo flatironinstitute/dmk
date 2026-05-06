@@ -3,6 +3,7 @@
 //
 // Plain C++; no <<<>>> launch syntax. Compiled into DMKOBJS_CUDA.
 
+#include <dmk/cuda_helpers.hpp>
 #include <dmk/cuda_shared_state.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/tree.hpp>
@@ -15,46 +16,10 @@
 
 namespace dmk {
 
-namespace {
-
-#define DMK_CHECK_CUDA(expr)                                                                                           \
-    do {                                                                                                               \
-        cudaError_t _e = (expr);                                                                                       \
-        if (_e != cudaSuccess)                                                                                         \
-            throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(_e));                            \
-    } while (0)
-
-template <typename T>
-T *device_alloc(std::size_t n) {
-    if (n == 0)
-        return nullptr;
-    T *d = nullptr;
-    DMK_CHECK_CUDA(cudaMalloc(&d, n * sizeof(T)));
-    return d;
-}
-
-template <typename T>
-T *device_upload(const T *src_host, std::size_t n) {
-    T *d = device_alloc<T>(n);
-    if (d)
-        DMK_CHECK_CUDA(cudaMemcpy(d, src_host, n * sizeof(T), cudaMemcpyHostToDevice));
-    return d;
-}
-
-void device_free(void *p) {
-    if (p)
-        cudaFree(p);
-}
-
-template <typename SctlVecInt>
-std::vector<int> sctl_int_vec_to_std(const SctlVecInt &v) {
-    std::vector<int> out(v.Dim());
-    for (std::size_t i = 0; i < out.size(); ++i)
-        out[i] = (int)v[i];
-    return out;
-}
-
-} // namespace
+using cuda_helpers::device_alloc;
+using cuda_helpers::device_free;
+using cuda_helpers::device_upload;
+using cuda_helpers::sctl_int_vec_to_std;
 
 template <typename Real, int DIM>
 CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tree) {
@@ -65,7 +30,9 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
 
     const auto &node_mid = tree.GetNodeMID();
     n_boxes = (int)tree.n_boxes();
-    n_levels = tree.boxsize.Dim();
+    // Use tree.n_levels() (= level_indices.Dim()) — boxsize.Dim() is n_levels+1
+    // because it carries an extra slot beyond the deepest live level.
+    n_levels = tree.n_levels();
     nlist1_stride = (1 << (2 * DIM)) - (1 << DIM) + 1;
 
     // ---------- host-side topology buffers ----------
@@ -156,6 +123,162 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
     }
     d_proxy_offsets_downward =
         device_upload((const long *)&tree.proxy_coeffs_offsets_downward[0], tree.proxy_coeffs_offsets_downward.Dim());
+
+    // ============== Downward-pass GPU plumbing ==============
+    DMK_CHECK_CUDA(cudaStreamCreateWithFlags(&downward_stream, cudaStreamNonBlocking));
+
+    n_neighbors = 1;
+    for (int d = 0; d < DIM; ++d)
+        n_neighbors *= 3;
+    n_pw = tree.expansion_constants.n_pw_diff;
+    n_pw2 = (n_pw + 1) / 2;
+    if constexpr (DIM == 3)
+        n_pw_modes = n_pw * n_pw * n_pw2;
+    else
+        n_pw_modes = n_pw * n_pw2; // 2D
+    n_charge_dim = tree.n_tables_down;
+    n_order = tree.expansion_constants.n_order;
+
+    // Neighbor list: flat n_boxes * n_neighbors.
+    {
+        const auto &node_lists = tree.GetNodeLists();
+        std::vector<int> nbr_h((std::size_t)n_boxes * n_neighbors);
+        for (int b = 0; b < n_boxes; ++b)
+            for (int k = 0; k < n_neighbors; ++k)
+                nbr_h[(std::size_t)b * n_neighbors + k] = node_lists[b].nbr[k];
+        d_neighbors = device_upload(nbr_h.data(), nbr_h.size());
+    }
+
+    // is_global_leaf as 0/1 bytes.
+    {
+        std::vector<unsigned char> leaf_h(n_boxes);
+        for (int b = 0; b < n_boxes; ++b)
+            leaf_h[b] = tree.is_global_leaf[b] ? 1 : 0;
+        d_is_global_leaf = device_upload(leaf_h.data(), leaf_h.size());
+    }
+
+    // pw_out_offsets: may or may not be sized yet. Pull it in if non-empty;
+    // otherwise upload_pw_out() will do it later.
+    if (tree.pw_out_offsets.Dim())
+        d_pw_out_offsets = device_upload((const long *)&tree.pw_out_offsets[0], tree.pw_out_offsets.Dim());
+
+    // Per-level pw2poly: each level's pw2poly is std::complex<Real>[n_pw * n_order],
+    // i.e. 2 * n_pw * n_order reals interleaved. Concatenate per-level.
+    pw2poly_per_level_reals = 2 * n_pw * n_order;
+    {
+        const std::size_t total = (std::size_t)n_levels * pw2poly_per_level_reals;
+        std::vector<Real> h(total);
+        for (int L = 0; L < n_levels; ++L) {
+            const auto &dfd = tree.difference_fourier_data[L];
+            // dfd.pw2poly is sctl::Vector<std::complex<Real>>. Reinterpret as Real* (interleaved).
+            const Real *src = reinterpret_cast<const Real *>(&dfd.pw2poly[0]);
+            std::copy(src, src + pw2poly_per_level_reals, &h[(std::size_t)L * pw2poly_per_level_reals]);
+        }
+        d_pw2poly_flat = device_upload(h.data(), total);
+    }
+
+    // Per-level wpwshift: SoA per neighbor (already SoA in calc_planewave_translation_matrix).
+    // 2 * n_neighbors * n_pw_modes reals per level.
+    wpwshift_per_level_reals = 2 * n_neighbors * n_pw_modes;
+    {
+        const std::size_t total = (std::size_t)n_levels * wpwshift_per_level_reals;
+        std::vector<Real> h(total);
+        for (int L = 0; L < n_levels; ++L) {
+            const auto &dfd = tree.difference_fourier_data[L];
+            // Already laid out SoA per neighbor by calc_planewave_translation_matrix.
+            const Real *src = reinterpret_cast<const Real *>(&dfd.wpwshift[0]);
+            std::copy(src, src + wpwshift_per_level_reals, &h[(std::size_t)L * wpwshift_per_level_reals]);
+        }
+        d_wpwshift_flat = device_upload(h.data(), total);
+    }
+
+    // p2c matrices.
+    if (tree.p2c.Dim())
+        d_p2c = device_upload(&tree.p2c[0], tree.p2c.Dim());
+
+    // Per-level pw_eval box lists: for each level, the boxes that do PW work
+    // (ifpwexp[b] && (src_counts_owned[b] + trg_counts_owned[b]) > 0).
+    {
+        pw_eval_box_offset_h.assign(n_levels + 1, 0);
+        pw_eval_box_count_h.assign(n_levels, 0);
+        std::vector<int> flat;
+        flat.reserve(n_boxes);
+        for (int L = 0; L < n_levels; ++L) {
+            pw_eval_box_offset_h[L] = (int)flat.size();
+            for (int idx = 0; idx < tree.level_indices[L].Dim(); ++idx) {
+                const int b = tree.level_indices[L][idx];
+                const int nboxpts = tree.src_counts_owned[b] + tree.trg_counts_owned[b];
+                if (tree.ifpwexp[b] && nboxpts) {
+                    flat.push_back(b);
+                    pw_eval_box_count_h[L]++;
+                }
+            }
+            max_pw_eval_per_level = std::max(max_pw_eval_per_level, pw_eval_box_count_h[L]);
+        }
+        pw_eval_box_offset_h[n_levels] = (int)flat.size();
+        pw_eval_box_count_total = (int)flat.size();
+        if (pw_eval_box_count_total)
+            d_pw_eval_box_flat = device_upload(flat.data(), flat.size());
+    }
+
+    // Per-level tensorprod pairs.
+    {
+        tp_offset_h.assign(n_levels + 1, 0);
+        tp_count_h.assign(n_levels, 0);
+        std::vector<int> parents, children, octants;
+        for (int L = 0; L < n_levels; ++L) {
+            tp_offset_h[L] = (int)parents.size();
+            for (const auto &p : tree.tensorprod_pairs_per_level[L]) {
+                parents.push_back(p.parent);
+                children.push_back(p.child);
+                octants.push_back(p.child_octant);
+                tp_count_h[L]++;
+            }
+            max_tp_per_level = std::max(max_tp_per_level, tp_count_h[L]);
+        }
+        tp_offset_h[n_levels] = (int)parents.size();
+        tp_count_total = (int)parents.size();
+        if (tp_count_total) {
+            d_tp_parents = device_upload(parents.data(), parents.size());
+            d_tp_children = device_upload(children.data(), children.size());
+            d_tp_octants = device_upload(octants.data(), octants.size());
+        }
+    }
+
+    // Tensorprod global scratch: 2 * n_order^3 reals per block, one slab per
+    // pair processed concurrently in a level.
+    tensorprod_scratch_stride_reals = 2L * n_order * n_order * n_order;
+    if (max_tp_per_level && tensorprod_scratch_stride_reals)
+        d_tensorprod_scratch = device_alloc<Real>((std::size_t)max_tp_per_level * tensorprod_scratch_stride_reals);
+
+    // pw_in scratch pool.
+    pw_in_stride_reals = 2L * n_charge_dim * n_pw_modes;
+    if (max_pw_eval_per_level && pw_in_stride_reals)
+        d_pw_in_pool = device_alloc<Real>((std::size_t)max_pw_eval_per_level * pw_in_stride_reals);
+}
+
+template <typename Real, int DIM>
+void CudaSharedDeviceState<Real, DIM>::upload_pw_out(DMKPtTree<Real, DIM> &tree) {
+    const std::size_t needed = tree.pw_out.Dim() * 2; // pw_out is complex; reals are 2x.
+    if (!needed)
+        return;
+    if (!d_pw_out_offsets)
+        d_pw_out_offsets = device_upload((const long *)&tree.pw_out_offsets[0], tree.pw_out_offsets.Dim());
+    if (!d_pw_out || pw_out_size != needed) {
+        if (d_pw_out)
+            device_free(d_pw_out);
+        d_pw_out = device_alloc<Real>(needed);
+        pw_out_size = needed;
+    }
+    DMK_CHECK_CUDA(cudaMemcpy(d_pw_out, reinterpret_cast<const Real *>(&tree.pw_out[0]), needed * sizeof(Real),
+                              cudaMemcpyHostToDevice));
+
+    if (proxy_size) {
+        DMK_CHECK_CUDA(cudaMemsetAsync(d_proxy_coeffs_downward, 0, proxy_size * sizeof(Real)));
+        const long n_coeffs_box = (long)n_charge_dim * sctl::pow<DIM>(n_order);
+        DMK_CHECK_CUDA(cudaMemcpyAsync(d_proxy_coeffs_downward, &tree.proxy_coeffs_downward[0],
+                                       n_coeffs_box * sizeof(Real), cudaMemcpyHostToDevice));
+    }
 }
 
 template <typename Real, int DIM>
@@ -185,6 +308,34 @@ CudaSharedDeviceState<Real, DIM>::~CudaSharedDeviceState() {
     device_free(d_pot_trg_offsets);
     device_free(d_proxy_coeffs_downward);
     device_free(d_proxy_offsets_downward);
+    device_free(d_neighbors);
+    device_free(d_is_global_leaf);
+    device_free(d_pw_out);
+    device_free(d_pw_out_offsets);
+    device_free(d_pw2poly_flat);
+    device_free(d_wpwshift_flat);
+    device_free(d_p2c);
+    device_free(d_pw_eval_box_flat);
+    device_free(d_tp_parents);
+    device_free(d_tp_children);
+    device_free(d_tp_octants);
+    device_free(d_tensorprod_scratch);
+    device_free(d_pw_in_pool);
+    if (downward_stream)
+        cudaStreamDestroy(downward_stream);
+}
+
+template <typename Real, int DIM>
+void CudaSharedDeviceState<Real, DIM>::dump(DMKPtTree<Real, DIM> &tree) {
+    const std::string prefix = "gpu/";
+    tree.dump(prefix);
+
+    auto write = [&](const std::string &name, const Real *d_ptr, std::size_t n) {
+        const std::string path = prefix + name + "." + std::to_string(tree.comm().Size()) + "." +
+                                 std::to_string(tree.comm().Rank()) + ".dat";
+        cuda_helpers::dump_device_buffer_to_file<Real>(path, d_ptr, n);
+    };
+    write("dmk_proxy_coeffs_downward", d_proxy_coeffs_downward, proxy_size);
 }
 
 template struct CudaSharedDeviceState<float, 2>;

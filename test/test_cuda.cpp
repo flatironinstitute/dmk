@@ -10,7 +10,12 @@
 // fills in the missing entries.
 
 #include <dmk/aot_kernels_cuda.hpp>
+#include <dmk/cuda_pw_to_proxy_kernels.hpp>
+#include <dmk/cuda_shift_pw_kernels.hpp>
+#include <dmk/cuda_tensorprod_kernels.hpp>
 #include <dmk/direct.hpp>
+#include <dmk/planewave.hpp>
+#include <dmk/tensorprod.hpp>
 #include <dmk/testing.hpp>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
@@ -18,7 +23,9 @@
 #include <cuda_runtime.h>
 
 #include <cmath>
+#include <complex>
 #include <functional>
+#include <random>
 #include <vector>
 
 namespace {
@@ -197,4 +204,231 @@ TEST_CASE("[CUDA] Stresslet 3D vs CPU AOT") {
     auto getter_f = [](dmk_eval_type ev, int n) { return dmk::get_stresslet_3d_kernel_cuda<float>(ev, n); };
     compare_kernel<double>(DMK_STRESSLET, 3, N_DIGITS_D, DMK_VELOCITY, 3, 3, true, getter_d, TOL_DOUBLE);
     compare_kernel<float>(DMK_STRESSLET, 3, N_DIGITS_F, DMK_VELOCITY, 3, 3, true, getter_f, TOL_FLOAT);
+}
+
+// Downward-pass kernel tests: each GPU kernel against its CPU counterpart
+// on isolated inputs.
+
+namespace {
+
+template <typename T>
+void fill_random(std::vector<T> &v, std::mt19937_64 &rng) {
+    std::uniform_real_distribution<double> d(-1.0, 1.0);
+    for (auto &x : v)
+        x = T(d(rng));
+}
+
+} // namespace
+
+TEST_CASE_TEMPLATE("[CUDA] tensorprod (parent->child) vs CPU", Real, double, float) {
+    using namespace dmk;
+    constexpr int DIM = 3;
+    const int n_order = 8;
+    const int n_charge_dim = 2;
+    const int N3 = n_order * n_order * n_order;
+
+    std::mt19937_64 rng(SEED);
+    std::vector<Real> parent(N3 * n_charge_dim);
+    std::vector<Real> umat(3 * n_order * n_order); // 3 axis matrices, n_order × n_order each
+    fill_random(parent, rng);
+    fill_random(umat, rng);
+
+    // CPU reference: tensorprod::transform writes into fout.
+    std::vector<Real> child_cpu(N3 * n_charge_dim, Real{0});
+    {
+        ndview<Real, DIM + 1> fin_v({n_order, n_order, n_order, n_charge_dim}, parent.data());
+        ndview<Real, 2> umat_v({n_order, DIM}, umat.data()); // shape is wrong but only .data() is used
+        ndview<Real, DIM + 1> fout_v({n_order, n_order, n_order, n_charge_dim}, child_cpu.data());
+        sctl::Vector<Real> workspace;
+        tensorprod::transform<Real, DIM>(n_charge_dim, /*add_flag=*/0, fin_v, umat_v, fout_v, workspace);
+    }
+
+    // GPU: lay out a 2-box proxy buffer (parent at offset 0, child at N3*n_charge_dim).
+    const int n_proxy_box = N3 * n_charge_dim;
+    std::vector<Real> proxy_host(2 * n_proxy_box, Real{0});
+    std::copy(parent.begin(), parent.end(), proxy_host.begin());
+    DeviceBuf<Real> d_proxy(proxy_host.size(), proxy_host.data());
+
+    std::vector<long> offsets_h{0L, (long)n_proxy_box};
+    DeviceBuf<long> d_offsets(offsets_h.size(), offsets_h.data());
+    DeviceBuf<Real> d_p2c(umat.size(), umat.data());
+
+    std::vector<int> parents_h{0}, children_h{1}, octants_h{0};
+    DeviceBuf<int> d_parents(1, parents_h.data()), d_children(1, children_h.data()), d_octants(1, octants_h.data());
+
+    const long scratch_stride = 2L * n_order * n_order * n_order;
+    DeviceBuf<Real> d_scratch(scratch_stride);
+
+    cuda::TensorprodArgs<Real> args;
+    args.n_pairs = 1;
+    args.n_order = n_order;
+    args.n_charge_dim = n_charge_dim;
+    args.parents = d_parents.p;
+    args.children = d_children.p;
+    args.child_octants = d_octants.p;
+    args.proxy_flat = d_proxy.p;
+    args.proxy_offsets = d_offsets.p;
+    args.p2c_flat = d_p2c.p;
+    args.scratch = d_scratch.p;
+    args.scratch_stride = scratch_stride;
+    cuda::launch_tensorprod_dispatch<Real>(DIM, args, /*stream=*/0);
+    REQUIRE_CUDA(cudaDeviceSynchronize());
+
+    std::vector<Real> proxy_back(proxy_host.size());
+    REQUIRE_CUDA(cudaMemcpy(proxy_back.data(), d_proxy.p, proxy_back.size() * sizeof(Real), cudaMemcpyDeviceToHost));
+    std::vector<Real> child_gpu(proxy_back.begin() + n_proxy_box, proxy_back.end());
+
+    const double err = rel_l2(child_gpu, child_cpu);
+    INFO("rel_l2 = " << err);
+    CHECK(err < (std::is_same_v<Real, double> ? TOL_DOUBLE : TOL_FLOAT));
+}
+
+TEST_CASE_TEMPLATE("[CUDA] pw_to_proxy vs CPU", Real, double, float) {
+    using namespace dmk;
+    using C = std::complex<Real>;
+    constexpr int DIM = 3;
+    const int n_order = 8;
+    const int n_pw = 11;
+    const int n_pw2 = (n_pw + 1) / 2;
+    const int n_charge_dim = 2;
+    const int n_pw_modes = n_pw * n_pw * n_pw2;
+    const int N3 = n_order * n_order * n_order;
+
+    std::mt19937_64 rng(SEED + 1);
+    std::vector<Real> pw_in_real(2 * n_pw_modes * n_charge_dim); // interleaved complex
+    std::vector<Real> pw2poly_real(2 * n_pw * n_order);          // interleaved complex
+    fill_random(pw_in_real, rng);
+    fill_random(pw2poly_real, rng);
+
+    // CPU reference
+    std::vector<Real> proxy_cpu(N3 * n_charge_dim, Real{0});
+    {
+        ndview<C, DIM + 1> pw_in_v({n_pw, n_pw, n_pw2, n_charge_dim}, reinterpret_cast<C *>(pw_in_real.data()));
+        ndview<C, 2> pw2poly_v({n_pw, n_order}, reinterpret_cast<C *>(pw2poly_real.data()));
+        ndview<Real, DIM + 1> proxy_v({n_order, n_order, n_order, n_charge_dim}, proxy_cpu.data());
+        sctl::Vector<Real> workspace;
+        planewave_to_proxy_potential<Real, DIM>(pw_in_v, pw2poly_v, proxy_v, workspace);
+    }
+
+    // GPU: pw_in_pool has one slot at offset 0; proxy_flat has one box at offset 0.
+    DeviceBuf<Real> d_pw_in(pw_in_real.size(), pw_in_real.data());
+    DeviceBuf<Real> d_pw2poly(pw2poly_real.size(), pw2poly_real.data());
+    DeviceBuf<Real> d_proxy(N3 * n_charge_dim);
+    REQUIRE_CUDA(cudaMemset(d_proxy.p, 0, d_proxy.n * sizeof(Real)));
+
+    std::vector<long> offsets_h{0L};
+    DeviceBuf<long> d_offsets(1, offsets_h.data());
+    std::vector<int> box_ids_h{0};
+    DeviceBuf<int> d_box_ids(1, box_ids_h.data());
+
+    cuda::PwToProxyArgs<Real> args;
+    args.n_boxes_at_level = 1;
+    args.n_order = n_order;
+    args.n_pw = n_pw;
+    args.n_pw2 = n_pw2;
+    args.n_charge_dim = n_charge_dim;
+    args.pw_in_stride = 2L * n_charge_dim * n_pw_modes;
+    args.box_ids = d_box_ids.p;
+    args.pw_in_pool = d_pw_in.p;
+    args.pw2poly = d_pw2poly.p;
+    args.proxy_flat = d_proxy.p;
+    args.proxy_offsets = d_offsets.p;
+    cuda::launch_pw_to_proxy_dispatch<Real>(DIM, args, /*stream=*/0);
+    REQUIRE_CUDA(cudaDeviceSynchronize());
+
+    std::vector<Real> proxy_gpu(d_proxy.n);
+    REQUIRE_CUDA(cudaMemcpy(proxy_gpu.data(), d_proxy.p, d_proxy.n * sizeof(Real), cudaMemcpyDeviceToHost));
+
+    const double err = rel_l2(proxy_gpu, proxy_cpu);
+    INFO("rel_l2 = " << err);
+    CHECK(err < (std::is_same_v<Real, double> ? TOL_DOUBLE : TOL_FLOAT));
+}
+
+TEST_CASE_TEMPLATE("[CUDA] shift_pw vs CPU", Real, double, float) {
+    using namespace dmk;
+    constexpr int DIM = 3;
+    constexpr int N_NEIGHBORS = 27;
+    const int n_pw = 11;
+    const int n_pw2 = (n_pw + 1) / 2;
+    const int n_charge_dim = 2;
+    const int n_pw_modes = n_pw * n_pw * n_pw2;
+    const int n_box_reals = 2 * n_charge_dim * n_pw_modes;
+
+    // 3 boxes total: box 0 is the target; boxes 1, 2 are neighbours that
+    // contribute via wpwshift slots npos=0 (ind=26) and npos=1 (ind=25).
+    // The remaining neighbour entries are -1 (no neighbour).
+    std::mt19937_64 rng(SEED + 2);
+    const int n_boxes = 3;
+    std::vector<Real> pw_out_h(n_boxes * n_box_reals);
+    std::vector<Real> wpwshift_h(2L * N_NEIGHBORS * n_pw_modes);
+    fill_random(pw_out_h, rng);
+    fill_random(wpwshift_h, rng);
+
+    std::vector<int> neighbors_h(n_boxes * N_NEIGHBORS, -1);
+    neighbors_h[0 * N_NEIGHBORS + 0] = 1;
+    neighbors_h[0 * N_NEIGHBORS + 1] = 2;
+    // Self at the canonical centre slot (npos = N_NEIGHBORS / 2 = 13). The
+    // GPU and CPU both skip neighbour == box, so the slot value doesn't matter.
+    neighbors_h[0 * N_NEIGHBORS + 13] = 0;
+
+    std::vector<long> pw_out_offsets_h{0L, (long)n_pw_modes * n_charge_dim, (long)n_pw_modes * n_charge_dim * 2};
+    std::vector<unsigned char> is_leaf_h(n_boxes, 0); // none are leaves → all neighbour pairs are eligible
+
+    // CPU reference: pw_in[box=0] = pw_out[0] + Σ_neighbour pw_out[n] * wpwshift[ind].
+    std::vector<Real> pw_in_cpu(n_box_reals);
+    std::copy(pw_out_h.begin(), pw_out_h.begin() + n_box_reals, pw_in_cpu.begin());
+    for (int npos = 0; npos < N_NEIGHBORS; ++npos) {
+        const int nbr = neighbors_h[0 * N_NEIGHBORS + npos];
+        if (nbr < 0 || nbr == 0)
+            continue;
+        const int ind = N_NEIGHBORS - 1 - npos;
+        const Real *shift_r = wpwshift_h.data() + (long)ind * n_pw_modes * 2;
+        const Real *shift_i = shift_r + n_pw_modes;
+        const Real *nbr_pw = pw_out_h.data() + (long)nbr * n_box_reals;
+        Real *dst = pw_in_cpu.data();
+        for (int d = 0; d < n_charge_dim; ++d) {
+            for (int m = 0; m < n_pw_modes; ++m) {
+                const long idx = (long)d * n_pw_modes * 2 + 2L * m;
+                const Real ar = nbr_pw[idx], ai = nbr_pw[idx + 1];
+                const Real cr = shift_r[m], ci = shift_i[m];
+                dst[idx] += ar * cr - ai * ci;
+                dst[idx + 1] += ar * ci + ai * cr;
+            }
+        }
+    }
+
+    // GPU
+    DeviceBuf<Real> d_pw_out(pw_out_h.size(), pw_out_h.data());
+    DeviceBuf<Real> d_wpwshift(wpwshift_h.size(), wpwshift_h.data());
+    DeviceBuf<int> d_neighbors(neighbors_h.size(), neighbors_h.data());
+    DeviceBuf<long> d_pw_out_offsets(pw_out_offsets_h.size(), pw_out_offsets_h.data());
+    DeviceBuf<unsigned char> d_is_leaf(is_leaf_h.size(), is_leaf_h.data());
+    DeviceBuf<Real> d_pw_in_pool(n_box_reals);
+    REQUIRE_CUDA(cudaMemset(d_pw_in_pool.p, 0, d_pw_in_pool.n * sizeof(Real)));
+
+    std::vector<int> box_ids_h{0};
+    DeviceBuf<int> d_box_ids(1, box_ids_h.data());
+
+    cuda::ShiftPwArgs<Real> args;
+    args.n_boxes_at_level = 1;
+    args.n_neighbors = N_NEIGHBORS;
+    args.n_charge_dim = n_charge_dim;
+    args.n_pw_modes = n_pw_modes;
+    args.pw_in_stride = (long)n_box_reals;
+    args.box_ids = d_box_ids.p;
+    args.neighbors = d_neighbors.p;
+    args.pw_out_offsets = d_pw_out_offsets.p;
+    args.is_global_leaf = d_is_leaf.p;
+    args.pw_out_flat = d_pw_out.p;
+    args.wpwshift = d_wpwshift.p;
+    args.pw_in_pool = d_pw_in_pool.p;
+    cuda::launch_shift_pw_dispatch<Real>(DIM, args, /*stream=*/0);
+    REQUIRE_CUDA(cudaDeviceSynchronize());
+
+    std::vector<Real> pw_in_gpu(n_box_reals);
+    REQUIRE_CUDA(cudaMemcpy(pw_in_gpu.data(), d_pw_in_pool.p, n_box_reals * sizeof(Real), cudaMemcpyDeviceToHost));
+
+    const double err = rel_l2(pw_in_gpu, pw_in_cpu);
+    INFO("rel_l2 = " << err);
+    CHECK(err < (std::is_same_v<Real, double> ? TOL_DOUBLE : TOL_FLOAT));
 }

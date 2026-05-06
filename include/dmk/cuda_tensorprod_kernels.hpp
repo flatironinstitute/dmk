@@ -2,8 +2,7 @@
 #define DMK_CUDA_TENSORPROD_KERNELS_HPP
 
 // Host-includable header for the GPU tensorprod (proxy_downward
-// parent → child propagation). One block per (parent, child) pair; each
-// block does the 3 axis-wise transforms in shared-memory ping-pong.
+// parent → child propagation). One block per (parent, child) pair.
 //
 // Output is *additive* into the child slot of d_proxy_downward. The shared
 // state allocates d_proxy_downward zero-initialized, so no add_flag tracking
@@ -31,6 +30,12 @@ struct TensorprodArgs {
     // p2c matrices, layout: [octant][axis][k_out, k_in] in F-major n_order×n_order.
     // Total length = n_octants * DIM * n_order * n_order.
     const Real *p2c_flat = nullptr;
+
+    // Per-block global scratch for the ff/ff2 ping-pong buffers. Block uses
+    // scratch + blockIdx.x * scratch_stride; ff occupies the first N3 reals,
+    // ff2 the next N3.
+    Real *scratch = nullptr;
+    long scratch_stride = 0; // reals; = 2 * n_order^3
 };
 
 template <typename Real>

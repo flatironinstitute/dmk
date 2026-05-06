@@ -7,6 +7,9 @@
 
 #include <cuda_runtime.h>
 
+#include <stdexcept>
+#include <string>
+
 namespace dmk::cuda {
 
 template <typename Real>
@@ -105,6 +108,9 @@ inline void launch_pw_to_proxy_3d(const PwToProxyArgs<Real> &args, cudaStream_t 
     const std::size_t shared_bytes =
         sizeof(Real) * 2 * (std::size_t)(args.n_pw * args.n_pw2 + args.n_order * args.n_pw2);
     PwToProxyByBoxKernel<Real><<<args.n_boxes_at_level, block_size, shared_bytes, stream>>>(args);
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess)
+        throw std::runtime_error(std::string("launch_pw_to_proxy_3d: ") + cudaGetErrorString(err));
 }
 
 } // namespace dmk::cuda

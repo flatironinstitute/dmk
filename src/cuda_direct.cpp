@@ -7,43 +7,19 @@
 
 #include <dmk/cuda_direct.hpp>
 #include <dmk/cuda_direct_kernels.hpp>
+#include <dmk/cuda_helpers.hpp>
 #include <dmk/cuda_shared_state.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/tree.hpp>
 
 #include <cuda_runtime.h>
 
-#include <stdexcept>
-#include <string>
 #include <vector>
 
 namespace dmk {
 
-namespace {
-
-#define DMK_CHECK_CUDA(expr)                                                                                           \
-    do {                                                                                                               \
-        cudaError_t _e = (expr);                                                                                       \
-        if (_e != cudaSuccess)                                                                                         \
-            throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(_e));                            \
-    } while (0)
-
-template <typename T>
-T *device_alloc_and_zero(std::size_t n) {
-    if (n == 0)
-        return nullptr;
-    T *d = nullptr;
-    DMK_CHECK_CUDA(cudaMalloc(&d, n * sizeof(T)));
-    DMK_CHECK_CUDA(cudaMemsetAsync(d, 0, n * sizeof(T)));
-    return d;
-}
-
-void device_free(void *p) {
-    if (p)
-        cudaFree(p);
-}
-
-} // namespace
+using cuda_helpers::device_alloc_and_zero;
+using cuda_helpers::device_free;
 
 template <typename Real, int DIM>
 struct CudaDirectContext<Real, DIM>::Impl {
