@@ -65,6 +65,9 @@ endif()
 
 set(DMK_GPU_TARGET "")
 if (DMK_GPU_OFFLOAD)
+  if (DMK_HAVE_MPI)
+    message(FATAL_ERROR "DMK_GPU_OFFLOAD and DMK_HAVE_MPI are mutually exclusive (the upward-pass MPI broadcast still needs a D2H/H2D path).")
+  endif()
   enable_language(CUDA)
   set(CMAKE_CUDA_STANDARD 20)
   set(CMAKE_CUDA_STANDARD_REQUIRED ON)
@@ -185,8 +188,10 @@ if (DMK_GPU_OFFLOAD)
               src/cuda_pw_to_proxy_kernels.cu
               src/cuda_proxy2pw_kernels.cu
               src/cuda_multiply_kernelft_kernels.cu
+              src/cuda_charge2proxy_kernels.cu
               src/cuda_downward.cpp
-              src/cuda_form_outgoing.cpp)
+              src/cuda_form_outgoing.cpp
+              src/cuda_upward.cpp)
   set_target_properties(DMKOBJS_CUDA PROPERTIES POSITION_INDEPENDENT_CODE ON)
   target_include_directories(DMKOBJS_CUDA PUBLIC ${DMK_INCLUDES})
   target_link_libraries(DMKOBJS_CUDA PUBLIC ${DMK_GPU_TARGET} ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET}

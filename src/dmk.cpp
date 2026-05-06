@@ -19,6 +19,7 @@
 
 #include <dmk/omp_wrapper.hpp>
 #include <dmk/testing.hpp>
+#include <nvtx3/nvToolsExt.h>
 
 using pdmk_tree_impl =
     std::variant<std::unique_ptr<dmk::DMKPtTree<float, 2>>, std::unique_ptr<dmk::DMKPtTree<float, 3>>,
@@ -498,8 +499,9 @@ inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *pot_trg) {
                           std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 3>>>) {
                 const auto &comm = (*static_cast<TreeType *>(tree))->GetComm();
                 sctl::Profile::Scoped prof("pdmk_tree_eval", &comm);
-
+                nvtxRangePush("pdmk_tree_eval");
                 t->eval();
+                nvtxRangePop();
                 t->desort_potentials(pot_src, pot_trg);
             }
         },

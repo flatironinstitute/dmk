@@ -74,12 +74,12 @@ void CudaDownwardContext<Real, DIM>::run_level(int level) {
         ta.n_pairs = n_tp;
         ta.n_order = s.n_order;
         ta.n_charge_dim = s.n_charge_dim;
-        ta.parents = s.d_tp_parents + tp_offset;
-        ta.children = s.d_tp_children + tp_offset;
+        ta.src_boxes = s.d_tp_parents + tp_offset;
+        ta.dst_boxes = s.d_tp_children + tp_offset;
         ta.child_octants = s.d_tp_octants + tp_offset;
         ta.proxy_flat = s.d_proxy_coeffs_downward;
         ta.proxy_offsets = s.d_proxy_offsets_downward;
-        ta.p2c_flat = s.d_p2c;
+        ta.umat_flat = s.d_p2c;
         ta.scratch = s.d_tensorprod_scratch;
         ta.scratch_stride = s.tensorprod_scratch_stride_reals;
         cuda::launch_tensorprod_dispatch<Real>(DIM, ta, s.downward_stream);

@@ -130,12 +130,48 @@ struct CudaSharedDeviceState {
 
     // p2c matrices (per child-octant, DIM matrices of n_order × n_order).
     Real *d_p2c = nullptr; // [n_octants * DIM * n_order * n_order]
+    // c2p matrices, same layout. Used by the upward tensorprod sweep.
+    Real *d_c2p = nullptr;
 
-    // Upward proxy coefficients. Uploaded by upload_proxy_upward() between
-    // the upward pass and form_outgoing on the GPU path.
+    // Upward proxy coefficients. Allocated in the ctor, zero-initialized.
+    // Either populated by GPU upward (charge2proxy + tensorprod) or by
+    // upload_proxy_upward() (CPU fallback).
     Real *d_proxy_coeffs_upward = nullptr;
     long *d_proxy_offsets_upward = nullptr;
     std::size_t proxy_upward_size = 0;
+    // Set true once the GPU upward path has populated d_proxy_coeffs_upward;
+    // form_outgoing and any other consumer skip the H2D upload when set.
+    bool proxy_upward_resident_on_device = false;
+
+    // Box centers and per-level inverse half-boxsize (= 2/boxsize[L]).
+    // Used by charge2proxy and could later replace eval_targets's local copies.
+    Real *d_centers = nullptr;       // [n_boxes * DIM]
+    Real *d_inv_box_scale = nullptr; // [n_levels]
+
+    // Owned source charges (analogue of d_charge_halo, but indexed by owned
+    // offsets/counts). Used by upward charge2proxy.
+    Real *d_charge_owned = nullptr;
+    long *d_charge_owned_offsets = nullptr;
+
+    // Per-group charge2proxy work lists (flattened across all levels).
+    int *d_c2p_center_boxes = nullptr;          // [n_c2p_groups]
+    int *d_c2p_levels = nullptr;                // [n_c2p_groups]
+    int *d_c2p_src_box_flat_offsets = nullptr;  // [n_c2p_groups]
+    int *d_c2p_n_src_boxes_per_group = nullptr; // [n_c2p_groups]
+    int *d_c2p_src_boxes_flat = nullptr;        // [c2p_src_boxes_total]
+    int n_c2p_groups = 0;
+    int c2p_src_boxes_total = 0;
+
+    // Per-level upward tensorprod pair lists (gating differs from downward
+    // tp_pairs, hence the separate arrays). Pairs at level L link a child at
+    // level L+1 (src) to its parent at level L (dst, additive).
+    int *d_tp_up_src_boxes = nullptr; // i.e. child boxes at level L+1
+    int *d_tp_up_dst_boxes = nullptr; // i.e. parent boxes at level L
+    int *d_tp_up_octants = nullptr;
+    std::vector<int> tp_up_offset_h; // [n_levels + 1]
+    std::vector<int> tp_up_count_h;  // [n_levels]
+    int tp_up_count_total = 0;
+    int max_tp_up_per_level = 0;
 
     // Per-level: list of boxes that do PW work at that level
     // (ifpwexp[b] && nboxpts > 0). Flat array, with start/count per level.

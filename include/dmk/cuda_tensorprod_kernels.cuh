@@ -1,8 +1,8 @@
 #ifndef DMK_CUDA_TENSORPROD_KERNELS_CUH
 #define DMK_CUDA_TENSORPROD_KERNELS_CUH
 
-// Per-pair tensorprod: child_proxy[i_x, j_y, k_z] +=
-//   sum_{ix, jy, kz} parent_proxy[ix, jy, kz]
+// Per-pair tensorprod: dst[i_x, j_y, k_z, d] +=
+//   sum_{ix, jy, kz} src[ix, jy, kz, d]
 //                  * umat_x[i_x, ix] * umat_y[j_y, jy] * umat_z[k_z, kz]
 //
 // Decomposed into 3 sequential axis transforms with ping-pong buffers ff/ff2
@@ -32,21 +32,21 @@ __global__ void TensorprodByPair3DKernel(TensorprodArgs<Real> a) {
     Real *ff = a.scratch + (long)pair_idx * a.scratch_stride;
     Real *ff2 = ff + N3;
 
-    const int parent = a.parents[pair_idx];
-    const int child = a.children[pair_idx];
+    const int src_box = a.src_boxes[pair_idx];
+    const int dst_box = a.dst_boxes[pair_idx];
     const int oct = a.child_octants[pair_idx];
 
-    const Real *p2c_oct = a.p2c_flat + oct * 3 * N2;
-    const Real *umat_x = p2c_oct + 0 * N2;
-    const Real *umat_y = p2c_oct + 1 * N2;
-    const Real *umat_z = p2c_oct + 2 * N2;
+    const Real *umat_oct = a.umat_flat + oct * 3 * N2;
+    const Real *umat_x = umat_oct + 0 * N2;
+    const Real *umat_y = umat_oct + 1 * N2;
+    const Real *umat_z = umat_oct + 2 * N2;
 
-    const Real *parent_base = a.proxy_flat + a.proxy_offsets[parent];
-    Real *child_base = a.proxy_flat + a.proxy_offsets[child];
+    const Real *src_base = a.proxy_flat + a.proxy_offsets[src_box];
+    Real *dst_base = a.proxy_flat + a.proxy_offsets[dst_box];
 
     for (int d = 0; d < a.n_charge_dim; ++d) {
-        const Real *fin = parent_base + d * N3;
-        Real *fout = child_base + d * N3;
+        const Real *fin = src_base + d * N3;
+        Real *fout = dst_base + d * N3;
 
         // Phase 1: ff(i, j, kout) = sum_k fin(i, j, k) * umat_z(kout, k)
         for (int t = threadIdx.x; t < N3; t += blockDim.x) {
@@ -80,7 +80,10 @@ __global__ void TensorprodByPair3DKernel(TensorprodArgs<Real> a) {
             Real acc = Real{0};
             for (int i = 0; i < N; ++i)
                 acc += ff2[i + jy * N + kz * N2] * umat_x[iout + i * N];
-            fout[iout + jy * N + kz * N2] += acc;
+            if (a.additive_atomic)
+                atomicAdd(&fout[iout + jy * N + kz * N2], acc);
+            else
+                fout[iout + jy * N + kz * N2] += acc;
         }
         __syncthreads();
     }

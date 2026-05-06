@@ -23,6 +23,7 @@
 #include <unistd.h>
 
 #include <dmk/omp_wrapper.hpp>
+#include <nvtx3/nvToolsExt.h>
 
 namespace dmk {
 
@@ -960,30 +961,37 @@ void DMKPtTree<Real, DIM>::generate_metadata() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::upward_pass() {
     sctl::Profile::Scoped profile("upward_pass", &comm_);
-    // GPU contexts are constructed when params.eval_path is GPU or BOTH.
-    // No fallback path: if any GPU op throws (unsupported config, runtime
-    // error, etc.) the exception escapes upward_pass unchanged. Always reset
-    // first so a prior BOTH-mode call's lingering contexts don't leak into a
-    // later CPU-only call.
+    nvtxRangePush("upward_pass");
+
 #ifdef DMK_GPU_OFFLOAD
+    nvtxRangePush("device_reset");
     cuda_eval_targets_ctx_.reset();
     cuda_direct_ctx_.reset();
     cuda_downward_ctx_.reset();
     cuda_form_outgoing_ctx_.reset();
+    cuda_upward_ctx_.reset();
     cuda_shared_state_.reset();
+    nvtxRangePop();
 
     const bool want_gpu = (params.eval_path == DMK_EVAL_PATH_GPU || params.eval_path == DMK_EVAL_PATH_BOTH);
     if (want_gpu && !debug_omit_direct && !debug_force_aot) {
+        nvtxRangePush("device_init");
         cuda_shared_state_ = std::make_unique<CudaSharedDeviceState<Real, DIM>>(*this);
         cuda_direct_ctx_ = std::make_unique<CudaDirectContext<Real, DIM>>(*this, *cuda_shared_state_);
+        nvtxRangePush("residual_direct");
         cuda_direct_ctx_->launch();
+        nvtxRangePop();
         cuda_eval_targets_ctx_ = std::make_unique<CudaEvalTargetsContext<Real, DIM>>(*this, *cuda_shared_state_);
         cuda_downward_ctx_ = std::make_unique<CudaDownwardContext<Real, DIM>>(*this, *cuda_shared_state_);
         cuda_form_outgoing_ctx_ = std::make_unique<CudaFormOutgoingContext<Real, DIM>>(*this, *cuda_shared_state_);
+        cuda_upward_ctx_ = std::make_unique<CudaUpwardContext<Real, DIM>>(*this, *cuda_shared_state_);
+        nvtxRangePop();
     }
+    const bool run_cpu_upward = (params.eval_path == DMK_EVAL_PATH_CPU || params.eval_path == DMK_EVAL_PATH_BOTH);
 #else
     if (params.eval_path != DMK_EVAL_PATH_CPU)
         throw std::runtime_error("DMK was built without DMK_GPU_OFFLOAD; only DMK_EVAL_PATH_CPU is available");
+    constexpr bool run_cpu_upward = true;
 #endif
     sctl::Profile::Tic("upward_pass_init", &comm_);
     const std::size_t n_coeffs = n_tables_up * sctl::pow<DIM>(expansion_constants.n_order);
@@ -1002,7 +1010,18 @@ void DMKPtTree<Real, DIM>::upward_pass() {
     const auto &node_mid = this->GetNodeMID();
 
     sctl::Profile::Toc();
-    {
+#ifdef DMK_GPU_OFFLOAD
+    // GPU upward kicks off charge2proxy + per-level tensorprod on
+    // shared.downward_stream; downward kernels chain naturally on the same
+    // stream, so no extra sync needed here.
+    if (cuda_upward_ctx_) {
+        sctl::Profile::Scoped p("cuda_upward", &comm_);
+        nvtxRangePush("cuda_upward");
+        cuda_upward_ctx_->run();
+        nvtxRangePop();
+    }
+#endif
+    if (run_cpu_upward) {
         sctl::Profile::Scoped profile("charge2proxy", &comm_);
         sctl::Profile::Tic("charge2proxy", &comm_);
 
@@ -1058,22 +1077,27 @@ void DMKPtTree<Real, DIM>::upward_pass() {
 #endif
     }
 
-    sctl::Profile::Tic("broadcast_proxy_coeffs", &comm_);
     logger->debug("Finished building proxy charges");
 
-    this->template ReduceBroadcast<Real>("proxy_coeffs");
-    this->GetData(proxy_coeffs_upward, counts, "proxy_coeffs");
-    long last_offset = 0;
-    for (int box = 0; box < n_boxes(); ++box) {
-        if (counts[box]) {
-            proxy_coeffs_offsets[box] = last_offset;
-            last_offset += n_coeffs;
-        } else
-            proxy_coeffs_offsets[box] = -1;
+    if (run_cpu_upward) {
+        sctl::Profile::Tic("broadcast_proxy_coeffs", &comm_);
+
+        this->template ReduceBroadcast<Real>("proxy_coeffs");
+        this->GetData(proxy_coeffs_upward, counts, "proxy_coeffs");
+        long last_offset = 0;
+        for (int box = 0; box < n_boxes(); ++box) {
+            if (counts[box]) {
+                proxy_coeffs_offsets[box] = last_offset;
+                last_offset += n_coeffs;
+            } else
+                proxy_coeffs_offsets[box] = -1;
+        }
+        sctl::Profile::Toc();
+        logger->debug("proxy: finished broadcasting proxy charges");
     }
-    sctl::Profile::Toc();
-    logger->debug("proxy: finished broadcasting proxy charges");
+
     logger->info("upward pass finished");
+    nvtxRangePop();
 }
 
 template <typename Real, int DIM>
@@ -1552,6 +1576,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::downward_pass() {
     sctl::Profile::Scoped prof("downward_pass", &comm_);
+    nvtxRangePush("downward_pass");
     sctl::Profile::Tic("downward_pass_init", &comm_);
     logger->info("downward pass started");
 
@@ -1638,13 +1663,14 @@ void DMKPtTree<Real, DIM>::downward_pass() {
     if (debug_dump_tree && cuda_shared_state_)
         cuda_shared_state_->dump(*this);
 
-    if (params.eval_path == DMK_EVAL_PATH_GPU) {
-        cuda_eval_targets_ctx_.reset();
-        cuda_direct_ctx_.reset();
-        cuda_downward_ctx_.reset();
-        cuda_form_outgoing_ctx_.reset();
-        cuda_shared_state_.reset();
-    }
+    // if (params.eval_path == DMK_EVAL_PATH_GPU) {
+    //     cuda_eval_targets_ctx_.reset();
+    //     cuda_direct_ctx_.reset();
+    //     cuda_downward_ctx_.reset();
+    //     cuda_form_outgoing_ctx_.reset();
+    //     cuda_upward_ctx_.reset();
+    //     cuda_shared_state_.reset();
+    // }
     // BOTH mode: contexts stay alive past eval() so debugging code can reach in.
 #endif
 
@@ -1657,6 +1683,7 @@ void DMKPtTree<Real, DIM>::downward_pass() {
     comm_.Barrier();
     sctl::Profile::Toc();
 #endif
+    nvtxRangePop();
 }
 
 /// @brief Evaluate using the standard OpenMP pathway

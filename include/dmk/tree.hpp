@@ -18,6 +18,7 @@
 #include <dmk/cuda_eval_targets.hpp>
 #include <dmk/cuda_form_outgoing.hpp>
 #include <dmk/cuda_shared_state.hpp>
+#include <dmk/cuda_upward.hpp>
 #include <memory>
 #endif
 
@@ -831,6 +832,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     std::unique_ptr<CudaEvalTargetsContext<Real, DIM>> cuda_eval_targets_ctx_;
     std::unique_ptr<CudaDownwardContext<Real, DIM>> cuda_downward_ctx_;
     std::unique_ptr<CudaFormOutgoingContext<Real, DIM>> cuda_form_outgoing_ctx_;
+    std::unique_ptr<CudaUpwardContext<Real, DIM>> cuda_upward_ctx_;
 #endif
 
   private:

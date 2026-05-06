@@ -13,16 +13,17 @@ class RunConfig:
     mpi_ranks: int = 1
     omp_threads_per_rank: int = 1
     n_src: int = 0
+    n_dim: int = 3
+    kernel: str = 'laplace'
     precision: str = 'float'
     uniform_dist: bool = False
     eps: float = 1e-5
-    n_per_leaf_dmk: int = 100
+    n_per_leaf: int = 100
     n_runs: int = 50
-    pvfmm_enabled: bool = False
-    n_per_leaf_pvfmm: int = 500
-    m_pvfmm: int = 6
     direct_enabled: bool = False
     n_direct: int = -1
+    log_level: int = 6
+    eval_path: int = 0
 
 
 def read_csv_with_yaml_header(path):
@@ -79,10 +80,10 @@ for raw_col, nice_path in custom_key_map.items():
         df[f'{nice_path}|t_min'] = scaled
         df[f'{nice_path}|t_max'] = scaled
 
-df_tree = df[df.columns[df.columns.str.contains(r'\|(t_min|t_max)$', regex=True)]]
+df_tree = df[df.columns[df.columns.str.contains(r'\|(?:t_min|t_max)$', regex=True)]]
 total_time_median = df['dmk_time'].median()
 
-print(df.describe())
+# print(df.describe())
 
 cols = df_tree.columns.tolist()
 stages = list(dict.fromkeys(c.rsplit('|', 1)[0] for c in cols))

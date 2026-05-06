@@ -227,9 +227,107 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
         d_wpwshift_flat = device_upload(h.data(), total);
     }
 
-    // p2c matrices.
+    // p2c / c2p matrices (per child-octant; identical layout, different
+    // direction of propagation).
     if (tree.p2c.Dim())
         d_p2c = device_upload(&tree.p2c[0], tree.p2c.Dim());
+    if (tree.c2p.Dim())
+        d_c2p = device_upload(&tree.c2p[0], tree.c2p.Dim());
+
+    // Box centers + inverse half-boxsize per level.
+    if (tree.centers.Dim())
+        d_centers = device_upload(&tree.centers[0], tree.centers.Dim());
+    {
+        std::vector<Real> sc_h(n_levels);
+        for (int L = 0; L < n_levels; ++L)
+            sc_h[L] = Real{2} / (Real)tree.boxsize[L];
+        d_inv_box_scale = device_upload(sc_h.data(), sc_h.size());
+    }
+
+    // Owned charges (used by GPU charge2proxy). For Stresslet this is the
+    // pre-multiplied force×normal product (n_tables_up = 9 components per
+    // source), exactly what the CPU upward path reads via charge_owned_view.
+    if (tree.charge_sorted_owned.Dim())
+        d_charge_owned = device_upload(&tree.charge_sorted_owned[0], tree.charge_sorted_owned.Dim());
+    if (tree.charge_offsets_owned.Dim())
+        d_charge_owned_offsets =
+            device_upload((const long *)&tree.charge_offsets_owned[0], tree.charge_offsets_owned.Dim());
+
+    // Charge2Proxy group lists, flattened across all groups.
+    {
+        n_c2p_groups = (int)tree.charge2proxy_groups.size();
+        std::vector<int> centers_h, levels_h, off_h, count_h, src_flat_h;
+        centers_h.reserve(n_c2p_groups);
+        levels_h.reserve(n_c2p_groups);
+        off_h.reserve(n_c2p_groups);
+        count_h.reserve(n_c2p_groups);
+        for (const auto &g : tree.charge2proxy_groups) {
+            centers_h.push_back(g.center_box);
+            levels_h.push_back(g.level);
+            off_h.push_back((int)src_flat_h.size());
+            count_h.push_back(g.n_src_boxes);
+            for (int k = 0; k < g.n_src_boxes; ++k)
+                src_flat_h.push_back(g.src_boxes[k]);
+        }
+        c2p_src_boxes_total = (int)src_flat_h.size();
+        if (n_c2p_groups) {
+            d_c2p_center_boxes = device_upload(centers_h.data(), centers_h.size());
+            d_c2p_levels = device_upload(levels_h.data(), levels_h.size());
+            d_c2p_src_box_flat_offsets = device_upload(off_h.data(), off_h.size());
+            d_c2p_n_src_boxes_per_group = device_upload(count_h.data(), count_h.size());
+            d_c2p_src_boxes_flat = device_upload(src_flat_h.data(), src_flat_h.size());
+        }
+    }
+
+    // Per-level upward tensorprod pair lists. Gating: parent has
+    // src_counts_owned[parent] > 0 && ifpwexp[parent], child has
+    // src_counts_owned[child] > 0 && ifpwexp[child]. Mirrors the CPU
+    // upward sweep (level n_levels-1..0). Pairs at level L = parent's level.
+    {
+        const auto &node_lists = tree.GetNodeLists();
+        constexpr int n_children = 1 << DIM;
+        tp_up_offset_h.assign(n_levels + 1, 0);
+        tp_up_count_h.assign(n_levels, 0);
+        std::vector<int> srcs, dsts, octs;
+        for (int L = 0; L < n_levels; ++L) {
+            tp_up_offset_h[L] = (int)srcs.size();
+            for (int idx = 0; idx < tree.level_indices[L].Dim(); ++idx) {
+                const int parent = tree.level_indices[L][idx];
+                if (!(tree.src_counts_owned[parent] > 0 && tree.ifpwexp[parent]))
+                    continue;
+                for (int ic = 0; ic < n_children; ++ic) {
+                    const int child = node_lists[parent].child[ic];
+                    if (child < 0)
+                        continue;
+                    if (!(tree.src_counts_owned[child] > 0 && tree.ifpwexp[child]))
+                        continue;
+                    srcs.push_back(child);
+                    dsts.push_back(parent);
+                    octs.push_back(ic);
+                    tp_up_count_h[L]++;
+                }
+            }
+            max_tp_up_per_level = std::max(max_tp_up_per_level, tp_up_count_h[L]);
+        }
+        tp_up_offset_h[n_levels] = (int)srcs.size();
+        tp_up_count_total = (int)srcs.size();
+        if (tp_up_count_total) {
+            d_tp_up_src_boxes = device_upload(srcs.data(), srcs.size());
+            d_tp_up_dst_boxes = device_upload(dsts.data(), dsts.size());
+            d_tp_up_octants = device_upload(octs.data(), octs.size());
+        }
+    }
+
+    // Allocate the upward proxy buffer up front (zero-initialized). The
+    // upward orchestrator zeroes it again at run() to handle re-evals.
+    proxy_upward_size = tree.proxy_coeffs_upward.Dim();
+    if (proxy_upward_size) {
+        d_proxy_coeffs_upward = device_alloc<Real>(proxy_upward_size);
+        DMK_CHECK_CUDA(cudaMemset(d_proxy_coeffs_upward, 0, proxy_upward_size * sizeof(Real)));
+    }
+    if (tree.proxy_coeffs_offsets.Dim())
+        d_proxy_offsets_upward =
+            device_upload((const long *)&tree.proxy_coeffs_offsets[0], tree.proxy_coeffs_offsets.Dim());
 
     // Per-level pw_eval box lists: for each level, the boxes that do PW work
     // (ifpwexp[b] && (src_counts_owned[b] + trg_counts_owned[b]) > 0).
@@ -281,10 +379,12 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
     }
 
     // Tensorprod global scratch: 2 * n_order^3 reals per block, one slab per
-    // pair processed concurrently in a level.
+    // pair processed concurrently in a level. Sized for the max across both
+    // directions (downward tp_pairs and upward tp_up_pairs share the slab).
     tensorprod_scratch_stride_reals = 2L * n_order * n_order * n_order;
-    if (max_tp_per_level && tensorprod_scratch_stride_reals)
-        d_tensorprod_scratch = device_alloc<Real>((std::size_t)max_tp_per_level * tensorprod_scratch_stride_reals);
+    const int max_tp_any = std::max(max_tp_per_level, max_tp_up_per_level);
+    if (max_tp_any && tensorprod_scratch_stride_reals)
+        d_tensorprod_scratch = device_alloc<Real>((std::size_t)max_tp_any * tensorprod_scratch_stride_reals);
 
     // pw_in scratch pool.
     pw_in_stride_reals = 2L * n_charge_dim * n_pw_modes;
@@ -413,6 +513,19 @@ CudaSharedDeviceState<Real, DIM>::~CudaSharedDeviceState() {
     device_free(d_radialft_flat);
     device_free(d_wpwshift_flat);
     device_free(d_p2c);
+    device_free(d_c2p);
+    device_free(d_centers);
+    device_free(d_inv_box_scale);
+    device_free(d_charge_owned);
+    device_free(d_charge_owned_offsets);
+    device_free(d_c2p_center_boxes);
+    device_free(d_c2p_levels);
+    device_free(d_c2p_src_box_flat_offsets);
+    device_free(d_c2p_n_src_boxes_per_group);
+    device_free(d_c2p_src_boxes_flat);
+    device_free(d_tp_up_src_boxes);
+    device_free(d_tp_up_dst_boxes);
+    device_free(d_tp_up_octants);
     device_free(d_proxy_coeffs_upward);
     device_free(d_proxy_offsets_upward);
     device_free(d_pw_eval_box_flat);
@@ -445,6 +558,7 @@ void CudaSharedDeviceState<Real, DIM>::dump(DMKPtTree<Real, DIM> &tree) {
         cuda_helpers::dump_device_buffer_to_file<Real>(path, d_ptr, n);
     };
     write("dmk_proxy_coeffs_downward", d_proxy_coeffs_downward, proxy_size);
+    write("dmk_proxy_coeffs", d_proxy_coeffs_upward, proxy_upward_size);
 }
 
 template struct CudaSharedDeviceState<float, 2>;
