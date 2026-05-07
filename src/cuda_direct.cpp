@@ -26,11 +26,16 @@ struct CudaDirectContext<Real, DIM>::Impl {
     DMKPtTree<Real, DIM> &tree;
     CudaSharedDeviceState<Real, DIM> &shared;
 
+    // Output pot buffers; allocated once at construction and zeroed at the
+    // start of each launch() so the context can be reused across evals.
     Real *d_pot_src_direct = nullptr;
     Real *d_pot_trg_direct = nullptr;
     bool launched = false;
 
-    Impl(DMKPtTree<Real, DIM> &t, CudaSharedDeviceState<Real, DIM> &s) : tree(t), shared(s) {}
+    Impl(DMKPtTree<Real, DIM> &t, CudaSharedDeviceState<Real, DIM> &s) : tree(t), shared(s) {
+        d_pot_src_direct = device_alloc_and_zero<Real>(shared.pot_src_size);
+        d_pot_trg_direct = device_alloc_and_zero<Real>(shared.pot_trg_size);
+    }
 
     ~Impl() {
         device_free(d_pot_src_direct);
@@ -51,8 +56,12 @@ void CudaDirectContext<Real, DIM>::launch() {
     auto &shared = pimpl_->shared;
     auto &im = *pimpl_;
 
-    im.d_pot_src_direct = device_alloc_and_zero<Real>(shared.pot_src_size);
-    im.d_pot_trg_direct = device_alloc_and_zero<Real>(shared.pot_trg_size);
+    if (im.d_pot_src_direct)
+        DMK_CHECK_CUDA(
+            cudaMemsetAsync(im.d_pot_src_direct, 0, shared.pot_src_size * sizeof(Real), shared.direct_stream));
+    if (im.d_pot_trg_direct)
+        DMK_CHECK_CUDA(
+            cudaMemsetAsync(im.d_pot_trg_direct, 0, shared.pot_trg_size * sizeof(Real), shared.direct_stream));
 
     cuda::DirectByBoxArgs<Real> args;
     args.n_work = shared.n_direct_work;

@@ -836,6 +836,22 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 #endif
 
   private:
+    // Path-specific pieces of upward_pass / downward_pass. The public
+    // upward_pass / downward_pass methods are dispatchers that call into
+    // these based on params.eval_path; in BOTH mode both halves run.
+    void cpu_upward_pass();
+    void cpu_downward_pass();
+#ifdef DMK_GPU_OFFLOAD
+    // Build the cuda_*_ctx_ unique_ptrs once at tree construction. After this
+    // returns, cuda_shared_state_ is non-null iff the GPU is actually going to
+    // run for evals on this tree (params.eval_path != CPU and no debug flag
+    // disables it). All device buffers and topology uploads happen here; per
+    // eval the contexts only re-launch kernels and re-zero output buffers.
+    void gpu_init_state();
+    void gpu_upward_pass();
+    void gpu_downward_pass();
+#endif
+
     static constexpr int nlist1_max_ = sctl::pow<DIM>(4) - sctl::pow<DIM>(2) + 1;
     // list1 contains boxes that are neighbors for direct interaction
     std::vector<std::array<int, nlist1_max_>> list1_;

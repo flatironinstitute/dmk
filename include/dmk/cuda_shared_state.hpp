@@ -262,6 +262,12 @@ struct CudaSharedDeviceState {
     /// repeat evals see the latest charges.
     void upload_proxy_upward(DMKPtTree<Real, DIM> &tree);
 
+    /// Re-upload the charge (and, for stresslet, density + normal) buffers
+    /// from the tree's host-side sorted arrays. Call after
+    /// DMKPtTree::update_charges so the device sees the new values; sizes are
+    /// assumed unchanged (the buffers were sized at construction).
+    void upload_charges(DMKPtTree<Real, DIM> &tree);
+
     /// Dump GPU-resident state to a "gpu/" subdirectory. First runs
     /// tree.dump("gpu/") to lay down topology + metadata, then overwrites the
     /// buffers the GPU owns with their device-side values.

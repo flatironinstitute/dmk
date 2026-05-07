@@ -64,7 +64,8 @@ struct CudaEvalTargetsContext<Real, DIM>::Impl {
     int *d_eval_targets_box_list = nullptr;
     Real *d_sc_per_level = nullptr;
 
-    // Allocated/zeroed at launch.
+    // Output buffers; allocated once at construction and zeroed at the start
+    // of each launch() so the context can be reused across evals.
     Real *d_pot_src_eval = nullptr;
     Real *d_pot_trg_eval = nullptr;
 
@@ -110,6 +111,9 @@ struct CudaEvalTargetsContext<Real, DIM>::Impl {
                 device_upload(tree.eval_targets_box_list.data(), tree.eval_targets_box_list.size());
 
         n_order = tree.expansion_constants.n_order;
+
+        d_pot_src_eval = device_alloc<Real>(shared.pot_src_size);
+        d_pot_trg_eval = device_alloc<Real>(shared.pot_trg_size);
     }
 
     ~Impl() {
@@ -157,8 +161,6 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
         cudaEventDestroy(evt);
     }
 
-    im.d_pot_src_eval = device_alloc<Real>(shared.pot_src_size);
-    im.d_pot_trg_eval = device_alloc<Real>(shared.pot_trg_size);
     if (im.d_pot_src_eval)
         DMK_CHECK_CUDA(cudaMemsetAsync(im.d_pot_src_eval, 0, shared.pot_src_size * sizeof(Real), im.stream));
     if (im.d_pot_trg_eval)

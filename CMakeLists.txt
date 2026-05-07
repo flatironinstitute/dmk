@@ -75,6 +75,7 @@ if (DMK_GPU_OFFLOAD)
   find_package(CUDAToolkit REQUIRED)
   set(DMK_GPU_TARGET CUDA::cudart)
   list(APPEND DMK_CXX_FLAGS "-DDMK_GPU_OFFLOAD")
+  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
 endif()
 
 find_package(BLAS REQUIRED)

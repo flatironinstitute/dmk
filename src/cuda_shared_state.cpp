@@ -478,6 +478,20 @@ void CudaSharedDeviceState<Real, DIM>::upload_proxy_upward(DMKPtTree<Real, DIM> 
 }
 
 template <typename Real, int DIM>
+void CudaSharedDeviceState<Real, DIM>::upload_charges(DMKPtTree<Real, DIM> &tree) {
+    const bool is_stresslet = tree.params.kernel == DMK_STRESSLET;
+    const auto &halo_src = is_stresslet ? tree.density_sorted_with_halo : tree.charge_sorted_with_halo;
+    if (d_charge_halo && halo_src.Dim())
+        DMK_CHECK_CUDA(cudaMemcpy(d_charge_halo, &halo_src[0], halo_src.Dim() * sizeof(Real), cudaMemcpyHostToDevice));
+    if (is_stresslet && d_normal_halo && tree.normal_sorted_with_halo.Dim())
+        DMK_CHECK_CUDA(cudaMemcpy(d_normal_halo, &tree.normal_sorted_with_halo[0],
+                                  tree.normal_sorted_with_halo.Dim() * sizeof(Real), cudaMemcpyHostToDevice));
+    if (d_charge_owned && tree.charge_sorted_owned.Dim())
+        DMK_CHECK_CUDA(cudaMemcpy(d_charge_owned, &tree.charge_sorted_owned[0],
+                                  tree.charge_sorted_owned.Dim() * sizeof(Real), cudaMemcpyHostToDevice));
+}
+
+template <typename Real, int DIM>
 CudaSharedDeviceState<Real, DIM>::~CudaSharedDeviceState() {
     device_free(d_direct_work);
     device_free(d_list1_flat);
