@@ -281,6 +281,14 @@ struct StokesletPolyEvaluator3DCuda {
     __device__ inline void operator()(Real (&u)[3][3], const Real (&dX)[3]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
         const bool in_range = (R2 > thresh2) && (R2 < d2max);
+        if (!in_range) {
+            for (int j = 0; j < 3; ++j) {
+                for (int i = 0; i < 3; ++i) {
+                    u[j][i] = 0.0;
+                }
+            }
+            return;
+        }
         const Real half = Real{0.5};
         const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
         const Real Rinv3 = Rinv * Rinv * Rinv;

@@ -20,7 +20,7 @@ void dispatch(int dim, int eval_level, int n_charge_dim, const EvalTargetsArgs<R
 
 #define DMK_EVAL_TARGETS_CASE(D, E, NCD)                                                                               \
     if (dim == (D) && eval_level == (E) && n_charge_dim == (NCD)) {                                                   \
-        launch_eval_targets_kernel<Real, (D), (E), (NCD), MAX_N_ORDER>(args, stream);                                  \
+        launch_eval_targets_kernel<Real, (D), (E), (NCD)>(args, stream);                                  \
         return;                                                                                                        \
     }
 
