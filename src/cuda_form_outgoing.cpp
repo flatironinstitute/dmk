@@ -59,7 +59,6 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
 
     // ============== Per-level proxy2pw + multiply ==============
     std::vector<cuda::Proxy2PwArgs<Real>> pa_h;
-    int proxy2pw_max_boxes = 0;
 
     if (!is_stresslet) {
         for (int L = 0; L < n_levels; ++L) {
@@ -84,70 +83,42 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
             pa.dst_offsets = s.d_pw_out_offsets;
             pa.dst_stride_complex = 0;
 
-            proxy2pw_max_boxes = std::max(proxy2pw_max_boxes, n_box);
             pa_h.push_back(pa);
         }
 
-        
-    }
-    for (int L = 0; L < n_levels; ++L) {
-        const int n_box = s.pw_form_box_count_h[L];
-        if (n_box == 0)
-            continue;
-        const int box_offset = s.pw_form_box_offset_h[L];
-
-        cuda::Proxy2PwArgs<Real> pa;
-        pa.n_boxes_at_level = n_box;
-        pa.n_order = s.n_order;
-        pa.n_pw = s.n_pw;
-        pa.n_pw2 = s.n_pw2;
-        pa.n_charge_dim = s.n_tables_up;
-        pa.box_ids = s.d_pw_form_box_flat + box_offset;
-        pa.proxy_flat = s.d_proxy_coeffs_upward;
-        pa.proxy_offsets = s.d_proxy_offsets_upward;
-        pa.poly2pw = s.d_poly2pw_flat + (long)L * s.poly2pw_per_level_reals;
-        if (is_stresslet) {
-            pa.dst_flat = s.d_pw_form_pool;
-            pa.dst_offsets = nullptr;
-            pa.dst_stride_complex = s.pw_form_stride_reals / 2;
-        } else {
-            pa.dst_flat = s.d_pw_out;
-            pa.dst_offsets = s.d_pw_out_offsets;
-            pa.dst_stride_complex = 0;
-        }
-
-        pa_h.push_back(pa);
-    }
-    if (!pa_h.empty()) {
-        cuda::Proxy2PwArgs<Real> *d_proxy2pw_args = nullptr;
-
-        DMK_CHECK_CUDA(cudaMallocAsync(
-            &d_proxy2pw_args,
-            pa_h.size() * sizeof(cuda::Proxy2PwArgs<Real>),
-            s.downward_stream));
-
-        DMK_CHECK_CUDA(cudaMemcpyAsync(
-            d_proxy2pw_args,
-            pa_h.data(),
-            pa_h.size() * sizeof(cuda::Proxy2PwArgs<Real>),
-            cudaMemcpyHostToDevice,
-            s.downward_stream));
-
         cuda::launch_proxy2pw_multilevel_dispatch<Real>(
-        DIM,
-        pa_h,
-        s.downward_stream);
-
-        DMK_CHECK_CUDA(cudaFreeAsync(d_proxy2pw_args, s.downward_stream));
+            DIM,
+            pa_h,
+            s.downward_stream);
     }
-
-
     for (int L = 0; L < n_levels; ++L) {
         const int n_box = s.pw_form_box_count_h[L];
         if (n_box == 0)
             continue;
         nvtxRangePush(std::string{"proxy2pw: level" + std::to_string(L)}.c_str());
         const int box_offset = s.pw_form_box_offset_h[L];
+
+        if (is_stresslet) {
+            cuda::Proxy2PwArgs<Real> pa;
+            pa.n_boxes_at_level = n_box;
+            pa.n_order = s.n_order;
+            pa.n_pw = s.n_pw;
+            pa.n_pw2 = s.n_pw2;
+            pa.n_charge_dim = s.n_tables_up;
+            pa.box_ids = s.d_pw_form_box_flat + box_offset;
+            pa.proxy_flat = s.d_proxy_coeffs_upward;
+            pa.proxy_offsets = s.d_proxy_offsets_upward;
+            pa.poly2pw = s.d_poly2pw_flat + (long)L * s.poly2pw_per_level_reals;
+
+            pa.dst_flat = s.d_pw_form_pool;
+            pa.dst_offsets = nullptr;
+            pa.dst_stride_complex = s.pw_form_stride_reals / 2;
+
+            cuda::launch_proxy2pw_dispatch<Real>(
+                DIM,
+                pa,
+                s.downward_stream);
+        }
 
         // Multiply by radialft (kernel-specific formula).
         const Real *radialft_L = s.d_radialft_flat + (long)L * s.radialft_per_level_reals;
