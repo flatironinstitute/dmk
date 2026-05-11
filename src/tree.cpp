@@ -1651,8 +1651,7 @@ void DMKPtTree<Real, DIM>::gpu_downward_pass() {
     if (!debug_omit_pw) {
         sctl::Profile::Scoped p("cuda_downward", &comm_);
         cuda_form_outgoing_ctx_->run();
-        for (int i_level = 0; i_level < n_levels(); ++i_level)
-            cuda_downward_ctx_->run_level(i_level);
+        cuda_downward_ctx_->run();
         cuda_downward_ctx_->mark_proxy_resident();
     }
     {

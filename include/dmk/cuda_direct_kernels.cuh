@@ -130,7 +130,7 @@ template <typename Evaluator, typename Real = typename Evaluator::scalar_type>
 inline void launch_direct_by_box(const DirectByBoxArgs<Real> &args, cudaStream_t stream = 0) {
     if (args.n_work == 0)
         return;
-    constexpr int block_size = 128;
+    constexpr int block_size = 256;
     DirectResidualByBoxKernel<Evaluator><<<args.n_work, block_size, 0, stream>>>(args);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess)

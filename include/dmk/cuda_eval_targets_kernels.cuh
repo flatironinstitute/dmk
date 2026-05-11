@@ -164,7 +164,7 @@ template <typename Real, int DIM, int EVAL_LEVEL, int N_CHARGE_DIM, int MAX_N_OR
 inline void launch_eval_targets_kernel(const EvalTargetsArgs<Real> &args, cudaStream_t stream) {
     if (args.n_eval_boxes == 0)
         return;
-    constexpr int block_size = 128;
+    constexpr int block_size = 512;
     EvalTargetsByBoxKernel<Real, DIM, EVAL_LEVEL, N_CHARGE_DIM, MAX_N_ORDER>
         <<<args.n_eval_boxes, block_size, 0, stream>>>(args);
 }

@@ -15,41 +15,43 @@
 //   wpwshift[ind]  : SoA — n_pw_modes reals (real parts), then n_pw_modes
 //                    reals (imag parts). One per neighbour-direction slot,
 //                    n_neighbors slots per level. (= 3^DIM)
-//
-// Neighbour index → wpwshift index:
-//     ind = n_neighbors - 1 - position_in_nbr_array
-// (Mirrors the CPU loop in form_eval_expansions.)
 
 #include <cuda_runtime.h>
+
+#include <vector>
 
 namespace dmk::cuda {
 
 template <typename Real>
 struct ShiftPwArgs {
-    int n_boxes_at_level = 0; // gridDim.x
-    int n_neighbors = 0;      // 3^DIM
-    int n_charge_dim = 0;     // n_tables_down
-    int n_pw_modes = 0;       // n_pw * n_pw * n_pw2 for 3D
-    long pw_in_stride = 0;    // = n_charge_dim * n_pw_modes * 2 (reals per slot)
+    int n_boxes_at_level = 0;
+    int n_neighbors = 0;
+    int n_charge_dim = 0;
+    int n_pw_modes = 0;
 
-    // Per-level box list: which boxes get processed by which block.
-    const int *box_ids = nullptr; // [n_boxes_at_level]
+    long pw_in_stride = 0;
 
-    // Tree topology (uploaded once at shared state ctor).
-    const int *neighbors = nullptr;                // [n_boxes * n_neighbors]; -1 = invalid
-    const long *pw_out_offsets = nullptr;          // [n_boxes]; -1 = no pw_out for this box
-    const unsigned char *is_global_leaf = nullptr; // [n_boxes]
+    const int *box_ids = nullptr;
+    const int *neighbors = nullptr;
+    const long *pw_out_offsets = nullptr;
+    const unsigned char *is_global_leaf = nullptr;
 
-    // PW data.
-    const Real *pw_out_flat = nullptr; // interleaved complex
-    const Real *wpwshift = nullptr;    // SoA, this level's; n_neighbors * n_pw_modes * 2 reals
+    const Real *pw_out_flat = nullptr;
+    const Real *wpwshift = nullptr;
 
-    // Output: per-block scratch. pw_in_pool[blockIdx.x * pw_in_stride .. ).
     Real *pw_in_pool = nullptr;
 };
 
 template <typename Real>
-void launch_shift_pw_dispatch(int dim, const ShiftPwArgs<Real> &args, cudaStream_t stream);
+void launch_shift_pw_dispatch(int dim,
+                              const ShiftPwArgs<Real> &args,
+                              cudaStream_t stream);
+
+template <typename Real>
+void launch_shift_pw_multilevel_dispatch(
+    int dim,
+    const std::vector<ShiftPwArgs<Real>> &args_h,
+    cudaStream_t stream);
 
 } // namespace dmk::cuda
 

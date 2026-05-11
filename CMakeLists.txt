@@ -206,11 +206,12 @@ if (DMK_GPU_OFFLOAD)
 endif()
 
 add_library(dmk STATIC)
-target_link_libraries(dmk PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT ${DMK_GPU_OBJS})
+target_link_libraries(dmk PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT ${DMK_GPU_OBJS} stdc++ supc++)
 
 add_library(dmk_shared SHARED)
 set_target_properties(dmk_shared PROPERTIES OUTPUT_NAME dmk)
 target_link_libraries(dmk_shared PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT ${DMK_GPU_OBJS})
+target_link_libraries(dmk_shared PRIVATE stdc++ supc++)
 
 if (DMK_BUILD_TESTS)
   add_subdirectory(test)

@@ -21,6 +21,7 @@
 // 2 * n_order * n_pw2 (ff2 slab) reals — a few KB even for large n_pw.
 
 #include <cuda_runtime.h>
+#include <vector>
 
 namespace dmk::cuda {
 
@@ -49,6 +50,12 @@ struct PwToProxyArgs {
 
 template <typename Real>
 void launch_pw_to_proxy_dispatch(int dim, const PwToProxyArgs<Real> &args, cudaStream_t stream);
+
+template <typename Real>
+void launch_pw_to_proxy_multilevel_dispatch(
+    int dim,
+    const std::vector<PwToProxyArgs<Real>> &args_h,
+    cudaStream_t stream);
 
 } // namespace dmk::cuda
 

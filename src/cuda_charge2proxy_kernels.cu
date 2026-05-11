@@ -10,7 +10,11 @@ namespace dmk::cuda {
 template <typename Real>
 void launch_charge2proxy_dispatch(int dim, const Charge2ProxyArgs<Real> &args, cudaStream_t stream) {
     if (dim == 3) {
-        launch_charge2proxy_3d<Real>(args, stream);
+        Charge2ProxyGroupOrder order;
+
+        build_charge2proxy_group_order(args, order, stream);
+        launch_charge2proxy_3d<Real>(args, thrust::raw_pointer_cast(order.group_perm.data()),
+            order.n_active_groups,stream);
         return;
     }
     throw std::runtime_error("CUDA charge2proxy: dim=" + std::to_string(dim) +

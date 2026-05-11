@@ -93,7 +93,7 @@ template <typename Real>
 inline void launch_tensorprod_3d(const TensorprodArgs<Real> &args, cudaStream_t stream) {
     if (args.n_pairs == 0)
         return;
-    constexpr int block_size = 128;
+    constexpr int block_size = 512;
     TensorprodByPair3DKernel<Real><<<args.n_pairs, block_size, 0, stream>>>(args);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess)
