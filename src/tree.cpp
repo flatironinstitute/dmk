@@ -129,42 +129,23 @@ inline int get_table_count_down(dmk_ikernel kernel) {
 }
 
 template <typename Real, int DIM>
-DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, const sctl::Vector<Real> &r_src,
-                                const sctl::Vector<Real> &charge, const sctl::Vector<Real> &normal,
-                                const sctl::Vector<Real> &r_trg)
-    : sctl::PtTree<Real, DIM>(comm), comm_(comm), params(params_),
-      kernel_input_dim(get_kernel_input_dim(params.n_dim, params.kernel)),
-      kernel_output_dim_src(get_kernel_output_dim(params.n_dim, params.kernel, params.eval_src)),
-      kernel_output_dim_trg(get_kernel_output_dim(params.n_dim, params.kernel, params.eval_trg)),
-      kernel_output_dim_max(std::max(kernel_output_dim_src, kernel_output_dim_trg)),
-      n_tables_up(get_table_count_up<DIM>(params.kernel)), n_tables_down(get_table_count_down<DIM>(params.kernel)),
-      n_digits(std::round(log10(1.0 / params_.eps) - 0.1)), expansion_constants(params),
-      logger(dmk::get_logger(comm, params.log_level)), rank_logger(dmk::get_rank_logger(comm, params.log_level)) {
-    sctl::Profile::Scoped profile("DMKPtTree::DMKPtTree", &comm_);
-    debug_omit_pw = (params.debug_flags & DMK_DEBUG_OMIT_PW) || util::env_is_set("DMK_DEBUG_OMIT_PW");
-    debug_omit_direct = (params.debug_flags & DMK_DEBUG_OMIT_DIRECT) || util::env_is_set("DMK_DEBUG_OMIT_DIRECT");
-    debug_dump_tree = (params.debug_flags & DMK_DEBUG_DUMP_TREE) || util::env_is_set("DMK_DEBUG_DUMP_TREE");
-    debug_force_aot = (params.debug_flags & DMK_DEBUG_FORCE_AOT) || util::env_is_set("DMK_DEBUG_FORCE_AOT");
-    if (debug_omit_pw)
-        logger->debug("Ignoring PW interactions");
-    if (debug_omit_direct)
-        logger->debug("Ignoring direct interactions");
-    logger->info("tree build started");
-
+void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &charge,
+                                      const sctl::Vector<Real> &normal, const sctl::Vector<Real> &r_trg) {
+    sctl::Profile::Scoped profile("build_tree", &comm_);
+    logger->info("base tree build started");
     const int n_src = r_src.Dim() / DIM;
     const int n_trg = r_trg.Dim() / DIM;
 
     // 0: Initialization
-    sctl::Vector<Real> pot_vec_src(n_src * kernel_output_dim_src);
-    sctl::Vector<Real> pot_vec_trg(n_trg * kernel_output_dim_trg);
-
     logger->debug("Building tree and sorting points");
+
     // Use "2-1" balancing for the tree, i.e. touching boxes never more than one level away in depth
     constexpr bool balance21 = true;
     // Only grab nearest neighbors as 'ghosts' <-> halo = 0
     constexpr int halo = 0;
 
     // All data that needs to be tree sorted
+    sctl::Profile::Tic("add_particles", &comm_);
     this->AddParticles("pdmk_src", r_src);
     this->AddParticles("pdmk_trg", r_trg);
 
@@ -174,18 +155,27 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 
         // Stresslet has (force .outer. normal) proxy charges
         sctl::Vector<Real> charge_normal(n_src * DIM * DIM);
+        Real *__restrict__ charge_normal_ptr = &charge_normal[0];
+        const Real *__restrict__ charge_ptr = &charge[0];
+        const Real *__restrict__ normal_ptr = &normal[0];
+#pragma omp parallel for schedule(static)
         for (int i = 0; i < n_src; ++i)
             for (int k = 0; k < DIM; ++k)
                 for (int j = 0; j < DIM; ++j)
-                    charge_normal[i * DIM * DIM + k * DIM + j] = charge[i * DIM + k] * normal[i * DIM + j];
+                    charge_normal_ptr[i * DIM * DIM + k * DIM + j] = charge_ptr[i * DIM + k] * normal_ptr[i * DIM + j];
         this->AddParticleData("pdmk_charge", "pdmk_src", charge_normal);
     } else {
         this->AddParticleData("pdmk_charge", "pdmk_src", charge);
     }
-    this->AddParticleData("pdmk_pot_src", "pdmk_src", pot_vec_src);
-    this->AddParticleData("pdmk_pot_trg", "pdmk_trg", pot_vec_trg);
-    this->UpdateRefinement(r_src, params.n_per_leaf, balance21, params.use_periodic, halo);
+    this->AddParticleData("pdmk_pot_src", "pdmk_src", kernel_output_dim_src);
+    this->AddParticleData("pdmk_pot_trg", "pdmk_trg", kernel_output_dim_trg);
+    sctl::Profile::Toc();
 
+    sctl::Profile::Tic("update_refinement", &comm_);
+    this->UpdateRefinement(r_src, params.n_per_leaf, balance21, params.use_periodic, halo);
+    sctl::Profile::Toc();
+
+    sctl::Profile::Tic("get_non_halo", &comm_);
     // Grab sorted particle data without the halo, so it's easier to get anything local to this rank.
     // Direct evaluations need halo data (for source particles), but targets points/particles should be owned by the
     // rank.
@@ -207,7 +197,9 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
         charge_sorted_owned = data;
         charge_cnt_owned = count;
     }
+    sctl::Profile::Toc();
 
+    sctl::Profile::Tic("broadcast_get_halo", &comm_);
     // Now grab sorted particle data with the halo, so we have it for direct evaluations
     this->template Broadcast<Real>("pdmk_src");
     this->template Broadcast<Real>("pdmk_charge");
@@ -219,17 +211,41 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     }
     this->GetData(charge_sorted_with_halo, charge_cnt_with_halo, "pdmk_charge");
     this->GetData(r_src_sorted_with_halo, r_src_cnt_with_halo, "pdmk_src");
+    sctl::Profile::Toc();
 
     logger->debug("base tree build completed");
-    generate_metadata();
+}
 
+template <typename Real, int DIM>
+DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, const sctl::Vector<Real> &r_src,
+                                const sctl::Vector<Real> &charge, const sctl::Vector<Real> &normal,
+                                const sctl::Vector<Real> &r_trg)
+    : sctl::PtTree<Real, DIM>(comm), comm_(comm), params(params_),
+      kernel_input_dim(get_kernel_input_dim(params.n_dim, params.kernel)),
+      kernel_output_dim_src(get_kernel_output_dim(params.n_dim, params.kernel, params.eval_src)),
+      kernel_output_dim_trg(get_kernel_output_dim(params.n_dim, params.kernel, params.eval_trg)),
+      kernel_output_dim_max(std::max(kernel_output_dim_src, kernel_output_dim_trg)),
+      n_tables_up(get_table_count_up<DIM>(params.kernel)), n_tables_down(get_table_count_down<DIM>(params.kernel)),
+      n_digits(std::round(log10(1.0 / params_.eps) - 0.1)), expansion_constants(params),
+      logger(dmk::get_logger(comm, params.log_level)), rank_logger(dmk::get_rank_logger(comm, params.log_level)) {
+    sctl::Profile::Scoped profile("DMKPtTree::DMKPtTree", &comm_);
+    debug_omit_pw = (params.debug_flags & DMK_DEBUG_OMIT_PW) || util::env_is_set("DMK_DEBUG_OMIT_PW");
+    debug_omit_direct = (params.debug_flags & DMK_DEBUG_OMIT_DIRECT) || util::env_is_set("DMK_DEBUG_OMIT_DIRECT");
+    debug_dump_tree = (params.debug_flags & DMK_DEBUG_DUMP_TREE) || util::env_is_set("DMK_DEBUG_DUMP_TREE");
+    debug_force_aot = (params.debug_flags & DMK_DEBUG_FORCE_AOT) || util::env_is_set("DMK_DEBUG_FORCE_AOT");
+    logger->info("tree build started");
+    if (debug_omit_pw)
+        logger->debug("Ignoring PW interactions");
+    if (debug_omit_direct)
+        logger->debug("Ignoring direct interactions");
+    build_tree(r_src, charge, normal, r_trg);
+    generate_metadata();
 #ifdef DMK_GPU_OFFLOAD
     // GPU offload state lives for the lifetime of the tree: device buffers
     // are allocated and topology is uploaded here exactly once. Per-eval the
     // contexts only re-launch kernels and re-zero output buffers.
     gpu_init_state();
 #endif
-
     logger->info("tree build completed");
 }
 
@@ -288,6 +304,7 @@ int DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal)
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::compute_data_offsets() {
+    sctl::Profile::Scoped profile("compute_data_offsets", &comm_);
     const auto &node_mid = this->GetNodeMID();
     r_src_offsets_with_halo.ReInit(n_boxes());
     r_src_offsets_owned.ReInit(n_boxes());
@@ -323,6 +340,7 @@ void DMKPtTree<Real, DIM>::compute_data_offsets() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::compute_level_indices_and_boxsizes() {
+    sctl::Profile::Scoped profile("compute_level_indices_and_boxsizes", &comm_);
     const auto &node_mid = this->GetNodeMID();
     level_indices.ReInit(SCTL_MAX_DEPTH);
     int8_t max_depth = 0;
@@ -341,6 +359,8 @@ void DMKPtTree<Real, DIM>::compute_level_indices_and_boxsizes() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::compute_box_centers() {
+    sctl::Profile::Scoped profile("compute_box_centers", &comm_);
+
     const auto &node_mid = this->GetNodeMID();
     centers.ReInit(n_boxes() * DIM);
     Real scale = 1.0;
@@ -356,6 +376,7 @@ void DMKPtTree<Real, DIM>::compute_box_centers() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::accumulate_subtree_counts() {
+    sctl::Profile::Scoped profile("accumulate_subtree_counts", &comm_);
     const auto &node_mid = this->GetNodeMID();
     const auto &node_lists = this->GetNodeLists();
     src_counts_with_halo.ReInit(n_boxes());
@@ -383,6 +404,7 @@ void DMKPtTree<Real, DIM>::accumulate_subtree_counts() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::gather_owned_source_positions() {
+    sctl::Profile::Scoped profile("gather_owned_source_positions", &comm_);
     const auto &node_attr = this->GetNodeAttr();
     r_src_sorted_owned.ReInit(DIM * src_counts_owned[0]);
     r_src_offsets_owned.ReInit(n_boxes());
@@ -399,6 +421,7 @@ void DMKPtTree<Real, DIM>::gather_owned_source_positions() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::broadcast_global_leaf_status() {
+    sctl::Profile::Scoped profile("broadcast_global_leaf_status", &comm_);
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_lists = this->GetNodeLists();
     is_global_leaf.ReInit(n_boxes());
@@ -429,6 +452,7 @@ void DMKPtTree<Real, DIM>::broadcast_global_leaf_status() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::compute_proxy_expansion_flags() {
+    sctl::Profile::Scoped profile("compute_proxy_expansion_flags", &comm_);
     const auto &node_lists = this->GetNodeLists();
     ifpwexp.ReInit(n_boxes());
     ifpwexp.SetZero();
@@ -453,6 +477,7 @@ void DMKPtTree<Real, DIM>::compute_proxy_expansion_flags() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::compute_proxy_evaluation_flags() {
+    sctl::Profile::Scoped profile("compute_proxy_evaluation_flags", &comm_);
     const auto &node_lists = this->GetNodeLists();
     iftensprodeval.ReInit(n_boxes());
     iftensprodeval.SetZero();
@@ -485,6 +510,7 @@ void DMKPtTree<Real, DIM>::compute_proxy_evaluation_flags() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_plane_wave_interaction_lists() {
+    sctl::Profile::Scoped profile("build_plane_wave_interaction_lists", &comm_);
     const auto &node_lists = this->GetNodeLists();
     nlistpw_.resize(n_boxes());
     listpw_.resize(n_boxes());
@@ -508,113 +534,95 @@ void DMKPtTree<Real, DIM>::build_plane_wave_interaction_lists() {
 // The slot k = d0 + 3*d1 + 9*d2 (for DIM=3) where d ∈ {0,1,2} maps to offset {-1,0,+1}.
 // The expected neighbor center is center[box] + offset * boxsize.
 // The shift is the difference between expected and actual positions, rounded to int.
-template <typename T, int DIM>
-static std::array<int, DIM> compute_periodic_shift_from_slot(int k, T bsize, const T *center_box, const T *center_nbr) {
+template <typename Real, int DIM>
+static std::array<int, DIM> compute_periodic_shift_from_slot(int k, Real bsize, const Real *center_box,
+                                                             const Real *center_nbr) {
     std::array<int, DIM> shift{};
     for (int d = 0; d < DIM; ++d) {
-        int dir = (k % 3) - 1; // -1, 0, or +1
+        const int dir = (k % 3) - 1; // -1, 0, or +1
         k /= 3;
-        T expected = center_box[d] + dir * bsize;
-        shift[d] = (int)std::round(expected - center_nbr[d]);
+        const Real expected = center_box[d] + dir * bsize;
+        shift[d] = std::round(expected - center_nbr[d]);
     }
     return shift;
 }
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_direct_interaction_lists() {
+    sctl::Profile::Scoped profile("build_direct_interaction_lists", &comm_);
+    const auto &node_mid = this->GetNodeMID();
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_lists = this->GetNodeLists();
     list1_.resize(n_boxes());
-    nlist1_.resize(n_boxes());
+    nlist1_.assign(n_boxes(), 0);
     list1_shift_.resize(n_boxes());
 
-    auto add_list1_entry = [&](int box, int neighb_box, const std::array<int, DIM> &shift) {
-        const int k = nlist1_[box];
-        list1_[box][k] = neighb_box;
-        list1_shift_[box][k] = shift;
-        nlist1_[box]++;
+    auto get_shift = [&](int nbr_k, Real bsize, int ref_box, int nbr_box) -> std::array<int, DIM> {
+        if (!params.use_periodic)
+            return {};
+        return compute_periodic_shift_from_slot<Real, DIM>(nbr_k, bsize, center_ptr(ref_box), center_ptr(nbr_box));
     };
 
-    const std::array<int, DIM> zero_shift{};
+    auto within_cutoff = [&](int trg, int src, const std::array<int, DIM> &shift, double cutoff) {
+        for (int d = 0; d < DIM; ++d)
+            if (std::abs(center_ptr(trg)[d] - (center_ptr(src)[d] + shift[d])) > cutoff)
+                return false;
+        return true;
+    };
 
-    for (int i_level = 0; i_level < n_levels(); ++i_level) {
-        const Real bsize_level = boxsize[i_level];
-        // Loop through target boxes at this level (boxes where we loop through neighbors for direct eval)
-        for (int box : level_indices[i_level]) {
-            if (!is_global_leaf[box] || node_attr[box].Ghost)
+#pragma omp parallel for schedule(guided, 4)
+    for (int box = 0; box < n_boxes(); ++box) {
+        if (!is_global_leaf[box] || node_attr[box].Ghost)
+            continue;
+
+        const int i_level = node_mid[box].Depth();
+        const Real bsize = boxsize[i_level];
+        const double cutoff_child = 1.05 * 0.75 * bsize;
+        const double cutoff_parent_nbr = 1.5 * 1.05 * bsize;
+
+        auto add = [&](int neighb_box, const std::array<int, DIM> &shift) {
+            int &k = nlist1_[box];
+            list1_[box][k] = neighb_box;
+            list1_shift_[box][k] = shift;
+            ++k;
+        };
+
+        // Same-level neighbors: leaf neighbors added directly; for non-leaf neighbors,
+        // add their children that are within touching range of box.
+        for (int nbr_k = 0; nbr_k < NCOLLEAGUE; ++nbr_k) {
+            const int neighb = node_lists[box].nbr[nbr_k];
+            if (neighb < 0)
                 continue;
-
-            // (boxsize + 0.5 boxsize) / 2 is the max distance from center of box to center of child neighbor box
-            const double cutoff_child = 1.05 * 0.75 * boxsize[i_level];
-            constexpr int MAX_NBRS = sctl::pow<DIM>(3);
-            for (int nbr_k = 0; nbr_k < MAX_NBRS; ++nbr_k) {
-                const auto neighb = node_lists[box].nbr[nbr_k];
-                if (neighb < 0)
-                    continue;
-
-                // Compute periodic shift from the nbr slot index
-                const auto nbr_shift = params.use_periodic
-                                           ? compute_periodic_shift_from_slot<Real, DIM>(
-                                                 nbr_k, bsize_level, center_ptr(box), center_ptr(neighb))
-                                           : zero_shift;
-
-                if (is_global_leaf[neighb] && src_counts_with_halo[neighb]) {
-                    add_list1_entry(box, neighb, nbr_shift);
-                    continue;
-                }
-
-                for (auto child : node_lists[neighb].child) {
-                    if (child < 0 || !src_counts_with_halo[child])
-                        continue;
-
-                    // For PBC: apply the parent's periodic shift when checking child distance
-                    bool inrange = true;
-                    for (int k = 0; k < DIM; ++k) {
-                        const double child_center = center_ptr(child)[k] + nbr_shift[k];
-                        const double distance = std::abs(center_ptr(box)[k] - child_center);
-                        if (distance > cutoff_child) {
-                            inrange = false;
-                            break;
-                        }
-                    }
-                    if (inrange)
-                        add_list1_entry(box, child, nbr_shift);
+            const auto shift = get_shift(nbr_k, bsize, box, neighb);
+            if (is_global_leaf[neighb]) {
+                if (src_counts_with_halo[neighb])
+                    add(neighb, shift);
+            } else {
+                for (int child : node_lists[neighb].child) {
+                    if (child >= 0 && src_counts_with_halo[child] && within_cutoff(box, child, shift, cutoff_child))
+                        add(child, shift);
                 }
             }
+        }
 
-            // We are checking for the colleagues of our parents for leaves, and level 0 has no parent
-            if (i_level == 0)
+        // Parent's neighbors: coarser leaf boxes that cannot appear as same-level neighbors.
+        if (i_level == 0)
+            continue;
+        const int parent = node_lists[box].parent;
+        for (int nbr_k = 0; nbr_k < NCOLLEAGUE; ++nbr_k) {
+            const int neighb = node_lists[parent].nbr[nbr_k];
+            if (neighb < 0 || !is_global_leaf[neighb] || !src_counts_with_halo[neighb])
                 continue;
-
-            // Search the colleagues of parent for neighboring leaves
-            const int parent = node_lists[box].parent;
-            const Real bsize_parent = boxsize[i_level - 1];
-            const double cutoff = 1.5 * 1.05 * boxsize[i_level];
-            for (int nbr_k = 0; nbr_k < MAX_NBRS; ++nbr_k) {
-                const auto neighb = node_lists[parent].nbr[nbr_k];
-                if (neighb < 0 || !is_global_leaf[neighb] || !src_counts_with_halo[neighb])
-                    continue;
-
-                const auto nbr_shift = params.use_periodic
-                                           ? compute_periodic_shift_from_slot<Real, DIM>(
-                                                 nbr_k, bsize_parent, center_ptr(parent), center_ptr(neighb))
-                                           : zero_shift;
-
-                bool inrange = true;
-                for (int k = 0; k < DIM; ++k) {
-                    const double distance = std::abs(center_ptr(box)[k] - (center_ptr(neighb)[k] + nbr_shift[k]));
-                    if (distance > cutoff)
-                        inrange = false;
-                }
-                if (inrange)
-                    add_list1_entry(box, neighb, nbr_shift);
-            }
+            const auto shift = get_shift(nbr_k, boxsize[i_level - 1], parent, neighb);
+            if (within_cutoff(box, neighb, shift, cutoff_parent_nbr))
+                add(neighb, shift);
         }
     }
 }
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_upward_pass_work_lists() {
+    sctl::Profile::Scoped profile("build_upward_pass_work_lists", &comm_);
     const auto &node_lists = this->GetNodeLists();
     has_proxy_from_children.ReInit(n_boxes());
     charge2proxy_groups.clear();
@@ -651,6 +659,7 @@ void DMKPtTree<Real, DIM>::build_upward_pass_work_lists() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
+    sctl::Profile::Scoped profile("allocate_proxy_coefficients", &comm_);
     const int n_coeffs_up = n_tables_up * sctl::pow<DIM>(expansion_constants.n_order);
     const int n_coeffs_down = n_tables_down * sctl::pow<DIM>(expansion_constants.n_order);
 
@@ -674,10 +683,9 @@ void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
         }
     }
 
-    proxy_coeffs_upward.ReInit(n_coeffs_up * n_proxy_boxes_upward);
     proxy_coeffs_downward.ReInit(n_coeffs_down * n_proxy_boxes_downward);
 
-    this->AddData("proxy_coeffs", proxy_coeffs_upward, counts_upward);
+    this->template AddData<Real>("proxy_coeffs", n_coeffs_up * n_proxy_boxes_upward, counts_upward);
     this->GetData(proxy_coeffs_upward, counts_upward, "proxy_coeffs");
 
     proxy_coeffs_offsets.ReInit(n_boxes());
@@ -706,6 +714,7 @@ void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
+    sctl::Profile::Scoped profile("precompute_window_difference_data", &comm_);
     sctl::Vector<Real> kernel_ft;
 
     if (params.use_periodic) {
@@ -785,6 +794,7 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
 /// @tparam DIM Spatial dimension tree lives in
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_direct_work_lists() {
+    sctl::Profile::Scoped profile("build_direct_work_lists", &comm_);
     const auto &node_attr = this->GetNodeAttr();
 
     direct_work.clear();
@@ -794,17 +804,17 @@ void DMKPtTree<Real, DIM>::build_direct_work_lists() {
             direct_work.push_back(i_box);
     }
 
-    // Sort by descending interaction cost so heaviest boxes get scheduled first
-    std::sort(direct_work.begin(), direct_work.end(), [&](int a, int b) {
-        const long pts_a = src_counts_owned[a] + trg_counts_owned[a];
-        const long pts_b = src_counts_owned[b] + trg_counts_owned[b];
-        long src_a = 0, src_b = 0;
-        for (auto j : list1(a))
-            src_a += src_counts_with_halo[j];
-        for (auto j : list1(b))
-            src_b += src_counts_with_halo[j];
-        return pts_a * src_a > pts_b * src_b;
-    });
+    std::vector<std::pair<long, int>> est_work(direct_work.size());
+    for (int i = 0; i < direct_work.size(); ++i) {
+        const int box = direct_work[i];
+        long src = 0;
+        for (auto j : list1(box))
+            src += src_counts_with_halo[j];
+        est_work[i] = {(src_counts_owned[box] + trg_counts_owned[box]) * src, box};
+    }
+    std::sort(est_work.begin(), est_work.end(), [](const auto &a, const auto &b) { return a.first > b.first; });
+    for (int i = 0; i < direct_work.size(); ++i)
+        direct_work[i] = est_work[i].second;
 }
 
 /// @brief Build list of direct evaluators for each level, source and target.
@@ -813,6 +823,8 @@ void DMKPtTree<Real, DIM>::build_direct_work_lists() {
 /// @tparam DIM Spatial dimension tree lives in
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_evaluators() {
+    sctl::Profile::Scoped profile("build_evaluators", &comm_);
+
     const int n_lvl = n_levels();
     direct_rsc.ReInit(n_lvl);
     direct_cen.ReInit(n_lvl);
@@ -835,7 +847,7 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
 
     eval_targets_box_list.clear();
     eval_targets_box_list.reserve(n_boxes());
-    for (int b = 0; b < (int)n_boxes(); ++b)
+    for (int b = 0; b < n_boxes(); ++b)
         if (iftensprodeval[b])
             eval_targets_box_list.push_back(b);
 
@@ -847,7 +859,7 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
         const auto &node_mid_local = this->GetNodeMID();
         const auto &node_lists_local = this->GetNodeLists();
         tensorprod_pairs_per_level.assign(n_levels(), {});
-        for (int b = 0; b < (int)n_boxes(); ++b) {
+        for (int b = 0; b < n_boxes(); ++b) {
             const int nboxpts = src_counts_owned[b] + trg_counts_owned[b];
             if (!ifpwexp[b] || !nboxpts || iftensprodeval[b])
                 continue;

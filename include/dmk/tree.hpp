@@ -665,6 +665,10 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     int n_levels() const { return level_indices.Dim(); }
     std::size_t n_boxes() const { return this->GetNodeMID().Dim(); }
 
+    // Add data and refine tree
+    void build_tree(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &charge,
+                    const sctl::Vector<Real> &normals, const sctl::Vector<Real> &r_trg);
+
     // Metadata generation subroutines
     void compute_data_offsets();
     void compute_level_indices_and_boxsizes();
