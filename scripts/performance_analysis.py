@@ -62,7 +62,8 @@ def remove_outliers_iqr(df, columns=None, k=1.5):
     return df[mask]
 
 
-df = remove_outliers_iqr(df, columns=['dmk_time'])
+time_col = next((c for c in df.columns if c.endswith('_time')), df.columns[0])
+df = remove_outliers_iqr(df, columns=[time_col])
 
 # Handle custom profiler keys: these are nanosecond timings that need to be
 # injected as synthetic t_min/t_max columns (they don't have per-rank breakdowns,
@@ -80,7 +81,7 @@ for raw_col, nice_path in custom_key_map.items():
         df[f'{nice_path}|t_max'] = scaled
 
 df_tree = df[df.columns[df.columns.str.contains(r'\|(t_min|t_max)$', regex=True)]]
-total_time_median = df['dmk_time'].median()
+total_time_median = df[time_col].median()
 
 print(df.describe())
 
@@ -141,7 +142,7 @@ ax.barh(data['path'], data['gap_median'], left=data['t_min_median'],
         xerr=data['gap_std'], label='gap +/- 1 sigma', color='salmon',
         ecolor='black', capsize=3)
 ax.axvline(total_time_median, color='black', linestyle='--',
-           label=f'total = {total_time_median:.4f}s')
+           label=f'{time_col} = {total_time_median:.4f}s')
 
 # Annotate each bar with % of total and imbalance %
 for i, row in data.iterrows():
