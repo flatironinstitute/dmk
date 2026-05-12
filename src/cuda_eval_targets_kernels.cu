@@ -51,4 +51,23 @@ void launch_eval_targets_dispatch(int dim, int eval_level, int n_charge_dim, con
 template void launch_eval_targets_dispatch<float>(int, int, int, const EvalTargetsArgs<float> &, cudaStream_t);
 template void launch_eval_targets_dispatch<double>(int, int, int, const EvalTargetsArgs<double> &, cudaStream_t);
 
+template <typename Real>
+__global__ void inplace_accumulate_kernel(Real* __restrict__ dst, const Real* __restrict__ src, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n)
+        dst[i] += src[i];
+}
+
+template <typename Real>
+void launch_inplace_accumulate(Real* dst, const Real* src, std::size_t n, cudaStream_t stream) {
+    if (n == 0)
+        return;
+    constexpr int block = 256;
+    int grid = (int)((n + block - 1) / block);
+    inplace_accumulate_kernel<<<grid, block, 0, stream>>>(dst, src, (int)n);
+}
+
+template void launch_inplace_accumulate<float>(float*, const float*, std::size_t, cudaStream_t);
+template void launch_inplace_accumulate<double>(double*, const double*, std::size_t, cudaStream_t);
+
 } // namespace dmk::cuda

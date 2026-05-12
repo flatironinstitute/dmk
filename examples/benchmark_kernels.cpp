@@ -534,8 +534,6 @@ Config parse_args(int argc, char *argv[]) {
             break;
         case 'p':
             if (optarg[0] == 'b')
-                cfg.eval_path = DMK_EVAL_PATH_BOTH;
-            else if (optarg[0] == 'c')
                 cfg.eval_path = DMK_EVAL_PATH_CPU;
             else if (optarg[0] == 'g')
                 cfg.eval_path = DMK_EVAL_PATH_GPU;

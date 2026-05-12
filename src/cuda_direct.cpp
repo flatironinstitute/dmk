@@ -14,8 +14,6 @@
 
 #include <cuda_runtime.h>
 
-#include <vector>
-
 namespace dmk {
 
 using cuda_helpers::device_alloc_and_zero;
@@ -104,30 +102,13 @@ void CudaDirectContext<Real, DIM>::launch() {
 }
 
 template <typename Real, int DIM>
-void CudaDirectContext<Real, DIM>::merge_into_host() {
-    auto &t = pimpl_->tree;
-    auto &shared = pimpl_->shared;
-    auto &im = *pimpl_;
+Real *CudaDirectContext<Real, DIM>::device_pot_src() const {
+    return pimpl_->d_pot_src_direct;
+}
 
-    if (!im.launched)
-        return;
-
-    DMK_CHECK_CUDA(cudaDeviceSynchronize());
-
-    if (shared.pot_src_size) {
-        std::vector<Real> tmp(shared.pot_src_size);
-        DMK_CHECK_CUDA(
-            cudaMemcpy(tmp.data(), im.d_pot_src_direct, shared.pot_src_size * sizeof(Real), cudaMemcpyDeviceToHost));
-        for (std::size_t i = 0; i < shared.pot_src_size; ++i)
-            t.pot_src_sorted[i] += tmp[i];
-    }
-    if (shared.pot_trg_size) {
-        std::vector<Real> tmp(shared.pot_trg_size);
-        DMK_CHECK_CUDA(
-            cudaMemcpy(tmp.data(), im.d_pot_trg_direct, shared.pot_trg_size * sizeof(Real), cudaMemcpyDeviceToHost));
-        for (std::size_t i = 0; i < shared.pot_trg_size; ++i)
-            t.pot_trg_sorted[i] += tmp[i];
-    }
+template <typename Real, int DIM>
+Real *CudaDirectContext<Real, DIM>::device_pot_trg() const {
+    return pimpl_->d_pot_trg_direct;
 }
 
 template class CudaDirectContext<float, 2>;

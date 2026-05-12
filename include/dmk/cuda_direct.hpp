@@ -12,11 +12,10 @@
 //        - dispatch the per-box residual kernel on the shared direct stream.
 //   2. downward_pass() runs multilevel work on the CPU. The GPU work is in
 //      flight on the direct stream throughout.
-//   3. End of downward_pass(): merge_into_host():
-//        - cudaDeviceSynchronize()
-//        - download d_pot_*_direct and accumulate into the tree's host
-//          pot_*_sorted arrays (which already hold multilevel far-field
-//          contributions).
+//   3. End of downward_pass(): the caller
+//      then passes device_pot_src()/device_pot_trg() to
+//      CudaEvalTargetsContext::finalize_gpu_only() which sums both GPU results
+//      in-place and downloads the combined answer in one pass.
 //
 // Simplifications still in force:
 //   * no ContactGeometry filtering — all owned src / trg points evaluated
@@ -46,9 +45,9 @@ class CudaDirectContext {
     /// direct stream. Returns immediately.
     void launch();
 
-    /// Synchronize, copy the device pot buffers back, and accumulate into
-    /// tree.pot_src_sorted / pot_trg_sorted.
-    void merge_into_host();
+    /// Device pointers to the direct potential outputs
+    Real *device_pot_src() const;
+    Real *device_pot_trg() const;
 
   private:
     struct Impl;

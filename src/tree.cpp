@@ -944,6 +944,16 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
     }
 }
 
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::compute_self_interaction_constants() {
+    self_interaction_constants.resize(n_levels() + 1);
+    // Fill for n_levels+1, note boxsize is already n_levels+1 in size
+#pragma omp parallel for schedule(dynamic)
+    for (int i_level = 0; i_level < n_levels() + 1; ++i_level)
+        self_interaction_constants[i_level] =
+            get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
+}
+
 /// @brief Build any bookkeeping data associated with the tree
 ///
 /// @tparam T Floating point format to use (float, double)
@@ -972,6 +982,7 @@ void DMKPtTree<Real, DIM>::generate_metadata() {
                                      expansion_constants.n_pw_diff, params.fparam, expansion_constants.beta, boxsize);
     precompute_window_difference_data();
     build_evaluators();
+    compute_self_interaction_constants();
 
     logger->debug("done generating tree traversal metadata and other constants");
 }
@@ -991,7 +1002,7 @@ void DMKPtTree<Real, DIM>::upward_pass() {
 #ifdef DMK_GPU_OFFLOAD
     if (cuda_upward_ctx_)
         gpu_upward_pass();
-    const bool run_cpu = (params.eval_path == DMK_EVAL_PATH_CPU || params.eval_path == DMK_EVAL_PATH_BOTH);
+    const bool run_cpu = params.eval_path == DMK_EVAL_PATH_CPU;
 #else
     if (params.eval_path != DMK_EVAL_PATH_CPU)
         throw std::runtime_error("DMK was built without DMK_GPU_OFFLOAD; only DMK_EVAL_PATH_CPU is available");
@@ -1017,7 +1028,7 @@ void DMKPtTree<Real, DIM>::gpu_init_state() {
     cuda_shared_state_.reset();
     nvtxRangePop();
 
-    const bool want_gpu = (params.eval_path == DMK_EVAL_PATH_GPU || params.eval_path == DMK_EVAL_PATH_BOTH);
+    const bool want_gpu = params.eval_path == DMK_EVAL_PATH_GPU;
     if (!want_gpu || debug_omit_direct || debug_force_aot)
         return;
 
@@ -1390,12 +1401,7 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::correct_for_self_interactions() {
     sctl::Profile::Scoped profile("correct_for_self");
-    Real w0[SCTL_MAX_DEPTH];
-    // Fill for n_levels+1, note boxsize is already n_levels+1 in size
-#pragma omp parallel for schedule(dynamic)
-    for (int i_level = 0; i_level < std::min(SCTL_MAX_DEPTH, n_levels() + 1); ++i_level)
-        w0[i_level] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
-
+    const auto &w0 = self_interaction_constants;
     const auto &node_mid = this->GetNodeMID();
 
 #pragma omp for schedule(dynamic)
@@ -1620,15 +1626,18 @@ void DMKPtTree<Real, DIM>::downward_pass() {
     init_planewave_data();
     sctl::Profile::Toc();
 
-    const bool run_cpu = (params.eval_path == DMK_EVAL_PATH_CPU || params.eval_path == DMK_EVAL_PATH_BOTH);
+    const bool run_cpu = params.eval_path == DMK_EVAL_PATH_CPU;
+    const bool run_gpu = params.eval_path == DMK_EVAL_PATH_GPU;
 
 #ifdef DMK_GPU_OFFLOAD
-    // Launches GPU kernels async on shared.downward_stream; in BOTH mode the
-    // CPU pass below runs concurrently with them. GPU-only mode finishes with
-    // a sync inside merge_into_host so host pot is populated by the time we
-    // return.
-    if (cuda_shared_state_)
+    // Launches GPU kernels async on shared.downward_stream; GPU-only mode syncs at the
+    // end of gpu_downward_pass so host pot is populated before we return.
+    if (run_gpu) {
         gpu_downward_pass();
+        sctl::Profile::Scoped p("cuda_merge", &comm_);
+        cuda_eval_targets_ctx_->finalize_gpu_only(cuda_direct_ctx_->device_pot_src(),
+                                                  cuda_direct_ctx_->device_pot_trg());
+    }
 #endif
 
     if (run_cpu)
@@ -1669,15 +1678,6 @@ void DMKPtTree<Real, DIM>::gpu_downward_pass() {
     {
         sctl::Profile::Scoped p("cuda_eval_targets_launch", &comm_);
         cuda_eval_targets_ctx_->launch();
-    }
-    // GPU-only: CPU pot is currently zero — download device pot so
-    // self-correction + the eval() caller see the GPU answer. BOTH mode: CPU
-    // result stays canonical on host; device buffers remain populated for
-    // debugging.
-    if (params.eval_path == DMK_EVAL_PATH_GPU) {
-        sctl::Profile::Scoped p("cuda_merge", &comm_);
-        cuda_direct_ctx_->merge_into_host();
-        cuda_eval_targets_ctx_->merge_into_host();
     }
 }
 #endif
@@ -1723,11 +1723,11 @@ template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::desort_potentials(Real *pot_src, Real *pot_trg) {
     logger->info("De-sorting potentials into user arrays");
     sctl::Profile::Tic("pdmk_tree_eval_sync", &comm_);
-    sctl::Vector<Real> res;
-    this->GetParticleData(res, "pdmk_pot_src");
-    sctl::Vector<Real>(res.Dim(), pot_src, false) = res;
-    this->GetParticleData(res, "pdmk_pot_trg");
-    sctl::Vector<Real>(res.Dim(), pot_trg, false) = res;
+    sctl::Vector<Real> res_src, res_trg;
+    this->GetParticleData(res_src, "pdmk_pot_src");
+    sctl::Vector<Real>(res_src.Dim(), pot_src, false) = res_src;
+    this->GetParticleData(res_trg, "pdmk_pot_trg");
+    sctl::Vector<Real>(res_trg.Dim(), pot_trg, false) = res_trg;
     sctl::Profile::Toc();
     logger->info("De-sort complete");
 }

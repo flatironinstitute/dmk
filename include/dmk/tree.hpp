@@ -685,6 +685,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void allocate_proxy_coefficients();
     void precompute_window_difference_data();
     void build_evaluators();
+    void compute_self_interaction_constants();
     void generate_metadata();
     void init_planewave_data();
 
@@ -869,6 +870,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     // listpw_ contains source boxes in the pw interaction
     std::vector<std::array<int, nlistpw_max_>> listpw_;
     std::vector<int> nlistpw_;
+
+    std::vector<Real> self_interaction_constants;
 
     // If proxy_view_downward(i_box) has been zeroed yet.
     std::vector<int> proxy_down_zeroed;
