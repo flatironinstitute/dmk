@@ -1644,9 +1644,8 @@ void DMKPtTree<Real, DIM>::downward_pass() {
         cpu_downward_pass();
     }
 
-    // Self-correction operates on the host pot — applies to whatever path
-    // wrote it last (CPU result in CPU/BOTH, downloaded GPU result in GPU).
-    correct_for_self_interactions();
+    if (run_cpu)
+        correct_for_self_interactions();
 
 #ifdef DMK_GPU_OFFLOAD
     // GPU dump (into "gpu/") must run before teardown so the device buffers
