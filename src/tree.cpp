@@ -124,7 +124,7 @@ inline int get_table_count_down(dmk_ikernel kernel) {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &charge,
                                       const sctl::Vector<Real> &normal, const sctl::Vector<Real> &r_trg) {
-    sctl::Profile::Scoped profile("build_tree");
+    sctl::Profile::Scoped profile("build_tree", &comm_);
     logger->info("base tree build started");
     const int n_src = r_src.Dim() / DIM;
     const int n_trg = r_trg.Dim() / DIM;
@@ -138,7 +138,7 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
     constexpr int halo = 0;
 
     // All data that needs to be tree sorted
-    sctl::Profile::Tic("add_particles");
+    sctl::Profile::Tic("add_particles", &comm_);
     this->AddParticles("pdmk_src", r_src);
     this->AddParticles("pdmk_trg", r_trg);
 
@@ -164,11 +164,11 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
     this->AddParticleData("pdmk_pot_trg", "pdmk_trg", kernel_output_dim_trg);
     sctl::Profile::Toc();
 
-    sctl::Profile::Tic("update_refinement");
+    sctl::Profile::Tic("update_refinement", &comm_);
     this->UpdateRefinement(r_src, params.n_per_leaf, balance21, params.use_periodic, halo);
     sctl::Profile::Toc();
 
-    sctl::Profile::Tic("get_non_halo");
+    sctl::Profile::Tic("get_non_halo", &comm_);
     // Grab sorted particle data without the halo, so it's easier to get anything local to this rank.
     // Direct evaluations need halo data (for source particles), but targets points/particles should be owned by the
     // rank.
@@ -192,7 +192,7 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
     }
     sctl::Profile::Toc();
 
-    sctl::Profile::Tic("broadcast_get_halo");
+    sctl::Profile::Tic("broadcast_get_halo", &comm_);
     // Now grab sorted particle data with the halo, so we have it for direct evaluations
     this->template Broadcast<Real>("pdmk_src");
     this->template Broadcast<Real>("pdmk_charge");
@@ -286,6 +286,7 @@ int DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal)
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::compute_data_offsets() {
+    sctl::Profile::Scoped profile("compute_data_offsets", &comm_);
     const auto &node_mid = this->GetNodeMID();
     r_src_offsets_with_halo.ReInit(n_boxes());
     r_src_offsets_owned.ReInit(n_boxes());
@@ -321,6 +322,7 @@ void DMKPtTree<Real, DIM>::compute_data_offsets() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::compute_level_indices_and_boxsizes() {
+    sctl::Profile::Scoped profile("compute_level_indices_and_boxsizes", &comm_);
     const auto &node_mid = this->GetNodeMID();
     level_indices.ReInit(SCTL_MAX_DEPTH);
     int8_t max_depth = 0;
@@ -339,6 +341,8 @@ void DMKPtTree<Real, DIM>::compute_level_indices_and_boxsizes() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::compute_box_centers() {
+    sctl::Profile::Scoped profile("compute_box_centers", &comm_);
+
     const auto &node_mid = this->GetNodeMID();
     centers.ReInit(n_boxes() * DIM);
     Real scale = 1.0;
@@ -354,6 +358,7 @@ void DMKPtTree<Real, DIM>::compute_box_centers() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::accumulate_subtree_counts() {
+    sctl::Profile::Scoped profile("accumulate_subtree_counts", &comm_);
     const auto &node_mid = this->GetNodeMID();
     const auto &node_lists = this->GetNodeLists();
     src_counts_with_halo.ReInit(n_boxes());
@@ -381,6 +386,7 @@ void DMKPtTree<Real, DIM>::accumulate_subtree_counts() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::gather_owned_source_positions() {
+    sctl::Profile::Scoped profile("gather_owned_source_positions", &comm_);
     const auto &node_attr = this->GetNodeAttr();
     r_src_sorted_owned.ReInit(DIM * src_counts_owned[0]);
     r_src_offsets_owned.ReInit(n_boxes());
@@ -397,6 +403,7 @@ void DMKPtTree<Real, DIM>::gather_owned_source_positions() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::broadcast_global_leaf_status() {
+    sctl::Profile::Scoped profile("broadcast_global_leaf_status", &comm_);
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_lists = this->GetNodeLists();
     is_global_leaf.ReInit(n_boxes());
@@ -427,6 +434,7 @@ void DMKPtTree<Real, DIM>::broadcast_global_leaf_status() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::compute_proxy_expansion_flags() {
+    sctl::Profile::Scoped profile("compute_proxy_expansion_flags", &comm_);
     const auto &node_lists = this->GetNodeLists();
     ifpwexp.ReInit(n_boxes());
     ifpwexp.SetZero();
@@ -451,6 +459,7 @@ void DMKPtTree<Real, DIM>::compute_proxy_expansion_flags() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::compute_proxy_evaluation_flags() {
+    sctl::Profile::Scoped profile("compute_proxy_evaluation_flags", &comm_);
     const auto &node_lists = this->GetNodeLists();
     iftensprodeval.ReInit(n_boxes());
     iftensprodeval.SetZero();
@@ -483,6 +492,7 @@ void DMKPtTree<Real, DIM>::compute_proxy_evaluation_flags() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_plane_wave_interaction_lists() {
+    sctl::Profile::Scoped profile("build_plane_wave_interaction_lists", &comm_);
     const auto &node_lists = this->GetNodeLists();
     nlistpw_.resize(n_boxes());
     listpw_.resize(n_boxes());
@@ -521,6 +531,7 @@ static std::array<int, DIM> compute_periodic_shift_from_slot(int k, Real bsize, 
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_direct_interaction_lists() {
+    sctl::Profile::Scoped profile("build_direct_interaction_lists", &comm_);
     const auto &node_mid = this->GetNodeMID();
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_lists = this->GetNodeLists();
@@ -593,6 +604,7 @@ void DMKPtTree<Real, DIM>::build_direct_interaction_lists() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_upward_pass_work_lists() {
+    sctl::Profile::Scoped profile("build_upward_pass_work_lists", &comm_);
     const auto &node_lists = this->GetNodeLists();
     has_proxy_from_children.ReInit(n_boxes());
     charge2proxy_groups.clear();
@@ -629,6 +641,7 @@ void DMKPtTree<Real, DIM>::build_upward_pass_work_lists() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
+    sctl::Profile::Scoped profile("allocate_proxy_coefficients", &comm_);
     const int n_coeffs_up = n_tables_up * sctl::pow<DIM>(expansion_constants.n_order);
     const int n_coeffs_down = n_tables_down * sctl::pow<DIM>(expansion_constants.n_order);
 
@@ -683,6 +696,7 @@ void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
+    sctl::Profile::Scoped profile("precompute_window_difference_data", &comm_);
     sctl::Vector<Real> kernel_ft;
 
     if (params.use_periodic) {
@@ -762,6 +776,7 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
 /// @tparam DIM Spatial dimension tree lives in
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_direct_work_lists() {
+    sctl::Profile::Scoped profile("build_direct_work_lists", &comm_);
     const auto &node_attr = this->GetNodeAttr();
 
     direct_work.clear();
@@ -790,6 +805,7 @@ void DMKPtTree<Real, DIM>::build_direct_work_lists() {
 /// @tparam DIM Spatial dimension tree lives in
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_evaluators() {
+    sctl::Profile::Scoped profile("build_evaluators", &comm_);
     try {
         auto src_eval = make_evaluator_aot<Real>(params.kernel, params.eval_src, DIM, n_digits, 3);
         auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.eval_trg, DIM, n_digits, 3);
