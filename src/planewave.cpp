@@ -173,6 +173,7 @@ void calc_planewave_translation_matrix(int nmax, T xmin, int npw, T hpw, sctl::V
     // across all plane wave modes, and store in per-block SoA layout:
     //   [real_0 ... real_{M-1} imag_0 ... imag_{M-1}]
     // where M = n_pw_modes
+#pragma omp parallel for schedule(static)
     for (int t = 0; t < n_translations; ++t) {
         T *block = reinterpret_cast<T *>(shift_vec.begin()) + t * n_pw_modes * 2;
         T *block_r = block;
