@@ -33,6 +33,8 @@ struct Config {
     int n_dim = 3;
     double fparam = 6.0;
     dmk_eval_path eval_path = DMK_EVAL_PATH_CPU;
+    bool bench_build = false;
+    bool bench_eval = true;
 };
 
 struct TimingResult {
@@ -260,6 +262,12 @@ double run_dmk(pdmk_tree tree, std::vector<Real> &pot, int n_src_per_rank, int k
     return ft - st;
 }
 
+void print_build_csv_header(std::ostream &os) { os << "build_time,build_pts_s,build_pts_s_rank,build_pts_s_thread"; }
+
+void print_build_csv_row(const TimingResult &t, std::ostream &os) {
+    os << t.elapsed << "," << t.pts_per_sec << "," << t.pts_per_sec_per_rank << "," << t.pts_per_sec_per_thread;
+}
+
 void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ostream &os) {
     const char *kernel_str = [&] {
         switch (cfg.kernel) {
@@ -290,7 +298,9 @@ void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ost
        << "# direct_enabled:       " << cfg.enable_direct << "\n"
        << "# n_direct:             " << cfg.n_direct << "\n"
        << "# log_level:            " << cfg.log_level << "\n"
-       << "# eval_path:            " << cfg.eval_path << "\n";
+       << "# eval_path:            " << cfg.eval_path << "\n"
+       << "# bench_build:          " << cfg.bench_build << "\n"
+       << "# bench_eval:           " << cfg.bench_eval << "\n";
 }
 
 void print_csv_header(std::ostream &os) {
@@ -356,13 +366,55 @@ void run_benchmark(const Config &cfg) {
     std::vector<Real> r_src, charges, normals;
     generate_and_scatter<Real>(n_dim, charge_dim, n_src, cfg.uniform, true, r_src, charges, normals, 0, rank, np);
 
-    pdmk_tree tree;
-    if constexpr (std::is_same_v<Real, float>)
-        tree =
-            pdmk_tree_createf(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), normals.data(), 0, nullptr);
-    else
-        tree =
-            pdmk_tree_create(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), normals.data(), 0, nullptr);
+    auto create_tree = [&]() -> pdmk_tree {
+        if constexpr (std::is_same_v<Real, float>)
+            return pdmk_tree_createf(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), normals.data(), 0,
+                                     nullptr);
+        else
+            return pdmk_tree_create(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), normals.data(), 0,
+                                    nullptr);
+    };
+
+    if (cfg.bench_build) {
+        if (rank == 0) {
+            print_csv_config_comment(cfg, np, n_threads, std::cout);
+            print_build_csv_header(std::cout);
+            std::cout << std::flush;
+        }
+        for (int run = 0; run < cfg.n_runs; ++run) {
+            sctl::Profile::reset();
+#ifdef DMK_HAVE_MPI
+            MPI_Barrier(MYCOMM);
+#endif
+            double st = omp_get_wtime();
+            pdmk_tree tree = create_tree();
+            double ft = omp_get_wtime();
+            pdmk_tree_destroy(tree);
+
+            TimingResult t = make_timing(ft - st, n_src, n_src_per_rank, n_threads);
+
+            if (run == 0) {
+                if (rank == 0)
+                    std::cout << ",";
+                pdmk_print_profile_data(MYCOMM, 'h');
+                if (rank == 0)
+                    std::cout << "\n";
+            }
+
+            if (rank == 0) {
+                print_build_csv_row(t, std::cout);
+                std::cout << ",";
+            }
+            pdmk_print_profile_data(MYCOMM, 'c');
+            if (rank == 0)
+                std::cout << "\n" << std::flush;
+        }
+    }
+
+    if (!cfg.bench_eval)
+        return;
+
+    pdmk_tree tree = create_tree();
 
     // Direct reference
     std::vector<Real> pot_direct;
@@ -383,7 +435,8 @@ void run_benchmark(const Config &cfg) {
 #endif
 
     if (rank == 0) {
-        print_csv_config_comment(cfg, np, n_threads, std::cout);
+        if (!cfg.bench_build)
+            print_csv_config_comment(cfg, np, n_threads, std::cout);
         print_csv_header(std::cout);
         std::cout << std::flush;
     }
@@ -431,6 +484,8 @@ Config parse_args(int argc, char *argv[]) {
     static struct option long_opts[] = {
         {"direct", no_argument, nullptr, 1001},
         {"no-direct", no_argument, nullptr, 1002},
+        {"bench-build", no_argument, nullptr, 1003},
+        {"no-bench-eval", no_argument, nullptr, 1004},
         {nullptr, 0, nullptr, 0},
     };
 
@@ -477,12 +532,6 @@ Config parse_args(int argc, char *argv[]) {
         case 'u':
             cfg.uniform = true;
             break;
-        case 1001:
-            cfg.enable_direct = true;
-            break;
-        case 1002:
-            cfg.enable_direct = false;
-            break;
         case 'p':
             if (optarg[0] == 'b')
                 cfg.eval_path = DMK_EVAL_PATH_BOTH;
@@ -494,25 +543,38 @@ Config parse_args(int argc, char *argv[]) {
                 std::cerr << "Unknown eval_path: " << optarg << "\n";
                 exit(1);
             }
+        case 1001:
+            cfg.enable_direct = true;
+            break;
+        case 1002:
+            cfg.enable_direct = false;
+            break;
+        case 1003:
+            cfg.bench_build = true;
+            break;
+        case 1004:
+            cfg.bench_eval = false;
             break;
         case 'h':
         case '?':
         default:
             std::cout << "Usage: " << argv[0] << "\n"
-                      << "  -N n_src           Number of source points\n"
-                      << "  -n n_per_leaf      DMK leaf size\n"
-                      << "  -e eps             Tolerance\n"
-                      << "  -t f|d             Precision\n"
-                      << "  -k kernel          laplace, sqrt_laplace, yukawa, stokeslet, stresslet\n"
-                      << "  -d dim             2 or 3\n"
-                      << "  -f fparam          Yukawa parameter (default: 6.0)\n"
-                      << "  -r n_runs          Benchmark iterations\n"
-                      << "  -D n_direct        Points for direct comparison\n"
-                      << "  -l log_level       DMK log verbosity\n"
-                      << "  -p                 Evaluation path (c)pu, (g)pu, or (b)oth\n"
-                      << "  -u                 Uniform distribution\n"
-                      << "  --direct/--no-direct  Enable/disable reference\n"
-                      << "  -h                 Help\n";
+                      << "  -N n_src              Number of source points\n"
+                      << "  -n n_per_leaf         DMK leaf size\n"
+                      << "  -e eps                Tolerance\n"
+                      << "  -t f|d                Precision\n"
+                      << "  -k kernel             laplace, sqrt_laplace, yukawa, stokeslet, stresslet\n"
+                      << "  -d dim                2 or 3\n"
+                      << "  -f fparam             Yukawa parameter (default: 6.0)\n"
+                      << "  -r n_runs             Benchmark iterations\n"
+                      << "  -D n_direct           Points for direct comparison\n"
+                      << "  -l log_level          DMK log verbosity\n"
+                      << "  -u                    Uniform distribution\n"
+                      << "  --direct/--no-direct  Enable/disable direct reference\n"
+                      << "  -p                    Evaluation path (c)pu, (g)pu, or (b)oth\n"
+                      << "  --bench-build         Also benchmark tree build time\n"
+                      << "  --no-bench-eval       Skip eval benchmark (build only)\n"
+                      << "  -h                    Help\n";
             exit(0);
         }
     }
