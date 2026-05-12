@@ -301,7 +301,7 @@ struct StokesletPolyEvaluator3DCuda {
                 Real val = foffd * dX[j] * dX[i];
                 if (i == j)
                     val += fdiag;
-                u[i][j] = in_range ? val : Real{0};
+                u[i][j] = val;
             }
     }
 };
