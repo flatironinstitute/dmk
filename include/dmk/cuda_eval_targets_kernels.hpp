@@ -40,6 +40,9 @@ template <typename Real>
 void launch_eval_targets_dispatch(int dim, int eval_level, int n_charge_dim, const EvalTargetsArgs<Real> &args,
                                   cudaStream_t stream);
 
+template <typename Real>
+void launch_inplace_accumulate(Real *dst, const Real *src, std::size_t n, cudaStream_t stream);
+
 } // namespace dmk::cuda
 
 #endif // DMK_CUDA_EVAL_TARGETS_KERNELS_HPP

@@ -31,7 +31,6 @@ typedef enum : int {
 typedef enum : int {
     DMK_EVAL_PATH_CPU = 0,
     DMK_EVAL_PATH_GPU = 1,
-    DMK_EVAL_PATH_BOTH = 2,
 } dmk_eval_path;
 
 typedef enum : int {
@@ -80,7 +79,7 @@ typedef struct pdmk_params {
     int log_level = 6;                           // 0: trace, 1: debug, 2: info, 3: warn, 4: err, 5: critical, 6: off
     uint32_t debug_flags = 0;                    // Debug params bit field, see above
     double debug_params[8] = {0};                // 0: beta, 1: order, rest: placeholders
-    dmk_eval_path eval_path = DMK_EVAL_PATH_CPU; // CPU / GPU / BOTH
+    dmk_eval_path eval_path = DMK_EVAL_PATH_CPU; // CPU / GPU
 } pdmk_params;
 
 #ifdef __cplusplus

@@ -200,30 +200,39 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
 }
 
 template <typename Real, int DIM>
-void CudaEvalTargetsContext<Real, DIM>::merge_into_host() {
+void CudaEvalTargetsContext<Real, DIM>::finalize_gpu_only(Real *d_extra_src, Real *d_extra_trg) {
     auto &t = pimpl_->tree;
     auto &shared = pimpl_->shared;
     auto &im = *pimpl_;
 
-    if (!im.launched)
+    // Caller already called CudaDirectContext::sync() (cudaDeviceSynchronize),
+    // so both direct and eval kernels are complete. If eval was not launched
+    // (n_eval_boxes == 0), skip straight to downloading only the direct result.
+    if (!im.launched) {
+        if (shared.pot_src_size && d_extra_src)
+            DMK_CHECK_CUDA(cudaMemcpy(&t.pot_src_sorted[0], d_extra_src, shared.pot_src_size * sizeof(Real),
+                                      cudaMemcpyDeviceToHost));
+        if (shared.pot_trg_size && d_extra_trg)
+            DMK_CHECK_CUDA(cudaMemcpy(&t.pot_trg_sorted[0], d_extra_trg, shared.pot_trg_size * sizeof(Real),
+                                      cudaMemcpyDeviceToHost));
         return;
+    }
+
+    // Sum the direct device buffers into the eval buffers in-place on GPU,
+    // then copy the combined result straight to host — no temps, no CPU loops.
+    if (shared.pot_src_size && d_extra_src)
+        cuda::launch_inplace_accumulate(im.d_pot_src_eval, d_extra_src, shared.pot_src_size, im.stream);
+    if (shared.pot_trg_size && d_extra_trg)
+        cuda::launch_inplace_accumulate(im.d_pot_trg_eval, d_extra_trg, shared.pot_trg_size, im.stream);
 
     DMK_CHECK_CUDA(cudaStreamSynchronize(im.stream));
 
-    if (shared.pot_src_size) {
-        std::vector<Real> tmp(shared.pot_src_size);
-        DMK_CHECK_CUDA(
-            cudaMemcpy(tmp.data(), im.d_pot_src_eval, shared.pot_src_size * sizeof(Real), cudaMemcpyDeviceToHost));
-        for (std::size_t i = 0; i < shared.pot_src_size; ++i)
-            t.pot_src_sorted[i] += tmp[i];
-    }
-    if (shared.pot_trg_size) {
-        std::vector<Real> tmp(shared.pot_trg_size);
-        DMK_CHECK_CUDA(
-            cudaMemcpy(tmp.data(), im.d_pot_trg_eval, shared.pot_trg_size * sizeof(Real), cudaMemcpyDeviceToHost));
-        for (std::size_t i = 0; i < shared.pot_trg_size; ++i)
-            t.pot_trg_sorted[i] += tmp[i];
-    }
+    if (shared.pot_src_size)
+        DMK_CHECK_CUDA(cudaMemcpy(&t.pot_src_sorted[0], im.d_pot_src_eval, shared.pot_src_size * sizeof(Real),
+                                  cudaMemcpyDeviceToHost));
+    if (shared.pot_trg_size)
+        DMK_CHECK_CUDA(cudaMemcpy(&t.pot_trg_sorted[0], im.d_pot_trg_eval, shared.pot_trg_size * sizeof(Real),
+                                  cudaMemcpyDeviceToHost));
 }
 
 template class CudaEvalTargetsContext<float, 2>;

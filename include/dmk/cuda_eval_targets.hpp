@@ -12,8 +12,9 @@
 //   3. End of downward_pass(): launch() uploads proxy_coeffs_downward,
 //      allocates+zeros d_pot_*_eval, and queues the kernel on the
 //      eval_targets stream.
-//   4. merge_into_host(): syncs, downloads d_pot_*_eval, accumulates into
-//      tree.pot_*_sorted alongside the direct context's contribution.
+//   4. finalize_gpu_only(d_extra_src, d_extra_trg): Accumulates the direct device buffers into
+//      d_pot_*_eval in-place on GPU, then copies the combined result directly
+//      to tree.pot_*_sorted — no temporaries, no CPU accumulation.
 //
 // Bootstrap scope: Laplace 3D, EVAL_LEVEL=1, n_charge_dim=1.
 
@@ -38,9 +39,9 @@ class CudaEvalTargetsContext {
     /// Upload proxy_coeffs_downward, allocate output buffers, queue kernel.
     void launch();
 
-    /// Synchronize, copy device pot buffers back, accumulate into the
-    /// tree's host pot_*_sorted arrays.
-    void merge_into_host();
+    /// Accumulate d_extra_{src,trg} into d_pot_*_eval on GPU, then copy the
+    /// combined result directly to tree.pot_*_sorted
+    void finalize_gpu_only(Real *d_extra_src, Real *d_extra_trg);
 
   private:
     struct Impl;
