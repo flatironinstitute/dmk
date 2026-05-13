@@ -456,6 +456,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level root pw_out must be ze
     std::fill(poisoned_tree.pw_out.begin(), poisoned_tree.pw_out.end(), poison);
 
     poisoned_tree.form_outgoing_expansions();
+    poisoned_tree.correct_for_self_interactions();
 
     const int n_pw = poisoned_tree.expansion_constants.n_pw_diff;
     const int n_order = poisoned_tree.expansion_constants.n_order;
