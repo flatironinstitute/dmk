@@ -259,7 +259,7 @@ __global__ void Charge2ProxyByGroup3DKernel(Charge2ProxyArgs<Real> a,
     constexpr int DIM = 3;
 
     const int N = TILE_I;
-    const int NC = 3;
+    const int NC = a.n_charge_dim;
     const int N2 = N * N;
     const int N3 = N2 * N;
 
@@ -488,7 +488,7 @@ inline void launch_charge2proxy_3d_gemm_micro_ktile_impl(
     constexpr int block_size = 256;
     constexpr int CHUNK = 128;
     constexpr int LD = CHUNK + 1;
-    constexpr int NC = 3;
+    const int NC = args.n_charge_dim;
 
     const std::size_t shared_bytes = (static_cast<std::size_t>(3) * N_ORDER * LD + static_cast<std::size_t>(NC) * LD) * sizeof(Real);
 
