@@ -61,7 +61,7 @@ __global__ void Charge2ProxyByGroup3DKernel_GemmMicroKTile(
     constexpr int DIM = 3;
 
     constexpr int N  = N_ORDER;
-    constexpr int NC = 3; // NEED FIX LATER
+    const int NC = a.n_charge_dim;
     constexpr int N2 = N * N;
     constexpr int N3 = N2 * N;
 
@@ -69,7 +69,7 @@ __global__ void Charge2ProxyByGroup3DKernel_GemmMicroKTile(
     constexpr int J_TILES = (N + J_TILE - 1) / J_TILE;
     constexpr int K_TILES = (N + K_TILE - 1) / K_TILE;
 
-    constexpr int NTILES = I_TILES * J_TILES * K_TILES * NC;
+    const int NTILES = I_TILES * J_TILES * K_TILES * NC;
 
     extern __shared__ unsigned char shared_raw[];
 
@@ -527,8 +527,22 @@ inline void launch_charge2proxy_3d(
         >(args, group_perm, n_launch_groups, stream);                         \
         break
 
-    switch (args.n_order) {
-        DISPATCH_N_ORDER(18);
+    switch (args.n_order) {        
+        DISPATCH_N_ORDER(5);
+        DISPATCH_N_ORDER(6);
+        DISPATCH_N_ORDER(7);
+        DISPATCH_N_ORDER(8);
+        DISPATCH_N_ORDER(9);
+        DISPATCH_N_ORDER(10);
+        DISPATCH_N_ORDER(11);
+        DISPATCH_N_ORDER(12);
+        DISPATCH_N_ORDER(13);
+        DISPATCH_N_ORDER(14);
+        DISPATCH_N_ORDER(15);
+        DISPATCH_N_ORDER(16);
+        DISPATCH_N_ORDER(17);
+        DISPATCH_N_ORDER(18);   
+        DISPATCH_N_ORDER(19);
 
         default:
             throw std::runtime_error(
