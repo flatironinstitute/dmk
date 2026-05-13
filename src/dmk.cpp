@@ -17,9 +17,9 @@
 #include <dmk/util.hpp>
 #include <sctl.hpp>
 
+#include <dmk/nvtx_wrapper.h>
 #include <dmk/omp_wrapper.hpp>
 #include <dmk/testing.hpp>
-#include <nvtx3/nvToolsExt.h>
 
 using pdmk_tree_impl =
     std::variant<std::unique_ptr<dmk::DMKPtTree<float, 2>>, std::unique_ptr<dmk::DMKPtTree<float, 3>>,

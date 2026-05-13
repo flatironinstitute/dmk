@@ -69,6 +69,10 @@ struct CudaEvalTargetsContext<Real, DIM>::Impl {
     Real *d_pot_src_eval = nullptr;
     Real *d_pot_trg_eval = nullptr;
 
+    Real *d_self_correction_work = nullptr;
+    int n_input_dim = 0;
+    int pot_stride = 0;
+
     cudaStream_t stream = nullptr;
     int n_eval_boxes = 0;
     int n_order = 0;
@@ -114,6 +118,11 @@ struct CudaEvalTargetsContext<Real, DIM>::Impl {
 
         d_pot_src_eval = device_alloc<Real>(shared.pot_src_size);
         d_pot_trg_eval = device_alloc<Real>(shared.pot_trg_size);
+
+        n_input_dim = tree.kernel_input_dim;
+        pot_stride = tree.kernel_output_dim_src;
+        if (!tree.self_correction_work.empty())
+            d_self_correction_work = device_upload(tree.self_correction_work.data(), tree.self_correction_work.size());
     }
 
     ~Impl() {
@@ -122,6 +131,7 @@ struct CudaEvalTargetsContext<Real, DIM>::Impl {
         device_free(d_sc_per_level);
         device_free(d_pot_src_eval);
         device_free(d_pot_trg_eval);
+        device_free(d_self_correction_work);
         if (stream)
             cudaStreamDestroy(stream);
     }
@@ -224,6 +234,22 @@ void CudaEvalTargetsContext<Real, DIM>::finalize_gpu_only(Real *d_extra_src, Rea
         cuda::launch_inplace_accumulate(im.d_pot_src_eval, d_extra_src, shared.pot_src_size, im.stream);
     if (shared.pot_trg_size && d_extra_trg)
         cuda::launch_inplace_accumulate(im.d_pot_trg_eval, d_extra_trg, shared.pot_trg_size, im.stream);
+
+    if (im.d_self_correction_work && shared.pot_src_size) {
+        cuda::SelfCorrectionArgs<Real> sc_args;
+        sc_args.direct_work = shared.d_direct_work;
+        sc_args.correction_factors = im.d_self_correction_work;
+        sc_args.src_counts_owned = shared.d_src_counts_owned;
+        sc_args.src_counts_halo = shared.d_src_counts_halo;
+        sc_args.charge_halo = shared.d_charge_halo;
+        sc_args.charge_halo_offsets = shared.d_charge_halo_offsets;
+        sc_args.pot_src = im.d_pot_src_eval;
+        sc_args.pot_src_offsets = shared.d_pot_src_offsets;
+        sc_args.n_direct_work = shared.n_direct_work;
+        sc_args.n_input_dim = im.n_input_dim;
+        sc_args.pot_stride = im.pot_stride;
+        cuda::launch_self_correction(sc_args, im.stream);
+    }
 
     DMK_CHECK_CUDA(cudaStreamSynchronize(im.stream));
 

@@ -1,6 +1,7 @@
 // GPU form_outgoing_expansions: per-box proxy2pw + multiply_kernelFT, then
 // windowed root proxy2pw + multiply_kernelFT + pw_to_proxy.
 
+#include <cuda_runtime.h>
 #include <dmk/cuda_form_outgoing.hpp>
 #include <dmk/cuda_helpers.hpp>
 #include <dmk/cuda_multiply_kernelft_kernels.hpp>
@@ -8,12 +9,10 @@
 #include <dmk/cuda_pw_to_proxy_kernels.hpp>
 #include <dmk/cuda_shared_state.hpp>
 #include <dmk/fourier_data.hpp>
+#include <dmk/nvtx_wrapper.h>
 #include <dmk/tree.hpp>
-#include <nvtx3/nvToolsExt.h>
-#include <cuda_runtime.h>
-#include <algorithm>
-#include <vector>
 #include <stdexcept>
+#include <vector>
 
 namespace dmk {
 
@@ -86,10 +85,7 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
             pa_h.push_back(pa);
         }
 
-        cuda::launch_proxy2pw_multilevel_dispatch<Real>(
-            DIM,
-            pa_h,
-            s.downward_stream);
+        cuda::launch_proxy2pw_multilevel_dispatch<Real>(DIM, pa_h, s.downward_stream);
     }
     for (int L = 0; L < n_levels; ++L) {
         const int n_box = s.pw_form_box_count_h[L];
@@ -114,10 +110,7 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
             pa.dst_offsets = nullptr;
             pa.dst_stride_complex = s.pw_form_stride_reals / 2;
 
-            cuda::launch_proxy2pw_dispatch<Real>(
-                DIM,
-                pa,
-                s.downward_stream);
+            cuda::launch_proxy2pw_dispatch<Real>(DIM, pa, s.downward_stream);
         }
 
         // Multiply by radialft (kernel-specific formula).

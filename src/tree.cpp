@@ -22,8 +22,8 @@
 #include <sctl/profile.hpp>
 #include <unistd.h>
 
+#include <dmk/nvtx_wrapper.h>
 #include <dmk/omp_wrapper.hpp>
-#include <nvtx3/nvToolsExt.h>
 
 namespace dmk {
 
@@ -945,13 +945,27 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
 }
 
 template <typename Real, int DIM>
-void DMKPtTree<Real, DIM>::compute_self_interaction_constants() {
-    self_interaction_constants.resize(n_levels() + 1);
-    // Fill for n_levels+1, note boxsize is already n_levels+1 in size
-#pragma omp parallel for schedule(dynamic)
-    for (int i_level = 0; i_level < n_levels() + 1; ++i_level)
-        self_interaction_constants[i_level] =
-            get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
+void DMKPtTree<Real, DIM>::build_self_correction_work_list() {
+    const auto &node_mid = this->GetNodeMID();
+    const int n_lvl = n_levels() + 1;
+    std::vector<Real> w0(n_lvl);
+    for (int i = 0; i < n_lvl; ++i)
+        w0[i] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i, boxsize[i]);
+
+    self_correction_work.resize(direct_work.size());
+#pragma omp parallel for schedule(static)
+    for (int idx = 0; idx < direct_work.size(); ++idx) {
+        const int box = direct_work[idx];
+        if (params.kernel == DMK_STRESSLET) {
+            self_correction_work[idx] = Real{0};
+            continue;
+        }
+        const int depth = node_mid[box].Depth();
+        if (params.kernel == DMK_STOKESLET)
+            self_correction_work[idx] = ifpwexp[box] ? 2 * w0[depth] : w0[depth];
+        else
+            self_correction_work[idx] = w0[depth + ifpwexp[box]];
+    }
 }
 
 /// @brief Build any bookkeeping data associated with the tree
@@ -982,7 +996,7 @@ void DMKPtTree<Real, DIM>::generate_metadata() {
                                      expansion_constants.n_pw_diff, params.fparam, expansion_constants.beta, boxsize);
     precompute_window_difference_data();
     build_evaluators();
-    compute_self_interaction_constants();
+    build_self_correction_work_list();
 
     logger->debug("done generating tree traversal metadata and other constants");
 }
@@ -1401,36 +1415,22 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::correct_for_self_interactions() {
     sctl::Profile::Scoped profile("correct_for_self");
-    const auto &w0 = self_interaction_constants;
-    const auto &node_mid = this->GetNodeMID();
 
 #pragma omp for schedule(dynamic)
     for (int idx = 0; idx < direct_work.size(); ++idx) {
+        const Real correction_factor = self_correction_work[idx];
+        if (correction_factor == Real{0})
+            continue;
         const int trg_box = direct_work[idx];
-        const int trg_level = node_mid[trg_box].Depth();
-
         if (!src_counts_owned[trg_box])
             continue;
-
-        if (params.kernel == DMK_STRESSLET)
-            continue;
-
-        // Correct for self-evaluations
-        auto pot = pot_src_view(trg_box);
-        auto charge = charge_with_halo_view(trg_box);
-        const auto correction_factor = [&]() -> Real {
-            if (params.kernel == DMK_STOKESLET) {
-                const auto depth = node_mid[trg_box].Depth();
-                return ifpwexp[trg_box] ? 2 * w0[depth] : w0[depth];
-            }
-            const auto depth = node_mid[trg_box].Depth() + ifpwexp[trg_box];
-            return w0[depth];
-        }();
 
         // FIXME: This needs to deal with correction factors where
         // kernel_input_dim != kernel_output_dim (like grad, which
         // needs only a correction factor on the potential, not
         // the gradient. That's why kernel_input_dim here works)
+        auto pot = pot_src_view(trg_box);
+        auto charge = charge_with_halo_view(trg_box);
         for (int i_src = 0; i_src < r_src_cnt_with_halo[trg_box]; ++i_src)
             for (int i = 0; i < kernel_input_dim; ++i)
                 pot(i, i_src) -= correction_factor * charge(i, i_src);
@@ -1620,9 +1620,6 @@ void DMKPtTree<Real, DIM>::downward_pass() {
     sctl::Profile::Tic("downward_pass_init", &comm_);
     logger->info("downward pass started");
 
-    pot_src_sorted.SetZero();
-    pot_trg_sorted.SetZero();
-
     init_planewave_data();
     sctl::Profile::Toc();
 
@@ -1640,12 +1637,15 @@ void DMKPtTree<Real, DIM>::downward_pass() {
     }
 #endif
 
-    if (run_cpu)
-        cpu_downward_pass();
+    if (run_cpu) {
+        pot_src_sorted.SetZero();
+        pot_trg_sorted.SetZero();
 
-    // Self-correction operates on the host pot — applies to whatever path
-    // wrote it last (CPU result in CPU/BOTH, downloaded GPU result in GPU).
-    correct_for_self_interactions();
+        cpu_downward_pass();
+    }
+
+    if (run_cpu)
+        correct_for_self_interactions();
 
 #ifdef DMK_GPU_OFFLOAD
     // GPU dump (into "gpu/") must run before teardown so the device buffers
@@ -1684,11 +1684,17 @@ void DMKPtTree<Real, DIM>::gpu_downward_pass() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::cpu_downward_pass() {
+    sctl::Profile::Tic("downward_pass_init", &comm_);
+
+    pot_src_sorted.SetZero();
+    pot_trg_sorted.SetZero();
+
+    init_planewave_data();
+    sctl::Profile::Toc();
+
     sctl::Profile::Tic("expansion_propagation_and_eval", &comm_);
     std::fill(proxy_down_zeroed.begin(), proxy_down_zeroed.end(), 0);
-
     form_outgoing_expansions();
-
     if (!debug_omit_pw) {
         const int n_pw = expansion_constants.n_pw_diff;
         for (int i_level = 0; i_level < n_levels(); ++i_level) {

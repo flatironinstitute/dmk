@@ -1,19 +1,19 @@
 // Per-level downward GPU orchestration. Issues shift_pw, pw_to_proxy, and
 // tensorprod kernels on the shared state's downward stream.
 
+#include <cuda_runtime.h>
 #include <dmk/cuda_downward.hpp>
+#include <dmk/cuda_helpers.hpp>
 #include <dmk/cuda_pw_to_proxy_kernels.hpp>
 #include <dmk/cuda_shared_state.hpp>
 #include <dmk/cuda_shift_pw_kernels.hpp>
 #include <dmk/cuda_tensorprod_kernels.hpp>
 #include <dmk/fourier_data.hpp>
+#include <dmk/nvtx_wrapper.h>
 #include <dmk/tree.hpp>
-#include <nvtx3/nvToolsExt.h>
-#include <cuda_runtime.h>
-#include <algorithm>
-#include <vector>
 #include <stdexcept>
-#include <dmk/cuda_helpers.hpp>
+#include <vector>
+
 namespace dmk {
 
 template <typename Real, int DIM>
@@ -51,8 +51,7 @@ void CudaDownwardContext<Real, DIM>::run() {
 
         pw_in_pool_base_reals[level] = total_pw_in_pool_reals;
 
-        total_pw_in_pool_reals +=
-            (long)n_pw_eval * s.pw_in_stride_reals;
+        total_pw_in_pool_reals += (long)n_pw_eval * s.pw_in_stride_reals;
     }
 
     Real *d_pw_in_pool_all = nullptr;
@@ -60,10 +59,7 @@ void CudaDownwardContext<Real, DIM>::run() {
     if (total_pw_in_pool_reals > 0) {
         void *tmp = nullptr;
 
-        DMK_CHECK_CUDA(cudaMallocAsync(
-            &tmp,
-            total_pw_in_pool_reals * sizeof(Real),
-            s.downward_stream));
+        DMK_CHECK_CUDA(cudaMallocAsync(&tmp, total_pw_in_pool_reals * sizeof(Real), s.downward_stream));
 
         d_pw_in_pool_all = static_cast<Real *>(tmp);
 
@@ -112,25 +108,17 @@ void CudaDownwardContext<Real, DIM>::run() {
 
         if (!shift_args_h.empty()) {
             nvtxRangePush("shift_pw: multilevel");
-            cuda::launch_shift_pw_multilevel_dispatch<Real>(
-                DIM,
-                shift_args_h,
-                s.downward_stream);
+            cuda::launch_shift_pw_multilevel_dispatch<Real>(DIM, shift_args_h, s.downward_stream);
             nvtxRangePop();
         }
 
         if (!pw_to_proxy_args_h.empty()) {
             nvtxRangePush("pw_to_proxy: multilevel");
-            cuda::launch_pw_to_proxy_multilevel_dispatch<Real>(
-                DIM,
-                pw_to_proxy_args_h,
-                s.downward_stream);
+            cuda::launch_pw_to_proxy_multilevel_dispatch<Real>(DIM, pw_to_proxy_args_h, s.downward_stream);
             nvtxRangePop();
         }
 
-        DMK_CHECK_CUDA(cudaFreeAsync(
-            d_pw_in_pool_all,
-            s.downward_stream));
+        DMK_CHECK_CUDA(cudaFreeAsync(d_pw_in_pool_all, s.downward_stream));
     }
 
     // 3. tensorprod level by level
@@ -159,10 +147,7 @@ void CudaDownwardContext<Real, DIM>::run() {
         ta.scratch = s.d_tensorprod_scratch;
         ta.scratch_stride = s.tensorprod_scratch_stride_reals;
 
-        cuda::launch_tensorprod_dispatch<Real>(
-            DIM,
-            ta,
-            s.downward_stream);
+        cuda::launch_tensorprod_dispatch<Real>(DIM, ta, s.downward_stream);
 
         nvtxRangePop();
     }

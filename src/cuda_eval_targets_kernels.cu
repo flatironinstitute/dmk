@@ -70,4 +70,38 @@ void launch_inplace_accumulate(Real* dst, const Real* src, std::size_t n, cudaSt
 template void launch_inplace_accumulate<float>(float*, const float*, std::size_t, cudaStream_t);
 template void launch_inplace_accumulate<double>(double*, const double*, std::size_t, cudaStream_t);
 
+template <typename Real>
+__global__ void self_correction_kernel(SelfCorrectionArgs<Real> a) {
+    int idx = blockIdx.x;
+    if (idx >= a.n_direct_work)
+        return;
+
+    Real factor = a.correction_factors[idx];
+    if (factor == Real{0})
+        return;
+
+    int box = a.direct_work[idx];
+    if (!a.src_counts_owned[box])
+        return;
+
+    int count = a.src_counts_halo[box];
+    long pot_off = a.pot_src_offsets[box];
+    long chg_off = a.charge_halo_offsets[box];
+
+    for (int i_src = threadIdx.x; i_src < count; i_src += blockDim.x)
+        for (int i = 0; i < a.n_input_dim; i++)
+            a.pot_src[pot_off + i_src * a.pot_stride + i] -= factor * a.charge_halo[chg_off + i_src * a.n_input_dim + i];
+}
+
+template <typename Real>
+void launch_self_correction(const SelfCorrectionArgs<Real> &args, cudaStream_t stream) {
+    if (args.n_direct_work == 0)
+        return;
+    constexpr int block = 128;
+    self_correction_kernel<<<args.n_direct_work, block, 0, stream>>>(args);
+}
+
+template void launch_self_correction<float>(const SelfCorrectionArgs<float> &, cudaStream_t);
+template void launch_self_correction<double>(const SelfCorrectionArgs<double> &, cudaStream_t);
+
 } // namespace dmk::cuda
