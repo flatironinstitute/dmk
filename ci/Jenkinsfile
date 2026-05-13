@@ -5,7 +5,7 @@ properties([
 
 try {
   timeout(time: 1, unit: 'HOURS') {
-    buildPod(dockerfile: 'ci/Dockerfile') {
+    buildPod(context: 'ci') {
       stage('main') {
         withEnv([
           "HOME=${WORKSPACE}",
@@ -16,8 +16,8 @@ try {
           sh 'which mpicxx'
           sh 'git submodule update --init --recursive'
           sh 'cmake -B build . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/build/install -DCMAKE_CXX_COMPILER=g++'
-          sh 'cd build && make -j4'
-          sh 'mpirun ./build/test/test_all'
+          sh 'cd build && make -j$PARALLEL'
+          sh 'mpirun -n 2 --bind-to none ./build/test/test_all -nc'
         }
       }
     }
