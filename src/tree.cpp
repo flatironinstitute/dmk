@@ -22,8 +22,8 @@
 #include <sctl/profile.hpp>
 #include <unistd.h>
 
+#include <dmk/nvtx_wrapper.h>
 #include <dmk/omp_wrapper.hpp>
-#include <nvtx3/nvToolsExt.h>
 
 namespace dmk {
 
