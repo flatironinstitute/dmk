@@ -1,4 +1,3 @@
-#include "dmk/util.hpp"
 #include <algorithm>
 #include <complex>
 #include <cstdio>
@@ -12,7 +11,14 @@
 #include <dmk/tensorprod.hpp>
 #include <dmk/testing.hpp>
 #include <dmk/tree.hpp>
+#include <dmk/util.hpp>
+
 #include <sctl.hpp>
+
+#define VERBOSE_MESSAGE(...)                                                                                           \
+    if (std::getenv("DMK_TEST_VERBOSE")) {                                                                             \
+        MESSAGE(__VA_ARGS__);                                                                                          \
+    }
 
 TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC direct verification", 1) {
     constexpr int n_dim = 3;
@@ -165,8 +171,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC direct verification", 1) {
                 ref2 += sctl::pow<2>(ref_pot[i]);
             }
             const double l2_err = (ref2 > 0) ? std::sqrt(err2 / ref2) : std::sqrt(err2);
-            MESSAGE("n_digits=", pc.n_digits, " eps=", pc.eps, " l2_err=", l2_err, " n_levels=", tree.n_levels(),
-                    " n_boxes=", tree.n_boxes());
+            VERBOSE_MESSAGE("n_digits=", pc.n_digits, " eps=", pc.eps, " l2_err=", l2_err,
+                            " n_levels=", tree.n_levels(), " n_boxes=", tree.n_boxes());
             const double tol = (pc.n_digits <= 3) ? 1e-3 : 1e-6;
             CHECK(l2_err < tol);
         }
@@ -323,8 +329,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC asymmetric-depth shift", 1) {
         min_level = std::min(min_level, t.level);
         max_level = std::max(max_level, t.level);
     }
-    MESSAGE("non-uniform tree: min_leaf_level=", min_level, " max_leaf_level=", max_level,
-            " n_levels=", tree.n_levels(), " n_boxes=", tree.n_boxes());
+    VERBOSE_MESSAGE("non-uniform tree: min_leaf_level=", min_level, " max_leaf_level=", max_level,
+                    " n_levels=", tree.n_levels(), " n_boxes=", tree.n_boxes());
     REQUIRE(max_level > min_level); // if this fails, tune cluster/filler to force asymmetry
 
     std::vector<double> ref_pot(targets.size(), 0.0);
@@ -365,7 +371,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC asymmetric-depth shift", 1) {
         max_abs_err = std::max(max_abs_err, std::abs(diff));
     }
     const double l2_err = (ref2 > 0) ? std::sqrt(err2 / ref2) : std::sqrt(err2);
-    MESSAGE("asymmetric-depth PBC: l2_err=", l2_err, " max_abs_err=", max_abs_err);
+    VERBOSE_MESSAGE("asymmetric-depth PBC: l2_err=", l2_err, " max_abs_err=", max_abs_err);
     CHECK(l2_err < 1e-5);
 }
 
@@ -456,6 +462,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level root pw_out must be ze
     std::fill(poisoned_tree.pw_out.begin(), poisoned_tree.pw_out.end(), poison);
 
     poisoned_tree.form_outgoing_expansions();
+    poisoned_tree.correct_for_self_interactions();
 
     const int n_pw = poisoned_tree.expansion_constants.n_pw_diff;
     const int n_order = poisoned_tree.expansion_constants.n_order;
@@ -473,7 +480,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level root pw_out must be ze
     for (int i = 0; i < poisoned_tree.pot_src_sorted.Dim(); ++i)
         max_src_diff = std::max(max_src_diff, std::abs(poisoned_tree.pot_src_sorted[i] - clean_tree.pot_src_sorted[i]));
 
-    MESSAGE("single-level periodic root sensitivity: max_src_diff=", max_src_diff, " max_trg_diff=", max_trg_diff);
+    VERBOSE_MESSAGE("single-level periodic root sensitivity: max_src_diff=", max_src_diff,
+                    " max_trg_diff=", max_trg_diff);
     CHECK(max_src_diff == doctest::Approx(0.0).epsilon(1e-12));
     CHECK(max_trg_diff == doctest::Approx(0.0).epsilon(1e-12));
 }
@@ -690,14 +698,14 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
                 const double l2_pot_src = safe_l2(err2_pot_src, ref2_pot_src);
                 const double l2_pot_trg = safe_l2(err2_pot_trg, ref2_pot_trg);
 
-                MESSAGE("PBC pipeline: ", label, " pot_src=", l2_pot_src, " pot_trg=", l2_pot_trg);
+                VERBOSE_MESSAGE("PBC pipeline: ", label, " pot_src=", l2_pot_src, " pot_trg=", l2_pot_trg);
                 CHECK(l2_pot_src < pc.tol_pot);
                 CHECK(l2_pot_trg < pc.tol_pot);
 
                 if (with_grad) {
                     const double l2_grad_src = safe_l2(err2_grad_src, ref2_grad_src);
                     const double l2_grad_trg = safe_l2(err2_grad_trg, ref2_grad_trg);
-                    MESSAGE("  grad_src=", l2_grad_src, " grad_trg=", l2_grad_trg);
+                    VERBOSE_MESSAGE("  grad_src=", l2_grad_src, " grad_trg=", l2_grad_trg);
                     CHECK(l2_grad_src < pc.tol_grad);
                     CHECK(l2_grad_trg < pc.tol_grad);
                 }

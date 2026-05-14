@@ -4,6 +4,7 @@
 #include <cmath>
 #include <complex>
 #include <dmk.h>
+#include <dmk/fourier_data.hpp>
 #include <dmk/logger.h>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
@@ -23,8 +24,6 @@
 #endif
 
 namespace dmk {
-template <typename T>
-struct FourierData;
 
 template <int DIM>
 struct ExpansionConstants {
