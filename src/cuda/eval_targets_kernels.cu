@@ -76,6 +76,26 @@ __device__ inline void chebyshev_fill_dev_with_deriv(Real (&T)[N], Real (&dT)[N]
     }
 }
 
+// One step of the streamed Chebyshev recurrence with derivative
+template <typename Real>
+__device__ __forceinline__ void cheby_step(int j, Real x, Real two_x, Real &Tprev2, Real &Tprev1, Real &dTprev2,
+                                           Real &dTprev1, Real &Tj, Real &dTj) {
+    if (j == 0) {
+        Tj = Real{1};
+        dTj = Real{0};
+    } else if (j == 1) {
+        Tj = x;
+        dTj = Real{1};
+    } else {
+        Tj = two_x * Tprev1 - Tprev2;
+        dTj = Real{2} * Tprev1 + two_x * dTprev1 - dTprev2;
+    }
+    Tprev2 = Tprev1;
+    Tprev1 = Tj;
+    dTprev2 = dTprev1;
+    dTprev1 = dTj;
+}
+
 template <typename Real, int DIM, int EVAL_LEVEL, int N_CHARGE_DIM, int N_ORDER>
 __global__ void EvalTargetsByBoxKernel(EvalTargetsArgs<Real> a) {
     static_assert(DIM == 2 || DIM == 3, "DIM must be 2 or 3");
@@ -130,29 +150,13 @@ __global__ void EvalTargetsByBoxKernel(EvalTargetsArgs<Real> a) {
             Real acc_gz = Real{0};
 
             if constexpr (DIM == 2) {
-                Real Ty_jm2 = Real{1};
-                Real Ty_jm1 = y;
-                Real dTy_jm2 = Real{0};
-                Real dTy_jm1 = Real{1};
+                Real Ty_jm2 = Real{1}, Ty_jm1 = y;
+                Real dTy_jm2 = Real{0}, dTy_jm1 = Real{1};
+                const Real two_y = Real{2} * y;
 
                 for (int j = 0; j < N_ORDER; ++j) {
                     Real Tyj, dTyj;
-
-                    if (j == 0) {
-                        Tyj = Real{1};
-                        dTyj = Real{0};
-                    } else if (j == 1) {
-                        Tyj = y;
-                        dTyj = Real{1};
-                    } else {
-                        const Real two_y = Real{2} * y;
-                        Tyj = two_y * Ty_jm1 - Ty_jm2;
-                        dTyj = Real{2} * Ty_jm1 + two_y * dTy_jm1 - dTy_jm2;
-                        Ty_jm2 = Ty_jm1;
-                        Ty_jm1 = Tyj;
-                        dTy_jm2 = dTy_jm1;
-                        dTy_jm1 = dTyj;
-                    }
+                    cheby_step(j, y, two_y, Ty_jm2, Ty_jm1, dTy_jm2, dTy_jm1, Tyj, dTyj);
 
                     Real px_pot = Real{0};
                     Real px_gx = Real{0};
@@ -174,58 +178,26 @@ __global__ void EvalTargetsByBoxKernel(EvalTargetsArgs<Real> a) {
             } else {
                 const Real z = (r_target[t * DIM + 2] - cen[2]) * sc;
 
-                Real Tz_km2 = Real{1};
-                Real Tz_km1 = z;
-                Real dTz_km2 = Real{0};
-                Real dTz_km1 = Real{1};
+                Real Tz_km2 = Real{1}, Tz_km1 = z;
+                Real dTz_km2 = Real{0}, dTz_km1 = Real{1};
+                const Real two_z = Real{2} * z;
+                const Real two_y = Real{2} * y;
 
                 for (int k = 0; k < N_ORDER; ++k) {
                     Real Tzk, dTzk;
-
-                    if (k == 0) {
-                        Tzk = Real{1};
-                        dTzk = Real{0};
-                    } else if (k == 1) {
-                        Tzk = z;
-                        dTzk = Real{1};
-                    } else {
-                        const Real two_z = Real{2} * z;
-                        Tzk = two_z * Tz_km1 - Tz_km2;
-                        dTzk = Real{2} * Tz_km1 + two_z * dTz_km1 - dTz_km2;
-                        Tz_km2 = Tz_km1;
-                        Tz_km1 = Tzk;
-                        dTz_km2 = dTz_km1;
-                        dTz_km1 = dTzk;
-                    }
+                    cheby_step(k, z, two_z, Tz_km2, Tz_km1, dTz_km2, dTz_km1, Tzk, dTzk);
 
                     Real py_pot = Real{0};
                     Real py_gx = Real{0};
                     Real py_gy = Real{0};
 
-                    Real Ty_jm2 = Real{1};
-                    Real Ty_jm1 = y;
-                    Real dTy_jm2 = Real{0};
-                    Real dTy_jm1 = Real{1};
+                    Real Ty_jm2 = Real{1}, Ty_jm1 = y;
+                    Real dTy_jm2 = Real{0}, dTy_jm1 = Real{1};
 
 #pragma unroll
                     for (int j = 0; j < N_ORDER; ++j) {
                         Real Tyj, dTyj;
-
-                        if (j == 0) {
-                            Tyj = Real{1};
-                            dTyj = Real{0};
-                        } else if (j == 1) {
-                            Tyj = y;
-                            dTyj = Real{1};
-                        } else {
-                            const Real two_y = Real{2} * y;
-                            Tyj = two_y * Ty_jm1 - Ty_jm2;
-                            dTyj = Real{2} * Ty_jm1 + two_y * dTy_jm1 - dTy_jm2;
-                            Ty_jm2 = Ty_jm1;
-                            Ty_jm1 = Tyj;
-                            dTy_jm2 = dTy_jm1;
-                            dTy_jm1 = dTyj;
-                        }
+                        cheby_step(j, y, two_y, Ty_jm2, Ty_jm1, dTy_jm2, dTy_jm1, Tyj, dTyj);
 
                         Real px_pot = Real{0};
                         Real px_gx = Real{0};
@@ -287,11 +259,10 @@ static void launch_eval_targets_kernel_impl(const EvalTargetsArgs<Real> &args, c
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess)
-        throw std::runtime_error(std::string("launch_eval_targets_kernel: ") + cudaGetErrorString(err) +
-                                 " (dim=" + std::to_string(DIM) + " eval_level=" + std::to_string(EVAL_LEVEL) +
-                                 " n_charge_dim=" + std::to_string(N_CHARGE_DIM) +
-                                 " n_order=" + std::to_string(args.n_order) +
-                                 " n_eval_boxes=" + std::to_string(args.n_eval_boxes) + ")");
+        throw std::runtime_error(
+            std::string("launch_eval_targets_kernel: ") + cudaGetErrorString(err) + " (dim=" + std::to_string(DIM) +
+            " eval_level=" + std::to_string(EVAL_LEVEL) + " n_charge_dim=" + std::to_string(N_CHARGE_DIM) +
+            " n_order=" + std::to_string(args.n_order) + " n_eval_boxes=" + std::to_string(args.n_eval_boxes) + ")");
 }
 
 template <typename Real, int DIM, int EVAL_LEVEL, int N_CHARGE_DIM>
@@ -346,9 +317,8 @@ void launch_eval_targets(int eval_level, int n_charge_dim, const EvalTargetsArgs
             return;
         }
     }
-    throw std::runtime_error("CUDA eval_targets: unsupported (DIM=" + std::to_string(DIM) +
-                             ", eval_level=" + std::to_string(eval_level) +
-                             ", n_charge_dim=" + std::to_string(n_charge_dim) + ")");
+    throw std::runtime_error("CUDA eval_targets: unsupported (DIM=" + std::to_string(DIM) + ", eval_level=" +
+                             std::to_string(eval_level) + ", n_charge_dim=" + std::to_string(n_charge_dim) + ")");
 }
 
 template void launch_eval_targets<float, 2>(int, int, const EvalTargetsArgs<float> &, cudaStream_t);
@@ -395,7 +365,8 @@ __global__ void self_correction_kernel(SelfCorrectionArgs<Real> a) {
 
     for (int i_src = threadIdx.x; i_src < count; i_src += blockDim.x)
         for (int i = 0; i < a.n_input_dim; i++)
-            a.pot_src[pot_off + i_src * a.pot_stride + i] -= factor * a.charge_halo[chg_off + i_src * a.n_input_dim + i];
+            a.pot_src[pot_off + i_src * a.pot_stride + i] -=
+                factor * a.charge_halo[chg_off + i_src * a.n_input_dim + i];
 }
 
 template <typename Real>
