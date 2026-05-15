@@ -18,36 +18,11 @@
 
 namespace dmk::cuda {
 
-template <typename Real>
-struct alignas(2 * sizeof(Real)) complx {
-    Real r;
-    Real i;
-};
-
-template <typename Real>
-__device__ __forceinline__ complx<Real> complx_zero() {
-    return complx<Real>{Real{0}, Real{0}};
-}
-
-template <typename Real>
-__device__ __forceinline__ complx<Real> complx_load(const Real *__restrict__ p) {
-    return complx<Real>{p[0], p[1]};
-}
-
-template <typename Real>
-__device__ __forceinline__ void complx_madd(complx<Real> &acc, const complx<Real> a, const complx<Real> b) {
-    acc.r = fma(a.r, b.r, acc.r);
-    acc.r = fma(-a.i, b.i, acc.r);
-    acc.i = fma(a.r, b.i, acc.i);
-    acc.i = fma(a.i, b.r, acc.i);
-}
-
-template <typename Real>
-__device__ __forceinline__ Real complx_real_madd(Real acc, const complx<Real> a, const complx<Real> b) {
-    acc = fma(a.r, b.r, acc);
-    acc = fma(-a.i, b.i, acc);
-    return acc;
-}
+using cuda_helpers::complx;
+using cuda_helpers::complx_load;
+using cuda_helpers::complx_madd;
+using cuda_helpers::complx_real_madd;
+using cuda_helpers::complx_zero;
 
 template <typename Real, int K1_TILE = 18, int COL_REG = 2, int K2_TILE = 2, int K3_TILE = 6, int KR_TILE = 6>
 __device__ __forceinline__ void PwToProxyBody(const PwToProxyArgs<Real> &a, const int box_idx) {

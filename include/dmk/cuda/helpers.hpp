@@ -173,6 +173,40 @@ class DeviceEvent {
     cudaEvent_t e_ = nullptr;
 };
 
+// Typed complex used inside device kernels. ABI-compatible with float2/double2
+// so reinterpret_cast'ing a Real* buffer of interleaved (re, im) pairs to
+// complx<Real>* gives a single hardware vector load/store
+template <typename Real>
+struct alignas(2 * sizeof(Real)) complx {
+    Real r;
+    Real i;
+};
+
+template <typename Real>
+__device__ __forceinline__ complx<Real> complx_zero() {
+    return complx<Real>{Real{0}, Real{0}};
+}
+
+template <typename Real>
+__device__ __forceinline__ complx<Real> complx_load(const Real *__restrict__ p) {
+    return complx<Real>{p[0], p[1]};
+}
+
+template <typename Real>
+__device__ __forceinline__ void complx_madd(complx<Real> &acc, const complx<Real> a, const complx<Real> b) {
+    acc.r = fma(a.r, b.r, acc.r);
+    acc.r = fma(-a.i, b.i, acc.r);
+    acc.i = fma(a.r, b.i, acc.i);
+    acc.i = fma(a.i, b.r, acc.i);
+}
+
+template <typename Real>
+__device__ __forceinline__ Real complx_real_madd(Real acc, const complx<Real> a, const complx<Real> b) {
+    acc = fma(a.r, b.r, acc);
+    acc = fma(-a.i, b.i, acc);
+    return acc;
+}
+
 template <typename SctlVec>
 inline std::vector<int> sctl_int_vec_to_std(const SctlVec &v) {
     std::vector<int> out(v.Dim());

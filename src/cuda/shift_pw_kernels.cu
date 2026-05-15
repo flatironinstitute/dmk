@@ -18,25 +18,10 @@
 
 namespace dmk::cuda {
 
-template <typename Real>
-struct Vec2Traits;
-
-template <>
-struct Vec2Traits<float> {
-    using Vec = float2;
-    __device__ static Vec make(float x, float y) { return make_float2(x, y); }
-};
-
-template <>
-struct Vec2Traits<double> {
-    using Vec = double2;
-    __device__ static Vec make(double x, double y) { return make_double2(x, y); }
-};
+using cuda_helpers::complx;
 
 template <typename Real>
 __device__ inline void ShiftPwByBoxBody(const ShiftPwArgs<Real> &a, int box_idx) {
-    using Vec = typename Vec2Traits<Real>::Vec;
-
     if (box_idx >= a.n_boxes_at_level)
         return;
 
@@ -49,20 +34,21 @@ __device__ inline void ShiftPwByBoxBody(const ShiftPwArgs<Real> &a, int box_idx)
     const bool box_is_leaf = (a.is_global_leaf[box] != 0);
 
     Real *pw_in_real = a.pw_in_pool + (long)box_idx * a.pw_in_stride;
-    Vec *pw_in = reinterpret_cast<Vec *>(pw_in_real);
+    complx<Real> *pw_in = reinterpret_cast<complx<Real> *>(pw_in_real);
 
     const long self_off = a.pw_out_offsets[box];
-    const Vec *self_pw = (self_off >= 0) ? reinterpret_cast<const Vec *>(a.pw_out_flat + 2 * self_off) : nullptr;
+    const complx<Real> *self_pw =
+        (self_off >= 0) ? reinterpret_cast<const complx<Real> *>(a.pw_out_flat + 2 * self_off) : nullptr;
 
     for (int d = 0; d < n_charge_dim; ++d) {
         const long d_base = (long)d * n_pw_modes;
 
         for (int m = threadIdx.x; m < n_pw_modes; m += blockDim.x) {
-            Vec acc;
+            complx<Real> acc;
             if (self_pw)
                 acc = self_pw[d_base + m];
             else
-                acc = Vec2Traits<Real>::make(Real{0}, Real{0});
+                acc = complx<Real>{Real{0}, Real{0}};
 
             for (int npos = 0; npos < n_neighbors; ++npos) {
                 const int neighbor = a.neighbors[(long)box * n_neighbors + npos];
@@ -78,14 +64,14 @@ __device__ inline void ShiftPwByBoxBody(const ShiftPwArgs<Real> &a, int box_idx)
                 const int ind = n_neighbors - 1 - npos;
                 const Real *shift_r = a.wpwshift + (long)ind * n_pw_modes * 2;
                 const Real *shift_i = shift_r + n_pw_modes;
-                const Vec *nbr_pw = reinterpret_cast<const Vec *>(a.pw_out_flat + 2 * nbr_off);
+                const complx<Real> *nbr_pw = reinterpret_cast<const complx<Real> *>(a.pw_out_flat + 2 * nbr_off);
 
-                const Vec z = nbr_pw[d_base + m];
+                const complx<Real> z = nbr_pw[d_base + m];
                 const Real sr = shift_r[m];
                 const Real si = shift_i[m];
 
-                acc.x += z.x * sr - z.y * si;
-                acc.y += z.x * si + z.y * sr;
+                acc.r += z.r * sr - z.i * si;
+                acc.i += z.r * si + z.i * sr;
             }
 
             pw_in[d_base + m] = acc;
