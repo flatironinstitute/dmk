@@ -54,6 +54,9 @@ class CudaEvalTargetsContext {
     int pot_stride_ = 0;
     int n_eval_boxes_ = 0;
     int n_order_ = 0;
+    int n_charge_dim_ = 0; // 1 for laplace/sqrt_laplace, 3 for stokeslet/stresslet
+    int eval_level_src_ = 0;
+    int eval_level_trg_ = 0;
     bool launched_ = false;
 
     cuda_helpers::DeviceStream stream_;

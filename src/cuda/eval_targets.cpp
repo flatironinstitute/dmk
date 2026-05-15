@@ -12,21 +12,23 @@
 #include <cuda_runtime.h>
 
 #include <stdexcept>
-#include <string>
 #include <vector>
 
 namespace dmk {
 
 namespace {
 
+template <int DIM>
 int n_charge_dim_for(dmk_ikernel kernel) {
     switch (kernel) {
     case DMK_LAPLACE:
+        return 1;
     case DMK_SQRT_LAPLACE:
         return 1;
     case DMK_STOKESLET:
+        return DIM;
     case DMK_STRESSLET:
-        return 3;
+        return DIM;
     default:
         throw std::runtime_error("CUDA eval_targets: unsupported kernel");
     }
@@ -35,10 +37,10 @@ int n_charge_dim_for(dmk_ikernel kernel) {
 int eval_level_for(dmk_eval_type ev) {
     switch (ev) {
     case DMK_POTENTIAL:
+        return 1;
     case DMK_VELOCITY:
         return 1;
     case DMK_POTENTIAL_GRAD:
-    case DMK_VELOCITY_PRESSURE:
         return 2;
     default:
         throw std::runtime_error("CUDA eval_targets: unsupported eval_type");
@@ -51,25 +53,9 @@ template <typename Real, int DIM>
 CudaEvalTargetsContext<Real, DIM>::CudaEvalTargetsContext(DMKPtTree<Real, DIM> &tree,
                                                           CudaSharedDeviceState<Real, DIM> &shared)
     : tree_(tree), shared_(shared) {
-    // Validate before allocating anything. Throwing here means the tree
-    // sees a null cuda_eval_targets_ctx_ and falls back to the
-    // already-parallel CPU eval_targets in form_eval_expansions.
-    // Supported combos must match the dispatch in eval_targets_kernels.cu.
-    const int ncd = n_charge_dim_for(tree.params.kernel);
-    const int el_src = eval_level_for(tree.params.eval_src);
-    const int el_trg = eval_level_for(tree.params.eval_trg);
-    auto supported = [](int dim, int el, int ncd) {
-        if (ncd == 1)
-            return (dim == 2 || dim == 3) && (el == 1 || el == 2);
-        if (ncd == 3)
-            return dim == 3 && el == 1;
-        return false;
-    };
-    if (!supported(DIM, el_src, ncd) || !supported(DIM, el_trg, ncd))
-        throw std::runtime_error("CUDA eval_targets: unsupported (DIM=" + std::to_string(DIM) + ", eval_src_level=" +
-                                 std::to_string(el_src) + ", eval_trg_level=" + std::to_string(el_trg) +
-                                 ", n_charge_dim=" + std::to_string(ncd) + ")");
-
+    n_charge_dim_ = n_charge_dim_for<DIM>(tree.params.kernel);
+    eval_level_src_ = eval_level_for(tree.params.eval_src);
+    eval_level_trg_ = eval_level_for(tree.params.eval_trg);
     stream_ = cuda_helpers::DeviceStream::non_blocking();
 
     n_eval_boxes_ = (int)tree.eval_targets_box_list.size();
@@ -114,10 +100,6 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
     d_pot_src_eval_.zero_async(stream_);
     d_pot_trg_eval_.zero_async(stream_);
 
-    const int n_charge_dim = n_charge_dim_for(t.params.kernel);
-    const int eval_level_src = eval_level_for(t.params.eval_src);
-    const int eval_level_trg = eval_level_for(t.params.eval_trg);
-
     cuda::EvalTargetsArgs<Real> args;
     args.n_eval_boxes = n_eval_boxes_;
     args.n_order = n_order_;
@@ -134,7 +116,7 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
     args.target_counts = shared.d_src_counts_owned.data();
     args.pot_flat = d_pot_src_eval_.data();
     args.pot_offsets = shared.d_pot_src_offsets.data();
-    cuda::launch_eval_targets<Real, DIM>(eval_level_src, n_charge_dim, args, stream_);
+    cuda::launch_eval_targets<Real, DIM>(eval_level_src_, n_charge_dim_, args, stream_);
 
     // pot_trg side
     args.r_target_flat = shared.d_r_trg_owned.data();
@@ -142,7 +124,7 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
     args.target_counts = shared.d_trg_counts_owned.data();
     args.pot_flat = d_pot_trg_eval_.data();
     args.pot_offsets = shared.d_pot_trg_offsets.data();
-    cuda::launch_eval_targets<Real, DIM>(eval_level_trg, n_charge_dim, args, stream_);
+    cuda::launch_eval_targets<Real, DIM>(eval_level_trg_, n_charge_dim_, args, stream_);
 
     launched_ = true;
 }

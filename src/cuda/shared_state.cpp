@@ -125,9 +125,7 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
     direct_stream = cuda_helpers::DeviceStream::non_blocking();
     downward_stream = cuda_helpers::DeviceStream::non_blocking();
 
-    n_neighbors = 1;
-    for (int d = 0; d < DIM; ++d)
-        n_neighbors *= 3;
+    n_neighbors = sctl::pow<DIM>(3);
     n_pw = tree.expansion_constants.n_pw_diff;
     n_pw2 = (n_pw + 1) / 2;
     if constexpr (DIM == 3)
