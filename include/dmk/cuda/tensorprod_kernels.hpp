@@ -47,8 +47,8 @@ struct TensorprodArgs {
     bool additive_atomic = false;
 };
 
-template <typename Real>
-void launch_tensorprod_dispatch(int dim, const TensorprodArgs<Real> &args, cudaStream_t stream);
+template <typename Real, int DIM>
+void launch_tensorprod(const TensorprodArgs<Real> &args, cudaStream_t stream);
 
 } // namespace dmk::cuda
 

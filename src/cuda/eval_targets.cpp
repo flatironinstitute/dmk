@@ -1,5 +1,5 @@
 // Orchestration for the GPU offload of proxy::eval_targets. Plain C++;
-// kernel launches go through cuda::launch_eval_targets_dispatch (defined in
+// kernel launches go through cuda::launch_eval_targets (defined in
 // src/cuda/eval_targets_kernels.cu).
 
 #include <dmk/cuda/eval_targets.hpp>
@@ -134,7 +134,7 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
     args.target_counts = shared.d_src_counts_owned.data();
     args.pot_flat = d_pot_src_eval_.data();
     args.pot_offsets = shared.d_pot_src_offsets.data();
-    cuda::launch_eval_targets_dispatch<Real>(DIM, eval_level_src, n_charge_dim, args, stream_);
+    cuda::launch_eval_targets<Real, DIM>(eval_level_src, n_charge_dim, args, stream_);
 
     // pot_trg side
     args.r_target_flat = shared.d_r_trg_owned.data();
@@ -142,7 +142,7 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
     args.target_counts = shared.d_trg_counts_owned.data();
     args.pot_flat = d_pot_trg_eval_.data();
     args.pot_offsets = shared.d_pot_trg_offsets.data();
-    cuda::launch_eval_targets_dispatch<Real>(DIM, eval_level_trg, n_charge_dim, args, stream_);
+    cuda::launch_eval_targets<Real, DIM>(eval_level_trg, n_charge_dim, args, stream_);
 
     launched_ = true;
 }

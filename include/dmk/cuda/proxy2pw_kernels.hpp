@@ -28,13 +28,13 @@ struct Proxy2PwArgs {
     long dst_stride_complex = 0;       // if dst_offsets is null, use box_idx * dst_stride_complex
 };
 
-template <typename Real>
-void launch_proxy2pw_dispatch(int dim, const Proxy2PwArgs<Real> &args, cudaStream_t stream);
+template <typename Real, int DIM>
+void launch_proxy2pw(const Proxy2PwArgs<Real> &args, cudaStream_t stream);
 
 // d_args_scratch must point to device memory sized >= pa_h.size() entries.
-template <typename Real>
-void launch_proxy2pw_multilevel_dispatch(int dim, const std::vector<Proxy2PwArgs<Real>> &pa_h,
-                                         Proxy2PwArgs<Real> *d_args_scratch, cudaStream_t stream);
+template <typename Real, int DIM>
+void launch_proxy2pw_multilevel(const std::vector<Proxy2PwArgs<Real>> &pa_h, Proxy2PwArgs<Real> *d_args_scratch,
+                                cudaStream_t stream);
 
 } // namespace dmk::cuda
 

@@ -23,36 +23,6 @@ namespace dmk::cuda_helpers {
             throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(_e));                            \
     } while (0)
 
-template <typename T>
-inline T *device_alloc(std::size_t n) {
-    if (n == 0)
-        return nullptr;
-    T *d = nullptr;
-    DMK_CHECK_CUDA(cudaMalloc(&d, n * sizeof(T)));
-    return d;
-}
-
-template <typename T>
-inline T *device_alloc_and_zero(std::size_t n) {
-    T *d = device_alloc<T>(n);
-    if (d)
-        DMK_CHECK_CUDA(cudaMemsetAsync(d, 0, n * sizeof(T)));
-    return d;
-}
-
-template <typename T>
-inline T *device_upload(const T *src_host, std::size_t n) {
-    T *d = device_alloc<T>(n);
-    if (d)
-        DMK_CHECK_CUDA(cudaMemcpy(d, src_host, n * sizeof(T), cudaMemcpyHostToDevice));
-    return d;
-}
-
-inline void device_free(void *p) {
-    if (p)
-        cudaFree(p);
-}
-
 // RAII wrapper around a `cudaMalloc`'d region. Move-only. `resize()` is a
 // no-op if the requested size matches what's already allocated, otherwise it
 // frees and re-allocates (no realloc — caller's responsibility if old data

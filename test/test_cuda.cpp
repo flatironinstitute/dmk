@@ -347,7 +347,7 @@ TEST_CASE_TEMPLATE("[CUDA] tensorprod (parent->child) vs CPU", Real, double, flo
     args.umat_flat = d_p2c.p;
     args.scratch = d_scratch.p;
     args.scratch_stride = scratch_stride;
-    cuda::launch_tensorprod_dispatch<Real>(DIM, args, /*stream=*/0);
+    cuda::launch_tensorprod<Real, DIM>(args, /*stream=*/0);
     REQUIRE_CUDA(cudaDeviceSynchronize());
 
     std::vector<Real> proxy_back(proxy_host.size());
@@ -409,7 +409,7 @@ TEST_CASE_TEMPLATE("[CUDA] pw_to_proxy vs CPU", Real, double, float) {
     args.pw2poly = d_pw2poly.p;
     args.proxy_flat = d_proxy.p;
     args.proxy_offsets = d_offsets.p;
-    cuda::launch_pw_to_proxy_dispatch<Real>(DIM, args, /*stream=*/0);
+    cuda::launch_pw_to_proxy<Real, DIM>(args, /*stream=*/0);
     REQUIRE_CUDA(cudaDeviceSynchronize());
 
     std::vector<Real> proxy_gpu(d_proxy.n);
@@ -498,7 +498,7 @@ TEST_CASE_TEMPLATE("[CUDA] shift_pw vs CPU", Real, double, float) {
     args.pw_out_flat = d_pw_out.p;
     args.wpwshift = d_wpwshift.p;
     args.pw_in_pool = d_pw_in_pool.p;
-    cuda::launch_shift_pw_dispatch<Real>(DIM, args, /*stream=*/0);
+    cuda::launch_shift_pw<Real, DIM>(args, /*stream=*/0);
     REQUIRE_CUDA(cudaDeviceSynchronize());
 
     std::vector<Real> pw_in_gpu(n_box_reals);
@@ -593,7 +593,7 @@ TEST_CASE_TEMPLATE("[CUDA] charge2proxy vs CPU", Real, double, float) {
     args.proxy_offsets = d_proxy_offsets.p;
     args.group_perm = nullptr; // identity = no work-balancing reorder
     args.n_active_groups = args.n_groups;
-    cuda::launch_charge2proxy_dispatch<Real>(DIM, args, /*stream=*/0);
+    cuda::launch_charge2proxy<Real, DIM>(args, /*stream=*/0);
     REQUIRE_CUDA(cudaDeviceSynchronize());
 
     std::vector<Real> proxy_gpu(d_proxy.n);

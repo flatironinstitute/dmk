@@ -5,9 +5,9 @@
 // EvalTargetsArgs<Real> is the bag of device pointers + small scalars; the
 // orchestration code (cuda_eval_targets.cpp) fills it in once per launch.
 //
-// launch_eval_targets_dispatch<Real>(...) selects the right
-// (DIM, EVAL_LEVEL, N_CHARGE_DIM) instantiation and queues the kernel on
-// `stream`. Defined in src/cuda_eval_targets_kernels.cu.
+// launch_eval_targets<Real>(...) selects the right (EVAL_LEVEL, N_CHARGE_DIM)
+// instantiation and queues the kernel on `stream`. DIM is fixed at 3 (the
+// other GPU contexts gate on it). Defined in src/cuda/eval_targets_kernels.cu.
 
 #include <cuda_runtime.h>
 
@@ -36,9 +36,8 @@ struct EvalTargetsArgs {
     const long *pot_offsets = nullptr; // [n_boxes]
 };
 
-template <typename Real>
-void launch_eval_targets_dispatch(int dim, int eval_level, int n_charge_dim, const EvalTargetsArgs<Real> &args,
-                                  cudaStream_t stream);
+template <typename Real, int DIM>
+void launch_eval_targets(int eval_level, int n_charge_dim, const EvalTargetsArgs<Real> &args, cudaStream_t stream);
 
 template <typename Real>
 void launch_inplace_accumulate(Real *dst, const Real *src, std::size_t n, cudaStream_t stream);

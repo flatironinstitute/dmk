@@ -354,7 +354,7 @@ static std::size_t pw_to_proxy_shared_bytes(int max_n_pw, int max_n_pw2, int max
 }
 
 template <typename Real, int K1_TILE = 6, int COL_REG = 2, int K2_TILE = 2, int K3_TILE = 3, int KR_TILE = 6>
-static void launch_pw_to_proxy_3d(const PwToProxyArgs<Real> &args, cudaStream_t stream) {
+static void launch_single(const PwToProxyArgs<Real> &args, cudaStream_t stream) {
     if (args.n_boxes_at_level == 0)
         return;
 
@@ -366,7 +366,7 @@ static void launch_pw_to_proxy_3d(const PwToProxyArgs<Real> &args, cudaStream_t 
             cudaFuncSetAttribute(PwToProxyByBoxKernel<Real, K1_TILE, COL_REG, K2_TILE, K3_TILE, KR_TILE>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(shared_bytes));
         if (attr_err != cudaSuccess)
-            throw std::runtime_error(std::string("launch_pw_to_proxy_3d: cudaFuncSetAttribute failed: ") +
+            throw std::runtime_error(std::string("launch_pw_to_proxy: cudaFuncSetAttribute failed: ") +
                                      cudaGetErrorString(attr_err) + " shared_bytes=" + std::to_string(shared_bytes));
     }
 
@@ -375,14 +375,14 @@ static void launch_pw_to_proxy_3d(const PwToProxyArgs<Real> &args, cudaStream_t 
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess)
-        throw std::runtime_error(std::string("launch_pw_to_proxy_3d: ") + cudaGetErrorString(err) +
+        throw std::runtime_error(std::string("launch_pw_to_proxy: ") + cudaGetErrorString(err) +
                                  " shared_bytes=" + std::to_string(shared_bytes) + " n_pw=" + std::to_string(args.n_pw) +
                                  " n_pw2=" + std::to_string(args.n_pw2) + " n_order=" + std::to_string(args.n_order));
 }
 
 template <typename Real, int K1_TILE = 18, int COL_REG = 1, int K2_TILE = 2, int K3_TILE = 3, int KR_TILE = 9>
-static void launch_pw_to_proxy_multilevel_3d(const PwToProxyArgs<Real> *d_args, int n_args, int max_boxes,
-                                             int max_n_pw, int max_n_pw2, int max_n_order, cudaStream_t stream) {
+static void launch_multi(const PwToProxyArgs<Real> *d_args, int n_args, int max_boxes, int max_n_pw, int max_n_pw2,
+                         int max_n_order, cudaStream_t stream) {
     if (n_args == 0 || max_boxes == 0)
         return;
 
@@ -394,7 +394,7 @@ static void launch_pw_to_proxy_multilevel_3d(const PwToProxyArgs<Real> *d_args, 
             cudaFuncSetAttribute(PwToProxyMultiLevelKernel<Real, K1_TILE, COL_REG, K2_TILE, K3_TILE, KR_TILE>,
                                  cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(shared_bytes));
         if (attr_err != cudaSuccess)
-            throw std::runtime_error(std::string("launch_pw_to_proxy_multilevel_3d: cudaFuncSetAttribute failed: ") +
+            throw std::runtime_error(std::string("launch_pw_to_proxy_multilevel: cudaFuncSetAttribute failed: ") +
                                      cudaGetErrorString(attr_err) + " shared_bytes=" + std::to_string(shared_bytes));
     }
 
@@ -404,30 +404,27 @@ static void launch_pw_to_proxy_multilevel_3d(const PwToProxyArgs<Real> *d_args, 
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess)
-        throw std::runtime_error(std::string("launch_pw_to_proxy_multilevel_3d: ") + cudaGetErrorString(err) +
+        throw std::runtime_error(std::string("launch_pw_to_proxy_multilevel: ") + cudaGetErrorString(err) +
                                  " shared_bytes=" + std::to_string(shared_bytes) +
                                  " max_n_pw=" + std::to_string(max_n_pw) + " max_n_pw2=" + std::to_string(max_n_pw2) +
                                  " max_n_order=" + std::to_string(max_n_order));
 }
 
-template <typename Real>
-void launch_pw_to_proxy_dispatch(int dim, const PwToProxyArgs<Real> &args, cudaStream_t stream) {
-    if (dim == 3) {
-        launch_pw_to_proxy_3d<Real>(args, stream);
-        return;
-    }
-    throw std::runtime_error("CUDA pw_to_proxy: dim=" + std::to_string(dim) + " not supported (only 3D for now)");
+// DIM is currently 3-only at the kernel level. <Real, 2> instantiations exist
+// so contexts templated on DIM link cleanly; they're unreachable at runtime.
+template <typename Real, int DIM>
+void launch_pw_to_proxy(const PwToProxyArgs<Real> &args, cudaStream_t stream) {
+    launch_single<Real>(args, stream);
 }
 
-template void launch_pw_to_proxy_dispatch<float>(int, const PwToProxyArgs<float> &, cudaStream_t);
-template void launch_pw_to_proxy_dispatch<double>(int, const PwToProxyArgs<double> &, cudaStream_t);
+template void launch_pw_to_proxy<float, 2>(const PwToProxyArgs<float> &, cudaStream_t);
+template void launch_pw_to_proxy<float, 3>(const PwToProxyArgs<float> &, cudaStream_t);
+template void launch_pw_to_proxy<double, 2>(const PwToProxyArgs<double> &, cudaStream_t);
+template void launch_pw_to_proxy<double, 3>(const PwToProxyArgs<double> &, cudaStream_t);
 
-template <typename Real>
-void launch_pw_to_proxy_multilevel_dispatch(int dim, const std::vector<PwToProxyArgs<Real>> &args_h,
-                                            PwToProxyArgs<Real> *d_args_scratch, cudaStream_t stream) {
-    if (dim != 3)
-        throw std::runtime_error("CUDA pw_to_proxy multilevel: dim=" + std::to_string(dim) +
-                                 " not supported (only 3D for now)");
+template <typename Real, int DIM>
+void launch_pw_to_proxy_multilevel(const std::vector<PwToProxyArgs<Real>> &args_h, PwToProxyArgs<Real> *d_args_scratch,
+                                   cudaStream_t stream) {
     if (args_h.empty())
         return;
 
@@ -447,13 +444,17 @@ void launch_pw_to_proxy_multilevel_dispatch(int dim, const std::vector<PwToProxy
     DMK_CHECK_CUDA(cudaMemcpyAsync(d_args_scratch, args_h.data(), args_h.size() * sizeof(PwToProxyArgs<Real>),
                                    cudaMemcpyHostToDevice, stream));
 
-    launch_pw_to_proxy_multilevel_3d<Real>(d_args_scratch, static_cast<int>(args_h.size()), max_boxes, max_n_pw,
-                                           max_n_pw2, max_n_order, stream);
+    launch_multi<Real>(d_args_scratch, static_cast<int>(args_h.size()), max_boxes, max_n_pw, max_n_pw2, max_n_order,
+                       stream);
 }
 
-template void launch_pw_to_proxy_multilevel_dispatch<float>(int, const std::vector<PwToProxyArgs<float>> &,
-                                                            PwToProxyArgs<float> *, cudaStream_t);
-template void launch_pw_to_proxy_multilevel_dispatch<double>(int, const std::vector<PwToProxyArgs<double>> &,
-                                                             PwToProxyArgs<double> *, cudaStream_t);
+template void launch_pw_to_proxy_multilevel<float, 2>(const std::vector<PwToProxyArgs<float>> &,
+                                                      PwToProxyArgs<float> *, cudaStream_t);
+template void launch_pw_to_proxy_multilevel<float, 3>(const std::vector<PwToProxyArgs<float>> &,
+                                                      PwToProxyArgs<float> *, cudaStream_t);
+template void launch_pw_to_proxy_multilevel<double, 2>(const std::vector<PwToProxyArgs<double>> &,
+                                                       PwToProxyArgs<double> *, cudaStream_t);
+template void launch_pw_to_proxy_multilevel<double, 3>(const std::vector<PwToProxyArgs<double>> &,
+                                                       PwToProxyArgs<double> *, cudaStream_t);
 
 } // namespace dmk::cuda

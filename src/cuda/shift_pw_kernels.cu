@@ -107,48 +107,28 @@ __global__ void ShiftPwMultiLevelKernel(const ShiftPwArgs<Real> *args, int n_arg
     ShiftPwByBoxBody<Real>(a, blockIdx.x);
 }
 
-template <typename Real>
-static void launch_shift_pw_3d(const ShiftPwArgs<Real> &args, cudaStream_t stream) {
+// DIM is currently 3-only at the kernel level. <Real, 2> instantiations exist
+// so contexts templated on DIM link cleanly; they're unreachable at runtime
+// because the GPU contexts' ctors throw for DIM != 3.
+template <typename Real, int DIM>
+void launch_shift_pw(const ShiftPwArgs<Real> &args, cudaStream_t stream) {
     if (args.n_boxes_at_level == 0)
         return;
     constexpr int block_size = 512;
     ShiftPwByBoxKernel<Real><<<args.n_boxes_at_level, block_size, 0, stream>>>(args);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess)
-        throw std::runtime_error(std::string("launch_shift_pw_3d: ") + cudaGetErrorString(err));
+        throw std::runtime_error(std::string("launch_shift_pw: ") + cudaGetErrorString(err));
 }
 
-template <typename Real>
-static void launch_shift_pw_multilevel_3d(const ShiftPwArgs<Real> *d_args, int n_args, int max_boxes,
-                                          cudaStream_t stream) {
-    if (n_args == 0 || max_boxes == 0)
-        return;
-    constexpr int block_size = 256;
-    dim3 grid(max_boxes, n_args, 1);
-    ShiftPwMultiLevelKernel<Real><<<grid, block_size, 0, stream>>>(d_args, n_args);
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess)
-        throw std::runtime_error(std::string("launch_shift_pw_multilevel_3d: ") + cudaGetErrorString(err));
-}
+template void launch_shift_pw<float, 2>(const ShiftPwArgs<float> &, cudaStream_t);
+template void launch_shift_pw<float, 3>(const ShiftPwArgs<float> &, cudaStream_t);
+template void launch_shift_pw<double, 2>(const ShiftPwArgs<double> &, cudaStream_t);
+template void launch_shift_pw<double, 3>(const ShiftPwArgs<double> &, cudaStream_t);
 
-template <typename Real>
-void launch_shift_pw_dispatch(int dim, const ShiftPwArgs<Real> &args, cudaStream_t stream) {
-    if (dim == 3) {
-        launch_shift_pw_3d<Real>(args, stream);
-        return;
-    }
-    throw std::runtime_error("CUDA shift_pw: dim=" + std::to_string(dim) + " not supported (only 3D for now)");
-}
-
-template void launch_shift_pw_dispatch<float>(int, const ShiftPwArgs<float> &, cudaStream_t);
-template void launch_shift_pw_dispatch<double>(int, const ShiftPwArgs<double> &, cudaStream_t);
-
-template <typename Real>
-void launch_shift_pw_multilevel_dispatch(int dim, const std::vector<ShiftPwArgs<Real>> &args_h,
-                                         ShiftPwArgs<Real> *d_args_scratch, cudaStream_t stream) {
-    if (dim != 3)
-        throw std::runtime_error("CUDA shift_pw multilevel: dim=" + std::to_string(dim) +
-                                 " not supported (only 3D for now)");
+template <typename Real, int DIM>
+void launch_shift_pw_multilevel(const std::vector<ShiftPwArgs<Real>> &args_h, ShiftPwArgs<Real> *d_args_scratch,
+                                cudaStream_t stream) {
     if (args_h.empty())
         return;
 
@@ -161,12 +141,21 @@ void launch_shift_pw_multilevel_dispatch(int dim, const std::vector<ShiftPwArgs<
     DMK_CHECK_CUDA(cudaMemcpyAsync(d_args_scratch, args_h.data(), args_h.size() * sizeof(ShiftPwArgs<Real>),
                                    cudaMemcpyHostToDevice, stream));
 
-    launch_shift_pw_multilevel_3d<Real>(d_args_scratch, static_cast<int>(args_h.size()), max_boxes, stream);
+    constexpr int block_size = 256;
+    dim3 grid(max_boxes, static_cast<int>(args_h.size()), 1);
+    ShiftPwMultiLevelKernel<Real><<<grid, block_size, 0, stream>>>(d_args_scratch, static_cast<int>(args_h.size()));
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess)
+        throw std::runtime_error(std::string("launch_shift_pw_multilevel: ") + cudaGetErrorString(err));
 }
 
-template void launch_shift_pw_multilevel_dispatch<float>(int, const std::vector<ShiftPwArgs<float>> &,
-                                                         ShiftPwArgs<float> *, cudaStream_t);
-template void launch_shift_pw_multilevel_dispatch<double>(int, const std::vector<ShiftPwArgs<double>> &,
-                                                          ShiftPwArgs<double> *, cudaStream_t);
+template void launch_shift_pw_multilevel<float, 2>(const std::vector<ShiftPwArgs<float>> &, ShiftPwArgs<float> *,
+                                                   cudaStream_t);
+template void launch_shift_pw_multilevel<float, 3>(const std::vector<ShiftPwArgs<float>> &, ShiftPwArgs<float> *,
+                                                   cudaStream_t);
+template void launch_shift_pw_multilevel<double, 2>(const std::vector<ShiftPwArgs<double>> &, ShiftPwArgs<double> *,
+                                                    cudaStream_t);
+template void launch_shift_pw_multilevel<double, 3>(const std::vector<ShiftPwArgs<double>> &, ShiftPwArgs<double> *,
+                                                    cudaStream_t);
 
 } // namespace dmk::cuda

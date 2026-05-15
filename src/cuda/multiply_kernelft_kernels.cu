@@ -193,19 +193,21 @@ __global__ void MultiplyStresslet3DByBoxKernel(MultiplyStresslet3DArgs<Real> a) 
 }
 
 // ===== launchers =====
-template <typename Real>
-static void launch_multiply_cd2p_3d(const MultiplyCd2pArgs<Real> &args, cudaStream_t stream) {
+// DIM is currently 3-only at the kernel level. <Real, 2> instantiations exist
+// so contexts templated on DIM link cleanly; they're unreachable at runtime.
+template <typename Real, int DIM>
+void launch_multiply_cd2p(const MultiplyCd2pArgs<Real> &args, cudaStream_t stream) {
     if (args.n_boxes_at_level == 0)
         return;
     constexpr int block_size = 128;
     MultiplyCd2pByBoxKernel<Real><<<args.n_boxes_at_level, block_size, 0, stream>>>(args);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess)
-        throw std::runtime_error(std::string("launch_multiply_cd2p_3d: ") + cudaGetErrorString(err));
+        throw std::runtime_error(std::string("launch_multiply_cd2p: ") + cudaGetErrorString(err));
 }
 
 template <typename Real>
-static void launch_multiply_stokeslet_3d_3d(const MultiplyStokeslet3DArgs<Real> &args, cudaStream_t stream) {
+void launch_multiply_stokeslet_3d(const MultiplyStokeslet3DArgs<Real> &args, cudaStream_t stream) {
     if (args.n_boxes_at_level == 0)
         return;
     constexpr int block_size = 128;
@@ -213,52 +215,27 @@ static void launch_multiply_stokeslet_3d_3d(const MultiplyStokeslet3DArgs<Real> 
     MultiplyStokeslet3DByBoxKernel<Real><<<args.n_boxes_at_level, block_size, shared_bytes, stream>>>(args);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess)
-        throw std::runtime_error(std::string("launch_multiply_stokeslet_3d_3d: ") + cudaGetErrorString(err));
+        throw std::runtime_error(std::string("launch_multiply_stokeslet_3d: ") + cudaGetErrorString(err));
 }
 
 template <typename Real>
-static void launch_multiply_stresslet_3d_3d(const MultiplyStresslet3DArgs<Real> &args, cudaStream_t stream) {
+void launch_multiply_stresslet_3d(const MultiplyStresslet3DArgs<Real> &args, cudaStream_t stream) {
     if (args.n_boxes_at_level == 0)
         return;
     constexpr int block_size = 128;
     MultiplyStresslet3DByBoxKernel<Real><<<args.n_boxes_at_level, block_size, 0, stream>>>(args);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess)
-        throw std::runtime_error(std::string("launch_multiply_stresslet_3d_3d: ") + cudaGetErrorString(err));
+        throw std::runtime_error(std::string("launch_multiply_stresslet_3d: ") + cudaGetErrorString(err));
 }
 
-template <typename Real>
-void launch_multiply_cd2p_dispatch(int dim, const MultiplyCd2pArgs<Real> &args, cudaStream_t stream) {
-    if (dim == 3) {
-        launch_multiply_cd2p_3d<Real>(args, stream);
-        return;
-    }
-    throw std::runtime_error("CUDA multiply_cd2p: dim=" + std::to_string(dim) + " not supported (only 3D for now)");
-}
-
-template <typename Real>
-void launch_multiply_stokeslet_3d_dispatch(int dim, const MultiplyStokeslet3DArgs<Real> &args, cudaStream_t stream) {
-    if (dim == 3) {
-        launch_multiply_stokeslet_3d_3d<Real>(args, stream);
-        return;
-    }
-    throw std::runtime_error("CUDA multiply_stokeslet_3d: dim=" + std::to_string(dim) + " not supported");
-}
-
-template <typename Real>
-void launch_multiply_stresslet_3d_dispatch(int dim, const MultiplyStresslet3DArgs<Real> &args, cudaStream_t stream) {
-    if (dim == 3) {
-        launch_multiply_stresslet_3d_3d<Real>(args, stream);
-        return;
-    }
-    throw std::runtime_error("CUDA multiply_stresslet_3d: dim=" + std::to_string(dim) + " not supported");
-}
-
-template void launch_multiply_cd2p_dispatch<float>(int, const MultiplyCd2pArgs<float> &, cudaStream_t);
-template void launch_multiply_cd2p_dispatch<double>(int, const MultiplyCd2pArgs<double> &, cudaStream_t);
-template void launch_multiply_stokeslet_3d_dispatch<float>(int, const MultiplyStokeslet3DArgs<float> &, cudaStream_t);
-template void launch_multiply_stokeslet_3d_dispatch<double>(int, const MultiplyStokeslet3DArgs<double> &, cudaStream_t);
-template void launch_multiply_stresslet_3d_dispatch<float>(int, const MultiplyStresslet3DArgs<float> &, cudaStream_t);
-template void launch_multiply_stresslet_3d_dispatch<double>(int, const MultiplyStresslet3DArgs<double> &, cudaStream_t);
+template void launch_multiply_cd2p<float, 2>(const MultiplyCd2pArgs<float> &, cudaStream_t);
+template void launch_multiply_cd2p<float, 3>(const MultiplyCd2pArgs<float> &, cudaStream_t);
+template void launch_multiply_cd2p<double, 2>(const MultiplyCd2pArgs<double> &, cudaStream_t);
+template void launch_multiply_cd2p<double, 3>(const MultiplyCd2pArgs<double> &, cudaStream_t);
+template void launch_multiply_stokeslet_3d<float>(const MultiplyStokeslet3DArgs<float> &, cudaStream_t);
+template void launch_multiply_stokeslet_3d<double>(const MultiplyStokeslet3DArgs<double> &, cudaStream_t);
+template void launch_multiply_stresslet_3d<float>(const MultiplyStresslet3DArgs<float> &, cudaStream_t);
+template void launch_multiply_stresslet_3d<double>(const MultiplyStresslet3DArgs<double> &, cudaStream_t);
 
 } // namespace dmk::cuda

@@ -41,8 +41,8 @@ struct Charge2ProxyArgs {
     int n_active_groups = 0;
 };
 
-template <typename Real>
-void launch_charge2proxy_dispatch(int dim, const Charge2ProxyArgs<Real> &args, cudaStream_t stream);
+template <typename Real, int DIM>
+void launch_charge2proxy(const Charge2ProxyArgs<Real> &args, cudaStream_t stream);
 
 } // namespace dmk::cuda
 

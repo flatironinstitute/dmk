@@ -28,8 +28,8 @@ struct MultiplyCd2pArgs {
     long pw_stride_complex = 0;
 };
 
-template <typename Real>
-void launch_multiply_cd2p_dispatch(int dim, const MultiplyCd2pArgs<Real> &args, cudaStream_t stream);
+template <typename Real, int DIM>
+void launch_multiply_cd2p(const MultiplyCd2pArgs<Real> &args, cudaStream_t stream);
 
 // ----- stokeslet_3d -----
 template <typename Real>
@@ -49,7 +49,7 @@ struct MultiplyStokeslet3DArgs {
 };
 
 template <typename Real>
-void launch_multiply_stokeslet_3d_dispatch(int dim, const MultiplyStokeslet3DArgs<Real> &args, cudaStream_t stream);
+void launch_multiply_stokeslet_3d(const MultiplyStokeslet3DArgs<Real> &args, cudaStream_t stream);
 
 // ----- stresslet_3d -----
 template <typename Real>
@@ -71,7 +71,7 @@ struct MultiplyStresslet3DArgs {
 };
 
 template <typename Real>
-void launch_multiply_stresslet_3d_dispatch(int dim, const MultiplyStresslet3DArgs<Real> &args, cudaStream_t stream);
+void launch_multiply_stresslet_3d(const MultiplyStresslet3DArgs<Real> &args, cudaStream_t stream);
 
 } // namespace dmk::cuda
 

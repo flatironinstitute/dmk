@@ -286,16 +286,16 @@ static void launch_charge2proxy_3d(const Charge2ProxyArgs<Real> &args, const int
 #undef DISPATCH_N_ORDER
 }
 
-template <typename Real>
-void launch_charge2proxy_dispatch(int dim, const Charge2ProxyArgs<Real> &args, cudaStream_t stream) {
-    if (dim == 3) {
-        launch_charge2proxy_3d<Real>(args, args.group_perm, args.n_active_groups, stream);
-        return;
-    }
-    throw std::runtime_error("CUDA charge2proxy: dim=" + std::to_string(dim) + " not supported (only 3D for now)");
+// DIM is currently 3-only at the kernel level. <Real, 2> instantiations exist
+// so contexts templated on DIM link cleanly; they're unreachable at runtime.
+template <typename Real, int DIM>
+void launch_charge2proxy(const Charge2ProxyArgs<Real> &args, cudaStream_t stream) {
+    launch_charge2proxy_3d<Real>(args, args.group_perm, args.n_active_groups, stream);
 }
 
-template void launch_charge2proxy_dispatch<float>(int, const Charge2ProxyArgs<float> &, cudaStream_t);
-template void launch_charge2proxy_dispatch<double>(int, const Charge2ProxyArgs<double> &, cudaStream_t);
+template void launch_charge2proxy<float, 2>(const Charge2ProxyArgs<float> &, cudaStream_t);
+template void launch_charge2proxy<float, 3>(const Charge2ProxyArgs<float> &, cudaStream_t);
+template void launch_charge2proxy<double, 2>(const Charge2ProxyArgs<double> &, cudaStream_t);
+template void launch_charge2proxy<double, 3>(const Charge2ProxyArgs<double> &, cudaStream_t);
 
 } // namespace dmk::cuda

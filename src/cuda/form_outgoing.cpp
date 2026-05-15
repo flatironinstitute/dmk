@@ -71,7 +71,7 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
             pa.dst_stride_complex = 0;
             pa_h.push_back(pa);
         }
-        cuda::launch_proxy2pw_multilevel_dispatch<Real>(DIM, pa_h, s.d_proxy2pw_args.data(), s.downward_stream);
+        cuda::launch_proxy2pw_multilevel<Real, DIM>(pa_h, s.d_proxy2pw_args.data(), s.downward_stream);
     } else {
         for (int L = 0; L < n_levels; ++L) {
             const int n_box = s.pw_form_box_count_h[L];
@@ -92,7 +92,7 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
             pa.dst_flat = s.d_pw_form_pool.data();
             pa.dst_offsets = nullptr;
             pa.dst_stride_complex = s.pw_form_stride_reals / 2;
-            cuda::launch_proxy2pw_dispatch<Real>(DIM, pa, s.downward_stream);
+            cuda::launch_proxy2pw<Real, DIM>(pa, s.downward_stream);
         }
     }
     nvtxRangePop();
@@ -117,7 +117,7 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
             ma.radialft = radialft_L;
             ma.pw_flat = s.d_pw_out.data();
             ma.pw_offsets = s.d_pw_out_offsets.data();
-            cuda::launch_multiply_cd2p_dispatch<Real>(DIM, ma, s.downward_stream);
+            cuda::launch_multiply_cd2p<Real, DIM>(ma, s.downward_stream);
         } else if (kernel == DMK_STOKESLET) {
             cuda::MultiplyStokeslet3DArgs<Real> ma;
             ma.n_boxes_at_level = n_box;
@@ -130,7 +130,7 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
             ma.radialft = radialft_L;
             ma.pw_flat = s.d_pw_out.data();
             ma.pw_offsets = s.d_pw_out_offsets.data();
-            cuda::launch_multiply_stokeslet_3d_dispatch<Real>(DIM, ma, s.downward_stream);
+            cuda::launch_multiply_stokeslet_3d<Real>(ma, s.downward_stream);
         } else if (is_stresslet) {
             cuda::MultiplyStresslet3DArgs<Real> ma;
             ma.n_boxes_at_level = n_box;
@@ -145,7 +145,7 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
             ma.src_stride_complex = s.pw_form_stride_reals / 2;
             ma.dst_flat = s.d_pw_out.data();
             ma.dst_offsets = s.d_pw_out_offsets.data();
-            cuda::launch_multiply_stresslet_3d_dispatch<Real>(DIM, ma, s.downward_stream);
+            cuda::launch_multiply_stresslet_3d<Real>(ma, s.downward_stream);
         } else {
             throw std::runtime_error("CUDA form_outgoing: unsupported kernel");
         }
@@ -168,7 +168,7 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
         pa.dst_flat = s.d_window_pw_form_in.data();
         pa.dst_offsets = nullptr;
         pa.dst_stride_complex = window_in_stride_complex;
-        cuda::launch_proxy2pw_dispatch<Real>(DIM, pa, s.downward_stream);
+        cuda::launch_proxy2pw<Real, DIM>(pa, s.downward_stream);
 
         // Multiply at window size.
         Real *pw_for_pw_to_proxy = s.d_window_pw_form_in.data();
@@ -182,7 +182,7 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
             ma.pw_flat = s.d_window_pw_form_in.data();
             ma.pw_offsets = nullptr;
             ma.pw_stride_complex = window_in_stride_complex;
-            cuda::launch_multiply_cd2p_dispatch<Real>(DIM, ma, s.downward_stream);
+            cuda::launch_multiply_cd2p<Real, DIM>(ma, s.downward_stream);
         } else if (kernel == DMK_STOKESLET) {
             cuda::MultiplyStokeslet3DArgs<Real> ma;
             ma.n_boxes_at_level = 1;
@@ -196,7 +196,7 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
             ma.pw_flat = s.d_window_pw_form_in.data();
             ma.pw_offsets = nullptr;
             ma.pw_stride_complex = window_in_stride_complex;
-            cuda::launch_multiply_stokeslet_3d_dispatch<Real>(DIM, ma, s.downward_stream);
+            cuda::launch_multiply_stokeslet_3d<Real>(ma, s.downward_stream);
         } else if (is_stresslet) {
             cuda::MultiplyStresslet3DArgs<Real> ma;
             ma.n_boxes_at_level = 1;
@@ -212,7 +212,7 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
             ma.dst_flat = s.d_window_pw_form_out.data();
             ma.dst_offsets = nullptr;
             ma.dst_stride_complex = (long)s.n_charge_dim * s.n_pw_modes_win;
-            cuda::launch_multiply_stresslet_3d_dispatch<Real>(DIM, ma, s.downward_stream);
+            cuda::launch_multiply_stresslet_3d<Real>(ma, s.downward_stream);
             pw_for_pw_to_proxy = s.d_window_pw_form_out.data();
         } else {
             throw std::runtime_error("CUDA form_outgoing: unsupported kernel (root)");
@@ -231,7 +231,7 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
         pp.pw2poly = s.d_window_pw2poly.data();
         pp.proxy_flat = s.d_proxy_coeffs_downward.data();
         pp.proxy_offsets = s.d_proxy_offsets_downward.data();
-        cuda::launch_pw_to_proxy_dispatch<Real>(DIM, pp, s.downward_stream);
+        cuda::launch_pw_to_proxy<Real, DIM>(pp, s.downward_stream);
     }
 }
 

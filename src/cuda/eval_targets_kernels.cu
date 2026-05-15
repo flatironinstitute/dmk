@@ -319,6 +319,7 @@ static void launch_eval_targets_kernel(const EvalTargetsArgs<Real> &args, cudaSt
         DISPATCH_N_ORDER(16);
         DISPATCH_N_ORDER(17);
         DISPATCH_N_ORDER(18);
+        DISPATCH_N_ORDER(19);
     default:
         throw std::runtime_error("launch_eval_targets_kernel: unsupported n_order=" + std::to_string(args.n_order));
     }
@@ -326,47 +327,34 @@ static void launch_eval_targets_kernel(const EvalTargetsArgs<Real> &args, cudaSt
 #undef DISPATCH_N_ORDER
 }
 
-namespace {
-
-template <typename Real>
-void dispatch(int dim, int eval_level, int n_charge_dim, const EvalTargetsArgs<Real> &args, cudaStream_t stream) {
-    constexpr int MAX_N_ORDER = 32;
-    if (args.n_order > MAX_N_ORDER)
-        throw std::runtime_error("CUDA eval_targets: n_order=" + std::to_string(args.n_order) +
-                                 " exceeds MAX_N_ORDER=" + std::to_string(MAX_N_ORDER));
-
-#define DMK_EVAL_TARGETS_CASE(D, E, NCD)                                                                               \
-    if (dim == (D) && eval_level == (E) && n_charge_dim == (NCD)) {                                                   \
-        launch_eval_targets_kernel<Real, (D), (E), (NCD)>(args, stream);                                               \
-        return;                                                                                                        \
+// EvalTargetsByBoxKernel's body already has `if constexpr (DIM == 2)` paths,
+// so DIM=2 instantiations work as soon as we explicitly instantiate them
+// below and lift the DIM=3 gate in the other GPU contexts.
+template <typename Real, int DIM>
+void launch_eval_targets(int eval_level, int n_charge_dim, const EvalTargetsArgs<Real> &args, cudaStream_t stream) {
+    if (n_charge_dim == 1 && eval_level == 1) {
+        launch_eval_targets_kernel<Real, DIM, 1, 1>(args, stream);
+        return;
     }
-
-    // Single-charge-dim (laplace, sqrt_laplace).
-    DMK_EVAL_TARGETS_CASE(2, 1, 1)
-    DMK_EVAL_TARGETS_CASE(2, 2, 1)
-    DMK_EVAL_TARGETS_CASE(3, 1, 1)
-    DMK_EVAL_TARGETS_CASE(3, 2, 1)
-
-    // Three-charge-dim (stokeslet, stresslet — both VELOCITY only, EVAL_LEVEL=1).
-    DMK_EVAL_TARGETS_CASE(3, 1, 3)
-
-#undef DMK_EVAL_TARGETS_CASE
-
-    throw std::runtime_error("CUDA eval_targets: unsupported (dim=" + std::to_string(dim) +
+    if (n_charge_dim == 1 && eval_level == 2) {
+        launch_eval_targets_kernel<Real, DIM, 2, 1>(args, stream);
+        return;
+    }
+    if constexpr (DIM == 3) {
+        if (n_charge_dim == 3 && eval_level == 1) {
+            launch_eval_targets_kernel<Real, 3, 1, 3>(args, stream);
+            return;
+        }
+    }
+    throw std::runtime_error("CUDA eval_targets: unsupported (DIM=" + std::to_string(DIM) +
                              ", eval_level=" + std::to_string(eval_level) +
                              ", n_charge_dim=" + std::to_string(n_charge_dim) + ")");
 }
 
-} // namespace
-
-template <typename Real>
-void launch_eval_targets_dispatch(int dim, int eval_level, int n_charge_dim, const EvalTargetsArgs<Real> &args,
-                                  cudaStream_t stream) {
-    dispatch<Real>(dim, eval_level, n_charge_dim, args, stream);
-}
-
-template void launch_eval_targets_dispatch<float>(int, int, int, const EvalTargetsArgs<float> &, cudaStream_t);
-template void launch_eval_targets_dispatch<double>(int, int, int, const EvalTargetsArgs<double> &, cudaStream_t);
+template void launch_eval_targets<float, 2>(int, int, const EvalTargetsArgs<float> &, cudaStream_t);
+template void launch_eval_targets<float, 3>(int, int, const EvalTargetsArgs<float> &, cudaStream_t);
+template void launch_eval_targets<double, 2>(int, int, const EvalTargetsArgs<double> &, cudaStream_t);
+template void launch_eval_targets<double, 3>(int, int, const EvalTargetsArgs<double> &, cudaStream_t);
 
 template <typename Real>
 __global__ void inplace_accumulate_kernel(Real *__restrict__ dst, const Real *__restrict__ src, int n) {

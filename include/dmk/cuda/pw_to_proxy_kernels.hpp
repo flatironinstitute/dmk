@@ -48,13 +48,13 @@ struct PwToProxyArgs {
     const long *proxy_offsets = nullptr;
 };
 
-template <typename Real>
-void launch_pw_to_proxy_dispatch(int dim, const PwToProxyArgs<Real> &args, cudaStream_t stream);
+template <typename Real, int DIM>
+void launch_pw_to_proxy(const PwToProxyArgs<Real> &args, cudaStream_t stream);
 
 // d_args_scratch must point to device memory sized >= args_h.size() entries.
-template <typename Real>
-void launch_pw_to_proxy_multilevel_dispatch(int dim, const std::vector<PwToProxyArgs<Real>> &args_h,
-                                            PwToProxyArgs<Real> *d_args_scratch, cudaStream_t stream);
+template <typename Real, int DIM>
+void launch_pw_to_proxy_multilevel(const std::vector<PwToProxyArgs<Real>> &args_h, PwToProxyArgs<Real> *d_args_scratch,
+                                   cudaStream_t stream);
 
 } // namespace dmk::cuda
 

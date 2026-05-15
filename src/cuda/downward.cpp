@@ -80,14 +80,14 @@ void CudaDownwardContext<Real, DIM>::run() {
 
     if (!shift_args_h.empty()) {
         nvtxRangePush("shift_pw: multilevel");
-        cuda::launch_shift_pw_multilevel_dispatch<Real>(DIM, shift_args_h, s.d_shift_pw_args.data(), s.downward_stream);
+        cuda::launch_shift_pw_multilevel<Real, DIM>(shift_args_h, s.d_shift_pw_args.data(), s.downward_stream);
         nvtxRangePop();
     }
 
     if (!pw_to_proxy_args_h.empty()) {
         nvtxRangePush("pw_to_proxy: multilevel");
-        cuda::launch_pw_to_proxy_multilevel_dispatch<Real>(DIM, pw_to_proxy_args_h, s.d_pw_to_proxy_args.data(),
-                                                           s.downward_stream);
+        cuda::launch_pw_to_proxy_multilevel<Real, DIM>(pw_to_proxy_args_h, s.d_pw_to_proxy_args.data(),
+                                                       s.downward_stream);
         nvtxRangePop();
     }
 
@@ -117,7 +117,7 @@ void CudaDownwardContext<Real, DIM>::run() {
         ta.scratch = s.d_tensorprod_scratch.data();
         ta.scratch_stride = s.tensorprod_scratch_stride_reals;
 
-        cuda::launch_tensorprod_dispatch<Real>(DIM, ta, s.downward_stream);
+        cuda::launch_tensorprod<Real, DIM>(ta, s.downward_stream);
 
         nvtxRangePop();
     }

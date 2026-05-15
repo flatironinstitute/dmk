@@ -50,7 +50,7 @@ void CudaUpwardContext<Real, DIM>::run() {
         a.proxy_offsets = s.d_proxy_offsets_upward.data();
         a.group_perm = s.d_c2p_group_perm.data();
         a.n_active_groups = s.n_c2p_active_groups;
-        cuda::launch_charge2proxy_dispatch<Real>(DIM, a, s.downward_stream);
+        cuda::launch_charge2proxy<Real, DIM>(a, s.downward_stream);
     }
 
     // Per-level tensorprod (deepest level first) — accumulates children's
@@ -59,7 +59,7 @@ void CudaUpwardContext<Real, DIM>::run() {
         const int n_pairs = s.tp_up_count_h[L];
         if (n_pairs == 0)
             continue;
-        auto range_string = "tensorprod_dispatch level: " + std::to_string(L);
+        auto range_string = "tensorprod up: level " + std::to_string(L);
         nvtxRangePush(range_string.c_str());
         const int off = s.tp_up_offset_h[L];
         cuda::TensorprodArgs<Real> ta;
@@ -75,7 +75,7 @@ void CudaUpwardContext<Real, DIM>::run() {
         ta.scratch = s.d_tensorprod_scratch.data();
         ta.scratch_stride = s.tensorprod_scratch_stride_reals;
         ta.additive_atomic = true; // multiple children of the same parent → race without atomics
-        cuda::launch_tensorprod_dispatch<Real>(DIM, ta, s.downward_stream);
+        cuda::launch_tensorprod<Real, DIM>(ta, s.downward_stream);
         nvtxRangePop();
     }
 

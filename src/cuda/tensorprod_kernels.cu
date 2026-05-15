@@ -86,27 +86,22 @@ __global__ void TensorprodByPair3DKernel(TensorprodArgs<Real> a) {
     }
 }
 
-template <typename Real>
-static void launch_tensorprod_3d(const TensorprodArgs<Real> &args, cudaStream_t stream) {
+// DIM is currently 3-only at the kernel level. <Real, 2> instantiations exist
+// so contexts templated on DIM link cleanly; they're unreachable at runtime.
+template <typename Real, int DIM>
+void launch_tensorprod(const TensorprodArgs<Real> &args, cudaStream_t stream) {
     if (args.n_pairs == 0)
         return;
     constexpr int block_size = 512;
     TensorprodByPair3DKernel<Real><<<args.n_pairs, block_size, 0, stream>>>(args);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess)
-        throw std::runtime_error(std::string("launch_tensorprod_3d: ") + cudaGetErrorString(err));
+        throw std::runtime_error(std::string("launch_tensorprod: ") + cudaGetErrorString(err));
 }
 
-template <typename Real>
-void launch_tensorprod_dispatch(int dim, const TensorprodArgs<Real> &args, cudaStream_t stream) {
-    if (dim == 3) {
-        launch_tensorprod_3d<Real>(args, stream);
-        return;
-    }
-    throw std::runtime_error("CUDA tensorprod: dim=" + std::to_string(dim) + " not supported (only 3D for now)");
-}
-
-template void launch_tensorprod_dispatch<float>(int, const TensorprodArgs<float> &, cudaStream_t);
-template void launch_tensorprod_dispatch<double>(int, const TensorprodArgs<double> &, cudaStream_t);
+template void launch_tensorprod<float, 2>(const TensorprodArgs<float> &, cudaStream_t);
+template void launch_tensorprod<float, 3>(const TensorprodArgs<float> &, cudaStream_t);
+template void launch_tensorprod<double, 2>(const TensorprodArgs<double> &, cudaStream_t);
+template void launch_tensorprod<double, 3>(const TensorprodArgs<double> &, cudaStream_t);
 
 } // namespace dmk::cuda
