@@ -81,7 +81,6 @@ for raw_col, nice_path in custom_key_map.items():
         df[f'{nice_path}|t_min'] = scaled
         df[f'{nice_path}|t_max'] = scaled
 
-
 df_tree = df[df.columns[df.columns.str.contains(r'\|(t_min|t_max)$', regex=True)]]
 total_time_median = df[time_col].median()
 
