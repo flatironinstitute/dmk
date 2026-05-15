@@ -848,7 +848,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
   private:
     // Path-specific pieces of upward_pass / downward_pass. The public
     // upward_pass / downward_pass methods are dispatchers that call into
-    // these based on params.eval_path; in BOTH mode both halves run.
+    // these based on params.eval_path
     void cpu_upward_pass();
     void cpu_downward_pass();
 #ifdef DMK_GPU_OFFLOAD

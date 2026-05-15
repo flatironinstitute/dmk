@@ -34,7 +34,7 @@ __device__ inline void chebyshev_fill_strided(Real x, Real *out, int n, int stri
     }
 }
 
-template <typename Real, int N_ORDER, int I_TILE = 3, int J_TILE = 6, int K_TILE = 2>
+template <typename Real, int N_ORDER, int I_TILE, int J_TILE, int K_TILE>
 __global__ void Charge2ProxyByGroup3DKernel_GemmMicroKTile(Charge2ProxyArgs<Real> a,
                                                           const int *__restrict__ group_perm) {
     constexpr int CHUNK = 128;
@@ -225,7 +225,7 @@ __global__ void Charge2ProxyByGroup3DKernel_GemmMicroKTile(Charge2ProxyArgs<Real
     }
 }
 
-template <typename Real, int N_ORDER, int I_TILE = 3, int J_TILE = 6, int K_TILE = 2>
+template <typename Real, int N_ORDER, int I_TILE, int J_TILE, int K_TILE>
 static void launch_charge2proxy_3d_gemm_micro_ktile_impl(const Charge2ProxyArgs<Real> &args, const int *group_perm,
                                                          int n_launch_groups, cudaStream_t stream) {
     if (args.n_groups == 0 || n_launch_groups == 0)
@@ -286,8 +286,6 @@ static void launch_charge2proxy_3d(const Charge2ProxyArgs<Real> &args, const int
 #undef DISPATCH_N_ORDER
 }
 
-// DIM is currently 3-only at the kernel level. <Real, 2> instantiations exist
-// so contexts templated on DIM link cleanly; they're unreachable at runtime.
 template <typename Real, int DIM>
 void launch_charge2proxy(const Charge2ProxyArgs<Real> &args, cudaStream_t stream) {
     launch_charge2proxy_3d<Real>(args, args.group_perm, args.n_active_groups, stream);

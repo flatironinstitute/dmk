@@ -24,7 +24,7 @@ using cuda_helpers::complx_madd;
 using cuda_helpers::complx_real_madd;
 using cuda_helpers::complx_zero;
 
-template <typename Real, int K1_TILE = 18, int COL_REG = 2, int K2_TILE = 2, int K3_TILE = 6, int KR_TILE = 6>
+template <typename Real, int K1_TILE, int COL_REG, int K2_TILE, int K3_TILE, int KR_TILE>
 __device__ __forceinline__ void PwToProxyBody(const PwToProxyArgs<Real> &a, const int box_idx) {
     if (box_idx >= a.n_boxes_at_level)
         return;
@@ -304,7 +304,7 @@ __device__ __forceinline__ void PwToProxyBody(const PwToProxyArgs<Real> &a, cons
     }
 }
 
-template <typename Real, int K1_TILE = 18, int COL_REG = 2, int K2_TILE = 2, int K3_TILE = 6, int KR_TILE = 6>
+template <typename Real, int K1_TILE, int COL_REG, int K2_TILE, int K3_TILE, int KR_TILE>
 __global__ void PwToProxyMultiLevelKernel(const PwToProxyArgs<Real> *__restrict__ args, int n_args) {
     const int arg_idx = blockIdx.y;
     if (arg_idx >= n_args)
@@ -313,7 +313,7 @@ __global__ void PwToProxyMultiLevelKernel(const PwToProxyArgs<Real> *__restrict_
     PwToProxyBody<Real, K1_TILE, COL_REG, K2_TILE, K3_TILE, KR_TILE>(a, blockIdx.x);
 }
 
-template <typename Real, int K1_TILE = 18, int COL_REG = 2, int K2_TILE = 2, int K3_TILE = 6, int KR_TILE = 6>
+template <typename Real, int K1_TILE, int COL_REG, int K2_TILE, int K3_TILE, int KR_TILE>
 __global__ void PwToProxyByBoxKernel(PwToProxyArgs<Real> a) {
     PwToProxyBody<Real, K1_TILE, COL_REG, K2_TILE, K3_TILE, KR_TILE>(a, blockIdx.x);
 }
@@ -385,8 +385,6 @@ static void launch_multi(const PwToProxyArgs<Real> *d_args, int n_args, int max_
                                  " max_n_order=" + std::to_string(max_n_order));
 }
 
-// DIM is currently 3-only at the kernel level. <Real, 2> instantiations exist
-// so contexts templated on DIM link cleanly; they're unreachable at runtime.
 template <typename Real, int DIM>
 void launch_pw_to_proxy(const PwToProxyArgs<Real> &args, cudaStream_t stream) {
     launch_single<Real>(args, stream);

@@ -322,7 +322,7 @@ void emit_cuda_file(const std::vector<std::pair<KernelDef, std::vector<CoeffsInf
 #include <dmk.h>
 #include <dmk/cuda/aot_kernels.hpp>
 #include <dmk/cuda/direct_kernels.cuh>
-#include <dmk/cuda/kernels.cuh>
+#include <dmk/cuda/cuda_kernels.cuh>
 #include <dmk/types.hpp>
 
 #include <cstddef>

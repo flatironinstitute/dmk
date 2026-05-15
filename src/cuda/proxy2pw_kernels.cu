@@ -122,8 +122,6 @@ __global__ void Proxy2PwMultiLevelKernel(const Proxy2PwArgs<Real> *args, int n_a
     Proxy2PwBody<Real>(args[arg_idx], blockIdx.x);
 }
 
-// DIM is currently 3-only at the kernel level. <Real, 2> instantiations exist
-// so contexts templated on DIM link cleanly; they're unreachable at runtime.
 template <typename Real, int DIM>
 void launch_proxy2pw(const Proxy2PwArgs<Real> &args, cudaStream_t stream) {
     if (args.n_boxes_at_level == 0)

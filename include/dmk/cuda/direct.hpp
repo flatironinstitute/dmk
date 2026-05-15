@@ -2,11 +2,6 @@
 #define DMK_CUDA_DIRECT_HPP
 
 // GPU offload of the direct (near-field residual) interactions.
-//
-// FIXME: Simplifications still in force: no ContactGeometry filtering
-// (all owned src/trg points evaluated against every list1 source
-// box's halo sources), no PBC, no Yukawa — CudaSharedDeviceState ctor
-// throws on the latter two.
 
 #include <dmk/cuda/helpers.hpp>
 

@@ -86,8 +86,6 @@ __global__ void TensorprodByPair3DKernel(TensorprodArgs<Real> a) {
     }
 }
 
-// DIM is currently 3-only at the kernel level. <Real, 2> instantiations exist
-// so contexts templated on DIM link cleanly; they're unreachable at runtime.
 template <typename Real, int DIM>
 void launch_tensorprod(const TensorprodArgs<Real> &args, cudaStream_t stream) {
     if (args.n_pairs == 0)

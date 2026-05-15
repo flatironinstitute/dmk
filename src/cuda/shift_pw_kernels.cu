@@ -93,9 +93,6 @@ __global__ void ShiftPwMultiLevelKernel(const ShiftPwArgs<Real> *args, int n_arg
     ShiftPwByBoxBody<Real>(a, blockIdx.x);
 }
 
-// DIM is currently 3-only at the kernel level. <Real, 2> instantiations exist
-// so contexts templated on DIM link cleanly; they're unreachable at runtime
-// because the GPU contexts' ctors throw for DIM != 3.
 template <typename Real, int DIM>
 void launch_shift_pw(const ShiftPwArgs<Real> &args, cudaStream_t stream) {
     if (args.n_boxes_at_level == 0)

@@ -190,8 +190,6 @@ __global__ void MultiplyStresslet3DByBoxKernel(MultiplyStresslet3DArgs<Real> a) 
     }
 }
 
-// DIM is currently 3-only at the kernel level. <Real, 2> instantiations exist
-// so contexts templated on DIM link cleanly; they're unreachable at runtime.
 template <typename Real, int DIM>
 void launch_multiply_cd2p(const MultiplyCd2pArgs<Real> &args, cudaStream_t stream) {
     if (args.n_boxes_at_level == 0)
