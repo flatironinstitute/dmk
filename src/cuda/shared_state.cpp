@@ -15,6 +15,134 @@ namespace dmk {
 
 using cuda_helpers::sctl_int_vec_to_std;
 
+namespace {
+
+// Build a per-level flat box list filtered by `pred`. Writes offset_h
+// ([n_levels+1]), count_h ([n_levels]), running max and total, and uploads
+// the flat list to d_flat (if non-empty).
+template <typename Real, int DIM, typename Pred>
+void build_per_level_box_list(DMKPtTree<Real, DIM> &tree, int n_levels, std::vector<int> &offset_h,
+                              std::vector<int> &count_h, int &max_per_level, int &count_total,
+                              DeviceBuffer<int> &d_flat, Pred pred) {
+    offset_h.assign(n_levels + 1, 0);
+    count_h.assign(n_levels, 0);
+    std::vector<int> flat;
+    flat.reserve(tree.n_boxes());
+    for (int L = 0; L < n_levels; ++L) {
+        offset_h[L] = flat.size();
+        for (int idx = 0; idx < tree.level_indices[L].Dim(); ++idx) {
+            const int b = tree.level_indices[L][idx];
+            if (pred(b)) {
+                flat.push_back(b);
+                count_h[L]++;
+            }
+        }
+        max_per_level = std::max(max_per_level, count_h[L]);
+    }
+    offset_h[n_levels] = flat.size();
+    count_total = flat.size();
+    if (count_total)
+        d_flat.upload(flat.data(), flat.size());
+}
+
+template <typename Real, int DIM>
+void build_charge2proxy_groups(CudaSharedDeviceState<Real, DIM> &s, DMKPtTree<Real, DIM> &tree) {
+    s.n_c2p_groups = tree.charge2proxy_groups.size();
+    std::vector<int> centers_h, levels_h, off_h, count_h, src_flat_h;
+    centers_h.reserve(s.n_c2p_groups);
+    levels_h.reserve(s.n_c2p_groups);
+    off_h.reserve(s.n_c2p_groups);
+    count_h.reserve(s.n_c2p_groups);
+    for (const auto &g : tree.charge2proxy_groups) {
+        centers_h.push_back(g.center_box);
+        levels_h.push_back(g.level);
+        off_h.push_back(src_flat_h.size());
+        count_h.push_back(g.n_src_boxes);
+        for (int k = 0; k < g.n_src_boxes; ++k)
+            src_flat_h.push_back(g.src_boxes[k]);
+    }
+    if (s.n_c2p_groups) {
+        s.d_c2p_center_boxes.upload(centers_h.data(), centers_h.size());
+        s.d_c2p_levels.upload(levels_h.data(), levels_h.size());
+        s.d_c2p_src_box_flat_offsets.upload(off_h.data(), off_h.size());
+        s.d_c2p_n_src_boxes_per_group.upload(count_h.data(), count_h.size());
+        s.d_c2p_src_boxes_flat.upload(src_flat_h.data(), src_flat_h.size());
+    }
+
+    // Group ordering: largest work first so heavy groups grab CTAs early.
+    // Work key matches the device kernel's previous formula (CHUNK=32 here
+    // is the tiebreaker granularity used in the old work-key kernel; the
+    // primary sort term is total_sources).
+    if (s.n_c2p_groups) {
+        constexpr int CHUNK = 32;
+        std::vector<std::pair<long long, int>> work_perm;
+        work_perm.reserve(s.n_c2p_groups);
+        for (int g = 0; g < s.n_c2p_groups; ++g) {
+            long long total_sources = 0;
+            long long total_chunks = 0;
+            const auto &grp = tree.charge2proxy_groups[g];
+            for (int sbi = 0; sbi < grp.n_src_boxes; ++sbi) {
+                const int sb = grp.src_boxes[sbi];
+                const int n_src = tree.src_counts_owned[sb];
+                total_sources += n_src;
+                total_chunks += (n_src + CHUNK - 1) / CHUNK;
+            }
+            work_perm.emplace_back(total_sources * 1024LL + total_chunks, g);
+        }
+        std::sort(work_perm.begin(), work_perm.end(), [](const auto &a, const auto &b) { return a.first > b.first; });
+        std::vector<int> perm_h(s.n_c2p_groups);
+        s.n_c2p_active_groups = 0;
+        for (int i = 0; i < s.n_c2p_groups; ++i) {
+            perm_h[i] = work_perm[i].second;
+            if (work_perm[i].first > 0)
+                ++s.n_c2p_active_groups;
+        }
+        s.d_c2p_group_perm.upload(perm_h.data(), perm_h.size());
+    }
+}
+
+// Per-level upward tensorprod pair lists. Gating: parent has
+// src_counts_owned[parent] > 0 && ifpwexp[parent], same for child. Mirrors
+// the CPU upward sweep (level n_levels-1..0). Pairs at level L = parent's
+// level.
+template <typename Real, int DIM>
+void build_tp_up_pair_lists(CudaSharedDeviceState<Real, DIM> &s, DMKPtTree<Real, DIM> &tree) {
+    const auto &node_lists = tree.GetNodeLists();
+    constexpr int n_children = 1 << DIM;
+    const int n_levels = s.n_levels;
+    s.tp_up_offset_h.assign(n_levels + 1, 0);
+    s.tp_up_count_h.assign(n_levels, 0);
+    std::vector<int> srcs, dsts, octs;
+    for (int L = 0; L < n_levels; ++L) {
+        s.tp_up_offset_h[L] = srcs.size();
+        for (int idx = 0; idx < tree.level_indices[L].Dim(); ++idx) {
+            const int parent = tree.level_indices[L][idx];
+            if (!(tree.src_counts_owned[parent] > 0 && tree.ifpwexp[parent]))
+                continue;
+            for (int ic = 0; ic < n_children; ++ic) {
+                const int child = node_lists[parent].child[ic];
+                if (child < 0)
+                    continue;
+                if (!(tree.src_counts_owned[child] > 0 && tree.ifpwexp[child]))
+                    continue;
+                srcs.push_back(child);
+                dsts.push_back(parent);
+                octs.push_back(ic);
+                s.tp_up_count_h[L]++;
+            }
+        }
+        s.max_tp_up_per_level = std::max(s.max_tp_up_per_level, s.tp_up_count_h[L]);
+    }
+    s.tp_up_offset_h[n_levels] = srcs.size();
+    if (!srcs.empty()) {
+        s.d_tp_up_src_boxes.upload(srcs.data(), srcs.size());
+        s.d_tp_up_dst_boxes.upload(dsts.data(), dsts.size());
+        s.d_tp_up_octants.upload(octs.data(), octs.size());
+    }
+}
+
+} // namespace
+
 template <typename Real, int DIM>
 CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tree) {
     if (tree.params.use_periodic)
@@ -238,100 +366,8 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
     if (tree.charge_offsets_owned.Dim())
         d_charge_owned_offsets.upload((const long *)&tree.charge_offsets_owned[0], tree.charge_offsets_owned.Dim());
 
-    // Charge2Proxy group lists, flattened across all groups.
-    {
-        n_c2p_groups = tree.charge2proxy_groups.size();
-        std::vector<int> centers_h, levels_h, off_h, count_h, src_flat_h;
-        centers_h.reserve(n_c2p_groups);
-        levels_h.reserve(n_c2p_groups);
-        off_h.reserve(n_c2p_groups);
-        count_h.reserve(n_c2p_groups);
-        for (const auto &g : tree.charge2proxy_groups) {
-            centers_h.push_back(g.center_box);
-            levels_h.push_back(g.level);
-            off_h.push_back(src_flat_h.size());
-            count_h.push_back(g.n_src_boxes);
-            for (int k = 0; k < g.n_src_boxes; ++k)
-                src_flat_h.push_back(g.src_boxes[k]);
-        }
-        if (n_c2p_groups) {
-            d_c2p_center_boxes.upload(centers_h.data(), centers_h.size());
-            d_c2p_levels.upload(levels_h.data(), levels_h.size());
-            d_c2p_src_box_flat_offsets.upload(off_h.data(), off_h.size());
-            d_c2p_n_src_boxes_per_group.upload(count_h.data(), count_h.size());
-            d_c2p_src_boxes_flat.upload(src_flat_h.data(), src_flat_h.size());
-        }
-
-        // Group ordering: largest work first so heavy groups grab CTAs early.
-        // Work key matches the device kernel's previous formula (CHUNK=32 here
-        // is the tiebreaker granularity used in the old work-key kernel; the
-        // primary sort term is total_sources).
-        if (n_c2p_groups) {
-            constexpr int CHUNK = 32;
-            std::vector<std::pair<long long, int>> work_perm;
-            work_perm.reserve(n_c2p_groups);
-            for (int g = 0; g < n_c2p_groups; ++g) {
-                long long total_sources = 0;
-                long long total_chunks = 0;
-                const auto &grp = tree.charge2proxy_groups[g];
-                for (int sbi = 0; sbi < grp.n_src_boxes; ++sbi) {
-                    const int sb = grp.src_boxes[sbi];
-                    const int n_src = tree.src_counts_owned[sb];
-                    total_sources += n_src;
-                    total_chunks += (n_src + CHUNK - 1) / CHUNK;
-                }
-                work_perm.emplace_back(total_sources * 1024LL + total_chunks, g);
-            }
-            std::sort(work_perm.begin(), work_perm.end(),
-                      [](const auto &a, const auto &b) { return a.first > b.first; });
-            std::vector<int> perm_h(n_c2p_groups);
-            n_c2p_active_groups = 0;
-            for (int i = 0; i < n_c2p_groups; ++i) {
-                perm_h[i] = work_perm[i].second;
-                if (work_perm[i].first > 0)
-                    ++n_c2p_active_groups;
-            }
-            d_c2p_group_perm.upload(perm_h.data(), perm_h.size());
-        }
-    }
-
-    // Per-level upward tensorprod pair lists. Gating: parent has
-    // src_counts_owned[parent] > 0 && ifpwexp[parent], child has
-    // src_counts_owned[child] > 0 && ifpwexp[child]. Mirrors the CPU
-    // upward sweep (level n_levels-1..0). Pairs at level L = parent's level.
-    {
-        const auto &node_lists = tree.GetNodeLists();
-        constexpr int n_children = 1 << DIM;
-        tp_up_offset_h.assign(n_levels + 1, 0);
-        tp_up_count_h.assign(n_levels, 0);
-        std::vector<int> srcs, dsts, octs;
-        for (int L = 0; L < n_levels; ++L) {
-            tp_up_offset_h[L] = srcs.size();
-            for (int idx = 0; idx < tree.level_indices[L].Dim(); ++idx) {
-                const int parent = tree.level_indices[L][idx];
-                if (!(tree.src_counts_owned[parent] > 0 && tree.ifpwexp[parent]))
-                    continue;
-                for (int ic = 0; ic < n_children; ++ic) {
-                    const int child = node_lists[parent].child[ic];
-                    if (child < 0)
-                        continue;
-                    if (!(tree.src_counts_owned[child] > 0 && tree.ifpwexp[child]))
-                        continue;
-                    srcs.push_back(child);
-                    dsts.push_back(parent);
-                    octs.push_back(ic);
-                    tp_up_count_h[L]++;
-                }
-            }
-            max_tp_up_per_level = std::max(max_tp_up_per_level, tp_up_count_h[L]);
-        }
-        tp_up_offset_h[n_levels] = srcs.size();
-        if (!srcs.empty()) {
-            d_tp_up_src_boxes.upload(srcs.data(), srcs.size());
-            d_tp_up_dst_boxes.upload(dsts.data(), dsts.size());
-            d_tp_up_octants.upload(octs.data(), octs.size());
-        }
-    }
+    build_charge2proxy_groups(*this, tree);
+    build_tp_up_pair_lists(*this, tree);
 
     // Allocate the upward proxy buffer up front (zero-initialized). The
     // upward orchestrator zeroes it again at run() to handle re-evals.
@@ -344,28 +380,10 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
 
     // Per-level pw_eval box lists: for each level, the boxes that do PW work
     // (ifpwexp[b] && (src_counts_owned[b] + trg_counts_owned[b]) > 0).
-    {
-        pw_eval_box_offset_h.assign(n_levels + 1, 0);
-        pw_eval_box_count_h.assign(n_levels, 0);
-        std::vector<int> flat;
-        flat.reserve(n_boxes);
-        for (int L = 0; L < n_levels; ++L) {
-            pw_eval_box_offset_h[L] = flat.size();
-            for (int idx = 0; idx < tree.level_indices[L].Dim(); ++idx) {
-                const int b = tree.level_indices[L][idx];
-                const int nboxpts = tree.src_counts_owned[b] + tree.trg_counts_owned[b];
-                if (tree.ifpwexp[b] && nboxpts) {
-                    flat.push_back(b);
-                    pw_eval_box_count_h[L]++;
-                }
-            }
-            max_pw_eval_per_level = std::max(max_pw_eval_per_level, pw_eval_box_count_h[L]);
-        }
-        pw_eval_box_offset_h[n_levels] = flat.size();
-        pw_eval_box_count_total = flat.size();
-        if (pw_eval_box_count_total)
-            d_pw_eval_box_flat.upload(flat.data(), flat.size());
-    }
+    build_per_level_box_list(tree, n_levels, pw_eval_box_offset_h, pw_eval_box_count_h, max_pw_eval_per_level,
+                             pw_eval_box_count_total, d_pw_eval_box_flat, [&](int b) {
+                                 return tree.ifpwexp[b] && (tree.src_counts_owned[b] + tree.trg_counts_owned[b]) > 0;
+                             });
 
     // Per-level tensorprod pairs.
     {
@@ -425,27 +443,9 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
 
     // Per-level pw_form (proxy2pw target) box list. Subset of pw_eval_box_flat
     // restricted to boxes that have an upward proxy to project from.
-    {
-        pw_form_box_offset_h.assign(n_levels + 1, 0);
-        pw_form_box_count_h.assign(n_levels, 0);
-        std::vector<int> flat;
-        flat.reserve(n_boxes);
-        for (int L = 0; L < n_levels; ++L) {
-            pw_form_box_offset_h[L] = flat.size();
-            for (int idx = 0; idx < tree.level_indices[L].Dim(); ++idx) {
-                const int b = tree.level_indices[L][idx];
-                if (tree.ifpwexp[b] && tree.proxy_coeffs_offsets[b] != -1) {
-                    flat.push_back(b);
-                    pw_form_box_count_h[L]++;
-                }
-            }
-            max_pw_form_per_level = std::max(max_pw_form_per_level, pw_form_box_count_h[L]);
-        }
-        pw_form_box_offset_h[n_levels] = flat.size();
-        pw_form_box_count_total = flat.size();
-        if (pw_form_box_count_total)
-            d_pw_form_box_flat.upload(flat.data(), flat.size());
-    }
+    build_per_level_box_list(tree, n_levels, pw_form_box_offset_h, pw_form_box_count_h, max_pw_form_per_level,
+                             pw_form_box_count_total, d_pw_form_box_flat,
+                             [&](int b) { return tree.ifpwexp[b] && tree.proxy_coeffs_offsets[b] != -1; });
 
     // Stresslet only: per-block pw_form pool sized for n_tables_up tables.
     // Other kernels write proxy2pw output directly into d_pw_out (since
