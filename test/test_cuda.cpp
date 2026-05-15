@@ -11,6 +11,7 @@
 
 #include <dmk/cuda/aot_kernels.hpp>
 #include <dmk/cuda/charge2proxy_kernels.hpp>
+#include <dmk/cuda/direct_kernels.hpp>
 #include <dmk/cuda/pw_to_proxy_kernels.hpp>
 #include <dmk/cuda/shift_pw_kernels.hpp>
 #include <dmk/cuda/tensorprod_kernels.hpp>
@@ -101,6 +102,62 @@ try_cuda(const std::function<dmk::residual_evaluator_func<Real>(dmk_eval_type, i
     }
 }
 
+// Invoke the per-box direct driver (the production path used by
+// CudaDirectContext) as if it were a flat all-pairs evaluator: build a
+// degenerate one-box "tree" with direct_work=[0], list1=[[0]], and let the
+// kernel do the full N_SRC × N_TRG sweep inside that single block.
+template <typename Real>
+void run_direct_by_box_pair_eval(dmk_ikernel kernel, int dim, int n_digits, Real rsc, Real cen, Real d2max,
+                                 Real thresh2, int n_src, const Real *d_r_src, const Real *d_charges,
+                                 const Real *d_normals, int n_trg, const Real *d_r_trg, Real *d_pot) {
+    const int work_h = 0;
+    const int list1_flat_h = 0;
+    const int list1_count_h = 1;
+    const int box_levels_h = 0;
+    const unsigned char ifpwexp_h = 0;
+    const long zero_long_h = 0;
+
+    DeviceBuf<int> d_work(1, &work_h);
+    DeviceBuf<int> d_list1_flat(1, &list1_flat_h);
+    DeviceBuf<int> d_list1_count(1, &list1_count_h);
+    DeviceBuf<int> d_box_levels(1, &box_levels_h);
+    DeviceBuf<unsigned char> d_ifpwexp(1, &ifpwexp_h);
+    DeviceBuf<Real> d_rsc(1, &rsc);
+    DeviceBuf<Real> d_cen(1, &cen);
+    DeviceBuf<Real> d_d2max(1, &d2max);
+    DeviceBuf<long> d_offset(1, &zero_long_h);
+    DeviceBuf<int> d_n_src(1, &n_src);
+    DeviceBuf<int> d_n_trg(1, &n_trg);
+
+    dmk::cuda::DirectByBoxArgs<Real> args;
+    args.n_work = 1;
+    args.n_levels = 1;
+    args.nlist1_stride = 1;
+    args.thresh2 = thresh2;
+    args.direct_work = d_work.p;
+    args.list1_flat = d_list1_flat.p;
+    args.list1_count = d_list1_count.p;
+    args.box_levels = d_box_levels.p;
+    args.ifpwexp = d_ifpwexp.p;
+    args.direct_rsc = d_rsc.p;
+    args.direct_cen = d_cen.p;
+    args.direct_d2max = d_d2max.p;
+    args.r_src_halo_flat = d_r_src;
+    args.r_src_halo_offsets = d_offset.p;
+    args.src_counts_halo = d_n_src.p;
+    args.charge_halo_flat = d_charges;
+    args.charge_halo_offsets = d_offset.p;
+    args.normal_halo_flat = d_normals;
+    args.normal_halo_offsets = d_normals ? d_offset.p : nullptr;
+    args.r_target_flat = d_r_trg;
+    args.r_target_offsets = d_offset.p;
+    args.target_counts = d_n_trg.p;
+    args.pot_flat = d_pot;
+    args.pot_offsets = d_offset.p;
+
+    dmk::cuda::launch_direct_by_box_dispatch<Real>(kernel, dim, n_digits, args, 0);
+}
+
 template <typename Real>
 void compare_kernel(dmk_ikernel kernel, int n_dim, int n_digits, dmk_eval_type eval_level, int charge_dim, int out_dim,
                     bool with_normals,
@@ -139,8 +196,6 @@ void compare_kernel(dmk_ikernel kernel, int n_dim, int n_digits, dmk_eval_type e
     DeviceBuf<Real> d_r_src(r_src.size(), r_src.data());
     DeviceBuf<Real> d_charges(charges.size(), charges.data());
     DeviceBuf<Real> d_r_trg(r_trg.size(), r_trg.data());
-    DeviceBuf<Real> d_pot(static_cast<std::size_t>(N_TRG) * out_dim);
-    REQUIRE_CUDA(cudaMemset(d_pot.p, 0, d_pot.n * sizeof(Real)));
 
     DeviceBuf<Real> d_normals;
     Real *d_normals_ptr = nullptr;
@@ -149,15 +204,34 @@ void compare_kernel(dmk_ikernel kernel, int n_dim, int n_digits, dmk_eval_type e
         d_normals_ptr = d_normals.p;
     }
 
-    cuda_eval(rsc, cen, d2max, thresh2, N_SRC, d_r_src.p, d_charges.p, d_normals_ptr, N_TRG, d_r_trg.p, d_pot.p);
-    REQUIRE_CUDA(cudaDeviceSynchronize());
+    const std::size_t pot_n = static_cast<std::size_t>(N_TRG) * out_dim;
 
-    std::vector<Real> pot_cuda(d_pot.n);
-    REQUIRE_CUDA(cudaMemcpy(pot_cuda.data(), d_pot.p, d_pot.n * sizeof(Real), cudaMemcpyDeviceToHost));
+    // Path 1: all-pairs driver (EvalPairsCuda via the AOT residual_evaluator_func).
+    {
+        DeviceBuf<Real> d_pot(pot_n);
+        REQUIRE_CUDA(cudaMemset(d_pot.p, 0, d_pot.n * sizeof(Real)));
+        cuda_eval(rsc, cen, d2max, thresh2, N_SRC, d_r_src.p, d_charges.p, d_normals_ptr, N_TRG, d_r_trg.p, d_pot.p);
+        REQUIRE_CUDA(cudaDeviceSynchronize());
+        std::vector<Real> pot_cuda(d_pot.n);
+        REQUIRE_CUDA(cudaMemcpy(pot_cuda.data(), d_pot.p, d_pot.n * sizeof(Real), cudaMemcpyDeviceToHost));
+        const double err = rel_l2(pot_cuda, pot_cpu);
+        INFO("all-pairs driver rel_l2 = " << err);
+        CHECK(err < tol);
+    }
 
-    const double err = rel_l2(pot_cuda, pot_cpu);
-    INFO("rel_l2 = " << err);
-    CHECK(err < tol);
+    // Path 2: per-box driver (DirectResidualByBoxKernelTiled, production path).
+    {
+        DeviceBuf<Real> d_pot(pot_n);
+        REQUIRE_CUDA(cudaMemset(d_pot.p, 0, d_pot.n * sizeof(Real)));
+        run_direct_by_box_pair_eval<Real>(kernel, n_dim, n_digits, rsc, cen, d2max, thresh2, N_SRC, d_r_src.p,
+                                          d_charges.p, d_normals_ptr, N_TRG, d_r_trg.p, d_pot.p);
+        REQUIRE_CUDA(cudaDeviceSynchronize());
+        std::vector<Real> pot_cuda(d_pot.n);
+        REQUIRE_CUDA(cudaMemcpy(pot_cuda.data(), d_pot.p, d_pot.n * sizeof(Real), cudaMemcpyDeviceToHost));
+        const double err = rel_l2(pot_cuda, pot_cpu);
+        INFO("per-box driver rel_l2 = " << err);
+        CHECK(err < tol);
+    }
 }
 } // namespace
 

@@ -2,7 +2,6 @@
 #include <dmk.h>
 #include <dmk/cuda/aot_kernels.hpp>
 #include <dmk/cuda/direct_kernels.cuh>
-#include <dmk/cuda/kernels.cuh>
 #include <dmk/types.hpp>
 
 #include <cstddef>
