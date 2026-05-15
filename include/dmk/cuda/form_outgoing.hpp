@@ -4,11 +4,6 @@
 // GPU equivalent of DMKPtTree::form_outgoing_expansions(). Computes pw_out
 // for every box that does PW work, plus the windowed-kernel root
 // contribution into proxy_coeffs_downward[0].
-//
-// Lifecycle:
-//   - Constructed alongside the other GPU contexts in upward_pass.
-//   - run() called once per downward_pass, after CPU upward_pass populated
-//     tree.proxy_coeffs_upward, before the per-level downward kernels.
 
 namespace dmk {
 

@@ -1,6 +1,3 @@
-// Per-level downward GPU orchestration. Issues shift_pw, pw_to_proxy, and
-// tensorprod kernels on the shared state's downward stream.
-
 #include <cuda_runtime.h>
 #include <dmk/cuda/downward.hpp>
 #include <dmk/cuda/helpers.hpp>
@@ -20,9 +17,6 @@ template <typename Real, int DIM>
 CudaDownwardContext<Real, DIM>::CudaDownwardContext(DMKPtTree<Real, DIM> &tree,
                                                     CudaSharedDeviceState<Real, DIM> &shared)
     : tree_(tree), shared_(shared) {
-    // Bootstrap scope: only 3D downward kernels exist. Throwing here lets
-    // tree.cpp's upward_pass catch reset cuda_downward_ctx_ and fall back to
-    // the CPU level loop without aborting the run.
     if (DIM != 3)
         throw std::runtime_error("CUDA downward: only DIM=3 supported");
 }

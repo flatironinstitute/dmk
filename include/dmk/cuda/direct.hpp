@@ -3,26 +3,10 @@
 
 // GPU offload of the direct (near-field residual) interactions.
 //
-// Lifecycle, driven by DMKPtTree::upward_pass / downward_pass when
-// DMK_GPU_OFFLOAD is enabled at configure time:
-//
-//   1. upward_pass() constructs CudaSharedDeviceState (uploads inputs +
-//      topology) and CudaDirectContext, then calls launch():
-//        - zeroes the device pot_src_direct / pot_trg_direct (allocated at
-//          construction time)
-//        - dispatches the per-box residual kernel on the shared direct stream.
-//   2. downward_pass() runs multilevel work on the CPU. The GPU work is in
-//      flight on the direct stream throughout.
-//   3. End of downward_pass(): the caller passes device_pot_src() /
-//      device_pot_trg() to CudaEvalTargetsContext::finalize_gpu_only() which
-//      sums both GPU results in-place and downloads the combined answer in
-//      one pass.
-//
-// Simplifications still in force:
-//   * no ContactGeometry filtering — all owned src / trg points evaluated
-//     against all halo sources of every list1 source box.
-//   * no PBC support (CudaSharedDeviceState ctor throws).
-//   * no Yukawa support (same).
+// FIXME: Simplifications still in force: no ContactGeometry filtering
+// (all owned src/trg points evaluated against every list1 source
+// box's halo sources), no PBC, no Yukawa — CudaSharedDeviceState ctor
+// throws on the latter two.
 
 #include <dmk/cuda/helpers.hpp>
 

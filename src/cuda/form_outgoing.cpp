@@ -1,6 +1,3 @@
-// GPU form_outgoing_expansions: per-box proxy2pw + multiply_kernelFT, then
-// windowed root proxy2pw + multiply_kernelFT + pw_to_proxy.
-
 #include <cuda_runtime.h>
 #include <dmk/cuda/form_outgoing.hpp>
 #include <dmk/cuda/helpers.hpp>
@@ -152,7 +149,7 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
         nvtxRangePop();
     }
 
-    // ============== Windowed root: writes proxy_coeffs_downward[0] ==============
+    // Windowed root: writes proxy_coeffs_downward[0].
     {
         const long window_in_stride_complex = (long)s.n_tables_up * s.n_pw_modes_win;
         cuda::Proxy2PwArgs<Real> pa;

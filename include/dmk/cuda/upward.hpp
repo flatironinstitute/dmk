@@ -1,17 +1,11 @@
 #ifndef DMK_CUDA_UPWARD_HPP
 #define DMK_CUDA_UPWARD_HPP
 
-// GPU equivalent of DMKPtTree::upward_pass()'s body (charge2proxy +
-// per-level child→parent tensorprod). Replaces the CPU loops that fill
-// proxy_coeffs_upward; the MPI ReduceBroadcast that follows in the CPU path
-// is currently incompatible with this orchestrator (CMake forbids
-// DMK_GPU_OFFLOAD + DMK_HAVE_MPI for now).
-//
-// Lifecycle:
-//   - Constructed alongside the other GPU contexts in upward_pass.
-//   - run() called once per upward_pass after the work lists and host
-//     buffers are ready, on shared.downward_stream so subsequent downward
-//     kernels chain naturally on the same stream.
+// GPU equivalent of DMKPtTree::upward_pass()'s body: charge2proxy + per-level
+// child→parent tensorprod, populating proxy_coeffs_upward. Runs on
+// shared.downward_stream so the subsequent downward kernels chain naturally.
+// MPI ReduceBroadcast is not yet wired here; CMake forbids DMK_GPU_OFFLOAD +
+// DMK_HAVE_MPI.
 
 namespace dmk {
 

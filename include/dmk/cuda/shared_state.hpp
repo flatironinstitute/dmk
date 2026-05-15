@@ -1,15 +1,8 @@
 #ifndef DMK_CUDA_SHARED_STATE_HPP
 #define DMK_CUDA_SHARED_STATE_HPP
 
-// Device-side state shared across GPU offload operations within one
-// upward_pass→downward_pass cycle. Owned by the tree; borrowed by each
-// per-operation context (direct, eval_targets, future tensorprod, …).
-//
-// Holds the read-only inputs (positions, charges, normals), the tree
-// topology arrays (direct_work, list1, box_levels, ifpwexp), the per-level
-// direct-eval params (rsc/cen/d2max), and the pot offsets used to index
-// per-context output buffers. Output buffers themselves are owned by their
-// respective contexts.
+// Device-side state shared across the GPU offload contexts. Owned by the
+// tree; output buffers (pot, etc.) live in their per-op contexts.
 
 #include <vector>
 
@@ -90,9 +83,6 @@ struct CudaSharedDeviceState {
     // then skip its H2D upload.
     bool proxy_resident_on_device = false;
 
-    // ============== Downward-pass GPU plumbing ==============
-
-    // Tree topology.
     int n_neighbors = 0;                          // sctl::pow<DIM>(3)
     DeviceBuffer<int> d_neighbors;                // [n_boxes * n_neighbors]; -1 = invalid
     DeviceBuffer<unsigned char> d_is_global_leaf; // [n_boxes]
@@ -256,12 +246,8 @@ struct CudaSharedDeviceState {
     Real hpw_win = 0; // expansion_constants.hpw_win
     dmk_ikernel kernel = DMK_LAPLACE;
 
-    // Non-blocking streams.
-    //   direct_stream:   per-box residual kernel (CudaDirectContext)
-    //   downward_stream: charge2proxy + tensorprod up + form_outgoing +
-    //                    shift_pw + pw_to_proxy + tensorprod down
-    // eval_targets owns its own stream and synchronizes against both of
-    // these via cudaEvent before reading their outputs.
+    // Direct runs concurrently with the upward+downward kernel chain;
+    // eval_targets owns its own stream and waits on both via cudaEvent.
     cuda_helpers::DeviceStream direct_stream;
     cuda_helpers::DeviceStream downward_stream;
 

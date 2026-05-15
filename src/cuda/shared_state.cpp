@@ -1,8 +1,3 @@
-// Construction / destruction of CudaSharedDeviceState — uploads all
-// read-only inputs + topology that GPU offload operations need.
-//
-// Plain C++; no <<<>>> launch syntax. Compiled into DMKOBJS_CUDA.
-
 #include <dmk/cuda/helpers.hpp>
 #include <dmk/cuda/shared_state.hpp>
 #include <dmk/fourier_data.hpp>
@@ -34,7 +29,6 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
     n_levels = tree.n_levels();
     nlist1_stride = (1 << (2 * DIM)) - (1 << DIM) + 1;
 
-    // ---------- host-side topology buffers ----------
     std::vector<int> direct_work_h(tree.direct_work.begin(), tree.direct_work.end());
     n_direct_work = (int)direct_work_h.size();
 
@@ -54,7 +48,6 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
         ifpwexp_h[b] = tree.ifpwexp[b] ? 1 : 0;
     }
 
-    // ---------- uploads ----------
     d_direct_work.upload(direct_work_h.data(), direct_work_h.size());
     d_list1_flat.upload(list1_flat_h.data(), list1_flat_h.size());
     d_list1_count.upload(list1_count_h.data(), list1_count_h.size());
@@ -121,7 +114,6 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
     d_proxy_offsets_downward.upload((const long *)&tree.proxy_coeffs_offsets_downward[0],
                                     tree.proxy_coeffs_offsets_downward.Dim());
 
-    // ============== Downward-pass GPU plumbing ==============
     direct_stream = cuda_helpers::DeviceStream::non_blocking();
     downward_stream = cuda_helpers::DeviceStream::non_blocking();
 

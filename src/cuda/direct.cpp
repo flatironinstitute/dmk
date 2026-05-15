@@ -1,10 +1,3 @@
-// Orchestration for the GPU offload of direct (near-field residual)
-// interactions. See include/dmk/cuda/direct.hpp for the lifecycle.
-//
-// Read-only inputs and topology live in CudaSharedDeviceState (uploaded
-// once). This file only manages direct's own output buffers and dispatches
-// the kernel.
-
 #include <dmk/cuda/direct.hpp>
 #include <dmk/cuda/direct_kernels.hpp>
 #include <dmk/cuda/helpers.hpp>
@@ -19,8 +12,6 @@ namespace dmk {
 template <typename Real, int DIM>
 CudaDirectContext<Real, DIM>::CudaDirectContext(DMKPtTree<Real, DIM> &tree, CudaSharedDeviceState<Real, DIM> &shared)
     : tree_(tree), shared_(shared) {
-    // Output buffers are zeroed at the start of each launch() so no need to
-    // initialize them here.
     d_pot_src_direct_.resize(shared.pot_src_size);
     d_pot_trg_direct_.resize(shared.pot_trg_size);
 }

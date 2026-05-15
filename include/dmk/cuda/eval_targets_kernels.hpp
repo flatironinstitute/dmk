@@ -1,13 +1,9 @@
 #ifndef DMK_CUDA_EVAL_TARGETS_KERNELS_HPP
 #define DMK_CUDA_EVAL_TARGETS_KERNELS_HPP
 
-// Host-includable header for the GPU per-box proxy::eval_targets kernel.
-// EvalTargetsArgs<Real> is the bag of device pointers + small scalars; the
-// orchestration code (cuda_eval_targets.cpp) fills it in once per launch.
-//
-// launch_eval_targets<Real>(...) selects the right (EVAL_LEVEL, N_CHARGE_DIM)
-// instantiation and queues the kernel on `stream`. DIM is fixed at 3 (the
-// other GPU contexts gate on it). Defined in src/cuda/eval_targets_kernels.cu.
+// Per-box proxy::eval_targets kernel. launch_eval_targets dispatches on
+// (EVAL_LEVEL, N_CHARGE_DIM); DIM=3 is the only path reachable today since
+// the other GPU contexts gate on it.
 
 #include <cuda_runtime.h>
 

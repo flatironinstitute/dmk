@@ -1,21 +1,11 @@
 #ifndef DMK_CUDA_EVAL_TARGETS_HPP
 #define DMK_CUDA_EVAL_TARGETS_HPP
 
-// GPU offload of proxy::eval_targets at iftensprodeval boxes.
-//
-// Lifecycle, driven by DMKPtTree::upward_pass / downward_pass:
-//
-//   1. upward_pass() constructs the context (allocates per-context device
-//      buffers + creates a non-blocking stream).
-//   2. downward_pass() runs the multilevel work on the CPU. The CPU's
-//      `proxy::eval_targets` calls are skipped when the context is live.
-//   3. End of downward_pass(): launch() uploads proxy_coeffs_downward,
-//      zeroes the per-context output buffers, and queues the kernel on the
-//      eval_targets stream.
-//   4. finalize_gpu_only(d_extra_src, d_extra_trg): accumulates the direct
-//      device buffers into d_pot_*_eval in-place on GPU, then copies the
-//      combined result directly to tree.pot_*_sorted — no temporaries, no
-//      CPU accumulation.
+// GPU offload of proxy::eval_targets at iftensprodeval boxes. launch()
+// uploads proxy_coeffs_downward (or skips when the GPU downward pass already
+// populated it) and queues the kernel. finalize_gpu_only() accumulates the
+// direct device buffers into d_pot_*_eval on-GPU and copies the combined
+// result straight to tree.pot_*_sorted — no host-side accumulation.
 
 #include <dmk/cuda/helpers.hpp>
 

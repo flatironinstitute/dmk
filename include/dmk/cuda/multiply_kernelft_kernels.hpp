@@ -14,7 +14,6 @@
 
 namespace dmk::cuda {
 
-// ----- cd2p -----
 template <typename Real>
 struct MultiplyCd2pArgs {
     int n_boxes_at_level = 0;
@@ -31,7 +30,6 @@ struct MultiplyCd2pArgs {
 template <typename Real, int DIM>
 void launch_multiply_cd2p(const MultiplyCd2pArgs<Real> &args, cudaStream_t stream);
 
-// ----- stokeslet_3d -----
 template <typename Real>
 struct MultiplyStokeslet3DArgs {
     int n_boxes_at_level = 0;
@@ -51,7 +49,6 @@ struct MultiplyStokeslet3DArgs {
 template <typename Real>
 void launch_multiply_stokeslet_3d(const MultiplyStokeslet3DArgs<Real> &args, cudaStream_t stream);
 
-// ----- stresslet_3d -----
 template <typename Real>
 struct MultiplyStresslet3DArgs {
     int n_boxes_at_level = 0;

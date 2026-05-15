@@ -1,6 +1,3 @@
-// GPU upward pass: zero d_proxy_coeffs_upward, run charge2proxy across all
-// groups, then per-level (deepest first) tensorprod (child→parent with c2p).
-
 #include <cuda_runtime.h>
 #include <dmk/cuda/charge2proxy_kernels.hpp>
 #include <dmk/cuda/helpers.hpp>

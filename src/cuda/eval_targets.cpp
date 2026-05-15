@@ -1,7 +1,3 @@
-// Orchestration for the GPU offload of proxy::eval_targets. Plain C++;
-// kernel launches go through cuda::launch_eval_targets (defined in
-// src/cuda/eval_targets_kernels.cu).
-
 #include <dmk/cuda/eval_targets.hpp>
 #include <dmk/cuda/eval_targets_kernels.hpp>
 #include <dmk/cuda/helpers.hpp>

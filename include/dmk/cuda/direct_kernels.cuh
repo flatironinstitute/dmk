@@ -1,58 +1,16 @@
 #ifndef DMK_CUDA_DIRECT_KERNELS_CUH
 #define DMK_CUDA_DIRECT_KERNELS_CUH
 
-// CUDA direct-evaluation kernels and supporting machinery.
+// CUDA direct-evaluation kernels. All pointers passed to the launchers must
+// be device-resident.
 //
-//   ___ __  __ ____   ___  ____ _____  _    _   _ _____
-//  |_ _|  \/  |  _ \ / _ \|  _ \_   _|/ \  | \ | |_   _|
-//   | || |\/| | |_) | | | | |_) || | / _ \ |  \| | | |
-//   | || |  | |  __/| |_| |  _ < | |/ ___ \| |\  | | |
-//  |___|_|  |_|_|    \___/|_| \_\|_/_/   \_\_| \_| |_|
-//
-// This header pulls together three layers, in order:
-//
-//   1. Math primitives — CoeffTag concept + compile-time horner_const.
-//      Coefficient tables ride into the kernel as compile-time *types*
-//      (CoeffTag) — not as runtime pointers and not as structural-class
-//      NTTP values (which trip a cudafe stub-generation bug in nvcc when
-//      used as template args to __global__ templates). A tag is just a
-//      struct exposing:
-//
-//        using value_type = Real;
-//        static constexpr std::size_t size = N;
-//        __host__ __device__ static constexpr Real at(std::size_t i) {
-//            constexpr Real v[N] = { ... };
-//            return v[i];
-//        }
-//
-//      The accessor is a *function*, not a static data member, because
-//      nvcc does not treat class-scope `static constexpr T data[N]`
-//      arrays as device-visible (they're host-only declarations even
-//      when constexpr). Encoding the values as literals inside a
-//      dual-annotated constexpr function sidesteps that — `Coeffs::at(I)`
-//      for constexpr `I` is constant-folded into an immediate on both
-//      host and device, with no separate device symbol needed.
-//
-//   2. Per-kernel evaluator structs (LaplacePolyEvaluator2DCuda, …) that
-//      carry the runtime fields they need (thresh2, d2max, rsc, cen) and
-//      a __device__ operator() that computes a single source/target pair.
-//      Each is templated on its CoeffTag(s); the scalar type is recovered
-//      from the pack's value_type. No coeff pointers, no n_coeffs runtime
-//      fields — those live in the type.
-//
-//   3. Two drivers that consume the evaluators:
-//        * EvalPairsCuda + *_poly_all_pairs — flat N×M all-pairs driver.
-//          Used by the AOT residual_evaluator_func<Real> getters that
-//          test_cuda.cpp uses for raw CPU-vs-GPU accuracy comparison.
-//        * DirectResidualByBoxKernelTiled + launch_direct_by_box —
-//          per-box driver that walks the tree's direct_work/list1 lists
-//          inside the kernel. Used in production by CudaDirectContext.
-//
-// All r_*, charge, normals, pot pointers passed to the launchers MUST be
-// device-resident. No H2D/D2H copies happen here.
-//
-// Known incompleteness in the bootstrap:
-//   * gradient/Hessian eval levels are not implemented (potential only)
+// Coefficient tables ride into the kernel as compile-time *types* (CoeffTag),
+// not runtime pointers and not structural-class NTTP values — the latter trip
+// a cudafe stub-generation bug in nvcc when used as template args to __global__
+// templates. The tag exposes the data via a `constexpr static T at(size_t)`
+// function rather than a `constexpr static T data[N]` member because nvcc
+// treats class-scope constexpr arrays as host-only; the function form
+// constant-folds to immediates on both sides.
 
 #include <dmk/cuda/direct_kernels.hpp>
 
@@ -63,10 +21,6 @@
 #include <string>
 
 namespace dmk::cuda {
-
-// =========================================================================
-// 1. Math primitives.
-// =========================================================================
 
 template <typename C>
 concept CoeffTag = requires {
@@ -103,10 +57,6 @@ concept DeviceKernelEvaluator = requires {
     { typename E::scalar_type(E::scale_factor) };
 };
 // clang-format on
-
-// =========================================================================
-// 2. Per-kernel device evaluators.
-// =========================================================================
 
 template <CoeffTag Coeffs>
 struct LaplacePolyEvaluator2DCuda {
@@ -267,14 +217,10 @@ struct StressletPolyEvaluator3DCuda {
     }
 };
 
-// =========================================================================
-// 3a. Flat all-pairs driver (used by the AOT residual_evaluator_func<Real>
-// getters that test_cuda.cpp uses for raw CPU-vs-GPU accuracy comparison).
-// =========================================================================
-
-// One thread per target. Source tiles are staged into shared memory and
-// reused by every thread in the block. Mirrors host EvalPairs in
-// vector_kernels.hpp. pot_dev is accumulated into.
+// Flat all-pairs driver — one thread per target, source tiles staged into
+// shared memory and reused by every thread in the block. Used by the AOT
+// residual_evaluator_func getters that test_cuda.cpp uses for raw CPU-vs-GPU
+// accuracy comparison. Mirrors host EvalPairs in vector_kernels.hpp.
 template <int KERNEL_OUTPUT_DIM, DeviceKernelEvaluator Evaluator>
 __global__ void EvalPairsCuda(int n_src,
                               const typename Evaluator::scalar_type *__restrict__ r_src,
@@ -425,27 +371,13 @@ inline void stresslet_3d_poly_all_pairs(Real rsc, Real cen, Real d2max, Real thr
                                                                        r_trg, pot, stream);
 }
 
-// =========================================================================
-// 3b. Per-box driver: one CUDA block per target box; the source-box loop
-// happens inside the kernel so each block owns its slice of pot output (no
-// cross-block race). Used in production by CudaDirectContext.
+// Per-box driver: one CUDA block per target box, source-box loop inside the
+// kernel so each block owns its slice of pot output (no cross-block race).
+// Used in production by CudaDirectContext. One launch handles either pot_src
+// or pot_trg; cuda/direct.cpp issues two launches per direct evaluation.
 //
-// One launch handles a single output side: either pot_src (target points =
-// owned sources of the trg_box) or pot_trg (target points = owned targets).
-// cuda/direct.cpp issues two launches per direct evaluation.
-//
-// Tree-derived runtime parameters (rsc/cen/d2max per level, ifpwexp, list1)
-// are uploaded once and consumed via the DirectByBoxArgs<Real> bundle.
-//
-// Simplifications relative to the CPU loop:
-//   * no ContactGeometry filtering
-//   * no PBC support (caller must reject use_periodic before getting here)
-//   * no Yukawa support (no CUDA Yukawa evaluator yet)
-//
-// Performance simplifications (deliberate, will revisit):
-//   * load is uneven: blocks with bigger trg boxes / more list1 source pairs
-//     dominate runtime.
-// =========================================================================
+// No ContactGeometry filtering, no PBC, no Yukawa — caller must reject those.
+// Block-load is uneven (big trg boxes dominate), deliberate for now.
 
 template <typename Evaluator, int SRC_TILE>
 __global__ void DirectResidualByBoxKernelTiled(DirectByBoxArgs<typename Evaluator::scalar_type> a) {

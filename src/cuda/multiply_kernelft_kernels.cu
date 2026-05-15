@@ -10,7 +10,7 @@
 
 namespace dmk::cuda {
 
-// ===== cd2p: pointwise complex × real =====
+// cd2p: pointwise complex × real.
 template <typename Real>
 __global__ void MultiplyCd2pByBoxKernel(MultiplyCd2pArgs<Real> a) {
     const int box_idx = blockIdx.x;
@@ -30,8 +30,7 @@ __global__ void MultiplyCd2pByBoxKernel(MultiplyCd2pArgs<Real> a) {
     }
 }
 
-// ===== stokeslet 3D =====
-//   For each (m1, m2, m3):
+// Stokeslet 3D. For each (m1, m2, m3):
 //     dot = p0*kx + p1*ky + p2*kz   (complex)
 //     dd  = (kx² + ky² + kz²) * f
 //     pw[d] = dot * (k_d * f) - p_d * dd  for d = x, y, z
@@ -110,8 +109,7 @@ __global__ void MultiplyStokeslet3DByBoxKernel(MultiplyStokeslet3DArgs<Real> a) 
     }
 }
 
-// ===== stresslet 3D =====
-//   Reads 9 input tables, writes 3 output tables. For each (m1, m2, m3) and
+// Stresslet 3D. Reads 9 input tables, writes 3 output tables. For each (m1, m2, m3) and
 //   k = (kx, ky, kz), with P_{ij} = src[m, i + 3*j]:
 //     u_i = -i f * (k_i * (|k|² tr(P) - 2 k^T P k) + |k|² ((P+P^T)k)_i)
 //   (See stresslet_3d_multiply_kernelFT in tree.hpp for the host reference.)
@@ -192,7 +190,6 @@ __global__ void MultiplyStresslet3DByBoxKernel(MultiplyStresslet3DArgs<Real> a) 
     }
 }
 
-// ===== launchers =====
 // DIM is currently 3-only at the kernel level. <Real, 2> instantiations exist
 // so contexts templated on DIM link cleanly; they're unreachable at runtime.
 template <typename Real, int DIM>
