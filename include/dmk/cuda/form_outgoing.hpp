@@ -10,8 +10,6 @@
 //   - run() called once per downward_pass, after CPU upward_pass populated
 //     tree.proxy_coeffs_upward, before the per-level downward kernels.
 
-#include <memory>
-
 namespace dmk {
 
 template <typename Real, int DIM>
@@ -23,15 +21,14 @@ template <typename Real, int DIM>
 class CudaFormOutgoingContext {
   public:
     CudaFormOutgoingContext(DMKPtTree<Real, DIM> &tree, CudaSharedDeviceState<Real, DIM> &shared);
-    ~CudaFormOutgoingContext();
     CudaFormOutgoingContext(const CudaFormOutgoingContext &) = delete;
     CudaFormOutgoingContext &operator=(const CudaFormOutgoingContext &) = delete;
 
     void run();
 
   private:
-    struct Impl;
-    std::unique_ptr<Impl> pimpl_;
+    DMKPtTree<Real, DIM> &tree_;
+    CudaSharedDeviceState<Real, DIM> &shared_;
 };
 
 } // namespace dmk

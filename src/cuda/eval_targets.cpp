@@ -1,6 +1,6 @@
 // Orchestration for the GPU offload of proxy::eval_targets. Plain C++;
 // kernel launches go through cuda::launch_eval_targets_dispatch (defined in
-// src/cuda_eval_targets_kernels.cu).
+// src/cuda/eval_targets_kernels.cu).
 
 #include <dmk/cuda/eval_targets.hpp>
 #include <dmk/cuda/eval_targets_kernels.hpp>
@@ -16,10 +16,6 @@
 #include <vector>
 
 namespace dmk {
-
-using cuda_helpers::device_alloc;
-using cuda_helpers::device_free;
-using cuda_helpers::device_upload;
 
 namespace {
 
@@ -52,106 +48,60 @@ int eval_level_for(dmk_eval_type ev) {
 } // namespace
 
 template <typename Real, int DIM>
-struct CudaEvalTargetsContext<Real, DIM>::Impl {
-    DMKPtTree<Real, DIM> &tree;
-    CudaSharedDeviceState<Real, DIM> &shared;
-
-    // Constructed once at upward_pass start; reused by launch().
-    // Note: d_proxy_coeffs_downward + offsets now live in shared state (so
-    // future GPU planewave_to_proxy / tensorprod can write to them directly
-    // and eval_targets just reads).
-    Real *d_centers = nullptr;
-    int *d_eval_targets_box_list = nullptr;
-    Real *d_sc_per_level = nullptr;
-
-    // Output buffers; allocated once at construction and zeroed at the start
-    // of each launch() so the context can be reused across evals.
-    Real *d_pot_src_eval = nullptr;
-    Real *d_pot_trg_eval = nullptr;
-
-    Real *d_self_correction_work = nullptr;
-    int n_input_dim = 0;
-    int pot_stride = 0;
-
-    cudaStream_t stream = nullptr;
-    int n_eval_boxes = 0;
-    int n_order = 0;
-    bool launched = false;
-
-    Impl(DMKPtTree<Real, DIM> &t, CudaSharedDeviceState<Real, DIM> &s) : tree(t), shared(s) {
-        // Validate before allocating anything. Throwing here means the tree
-        // sees a null cuda_eval_targets_ctx_ and falls back to the
-        // already-parallel CPU eval_targets in form_eval_expansions.
-        // Supported combos must match the dispatch in cuda_eval_targets_kernels.cu.
-        const int ncd = n_charge_dim_for(tree.params.kernel);
-        const int el_src = eval_level_for(tree.params.eval_src);
-        const int el_trg = eval_level_for(tree.params.eval_trg);
-        auto supported = [](int dim, int el, int ncd) {
-            if (ncd == 1)
-                return (dim == 2 || dim == 3) && (el == 1 || el == 2);
-            if (ncd == 3)
-                return dim == 3 && el == 1;
-            return false;
-        };
-        if (!supported(DIM, el_src, ncd) || !supported(DIM, el_trg, ncd))
-            throw std::runtime_error("CUDA eval_targets: unsupported (DIM=" + std::to_string(DIM) +
-                                     ", eval_src_level=" + std::to_string(el_src) + ", eval_trg_level=" +
-                                     std::to_string(el_trg) + ", n_charge_dim=" + std::to_string(ncd) + ")");
-
-        DMK_CHECK_CUDA(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-
-        const int n_lvl = tree.boxsize.Dim();
-        std::vector<Real> sc_h(n_lvl);
-        for (int l = 0; l < n_lvl; ++l)
-            sc_h[l] = Real{2} / tree.boxsize[l];
-        d_sc_per_level = device_upload(sc_h.data(), sc_h.size());
-
-        if (tree.centers.Dim())
-            d_centers = device_upload(&tree.centers[0], tree.centers.Dim());
-
-        n_eval_boxes = (int)tree.eval_targets_box_list.size();
-        if (n_eval_boxes)
-            d_eval_targets_box_list =
-                device_upload(tree.eval_targets_box_list.data(), tree.eval_targets_box_list.size());
-
-        n_order = tree.expansion_constants.n_order;
-
-        d_pot_src_eval = device_alloc<Real>(shared.pot_src_size);
-        d_pot_trg_eval = device_alloc<Real>(shared.pot_trg_size);
-
-        n_input_dim = tree.kernel_input_dim;
-        pot_stride = tree.kernel_output_dim_src;
-        if (!tree.self_correction_work.empty())
-            d_self_correction_work = device_upload(tree.self_correction_work.data(), tree.self_correction_work.size());
-    }
-
-    ~Impl() {
-        device_free(d_centers);
-        device_free(d_eval_targets_box_list);
-        device_free(d_sc_per_level);
-        device_free(d_pot_src_eval);
-        device_free(d_pot_trg_eval);
-        device_free(d_self_correction_work);
-        if (stream)
-            cudaStreamDestroy(stream);
-    }
-};
-
-template <typename Real, int DIM>
 CudaEvalTargetsContext<Real, DIM>::CudaEvalTargetsContext(DMKPtTree<Real, DIM> &tree,
                                                           CudaSharedDeviceState<Real, DIM> &shared)
-    : pimpl_(std::make_unique<Impl>(tree, shared)) {}
+    : tree_(tree), shared_(shared) {
+    // Validate before allocating anything. Throwing here means the tree
+    // sees a null cuda_eval_targets_ctx_ and falls back to the
+    // already-parallel CPU eval_targets in form_eval_expansions.
+    // Supported combos must match the dispatch in eval_targets_kernels.cu.
+    const int ncd = n_charge_dim_for(tree.params.kernel);
+    const int el_src = eval_level_for(tree.params.eval_src);
+    const int el_trg = eval_level_for(tree.params.eval_trg);
+    auto supported = [](int dim, int el, int ncd) {
+        if (ncd == 1)
+            return (dim == 2 || dim == 3) && (el == 1 || el == 2);
+        if (ncd == 3)
+            return dim == 3 && el == 1;
+        return false;
+    };
+    if (!supported(DIM, el_src, ncd) || !supported(DIM, el_trg, ncd))
+        throw std::runtime_error("CUDA eval_targets: unsupported (DIM=" + std::to_string(DIM) + ", eval_src_level=" +
+                                 std::to_string(el_src) + ", eval_trg_level=" + std::to_string(el_trg) +
+                                 ", n_charge_dim=" + std::to_string(ncd) + ")");
 
-template <typename Real, int DIM>
-CudaEvalTargetsContext<Real, DIM>::~CudaEvalTargetsContext() = default;
+    stream_ = cuda_helpers::DeviceStream::non_blocking();
+
+    const int n_lvl = tree.boxsize.Dim();
+    std::vector<Real> sc_h(n_lvl);
+    for (int l = 0; l < n_lvl; ++l)
+        sc_h[l] = Real{2} / tree.boxsize[l];
+    d_sc_per_level_.upload(sc_h.data(), sc_h.size());
+
+    if (tree.centers.Dim())
+        d_centers_.upload(&tree.centers[0], tree.centers.Dim());
+
+    n_eval_boxes_ = (int)tree.eval_targets_box_list.size();
+    if (n_eval_boxes_)
+        d_eval_targets_box_list_.upload(tree.eval_targets_box_list.data(), tree.eval_targets_box_list.size());
+
+    n_order_ = tree.expansion_constants.n_order;
+
+    d_pot_src_eval_.resize(shared.pot_src_size);
+    d_pot_trg_eval_.resize(shared.pot_trg_size);
+
+    n_input_dim_ = tree.kernel_input_dim;
+    pot_stride_ = tree.kernel_output_dim_src;
+    if (!tree.self_correction_work.empty())
+        d_self_correction_work_.upload(tree.self_correction_work.data(), tree.self_correction_work.size());
+}
 
 template <typename Real, int DIM>
 void CudaEvalTargetsContext<Real, DIM>::launch() {
-    auto &t = pimpl_->tree;
-    auto &shared = pimpl_->shared;
-    auto &im = *pimpl_;
+    auto &t = tree_;
+    auto &shared = shared_;
 
-    if (im.n_eval_boxes == 0)
+    if (n_eval_boxes_ == 0)
         return;
 
     // If the GPU downward pass already populated d_proxy_coeffs_downward, we
@@ -161,63 +111,60 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
     if (!shared.proxy_resident_on_device && shared.d_proxy_coeffs_downward) {
         DMK_CHECK_CUDA(cudaMemcpyAsync(shared.d_proxy_coeffs_downward.data(), &t.proxy_coeffs_downward[0],
                                        shared.d_proxy_coeffs_downward.size() * sizeof(Real), cudaMemcpyHostToDevice,
-                                       im.stream));
+                                       stream_));
     } else if (shared.proxy_resident_on_device) {
         // Downward kernels wrote to d_proxy on shared.downward_stream. Make
         // eval_targets' stream wait for downward to complete before reading.
         auto evt = cuda_helpers::DeviceEvent::disable_timing();
         DMK_CHECK_CUDA(cudaEventRecord(evt, shared.downward_stream));
-        DMK_CHECK_CUDA(cudaStreamWaitEvent(im.stream, evt, 0));
+        DMK_CHECK_CUDA(cudaStreamWaitEvent(stream_, evt, 0));
     }
 
-    if (im.d_pot_src_eval)
-        DMK_CHECK_CUDA(cudaMemsetAsync(im.d_pot_src_eval, 0, shared.pot_src_size * sizeof(Real), im.stream));
-    if (im.d_pot_trg_eval)
-        DMK_CHECK_CUDA(cudaMemsetAsync(im.d_pot_trg_eval, 0, shared.pot_trg_size * sizeof(Real), im.stream));
+    d_pot_src_eval_.zero_async(stream_);
+    d_pot_trg_eval_.zero_async(stream_);
 
     const int n_charge_dim = n_charge_dim_for(t.params.kernel);
     const int eval_level_src = eval_level_for(t.params.eval_src);
     const int eval_level_trg = eval_level_for(t.params.eval_trg);
 
     cuda::EvalTargetsArgs<Real> args;
-    args.n_eval_boxes = im.n_eval_boxes;
-    args.n_order = im.n_order;
-    args.eval_targets_box_list = im.d_eval_targets_box_list;
+    args.n_eval_boxes = n_eval_boxes_;
+    args.n_order = n_order_;
+    args.eval_targets_box_list = d_eval_targets_box_list_.data();
     args.box_levels = shared.d_box_levels.data();
-    args.sc_per_level = im.d_sc_per_level;
+    args.sc_per_level = d_sc_per_level_.data();
     args.proxy_flat = shared.d_proxy_coeffs_downward.data();
     args.proxy_offsets = shared.d_proxy_offsets_downward.data();
-    args.centers = im.d_centers;
+    args.centers = d_centers_.data();
 
     // pot_src side
     args.r_target_flat = shared.d_r_src_owned.data();
     args.r_target_offsets = shared.d_r_src_owned_offsets.data();
     args.target_counts = shared.d_src_counts_owned.data();
-    args.pot_flat = im.d_pot_src_eval;
+    args.pot_flat = d_pot_src_eval_.data();
     args.pot_offsets = shared.d_pot_src_offsets.data();
-    cuda::launch_eval_targets_dispatch<Real>(DIM, eval_level_src, n_charge_dim, args, im.stream);
+    cuda::launch_eval_targets_dispatch<Real>(DIM, eval_level_src, n_charge_dim, args, stream_);
 
     // pot_trg side
     args.r_target_flat = shared.d_r_trg_owned.data();
     args.r_target_offsets = shared.d_r_trg_owned_offsets.data();
     args.target_counts = shared.d_trg_counts_owned.data();
-    args.pot_flat = im.d_pot_trg_eval;
+    args.pot_flat = d_pot_trg_eval_.data();
     args.pot_offsets = shared.d_pot_trg_offsets.data();
-    cuda::launch_eval_targets_dispatch<Real>(DIM, eval_level_trg, n_charge_dim, args, im.stream);
+    cuda::launch_eval_targets_dispatch<Real>(DIM, eval_level_trg, n_charge_dim, args, stream_);
 
-    im.launched = true;
+    launched_ = true;
 }
 
 template <typename Real, int DIM>
 void CudaEvalTargetsContext<Real, DIM>::finalize_gpu_only(Real *d_extra_src, Real *d_extra_trg) {
-    auto &t = pimpl_->tree;
-    auto &shared = pimpl_->shared;
-    auto &im = *pimpl_;
+    auto &t = tree_;
+    auto &shared = shared_;
 
     // Caller already called CudaDirectContext::sync() (cudaDeviceSynchronize),
     // so both direct and eval kernels are complete. If eval was not launched
     // (n_eval_boxes == 0), skip straight to downloading only the direct result.
-    if (!im.launched) {
+    if (!launched_) {
         if (shared.pot_src_size && d_extra_src)
             DMK_CHECK_CUDA(cudaMemcpy(&t.pot_src_sorted[0], d_extra_src, shared.pot_src_size * sizeof(Real),
                                       cudaMemcpyDeviceToHost));
@@ -230,33 +177,33 @@ void CudaEvalTargetsContext<Real, DIM>::finalize_gpu_only(Real *d_extra_src, Rea
     // Sum the direct device buffers into the eval buffers in-place on GPU,
     // then copy the combined result straight to host — no temps, no CPU loops.
     if (shared.pot_src_size && d_extra_src)
-        cuda::launch_inplace_accumulate(im.d_pot_src_eval, d_extra_src, shared.pot_src_size, im.stream);
+        cuda::launch_inplace_accumulate(d_pot_src_eval_.data(), d_extra_src, shared.pot_src_size, stream_);
     if (shared.pot_trg_size && d_extra_trg)
-        cuda::launch_inplace_accumulate(im.d_pot_trg_eval, d_extra_trg, shared.pot_trg_size, im.stream);
+        cuda::launch_inplace_accumulate(d_pot_trg_eval_.data(), d_extra_trg, shared.pot_trg_size, stream_);
 
-    if (im.d_self_correction_work && shared.pot_src_size) {
+    if (d_self_correction_work_ && shared.pot_src_size) {
         cuda::SelfCorrectionArgs<Real> sc_args;
         sc_args.direct_work = shared.d_direct_work.data();
-        sc_args.correction_factors = im.d_self_correction_work;
+        sc_args.correction_factors = d_self_correction_work_.data();
         sc_args.src_counts_owned = shared.d_src_counts_owned.data();
         sc_args.src_counts_halo = shared.d_src_counts_halo.data();
         sc_args.charge_halo = shared.d_charge_halo.data();
         sc_args.charge_halo_offsets = shared.d_charge_halo_offsets.data();
-        sc_args.pot_src = im.d_pot_src_eval;
+        sc_args.pot_src = d_pot_src_eval_.data();
         sc_args.pot_src_offsets = shared.d_pot_src_offsets.data();
         sc_args.n_direct_work = shared.n_direct_work;
-        sc_args.n_input_dim = im.n_input_dim;
-        sc_args.pot_stride = im.pot_stride;
-        cuda::launch_self_correction(sc_args, im.stream);
+        sc_args.n_input_dim = n_input_dim_;
+        sc_args.pot_stride = pot_stride_;
+        cuda::launch_self_correction(sc_args, stream_);
     }
 
-    DMK_CHECK_CUDA(cudaStreamSynchronize(im.stream));
+    DMK_CHECK_CUDA(cudaStreamSynchronize(stream_));
 
     if (shared.pot_src_size)
-        DMK_CHECK_CUDA(cudaMemcpy(&t.pot_src_sorted[0], im.d_pot_src_eval, shared.pot_src_size * sizeof(Real),
+        DMK_CHECK_CUDA(cudaMemcpy(&t.pot_src_sorted[0], d_pot_src_eval_.data(), shared.pot_src_size * sizeof(Real),
                                   cudaMemcpyDeviceToHost));
     if (shared.pot_trg_size)
-        DMK_CHECK_CUDA(cudaMemcpy(&t.pot_trg_sorted[0], im.d_pot_trg_eval, shared.pot_trg_size * sizeof(Real),
+        DMK_CHECK_CUDA(cudaMemcpy(&t.pot_trg_sorted[0], d_pot_trg_eval_.data(), shared.pot_trg_size * sizeof(Real),
                                   cudaMemcpyDeviceToHost));
 }
 

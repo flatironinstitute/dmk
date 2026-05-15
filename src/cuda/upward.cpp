@@ -15,28 +15,17 @@
 namespace dmk {
 
 template <typename Real, int DIM>
-struct CudaUpwardContext<Real, DIM>::Impl {
-    DMKPtTree<Real, DIM> &tree;
-    CudaSharedDeviceState<Real, DIM> &shared;
-
-    Impl(DMKPtTree<Real, DIM> &t, CudaSharedDeviceState<Real, DIM> &s) : tree(t), shared(s) {
-        if (DIM != 3)
-            throw std::runtime_error("CUDA upward: only DIM=3 supported");
-        if (!s.d_charge_owned || !s.d_charge_owned_offsets)
-            throw std::runtime_error("CUDA upward: owned charges not uploaded by shared state");
-    }
-};
-
-template <typename Real, int DIM>
 CudaUpwardContext<Real, DIM>::CudaUpwardContext(DMKPtTree<Real, DIM> &tree, CudaSharedDeviceState<Real, DIM> &shared)
-    : pimpl_(std::make_unique<Impl>(tree, shared)) {}
-
-template <typename Real, int DIM>
-CudaUpwardContext<Real, DIM>::~CudaUpwardContext() = default;
+    : tree_(tree), shared_(shared) {
+    if (DIM != 3)
+        throw std::runtime_error("CUDA upward: only DIM=3 supported");
+    if (!shared.d_charge_owned || !shared.d_charge_owned_offsets)
+        throw std::runtime_error("CUDA upward: owned charges not uploaded by shared state");
+}
 
 template <typename Real, int DIM>
 void CudaUpwardContext<Real, DIM>::run() {
-    auto &s = pimpl_->shared;
+    auto &s = shared_;
 
     s.d_proxy_coeffs_upward.zero_async(s.downward_stream);
 

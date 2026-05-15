@@ -10,15 +10,14 @@
 //   2. downward_pass() runs the multilevel work on the CPU. The CPU's
 //      `proxy::eval_targets` calls are skipped when the context is live.
 //   3. End of downward_pass(): launch() uploads proxy_coeffs_downward,
-//      allocates+zeros d_pot_*_eval, and queues the kernel on the
+//      zeroes the per-context output buffers, and queues the kernel on the
 //      eval_targets stream.
-//   4. finalize_gpu_only(d_extra_src, d_extra_trg): Accumulates the direct device buffers into
-//      d_pot_*_eval in-place on GPU, then copies the combined result directly
-//      to tree.pot_*_sorted — no temporaries, no CPU accumulation.
-//
-// Bootstrap scope: Laplace 3D, EVAL_LEVEL=1, n_charge_dim=1.
+//   4. finalize_gpu_only(d_extra_src, d_extra_trg): accumulates the direct
+//      device buffers into d_pot_*_eval in-place on GPU, then copies the
+//      combined result directly to tree.pot_*_sorted — no temporaries, no
+//      CPU accumulation.
 
-#include <memory>
+#include <dmk/cuda/helpers.hpp>
 
 namespace dmk {
 
@@ -32,7 +31,6 @@ template <typename Real, int DIM>
 class CudaEvalTargetsContext {
   public:
     CudaEvalTargetsContext(DMKPtTree<Real, DIM> &tree, CudaSharedDeviceState<Real, DIM> &shared);
-    ~CudaEvalTargetsContext();
     CudaEvalTargetsContext(const CudaEvalTargetsContext &) = delete;
     CudaEvalTargetsContext &operator=(const CudaEvalTargetsContext &) = delete;
 
@@ -40,12 +38,27 @@ class CudaEvalTargetsContext {
     void launch();
 
     /// Accumulate d_extra_{src,trg} into d_pot_*_eval on GPU, then copy the
-    /// combined result directly to tree.pot_*_sorted
+    /// combined result directly to tree.pot_*_sorted.
     void finalize_gpu_only(Real *d_extra_src, Real *d_extra_trg);
 
   private:
-    struct Impl;
-    std::unique_ptr<Impl> pimpl_;
+    DMKPtTree<Real, DIM> &tree_;
+    CudaSharedDeviceState<Real, DIM> &shared_;
+
+    cuda_helpers::DeviceBuffer<Real> d_centers_;
+    cuda_helpers::DeviceBuffer<int> d_eval_targets_box_list_;
+    cuda_helpers::DeviceBuffer<Real> d_sc_per_level_;
+    cuda_helpers::DeviceBuffer<Real> d_pot_src_eval_;
+    cuda_helpers::DeviceBuffer<Real> d_pot_trg_eval_;
+    cuda_helpers::DeviceBuffer<Real> d_self_correction_work_;
+
+    int n_input_dim_ = 0;
+    int pot_stride_ = 0;
+    int n_eval_boxes_ = 0;
+    int n_order_ = 0;
+    bool launched_ = false;
+
+    cuda_helpers::DeviceStream stream_;
 };
 
 } // namespace dmk

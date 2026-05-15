@@ -25,17 +25,13 @@ template <typename Real, int DIM>
 class CudaDownwardContext {
   public:
     CudaDownwardContext(DMKPtTree<Real, DIM> &tree, CudaSharedDeviceState<Real, DIM> &shared);
-    ~CudaDownwardContext() = default;
     CudaDownwardContext(const CudaDownwardContext &) = delete;
     CudaDownwardContext &operator=(const CudaDownwardContext &) = delete;
 
-    /// Issue the three GPU kernels for one level on the downward stream.
-    /// Caller is responsible for invoking levels in order 0..n_levels-1.
-    void run_level(int level);
+    /// Issue shift_pw + pw_to_proxy + per-level tensorprod on the downward
+    /// stream, then mark proxy as resident on the device so eval_targets
+    /// skips its upload.
     void run();
-    /// Mark proxy as resident on the device so eval_targets skips its upload.
-    /// Called after all levels have been issued.
-    void mark_proxy_resident();
 
   private:
     DMKPtTree<Real, DIM> &tree_;

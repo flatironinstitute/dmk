@@ -1673,7 +1673,6 @@ void DMKPtTree<Real, DIM>::gpu_downward_pass() {
         sctl::Profile::Scoped p("cuda_downward", &comm_);
         cuda_form_outgoing_ctx_->run();
         cuda_downward_ctx_->run();
-        cuda_downward_ctx_->mark_proxy_resident();
     }
     {
         sctl::Profile::Scoped p("cuda_eval_targets_launch", &comm_);

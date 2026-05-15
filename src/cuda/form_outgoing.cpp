@@ -17,28 +17,17 @@
 namespace dmk {
 
 template <typename Real, int DIM>
-struct CudaFormOutgoingContext<Real, DIM>::Impl {
-    DMKPtTree<Real, DIM> &tree;
-    CudaSharedDeviceState<Real, DIM> &shared;
-
-    Impl(DMKPtTree<Real, DIM> &t, CudaSharedDeviceState<Real, DIM> &s) : tree(t), shared(s) {
-        if (DIM != 3)
-            throw std::runtime_error("CUDA form_outgoing: only DIM=3 supported");
-    }
-};
-
-template <typename Real, int DIM>
 CudaFormOutgoingContext<Real, DIM>::CudaFormOutgoingContext(DMKPtTree<Real, DIM> &tree,
                                                             CudaSharedDeviceState<Real, DIM> &shared)
-    : pimpl_(std::make_unique<Impl>(tree, shared)) {}
-
-template <typename Real, int DIM>
-CudaFormOutgoingContext<Real, DIM>::~CudaFormOutgoingContext() = default;
+    : tree_(tree), shared_(shared) {
+    if (DIM != 3)
+        throw std::runtime_error("CUDA form_outgoing: only DIM=3 supported");
+}
 
 template <typename Real, int DIM>
 void CudaFormOutgoingContext<Real, DIM>::run() {
-    auto &t = pimpl_->tree;
-    auto &s = pimpl_->shared;
+    auto &t = tree_;
+    auto &s = shared_;
 
     s.allocate_pw_out(t);
     if (!s.proxy_upward_resident_on_device)

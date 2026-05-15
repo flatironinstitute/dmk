@@ -152,75 +152,8 @@ void CudaDownwardContext<Real, DIM>::run() {
         nvtxRangePop();
     }
 
+    s.proxy_resident_on_device = true;
     nvtxRangePop();
-}
-
-template <typename Real, int DIM>
-void CudaDownwardContext<Real, DIM>::run_level(int level) {
-    auto range_string = "run_level: " + std::to_string(level);
-    nvtxRangePush(range_string.c_str());
-    auto &s = shared_;
-    const int n_pw_eval = s.pw_eval_box_count_h[level];
-
-    if (n_pw_eval > 0) {
-        const int box_offset = s.pw_eval_box_offset_h[level];
-
-        // 1. shift_pw: pw_out → pw_in_pool.
-        cuda::ShiftPwArgs<Real> sa;
-        sa.n_boxes_at_level = n_pw_eval;
-        sa.n_neighbors = s.n_neighbors;
-        sa.n_charge_dim = s.n_charge_dim;
-        sa.n_pw_modes = s.n_pw_modes;
-        sa.pw_in_stride = s.pw_in_stride_reals;
-        sa.box_ids = s.d_pw_eval_box_flat.data() + box_offset;
-        sa.neighbors = s.d_neighbors.data();
-        sa.pw_out_offsets = s.d_pw_out_offsets.data();
-        sa.is_global_leaf = s.d_is_global_leaf.data();
-        sa.pw_out_flat = s.d_pw_out.data();
-        sa.wpwshift = s.d_wpwshift_flat.data() + (long)level * s.wpwshift_per_level_reals;
-        sa.pw_in_pool = s.d_pw_in_pool.data();
-        cuda::launch_shift_pw_dispatch<Real>(DIM, sa, s.downward_stream);
-
-        // 2. pw_to_proxy: pw_in_pool → d_proxy_coeffs_downward (additive).
-        cuda::PwToProxyArgs<Real> pa;
-        pa.n_boxes_at_level = n_pw_eval;
-        pa.n_order = s.n_order;
-        pa.n_pw = s.n_pw;
-        pa.n_pw2 = s.n_pw2;
-        pa.n_charge_dim = s.n_charge_dim;
-        pa.pw_in_stride = s.pw_in_stride_reals;
-        pa.box_ids = s.d_pw_eval_box_flat.data() + box_offset;
-        pa.pw_in_pool = s.d_pw_in_pool.data();
-        pa.pw2poly = s.d_pw2poly_flat.data() + (long)level * s.pw2poly_per_level_reals;
-        pa.proxy_flat = s.d_proxy_coeffs_downward.data();
-        pa.proxy_offsets = s.d_proxy_offsets_downward.data();
-        cuda::launch_pw_to_proxy_dispatch<Real>(DIM, pa, s.downward_stream);
-    }
-
-    // 3. tensorprod: parent's proxy → child's proxy (additive).
-    const int n_tp = s.tp_count_h[level];
-    if (n_tp > 0) {
-        const int tp_offset = s.tp_offset_h[level];
-        cuda::TensorprodArgs<Real> ta;
-        ta.n_pairs = n_tp;
-        ta.n_order = s.n_order;
-        ta.n_charge_dim = s.n_charge_dim;
-        ta.src_boxes = s.d_tp_parents.data() + tp_offset;
-        ta.dst_boxes = s.d_tp_children.data() + tp_offset;
-        ta.child_octants = s.d_tp_octants.data() + tp_offset;
-        ta.proxy_flat = s.d_proxy_coeffs_downward.data();
-        ta.proxy_offsets = s.d_proxy_offsets_downward.data();
-        ta.umat_flat = s.d_p2c.data();
-        ta.scratch = s.d_tensorprod_scratch.data();
-        ta.scratch_stride = s.tensorprod_scratch_stride_reals;
-        cuda::launch_tensorprod_dispatch<Real>(DIM, ta, s.downward_stream);
-    }
-    nvtxRangePop();
-}
-
-template <typename Real, int DIM>
-void CudaDownwardContext<Real, DIM>::mark_proxy_resident() {
-    shared_.proxy_resident_on_device = true;
 }
 
 template class CudaDownwardContext<float, 2>;

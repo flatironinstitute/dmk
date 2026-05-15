@@ -13,8 +13,6 @@
 //     buffers are ready, on shared.downward_stream so subsequent downward
 //     kernels chain naturally on the same stream.
 
-#include <memory>
-
 namespace dmk {
 
 template <typename Real, int DIM>
@@ -26,15 +24,14 @@ template <typename Real, int DIM>
 class CudaUpwardContext {
   public:
     CudaUpwardContext(DMKPtTree<Real, DIM> &tree, CudaSharedDeviceState<Real, DIM> &shared);
-    ~CudaUpwardContext();
     CudaUpwardContext(const CudaUpwardContext &) = delete;
     CudaUpwardContext &operator=(const CudaUpwardContext &) = delete;
 
     void run();
 
   private:
-    struct Impl;
-    std::unique_ptr<Impl> pimpl_;
+    DMKPtTree<Real, DIM> &tree_;
+    CudaSharedDeviceState<Real, DIM> &shared_;
 };
 
 } // namespace dmk

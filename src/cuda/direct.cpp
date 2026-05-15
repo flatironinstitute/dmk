@@ -1,5 +1,5 @@
 // Orchestration for the GPU offload of direct (near-field residual)
-// interactions. See include/dmk/cuda_direct.hpp for the lifecycle.
+// interactions. See include/dmk/cuda/direct.hpp for the lifecycle.
 //
 // Read-only inputs and topology live in CudaSharedDeviceState (uploaded
 // once). This file only manages direct's own output buffers and dispatches
@@ -16,50 +16,22 @@
 
 namespace dmk {
 
-using cuda_helpers::device_alloc_and_zero;
-using cuda_helpers::device_free;
-
-template <typename Real, int DIM>
-struct CudaDirectContext<Real, DIM>::Impl {
-    DMKPtTree<Real, DIM> &tree;
-    CudaSharedDeviceState<Real, DIM> &shared;
-
-    // Output pot buffers; allocated once at construction and zeroed at the
-    // start of each launch() so the context can be reused across evals.
-    Real *d_pot_src_direct = nullptr;
-    Real *d_pot_trg_direct = nullptr;
-    bool launched = false;
-
-    Impl(DMKPtTree<Real, DIM> &t, CudaSharedDeviceState<Real, DIM> &s) : tree(t), shared(s) {
-        d_pot_src_direct = device_alloc_and_zero<Real>(shared.pot_src_size);
-        d_pot_trg_direct = device_alloc_and_zero<Real>(shared.pot_trg_size);
-    }
-
-    ~Impl() {
-        device_free(d_pot_src_direct);
-        device_free(d_pot_trg_direct);
-    }
-};
-
 template <typename Real, int DIM>
 CudaDirectContext<Real, DIM>::CudaDirectContext(DMKPtTree<Real, DIM> &tree, CudaSharedDeviceState<Real, DIM> &shared)
-    : pimpl_(std::make_unique<Impl>(tree, shared)) {}
-
-template <typename Real, int DIM>
-CudaDirectContext<Real, DIM>::~CudaDirectContext() = default;
+    : tree_(tree), shared_(shared) {
+    d_pot_src_direct_.resize(shared.pot_src_size);
+    d_pot_trg_direct_.resize(shared.pot_trg_size);
+    d_pot_src_direct_.zero_async();
+    d_pot_trg_direct_.zero_async();
+}
 
 template <typename Real, int DIM>
 void CudaDirectContext<Real, DIM>::launch() {
-    auto &t = pimpl_->tree;
-    auto &shared = pimpl_->shared;
-    auto &im = *pimpl_;
+    auto &t = tree_;
+    auto &shared = shared_;
 
-    if (im.d_pot_src_direct)
-        DMK_CHECK_CUDA(
-            cudaMemsetAsync(im.d_pot_src_direct, 0, shared.pot_src_size * sizeof(Real), shared.direct_stream));
-    if (im.d_pot_trg_direct)
-        DMK_CHECK_CUDA(
-            cudaMemsetAsync(im.d_pot_trg_direct, 0, shared.pot_trg_size * sizeof(Real), shared.direct_stream));
+    d_pot_src_direct_.zero_async(shared.direct_stream);
+    d_pot_trg_direct_.zero_async(shared.direct_stream);
 
     cuda::DirectByBoxArgs<Real> args;
     args.n_work = shared.n_direct_work;
@@ -86,7 +58,7 @@ void CudaDirectContext<Real, DIM>::launch() {
     args.r_target_flat = shared.d_r_src_owned.data();
     args.r_target_offsets = shared.d_r_src_owned_offsets.data();
     args.target_counts = shared.d_src_counts_owned.data();
-    args.pot_flat = im.d_pot_src_direct;
+    args.pot_flat = d_pot_src_direct_.data();
     args.pot_offsets = shared.d_pot_src_offsets.data();
     cuda::launch_direct_by_box_dispatch<Real>(t.params.kernel, DIM, t.n_digits, args, shared.direct_stream);
 
@@ -94,21 +66,9 @@ void CudaDirectContext<Real, DIM>::launch() {
     args.r_target_flat = shared.d_r_trg_owned.data();
     args.r_target_offsets = shared.d_r_trg_owned_offsets.data();
     args.target_counts = shared.d_trg_counts_owned.data();
-    args.pot_flat = im.d_pot_trg_direct;
+    args.pot_flat = d_pot_trg_direct_.data();
     args.pot_offsets = shared.d_pot_trg_offsets.data();
     cuda::launch_direct_by_box_dispatch<Real>(t.params.kernel, DIM, t.n_digits, args, shared.direct_stream);
-
-    im.launched = true;
-}
-
-template <typename Real, int DIM>
-Real *CudaDirectContext<Real, DIM>::device_pot_src() const {
-    return pimpl_->d_pot_src_direct;
-}
-
-template <typename Real, int DIM>
-Real *CudaDirectContext<Real, DIM>::device_pot_trg() const {
-    return pimpl_->d_pot_trg_direct;
 }
 
 template class CudaDirectContext<float, 2>;
