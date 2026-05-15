@@ -26,7 +26,7 @@ __device__ inline void Proxy2PwBody(const Proxy2PwArgs<Real> &a, int box_idx) {
 
     extern __shared__ unsigned char shared_raw[];
     Real *ff_slab = reinterpret_cast<Real *>(shared_raw);
-    Real *ff2_slab = ff_slab + 2 * (long)a.n_order * a.n_order;
+    Real *ff2_slab = ff_slab + 2 * a.n_order * a.n_order;
 
     const int box = a.box_ids[box_idx];
 
@@ -48,8 +48,8 @@ __device__ inline void Proxy2PwBody(const Proxy2PwArgs<Real> &a, int box_idx) {
     const int n_pw_modes = n_pw * n_pw * n_pw2;
 
     for (int d = 0; d < a.n_charge_dim; ++d) {
-        const Real *proxy_d = proxy + (long)d * n_order3;
-        Real *pw_d = pw_dst + 2 * (long)d * n_pw_modes;
+        const Real *proxy_d = proxy + d * n_order3;
+        Real *pw_d = pw_dst + 2 * d * n_pw_modes;
 
         for (int m3 = 0; m3 < n_pw2; ++m3) {
             // Phase 1: ff(i, j) = sum_k proxy(i, j, k, d) * poly2pw(m3, k).
@@ -58,9 +58,9 @@ __device__ inline void Proxy2PwBody(const Proxy2PwArgs<Real> &a, int box_idx) {
                 const int j = t / n_order;
                 Real sum_r = Real{0}, sum_i = Real{0};
                 for (int k = 0; k < n_order; ++k) {
-                    const Real p = proxy_d[i + (long)j * n_order + (long)k * n_order2];
-                    const Real qr = a.poly2pw[2 * (m3 + (long)k * n_pw)];
-                    const Real qi = a.poly2pw[2 * (m3 + (long)k * n_pw) + 1];
+                    const Real p = proxy_d[i + j * n_order + k * n_order2];
+                    const Real qr = a.poly2pw[2 * (m3 + k * n_pw)];
+                    const Real qi = a.poly2pw[2 * (m3 + k * n_pw) + 1];
                     sum_r += p * qr;
                     sum_i += p * qi;
                 }
@@ -77,8 +77,8 @@ __device__ inline void Proxy2PwBody(const Proxy2PwArgs<Real> &a, int box_idx) {
                 for (int j = 0; j < n_order; ++j) {
                     const Real fr = ff_slab[2 * (i + j * n_order)];
                     const Real fi = ff_slab[2 * (i + j * n_order) + 1];
-                    const Real qr = a.poly2pw[2 * (m2 + (long)j * n_pw)];
-                    const Real qi = a.poly2pw[2 * (m2 + (long)j * n_pw) + 1];
+                    const Real qr = a.poly2pw[2 * (m2 + j * n_pw)];
+                    const Real qi = a.poly2pw[2 * (m2 + j * n_pw) + 1];
                     sum_r += fr * qr - fi * qi;
                     sum_i += fr * qi + fi * qr;
                 }
@@ -95,12 +95,12 @@ __device__ inline void Proxy2PwBody(const Proxy2PwArgs<Real> &a, int box_idx) {
                 for (int i = 0; i < n_order; ++i) {
                     const Real fr = ff2_slab[2 * (i + m2 * n_order)];
                     const Real fi = ff2_slab[2 * (i + m2 * n_order) + 1];
-                    const Real qr = a.poly2pw[2 * (m1 + (long)i * n_pw)];
-                    const Real qi = a.poly2pw[2 * (m1 + (long)i * n_pw) + 1];
+                    const Real qr = a.poly2pw[2 * (m1 + i * n_pw)];
+                    const Real qi = a.poly2pw[2 * (m1 + i * n_pw) + 1];
                     sum_r += fr * qr - fi * qi;
                     sum_i += fr * qi + fi * qr;
                 }
-                const long flat = (long)m1 + (long)m2 * n_pw + (long)m3 * n_pw * n_pw;
+                const int flat = m1 + m2 * n_pw + m3 * n_pw * n_pw;
                 pw_d[2 * flat] = sum_r;
                 pw_d[2 * flat + 1] = sum_i;
             }
@@ -129,7 +129,7 @@ void launch_proxy2pw(const Proxy2PwArgs<Real> &args, cudaStream_t stream) {
 
     constexpr int block_size = 128;
     const std::size_t shared_bytes =
-        sizeof(Real) * 2 * (std::size_t)(args.n_order * args.n_order + args.n_order * args.n_pw);
+        sizeof(Real) * 2 * (args.n_order * args.n_order + args.n_order * args.n_pw);
 
     Proxy2PwByBoxKernel<Real><<<args.n_boxes_at_level, block_size, shared_bytes, stream>>>(args);
 
@@ -165,7 +165,7 @@ void launch_proxy2pw_multilevel(const std::vector<Proxy2PwArgs<Real>> &pa_h, Pro
 
     constexpr int block_size = 128;
     const std::size_t shared_bytes =
-        sizeof(Real) * 2 * ((std::size_t)max_n_order * max_n_order + (std::size_t)max_n_order * max_n_pw);
+        sizeof(Real) * 2 * (max_n_order * max_n_order + max_n_order * max_n_pw);
 
     dim3 grid(max_boxes, static_cast<int>(pa_h.size()), 1);
     Proxy2PwMultiLevelKernel<Real><<<grid, block_size, shared_bytes, stream>>>(d_args_scratch,

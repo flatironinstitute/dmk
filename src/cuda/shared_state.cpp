@@ -294,9 +294,9 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
     poly2pw_per_level_reals = 2 * n_pw * n_order;
     radialft_per_level_reals = n_pw_modes;
     {
-        const std::size_t total_pw2poly = (std::size_t)n_levels * pw2poly_per_level_reals;
-        const std::size_t total_poly2pw = (std::size_t)n_levels * poly2pw_per_level_reals;
-        const std::size_t total_radialft = (std::size_t)n_levels * radialft_per_level_reals;
+        const std::size_t total_pw2poly = n_levels * pw2poly_per_level_reals;
+        const std::size_t total_poly2pw = n_levels * poly2pw_per_level_reals;
+        const std::size_t total_radialft = n_levels * radialft_per_level_reals;
         std::vector<Real> h_pw2poly(total_pw2poly);
         std::vector<Real> h_poly2pw(total_poly2pw);
         std::vector<Real> h_radialft(total_radialft);
@@ -305,12 +305,12 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
             const auto &dfd = tree.difference_fourier_data[L];
             std::copy(reinterpret_cast<const Real *>(&dfd.pw2poly[0]),
                       reinterpret_cast<const Real *>(&dfd.pw2poly[0]) + pw2poly_per_level_reals,
-                      &h_pw2poly[(std::size_t)L * pw2poly_per_level_reals]);
+                      &h_pw2poly[L * pw2poly_per_level_reals]);
             std::copy(reinterpret_cast<const Real *>(&dfd.poly2pw[0]),
                       reinterpret_cast<const Real *>(&dfd.poly2pw[0]) + poly2pw_per_level_reals,
-                      &h_poly2pw[(std::size_t)L * poly2pw_per_level_reals]);
+                      &h_poly2pw[L * poly2pw_per_level_reals]);
             std::copy(&dfd.radialft[0], &dfd.radialft[0] + radialft_per_level_reals,
-                      &h_radialft[(std::size_t)L * radialft_per_level_reals]);
+                      &h_radialft[L * radialft_per_level_reals]);
             hpw_per_level_h[L] = (Real)tree.expansion_constants.hpw_diff / (Real)tree.boxsize[L];
         }
         d_pw2poly_flat.upload(h_pw2poly.data(), total_pw2poly);
@@ -321,8 +321,8 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
     // Windowed Fourier data (single-instance, used at the root).
     if (n_pw_win) {
         const auto &wfd = tree.window_fourier_data;
-        d_window_pw2poly.upload(reinterpret_cast<const Real *>(&wfd.pw2poly[0]), (std::size_t)2 * n_pw_win * n_order);
-        d_window_poly2pw.upload(reinterpret_cast<const Real *>(&wfd.poly2pw[0]), (std::size_t)2 * n_pw_win * n_order);
+        d_window_pw2poly.upload(reinterpret_cast<const Real *>(&wfd.pw2poly[0]), 2 * n_pw_win * n_order);
+        d_window_poly2pw.upload(reinterpret_cast<const Real *>(&wfd.poly2pw[0]), 2 * n_pw_win * n_order);
         d_window_radialft.upload(&wfd.radialft[0], n_pw_modes_win);
     }
 
@@ -330,13 +330,13 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
     // 2 * n_neighbors * n_pw_modes reals per level.
     wpwshift_per_level_reals = 2 * n_neighbors * n_pw_modes;
     {
-        const std::size_t total = (std::size_t)n_levels * wpwshift_per_level_reals;
+        const std::size_t total = n_levels * wpwshift_per_level_reals;
         std::vector<Real> h(total);
         for (int L = 0; L < n_levels; ++L) {
             const auto &dfd = tree.difference_fourier_data[L];
             // Already laid out SoA per neighbor by calc_planewave_translation_matrix.
             const Real *src = reinterpret_cast<const Real *>(&dfd.wpwshift[0]);
-            std::copy(src, src + wpwshift_per_level_reals, &h[(std::size_t)L * wpwshift_per_level_reals]);
+            std::copy(src, src + wpwshift_per_level_reals, &h[L * wpwshift_per_level_reals]);
         }
         d_wpwshift_flat.upload(h.data(), total);
     }
@@ -458,9 +458,9 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
 
     // Windowed root scratch buffers (one slot, n_pw_win-sized).
     if (n_pw_modes_win) {
-        d_window_pw_form_in.resize(2 * (std::size_t)n_tables_up * n_pw_modes_win);
+        d_window_pw_form_in.resize(2 * n_tables_up * n_pw_modes_win);
         if (kernel == DMK_STRESSLET)
-            d_window_pw_form_out.resize(2 * (std::size_t)n_charge_dim * n_pw_modes_win);
+            d_window_pw_form_out.resize(2 * n_charge_dim * n_pw_modes_win);
     }
 
     // Single-element {0} scratch for kernels that take a per-block box-id

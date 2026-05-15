@@ -252,7 +252,7 @@ static void launch_eval_targets_kernel_impl(const EvalTargetsArgs<Real> &args, c
     constexpr int n2 = N_ORDER * N_ORDER;
     constexpr int coeffs_stride_per_dim = (DIM == 2) ? n2 : n2 * N_ORDER;
 
-    const std::size_t shared_bytes = static_cast<std::size_t>(coeffs_stride_per_dim) * sizeof(Real);
+    const std::size_t shared_bytes = coeffs_stride_per_dim * sizeof(Real);
 
     EvalTargetsByBoxKernel<Real, DIM, EVAL_LEVEL, N_CHARGE_DIM, N_ORDER>
         <<<args.n_eval_boxes, block_size, shared_bytes, stream>>>(args);

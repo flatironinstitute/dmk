@@ -550,7 +550,7 @@ inline void launch_direct_by_box(const DirectByBoxArgs<Real> &args, cudaStream_t
     constexpr int KERNEL_INPUT_DIM = Evaluator::KERNEL_INPUT_DIM;
     constexpr int NORMAL_DIM = Evaluator::NORMAL_DIM;
     constexpr int values_per_source = SPATIAL_DIM + KERNEL_INPUT_DIM + NORMAL_DIM;
-    const std::size_t shared_bytes = static_cast<std::size_t>(SRC_TILE) * values_per_source * sizeof(Real);
+    const std::size_t shared_bytes = SRC_TILE * values_per_source * sizeof(Real);
 
     DirectResidualByBoxKernelTiled<Evaluator, SRC_TILE><<<args.n_work, block_size, shared_bytes, stream>>>(args);
 

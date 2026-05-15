@@ -236,8 +236,7 @@ static void launch_charge2proxy_3d_gemm_micro_ktile_impl(const Charge2ProxyArgs<
     constexpr int LD = CHUNK + 1;
     const int NC = args.n_charge_dim;
 
-    const std::size_t shared_bytes =
-        (static_cast<std::size_t>(3) * N_ORDER * LD + static_cast<std::size_t>(NC) * LD) * sizeof(Real);
+    const std::size_t shared_bytes = (3 * N_ORDER * LD + NC * LD) * sizeof(Real);
 
     Charge2ProxyByGroup3DKernel_GemmMicroKTile<Real, N_ORDER, I_TILE, J_TILE, K_TILE>
         <<<n_launch_groups, block_size, shared_bytes, stream>>>(args, group_perm);

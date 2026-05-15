@@ -58,12 +58,12 @@ __global__ void MultiplyStokeslet3DByBoxKernel(MultiplyStokeslet3DArgs<Real> a) 
 
     // n0 is the centre-mode index used by the windowed correction: it
     // corresponds to ix=iy=npw_half, iz=npw_half (the unique "DC" point).
-    const long n0 = (long)npw_half + (long)n_pw * npw_half + (long)n_pw * n_pw * npw_half;
+    const int n0 = npw_half + n_pw * npw_half + n_pw * n_pw * npw_half;
 
     if (a.is_windowed && threadIdx.x == 0) {
         for (int d = 0; d < 3; ++d) {
-            cvec[2 * d + 0] = pw[2 * (n0 + (long)d * n_pw_modes)];
-            cvec[2 * d + 1] = pw[2 * (n0 + (long)d * n_pw_modes) + 1];
+            cvec[2 * d + 0] = pw[2 * (n0 + d * n_pw_modes)];
+            cvec[2 * d + 1] = pw[2 * (n0 + d * n_pw_modes) + 1];
         }
     }
     __syncthreads();
@@ -78,9 +78,9 @@ __global__ void MultiplyStokeslet3DByBoxKernel(MultiplyStokeslet3DArgs<Real> a) 
         const Real f = a.radialft[n_idx];
         const Real dd = (kx * kx + ky * ky + kz * kz) * f;
 
-        const long off0 = 2 * (long)n_idx;
-        const long off1 = 2 * (long)(n_idx + n_pw_modes);
-        const long off2 = 2 * (long)(n_idx + 2 * n_pw_modes);
+        const int off0 = 2 * n_idx;
+        const int off1 = 2 * (n_idx + n_pw_modes);
+        const int off2 = 2 * (n_idx + 2 * n_pw_modes);
         const Real p0r = pw[off0], p0i = pw[off0 + 1];
         const Real p1r = pw[off1], p1i = pw[off1 + 1];
         const Real p2r = pw[off2], p2i = pw[off2 + 1];
@@ -102,8 +102,8 @@ __global__ void MultiplyStokeslet3DByBoxKernel(MultiplyStokeslet3DArgs<Real> a) 
             // rl = sqrt(3) + 1; cval = 1/rl.
             const Real cval = Real(1) / (Real(1.7320508075688772935) + Real(1));
             for (int d = 0; d < 3; ++d) {
-                pw[2 * (n0 + (long)d * n_pw_modes)] += cval * cvec[2 * d + 0];
-                pw[2 * (n0 + (long)d * n_pw_modes) + 1] += cval * cvec[2 * d + 1];
+                pw[2 * (n0 + d * n_pw_modes)] += cval * cvec[2 * d + 0];
+                pw[2 * (n0 + d * n_pw_modes) + 1] += cval * cvec[2 * d + 1];
             }
         }
     }
@@ -147,7 +147,7 @@ __global__ void MultiplyStresslet3DByBoxKernel(MultiplyStresslet3DArgs<Real> a) 
         Real Pr[3][3], Pi[3][3];
         for (int j = 0; j < 3; ++j) {
             for (int i = 0; i < 3; ++i) {
-                const long o = 2 * (n_idx + (long)n_pw_modes * (i + 3 * j));
+                const int o = 2 * (n_idx + n_pw_modes * (i + 3 * j));
                 Pr[i][j] = src[o];
                 Pi[i][j] = src[o + 1];
             }
@@ -183,7 +183,7 @@ __global__ void MultiplyStresslet3DByBoxKernel(MultiplyStresslet3DArgs<Real> a) 
         for (int i = 0; i < 3; ++i) {
             const Real ar = k[i] * zz_r + rksq * prod_r[i];
             const Real ai = k[i] * zz_i + rksq * prod_i[i];
-            const long o = 2 * (n_idx + (long)n_pw_modes * i);
+            const int o = 2 * (n_idx + n_pw_modes * i);
             dst[o] = f * ai;
             dst[o + 1] = -f * ar;
         }

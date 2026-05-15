@@ -41,7 +41,7 @@ __device__ inline void ShiftPwByBoxBody(const ShiftPwArgs<Real> &a, int box_idx)
         (self_off >= 0) ? reinterpret_cast<const complx<Real> *>(a.pw_out_flat + 2 * self_off) : nullptr;
 
     for (int d = 0; d < n_charge_dim; ++d) {
-        const long d_base = (long)d * n_pw_modes;
+        const int d_base = d * n_pw_modes;
 
         for (int m = threadIdx.x; m < n_pw_modes; m += blockDim.x) {
             complx<Real> acc;
@@ -51,7 +51,7 @@ __device__ inline void ShiftPwByBoxBody(const ShiftPwArgs<Real> &a, int box_idx)
                 acc = complx<Real>{Real{0}, Real{0}};
 
             for (int npos = 0; npos < n_neighbors; ++npos) {
-                const int neighbor = a.neighbors[(long)box * n_neighbors + npos];
+                const int neighbor = a.neighbors[box * n_neighbors + npos];
                 if (neighbor < 0 || neighbor == box)
                     continue;
                 if (box_is_leaf && a.is_global_leaf[neighbor] != 0)
@@ -62,7 +62,7 @@ __device__ inline void ShiftPwByBoxBody(const ShiftPwArgs<Real> &a, int box_idx)
                     continue;
 
                 const int ind = n_neighbors - 1 - npos;
-                const Real *shift_r = a.wpwshift + (long)ind * n_pw_modes * 2;
+                const Real *shift_r = a.wpwshift + ind * n_pw_modes * 2;
                 const Real *shift_i = shift_r + n_pw_modes;
                 const complx<Real> *nbr_pw = reinterpret_cast<const complx<Real> *>(a.pw_out_flat + 2 * nbr_off);
 

@@ -61,7 +61,7 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
         pa.box_ids = s.d_pw_form_box_flat.data() + box_offset;
         pa.proxy_flat = s.d_proxy_coeffs_upward.data();
         pa.proxy_offsets = s.d_proxy_offsets_upward.data();
-        pa.poly2pw = s.d_poly2pw_flat.data() + (long)L * s.poly2pw_per_level_reals;
+        pa.poly2pw = s.d_poly2pw_flat.data() + L * s.poly2pw_per_level_reals;
         if (!is_stresslet) {
             pa.dst_flat = s.d_pw_out.data();
             pa.dst_offsets = s.d_pw_out_offsets.data();
@@ -137,7 +137,7 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
             continue;
         nvtxRangePush(std::string{"multiply_kernelft: level" + std::to_string(L)}.c_str());
         const int box_offset = s.pw_form_box_offset_h[L];
-        const Real *radialft_L = s.d_radialft_flat.data() + (long)L * s.radialft_per_level_reals;
+        const Real *radialft_L = s.d_radialft_flat.data() + L * s.radialft_per_level_reals;
 
         Real *src = is_stresslet ? s.d_pw_form_pool.data() : s.d_pw_out.data();
         const long *src_offsets = is_stresslet ? nullptr : s.d_pw_out_offsets.data();
@@ -150,7 +150,7 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
 
     // Windowed root: writes proxy_coeffs_downward[0].
     {
-        const long window_in_stride_complex = (long)s.n_tables_up * s.n_pw_modes_win;
+        const long window_in_stride_complex = s.n_tables_up * s.n_pw_modes_win;
         cuda::Proxy2PwArgs<Real> pa;
         pa.n_boxes_at_level = 1;
         pa.n_order = s.n_order;
@@ -167,7 +167,7 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
         cuda::launch_proxy2pw<Real, DIM>(pa, s.downward_stream);
 
         // Multiply at window size.
-        const long window_out_stride_complex = (long)s.n_charge_dim * s.n_pw_modes_win;
+        const long window_out_stride_complex = s.n_charge_dim * s.n_pw_modes_win;
         multiply_at(1, s.n_pw_win, s.n_pw2_win, s.n_pw_modes_win, s.hpw_win, /*windowed=*/true, s.d_box0_id.data(),
                     s.d_window_radialft.data(), s.d_window_pw_form_in.data(), nullptr, window_in_stride_complex,
                     s.d_window_pw_form_out.data(), nullptr, window_out_stride_complex);

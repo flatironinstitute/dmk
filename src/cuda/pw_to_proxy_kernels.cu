@@ -54,10 +54,10 @@ __device__ __forceinline__ void PwToProxyBody(const PwToProxyArgs<Real> &a, cons
     complx<Real> *__restrict__ s_A_T = smem;
 
     // s_F[kr, c], c = m2 + m3 * n_pw
-    complx<Real> *__restrict__ s_F = s_A_T + static_cast<long>(n_pw) * k_pad;
+    complx<Real> *__restrict__ s_F = s_A_T + n_pw * k_pad;
 
     // s_G[kr, m3, k2], k2 fastest
-    complx<Real> *__restrict__ s_G = s_F + static_cast<long>(K1_TILE) * phase1_cols;
+    complx<Real> *__restrict__ s_G = s_F + K1_TILE * phase1_cols;
 
     // Stage A once per CTA.
     for (int idx = threadIdx.x; idx < n_pw * k_pad; idx += blockDim.x) {
@@ -67,14 +67,14 @@ __device__ __forceinline__ void PwToProxyBody(const PwToProxyArgs<Real> &a, cons
         complx<Real> z = complx_zero<Real>();
 
         if (k < n_order)
-            z = complx_load((a.pw2poly + 2 * (static_cast<long>(k) * n_pw + m)));
+            z = complx_load((a.pw2poly + 2 * (k * n_pw + m)));
 
         s_A_T[idx] = z;
     }
 
     __syncthreads();
 
-    const Real *__restrict__ pw_in_box = a.pw_in_pool + static_cast<long>(box_idx) * a.pw_in_stride;
+    const Real *__restrict__ pw_in_box = a.pw_in_pool + box_idx * a.pw_in_stride;
     Real *__restrict__ proxy_box = a.proxy_flat + proxy_off;
 
     const int k2_tiles = (n_order + K2_TILE - 1) / K2_TILE;
@@ -82,8 +82,8 @@ __device__ __forceinline__ void PwToProxyBody(const PwToProxyArgs<Real> &a, cons
     const int kr_tiles = (K1_TILE + KR_TILE - 1) / KR_TILE;
 
     for (int d = 0; d < a.n_charge_dim; ++d) {
-        const Real *__restrict__ pw_in_d = pw_in_box + 2 * static_cast<long>(d) * n_pw_modes;
-        Real *__restrict__ proxy_d = proxy_box + static_cast<long>(d) * n_order3;
+        const Real *__restrict__ pw_in_d = pw_in_box + 2 * d * n_pw_modes;
+        Real *__restrict__ proxy_d = proxy_box + d * n_order3;
 
         for (int k1_base = 0; k1_base < n_order; k1_base += K1_TILE) {
             // phase 1
@@ -108,7 +108,7 @@ __device__ __forceinline__ void PwToProxyBody(const PwToProxyArgs<Real> &a, cons
                     for (int cr = 0; cr < COL_REG; ++cr) {
                         const int c = c_base + cr;
                         if (c < phase1_cols) {
-                            const long pidx = static_cast<long>(m1) + static_cast<long>(c) * n_pw;
+                            const int pidx = m1 + c * n_pw;
                             p[cr] = complx_load(pw_in_d + 2 * pidx);
                         } else {
                             p[cr] = complx_zero<Real>();
@@ -136,7 +136,7 @@ __device__ __forceinline__ void PwToProxyBody(const PwToProxyArgs<Real> &a, cons
                         for (int cr = 0; cr < COL_REG; ++cr) {
                             const int c = c_base + cr;
                             if (c < phase1_cols)
-                                s_F[static_cast<long>(kr) * phase1_cols + c] = acc[kr][cr];
+                                s_F[kr * phase1_cols + c] = acc[kr][cr];
                         }
                     }
                 }
@@ -177,7 +177,7 @@ __device__ __forceinline__ void PwToProxyBody(const PwToProxyArgs<Real> &a, cons
                         const int kr = kr_base + rr;
                         const int k1 = k1_base + kr;
                         if (kr < K1_TILE && k1 < n_order)
-                            f[rr] = s_F[static_cast<long>(kr) * phase1_cols + c];
+                            f[rr] = s_F[kr * phase1_cols + c];
                         else
                             f[rr] = complx_zero<Real>();
                     }
@@ -216,7 +216,7 @@ __device__ __forceinline__ void PwToProxyBody(const PwToProxyArgs<Real> &a, cons
                                 complx<Real> v = acc[rr][k2r];
                                 v.r *= scale;
                                 v.i *= scale;
-                                s_G[static_cast<long>(kr) * n_pw2 * n_order + static_cast<long>(m3) * n_order + k2] = v;
+                                s_G[kr * n_pw2 * n_order + m3 * n_order + k2] = v;
                             }
                         }
                     }
@@ -256,7 +256,7 @@ __device__ __forceinline__ void PwToProxyBody(const PwToProxyArgs<Real> &a, cons
                         const int kr = kr_base + rr;
                         const int k1 = k1_base + kr;
                         if (kr < K1_TILE && k1 < n_order)
-                            g[rr] = s_G[static_cast<long>(kr) * n_pw2 * n_order + static_cast<long>(m3) * n_order + k2];
+                            g[rr] = s_G[kr * n_pw2 * n_order + m3 * n_order + k2];
                         else
                             g[rr] = complx_zero<Real>();
                     }
@@ -290,8 +290,7 @@ __device__ __forceinline__ void PwToProxyBody(const PwToProxyArgs<Real> &a, cons
                         for (int k3r = 0; k3r < K3_TILE; ++k3r) {
                             const int k3 = k3_base + k3r;
                             if (k3 < n_order) {
-                                Real *__restrict__ out =
-                                    proxy_d + k1 + static_cast<long>(k2) * n_order + static_cast<long>(k3) * n_order2;
+                                Real *__restrict__ out = proxy_d + k1 + k2 * n_order + k3 * n_order2;
                                 *out += Real{2} * acc[rr][k3r];
                             }
                         }
@@ -322,9 +321,8 @@ template <typename Real, int K1_TILE>
 static std::size_t pw_to_proxy_shared_bytes(int max_n_pw, int max_n_pw2, int max_n_order) {
     const int max_k_pad = ((max_n_order + 3) / 4) * 4;
     const int max_phase1_cols = max_n_pw * max_n_pw2;
-    const std::size_t complex_count = static_cast<std::size_t>(max_n_pw) * max_k_pad +
-                                      static_cast<std::size_t>(K1_TILE) * max_phase1_cols +
-                                      static_cast<std::size_t>(K1_TILE) * max_n_pw2 * max_n_order;
+    const std::size_t complex_count =
+        max_n_pw * max_k_pad + K1_TILE * max_phase1_cols + K1_TILE * max_n_pw2 * max_n_order;
     return complex_count * sizeof(complx<Real>);
 }
 

@@ -53,7 +53,7 @@ void CudaDownwardContext<Real, DIM>::run() {
         sa.pw_out_offsets = s.d_pw_out_offsets.data();
         sa.is_global_leaf = s.d_is_global_leaf.data();
         sa.pw_out_flat = s.d_pw_out.data();
-        sa.wpwshift = s.d_wpwshift_flat.data() + (long)level * s.wpwshift_per_level_reals;
+        sa.wpwshift = s.d_wpwshift_flat.data() + level * s.wpwshift_per_level_reals;
         sa.pw_in_pool = level_pw_in_pool;
         shift_args_h.push_back(sa);
 
@@ -66,7 +66,7 @@ void CudaDownwardContext<Real, DIM>::run() {
         pa.pw_in_stride = s.pw_in_stride_reals;
         pa.box_ids = s.d_pw_eval_box_flat.data() + box_offset;
         pa.pw_in_pool = level_pw_in_pool;
-        pa.pw2poly = s.d_pw2poly_flat.data() + (long)level * s.pw2poly_per_level_reals;
+        pa.pw2poly = s.d_pw2poly_flat.data() + level * s.pw2poly_per_level_reals;
         pa.proxy_flat = s.d_proxy_coeffs_downward.data();
         pa.proxy_offsets = s.d_proxy_offsets_downward.data();
         pw_to_proxy_args_h.push_back(pa);
