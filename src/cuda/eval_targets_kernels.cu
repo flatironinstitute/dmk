@@ -368,8 +368,8 @@ void launch_inplace_accumulate(Real *dst, const Real *src, std::size_t n, cudaSt
     if (n == 0)
         return;
     constexpr int block = 256;
-    int grid = (int)((n + block - 1) / block);
-    inplace_accumulate_kernel<<<grid, block, 0, stream>>>(dst, src, (int)n);
+    int grid = (n + block - 1) / block;
+    inplace_accumulate_kernel<<<grid, block, 0, stream>>>(dst, src, n);
 }
 
 template void launch_inplace_accumulate<float>(float *, const float *, std::size_t, cudaStream_t);

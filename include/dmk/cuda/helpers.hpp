@@ -211,7 +211,7 @@ template <typename SctlVec>
 inline std::vector<int> sctl_int_vec_to_std(const SctlVec &v) {
     std::vector<int> out(v.Dim());
     for (std::size_t i = 0; i < out.size(); ++i)
-        out[i] = (int)v[i];
+        out[i] = v[i];
     return out;
 }
 

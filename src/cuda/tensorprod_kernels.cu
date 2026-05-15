@@ -26,7 +26,7 @@ __global__ void TensorprodByPair3DKernel(TensorprodArgs<Real> a) {
     if (pair_idx >= a.n_pairs)
         return;
 
-    Real *ff = a.scratch + (long)pair_idx * a.scratch_stride;
+    Real *ff = a.scratch + pair_idx * a.scratch_stride;
     Real *ff2 = ff + N3;
 
     const int src_box = a.src_boxes[pair_idx];

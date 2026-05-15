@@ -17,7 +17,7 @@ __global__ void MultiplyCd2pByBoxKernel(MultiplyCd2pArgs<Real> a) {
     if (box_idx >= a.n_boxes_at_level)
         return;
     const int box = a.box_ids[box_idx];
-    const long off_complex = a.pw_offsets ? a.pw_offsets[box] : (long)box_idx * a.pw_stride_complex;
+    const long off_complex = a.pw_offsets ? a.pw_offsets[box] : box_idx * a.pw_stride_complex;
     if (off_complex < 0)
         return;
     Real *pw = a.pw_flat + 2 * off_complex;
@@ -45,7 +45,7 @@ __global__ void MultiplyStokeslet3DByBoxKernel(MultiplyStokeslet3DArgs<Real> a) 
     if (box_idx >= a.n_boxes_at_level)
         return;
     const int box = a.box_ids[box_idx];
-    const long off_complex = a.pw_offsets ? a.pw_offsets[box] : (long)box_idx * a.pw_stride_complex;
+    const long off_complex = a.pw_offsets ? a.pw_offsets[box] : box_idx * a.pw_stride_complex;
     if (off_complex < 0)
         return;
     Real *pw = a.pw_flat + 2 * off_complex;
@@ -119,8 +119,8 @@ __global__ void MultiplyStresslet3DByBoxKernel(MultiplyStresslet3DArgs<Real> a) 
     if (box_idx >= a.n_boxes_at_level)
         return;
     const int box = a.box_ids[box_idx];
-    const long src_off = a.src_offsets ? a.src_offsets[box] : (long)box_idx * a.src_stride_complex;
-    const long dst_off = a.dst_offsets ? a.dst_offsets[box] : (long)box_idx * a.dst_stride_complex;
+    const long src_off = a.src_offsets ? a.src_offsets[box] : box_idx * a.src_stride_complex;
+    const long dst_off = a.dst_offsets ? a.dst_offsets[box] : box_idx * a.dst_stride_complex;
     if (src_off < 0 || dst_off < 0)
         return;
     const Real *src = a.src_flat + 2 * src_off;

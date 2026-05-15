@@ -23,20 +23,20 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
         throw std::runtime_error("CUDA offload: Yukawa kernel is not yet supported on the GPU path");
 
     const auto &node_mid = tree.GetNodeMID();
-    n_boxes = (int)tree.n_boxes();
+    n_boxes = tree.n_boxes();
     // Use tree.n_levels() (= level_indices.Dim()) — boxsize.Dim() is n_levels+1
     // because it carries an extra slot beyond the deepest live level.
     n_levels = tree.n_levels();
     nlist1_stride = (1 << (2 * DIM)) - (1 << DIM) + 1;
 
     std::vector<int> direct_work_h(tree.direct_work.begin(), tree.direct_work.end());
-    n_direct_work = (int)direct_work_h.size();
+    n_direct_work = direct_work_h.size();
 
     std::vector<int> list1_flat_h((std::size_t)n_boxes * nlist1_stride, -1);
     std::vector<int> list1_count_h(n_boxes, 0);
     for (int b = 0; b < n_boxes; ++b) {
         const auto sp = tree.list1(b);
-        list1_count_h[b] = (int)sp.size();
+        list1_count_h[b] = sp.size();
         for (std::size_t k = 0; k < sp.size(); ++k)
             list1_flat_h[(std::size_t)b * nlist1_stride + k] = sp[k];
     }
@@ -133,7 +133,7 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
         n_pw_modes_win = n_pw_win * n_pw_win * n_pw2_win;
     else
         n_pw_modes_win = n_pw_win * n_pw2_win;
-    hpw_win = (Real)tree.expansion_constants.hpw_win;
+    hpw_win = tree.expansion_constants.hpw_win;
     kernel = tree.params.kernel;
 
     // Neighbor list: flat n_boxes * n_neighbors.
@@ -195,7 +195,7 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
         const auto &wfd = tree.window_fourier_data;
         d_window_pw2poly.upload(reinterpret_cast<const Real *>(&wfd.pw2poly[0]), (std::size_t)2 * n_pw_win * n_order);
         d_window_poly2pw.upload(reinterpret_cast<const Real *>(&wfd.poly2pw[0]), (std::size_t)2 * n_pw_win * n_order);
-        d_window_radialft.upload(&wfd.radialft[0], (std::size_t)n_pw_modes_win);
+        d_window_radialft.upload(&wfd.radialft[0], n_pw_modes_win);
     }
 
     // Per-level wpwshift: SoA per neighbor (already SoA in calc_planewave_translation_matrix).
@@ -240,7 +240,7 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
 
     // Charge2Proxy group lists, flattened across all groups.
     {
-        n_c2p_groups = (int)tree.charge2proxy_groups.size();
+        n_c2p_groups = tree.charge2proxy_groups.size();
         std::vector<int> centers_h, levels_h, off_h, count_h, src_flat_h;
         centers_h.reserve(n_c2p_groups);
         levels_h.reserve(n_c2p_groups);
@@ -249,7 +249,7 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
         for (const auto &g : tree.charge2proxy_groups) {
             centers_h.push_back(g.center_box);
             levels_h.push_back(g.level);
-            off_h.push_back((int)src_flat_h.size());
+            off_h.push_back(src_flat_h.size());
             count_h.push_back(g.n_src_boxes);
             for (int k = 0; k < g.n_src_boxes; ++k)
                 src_flat_h.push_back(g.src_boxes[k]);
@@ -306,7 +306,7 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
         tp_up_count_h.assign(n_levels, 0);
         std::vector<int> srcs, dsts, octs;
         for (int L = 0; L < n_levels; ++L) {
-            tp_up_offset_h[L] = (int)srcs.size();
+            tp_up_offset_h[L] = srcs.size();
             for (int idx = 0; idx < tree.level_indices[L].Dim(); ++idx) {
                 const int parent = tree.level_indices[L][idx];
                 if (!(tree.src_counts_owned[parent] > 0 && tree.ifpwexp[parent]))
@@ -325,7 +325,7 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
             }
             max_tp_up_per_level = std::max(max_tp_up_per_level, tp_up_count_h[L]);
         }
-        tp_up_offset_h[n_levels] = (int)srcs.size();
+        tp_up_offset_h[n_levels] = srcs.size();
         if (!srcs.empty()) {
             d_tp_up_src_boxes.upload(srcs.data(), srcs.size());
             d_tp_up_dst_boxes.upload(dsts.data(), dsts.size());
@@ -350,7 +350,7 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
         std::vector<int> flat;
         flat.reserve(n_boxes);
         for (int L = 0; L < n_levels; ++L) {
-            pw_eval_box_offset_h[L] = (int)flat.size();
+            pw_eval_box_offset_h[L] = flat.size();
             for (int idx = 0; idx < tree.level_indices[L].Dim(); ++idx) {
                 const int b = tree.level_indices[L][idx];
                 const int nboxpts = tree.src_counts_owned[b] + tree.trg_counts_owned[b];
@@ -361,8 +361,8 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
             }
             max_pw_eval_per_level = std::max(max_pw_eval_per_level, pw_eval_box_count_h[L]);
         }
-        pw_eval_box_offset_h[n_levels] = (int)flat.size();
-        pw_eval_box_count_total = (int)flat.size();
+        pw_eval_box_offset_h[n_levels] = flat.size();
+        pw_eval_box_count_total = flat.size();
         if (pw_eval_box_count_total)
             d_pw_eval_box_flat.upload(flat.data(), flat.size());
     }
@@ -373,7 +373,7 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
         tp_count_h.assign(n_levels, 0);
         std::vector<int> parents, children, octants;
         for (int L = 0; L < n_levels; ++L) {
-            tp_offset_h[L] = (int)parents.size();
+            tp_offset_h[L] = parents.size();
             for (const auto &p : tree.tensorprod_pairs_per_level[L]) {
                 parents.push_back(p.parent);
                 children.push_back(p.child);
@@ -382,8 +382,8 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
             }
             max_tp_per_level = std::max(max_tp_per_level, tp_count_h[L]);
         }
-        tp_offset_h[n_levels] = (int)parents.size();
-        tp_count_total = (int)parents.size();
+        tp_offset_h[n_levels] = parents.size();
+        tp_count_total = parents.size();
         if (tp_count_total) {
             d_tp_parents.upload(parents.data(), parents.size());
             d_tp_children.upload(children.data(), children.size());
@@ -397,7 +397,7 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
     tensorprod_scratch_stride_reals = 2L * n_order * n_order * n_order;
     const int max_tp_any = std::max(max_tp_per_level, max_tp_up_per_level);
     if (max_tp_any && tensorprod_scratch_stride_reals)
-        d_tensorprod_scratch.resize((std::size_t)max_tp_any * tensorprod_scratch_stride_reals);
+        d_tensorprod_scratch.resize(max_tp_any * tensorprod_scratch_stride_reals);
 
     // pw_in scratch pool. The multilevel kernels launch all levels concurrently
     // on the same stream with disjoint slab regions, so the buffer is the SUM
@@ -411,7 +411,7 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
             total_slots += pw_eval_box_count_h[L];
         }
         if (total_slots && pw_in_stride_reals)
-            d_pw_in_pool.resize((std::size_t)total_slots * pw_in_stride_reals);
+            d_pw_in_pool.resize(total_slots * pw_in_stride_reals);
     }
 
     // Persistent device scratch for multilevel kernel-arg arrays. One slot per
@@ -431,7 +431,7 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
         std::vector<int> flat;
         flat.reserve(n_boxes);
         for (int L = 0; L < n_levels; ++L) {
-            pw_form_box_offset_h[L] = (int)flat.size();
+            pw_form_box_offset_h[L] = flat.size();
             for (int idx = 0; idx < tree.level_indices[L].Dim(); ++idx) {
                 const int b = tree.level_indices[L][idx];
                 if (tree.ifpwexp[b] && tree.proxy_coeffs_offsets[b] != -1) {
@@ -441,8 +441,8 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
             }
             max_pw_form_per_level = std::max(max_pw_form_per_level, pw_form_box_count_h[L]);
         }
-        pw_form_box_offset_h[n_levels] = (int)flat.size();
-        pw_form_box_count_total = (int)flat.size();
+        pw_form_box_offset_h[n_levels] = flat.size();
+        pw_form_box_count_total = flat.size();
         if (pw_form_box_count_total)
             d_pw_form_box_flat.upload(flat.data(), flat.size());
     }
@@ -453,7 +453,7 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
     if (kernel == DMK_STRESSLET) {
         pw_form_stride_reals = 2L * n_tables_up * n_pw_modes;
         if (max_pw_form_per_level && pw_form_stride_reals)
-            d_pw_form_pool.resize((std::size_t)max_pw_form_per_level * pw_form_stride_reals);
+            d_pw_form_pool.resize(max_pw_form_per_level * pw_form_stride_reals);
     }
 
     // Windowed root scratch buffers (one slot, n_pw_win-sized).

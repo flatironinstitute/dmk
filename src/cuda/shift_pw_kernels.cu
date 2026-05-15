@@ -33,7 +33,7 @@ __device__ inline void ShiftPwByBoxBody(const ShiftPwArgs<Real> &a, int box_idx)
 
     const bool box_is_leaf = (a.is_global_leaf[box] != 0);
 
-    Real *pw_in_real = a.pw_in_pool + (long)box_idx * a.pw_in_stride;
+    Real *pw_in_real = a.pw_in_pool + box_idx * a.pw_in_stride;
     complx<Real> *pw_in = reinterpret_cast<complx<Real> *>(pw_in_real);
 
     const long self_off = a.pw_out_offsets[box];

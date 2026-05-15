@@ -35,7 +35,7 @@ __device__ inline void Proxy2PwBody(const Proxy2PwArgs<Real> &a, int box_idx) {
         return;
     const Real *proxy = a.proxy_flat + src_off;
 
-    const long dst_off_complex = a.dst_offsets ? a.dst_offsets[box] : (long)box_idx * a.dst_stride_complex;
+    const long dst_off_complex = a.dst_offsets ? a.dst_offsets[box] : box_idx * a.dst_stride_complex;
     if (dst_off_complex < 0)
         return;
     Real *pw_dst = a.dst_flat + 2 * dst_off_complex;

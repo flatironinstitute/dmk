@@ -54,7 +54,7 @@ CudaEvalTargetsContext<Real, DIM>::CudaEvalTargetsContext(DMKPtTree<Real, DIM> &
     eval_level_trg_ = eval_level_for(tree.params.eval_trg);
     stream_ = cuda_helpers::DeviceStream::non_blocking();
 
-    n_eval_boxes_ = (int)tree.eval_targets_box_list.size();
+    n_eval_boxes_ = tree.eval_targets_box_list.size();
     if (n_eval_boxes_)
         d_eval_targets_box_list_.upload(tree.eval_targets_box_list.data(), tree.eval_targets_box_list.size());
 
