@@ -13,6 +13,7 @@ option(DMK_HAVE_OPENMP "Use OpenMP for parallelism" ON)
 option(DMK_BUILD_REFERENCE "Build reference Fortran implementation" OFF)
 option(DMK_USE_JIT "Use JIT compilation where supported (requires LLVM)" OFF)
 option(DMK_GPU_OFFLOAD "Enable GPU offloading via CUDA" OFF)
+option(DMK_CUDA_USE_NVRTC_JIT "Enable CUDA NVRTC JIT kernels" OFF)
 
 if (DMK_BUILD_REFERENCE)
   enable_language(Fortran)
@@ -74,8 +75,35 @@ if (DMK_GPU_OFFLOAD)
   set(CMAKE_CUDA_EXTENSIONS OFF)
   find_package(CUDAToolkit REQUIRED)
   set(DMK_GPU_TARGET CUDA::cudart)
+  set(DMK_CUDA_JIT_TARGETS "")
+  set(DMK_CUDA_JIT_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  if (DMK_CUDA_USE_NVRTC_JIT)
+    list(APPEND DMK_CXX_FLAGS "-DDMK_CUDA_USE_NVRTC_JIT")
+
+    configure_file(
+      ${PROJECT_SOURCE_DIR}/src/cuda/jit/dmk_jit_config.hpp.in
+      ${DMK_CUDA_JIT_GENERATED_INCLUDE_DIR}/dmk_jit_config.hpp
+      @ONLY
+    )
+
+    list(APPEND DMK_CUDA_JIT_TARGETS
+      CUDA::cuda_driver
+      CUDA::nvrtc
+      )
+  endif()
   list(APPEND DMK_CXX_FLAGS "-DDMK_GPU_OFFLOAD")
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo -Xptxas=-warn-spills")
+endif()
+
+set(DMK_CUDA_JIT_SRC "")
+
+if (DMK_CUDA_USE_NVRTC_JIT)
+  list(APPEND DMK_CUDA_JIT_SRC
+    src/cuda/jit/jit_cache.cpp
+    src/cuda/jit/jit_compiler.cpp
+    src/cuda/jit/jit_kernel.cpp
+    src/cuda/jit/charge2proxy_launcher.cpp
+  )
 endif()
 
 find_package(BLAS REQUIRED)
@@ -128,7 +156,8 @@ if (DMK_BUILD_REFERENCE)
   file(GLOB_RECURSE DMK_REF_COMMON_SRC CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/src/common/*.f*"
     "${PROJECT_SOURCE_DIR}/vec-kernels/src/libkernels2.cpp")
-  add_library(dmk_ref_common OBJECT ${DMK_REF_COMMON_SRC})
+  add_library(dmk_ref_common OBJE
+  CT ${DMK_REF_COMMON_SRC})
   set_target_properties(dmk_ref_common PROPERTIES POSITION_INDEPENDENT_CODE ON)
   target_include_directories(dmk_ref_common PRIVATE
     "${PROJECT_SOURCE_DIR}/extern/VCL/version2"
@@ -192,11 +221,29 @@ if (DMK_GPU_OFFLOAD)
               src/cuda_charge2proxy_kernels.cu
               src/cuda_downward.cpp
               src/cuda_form_outgoing.cpp
-              src/cuda_upward.cpp)
+              src/cuda_upward.cpp
+              ${DMK_CUDA_JIT_SRC}
+              )
   set_target_properties(DMKOBJS_CUDA PROPERTIES POSITION_INDEPENDENT_CODE ON)
-  target_include_directories(DMKOBJS_CUDA PUBLIC ${DMK_INCLUDES})
-  target_link_libraries(DMKOBJS_CUDA PUBLIC ${DMK_GPU_TARGET} ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET}
-    nda::nda_c spdlog::spdlog_header_only)
+  target_include_directories(DMKOBJS_CUDA PUBLIC
+    ${DMK_INCLUDES}
+  )
+
+  if (DMK_CUDA_USE_NVRTC_JIT)
+    target_include_directories(DMKOBJS_CUDA PRIVATE
+      ${PROJECT_SOURCE_DIR}/src
+      ${DMK_CUDA_JIT_GENERATED_INCLUDE_DIR}
+    )
+  endif()
+
+  target_link_libraries(DMKOBJS_CUDA PUBLIC
+    ${DMK_GPU_TARGET}
+    ${DMK_CUDA_JIT_TARGETS}
+    ${DMK_OPENMP_TARGET}
+    ${DMK_MPI_TARGET}
+    nda::nda_c
+    spdlog::spdlog_header_only
+  )
   target_compile_options(DMKOBJS_CUDA PUBLIC "${DMK_CXX_FLAGS}")
 endif()
 
@@ -207,12 +254,17 @@ endif()
 
 add_library(dmk STATIC)
 target_link_libraries(dmk PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT ${DMK_GPU_OBJS} stdc++ supc++)
+if (DMK_GPU_OFFLOAD AND DMK_CUDA_USE_NVRTC_JIT)
+  target_link_libraries(dmk PUBLIC ${DMK_CUDA_JIT_TARGETS})
+endif()
 
 add_library(dmk_shared SHARED)
 set_target_properties(dmk_shared PROPERTIES OUTPUT_NAME dmk)
 target_link_libraries(dmk_shared PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT ${DMK_GPU_OBJS})
 target_link_libraries(dmk_shared PRIVATE stdc++ supc++)
-
+if (DMK_GPU_OFFLOAD AND DMK_CUDA_USE_NVRTC_JIT)
+  target_link_libraries(dmk_shared PUBLIC ${DMK_CUDA_JIT_TARGETS})
+endif()
 if (DMK_BUILD_TESTS)
   add_subdirectory(test)
 endif()

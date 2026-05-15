@@ -1,0 +1,40 @@
+#pragma once
+
+#include <cuda.h>
+#include <cuda_runtime.h>
+
+#include <mutex>
+#include <unordered_map>
+#include <vector>
+#include <memory>
+#include "jit_compiler.hpp"
+#include "jit_kernel.hpp"
+#include "jit_types.hpp"
+
+namespace dmk::cuda::jit {
+
+
+class JitCache {
+public: 
+    JitCache();
+    explicit JitCache(std::vector<std::string> include_dirs);
+
+    std::shared_ptr<JitKernel> get_kernel(const JitKey& key);
+
+private:
+    std::shared_ptr<JitKernel> compile_and_load(const JitKey& key);
+
+    std::string make_source(const JitKey& key) const;
+
+    std::vector<std::string> make_nvrtc_options() const;
+
+    std::mutex mutex_;
+    std::unordered_map<std::string, std::shared_ptr<JitKernel>> cache_;
+    JitCompiler compiler_;
+
+    std::vector<std::string> include_dirs_;
+    std::vector<std::string> extra_options_;
+};
+
+
+}
