@@ -152,9 +152,8 @@ struct CudaSharedDeviceState {
     DeviceBuffer<int> d_c2p_levels;                // [n_c2p_groups]
     DeviceBuffer<int> d_c2p_src_box_flat_offsets;  // [n_c2p_groups]
     DeviceBuffer<int> d_c2p_n_src_boxes_per_group; // [n_c2p_groups]
-    DeviceBuffer<int> d_c2p_src_boxes_flat;        // [c2p_src_boxes_total]
+    DeviceBuffer<int> d_c2p_src_boxes_flat;
     int n_c2p_groups = 0;
-    int c2p_src_boxes_total = 0;
 
     // Per-level upward tensorprod pair lists (gating differs from downward
     // tp_pairs, hence the separate arrays). Pairs at level L link a child at
@@ -164,7 +163,6 @@ struct CudaSharedDeviceState {
     DeviceBuffer<int> d_tp_up_octants;
     std::vector<int> tp_up_offset_h; // [n_levels + 1]
     std::vector<int> tp_up_count_h;  // [n_levels]
-    int tp_up_count_total = 0;
     int max_tp_up_per_level = 0;
 
     // Per-level: list of boxes that do PW work at that level
@@ -222,11 +220,9 @@ struct CudaSharedDeviceState {
     DeviceBuffer<Real> d_window_pw2poly;  // 2 * n_pw_win * n_order reals
     DeviceBuffer<Real> d_window_radialft; // n_pw_modes_win reals
 
-    // Single-element scratch for routines that take per-block box-id / offset
-    // arrays but operate on just box 0 (root). Both arrays point at GPU memory
-    // populated with [0].
-    DeviceBuffer<int> d_box0_id;      // {0}
-    DeviceBuffer<long> d_box0_offset; // {0}
+    // Single-element {0} scratch for kernels that take a per-block box-id
+    // array but only operate on box 0 (the root box).
+    DeviceBuffer<int> d_box0_id;
 
     // Cached scalar params for the kernels.
     int n_pw = 0;
@@ -241,8 +237,13 @@ struct CudaSharedDeviceState {
     Real hpw_win = 0; // expansion_constants.hpw_win
     dmk_ikernel kernel = DMK_LAPLACE;
 
-    // Streams (eval_targets stream still owned by its context).
-    cudaStream_t direct_stream = 0; // default stream
+    // Non-blocking streams.
+    //   direct_stream:   per-box residual kernel (CudaDirectContext)
+    //   downward_stream: charge2proxy + tensorprod up + form_outgoing +
+    //                    shift_pw + pw_to_proxy + tensorprod down
+    // eval_targets owns its own stream and synchronizes against both of
+    // these via cudaEvent before reading their outputs.
+    cuda_helpers::DeviceStream direct_stream;
     cuda_helpers::DeviceStream downward_stream;
 
     /// Allocate d_pw_out + d_pw_out_offsets. Idempotent. Call once per

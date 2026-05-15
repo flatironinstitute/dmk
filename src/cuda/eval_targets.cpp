@@ -72,15 +72,6 @@ CudaEvalTargetsContext<Real, DIM>::CudaEvalTargetsContext(DMKPtTree<Real, DIM> &
 
     stream_ = cuda_helpers::DeviceStream::non_blocking();
 
-    const int n_lvl = tree.boxsize.Dim();
-    std::vector<Real> sc_h(n_lvl);
-    for (int l = 0; l < n_lvl; ++l)
-        sc_h[l] = Real{2} / tree.boxsize[l];
-    d_sc_per_level_.upload(sc_h.data(), sc_h.size());
-
-    if (tree.centers.Dim())
-        d_centers_.upload(&tree.centers[0], tree.centers.Dim());
-
     n_eval_boxes_ = (int)tree.eval_targets_box_list.size();
     if (n_eval_boxes_)
         d_eval_targets_box_list_.upload(tree.eval_targets_box_list.data(), tree.eval_targets_box_list.size());
@@ -132,10 +123,10 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
     args.n_order = n_order_;
     args.eval_targets_box_list = d_eval_targets_box_list_.data();
     args.box_levels = shared.d_box_levels.data();
-    args.sc_per_level = d_sc_per_level_.data();
+    args.sc_per_level = shared.d_inv_box_scale.data();
     args.proxy_flat = shared.d_proxy_coeffs_downward.data();
     args.proxy_offsets = shared.d_proxy_offsets_downward.data();
-    args.centers = d_centers_.data();
+    args.centers = shared.d_centers.data();
 
     // pot_src side
     args.r_target_flat = shared.d_r_src_owned.data();
@@ -161,10 +152,10 @@ void CudaEvalTargetsContext<Real, DIM>::finalize_gpu_only(Real *d_extra_src, Rea
     auto &t = tree_;
     auto &shared = shared_;
 
-    // Caller already called CudaDirectContext::sync() (cudaDeviceSynchronize),
-    // so both direct and eval kernels are complete. If eval was not launched
-    // (n_eval_boxes == 0), skip straight to downloading only the direct result.
+    // No eval kernels ran (n_eval_boxes == 0): direct's output is the final
+    // answer. Drain direct's stream and download.
     if (!launched_) {
+        DMK_CHECK_CUDA(cudaStreamSynchronize(shared.direct_stream));
         if (shared.pot_src_size && d_extra_src)
             DMK_CHECK_CUDA(cudaMemcpy(&t.pot_src_sorted[0], d_extra_src, shared.pot_src_size * sizeof(Real),
                                       cudaMemcpyDeviceToHost));
@@ -173,6 +164,12 @@ void CudaEvalTargetsContext<Real, DIM>::finalize_gpu_only(Real *d_extra_src, Rea
                                       cudaMemcpyDeviceToHost));
         return;
     }
+
+    // Make eval_targets' stream wait for direct's kernels to finish before
+    // the accumulate kernels below read direct's output buffers.
+    auto direct_done = cuda_helpers::DeviceEvent::disable_timing();
+    DMK_CHECK_CUDA(cudaEventRecord(direct_done, shared.direct_stream));
+    DMK_CHECK_CUDA(cudaStreamWaitEvent(stream_, direct_done, 0));
 
     // Sum the direct device buffers into the eval buffers in-place on GPU,
     // then copy the combined result straight to host — no temps, no CPU loops.

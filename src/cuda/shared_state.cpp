@@ -120,6 +120,7 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
                                     tree.proxy_coeffs_offsets_downward.Dim());
 
     // ============== Downward-pass GPU plumbing ==============
+    direct_stream = cuda_helpers::DeviceStream::non_blocking();
     downward_stream = cuda_helpers::DeviceStream::non_blocking();
 
     n_neighbors = 1;
@@ -261,7 +262,6 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
             for (int k = 0; k < g.n_src_boxes; ++k)
                 src_flat_h.push_back(g.src_boxes[k]);
         }
-        c2p_src_boxes_total = (int)src_flat_h.size();
         if (n_c2p_groups) {
             d_c2p_center_boxes.upload(centers_h.data(), centers_h.size());
             d_c2p_levels.upload(levels_h.data(), levels_h.size());
@@ -302,8 +302,7 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
             max_tp_up_per_level = std::max(max_tp_up_per_level, tp_up_count_h[L]);
         }
         tp_up_offset_h[n_levels] = (int)srcs.size();
-        tp_up_count_total = (int)srcs.size();
-        if (tp_up_count_total) {
+        if (!srcs.empty()) {
             d_tp_up_src_boxes.upload(srcs.data(), srcs.size());
             d_tp_up_dst_boxes.upload(dsts.data(), dsts.size());
             d_tp_up_octants.upload(octs.data(), octs.size());
@@ -421,13 +420,11 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
             d_window_pw_form_out.resize(2 * (std::size_t)n_charge_dim * n_pw_modes_win);
     }
 
-    // Single-element {0} scratch for kernels that take per-block box-id /
-    // offset arrays but operate on just box 0 at the root.
+    // Single-element {0} scratch for kernels that take a per-block box-id
+    // array but only operate on the root box.
     {
         const int zero_int = 0;
-        const long zero_long = 0;
         d_box0_id.upload(&zero_int, 1);
-        d_box0_offset.upload(&zero_long, 1);
     }
 }
 

@@ -19,10 +19,10 @@ namespace dmk {
 template <typename Real, int DIM>
 CudaDirectContext<Real, DIM>::CudaDirectContext(DMKPtTree<Real, DIM> &tree, CudaSharedDeviceState<Real, DIM> &shared)
     : tree_(tree), shared_(shared) {
+    // Output buffers are zeroed at the start of each launch() so no need to
+    // initialize them here.
     d_pot_src_direct_.resize(shared.pot_src_size);
     d_pot_trg_direct_.resize(shared.pot_trg_size);
-    d_pot_src_direct_.zero_async();
-    d_pot_trg_direct_.zero_async();
 }
 
 template <typename Real, int DIM>

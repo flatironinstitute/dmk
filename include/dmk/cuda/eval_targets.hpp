@@ -45,9 +45,7 @@ class CudaEvalTargetsContext {
     DMKPtTree<Real, DIM> &tree_;
     CudaSharedDeviceState<Real, DIM> &shared_;
 
-    cuda_helpers::DeviceBuffer<Real> d_centers_;
     cuda_helpers::DeviceBuffer<int> d_eval_targets_box_list_;
-    cuda_helpers::DeviceBuffer<Real> d_sc_per_level_;
     cuda_helpers::DeviceBuffer<Real> d_pot_src_eval_;
     cuda_helpers::DeviceBuffer<Real> d_pot_trg_eval_;
     cuda_helpers::DeviceBuffer<Real> d_self_correction_work_;
