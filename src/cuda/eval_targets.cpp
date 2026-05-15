@@ -2,10 +2,10 @@
 // kernel launches go through cuda::launch_eval_targets_dispatch (defined in
 // src/cuda_eval_targets_kernels.cu).
 
-#include <dmk/cuda_eval_targets.hpp>
-#include <dmk/cuda_eval_targets_kernels.hpp>
-#include <dmk/cuda_helpers.hpp>
-#include <dmk/cuda_shared_state.hpp>
+#include <dmk/cuda/eval_targets.hpp>
+#include <dmk/cuda/eval_targets_kernels.hpp>
+#include <dmk/cuda/helpers.hpp>
+#include <dmk/cuda/shared_state.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/tree.hpp>
 

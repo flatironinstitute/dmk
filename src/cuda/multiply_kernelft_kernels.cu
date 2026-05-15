@@ -1,6 +1,6 @@
 // Runtime dispatches for the per-block multiply_kernelFT family.
 
-#include <dmk/cuda_multiply_kernelft_kernels.cuh>
+#include <dmk/cuda/multiply_kernelft_kernels.cuh>
 
 #include <stdexcept>
 #include <string>

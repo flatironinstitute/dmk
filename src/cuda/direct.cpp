@@ -5,10 +5,10 @@
 // once). This file only manages direct's own output buffers and dispatches
 // the kernel.
 
-#include <dmk/cuda_direct.hpp>
-#include <dmk/cuda_direct_kernels.hpp>
-#include <dmk/cuda_helpers.hpp>
-#include <dmk/cuda_shared_state.hpp>
+#include <dmk/cuda/direct.hpp>
+#include <dmk/cuda/direct_kernels.hpp>
+#include <dmk/cuda/helpers.hpp>
+#include <dmk/cuda/shared_state.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/tree.hpp>
 

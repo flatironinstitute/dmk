@@ -1,6 +1,6 @@
 // Runtime dispatch for the charge2proxy GPU kernel.
 
-#include <dmk/cuda_charge2proxy_kernels.cuh>
+#include <dmk/cuda/charge2proxy_kernels.cuh>
 
 #include <stdexcept>
 #include <string>

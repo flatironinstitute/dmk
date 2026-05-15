@@ -1,6 +1,6 @@
 // Runtime dispatch for the per-block proxy2pw kernel.
 
-#include <dmk/cuda_proxy2pw_kernels.cuh>
+#include <dmk/cuda/proxy2pw_kernels.cuh>
 
 #include <stdexcept>
 #include <string>

@@ -10,7 +10,7 @@
 // ff/ff2 slabs stay in shared memory: ff is n_order×n_order complex,
 // ff2 is n_order×n_pw complex.
 
-#include <dmk/cuda_proxy2pw_kernels.hpp>
+#include <dmk/cuda/proxy2pw_kernels.hpp>
 
 #include <cuda_runtime.h>
 

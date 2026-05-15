@@ -1,6 +1,6 @@
 // Runtime dispatch for tensorprod (proxy_downward parent → child).
 
-#include <dmk/cuda_tensorprod_kernels.cuh>
+#include <dmk/cuda/tensorprod_kernels.cuh>
 
 #include <stdexcept>
 #include <string>

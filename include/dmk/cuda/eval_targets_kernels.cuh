@@ -14,7 +14,7 @@
 // EVAL_LEVEL=2 returns potential + gradient. For DIM=2 that's (pot, gx, gy);
 // for DIM=3, (pot, gx, gy, gz). Gradients are scaled by `sc` to match host.
 
-#include <dmk/cuda_eval_targets_kernels.hpp>
+#include <dmk/cuda/eval_targets_kernels.hpp>
 
 #include <stdexcept>
 #include <string>

@@ -1,8 +1,8 @@
 // Runtime dispatch for pw_to_proxy kernels.
 
-#include <dmk/cuda_pw_to_proxy_kernels.hpp>
-#include <dmk/cuda_pw_to_proxy_kernels.cuh>
-#include <dmk/cuda_helpers.hpp>
+#include <dmk/cuda/pw_to_proxy_kernels.hpp>
+#include <dmk/cuda/pw_to_proxy_kernels.cuh>
+#include <dmk/cuda/helpers.hpp>
 
 #include <algorithm>
 #include <stdexcept>

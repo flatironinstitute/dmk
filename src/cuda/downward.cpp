@@ -2,12 +2,12 @@
 // tensorprod kernels on the shared state's downward stream.
 
 #include <cuda_runtime.h>
-#include <dmk/cuda_downward.hpp>
-#include <dmk/cuda_helpers.hpp>
-#include <dmk/cuda_pw_to_proxy_kernels.hpp>
-#include <dmk/cuda_shared_state.hpp>
-#include <dmk/cuda_shift_pw_kernels.hpp>
-#include <dmk/cuda_tensorprod_kernels.hpp>
+#include <dmk/cuda/downward.hpp>
+#include <dmk/cuda/helpers.hpp>
+#include <dmk/cuda/pw_to_proxy_kernels.hpp>
+#include <dmk/cuda/shared_state.hpp>
+#include <dmk/cuda/shift_pw_kernels.hpp>
+#include <dmk/cuda/tensorprod_kernels.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/nvtx_wrapper.h>
 #include <dmk/tree.hpp>

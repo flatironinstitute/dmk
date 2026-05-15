@@ -14,12 +14,12 @@
 #include <stdexcept>
 
 #ifdef DMK_GPU_OFFLOAD
-#include <dmk/cuda_direct.hpp>
-#include <dmk/cuda_downward.hpp>
-#include <dmk/cuda_eval_targets.hpp>
-#include <dmk/cuda_form_outgoing.hpp>
-#include <dmk/cuda_shared_state.hpp>
-#include <dmk/cuda_upward.hpp>
+#include <dmk/cuda/direct.hpp>
+#include <dmk/cuda/downward.hpp>
+#include <dmk/cuda/eval_targets.hpp>
+#include <dmk/cuda/form_outgoing.hpp>
+#include <dmk/cuda/shared_state.hpp>
+#include <dmk/cuda/upward.hpp>
 #include <memory>
 #endif
 

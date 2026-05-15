@@ -9,11 +9,11 @@
 // progressively more useful as scripts/generate_aot_kernels --target=cuda
 // fills in the missing entries.
 
-#include <dmk/aot_kernels_cuda.hpp>
-#include <dmk/cuda_charge2proxy_kernels.hpp>
-#include <dmk/cuda_pw_to_proxy_kernels.hpp>
-#include <dmk/cuda_shift_pw_kernels.hpp>
-#include <dmk/cuda_tensorprod_kernels.hpp>
+#include <dmk/cuda/aot_kernels.hpp>
+#include <dmk/cuda/charge2proxy_kernels.hpp>
+#include <dmk/cuda/pw_to_proxy_kernels.hpp>
+#include <dmk/cuda/shift_pw_kernels.hpp>
+#include <dmk/cuda/tensorprod_kernels.hpp>
 #include <dmk/direct.hpp>
 #include <dmk/planewave.hpp>
 #include <dmk/proxy.hpp>

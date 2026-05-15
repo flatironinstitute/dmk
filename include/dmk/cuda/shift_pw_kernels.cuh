@@ -9,7 +9,7 @@
 // Threads stride over the 2 * n_charge_dim * n_pw_modes reals in the slot.
 // No shared memory needed — each thread reads/writes its own indices.
 
-#include <dmk/cuda_shift_pw_kernels.hpp>
+#include <dmk/cuda/shift_pw_kernels.hpp>
 
 #include <cuda_runtime.h>
 

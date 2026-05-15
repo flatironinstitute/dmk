@@ -2,11 +2,11 @@
 // groups, then per-level (deepest first) tensorprod (child→parent with c2p).
 
 #include <cuda_runtime.h>
-#include <dmk/cuda_charge2proxy_kernels.hpp>
-#include <dmk/cuda_helpers.hpp>
-#include <dmk/cuda_shared_state.hpp>
-#include <dmk/cuda_tensorprod_kernels.hpp>
-#include <dmk/cuda_upward.hpp>
+#include <dmk/cuda/charge2proxy_kernels.hpp>
+#include <dmk/cuda/helpers.hpp>
+#include <dmk/cuda/shared_state.hpp>
+#include <dmk/cuda/tensorprod_kernels.hpp>
+#include <dmk/cuda/upward.hpp>
 #include <dmk/nvtx_wrapper.h>
 #include <dmk/tree.hpp>
 

@@ -1,7 +1,7 @@
 #ifndef DMK_CUDA_MULTIPLY_KERNELFT_KERNELS_CUH
 #define DMK_CUDA_MULTIPLY_KERNELFT_KERNELS_CUH
 
-#include <dmk/cuda_multiply_kernelft_kernels.hpp>
+#include <dmk/cuda/multiply_kernelft_kernels.hpp>
 
 #include <cuda_runtime.h>
 

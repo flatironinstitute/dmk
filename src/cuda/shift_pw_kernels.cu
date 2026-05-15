@@ -1,8 +1,8 @@
 // Runtime dispatch for shift_pw kernels.
 
-#include <dmk/cuda_shift_pw_kernels.hpp>
-#include <dmk/cuda_shift_pw_kernels.cuh>
-#include <dmk/cuda_helpers.hpp>
+#include <dmk/cuda/shift_pw_kernels.hpp>
+#include <dmk/cuda/shift_pw_kernels.cuh>
+#include <dmk/cuda/helpers.hpp>
 
 #include <algorithm>
 #include <stdexcept>

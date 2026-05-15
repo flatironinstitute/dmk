@@ -10,7 +10,7 @@
 // are too large for shared at typical n_order). Block size 128, threads
 // stride over the n_order^DIM output cells.
 
-#include <dmk/cuda_tensorprod_kernels.hpp>
+#include <dmk/cuda/tensorprod_kernels.hpp>
 
 #include <cuda_runtime.h>
 

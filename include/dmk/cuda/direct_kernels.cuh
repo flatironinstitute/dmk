@@ -22,8 +22,8 @@
 //   * load is uneven: blocks with bigger trg boxes / more list1 source pairs
 //     dominate runtime.
 
-#include <dmk/cuda_direct_kernels.hpp>
-#include <dmk/cuda_kernels.cuh>
+#include <dmk/cuda/direct_kernels.hpp>
+#include <dmk/cuda/kernels.cuh>
 
 #include <cuda_runtime.h>
 

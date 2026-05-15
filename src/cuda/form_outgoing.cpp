@@ -2,12 +2,12 @@
 // windowed root proxy2pw + multiply_kernelFT + pw_to_proxy.
 
 #include <cuda_runtime.h>
-#include <dmk/cuda_form_outgoing.hpp>
-#include <dmk/cuda_helpers.hpp>
-#include <dmk/cuda_multiply_kernelft_kernels.hpp>
-#include <dmk/cuda_proxy2pw_kernels.hpp>
-#include <dmk/cuda_pw_to_proxy_kernels.hpp>
-#include <dmk/cuda_shared_state.hpp>
+#include <dmk/cuda/form_outgoing.hpp>
+#include <dmk/cuda/helpers.hpp>
+#include <dmk/cuda/multiply_kernelft_kernels.hpp>
+#include <dmk/cuda/proxy2pw_kernels.hpp>
+#include <dmk/cuda/pw_to_proxy_kernels.hpp>
+#include <dmk/cuda/shared_state.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/nvtx_wrapper.h>
 #include <dmk/tree.hpp>

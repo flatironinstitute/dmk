@@ -3,8 +3,8 @@
 //
 // Plain C++; no <<<>>> launch syntax. Compiled into DMKOBJS_CUDA.
 
-#include <dmk/cuda_helpers.hpp>
-#include <dmk/cuda_shared_state.hpp>
+#include <dmk/cuda/helpers.hpp>
+#include <dmk/cuda/shared_state.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/tree.hpp>
 

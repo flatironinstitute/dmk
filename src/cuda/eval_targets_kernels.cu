@@ -2,7 +2,7 @@
 // on (DIM, EVAL_LEVEL, N_CHARGE_DIM); n_order is runtime-bound up to
 // MAX_N_ORDER. Add new combos here as needed.
 
-#include <dmk/cuda_eval_targets_kernels.cuh>
+#include <dmk/cuda/eval_targets_kernels.cuh>
 
 #include <stdexcept>
 #include <string>
