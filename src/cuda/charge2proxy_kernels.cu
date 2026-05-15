@@ -11,13 +11,6 @@
 
 #include <dmk/cuda/charge2proxy_kernels.hpp>
 
-#include <thrust/count.h>
-#include <thrust/device_ptr.h>
-#include <thrust/device_vector.h>
-#include <thrust/execution_policy.h>
-#include <thrust/functional.h>
-#include <thrust/sort.h>
-
 #include <cuda_runtime.h>
 
 #include <stdexcept>
@@ -232,71 +225,6 @@ __global__ void Charge2ProxyByGroup3DKernel_GemmMicroKTile(Charge2ProxyArgs<Real
     }
 }
 
-template <typename Real>
-__global__ void ComputeCharge2ProxyGroupWorkKernel(Charge2ProxyArgs<Real> a, long long *__restrict__ work_keys,
-                                                   int *__restrict__ group_perm) {
-    constexpr int CHUNK = 32;
-
-    const int g = blockIdx.x * blockDim.x + threadIdx.x;
-    if (g >= a.n_groups)
-        return;
-
-    const int sb_off = a.src_box_flat_offsets[g];
-    const int n_src_boxes = a.n_src_boxes_per_group[g];
-
-    long long total_sources = 0;
-    long long total_chunks = 0;
-
-    for (int sbi = 0; sbi < n_src_boxes; ++sbi) {
-        const int sb = a.src_boxes_flat[sb_off + sbi];
-        const int n_src = a.src_counts_owned[sb];
-
-        total_sources += n_src;
-        total_chunks += (n_src + CHUNK - 1) / CHUNK;
-    }
-
-    work_keys[g] = total_sources * 1024LL + total_chunks;
-    group_perm[g] = g;
-}
-
-struct PositiveWork {
-    __host__ __device__ bool operator()(long long x) const { return x > 0; }
-};
-
-struct Charge2ProxyGroupOrder {
-    thrust::device_vector<long long> work_keys;
-    thrust::device_vector<int> group_perm;
-    int n_active_groups = 0;
-};
-
-template <typename Real>
-static void build_charge2proxy_group_order(const Charge2ProxyArgs<Real> &args, Charge2ProxyGroupOrder &order,
-                                           cudaStream_t stream) {
-    order.work_keys.resize(args.n_groups);
-    order.group_perm.resize(args.n_groups);
-    order.n_active_groups = 0;
-
-    if (args.n_groups == 0)
-        return;
-
-    constexpr int block_size = 256;
-    const int grid_size = (args.n_groups + block_size - 1) / block_size;
-
-    ComputeCharge2ProxyGroupWorkKernel<Real><<<grid_size, block_size, 0, stream>>>(
-        args, thrust::raw_pointer_cast(order.work_keys.data()), thrust::raw_pointer_cast(order.group_perm.data()));
-
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess)
-        throw std::runtime_error(std::string("ComputeCharge2ProxyGroupWorkKernel: ") + cudaGetErrorString(err));
-
-    auto policy = thrust::cuda::par.on(stream);
-    thrust::sort_by_key(policy, order.work_keys.begin(), order.work_keys.end(), order.group_perm.begin(),
-                        thrust::greater<long long>());
-
-    order.n_active_groups = static_cast<int>(
-        thrust::count_if(policy, order.work_keys.begin(), order.work_keys.end(), PositiveWork{}));
-}
-
 template <typename Real, int N_ORDER, int I_TILE = 3, int J_TILE = 6, int K_TILE = 2>
 static void launch_charge2proxy_3d_gemm_micro_ktile_impl(const Charge2ProxyArgs<Real> &args, const int *group_perm,
                                                          int n_launch_groups, cudaStream_t stream) {
@@ -361,10 +289,7 @@ static void launch_charge2proxy_3d(const Charge2ProxyArgs<Real> &args, const int
 template <typename Real>
 void launch_charge2proxy_dispatch(int dim, const Charge2ProxyArgs<Real> &args, cudaStream_t stream) {
     if (dim == 3) {
-        Charge2ProxyGroupOrder order;
-        build_charge2proxy_group_order(args, order, stream);
-        launch_charge2proxy_3d<Real>(args, thrust::raw_pointer_cast(order.group_perm.data()), order.n_active_groups,
-                                     stream);
+        launch_charge2proxy_3d<Real>(args, args.group_perm, args.n_active_groups, stream);
         return;
     }
     throw std::runtime_error("CUDA charge2proxy: dim=" + std::to_string(dim) + " not supported (only 3D for now)");

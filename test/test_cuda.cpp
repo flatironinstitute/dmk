@@ -591,6 +591,8 @@ TEST_CASE_TEMPLATE("[CUDA] charge2proxy vs CPU", Real, double, float) {
     args.charge_owned_offsets = d_charge_offsets.p;
     args.proxy_flat = d_proxy.p;
     args.proxy_offsets = d_proxy_offsets.p;
+    args.group_perm = nullptr; // identity = no work-balancing reorder
+    args.n_active_groups = args.n_groups;
     cuda::launch_charge2proxy_dispatch<Real>(DIM, args, /*stream=*/0);
     REQUIRE_CUDA(cudaDeviceSynchronize());
 

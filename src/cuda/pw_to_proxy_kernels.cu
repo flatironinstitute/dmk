@@ -424,7 +424,7 @@ template void launch_pw_to_proxy_dispatch<double>(int, const PwToProxyArgs<doubl
 
 template <typename Real>
 void launch_pw_to_proxy_multilevel_dispatch(int dim, const std::vector<PwToProxyArgs<Real>> &args_h,
-                                            cudaStream_t stream) {
+                                            PwToProxyArgs<Real> *d_args_scratch, cudaStream_t stream) {
     if (dim != 3)
         throw std::runtime_error("CUDA pw_to_proxy multilevel: dim=" + std::to_string(dim) +
                                  " not supported (only 3D for now)");
@@ -444,23 +444,16 @@ void launch_pw_to_proxy_multilevel_dispatch(int dim, const std::vector<PwToProxy
     if (max_boxes == 0)
         return;
 
-    PwToProxyArgs<Real> *d_args = nullptr;
-    void *tmp = nullptr;
-    DMK_CHECK_CUDA(cudaMallocAsync(&tmp, args_h.size() * sizeof(PwToProxyArgs<Real>), stream));
-    d_args = static_cast<PwToProxyArgs<Real> *>(tmp);
-
-    DMK_CHECK_CUDA(cudaMemcpyAsync(d_args, args_h.data(), args_h.size() * sizeof(PwToProxyArgs<Real>),
+    DMK_CHECK_CUDA(cudaMemcpyAsync(d_args_scratch, args_h.data(), args_h.size() * sizeof(PwToProxyArgs<Real>),
                                    cudaMemcpyHostToDevice, stream));
 
-    launch_pw_to_proxy_multilevel_3d<Real>(d_args, static_cast<int>(args_h.size()), max_boxes, max_n_pw, max_n_pw2,
-                                           max_n_order, stream);
-
-    DMK_CHECK_CUDA(cudaFreeAsync(d_args, stream));
+    launch_pw_to_proxy_multilevel_3d<Real>(d_args_scratch, static_cast<int>(args_h.size()), max_boxes, max_n_pw,
+                                           max_n_pw2, max_n_order, stream);
 }
 
 template void launch_pw_to_proxy_multilevel_dispatch<float>(int, const std::vector<PwToProxyArgs<float>> &,
-                                                            cudaStream_t);
+                                                            PwToProxyArgs<float> *, cudaStream_t);
 template void launch_pw_to_proxy_multilevel_dispatch<double>(int, const std::vector<PwToProxyArgs<double>> &,
-                                                             cudaStream_t);
+                                                             PwToProxyArgs<double> *, cudaStream_t);
 
 } // namespace dmk::cuda

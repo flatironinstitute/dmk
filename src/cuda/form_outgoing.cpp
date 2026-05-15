@@ -71,7 +71,7 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
             pa.dst_stride_complex = 0;
             pa_h.push_back(pa);
         }
-        cuda::launch_proxy2pw_multilevel_dispatch<Real>(DIM, pa_h, s.downward_stream);
+        cuda::launch_proxy2pw_multilevel_dispatch<Real>(DIM, pa_h, s.d_proxy2pw_args.data(), s.downward_stream);
     } else {
         for (int L = 0; L < n_levels; ++L) {
             const int n_box = s.pw_form_box_count_h[L];

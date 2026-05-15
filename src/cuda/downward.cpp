@@ -38,87 +38,57 @@ void CudaDownwardContext<Real, DIM>::run() {
     std::vector<cuda::ShiftPwArgs<Real>> shift_args_h;
     std::vector<cuda::PwToProxyArgs<Real>> pw_to_proxy_args_h;
 
-    std::vector<long> pw_in_pool_base_reals(n_levels, -1);
-
-    long total_pw_in_pool_reals = 0;
-
-    // First pass: compute disjoint temporary pw_in_pool regions.
+    // pw_in_pool layout (per-level disjoint slabs) was precomputed in shared
+    // state — just index into it here.
     for (int level = 0; level < n_levels; ++level) {
         const int n_pw_eval = s.pw_eval_box_count_h[level];
-
         if (n_pw_eval <= 0)
             continue;
 
-        pw_in_pool_base_reals[level] = total_pw_in_pool_reals;
+        const int box_offset = s.pw_eval_box_offset_h[level];
+        Real *level_pw_in_pool = s.d_pw_in_pool.data() + s.pw_in_pool_base_h[level] * s.pw_in_stride_reals;
 
-        total_pw_in_pool_reals += (long)n_pw_eval * s.pw_in_stride_reals;
+        cuda::ShiftPwArgs<Real> sa;
+        sa.n_boxes_at_level = n_pw_eval;
+        sa.n_neighbors = s.n_neighbors;
+        sa.n_charge_dim = s.n_charge_dim;
+        sa.n_pw_modes = s.n_pw_modes;
+        sa.pw_in_stride = s.pw_in_stride_reals;
+        sa.box_ids = s.d_pw_eval_box_flat.data() + box_offset;
+        sa.neighbors = s.d_neighbors.data();
+        sa.pw_out_offsets = s.d_pw_out_offsets.data();
+        sa.is_global_leaf = s.d_is_global_leaf.data();
+        sa.pw_out_flat = s.d_pw_out.data();
+        sa.wpwshift = s.d_wpwshift_flat.data() + (long)level * s.wpwshift_per_level_reals;
+        sa.pw_in_pool = level_pw_in_pool;
+        shift_args_h.push_back(sa);
+
+        cuda::PwToProxyArgs<Real> pa;
+        pa.n_boxes_at_level = n_pw_eval;
+        pa.n_order = s.n_order;
+        pa.n_pw = s.n_pw;
+        pa.n_pw2 = s.n_pw2;
+        pa.n_charge_dim = s.n_charge_dim;
+        pa.pw_in_stride = s.pw_in_stride_reals;
+        pa.box_ids = s.d_pw_eval_box_flat.data() + box_offset;
+        pa.pw_in_pool = level_pw_in_pool;
+        pa.pw2poly = s.d_pw2poly_flat.data() + (long)level * s.pw2poly_per_level_reals;
+        pa.proxy_flat = s.d_proxy_coeffs_downward.data();
+        pa.proxy_offsets = s.d_proxy_offsets_downward.data();
+        pw_to_proxy_args_h.push_back(pa);
     }
 
-    Real *d_pw_in_pool_all = nullptr;
+    if (!shift_args_h.empty()) {
+        nvtxRangePush("shift_pw: multilevel");
+        cuda::launch_shift_pw_multilevel_dispatch<Real>(DIM, shift_args_h, s.d_shift_pw_args.data(), s.downward_stream);
+        nvtxRangePop();
+    }
 
-    if (total_pw_in_pool_reals > 0) {
-        void *tmp = nullptr;
-
-        DMK_CHECK_CUDA(cudaMallocAsync(&tmp, total_pw_in_pool_reals * sizeof(Real), s.downward_stream));
-
-        d_pw_in_pool_all = static_cast<Real *>(tmp);
-
-        for (int level = 0; level < n_levels; ++level) {
-            const int n_pw_eval = s.pw_eval_box_count_h[level];
-
-            if (n_pw_eval <= 0)
-                continue;
-
-            const int box_offset = s.pw_eval_box_offset_h[level];
-            Real *level_pw_in_pool = d_pw_in_pool_all + pw_in_pool_base_reals[level];
-
-            // 1. shift_pw
-            cuda::ShiftPwArgs<Real> sa;
-            sa.n_boxes_at_level = n_pw_eval;
-            sa.n_neighbors = s.n_neighbors;
-            sa.n_charge_dim = s.n_charge_dim;
-            sa.n_pw_modes = s.n_pw_modes;
-            sa.pw_in_stride = s.pw_in_stride_reals;
-            sa.box_ids = s.d_pw_eval_box_flat.data() + box_offset;
-            sa.neighbors = s.d_neighbors.data();
-            sa.pw_out_offsets = s.d_pw_out_offsets.data();
-            sa.is_global_leaf = s.d_is_global_leaf.data();
-            sa.pw_out_flat = s.d_pw_out.data();
-            sa.wpwshift = s.d_wpwshift_flat.data() + (long)level * s.wpwshift_per_level_reals;
-            sa.pw_in_pool = level_pw_in_pool;
-
-            shift_args_h.push_back(sa);
-
-            // 2. pw_to_proxy
-            cuda::PwToProxyArgs<Real> pa;
-            pa.n_boxes_at_level = n_pw_eval;
-            pa.n_order = s.n_order;
-            pa.n_pw = s.n_pw;
-            pa.n_pw2 = s.n_pw2;
-            pa.n_charge_dim = s.n_charge_dim;
-            pa.pw_in_stride = s.pw_in_stride_reals;
-            pa.box_ids = s.d_pw_eval_box_flat.data() + box_offset;
-            pa.pw_in_pool = level_pw_in_pool;
-            pa.pw2poly = s.d_pw2poly_flat.data() + (long)level * s.pw2poly_per_level_reals;
-            pa.proxy_flat = s.d_proxy_coeffs_downward.data();
-            pa.proxy_offsets = s.d_proxy_offsets_downward.data();
-
-            pw_to_proxy_args_h.push_back(pa);
-        }
-
-        if (!shift_args_h.empty()) {
-            nvtxRangePush("shift_pw: multilevel");
-            cuda::launch_shift_pw_multilevel_dispatch<Real>(DIM, shift_args_h, s.downward_stream);
-            nvtxRangePop();
-        }
-
-        if (!pw_to_proxy_args_h.empty()) {
-            nvtxRangePush("pw_to_proxy: multilevel");
-            cuda::launch_pw_to_proxy_multilevel_dispatch<Real>(DIM, pw_to_proxy_args_h, s.downward_stream);
-            nvtxRangePop();
-        }
-
-        DMK_CHECK_CUDA(cudaFreeAsync(d_pw_in_pool_all, s.downward_stream));
+    if (!pw_to_proxy_args_h.empty()) {
+        nvtxRangePush("pw_to_proxy: multilevel");
+        cuda::launch_pw_to_proxy_multilevel_dispatch<Real>(DIM, pw_to_proxy_args_h, s.d_pw_to_proxy_args.data(),
+                                                           s.downward_stream);
+        nvtxRangePop();
     }
 
     // 3. tensorprod level by level

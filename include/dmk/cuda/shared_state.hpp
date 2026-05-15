@@ -16,6 +16,9 @@
 #include <cuda_runtime.h>
 #include <dmk.h>
 #include <dmk/cuda/helpers.hpp>
+#include <dmk/cuda/proxy2pw_kernels.hpp>
+#include <dmk/cuda/pw_to_proxy_kernels.hpp>
+#include <dmk/cuda/shift_pw_kernels.hpp>
 
 namespace dmk {
 using cuda_helpers::DeviceBuffer;
@@ -155,6 +158,12 @@ struct CudaSharedDeviceState {
     DeviceBuffer<int> d_c2p_src_boxes_flat;
     int n_c2p_groups = 0;
 
+    // Permutation of charge2proxy groups in descending order of source work.
+    // Precomputed at ctor — keys depend only on tree-build constants (src
+    // counts, box lists). n_c2p_active_groups counts groups with non-zero work.
+    DeviceBuffer<int> d_c2p_group_perm; // [n_c2p_groups]
+    int n_c2p_active_groups = 0;
+
     // Per-level upward tensorprod pair lists (gating differs from downward
     // tp_pairs, hence the separate arrays). Pairs at level L link a child at
     // level L+1 (src) to its parent at level L (dst, additive).
@@ -199,9 +208,19 @@ struct CudaSharedDeviceState {
     long tensorprod_scratch_stride_reals = 0; // = 2 * n_order^3
 
     // pw_in scratch pool: per-block slot for the shift_pw output, consumed
-    // by pw_to_proxy on the same stream. Sized for the worst-case level.
+    // by pw_to_proxy on the same stream. Multilevel kernels launch all levels
+    // concurrently with disjoint pool regions, so the buffer holds the sum
+    // (not max) of per-level slot counts.
     DeviceBuffer<Real> d_pw_in_pool;
-    long pw_in_stride_reals = 0; // 2 * n_charge_dim * n_pw_modes
+    long pw_in_stride_reals = 0;         // 2 * n_charge_dim * n_pw_modes
+    std::vector<long> pw_in_pool_base_h; // [n_levels]; level L's slab starts at base*pw_in_stride_reals reals
+
+    // Persistent device scratch for the multilevel kernel-arg arrays. Sized
+    // for n_levels at ctor; each downward_pass uploads the live subset and
+    // launches without touching cudaMalloc/Free.
+    DeviceBuffer<cuda::ShiftPwArgs<Real>> d_shift_pw_args;
+    DeviceBuffer<cuda::PwToProxyArgs<Real>> d_pw_to_proxy_args;
+    DeviceBuffer<cuda::Proxy2PwArgs<Real>> d_proxy2pw_args;
 
     // Stresslet only: per-box pw_form pool used as the proxy2pw → multiply
     // intermediate (n_tables_up = 9, larger than n_tables_down = 3). Empty for

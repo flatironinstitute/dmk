@@ -48,6 +48,8 @@ void CudaUpwardContext<Real, DIM>::run() {
         a.charge_owned_offsets = s.d_charge_owned_offsets.data();
         a.proxy_flat = s.d_proxy_coeffs_upward.data();
         a.proxy_offsets = s.d_proxy_offsets_upward.data();
+        a.group_perm = s.d_c2p_group_perm.data();
+        a.n_active_groups = s.n_c2p_active_groups;
         cuda::launch_charge2proxy_dispatch<Real>(DIM, a, s.downward_stream);
     }
 

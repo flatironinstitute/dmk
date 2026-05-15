@@ -34,6 +34,11 @@ struct Charge2ProxyArgs {
 
     Real *proxy_flat = nullptr; // d_proxy_coeffs_upward (additive write)
     const long *proxy_offsets = nullptr;
+
+    // Sort order over groups (largest work first). Length n_groups; the first
+    // n_active_groups entries are non-zero-work and are the ones launched.
+    const int *group_perm = nullptr;
+    int n_active_groups = 0;
 };
 
 template <typename Real>

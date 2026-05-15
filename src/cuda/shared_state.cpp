@@ -10,8 +10,10 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace dmk {
@@ -269,6 +271,38 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
             d_c2p_n_src_boxes_per_group.upload(count_h.data(), count_h.size());
             d_c2p_src_boxes_flat.upload(src_flat_h.data(), src_flat_h.size());
         }
+
+        // Group ordering: largest work first so heavy groups grab CTAs early.
+        // Work key matches the device kernel's previous formula (CHUNK=32 here
+        // is the tiebreaker granularity used in the old work-key kernel; the
+        // primary sort term is total_sources).
+        if (n_c2p_groups) {
+            constexpr int CHUNK = 32;
+            std::vector<std::pair<long long, int>> work_perm;
+            work_perm.reserve(n_c2p_groups);
+            for (int g = 0; g < n_c2p_groups; ++g) {
+                long long total_sources = 0;
+                long long total_chunks = 0;
+                const auto &grp = tree.charge2proxy_groups[g];
+                for (int sbi = 0; sbi < grp.n_src_boxes; ++sbi) {
+                    const int sb = grp.src_boxes[sbi];
+                    const int n_src = tree.src_counts_owned[sb];
+                    total_sources += n_src;
+                    total_chunks += (n_src + CHUNK - 1) / CHUNK;
+                }
+                work_perm.emplace_back(total_sources * 1024LL + total_chunks, g);
+            }
+            std::sort(work_perm.begin(), work_perm.end(),
+                      [](const auto &a, const auto &b) { return a.first > b.first; });
+            std::vector<int> perm_h(n_c2p_groups);
+            n_c2p_active_groups = 0;
+            for (int i = 0; i < n_c2p_groups; ++i) {
+                perm_h[i] = work_perm[i].second;
+                if (work_perm[i].first > 0)
+                    ++n_c2p_active_groups;
+            }
+            d_c2p_group_perm.upload(perm_h.data(), perm_h.size());
+        }
     }
 
     // Per-level upward tensorprod pair lists. Gating: parent has
@@ -375,10 +409,29 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
     if (max_tp_any && tensorprod_scratch_stride_reals)
         d_tensorprod_scratch.resize((std::size_t)max_tp_any * tensorprod_scratch_stride_reals);
 
-    // pw_in scratch pool.
+    // pw_in scratch pool. The multilevel kernels launch all levels concurrently
+    // on the same stream with disjoint slab regions, so the buffer is the SUM
+    // of per-level slot counts (not max).
     pw_in_stride_reals = 2L * n_charge_dim * n_pw_modes;
-    if (max_pw_eval_per_level && pw_in_stride_reals)
-        d_pw_in_pool.resize((std::size_t)max_pw_eval_per_level * pw_in_stride_reals);
+    pw_in_pool_base_h.assign(n_levels, 0);
+    {
+        long total_slots = 0;
+        for (int L = 0; L < n_levels; ++L) {
+            pw_in_pool_base_h[L] = total_slots;
+            total_slots += pw_eval_box_count_h[L];
+        }
+        if (total_slots && pw_in_stride_reals)
+            d_pw_in_pool.resize((std::size_t)total_slots * pw_in_stride_reals);
+    }
+
+    // Persistent device scratch for multilevel kernel-arg arrays. One slot per
+    // level even though not every level uses one — sizes are tiny compared to
+    // the data buffers.
+    if (n_levels) {
+        d_shift_pw_args.resize(n_levels);
+        d_pw_to_proxy_args.resize(n_levels);
+        d_proxy2pw_args.resize(n_levels);
+    }
 
     // Per-level pw_form (proxy2pw target) box list. Subset of pw_eval_box_flat
     // restricted to boxes that have an upward proxy to project from.

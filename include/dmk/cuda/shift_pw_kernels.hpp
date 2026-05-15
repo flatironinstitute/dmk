@@ -43,15 +43,13 @@ struct ShiftPwArgs {
 };
 
 template <typename Real>
-void launch_shift_pw_dispatch(int dim,
-                              const ShiftPwArgs<Real> &args,
-                              cudaStream_t stream);
+void launch_shift_pw_dispatch(int dim, const ShiftPwArgs<Real> &args, cudaStream_t stream);
 
+// d_args_scratch must point to device memory sized >= args_h.size() entries.
+// The orchestrator owns it; this function uploads args_h into it and launches.
 template <typename Real>
-void launch_shift_pw_multilevel_dispatch(
-    int dim,
-    const std::vector<ShiftPwArgs<Real>> &args_h,
-    cudaStream_t stream);
+void launch_shift_pw_multilevel_dispatch(int dim, const std::vector<ShiftPwArgs<Real>> &args_h,
+                                         ShiftPwArgs<Real> *d_args_scratch, cudaStream_t stream);
 
 } // namespace dmk::cuda
 

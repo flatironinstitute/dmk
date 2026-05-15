@@ -7,6 +7,7 @@
 // ff/ff2 slabs stay in shared memory: ff is n_order×n_order complex,
 // ff2 is n_order×n_pw complex.
 
+#include <dmk/cuda/helpers.hpp>
 #include <dmk/cuda/proxy2pw_kernels.hpp>
 
 #include <cuda_runtime.h>
@@ -168,7 +169,8 @@ template void launch_proxy2pw_dispatch<float>(int, const Proxy2PwArgs<float> &, 
 template void launch_proxy2pw_dispatch<double>(int, const Proxy2PwArgs<double> &, cudaStream_t);
 
 template <typename Real>
-void launch_proxy2pw_multilevel_dispatch(int dim, const std::vector<Proxy2PwArgs<Real>> &pa_h, cudaStream_t stream) {
+void launch_proxy2pw_multilevel_dispatch(int dim, const std::vector<Proxy2PwArgs<Real>> &pa_h,
+                                         Proxy2PwArgs<Real> *d_args_scratch, cudaStream_t stream) {
     if (dim != 3)
         throw std::runtime_error("CUDA proxy2pw multilevel: dim=" + std::to_string(dim) +
                                  " not supported (only 3D for now)");
@@ -186,17 +188,16 @@ void launch_proxy2pw_multilevel_dispatch(int dim, const std::vector<Proxy2PwArgs
     if (max_boxes == 0)
         return;
 
-    Proxy2PwArgs<Real> *d_args = nullptr;
-    cudaMallocAsync(reinterpret_cast<void **>(&d_args), pa_h.size() * sizeof(Proxy2PwArgs<Real>), stream);
-    cudaMemcpyAsync(d_args, pa_h.data(), pa_h.size() * sizeof(Proxy2PwArgs<Real>), cudaMemcpyHostToDevice, stream);
+    DMK_CHECK_CUDA(cudaMemcpyAsync(d_args_scratch, pa_h.data(), pa_h.size() * sizeof(Proxy2PwArgs<Real>),
+                                   cudaMemcpyHostToDevice, stream));
 
-    launch_proxy2pw_multilevel_3d<Real>(d_args, static_cast<int>(pa_h.size()), max_boxes, max_n_order, max_n_pw,
+    launch_proxy2pw_multilevel_3d<Real>(d_args_scratch, static_cast<int>(pa_h.size()), max_boxes, max_n_order, max_n_pw,
                                         stream);
-
-    cudaFreeAsync(d_args, stream);
 }
 
-template void launch_proxy2pw_multilevel_dispatch<float>(int, const std::vector<Proxy2PwArgs<float>> &, cudaStream_t);
-template void launch_proxy2pw_multilevel_dispatch<double>(int, const std::vector<Proxy2PwArgs<double>> &, cudaStream_t);
+template void launch_proxy2pw_multilevel_dispatch<float>(int, const std::vector<Proxy2PwArgs<float>> &,
+                                                         Proxy2PwArgs<float> *, cudaStream_t);
+template void launch_proxy2pw_multilevel_dispatch<double>(int, const std::vector<Proxy2PwArgs<double>> &,
+                                                          Proxy2PwArgs<double> *, cudaStream_t);
 
 } // namespace dmk::cuda
