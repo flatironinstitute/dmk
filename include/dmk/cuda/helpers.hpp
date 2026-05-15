@@ -53,6 +53,156 @@ inline void device_free(void *p) {
         cudaFree(p);
 }
 
+// RAII wrapper around a `cudaMalloc`'d region. Move-only. `resize()` is a
+// no-op if the requested size matches what's already allocated, otherwise it
+// frees and re-allocates (no realloc — caller's responsibility if old data
+// matters).
+template <typename T>
+class DeviceBuffer {
+  public:
+    DeviceBuffer() = default;
+    explicit DeviceBuffer(std::size_t n) { resize(n); }
+    ~DeviceBuffer() { reset(); }
+
+    DeviceBuffer(DeviceBuffer &&o) noexcept : p_(o.p_), n_(o.n_) {
+        o.p_ = nullptr;
+        o.n_ = 0;
+    }
+    DeviceBuffer &operator=(DeviceBuffer &&o) noexcept {
+        if (this != &o) {
+            reset();
+            p_ = o.p_;
+            n_ = o.n_;
+            o.p_ = nullptr;
+            o.n_ = 0;
+        }
+        return *this;
+    }
+    DeviceBuffer(const DeviceBuffer &) = delete;
+    DeviceBuffer &operator=(const DeviceBuffer &) = delete;
+
+    void resize(std::size_t n) {
+        if (n == n_)
+            return;
+        reset();
+        if (n) {
+            DMK_CHECK_CUDA(cudaMalloc(&p_, n * sizeof(T)));
+            n_ = n;
+        }
+    }
+
+    void reset() {
+        if (p_) {
+            cudaFree(p_);
+            p_ = nullptr;
+        }
+        n_ = 0;
+    }
+
+    void upload(const T *src, std::size_t n) {
+        resize(n);
+        if (n)
+            DMK_CHECK_CUDA(cudaMemcpy(p_, src, n * sizeof(T), cudaMemcpyHostToDevice));
+    }
+    void upload_async(const T *src, std::size_t n, cudaStream_t stream) {
+        resize(n);
+        if (n)
+            DMK_CHECK_CUDA(cudaMemcpyAsync(p_, src, n * sizeof(T), cudaMemcpyHostToDevice, stream));
+    }
+    void zero_async(cudaStream_t stream = 0) {
+        if (n_)
+            DMK_CHECK_CUDA(cudaMemsetAsync(p_, 0, n_ * sizeof(T), stream));
+    }
+
+    T *data() { return p_; }
+    const T *data() const { return p_; }
+    std::size_t size() const { return n_; }
+    std::size_t size_bytes() const { return n_ * sizeof(T); }
+    explicit operator bool() const { return p_ != nullptr; }
+
+  private:
+    T *p_ = nullptr;
+    std::size_t n_ = 0;
+};
+
+// RAII wrapper around a cudaStream. Default-constructed instance carries no
+// stream (data() returns 0, the default-stream sentinel). Use the named
+// factory to create an owned non-blocking stream.
+class DeviceStream {
+  public:
+    DeviceStream() = default;
+    ~DeviceStream() { reset(); }
+
+    DeviceStream(DeviceStream &&o) noexcept : s_(o.s_) { o.s_ = nullptr; }
+    DeviceStream &operator=(DeviceStream &&o) noexcept {
+        if (this != &o) {
+            reset();
+            s_ = o.s_;
+            o.s_ = nullptr;
+        }
+        return *this;
+    }
+    DeviceStream(const DeviceStream &) = delete;
+    DeviceStream &operator=(const DeviceStream &) = delete;
+
+    static DeviceStream non_blocking() {
+        DeviceStream s;
+        DMK_CHECK_CUDA(cudaStreamCreateWithFlags(&s.s_, cudaStreamNonBlocking));
+        return s;
+    }
+
+    void reset() {
+        if (s_) {
+            cudaStreamDestroy(s_);
+            s_ = nullptr;
+        }
+    }
+
+    cudaStream_t get() const { return s_; }
+    operator cudaStream_t() const { return s_; }
+
+  private:
+    cudaStream_t s_ = nullptr;
+};
+
+// RAII wrapper around a cudaEvent. Default-constructed = no event.
+class DeviceEvent {
+  public:
+    DeviceEvent() = default;
+    ~DeviceEvent() { reset(); }
+
+    DeviceEvent(DeviceEvent &&o) noexcept : e_(o.e_) { o.e_ = nullptr; }
+    DeviceEvent &operator=(DeviceEvent &&o) noexcept {
+        if (this != &o) {
+            reset();
+            e_ = o.e_;
+            o.e_ = nullptr;
+        }
+        return *this;
+    }
+    DeviceEvent(const DeviceEvent &) = delete;
+    DeviceEvent &operator=(const DeviceEvent &) = delete;
+
+    static DeviceEvent disable_timing() {
+        DeviceEvent e;
+        DMK_CHECK_CUDA(cudaEventCreateWithFlags(&e.e_, cudaEventDisableTiming));
+        return e;
+    }
+
+    void reset() {
+        if (e_) {
+            cudaEventDestroy(e_);
+            e_ = nullptr;
+        }
+    }
+
+    cudaEvent_t get() const { return e_; }
+    operator cudaEvent_t() const { return e_; }
+
+  private:
+    cudaEvent_t e_ = nullptr;
+};
+
 template <typename SctlVec>
 inline std::vector<int> sctl_int_vec_to_std(const SctlVec &v) {
     std::vector<int> out(v.Dim());

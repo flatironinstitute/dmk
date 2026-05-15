@@ -158,17 +158,16 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
     // skip the host→device upload entirely. Otherwise (eval_targets-only
     // path) we upload the CPU-built proxy_coeffs_downward into the shared
     // buffer.
-    if (!shared.proxy_resident_on_device && shared.proxy_size) {
-        DMK_CHECK_CUDA(cudaMemcpyAsync(shared.d_proxy_coeffs_downward, &t.proxy_coeffs_downward[0],
-                                       shared.proxy_size * sizeof(Real), cudaMemcpyHostToDevice, im.stream));
+    if (!shared.proxy_resident_on_device && shared.d_proxy_coeffs_downward) {
+        DMK_CHECK_CUDA(cudaMemcpyAsync(shared.d_proxy_coeffs_downward.data(), &t.proxy_coeffs_downward[0],
+                                       shared.d_proxy_coeffs_downward.size() * sizeof(Real), cudaMemcpyHostToDevice,
+                                       im.stream));
     } else if (shared.proxy_resident_on_device) {
         // Downward kernels wrote to d_proxy on shared.downward_stream. Make
         // eval_targets' stream wait for downward to complete before reading.
-        cudaEvent_t evt;
-        DMK_CHECK_CUDA(cudaEventCreateWithFlags(&evt, cudaEventDisableTiming));
+        auto evt = cuda_helpers::DeviceEvent::disable_timing();
         DMK_CHECK_CUDA(cudaEventRecord(evt, shared.downward_stream));
         DMK_CHECK_CUDA(cudaStreamWaitEvent(im.stream, evt, 0));
-        cudaEventDestroy(evt);
     }
 
     if (im.d_pot_src_eval)
@@ -184,26 +183,26 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
     args.n_eval_boxes = im.n_eval_boxes;
     args.n_order = im.n_order;
     args.eval_targets_box_list = im.d_eval_targets_box_list;
-    args.box_levels = shared.d_box_levels;
+    args.box_levels = shared.d_box_levels.data();
     args.sc_per_level = im.d_sc_per_level;
-    args.proxy_flat = shared.d_proxy_coeffs_downward;
-    args.proxy_offsets = shared.d_proxy_offsets_downward;
+    args.proxy_flat = shared.d_proxy_coeffs_downward.data();
+    args.proxy_offsets = shared.d_proxy_offsets_downward.data();
     args.centers = im.d_centers;
 
     // pot_src side
-    args.r_target_flat = shared.d_r_src_owned;
-    args.r_target_offsets = shared.d_r_src_owned_offsets;
-    args.target_counts = shared.d_src_counts_owned;
+    args.r_target_flat = shared.d_r_src_owned.data();
+    args.r_target_offsets = shared.d_r_src_owned_offsets.data();
+    args.target_counts = shared.d_src_counts_owned.data();
     args.pot_flat = im.d_pot_src_eval;
-    args.pot_offsets = shared.d_pot_src_offsets;
+    args.pot_offsets = shared.d_pot_src_offsets.data();
     cuda::launch_eval_targets_dispatch<Real>(DIM, eval_level_src, n_charge_dim, args, im.stream);
 
     // pot_trg side
-    args.r_target_flat = shared.d_r_trg_owned;
-    args.r_target_offsets = shared.d_r_trg_owned_offsets;
-    args.target_counts = shared.d_trg_counts_owned;
+    args.r_target_flat = shared.d_r_trg_owned.data();
+    args.r_target_offsets = shared.d_r_trg_owned_offsets.data();
+    args.target_counts = shared.d_trg_counts_owned.data();
     args.pot_flat = im.d_pot_trg_eval;
-    args.pot_offsets = shared.d_pot_trg_offsets;
+    args.pot_offsets = shared.d_pot_trg_offsets.data();
     cuda::launch_eval_targets_dispatch<Real>(DIM, eval_level_trg, n_charge_dim, args, im.stream);
 
     im.launched = true;
@@ -237,14 +236,14 @@ void CudaEvalTargetsContext<Real, DIM>::finalize_gpu_only(Real *d_extra_src, Rea
 
     if (im.d_self_correction_work && shared.pot_src_size) {
         cuda::SelfCorrectionArgs<Real> sc_args;
-        sc_args.direct_work = shared.d_direct_work;
+        sc_args.direct_work = shared.d_direct_work.data();
         sc_args.correction_factors = im.d_self_correction_work;
-        sc_args.src_counts_owned = shared.d_src_counts_owned;
-        sc_args.src_counts_halo = shared.d_src_counts_halo;
-        sc_args.charge_halo = shared.d_charge_halo;
-        sc_args.charge_halo_offsets = shared.d_charge_halo_offsets;
+        sc_args.src_counts_owned = shared.d_src_counts_owned.data();
+        sc_args.src_counts_halo = shared.d_src_counts_halo.data();
+        sc_args.charge_halo = shared.d_charge_halo.data();
+        sc_args.charge_halo_offsets = shared.d_charge_halo_offsets.data();
         sc_args.pot_src = im.d_pot_src_eval;
-        sc_args.pot_src_offsets = shared.d_pot_src_offsets;
+        sc_args.pot_src_offsets = shared.d_pot_src_offsets.data();
         sc_args.n_direct_work = shared.n_direct_work;
         sc_args.n_input_dim = im.n_input_dim;
         sc_args.pot_stride = im.pot_stride;

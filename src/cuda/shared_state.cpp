@@ -16,9 +16,6 @@
 
 namespace dmk {
 
-using cuda_helpers::device_alloc;
-using cuda_helpers::device_free;
-using cuda_helpers::device_upload;
 using cuda_helpers::sctl_int_vec_to_std;
 
 template <typename Real, int DIM>
@@ -56,76 +53,74 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
     }
 
     // ---------- uploads ----------
-    d_direct_work = device_upload(direct_work_h.data(), direct_work_h.size());
-    d_list1_flat = device_upload(list1_flat_h.data(), list1_flat_h.size());
-    d_list1_count = device_upload(list1_count_h.data(), list1_count_h.size());
-    d_box_levels = device_upload(box_levels_h.data(), box_levels_h.size());
-    d_ifpwexp = device_upload(ifpwexp_h.data(), ifpwexp_h.size());
+    d_direct_work.upload(direct_work_h.data(), direct_work_h.size());
+    d_list1_flat.upload(list1_flat_h.data(), list1_flat_h.size());
+    d_list1_count.upload(list1_count_h.data(), list1_count_h.size());
+    d_box_levels.upload(box_levels_h.data(), box_levels_h.size());
+    d_ifpwexp.upload(ifpwexp_h.data(), ifpwexp_h.size());
 
-    d_direct_rsc = device_upload(&tree.direct_rsc[0], tree.direct_rsc.Dim());
-    d_direct_cen = device_upload(&tree.direct_cen[0], tree.direct_cen.Dim());
-    d_direct_d2max = device_upload(&tree.direct_d2max[0], tree.direct_d2max.Dim());
+    d_direct_rsc.upload(&tree.direct_rsc[0], tree.direct_rsc.Dim());
+    d_direct_cen.upload(&tree.direct_cen[0], tree.direct_cen.Dim());
+    d_direct_d2max.upload(&tree.direct_d2max[0], tree.direct_d2max.Dim());
 
     if (tree.r_src_sorted_with_halo.Dim())
-        d_r_src_halo = device_upload(&tree.r_src_sorted_with_halo[0], tree.r_src_sorted_with_halo.Dim());
-    d_r_src_halo_offsets =
-        device_upload((const long *)&tree.r_src_offsets_with_halo[0], tree.r_src_offsets_with_halo.Dim());
+        d_r_src_halo.upload(&tree.r_src_sorted_with_halo[0], tree.r_src_sorted_with_halo.Dim());
+    d_r_src_halo_offsets.upload((const long *)&tree.r_src_offsets_with_halo[0], tree.r_src_offsets_with_halo.Dim());
     {
         auto h = sctl_int_vec_to_std(tree.src_counts_with_halo);
-        d_src_counts_halo = device_upload(h.data(), h.size());
+        d_src_counts_halo.upload(h.data(), h.size());
     }
 
     const bool is_stresslet = tree.params.kernel == DMK_STRESSLET;
     if (is_stresslet) {
         if (tree.density_sorted_with_halo.Dim())
-            d_charge_halo = device_upload(&tree.density_sorted_with_halo[0], tree.density_sorted_with_halo.Dim());
-        d_charge_halo_offsets =
-            device_upload((const long *)&tree.density_offsets_with_halo[0], tree.density_offsets_with_halo.Dim());
+            d_charge_halo.upload(&tree.density_sorted_with_halo[0], tree.density_sorted_with_halo.Dim());
+        d_charge_halo_offsets.upload((const long *)&tree.density_offsets_with_halo[0],
+                                     tree.density_offsets_with_halo.Dim());
         if (tree.normal_sorted_with_halo.Dim())
-            d_normal_halo = device_upload(&tree.normal_sorted_with_halo[0], tree.normal_sorted_with_halo.Dim());
-        d_normal_halo_offsets =
-            device_upload((const long *)&tree.normal_offsets_with_halo[0], tree.normal_offsets_with_halo.Dim());
+            d_normal_halo.upload(&tree.normal_sorted_with_halo[0], tree.normal_sorted_with_halo.Dim());
+        d_normal_halo_offsets.upload((const long *)&tree.normal_offsets_with_halo[0],
+                                     tree.normal_offsets_with_halo.Dim());
     } else {
         if (tree.charge_sorted_with_halo.Dim())
-            d_charge_halo = device_upload(&tree.charge_sorted_with_halo[0], tree.charge_sorted_with_halo.Dim());
-        d_charge_halo_offsets =
-            device_upload((const long *)&tree.charge_offsets_with_halo[0], tree.charge_offsets_with_halo.Dim());
+            d_charge_halo.upload(&tree.charge_sorted_with_halo[0], tree.charge_sorted_with_halo.Dim());
+        d_charge_halo_offsets.upload((const long *)&tree.charge_offsets_with_halo[0],
+                                     tree.charge_offsets_with_halo.Dim());
     }
 
     if (tree.r_src_sorted_owned.Dim())
-        d_r_src_owned = device_upload(&tree.r_src_sorted_owned[0], tree.r_src_sorted_owned.Dim());
-    d_r_src_owned_offsets = device_upload((const long *)&tree.r_src_offsets_owned[0], tree.r_src_offsets_owned.Dim());
+        d_r_src_owned.upload(&tree.r_src_sorted_owned[0], tree.r_src_sorted_owned.Dim());
+    d_r_src_owned_offsets.upload((const long *)&tree.r_src_offsets_owned[0], tree.r_src_offsets_owned.Dim());
     {
         auto h = sctl_int_vec_to_std(tree.src_counts_owned);
-        d_src_counts_owned = device_upload(h.data(), h.size());
+        d_src_counts_owned.upload(h.data(), h.size());
     }
 
     if (tree.r_trg_sorted_owned.Dim())
-        d_r_trg_owned = device_upload(&tree.r_trg_sorted_owned[0], tree.r_trg_sorted_owned.Dim());
-    d_r_trg_owned_offsets = device_upload((const long *)&tree.r_trg_offsets_owned[0], tree.r_trg_offsets_owned.Dim());
+        d_r_trg_owned.upload(&tree.r_trg_sorted_owned[0], tree.r_trg_sorted_owned.Dim());
+    d_r_trg_owned_offsets.upload((const long *)&tree.r_trg_offsets_owned[0], tree.r_trg_offsets_owned.Dim());
     {
         auto h = sctl_int_vec_to_std(tree.trg_counts_owned);
-        d_trg_counts_owned = device_upload(h.data(), h.size());
+        d_trg_counts_owned.upload(h.data(), h.size());
     }
 
     pot_src_size = tree.pot_src_sorted.Dim();
     pot_trg_size = tree.pot_trg_sorted.Dim();
-    d_pot_src_offsets = device_upload((const long *)&tree.pot_src_offsets[0], tree.pot_src_offsets.Dim());
-    d_pot_trg_offsets = device_upload((const long *)&tree.pot_trg_offsets[0], tree.pot_trg_offsets.Dim());
+    d_pot_src_offsets.upload((const long *)&tree.pot_src_offsets[0], tree.pot_src_offsets.Dim());
+    d_pot_trg_offsets.upload((const long *)&tree.pot_trg_offsets[0], tree.pot_trg_offsets.Dim());
 
     // Downward proxy buffer: allocated zero-initialized; populated later (by
     // host upload from eval_targets, or by GPU planewave_to_proxy / tensorprod
     // kernels once those are in place).
-    proxy_size = tree.proxy_coeffs_downward.Dim();
-    if (proxy_size) {
-        d_proxy_coeffs_downward = device_alloc<Real>(proxy_size);
-        DMK_CHECK_CUDA(cudaMemset(d_proxy_coeffs_downward, 0, proxy_size * sizeof(Real)));
+    if (tree.proxy_coeffs_downward.Dim()) {
+        d_proxy_coeffs_downward.resize(tree.proxy_coeffs_downward.Dim());
+        d_proxy_coeffs_downward.zero_async();
     }
-    d_proxy_offsets_downward =
-        device_upload((const long *)&tree.proxy_coeffs_offsets_downward[0], tree.proxy_coeffs_offsets_downward.Dim());
+    d_proxy_offsets_downward.upload((const long *)&tree.proxy_coeffs_offsets_downward[0],
+                                    tree.proxy_coeffs_offsets_downward.Dim());
 
     // ============== Downward-pass GPU plumbing ==============
-    DMK_CHECK_CUDA(cudaStreamCreateWithFlags(&downward_stream, cudaStreamNonBlocking));
+    downward_stream = cuda_helpers::DeviceStream::non_blocking();
 
     n_neighbors = 1;
     for (int d = 0; d < DIM; ++d)
@@ -155,7 +150,7 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
         for (int b = 0; b < n_boxes; ++b)
             for (int k = 0; k < n_neighbors; ++k)
                 nbr_h[(std::size_t)b * n_neighbors + k] = node_lists[b].nbr[k];
-        d_neighbors = device_upload(nbr_h.data(), nbr_h.size());
+        d_neighbors.upload(nbr_h.data(), nbr_h.size());
     }
 
     // is_global_leaf as 0/1 bytes.
@@ -163,13 +158,13 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
         std::vector<unsigned char> leaf_h(n_boxes);
         for (int b = 0; b < n_boxes; ++b)
             leaf_h[b] = tree.is_global_leaf[b] ? 1 : 0;
-        d_is_global_leaf = device_upload(leaf_h.data(), leaf_h.size());
+        d_is_global_leaf.upload(leaf_h.data(), leaf_h.size());
     }
 
     // pw_out_offsets: may or may not be sized yet. Pull it in if non-empty;
     // otherwise allocate_pw_out() will do it later.
     if (tree.pw_out_offsets.Dim())
-        d_pw_out_offsets = device_upload((const long *)&tree.pw_out_offsets[0], tree.pw_out_offsets.Dim());
+        d_pw_out_offsets.upload((const long *)&tree.pw_out_offsets[0], tree.pw_out_offsets.Dim());
 
     // Per-level pw2poly / poly2pw / radialft. pw2poly and poly2pw are
     // std::complex<Real>[n_pw * n_order] = 2 * n_pw * n_order reals each;
@@ -197,19 +192,17 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
                       &h_radialft[(std::size_t)L * radialft_per_level_reals]);
             hpw_per_level_h[L] = (Real)tree.expansion_constants.hpw_diff / (Real)tree.boxsize[L];
         }
-        d_pw2poly_flat = device_upload(h_pw2poly.data(), total_pw2poly);
-        d_poly2pw_flat = device_upload(h_poly2pw.data(), total_poly2pw);
-        d_radialft_flat = device_upload(h_radialft.data(), total_radialft);
+        d_pw2poly_flat.upload(h_pw2poly.data(), total_pw2poly);
+        d_poly2pw_flat.upload(h_poly2pw.data(), total_poly2pw);
+        d_radialft_flat.upload(h_radialft.data(), total_radialft);
     }
 
     // Windowed Fourier data (single-instance, used at the root).
     if (n_pw_win) {
         const auto &wfd = tree.window_fourier_data;
-        d_window_pw2poly =
-            device_upload(reinterpret_cast<const Real *>(&wfd.pw2poly[0]), (std::size_t)2 * n_pw_win * n_order);
-        d_window_poly2pw =
-            device_upload(reinterpret_cast<const Real *>(&wfd.poly2pw[0]), (std::size_t)2 * n_pw_win * n_order);
-        d_window_radialft = device_upload(&wfd.radialft[0], (std::size_t)n_pw_modes_win);
+        d_window_pw2poly.upload(reinterpret_cast<const Real *>(&wfd.pw2poly[0]), (std::size_t)2 * n_pw_win * n_order);
+        d_window_poly2pw.upload(reinterpret_cast<const Real *>(&wfd.poly2pw[0]), (std::size_t)2 * n_pw_win * n_order);
+        d_window_radialft.upload(&wfd.radialft[0], (std::size_t)n_pw_modes_win);
     }
 
     // Per-level wpwshift: SoA per neighbor (already SoA in calc_planewave_translation_matrix).
@@ -224,34 +217,33 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
             const Real *src = reinterpret_cast<const Real *>(&dfd.wpwshift[0]);
             std::copy(src, src + wpwshift_per_level_reals, &h[(std::size_t)L * wpwshift_per_level_reals]);
         }
-        d_wpwshift_flat = device_upload(h.data(), total);
+        d_wpwshift_flat.upload(h.data(), total);
     }
 
     // p2c / c2p matrices (per child-octant; identical layout, different
     // direction of propagation).
     if (tree.p2c.Dim())
-        d_p2c = device_upload(&tree.p2c[0], tree.p2c.Dim());
+        d_p2c.upload(&tree.p2c[0], tree.p2c.Dim());
     if (tree.c2p.Dim())
-        d_c2p = device_upload(&tree.c2p[0], tree.c2p.Dim());
+        d_c2p.upload(&tree.c2p[0], tree.c2p.Dim());
 
     // Box centers + inverse half-boxsize per level.
     if (tree.centers.Dim())
-        d_centers = device_upload(&tree.centers[0], tree.centers.Dim());
+        d_centers.upload(&tree.centers[0], tree.centers.Dim());
     {
         std::vector<Real> sc_h(n_levels);
         for (int L = 0; L < n_levels; ++L)
             sc_h[L] = Real{2} / (Real)tree.boxsize[L];
-        d_inv_box_scale = device_upload(sc_h.data(), sc_h.size());
+        d_inv_box_scale.upload(sc_h.data(), sc_h.size());
     }
 
     // Owned charges (used by GPU charge2proxy). For Stresslet this is the
     // pre-multiplied force×normal product (n_tables_up = 9 components per
     // source), exactly what the CPU upward path reads via charge_owned_view.
     if (tree.charge_sorted_owned.Dim())
-        d_charge_owned = device_upload(&tree.charge_sorted_owned[0], tree.charge_sorted_owned.Dim());
+        d_charge_owned.upload(&tree.charge_sorted_owned[0], tree.charge_sorted_owned.Dim());
     if (tree.charge_offsets_owned.Dim())
-        d_charge_owned_offsets =
-            device_upload((const long *)&tree.charge_offsets_owned[0], tree.charge_offsets_owned.Dim());
+        d_charge_owned_offsets.upload((const long *)&tree.charge_offsets_owned[0], tree.charge_offsets_owned.Dim());
 
     // Charge2Proxy group lists, flattened across all groups.
     {
@@ -271,11 +263,11 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
         }
         c2p_src_boxes_total = (int)src_flat_h.size();
         if (n_c2p_groups) {
-            d_c2p_center_boxes = device_upload(centers_h.data(), centers_h.size());
-            d_c2p_levels = device_upload(levels_h.data(), levels_h.size());
-            d_c2p_src_box_flat_offsets = device_upload(off_h.data(), off_h.size());
-            d_c2p_n_src_boxes_per_group = device_upload(count_h.data(), count_h.size());
-            d_c2p_src_boxes_flat = device_upload(src_flat_h.data(), src_flat_h.size());
+            d_c2p_center_boxes.upload(centers_h.data(), centers_h.size());
+            d_c2p_levels.upload(levels_h.data(), levels_h.size());
+            d_c2p_src_box_flat_offsets.upload(off_h.data(), off_h.size());
+            d_c2p_n_src_boxes_per_group.upload(count_h.data(), count_h.size());
+            d_c2p_src_boxes_flat.upload(src_flat_h.data(), src_flat_h.size());
         }
     }
 
@@ -312,22 +304,20 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
         tp_up_offset_h[n_levels] = (int)srcs.size();
         tp_up_count_total = (int)srcs.size();
         if (tp_up_count_total) {
-            d_tp_up_src_boxes = device_upload(srcs.data(), srcs.size());
-            d_tp_up_dst_boxes = device_upload(dsts.data(), dsts.size());
-            d_tp_up_octants = device_upload(octs.data(), octs.size());
+            d_tp_up_src_boxes.upload(srcs.data(), srcs.size());
+            d_tp_up_dst_boxes.upload(dsts.data(), dsts.size());
+            d_tp_up_octants.upload(octs.data(), octs.size());
         }
     }
 
     // Allocate the upward proxy buffer up front (zero-initialized). The
     // upward orchestrator zeroes it again at run() to handle re-evals.
-    proxy_upward_size = tree.proxy_coeffs_upward.Dim();
-    if (proxy_upward_size) {
-        d_proxy_coeffs_upward = device_alloc<Real>(proxy_upward_size);
-        DMK_CHECK_CUDA(cudaMemset(d_proxy_coeffs_upward, 0, proxy_upward_size * sizeof(Real)));
+    if (tree.proxy_coeffs_upward.Dim()) {
+        d_proxy_coeffs_upward.resize(tree.proxy_coeffs_upward.Dim());
+        d_proxy_coeffs_upward.zero_async();
     }
     if (tree.proxy_coeffs_offsets.Dim())
-        d_proxy_offsets_upward =
-            device_upload((const long *)&tree.proxy_coeffs_offsets[0], tree.proxy_coeffs_offsets.Dim());
+        d_proxy_offsets_upward.upload((const long *)&tree.proxy_coeffs_offsets[0], tree.proxy_coeffs_offsets.Dim());
 
     // Per-level pw_eval box lists: for each level, the boxes that do PW work
     // (ifpwexp[b] && (src_counts_owned[b] + trg_counts_owned[b]) > 0).
@@ -351,7 +341,7 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
         pw_eval_box_offset_h[n_levels] = (int)flat.size();
         pw_eval_box_count_total = (int)flat.size();
         if (pw_eval_box_count_total)
-            d_pw_eval_box_flat = device_upload(flat.data(), flat.size());
+            d_pw_eval_box_flat.upload(flat.data(), flat.size());
     }
 
     // Per-level tensorprod pairs.
@@ -372,9 +362,9 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
         tp_offset_h[n_levels] = (int)parents.size();
         tp_count_total = (int)parents.size();
         if (tp_count_total) {
-            d_tp_parents = device_upload(parents.data(), parents.size());
-            d_tp_children = device_upload(children.data(), children.size());
-            d_tp_octants = device_upload(octants.data(), octants.size());
+            d_tp_parents.upload(parents.data(), parents.size());
+            d_tp_children.upload(children.data(), children.size());
+            d_tp_octants.upload(octants.data(), octants.size());
         }
     }
 
@@ -384,12 +374,12 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
     tensorprod_scratch_stride_reals = 2L * n_order * n_order * n_order;
     const int max_tp_any = std::max(max_tp_per_level, max_tp_up_per_level);
     if (max_tp_any && tensorprod_scratch_stride_reals)
-        d_tensorprod_scratch = device_alloc<Real>((std::size_t)max_tp_any * tensorprod_scratch_stride_reals);
+        d_tensorprod_scratch.resize((std::size_t)max_tp_any * tensorprod_scratch_stride_reals);
 
     // pw_in scratch pool.
     pw_in_stride_reals = 2L * n_charge_dim * n_pw_modes;
     if (max_pw_eval_per_level && pw_in_stride_reals)
-        d_pw_in_pool = device_alloc<Real>((std::size_t)max_pw_eval_per_level * pw_in_stride_reals);
+        d_pw_in_pool.resize((std::size_t)max_pw_eval_per_level * pw_in_stride_reals);
 
     // Per-level pw_form (proxy2pw target) box list. Subset of pw_eval_box_flat
     // restricted to boxes that have an upward proxy to project from.
@@ -412,7 +402,7 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
         pw_form_box_offset_h[n_levels] = (int)flat.size();
         pw_form_box_count_total = (int)flat.size();
         if (pw_form_box_count_total)
-            d_pw_form_box_flat = device_upload(flat.data(), flat.size());
+            d_pw_form_box_flat.upload(flat.data(), flat.size());
     }
 
     // Stresslet only: per-block pw_form pool sized for n_tables_up tables.
@@ -421,17 +411,14 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
     if (kernel == DMK_STRESSLET) {
         pw_form_stride_reals = 2L * n_tables_up * n_pw_modes;
         if (max_pw_form_per_level && pw_form_stride_reals)
-            d_pw_form_pool = device_alloc<Real>((std::size_t)max_pw_form_per_level * pw_form_stride_reals);
+            d_pw_form_pool.resize((std::size_t)max_pw_form_per_level * pw_form_stride_reals);
     }
 
     // Windowed root scratch buffers (one slot, n_pw_win-sized).
     if (n_pw_modes_win) {
-        const std::size_t in_reals = 2 * (std::size_t)n_tables_up * n_pw_modes_win;
-        d_window_pw_form_in = device_alloc<Real>(in_reals);
-        if (kernel == DMK_STRESSLET) {
-            const std::size_t out_reals = 2 * (std::size_t)n_charge_dim * n_pw_modes_win;
-            d_window_pw_form_out = device_alloc<Real>(out_reals);
-        }
+        d_window_pw_form_in.resize(2 * (std::size_t)n_tables_up * n_pw_modes_win);
+        if (kernel == DMK_STRESSLET)
+            d_window_pw_form_out.resize(2 * (std::size_t)n_charge_dim * n_pw_modes_win);
     }
 
     // Single-element {0} scratch for kernels that take per-block box-id /
@@ -439,8 +426,8 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
     {
         const int zero_int = 0;
         const long zero_long = 0;
-        d_box0_id = device_upload(&zero_int, 1);
-        d_box0_offset = device_upload(&zero_long, 1);
+        d_box0_id.upload(&zero_int, 1);
+        d_box0_offset.upload(&zero_long, 1);
     }
 }
 
@@ -450,13 +437,8 @@ void CudaSharedDeviceState<Real, DIM>::allocate_pw_out(DMKPtTree<Real, DIM> &tre
     if (!needed)
         return;
     if (!d_pw_out_offsets)
-        d_pw_out_offsets = device_upload((const long *)&tree.pw_out_offsets[0], tree.pw_out_offsets.Dim());
-    if (!d_pw_out || pw_out_size != needed) {
-        if (d_pw_out)
-            device_free(d_pw_out);
-        d_pw_out = device_alloc<Real>(needed);
-        pw_out_size = needed;
-    }
+        d_pw_out_offsets.upload((const long *)&tree.pw_out_offsets[0], tree.pw_out_offsets.Dim());
+    d_pw_out.resize(needed);
 }
 
 template <typename Real, int DIM>
@@ -465,16 +447,8 @@ void CudaSharedDeviceState<Real, DIM>::upload_proxy_upward(DMKPtTree<Real, DIM> 
     if (!needed)
         return;
     if (!d_proxy_offsets_upward)
-        d_proxy_offsets_upward =
-            device_upload((const long *)&tree.proxy_coeffs_offsets[0], tree.proxy_coeffs_offsets.Dim());
-    if (!d_proxy_coeffs_upward || proxy_upward_size != needed) {
-        if (d_proxy_coeffs_upward)
-            device_free(d_proxy_coeffs_upward);
-        d_proxy_coeffs_upward = device_alloc<Real>(needed);
-        proxy_upward_size = needed;
-    }
-    DMK_CHECK_CUDA(
-        cudaMemcpy(d_proxy_coeffs_upward, &tree.proxy_coeffs_upward[0], needed * sizeof(Real), cudaMemcpyHostToDevice));
+        d_proxy_offsets_upward.upload((const long *)&tree.proxy_coeffs_offsets[0], tree.proxy_coeffs_offsets.Dim());
+    d_proxy_coeffs_upward.upload(&tree.proxy_coeffs_upward[0], needed);
 }
 
 template <typename Real, int DIM>
@@ -482,83 +456,11 @@ void CudaSharedDeviceState<Real, DIM>::upload_charges(DMKPtTree<Real, DIM> &tree
     const bool is_stresslet = tree.params.kernel == DMK_STRESSLET;
     const auto &halo_src = is_stresslet ? tree.density_sorted_with_halo : tree.charge_sorted_with_halo;
     if (d_charge_halo && halo_src.Dim())
-        DMK_CHECK_CUDA(cudaMemcpy(d_charge_halo, &halo_src[0], halo_src.Dim() * sizeof(Real), cudaMemcpyHostToDevice));
+        d_charge_halo.upload(&halo_src[0], halo_src.Dim());
     if (is_stresslet && d_normal_halo && tree.normal_sorted_with_halo.Dim())
-        DMK_CHECK_CUDA(cudaMemcpy(d_normal_halo, &tree.normal_sorted_with_halo[0],
-                                  tree.normal_sorted_with_halo.Dim() * sizeof(Real), cudaMemcpyHostToDevice));
+        d_normal_halo.upload(&tree.normal_sorted_with_halo[0], tree.normal_sorted_with_halo.Dim());
     if (d_charge_owned && tree.charge_sorted_owned.Dim())
-        DMK_CHECK_CUDA(cudaMemcpy(d_charge_owned, &tree.charge_sorted_owned[0],
-                                  tree.charge_sorted_owned.Dim() * sizeof(Real), cudaMemcpyHostToDevice));
-}
-
-template <typename Real, int DIM>
-CudaSharedDeviceState<Real, DIM>::~CudaSharedDeviceState() {
-    device_free(d_direct_work);
-    device_free(d_list1_flat);
-    device_free(d_list1_count);
-    device_free(d_box_levels);
-    device_free(d_ifpwexp);
-    device_free(d_direct_rsc);
-    device_free(d_direct_cen);
-    device_free(d_direct_d2max);
-    device_free(d_r_src_halo);
-    device_free(d_r_src_halo_offsets);
-    device_free(d_src_counts_halo);
-    device_free(d_charge_halo);
-    device_free(d_charge_halo_offsets);
-    device_free(d_normal_halo);
-    device_free(d_normal_halo_offsets);
-    device_free(d_r_src_owned);
-    device_free(d_r_src_owned_offsets);
-    device_free(d_src_counts_owned);
-    device_free(d_r_trg_owned);
-    device_free(d_r_trg_owned_offsets);
-    device_free(d_trg_counts_owned);
-    device_free(d_pot_src_offsets);
-    device_free(d_pot_trg_offsets);
-    device_free(d_proxy_coeffs_downward);
-    device_free(d_proxy_offsets_downward);
-    device_free(d_neighbors);
-    device_free(d_is_global_leaf);
-    device_free(d_pw_out);
-    device_free(d_pw_out_offsets);
-    device_free(d_pw2poly_flat);
-    device_free(d_poly2pw_flat);
-    device_free(d_radialft_flat);
-    device_free(d_wpwshift_flat);
-    device_free(d_p2c);
-    device_free(d_c2p);
-    device_free(d_centers);
-    device_free(d_inv_box_scale);
-    device_free(d_charge_owned);
-    device_free(d_charge_owned_offsets);
-    device_free(d_c2p_center_boxes);
-    device_free(d_c2p_levels);
-    device_free(d_c2p_src_box_flat_offsets);
-    device_free(d_c2p_n_src_boxes_per_group);
-    device_free(d_c2p_src_boxes_flat);
-    device_free(d_tp_up_src_boxes);
-    device_free(d_tp_up_dst_boxes);
-    device_free(d_tp_up_octants);
-    device_free(d_proxy_coeffs_upward);
-    device_free(d_proxy_offsets_upward);
-    device_free(d_pw_eval_box_flat);
-    device_free(d_pw_form_box_flat);
-    device_free(d_tp_parents);
-    device_free(d_tp_children);
-    device_free(d_tp_octants);
-    device_free(d_tensorprod_scratch);
-    device_free(d_pw_in_pool);
-    device_free(d_pw_form_pool);
-    device_free(d_window_pw_form_in);
-    device_free(d_window_pw_form_out);
-    device_free(d_window_poly2pw);
-    device_free(d_window_pw2poly);
-    device_free(d_window_radialft);
-    device_free(d_box0_id);
-    device_free(d_box0_offset);
-    if (downward_stream)
-        cudaStreamDestroy(downward_stream);
+        d_charge_owned.upload(&tree.charge_sorted_owned[0], tree.charge_sorted_owned.Dim());
 }
 
 template <typename Real, int DIM>
@@ -571,8 +473,8 @@ void CudaSharedDeviceState<Real, DIM>::dump(DMKPtTree<Real, DIM> &tree) {
                                  std::to_string(tree.comm().Rank()) + ".dat";
         cuda_helpers::dump_device_buffer_to_file<Real>(path, d_ptr, n);
     };
-    write("dmk_proxy_coeffs_downward", d_proxy_coeffs_downward, proxy_size);
-    write("dmk_proxy_coeffs", d_proxy_coeffs_upward, proxy_upward_size);
+    write("dmk_proxy_coeffs_downward", d_proxy_coeffs_downward.data(), d_proxy_coeffs_downward.size());
+    write("dmk_proxy_coeffs", d_proxy_coeffs_upward.data(), d_proxy_coeffs_upward.size());
 }
 
 template struct CudaSharedDeviceState<float, 2>;
