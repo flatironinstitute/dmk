@@ -211,17 +211,17 @@ add_library(dmk_bootstrap STATIC)
 target_link_libraries(dmk_bootstrap PUBLIC DMKOBJS_BOOTSTRAP)
 
 if (DMK_GPU_OFFLOAD)
-  add_library(DMKOBJS_CUDA OBJECT src/cuda_kernels.cu src/cuda_direct.cpp src/cuda_shared_state.cpp
-              src/cuda_eval_targets.cpp src/cuda_eval_targets_kernels.cu
-              src/cuda_tensorprod_kernels.cu
-              src/cuda_shift_pw_kernels.cu
-              src/cuda_pw_to_proxy_kernels.cu
-              src/cuda_proxy2pw_kernels.cu
-              src/cuda_multiply_kernelft_kernels.cu
-              src/cuda_charge2proxy_kernels.cu
-              src/cuda_downward.cpp
-              src/cuda_form_outgoing.cpp
-              src/cuda_upward.cpp
+  add_library(DMKOBJS_CUDA OBJECT src/cuda/aot_kernels.cu src/cuda/direct.cpp src/cuda/shared_state.cpp
+              src/cuda/eval_targets.cpp src/cuda/eval_targets_kernels.cu
+              src/cuda/tensorprod_kernels.cu
+              src/cuda/shift_pw_kernels.cu
+              src/cuda/pw_to_proxy_kernels.cu
+              src/cuda/proxy2pw_kernels.cu
+              src/cuda/multiply_kernelft_kernels.cu
+              src/cuda/charge2proxy_kernels.cu
+              src/cuda/downward.cpp
+              src/cuda/form_outgoing.cpp
+              src/cuda/upward.cpp
               ${DMK_CUDA_JIT_SRC}
               )
   set_target_properties(DMKOBJS_CUDA PROPERTIES POSITION_INDEPENDENT_CODE ON)

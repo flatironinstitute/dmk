@@ -14,12 +14,12 @@
 #include <stdexcept>
 
 #ifdef DMK_GPU_OFFLOAD
-#include <dmk/cuda_direct.hpp>
-#include <dmk/cuda_downward.hpp>
-#include <dmk/cuda_eval_targets.hpp>
-#include <dmk/cuda_form_outgoing.hpp>
-#include <dmk/cuda_shared_state.hpp>
-#include <dmk/cuda_upward.hpp>
+#include <dmk/cuda/direct.hpp>
+#include <dmk/cuda/downward.hpp>
+#include <dmk/cuda/eval_targets.hpp>
+#include <dmk/cuda/form_outgoing.hpp>
+#include <dmk/cuda/shared_state.hpp>
+#include <dmk/cuda/upward.hpp>
 #include <memory>
 #endif
 
@@ -848,7 +848,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
   private:
     // Path-specific pieces of upward_pass / downward_pass. The public
     // upward_pass / downward_pass methods are dispatchers that call into
-    // these based on params.eval_path; in BOTH mode both halves run.
+    // these based on params.eval_path
     void cpu_upward_pass();
     void cpu_downward_pass();
 #ifdef DMK_GPU_OFFLOAD

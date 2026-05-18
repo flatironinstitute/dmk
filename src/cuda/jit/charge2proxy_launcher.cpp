@@ -4,7 +4,7 @@
 #ifdef DMK_CUDA_USE_NVRTC_JIT
 #include <dmk_jit_config.hpp>
 #endif
-#include <dmk/cuda_charge2proxy_kernels.hpp>
+#include <dmk/cuda/charge2proxy_kernels.hpp>
 
 #include <cuda_runtime.h>
 
@@ -91,7 +91,7 @@ std::string make_specialization_constants(const JitKey& key) {
     const int k_tile       = get_required_param(key, "K_TILE");
     const std::string real_type = key.real;
     std::ostringstream ss;
-    ss << "#include <dmk/cuda_charge2proxy_kernelargs.hpp>\n"; 
+    ss << "#include <dmk/cuda/charge2proxy_kernelargs.hpp>\n"; 
     ss << "using dmk::cuda::Charge2ProxyArgs;\n\n";
     ss << "constexpr int N_ORDER      = " << n_order << ";\n";
     ss << "constexpr int N_CHARGE_DIM = " << n_charge_dim << ";\n";

@@ -4,7 +4,7 @@
 #include "jit_cache.hpp"
 #include "jit_types.hpp"
 
-#include <dmk/cuda_charge2proxy_kernels.hpp>
+#include <dmk/cuda/charge2proxy_kernels.hpp>
 
 #include <cuda_runtime.h>
 
