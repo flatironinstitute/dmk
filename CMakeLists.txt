@@ -105,6 +105,7 @@ if (DMK_CUDA_USE_NVRTC_JIT)
     src/cuda/jit/charge2proxy_launcher.cpp
     src/cuda/jit/tensorprod_launcher.cpp
     src/cuda/jit/proxy2pw_launcher.cpp
+    src/cuda/jit/pw2proxy_launcher.cpp
   )
 endif()
 

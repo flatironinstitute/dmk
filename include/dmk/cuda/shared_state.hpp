@@ -10,7 +10,7 @@
 #include <dmk.h>
 #include <dmk/cuda/helpers.hpp>
 #include <dmk/cuda/proxy2pw_kernels.hpp>
-#include <dmk/cuda/pw_to_proxy_kernels.hpp>
+#include <dmk/cuda/pw2proxy_kernels.hpp>
 #include <dmk/cuda/shift_pw_kernels.hpp>
 
 namespace dmk {

@@ -1,7 +1,7 @@
 #include <cuda_runtime.h>
 #include <dmk/cuda/downward.hpp>
 #include <dmk/cuda/helpers.hpp>
-#include <dmk/cuda/pw_to_proxy_kernels.hpp>
+#include <dmk/cuda/pw2proxy_kernels.hpp>
 #include <dmk/cuda/shared_state.hpp>
 #include <dmk/cuda/shift_pw_kernels.hpp>
 #include <dmk/cuda/tensorprod_kernels.hpp>

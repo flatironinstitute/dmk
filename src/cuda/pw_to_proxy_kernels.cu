@@ -7,7 +7,7 @@
 // real-valued proxy buffer.
 
 #include <dmk/cuda/helpers.hpp>
-#include <dmk/cuda/pw_to_proxy_kernels.hpp>
+#include <dmk/cuda/pw2proxy_kernels.hpp>
 
 #include <cuda_runtime.h>
 
@@ -16,8 +16,22 @@
 #include <string>
 #include <vector>
 
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+#include <cstdlib>
+#include "cuda/jit/pw2proxy_launcher.hpp"
+#endif
 namespace dmk::cuda {
 
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+namespace {
+
+inline bool pw_to_proxy_jit_enabled() {
+    const char* disable = std::getenv("DMK_DISABLE_PW_TO_PROXY_JIT");
+    return !(disable && std::string(disable) == "1");
+}
+
+} // namespace
+#endif
 using cuda_helpers::complx;
 using cuda_helpers::complx_load;
 using cuda_helpers::complx_madd;
@@ -325,33 +339,117 @@ static std::size_t pw_to_proxy_shared_bytes(int max_n_pw, int max_n_pw2, int max
         max_n_pw * max_k_pad + K1_TILE * max_phase1_cols + K1_TILE * max_n_pw2 * max_n_order;
     return complex_count * sizeof(complx<Real>);
 }
-
-template <typename Real, int K1_TILE = 6, int COL_REG = 2, int K2_TILE = 2, int K3_TILE = 3, int KR_TILE = 6>
-static void launch_single(const PwToProxyArgs<Real> &args, cudaStream_t stream) {
+template <
+    typename Real,
+    int K1_TILE = 6,
+    int COL_REG = 2,
+    int K2_TILE = 2,
+    int K3_TILE = 3,
+    int KR_TILE = 6
+>
+static void launch_single(
+    const PwToProxyArgs<Real> &args,
+    cudaStream_t stream
+) {
     if (args.n_boxes_at_level == 0)
         return;
 
     constexpr int block_size = 128;
-    const std::size_t shared_bytes = pw_to_proxy_shared_bytes<Real, K1_TILE>(args.n_pw, args.n_pw2, args.n_order);
+
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+    if (pw_to_proxy_jit_enabled()) {
+        static dmk::cuda::jit::JitCache jit_cache;
+
+        dmk::cuda::jit::launch_pw_to_proxy_jit<Real>(
+            jit_cache,
+            args,
+            stream,
+            K1_TILE,
+            COL_REG,
+            K2_TILE,
+            K3_TILE,
+            KR_TILE,
+            block_size
+        );
+
+        return;
+    }
+#endif
+
+    const std::size_t shared_bytes =
+        pw_to_proxy_shared_bytes<Real, K1_TILE>(
+            args.n_pw,
+            args.n_pw2,
+            args.n_order
+        );
 
     if (shared_bytes > 48 * 1024) {
         cudaError_t attr_err =
-            cudaFuncSetAttribute(PwToProxyByBoxKernel<Real, K1_TILE, COL_REG, K2_TILE, K3_TILE, KR_TILE>,
-                                 cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(shared_bytes));
-        if (attr_err != cudaSuccess)
-            throw std::runtime_error(std::string("launch_pw_to_proxy: cudaFuncSetAttribute failed: ") +
-                                     cudaGetErrorString(attr_err) + " shared_bytes=" + std::to_string(shared_bytes));
+            cudaFuncSetAttribute(
+                PwToProxyByBoxKernel<
+                    Real,
+                    K1_TILE,
+                    COL_REG,
+                    K2_TILE,
+                    K3_TILE,
+                    KR_TILE
+                >,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                static_cast<int>(shared_bytes)
+            );
+
+        if (attr_err != cudaSuccess) {
+            throw std::runtime_error(
+                std::string("launch_pw_to_proxy: cudaFuncSetAttribute failed: ") +
+                cudaGetErrorString(attr_err) +
+                " shared_bytes=" + std::to_string(shared_bytes)
+            );
+        }
     }
 
     PwToProxyByBoxKernel<Real, K1_TILE, COL_REG, K2_TILE, K3_TILE, KR_TILE>
         <<<args.n_boxes_at_level, block_size, shared_bytes, stream>>>(args);
 
     cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess)
-        throw std::runtime_error(std::string("launch_pw_to_proxy: ") + cudaGetErrorString(err) +
-                                 " shared_bytes=" + std::to_string(shared_bytes) + " n_pw=" + std::to_string(args.n_pw) +
-                                 " n_pw2=" + std::to_string(args.n_pw2) + " n_order=" + std::to_string(args.n_order));
+
+    if (err != cudaSuccess) {
+        throw std::runtime_error(
+            std::string("launch_pw_to_proxy: ") +
+            cudaGetErrorString(err) +
+            " shared_bytes=" + std::to_string(shared_bytes) +
+            " n_pw=" + std::to_string(args.n_pw) +
+            " n_pw2=" + std::to_string(args.n_pw2) +
+            " n_order=" + std::to_string(args.n_order)
+        );
+    }
 }
+
+// template <typename Real, int K1_TILE = 6, int COL_REG = 2, int K2_TILE = 2, int K3_TILE = 3, int KR_TILE = 6>
+// static void launch_single(const PwToProxyArgs<Real> &args, cudaStream_t stream) {
+//     if (args.n_boxes_at_level == 0)
+//         return;
+
+//     constexpr int block_size = 128;
+//     const std::size_t shared_bytes = pw_to_proxy_shared_bytes<Real, K1_TILE>(args.n_pw, args.n_pw2, args.n_order);
+
+//     if (shared_bytes > 48 * 1024) {
+//         cudaError_t attr_err =
+//             cudaFuncSetAttribute(PwToProxyByBoxKernel<Real, K1_TILE, COL_REG, K2_TILE, K3_TILE, KR_TILE>,
+//                                  cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(shared_bytes));
+//         if (attr_err != cudaSuccess)
+//             throw std::runtime_error(std::string("launch_pw_to_proxy: cudaFuncSetAttribute failed: ") +
+//                                      cudaGetErrorString(attr_err) + " shared_bytes=" + std::to_string(shared_bytes));
+//     }
+
+//     PwToProxyByBoxKernel<Real, K1_TILE, COL_REG, K2_TILE, K3_TILE, KR_TILE>
+//         <<<args.n_boxes_at_level, block_size, shared_bytes, stream>>>(args);
+
+//     cudaError_t err = cudaGetLastError();
+//     if (err != cudaSuccess)
+//         throw std::runtime_error(std::string("launch_pw_to_proxy: ") + cudaGetErrorString(err) +
+//                                  " shared_bytes=" + std::to_string(shared_bytes) + " n_pw=" + std::to_string(args.n_pw) +
+//                                  " n_pw2=" + std::to_string(args.n_pw2) + " n_order=" + std::to_string(args.n_order));
+// }
 
 template <typename Real, int K1_TILE = 18, int COL_REG = 1, int K2_TILE = 2, int K3_TILE = 3, int KR_TILE = 9>
 static void launch_multi(const PwToProxyArgs<Real> *d_args, int n_args, int max_boxes, int max_n_pw, int max_n_pw2,
@@ -383,6 +481,8 @@ static void launch_multi(const PwToProxyArgs<Real> *d_args, int n_args, int max_
                                  " max_n_order=" + std::to_string(max_n_order));
 }
 
+
+
 template <typename Real, int DIM>
 void launch_pw_to_proxy(const PwToProxyArgs<Real> &args, cudaStream_t stream) {
     launch_single<Real>(args, stream);
@@ -394,30 +494,96 @@ template void launch_pw_to_proxy<double, 2>(const PwToProxyArgs<double> &, cudaS
 template void launch_pw_to_proxy<double, 3>(const PwToProxyArgs<double> &, cudaStream_t);
 
 template <typename Real, int DIM>
-void launch_pw_to_proxy_multilevel(const std::vector<PwToProxyArgs<Real>> &args_h, PwToProxyArgs<Real> *d_args_scratch,
-                                   cudaStream_t stream) {
+void launch_pw_to_proxy_multilevel(
+    const std::vector<PwToProxyArgs<Real>> &args_h,
+    PwToProxyArgs<Real> *d_args_scratch,
+    cudaStream_t stream
+) {
     if (args_h.empty())
         return;
+
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+    if (pw_to_proxy_jit_enabled()) {
+        static dmk::cuda::jit::JitCache jit_cache;
+
+        dmk::cuda::jit::launch_pw_to_proxy_multilevel_jit<Real>(
+            jit_cache,
+            args_h,
+            d_args_scratch,
+            stream,
+            18,  // K1_TILE
+            1,   // COL_REG
+            2,   // K2_TILE
+            3,   // K3_TILE
+            9,   // KR_TILE
+            256  // block_size
+        );
+
+        return;
+    }
+#endif
 
     int max_boxes = 0;
     int max_n_pw = 0;
     int max_n_pw2 = 0;
     int max_n_order = 0;
+
     for (const auto &a : args_h) {
         max_boxes = std::max(max_boxes, a.n_boxes_at_level);
         max_n_pw = std::max(max_n_pw, a.n_pw);
         max_n_pw2 = std::max(max_n_pw2, a.n_pw2);
         max_n_order = std::max(max_n_order, a.n_order);
     }
+
     if (max_boxes == 0)
         return;
 
-    DMK_CHECK_CUDA(cudaMemcpyAsync(d_args_scratch, args_h.data(), args_h.size() * sizeof(PwToProxyArgs<Real>),
-                                   cudaMemcpyHostToDevice, stream));
+    DMK_CHECK_CUDA(
+        cudaMemcpyAsync(
+            d_args_scratch,
+            args_h.data(),
+            args_h.size() * sizeof(PwToProxyArgs<Real>),
+            cudaMemcpyHostToDevice,
+            stream
+        )
+    );
 
-    launch_multi<Real>(d_args_scratch, static_cast<int>(args_h.size()), max_boxes, max_n_pw, max_n_pw2, max_n_order,
-                       stream);
+    launch_multi<Real>(
+        d_args_scratch,
+        static_cast<int>(args_h.size()),
+        max_boxes,
+        max_n_pw,
+        max_n_pw2,
+        max_n_order,
+        stream
+    );
 }
+
+// template <typename Real, int DIM>
+// void launch_pw_to_proxy_multilevel(const std::vector<PwToProxyArgs<Real>> &args_h, PwToProxyArgs<Real> *d_args_scratch,
+//                                    cudaStream_t stream) {
+//     if (args_h.empty())
+//         return;
+
+//     int max_boxes = 0;
+//     int max_n_pw = 0;
+//     int max_n_pw2 = 0;
+//     int max_n_order = 0;
+//     for (const auto &a : args_h) {
+//         max_boxes = std::max(max_boxes, a.n_boxes_at_level);
+//         max_n_pw = std::max(max_n_pw, a.n_pw);
+//         max_n_pw2 = std::max(max_n_pw2, a.n_pw2);
+//         max_n_order = std::max(max_n_order, a.n_order);
+//     }
+//     if (max_boxes == 0)
+//         return;
+
+//     DMK_CHECK_CUDA(cudaMemcpyAsync(d_args_scratch, args_h.data(), args_h.size() * sizeof(PwToProxyArgs<Real>),
+//                                    cudaMemcpyHostToDevice, stream));
+
+//     launch_multi<Real>(d_args_scratch, static_cast<int>(args_h.size()), max_boxes, max_n_pw, max_n_pw2, max_n_order,
+//                        stream);
+// }
 
 template void launch_pw_to_proxy_multilevel<float, 2>(const std::vector<PwToProxyArgs<float>> &,
                                                       PwToProxyArgs<float> *, cudaStream_t);
