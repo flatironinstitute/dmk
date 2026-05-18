@@ -74,6 +74,9 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
     auto &t = tree_;
     auto &shared = shared_;
 
+    d_pot_src_eval_.zero_async(stream_);
+    d_pot_trg_eval_.zero_async(stream_);
+
     if (n_eval_boxes_ == 0)
         return;
 
@@ -92,9 +95,6 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
         DMK_CHECK_CUDA(cudaEventRecord(evt, shared.downward_stream));
         DMK_CHECK_CUDA(cudaStreamWaitEvent(stream_, evt, 0));
     }
-
-    d_pot_src_eval_.zero_async(stream_);
-    d_pot_trg_eval_.zero_async(stream_);
 
     cuda::EvalTargetsArgs<Real> args;
     args.n_eval_boxes = n_eval_boxes_;
@@ -122,40 +122,8 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
     args.pot_offsets = shared.d_pot_trg_offsets.data();
     cuda::launch_eval_targets<Real, DIM>(eval_level_trg_, n_charge_dim_, args, stream_);
 
-    launched_ = true;
-}
-
-template <typename Real, int DIM>
-void CudaEvalTargetsContext<Real, DIM>::finalize_gpu_only(Real *d_extra_src, Real *d_extra_trg) {
-    auto &t = tree_;
-    auto &shared = shared_;
-
-    // No eval kernels ran (n_eval_boxes == 0): direct's output is the final
-    // answer. Drain direct's stream and download.
-    if (!launched_) {
-        DMK_CHECK_CUDA(cudaStreamSynchronize(shared.direct_stream));
-        if (shared.pot_src_size && d_extra_src)
-            DMK_CHECK_CUDA(cudaMemcpy(&t.pot_src_sorted[0], d_extra_src, shared.pot_src_size * sizeof(Real),
-                                      cudaMemcpyDeviceToHost));
-        if (shared.pot_trg_size && d_extra_trg)
-            DMK_CHECK_CUDA(cudaMemcpy(&t.pot_trg_sorted[0], d_extra_trg, shared.pot_trg_size * sizeof(Real),
-                                      cudaMemcpyDeviceToHost));
-        return;
-    }
-
-    // Make eval_targets' stream wait for direct's kernels to finish before
-    // the accumulate kernels below read direct's output buffers.
-    auto direct_done = cuda_helpers::DeviceEvent::disable_timing();
-    DMK_CHECK_CUDA(cudaEventRecord(direct_done, shared.direct_stream));
-    DMK_CHECK_CUDA(cudaStreamWaitEvent(stream_, direct_done, 0));
-
-    // Sum the direct device buffers into the eval buffers in-place on GPU,
-    // then copy the combined result straight to host — no temps, no CPU loops.
-    if (shared.pot_src_size && d_extra_src)
-        cuda::launch_inplace_accumulate(d_pot_src_eval_.data(), d_extra_src, shared.pot_src_size, stream_);
-    if (shared.pot_trg_size && d_extra_trg)
-        cuda::launch_inplace_accumulate(d_pot_trg_eval_.data(), d_extra_trg, shared.pot_trg_size, stream_);
-
+    // Self-correction modifies pot_src_eval in sorted layout; commutes with
+    // direct's contribution, so it can run here on stream_ (before the merge).
     if (d_self_correction_work_ && shared.pot_src_size) {
         cuda::SelfCorrectionArgs<Real> sc_args;
         sc_args.direct_work = shared.d_direct_work.data();
@@ -171,15 +139,6 @@ void CudaEvalTargetsContext<Real, DIM>::finalize_gpu_only(Real *d_extra_src, Rea
         sc_args.pot_stride = pot_stride_;
         cuda::launch_self_correction(sc_args, stream_);
     }
-
-    DMK_CHECK_CUDA(cudaStreamSynchronize(stream_));
-
-    if (shared.pot_src_size)
-        DMK_CHECK_CUDA(cudaMemcpy(&t.pot_src_sorted[0], d_pot_src_eval_.data(), shared.pot_src_size * sizeof(Real),
-                                  cudaMemcpyDeviceToHost));
-    if (shared.pot_trg_size)
-        DMK_CHECK_CUDA(cudaMemcpy(&t.pot_trg_sorted[0], d_pot_trg_eval_.data(), shared.pot_trg_size * sizeof(Real),
-                                  cudaMemcpyDeviceToHost));
 }
 
 template class CudaEvalTargetsContext<float, 2>;

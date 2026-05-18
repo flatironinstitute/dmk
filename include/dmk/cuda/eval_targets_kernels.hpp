@@ -36,9 +36,6 @@ template <typename Real, int DIM>
 void launch_eval_targets(int eval_level, int n_charge_dim, const EvalTargetsArgs<Real> &args, cudaStream_t stream);
 
 template <typename Real>
-void launch_inplace_accumulate(Real *dst, const Real *src, std::size_t n, cudaStream_t stream);
-
-template <typename Real>
 struct SelfCorrectionArgs {
     const int *direct_work;          // [n_direct_work]
     const Real *correction_factors;  // [n_direct_work]
