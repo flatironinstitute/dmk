@@ -5,6 +5,7 @@
 namespace dmk::cuda::jit{
 
 std::string make_charge2proxy_source(const JitKey& key);
+std::string make_tensorprod_source(const JitKey& key);
 
 std::string JitKey::to_string() const {
     std::ostringstream os;
@@ -137,9 +138,11 @@ std::shared_ptr<JitKernel> JitCache::compile_and_load(const JitKey& key) {
 
 std::string JitCache::make_source(const JitKey& key) const {
     if (key.name == "Charge2ProxyKernel") {
-        return make_charge2proxy_source(key);
+      return make_charge2proxy_source(key);
     }
-
+    if (key.name == "TensorprodKernel") {
+        return make_tensorprod_source(key);
+    }
     throw std::runtime_error("Unknown JIT kernel family: " + key.name);
 }
 

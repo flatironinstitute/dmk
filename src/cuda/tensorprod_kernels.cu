@@ -14,7 +14,23 @@
 #include <stdexcept>
 #include <string>
 
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+#include <cstdlib>
+#include "cuda/jit/tensorprod_launcher.hpp"
+#endif
+
 namespace dmk::cuda {
+
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+namespace {
+
+inline bool tensorprod_jit_enabled() {
+    const char* disable = std::getenv("DMK_DISABLE_TENSORPROD_JIT");
+    return !(disable && std::string(disable) == "1");
+}
+
+} // namespace
+#endif
 
 template <typename Real>
 __global__ void TensorprodByPair3DKernel(TensorprodArgs<Real> a) {
@@ -45,43 +61,59 @@ __global__ void TensorprodByPair3DKernel(TensorprodArgs<Real> a) {
         const Real *fin = src_base + d * N3;
         Real *fout = dst_base + d * N3;
 
-        // Phase 1: ff(i, j, kout) = sum_k fin(i, j, k) * umat_z(kout, k)
         for (int t = threadIdx.x; t < N3; t += blockDim.x) {
             const int i = t % N;
             const int j = (t / N) % N;
             const int kout = t / N2;
+
             Real acc = Real{0};
-            for (int k = 0; k < N; ++k)
-                acc += fin[i + j * N + k * N2] * umat_z[kout + k * N];
+
+            for (int k = 0; k < N; ++k) {
+                acc += fin[i + j * N + k * N2] *
+                       umat_z[kout + k * N];
+            }
+
             ff[i + j * N + kout * N2] = acc;
         }
+
         __syncthreads();
 
-        // Phase 2: ff2(i, jout, kz) = sum_j ff(i, j, kz) * umat_y(jout, j)
         for (int t = threadIdx.x; t < N3; t += blockDim.x) {
             const int i = t % N;
             const int jout = (t / N) % N;
             const int kz = t / N2;
+
             Real acc = Real{0};
-            for (int j = 0; j < N; ++j)
-                acc += ff[i + j * N + kz * N2] * umat_y[jout + j * N];
+
+            for (int j = 0; j < N; ++j) {
+                acc += ff[i + j * N + kz * N2] *
+                       umat_y[jout + j * N];
+            }
+
             ff2[i + jout * N + kz * N2] = acc;
         }
+
         __syncthreads();
 
-        // Phase 3: fout(iout, jy, kz) += sum_i ff2(i, jy, kz) * umat_x(iout, i)
         for (int t = threadIdx.x; t < N3; t += blockDim.x) {
             const int iout = t % N;
             const int jy = (t / N) % N;
             const int kz = t / N2;
+
             Real acc = Real{0};
-            for (int i = 0; i < N; ++i)
-                acc += ff2[i + jy * N + kz * N2] * umat_x[iout + i * N];
-            if (a.additive_atomic)
+
+            for (int i = 0; i < N; ++i) {
+                acc += ff2[i + jy * N + kz * N2] *
+                       umat_x[iout + i * N];
+            }
+
+            if (a.additive_atomic) {
                 atomicAdd(&fout[iout + jy * N + kz * N2], acc);
-            else
+            } else {
                 fout[iout + jy * N + kz * N2] += acc;
+            }
         }
+
         __syncthreads();
     }
 }
@@ -90,16 +122,55 @@ template <typename Real, int DIM>
 void launch_tensorprod(const TensorprodArgs<Real> &args, cudaStream_t stream) {
     if (args.n_pairs == 0)
         return;
+
     constexpr int block_size = 512;
-    TensorprodByPair3DKernel<Real><<<args.n_pairs, block_size, 0, stream>>>(args);
+
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+    if (tensorprod_jit_enabled()) {
+        static dmk::cuda::jit::JitCache jit_cache;
+
+        dmk::cuda::jit::launch_tensorprod_jit<Real>(
+            jit_cache,
+            args,
+            stream,
+            block_size
+        );
+
+        return;
+    }
+#endif
+
+    TensorprodByPair3DKernel<Real>
+        <<<args.n_pairs, block_size, 0, stream>>>(args);
+
     cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess)
-        throw std::runtime_error(std::string("launch_tensorprod: ") + cudaGetErrorString(err));
+
+    if (err != cudaSuccess) {
+        throw std::runtime_error(
+            std::string("launch_tensorprod: ") +
+            cudaGetErrorString(err)
+        );
+    }
 }
 
-template void launch_tensorprod<float, 2>(const TensorprodArgs<float> &, cudaStream_t);
-template void launch_tensorprod<float, 3>(const TensorprodArgs<float> &, cudaStream_t);
-template void launch_tensorprod<double, 2>(const TensorprodArgs<double> &, cudaStream_t);
-template void launch_tensorprod<double, 3>(const TensorprodArgs<double> &, cudaStream_t);
+template void launch_tensorprod<float, 2>(
+    const TensorprodArgs<float> &,
+    cudaStream_t
+);
+
+template void launch_tensorprod<float, 3>(
+    const TensorprodArgs<float> &,
+    cudaStream_t
+);
+
+template void launch_tensorprod<double, 2>(
+    const TensorprodArgs<double> &,
+    cudaStream_t
+);
+
+template void launch_tensorprod<double, 3>(
+    const TensorprodArgs<double> &,
+    cudaStream_t
+);
 
 } // namespace dmk::cuda
