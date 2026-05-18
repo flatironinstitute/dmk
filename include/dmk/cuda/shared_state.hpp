@@ -69,8 +69,19 @@ struct CudaSharedDeviceState {
     DeviceBuffer<long> d_pot_src_offsets;
     DeviceBuffer<long> d_pot_trg_offsets;
 
+    // Map from sorted index back to the original source index
+    DeviceBuffer<long> d_scatter_index_src;
+    DeviceBuffer<long> d_scatter_index_trg;
+
     std::size_t pot_src_size = 0;
     std::size_t pot_trg_size = 0;
+    int pot_src_dof = 0; // = tree.kernel_output_dim_src
+    int pot_trg_dof = 0; // = tree.kernel_output_dim_trg
+
+    // Descattered (user-order) potential outputs, written by finalize_pot()
+    // and consumed by tree.desort_potentials() via a single D2H copy each.
+    DeviceBuffer<Real> d_pot_src_final;
+    DeviceBuffer<Real> d_pot_trg_final;
 
     // Downward-pass proxy expansion. Allocated zero-initialized at construction;
     // populated either by host upload (current eval_targets path) or by GPU
@@ -272,6 +283,16 @@ struct CudaSharedDeviceState {
     /// tree.dump("gpu/") to lay down topology + metadata, then overwrites the
     /// buffers the GPU owns with their device-side values.
     void dump(DMKPtTree<Real, DIM> &tree);
+
+    /// Fused merge of long-range (eval_targets) and short-range (direct)
+    /// potential buffers into d_pot_*_final, descattered to user order via
+    /// d_scatter_index_*. eval_stream must have queued (and not yet finished)
+    /// any writes to d_pot_eval_*; this method records an event on it and
+    /// makes direct_stream wait, then launches the fused kernel on
+    /// direct_stream and synchronizes. Buffers stay device-resident until
+    /// tree.desort_potentials() copies them out.
+    void finalize_pot(cudaStream_t eval_stream, const Real *d_pot_eval_src, const Real *d_pot_eval_trg,
+                      const Real *d_extra_src, const Real *d_extra_trg);
 };
 
 } // namespace dmk

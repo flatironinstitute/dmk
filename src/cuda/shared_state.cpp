@@ -1,5 +1,6 @@
 #include <dmk/cuda/helpers.hpp>
 #include <dmk/cuda/shared_state.hpp>
+#include <dmk/cuda/shared_state_kernels.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/tree.hpp>
 
@@ -229,8 +230,20 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
 
     pot_src_size = tree.pot_src_sorted.Dim();
     pot_trg_size = tree.pot_trg_sorted.Dim();
+    pot_src_dof = tree.kernel_output_dim_src;
+    pot_trg_dof = tree.kernel_output_dim_trg;
     d_pot_src_offsets.upload((const long *)&tree.pot_src_offsets[0], tree.pot_src_offsets.Dim());
     d_pot_trg_offsets.upload((const long *)&tree.pot_trg_offsets[0], tree.pot_trg_offsets.Dim());
+
+    const auto &src_idx = tree.GetScatterIdx("pdmk_src");
+    const auto &trg_idx = tree.GetScatterIdx("pdmk_trg");
+    d_scatter_index_src.upload(&src_idx[0], src_idx.Dim());
+    d_scatter_index_trg.upload(&trg_idx[0], trg_idx.Dim());
+
+    if (pot_src_size)
+        d_pot_src_final.resize(pot_src_size);
+    if (pot_trg_size)
+        d_pot_trg_final.resize(pot_trg_size);
 
     // Downward proxy buffer: allocated zero-initialized; populated later (by
     // host upload from eval_targets, or by GPU planewave_to_proxy / tensorprod
@@ -515,6 +528,31 @@ void CudaSharedDeviceState<Real, DIM>::dump(DMKPtTree<Real, DIM> &tree) {
     };
     write("dmk_proxy_coeffs_downward", d_proxy_coeffs_downward.data(), d_proxy_coeffs_downward.size());
     write("dmk_proxy_coeffs", d_proxy_coeffs_upward.data(), d_proxy_coeffs_upward.size());
+}
+
+template <typename Real, int DIM>
+void CudaSharedDeviceState<Real, DIM>::finalize_pot(cudaStream_t eval_stream, const Real *d_pot_eval_src,
+                                                    const Real *d_pot_eval_trg, const Real *d_extra_src,
+                                                    const Real *d_extra_trg) {
+    // Make direct_stream wait for eval_stream's pending writes to d_pot_eval_*
+    // before reading them. (direct_stream is already serial with direct's own
+    // writes to d_extra_*.)
+    auto eval_done = cuda_helpers::DeviceEvent::disable_timing();
+    DMK_CHECK_CUDA(cudaEventRecord(eval_done, eval_stream));
+    DMK_CHECK_CUDA(cudaStreamWaitEvent(direct_stream, eval_done, 0));
+
+    if (pot_src_size && d_pot_eval_src && d_extra_src) {
+        const long n = (long)(pot_src_size / pot_src_dof);
+        cuda::launch_accumulate_and_scatter<Real>(d_pot_src_final.data(), d_pot_eval_src, d_extra_src,
+                                                  d_scatter_index_src.data(), pot_src_dof, n, direct_stream);
+    }
+    if (pot_trg_size && d_pot_eval_trg && d_extra_trg) {
+        const long n = (long)(pot_trg_size / pot_trg_dof);
+        cuda::launch_accumulate_and_scatter<Real>(d_pot_trg_final.data(), d_pot_eval_trg, d_extra_trg,
+                                                  d_scatter_index_trg.data(), pot_trg_dof, n, direct_stream);
+    }
+
+    DMK_CHECK_CUDA(cudaStreamSynchronize(direct_stream));
 }
 
 template struct CudaSharedDeviceState<float, 2>;

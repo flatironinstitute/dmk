@@ -3,9 +3,10 @@
 
 // GPU offload of proxy::eval_targets at iftensprodeval boxes. launch()
 // uploads proxy_coeffs_downward (or skips when the GPU downward pass already
-// populated it) and queues the kernel. finalize_gpu_only() accumulates the
-// direct device buffers into d_pot_*_eval on-GPU and copies the combined
-// result straight to tree.pot_*_sorted — no host-side accumulation.
+// populated it), queues the eval kernel, and applies self-correction in
+// place — all on stream(). Sorted-layout outputs live in d_pot_*_eval; the
+// merge with direct's output (and the descatter to user order) happens in
+// CudaSharedDeviceState::finalize_pot().
 
 #include <dmk/cuda/helpers.hpp>
 
@@ -24,12 +25,14 @@ class CudaEvalTargetsContext {
     CudaEvalTargetsContext(const CudaEvalTargetsContext &) = delete;
     CudaEvalTargetsContext &operator=(const CudaEvalTargetsContext &) = delete;
 
-    /// Upload proxy_coeffs_downward, allocate output buffers, queue kernel.
+    /// Zero d_pot_*_eval, queue the eval kernel (if there are eval boxes),
+    /// then apply self-correction. All async on stream().
     void launch();
 
-    /// Accumulate d_extra_{src,trg} into d_pot_*_eval on GPU, then copy the
-    /// combined result directly to tree.pot_*_sorted.
-    void finalize_gpu_only(Real *d_extra_src, Real *d_extra_trg);
+    /// Sorted-layout output buffers; consumed by shared.finalize_pot().
+    Real *device_pot_src() { return d_pot_src_eval_.data(); }
+    Real *device_pot_trg() { return d_pot_trg_eval_.data(); }
+    cudaStream_t stream() const { return stream_; }
 
   private:
     DMKPtTree<Real, DIM> &tree_;
@@ -47,7 +50,6 @@ class CudaEvalTargetsContext {
     int n_charge_dim_ = 0; // 1 for laplace/sqrt_laplace, 3 for stokeslet/stresslet
     int eval_level_src_ = 0;
     int eval_level_trg_ = 0;
-    bool launched_ = false;
 
     cuda_helpers::DeviceStream stream_;
 };

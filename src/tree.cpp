@@ -1630,10 +1630,14 @@ void DMKPtTree<Real, DIM>::downward_pass() {
     // Launches GPU kernels async on shared.downward_stream; GPU-only mode syncs at the
     // end of gpu_downward_pass so host pot is populated before we return.
     if (run_gpu) {
+        // The GPU descatter in finalize_pot only does the local permutation
+        // (no MPI Alltoallv). Multi-rank GPU is not currently supported.
+        SCTL_ASSERT(comm_.Size() == 1 && "GPU eval_path requires a single rank");
         gpu_downward_pass();
         sctl::Profile::Scoped p("cuda_merge", &comm_);
-        cuda_eval_targets_ctx_->finalize_gpu_only(cuda_direct_ctx_->device_pot_src(),
-                                                  cuda_direct_ctx_->device_pot_trg());
+        cuda_shared_state_->finalize_pot(cuda_eval_targets_ctx_->stream(), cuda_eval_targets_ctx_->device_pot_src(),
+                                         cuda_eval_targets_ctx_->device_pot_trg(), cuda_direct_ctx_->device_pot_src(),
+                                         cuda_direct_ctx_->device_pot_trg());
     }
 #endif
 
@@ -1729,6 +1733,26 @@ void DMKPtTree<Real, DIM>::desort_potentials(Real *pot_src, Real *pot_trg) {
     logger->info("De-sorting potentials into user arrays");
     sctl::Profile::Tic("pdmk_tree_eval_sync", &comm_);
     nvtxRangePush("pdmk_tree_eval_sync");
+
+#ifdef DMK_GPU_OFFLOAD
+    if (params.eval_path == DMK_EVAL_PATH_GPU && cuda_shared_state_) {
+        // finalize_pot wrote the descattered (user-order) result into
+        // d_pot_*_final and synchronized its stream; one D2H per side and
+        // we're done.
+        auto &s = *cuda_shared_state_;
+        if (s.pot_src_size)
+            DMK_CHECK_CUDA(
+                cudaMemcpy(pot_src, s.d_pot_src_final.data(), s.pot_src_size * sizeof(Real), cudaMemcpyDeviceToHost));
+        if (s.pot_trg_size)
+            DMK_CHECK_CUDA(
+                cudaMemcpy(pot_trg, s.d_pot_trg_final.data(), s.pot_trg_size * sizeof(Real), cudaMemcpyDeviceToHost));
+        sctl::Profile::Toc();
+        nvtxRangePop();
+        logger->info("De-sort complete");
+        return;
+    }
+#endif
+
     sctl::Vector<Real> res_src, res_trg;
     this->GetParticleData(res_src, "pdmk_pot_src");
     sctl::Vector<Real>(res_src.Dim(), pot_src, false) = res_src;
