@@ -17,6 +17,12 @@
 #include <string>
 #include <vector>
 
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+#include <cstdlib>
+#include "cuda/jit/proxy2pw_launcher.hpp"
+#endif
+
+
 namespace dmk::cuda {
 
 template <typename Real>
@@ -122,66 +128,182 @@ __global__ void Proxy2PwMultiLevelKernel(const Proxy2PwArgs<Real> *args, int n_a
     Proxy2PwBody<Real>(args[arg_idx], blockIdx.x);
 }
 
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+namespace {
+
+inline bool proxy2pw_jit_enabled() {
+    const char* disable = std::getenv("DMK_DISABLE_PROXY2PW_JIT");
+    return !(disable && std::string(disable) == "1");
+}
+
+} // namespace
+#endif
+
 template <typename Real, int DIM>
-void launch_proxy2pw(const Proxy2PwArgs<Real> &args, cudaStream_t stream) {
+void launch_proxy2pw(
+    const Proxy2PwArgs<Real>& args,
+    cudaStream_t stream
+) {
     if (args.n_boxes_at_level == 0)
         return;
 
     constexpr int block_size = 128;
-    const std::size_t shared_bytes =
-        sizeof(Real) * 2 * (args.n_order * args.n_order + args.n_order * args.n_pw);
 
-    Proxy2PwByBoxKernel<Real><<<args.n_boxes_at_level, block_size, shared_bytes, stream>>>(args);
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+    if (proxy2pw_jit_enabled()) {
+        static dmk::cuda::jit::JitCache jit_cache;
+
+        dmk::cuda::jit::launch_proxy2pw_jit<Real>(
+            jit_cache,
+            args,
+            stream,
+            block_size
+        );
+
+        return;
+    }
+#endif
+
+    const std::size_t shared_bytes =
+        sizeof(Real) * 2 *
+        (
+            std::size_t(args.n_order) * std::size_t(args.n_order) +
+            std::size_t(args.n_order) * std::size_t(args.n_pw)
+        );
+
+    Proxy2PwByBoxKernel<Real>
+        <<<args.n_boxes_at_level, block_size, shared_bytes, stream>>>(
+            args
+        );
 
     cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess)
-        throw std::runtime_error(std::string("launch_proxy2pw: ") + cudaGetErrorString(err));
+
+    if (err != cudaSuccess) {
+        throw std::runtime_error(
+            std::string("launch_proxy2pw: ") +
+            cudaGetErrorString(err)
+        );
+    }
 }
 
-template void launch_proxy2pw<float, 2>(const Proxy2PwArgs<float> &, cudaStream_t);
-template void launch_proxy2pw<float, 3>(const Proxy2PwArgs<float> &, cudaStream_t);
-template void launch_proxy2pw<double, 2>(const Proxy2PwArgs<double> &, cudaStream_t);
-template void launch_proxy2pw<double, 3>(const Proxy2PwArgs<double> &, cudaStream_t);
-
 template <typename Real, int DIM>
-void launch_proxy2pw_multilevel(const std::vector<Proxy2PwArgs<Real>> &pa_h, Proxy2PwArgs<Real> *d_args_scratch,
-                                cudaStream_t stream) {
+void launch_proxy2pw_multilevel(
+    const std::vector<Proxy2PwArgs<Real>>& pa_h,
+    Proxy2PwArgs<Real>* d_args_scratch,
+    cudaStream_t stream
+) {
     if (pa_h.empty())
         return;
+
+    constexpr int block_size = 128;
+
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+    if (proxy2pw_jit_enabled()) {
+        static dmk::cuda::jit::JitCache jit_cache;
+
+        dmk::cuda::jit::launch_proxy2pw_multilevel_jit<Real>(
+            jit_cache,
+            pa_h,
+            d_args_scratch,
+            stream,
+            block_size
+        );
+
+        return;
+    }
+#endif
 
     int max_boxes = 0;
     int max_n_order = 0;
     int max_n_pw = 0;
-    for (const auto &pa : pa_h) {
+
+    for (const auto& pa : pa_h) {
         max_boxes = std::max(max_boxes, pa.n_boxes_at_level);
         max_n_order = std::max(max_n_order, pa.n_order);
         max_n_pw = std::max(max_n_pw, pa.n_pw);
     }
+
     if (max_boxes == 0)
         return;
 
-    DMK_CHECK_CUDA(cudaMemcpyAsync(d_args_scratch, pa_h.data(), pa_h.size() * sizeof(Proxy2PwArgs<Real>),
-                                   cudaMemcpyHostToDevice, stream));
+    DMK_CHECK_CUDA(
+        cudaMemcpyAsync(
+            d_args_scratch,
+            pa_h.data(),
+            pa_h.size() * sizeof(Proxy2PwArgs<Real>),
+            cudaMemcpyHostToDevice,
+            stream
+        )
+    );
 
-    constexpr int block_size = 128;
     const std::size_t shared_bytes =
-        sizeof(Real) * 2 * (max_n_order * max_n_order + max_n_order * max_n_pw);
+        sizeof(Real) * 2 *
+        (
+            std::size_t(max_n_order) * std::size_t(max_n_order) +
+            std::size_t(max_n_order) * std::size_t(max_n_pw)
+        );
 
     dim3 grid(max_boxes, static_cast<int>(pa_h.size()), 1);
-    Proxy2PwMultiLevelKernel<Real><<<grid, block_size, shared_bytes, stream>>>(d_args_scratch,
-                                                                               static_cast<int>(pa_h.size()));
+
+    Proxy2PwMultiLevelKernel<Real>
+        <<<grid, block_size, shared_bytes, stream>>>(
+            d_args_scratch,
+            static_cast<int>(pa_h.size())
+        );
+
     cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess)
-        throw std::runtime_error(std::string("launch_proxy2pw_multilevel: ") + cudaGetErrorString(err));
+
+    if (err != cudaSuccess) {
+        throw std::runtime_error(
+            std::string("launch_proxy2pw_multilevel: ") +
+            cudaGetErrorString(err)
+        );
+    }
 }
 
-template void launch_proxy2pw_multilevel<float, 2>(const std::vector<Proxy2PwArgs<float>> &, Proxy2PwArgs<float> *,
-                                                   cudaStream_t);
-template void launch_proxy2pw_multilevel<float, 3>(const std::vector<Proxy2PwArgs<float>> &, Proxy2PwArgs<float> *,
-                                                   cudaStream_t);
-template void launch_proxy2pw_multilevel<double, 2>(const std::vector<Proxy2PwArgs<double>> &, Proxy2PwArgs<double> *,
-                                                    cudaStream_t);
-template void launch_proxy2pw_multilevel<double, 3>(const std::vector<Proxy2PwArgs<double>> &, Proxy2PwArgs<double> *,
-                                                    cudaStream_t);
+template void launch_proxy2pw<float, 2>(
+    const Proxy2PwArgs<float>&,
+    cudaStream_t
+);
+
+template void launch_proxy2pw<float, 3>(
+    const Proxy2PwArgs<float>&,
+    cudaStream_t
+);
+
+template void launch_proxy2pw<double, 2>(
+    const Proxy2PwArgs<double>&,
+    cudaStream_t
+);
+
+template void launch_proxy2pw<double, 3>(
+    const Proxy2PwArgs<double>&,
+    cudaStream_t
+);
+
+template void launch_proxy2pw_multilevel<float, 2>(
+    const std::vector<Proxy2PwArgs<float>>&,
+    Proxy2PwArgs<float>*,
+    cudaStream_t
+);
+
+template void launch_proxy2pw_multilevel<float, 3>(
+    const std::vector<Proxy2PwArgs<float>>&,
+    Proxy2PwArgs<float>*,
+    cudaStream_t
+);
+
+template void launch_proxy2pw_multilevel<double, 2>(
+    const std::vector<Proxy2PwArgs<double>>&,
+    Proxy2PwArgs<double>*,
+    cudaStream_t
+);
+
+template void launch_proxy2pw_multilevel<double, 3>(
+    const std::vector<Proxy2PwArgs<double>>&,
+    Proxy2PwArgs<double>*,
+    cudaStream_t
+);
+
 
 } // namespace dmk::cuda
