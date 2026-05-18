@@ -374,10 +374,10 @@ void launch_pw_to_proxy_multilevel_jit(
         {"K2_TILE", k2_tile},
         {"K3_TILE", k3_tile},
         {"KR_TILE", kr_tile},
-        {"N_ORDER", 0},
-        {"N_CHARGE_DIM", 0},
-        {"N_PW", 0},
-        {"N_PW2", 0},
+        {"N_ORDER", args_h[0].n_order},
+        {"N_CHARGE_DIM", args_h[0].n_charge_dim},
+        {"N_PW", args_h[0].n_pw},
+        {"N_PW2", args_h[0].n_pw2},
         {"BLOCK_SIZE", blocksize},
 
     };

@@ -267,10 +267,10 @@ void launch_proxy2pw_multilevel_jit(
 
     key.params = {
         {"BLOCK_SIZE", blocksize},
-        {"N_ORDER", 0},
-        {"N_CHARGE_DIM", 0},
-        {"N_PW", 0},
-        {"N_PW2", 0} //unused in the multi-level path
+        {"N_ORDER", pa_h[0].n_order},
+        {"N_CHARGE_DIM", pa_h[0].n_charge_dim},
+        {"N_PW", pa_h[0].n_pw},
+        {"N_PW2", pa_h[0].n_pw2} //unused in the multi-level path
     };
 
     auto kernel = cache.get_kernel(key);

@@ -46,10 +46,10 @@ extern "C" __global__ void PwToProxyMultiLevelKernel(const PwToProxyArgs<Real> *
     if (proxy_off < 0)
         return;
 
-    const int n_pw = a.n_pw;
-    const int n_pw2 = a.n_pw2;
+    const int n_pw = N_PW;
+    const int n_pw2 = N_PW2;
     const int n_pw_half = n_pw / 2;
-    const int n_order = a.n_order;
+    const int n_order = N_ORDER;
     const int n_order2 = n_order * n_order;
     const int n_order3 = n_order2 * n_order;
     const int n_pw_modes = n_pw * n_pw * n_pw2;
