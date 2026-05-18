@@ -100,14 +100,20 @@ std::filesystem::path jit_source_root() {
 
 std::string make_specialization_constants(const JitKey& key) {
     const int blocksize    = get_required_param(key, "BLOCK_SIZE");
-
+    const int n_order      = get_required_param(key, "N_ORDER");
+    const int n_pw         = get_required_param(key, "N_PW");
+    const int n_pw2        = get_required_param(key, "N_PW2");
+    const int n_charge_dim = get_required_param(key, "N_CHARGE_DIM");
     const std::string real_type = key.real;
 
     std::ostringstream ss;
 
     ss << "#include <dmk/cuda/proxy2pw_kernelargs.hpp>\n";
     ss << "using dmk::cuda::Proxy2PwArgs;\n\n";
-
+    ss << "constexpr int N_ORDER      = " << n_order << ";\n";
+    ss << "constexpr int N_PW         = " << n_pw << ";\n";
+    ss << "constexpr int N_PW2        = " << n_pw2 << ";\n";
+    ss << "constexpr int N_CHARGE_DIM = " << n_charge_dim << ";\n";
     ss << "constexpr int BLOCK_SIZE   = " << blocksize << ";\n";
     ss << "using Real = " << real_type << ";\n\n";
 
@@ -139,53 +145,6 @@ void check_proxy2pw_shape_or_throw(
     }
 }
 
-template <typename Real>
-struct Proxy2PwShape {
-    int n_order = 0;
-    int n_pw = 0;
-    int n_pw2 = 0;
-    int n_charge_dim = 0;
-    int max_boxes = 0;
-};
-
-template <typename Real>
-Proxy2PwShape<Real> get_homogeneous_multilevel_shape_or_throw(
-    const std::vector<dmk::cuda::Proxy2PwArgs<Real>>& pa_h
-) {
-    Proxy2PwShape<Real> shape{};
-
-    for (const auto& pa : pa_h) {
-        if (pa.n_boxes_at_level == 0) {
-            continue;
-        }
-
-        check_proxy2pw_shape_or_throw(pa);
-
-        if (shape.max_boxes == 0) {
-            shape.n_order = pa.n_order;
-            shape.n_pw = pa.n_pw;
-            shape.n_pw2 = pa.n_pw2;
-            shape.n_charge_dim = pa.n_charge_dim;
-        } else {
-            if (
-                pa.n_order != shape.n_order ||
-                pa.n_pw != shape.n_pw ||
-                pa.n_pw2 != shape.n_pw2 ||
-                pa.n_charge_dim != shape.n_charge_dim
-            ) {
-                throw std::runtime_error(
-                    "Proxy2Pw JIT multilevel requires homogeneous "
-                    "n_order/n_pw/n_pw2/n_charge_dim for this "
-                    "specialized implementation"
-                );
-            }
-        }
-
-        shape.max_boxes = std::max(shape.max_boxes, pa.n_boxes_at_level);
-    }
-
-    return shape;
-}
 
 } // namespace
 
@@ -239,6 +198,10 @@ void launch_proxy2pw_jit(
 
     key.params = {
         {"BLOCK_SIZE", blocksize},
+        {"N_ORDER", args.n_order},
+        {"N_CHARGE_DIM", args.n_charge_dim},
+        {"N_PW", args.n_pw},
+        {"N_PW2", args.n_pw2}
     };
 
     auto kernel = cache.get_kernel(key);
@@ -258,8 +221,6 @@ void launch_proxy2pw_jit(
         args
     );
 
-    DMK_CHECK_CUDA(cudaPeekAtLastError());
-    DMK_CHECK_CUDA(cudaStreamSynchronize(stream));
 }
 
 template <typename Real>
@@ -306,6 +267,10 @@ void launch_proxy2pw_multilevel_jit(
 
     key.params = {
         {"BLOCK_SIZE", blocksize},
+        {"N_ORDER", 0},
+        {"N_CHARGE_DIM", 0},
+        {"N_PW", 0},
+        {"N_PW2", 0} //unused in the multi-level path
     };
 
     auto kernel = cache.get_kernel(key);
@@ -327,8 +292,6 @@ void launch_proxy2pw_multilevel_jit(
         d_args_scratch,
         n_args
     );
-    DMK_CHECK_CUDA(cudaPeekAtLastError());
-    DMK_CHECK_CUDA(cudaStreamSynchronize(stream));
 }
 
 template void launch_proxy2pw_jit<float>(

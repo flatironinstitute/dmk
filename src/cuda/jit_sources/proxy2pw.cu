@@ -7,7 +7,7 @@ extern "C" __global__ void Proxy2PwKernel(Proxy2PwArgs<Real> a) {
 
     extern __shared__ unsigned char shared_raw[];
     Real *ff_slab = reinterpret_cast<Real *>(shared_raw);
-    Real *ff2_slab = ff_slab + 2 * a.n_order * a.n_order;
+    Real *ff2_slab = ff_slab + 2 * N_ORDER * N_ORDER;
 
     const int box = a.box_ids[box_idx];
 
@@ -21,18 +21,18 @@ extern "C" __global__ void Proxy2PwKernel(Proxy2PwArgs<Real> a) {
         return;
     Real *pw_dst = a.dst_flat + 2 * dst_off_complex;
 
-    const int n_order = a.n_order;
+    const int n_order = N_ORDER;
     const int n_order2 = n_order * n_order;
     const int n_order3 = n_order2 * n_order;
-    const int n_pw = a.n_pw;
-    const int n_pw2 = a.n_pw2;
+    const int n_pw = N_PW;
+    const int n_pw2 = N_PW2;
     const int n_pw_modes = n_pw * n_pw * n_pw2;
 
-    for (int d = 0; d < a.n_charge_dim  ; ++d) {
+    for (int d = 0; d < N_CHARGE_DIM; ++d) {
         const Real *proxy_d = proxy + d * n_order3;
         Real *pw_d = pw_dst + 2 * d * n_pw_modes;
 
-        for (int m3 = 0; m3 < a.n_pw2; ++m3) {
+        for (int m3 = 0; m3 < N_PW2; ++m3) {
             // Phase 1: ff(i, j) = sum_k proxy(i, j, k, d) * poly2pw(m3, k).
             for (int t = threadIdx.x; t < n_order2; t += blockDim.x) {
                 const int i = t % n_order;
