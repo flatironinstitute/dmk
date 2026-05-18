@@ -1673,7 +1673,6 @@ void DMKPtTree<Real, DIM>::gpu_downward_pass() {
         sctl::Profile::Scoped p("cuda_downward", &comm_);
         cuda_form_outgoing_ctx_->run();
         cuda_downward_ctx_->run();
-        cuda_downward_ctx_->mark_proxy_resident();
     }
     {
         sctl::Profile::Scoped p("cuda_eval_targets_launch", &comm_);
@@ -1729,12 +1728,14 @@ template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::desort_potentials(Real *pot_src, Real *pot_trg) {
     logger->info("De-sorting potentials into user arrays");
     sctl::Profile::Tic("pdmk_tree_eval_sync", &comm_);
+    nvtxRangePush("pdmk_tree_eval_sync");
     sctl::Vector<Real> res_src, res_trg;
     this->GetParticleData(res_src, "pdmk_pot_src");
     sctl::Vector<Real>(res_src.Dim(), pot_src, false) = res_src;
     this->GetParticleData(res_trg, "pdmk_pot_trg");
     sctl::Vector<Real>(res_trg.Dim(), pot_trg, false) = res_trg;
     sctl::Profile::Toc();
+    nvtxRangePop();
     logger->info("De-sort complete");
 }
 

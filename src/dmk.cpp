@@ -501,8 +501,8 @@ inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *pot_trg) {
                 sctl::Profile::Scoped prof("pdmk_tree_eval", &comm);
                 nvtxRangePush("pdmk_tree_eval");
                 t->eval();
-                nvtxRangePop();
                 t->desort_potentials(pot_src, pot_trg);
+                nvtxRangePop();
             }
         },
         *static_cast<pdmk_tree_impl *>(tree));
