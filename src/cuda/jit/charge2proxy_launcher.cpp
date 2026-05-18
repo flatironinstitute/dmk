@@ -162,8 +162,8 @@ void launch_charge2proxy_jit(
     JitKey key;
     key.name = "Charge2ProxyKernel";
     key.real = real_name<Real>();
-    key.sm_major = get_sm_major();
-    key.sm_minor = get_sm_minor();
+    key.sm_major = cache.sm_major();
+    key.sm_minor = cache.sm_minor();
 
     key.params = {
         {"N_ORDER", args.n_order},

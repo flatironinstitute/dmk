@@ -21,6 +21,9 @@ public:
 
     std::shared_ptr<JitKernel> get_kernel(const JitKey& key);
 
+    int sm_major() const { return sm_major_; }
+    int sm_minor() const { return sm_minor_; }
+
 private:
     std::shared_ptr<JitKernel> compile_and_load(const JitKey& key);
 
@@ -34,6 +37,11 @@ private:
 
     std::vector<std::string> include_dirs_;
     std::vector<std::string> extra_options_;
+
+    int device_ = 0;
+    int sm_major_ = 0;
+    int sm_minor_ = 0;
+    
 };
 
 

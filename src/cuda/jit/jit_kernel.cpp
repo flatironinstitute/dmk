@@ -10,24 +10,6 @@ void JitKernel::unload() {
     }
 }
 
-int get_sm_major() {
-    int dev = 0;
-    cudaGetDevice(&dev);
-
-    cudaDeviceProp prop{};
-    cudaGetDeviceProperties(&prop, dev);
-
-    return prop.major;
-}
-
-int get_sm_minor() {
-    int dev = 0;
-    cudaGetDevice(&dev);
-    cudaDeviceProp prop{};
-    cudaGetDeviceProperties(&prop, dev);
-
-    return prop.minor;
-}
 
 }
 

@@ -84,7 +84,5 @@ private:
     
 };
 
-int get_sm_major();
-int get_sm_minor();
 
 } // namespace dmk::cuda::jit
