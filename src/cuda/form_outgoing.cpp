@@ -40,43 +40,37 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
     const dmk_ikernel kernel = s.kernel;
     const bool is_stresslet = (kernel == DMK_STRESSLET);
 
-    // proxy2pw: non-stresslet writes its n_tables_down complex tables straight
-    // into d_pw_out via a single multilevel batch. Stresslet writes
-    // n_tables_up = 9 tables, which don't fit d_pw_out (sized for n_tables_down
-    // = 3), so it lands in d_pw_form_pool and we issue per-level launches.
-    nvtxRangePush("proxy2pw");
-    std::vector<cuda::Proxy2PwArgs<Real>> pa_h;
-    for (int L = 0; L < n_levels; ++L) {
-        const int n_box = s.pw_form_box_count_h[L];
-        if (n_box == 0)
-            continue;
-        const int box_offset = s.pw_form_box_offset_h[L];
+    // TODO: This is gross: stresslets have proxy2pw done alongside
+    // the kernel multiplication due to their weird dim->dim^2->dim
+    // mapping (long range is handled by fits of outer-product of
+    // r.n).
+    if (!is_stresslet) {
+        nvtxRangePush("proxy2pw");
+        std::vector<cuda::Proxy2PwArgs<Real>> pa_h;
+        for (int L = 0; L < n_levels; ++L) {
+            const int n_box = s.pw_form_box_count_h[L];
+            if (n_box == 0)
+                continue;
+            const int box_offset = s.pw_form_box_offset_h[L];
 
-        cuda::Proxy2PwArgs<Real> pa;
-        pa.n_boxes_at_level = n_box;
-        pa.n_order = s.n_order;
-        pa.n_pw = s.n_pw;
-        pa.n_pw2 = s.n_pw2;
-        pa.n_charge_dim = s.n_tables_up;
-        pa.box_ids = s.d_pw_form_box_flat.data() + box_offset;
-        pa.proxy_flat = s.d_proxy_coeffs_upward.data();
-        pa.proxy_offsets = s.d_proxy_offsets_upward.data();
-        pa.poly2pw = s.d_poly2pw_flat.data() + L * s.poly2pw_per_level_reals;
-        if (!is_stresslet) {
+            cuda::Proxy2PwArgs<Real> pa;
+            pa.n_boxes_at_level = n_box;
+            pa.n_order = s.n_order;
+            pa.n_pw = s.n_pw;
+            pa.n_pw2 = s.n_pw2;
+            pa.n_charge_dim = s.n_tables_up;
+            pa.box_ids = s.d_pw_form_box_flat.data() + box_offset;
+            pa.proxy_flat = s.d_proxy_coeffs_upward.data();
+            pa.proxy_offsets = s.d_proxy_offsets_upward.data();
+            pa.poly2pw = s.d_poly2pw_flat.data() + L * s.poly2pw_per_level_reals;
             pa.dst_flat = s.d_pw_out.data();
             pa.dst_offsets = s.d_pw_out_offsets.data();
             pa.dst_stride_complex = 0;
             pa_h.push_back(pa);
-        } else {
-            pa.dst_flat = s.d_pw_form_pool.data();
-            pa.dst_offsets = nullptr;
-            pa.dst_stride_complex = s.pw_form_stride_reals / 2;
-            cuda::launch_proxy2pw<Real, DIM>(pa, s.downward_stream);
         }
-    }
-    if (!is_stresslet)
         cuda::launch_proxy2pw_multilevel<Real, DIM>(pa_h, s.d_proxy2pw_args.data(), s.downward_stream);
-    nvtxRangePop();
+        nvtxRangePop();
+    }
 
     // multiply_kernelFT: per-level, kernel-specific formula applied to the
     // proxy2pw output. cd2p/stokeslet operate in place on d_pw_out; stresslet
@@ -135,9 +129,26 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
         const int n_box = s.pw_form_box_count_h[L];
         if (n_box == 0)
             continue;
-        nvtxRangePush(std::string{"multiply_kernelft: level" + std::to_string(L)}.c_str());
+        nvtxRangePush(std::string{"form_outgoing: level" + std::to_string(L)}.c_str());
         const int box_offset = s.pw_form_box_offset_h[L];
         const Real *radialft_L = s.d_radialft_flat.data() + L * s.radialft_per_level_reals;
+
+        if (is_stresslet) {
+            cuda::Proxy2PwArgs<Real> pa;
+            pa.n_boxes_at_level = n_box;
+            pa.n_order = s.n_order;
+            pa.n_pw = s.n_pw;
+            pa.n_pw2 = s.n_pw2;
+            pa.n_charge_dim = s.n_tables_up;
+            pa.box_ids = s.d_pw_form_box_flat.data() + box_offset;
+            pa.proxy_flat = s.d_proxy_coeffs_upward.data();
+            pa.proxy_offsets = s.d_proxy_offsets_upward.data();
+            pa.poly2pw = s.d_poly2pw_flat.data() + L * s.poly2pw_per_level_reals;
+            pa.dst_flat = s.d_pw_form_pool.data();
+            pa.dst_offsets = nullptr;
+            pa.dst_stride_complex = s.pw_form_stride_reals / 2;
+            cuda::launch_proxy2pw<Real, DIM>(pa, s.downward_stream);
+        }
 
         Real *src = is_stresslet ? s.d_pw_form_pool.data() : s.d_pw_out.data();
         const long *src_offsets = is_stresslet ? nullptr : s.d_pw_out_offsets.data();
