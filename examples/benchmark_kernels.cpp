@@ -368,10 +368,10 @@ void run_benchmark(const Config &cfg) {
 
     auto create_tree = [&]() -> pdmk_tree {
         if constexpr (std::is_same_v<Real, float>)
-            return pdmk_tree_createf(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), normals.data(), 0,
+            return pdmk_tree_createf(MYCOMM, &params, n_src_per_rank, r_src.data(), charges.data(), normals.data(), 0,
                                      nullptr);
         else
-            return pdmk_tree_create(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), normals.data(), 0,
+            return pdmk_tree_create(MYCOMM, &params, n_src_per_rank, r_src.data(), charges.data(), normals.data(), 0,
                                     nullptr);
     };
 

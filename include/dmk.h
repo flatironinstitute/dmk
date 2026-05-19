@@ -3,7 +3,20 @@
 
 #include <stdint.h>
 
-typedef enum : int {
+#ifdef DMK_HAVE_MPI
+#include <mpi.h>
+typedef MPI_Comm dmk_communicator;
+#else
+typedef void *dmk_communicator;
+#endif
+
+#ifdef __cplusplus
+#define DMK_DEFAULT(x) = x
+#else
+#define DMK_DEFAULT(x)
+#endif
+
+typedef enum {
     DMK_YUKAWA = 0,
     DMK_LAPLACE = 1,
     DMK_SQRT_LAPLACE = 2,
@@ -11,7 +24,7 @@ typedef enum : int {
     DMK_STRESSLET = 4,
 } dmk_ikernel;
 
-typedef enum : int {
+typedef enum {
     DMK_POTENTIAL = 1,
     DMK_POTENTIAL_GRAD = 2,
     DMK_POTENTIAL_GRAD_HESSIAN = 3,
@@ -20,20 +33,13 @@ typedef enum : int {
 } dmk_eval_type;
 
 // Selects which compute path eval() uses. The CPU path is always available.
-// GPU and BOTH require the library to be built with -DDMK_GPU_OFFLOAD=ON; if
-// not built that way, GPU/BOTH throw at eval time.
-//
-//   CPU:  CPU only (default).
-//   GPU:  GPU only — host pot is overwritten with the GPU result at merge.
-//   BOTH: run both paths to completion. Host pot holds the CPU result;
-//         device buffers (proxy_coeffs_downward, pot_*_direct, pot_*_eval)
-//         remain populated for diffing / cuda-gdb. Useful for debugging.
-typedef enum : int {
+// GPU requires the library to be built with -DDMK_GPU_OFFLOAD=ON
+typedef enum {
     DMK_EVAL_PATH_CPU = 0,
     DMK_EVAL_PATH_GPU = 1,
 } dmk_eval_path;
 
-typedef enum : int {
+typedef enum {
     DMK_LOG_TRACE = 0,
     DMK_LOG_DEBUG = 1,
     DMK_LOG_INFO = 2,
@@ -60,36 +66,34 @@ enum {
 };
 
 typedef void *pdmk_tree;
-#ifdef DMK_HAVE_MPI
-#include <mpi.h>
-typedef MPI_Comm dmk_communicator;
-#else
-typedef void *dmk_communicator;
-#endif
 
+// clang-format off
 typedef struct pdmk_params {
-    int n_dim = 0;                               // dimension of system
-    double eps = 1e-3;                           // target precision
-    dmk_ikernel kernel = DMK_YUKAWA;             // evaluation kernel
-    dmk_eval_type eval_src = DMK_POTENTIAL;      // level to compute at sources (potential, pot+grad, pot+grad+hess)
-    dmk_eval_type eval_trg = DMK_POTENTIAL;      // level to compute at sources (potential, pot+grad, pot+grad+hess)
-    double fparam = 6.0;                         // param for selected potential (FIXME: make more flexible)
-    int use_periodic = false;                    // use periodic boundary conditions (in all dimensions, currently)
-    int n_per_leaf = 200;                        // tuning: number of particles per leaf in N-tree
-    int log_level = 6;                           // 0: trace, 1: debug, 2: info, 3: warn, 4: err, 5: critical, 6: off
-    uint32_t debug_flags = 0;                    // Debug params bit field, see above
-    double debug_params[8] = {0};                // 0: beta, 1: order, rest: placeholders
-    dmk_eval_path eval_path = DMK_EVAL_PATH_CPU; // CPU / GPU
+    int n_dim DMK_DEFAULT(0);                               // dimension of system
+    double eps DMK_DEFAULT(1e-3);                           // target precision
+    dmk_ikernel kernel DMK_DEFAULT(DMK_YUKAWA);             // evaluation kernel
+    dmk_eval_type eval_src DMK_DEFAULT(DMK_POTENTIAL);      // level to compute at sources (potential, pot+grad, pot+grad+hess)
+    dmk_eval_type eval_trg DMK_DEFAULT(DMK_POTENTIAL);      // level to compute at sources (potential, pot+grad, pot+grad+hess)
+    double fparam DMK_DEFAULT(6.0);                         // param for selected potential (FIXME: make more flexible)
+    int use_periodic DMK_DEFAULT(0);                        // use periodic boundary conditions (in all dimensions, currently)
+    int n_per_leaf DMK_DEFAULT(280);                        // tuning: number of particles per leaf in N-tree
+    int log_level DMK_DEFAULT(6);                           // 0: trace, 1: debug, 2: info, 3: warn, 4: err, 5: critical, 6: off
+    uint32_t debug_flags DMK_DEFAULT(0);                    // Debug params bit field, see above
+    double debug_params[8] DMK_DEFAULT({0});                // 0: beta, 1: order, rest: placeholders
+    dmk_eval_path eval_path DMK_DEFAULT(DMK_EVAL_PATH_CPU); // CPU / GPU
 } pdmk_params;
+// clang-format on
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-pdmk_tree pdmk_tree_createf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src,
+void pdmk_init_default_params(pdmk_params *params);
+
+pdmk_tree pdmk_tree_createf(dmk_communicator comm, const pdmk_params *params, int n_src, const float *r_src,
                             const float *charge, const float *normal, int n_trg, const float *r_trg);
 void pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *pot_trg);
-pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src,
+pdmk_tree pdmk_tree_create(dmk_communicator comm, const pdmk_params *params, int n_src, const double *r_src,
                            const double *charge, const double *normal, int n_trg, const double *r_trg);
 
 int pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const double *normal);
@@ -99,12 +103,14 @@ void pdmk_tree_destroy(pdmk_tree tree);
 void pdmk_tree_eval(pdmk_tree tree, double *pot_src, double *pot_trg);
 void pdmk_print_profile_data(dmk_communicator comm, char type);
 
-void pdmk(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
+void pdmk(dmk_communicator comm, const pdmk_params *params, int n_src, const double *r_src, const double *charge,
           const double *normal, int n_trg, const double *r_trg, double *pot_src, double *pot_trg);
-void pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
+void pdmkf(dmk_communicator comm, const pdmk_params *params, int n_src, const float *r_src, const float *charge,
            const float *normal, int n_trg, const float *r_trg, float *pot_src, float *pot_trg);
 #ifdef __cplusplus
 }
 #endif
+
+#undef DMK_DEFAULT
 
 #endif

@@ -305,11 +305,11 @@ void run_comparison(const Config &cfg) {
 
     pdmk_tree dmk_tree;
     if constexpr (std::is_same_v<Real, float>)
-        dmk_tree = pdmk_tree_createf(MPI_COMM_WORLD, params, n_src_per_rank, r_src.data(), charges.data(), nullptr, 0,
+        dmk_tree = pdmk_tree_createf(MPI_COMM_WORLD, &params, n_src_per_rank, r_src.data(), charges.data(), nullptr, 0,
                                      nullptr);
     else
-        dmk_tree =
-            pdmk_tree_create(MPI_COMM_WORLD, params, n_src_per_rank, r_src.data(), charges.data(), nullptr, 0, nullptr);
+        dmk_tree = pdmk_tree_create(MPI_COMM_WORLD, &params, n_src_per_rank, r_src.data(), charges.data(), nullptr, 0,
+                                    nullptr);
 
     const auto kernel_fn = pvfmm::LaplaceKernel<Real>::potential();
     pvfmm::PtFMM_Tree<Real> *pvfmm_tree = nullptr;

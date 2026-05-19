@@ -119,10 +119,10 @@ void run_example(const pdmk_params &params, int n_src_per_rank, int n_runs, bool
 
     pdmk_tree tree;
     if constexpr (std::is_same_v<Real, float>)
-        tree = pdmk_tree_createf(MPI_COMM_WORLD, params, n_src_per_rank, &r_src[0], &charges[0], &rnormal[0], n_trg,
+        tree = pdmk_tree_createf(MPI_COMM_WORLD, &params, n_src_per_rank, &r_src[0], &charges[0], &rnormal[0], n_trg,
                                  &r_trg[0]);
     else
-        tree = pdmk_tree_create(MPI_COMM_WORLD, params, n_src_per_rank, &r_src[0], &charges[0], &rnormal[0], n_trg,
+        tree = pdmk_tree_create(MPI_COMM_WORLD, &params, n_src_per_rank, &r_src[0], &charges[0], &rnormal[0], n_trg,
                                 &r_trg[0]);
 
     for (int i = 0; i < n_runs; ++i) {

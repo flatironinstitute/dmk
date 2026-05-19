@@ -67,7 +67,7 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
 
     // Tree build
     double t0 = MY_OMP_GET_WTIME();
-    pdmk_tree tree = pdmk_tree_create(MYCOMM, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
+    pdmk_tree tree = pdmk_tree_create(MYCOMM, &params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
     result.tree_build_time = MY_OMP_GET_WTIME() - t0;
 
     // Eval
