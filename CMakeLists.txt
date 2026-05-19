@@ -1,8 +1,9 @@
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.28)
 
 project(dmk LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_EXTENSIONS OFF)
+include(GNUInstallDirs)
 
 option(DMK_BUILD_TESTS "Build tests" ON)
 option(DMK_BUILD_EXAMPLES "Build examples" ON)
@@ -117,6 +118,7 @@ if (DMK_BUILD_PVFMM)
     pvfmm_lib
     GIT_REPOSITORY https://github.com/dmalhotra/pvfmm.git
     GIT_TAG develop
+    EXCLUDE_FROM_ALL
   )
   FetchContent_MakeAvailable(pvfmm_lib)
 endif()
@@ -131,6 +133,7 @@ FetchContent_Declare(
   polyfit
   GIT_REPOSITORY https://github.com/DiamonDinoia/polyfit.git
   GIT_TAG        a2994771155ed4cd22c2b792b463c42eefca3067
+  EXCLUDE_FROM_ALL
 )
 set(MONOFIT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(MONOFIT_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -138,14 +141,14 @@ FetchContent_MakeAvailable(polyfit)
 
 add_subdirectory(extern/spdlog EXCLUDE_FROM_ALL)
 add_subdirectory(extern/nanobench EXCLUDE_FROM_ALL)
-add_subdirectory(extern/doctest)
-add_subdirectory(extern/nda)
+add_subdirectory(extern/doctest EXCLUDE_FROM_ALL)
+add_subdirectory(extern/nda EXCLUDE_FROM_ALL)
 if (DMK_USE_JIT)
   list(APPEND DMK_CXX_FLAGS "-DDMK_USE_JIT")
   set(RUFUS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(RUFUS_LINK_LLVM_SHARED ON CACHE BOOL "" FORCE)
   set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
-  add_subdirectory(extern/RuFuS)
+  add_subdirectory(extern/RuFuS EXCLUDE_FROM_ALL)
 
   rufus_embed_ir_as_header(jit_kernels src/jit_kernels.cpp
     INCLUDES ${DMK_INCLUDES}
@@ -257,18 +260,19 @@ if (DMK_GPU_OFFLOAD)
 endif()
 
 add_library(dmk STATIC)
-target_link_libraries(dmk PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT ${DMK_GPU_OBJS} stdc++ supc++)
-if (DMK_GPU_OFFLOAD AND DMK_CUDA_USE_NVRTC_JIT)
-  target_link_libraries(dmk PUBLIC ${DMK_CUDA_JIT_TARGETS})
-endif()
+target_link_libraries(dmk PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT ${DMK_GPU_OBJS})
 
 add_library(dmk_shared SHARED)
 set_target_properties(dmk_shared PROPERTIES OUTPUT_NAME dmk)
 target_link_libraries(dmk_shared PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT ${DMK_GPU_OBJS})
-target_link_libraries(dmk_shared PRIVATE stdc++ supc++)
-if (DMK_GPU_OFFLOAD AND DMK_CUDA_USE_NVRTC_JIT)
-  target_link_libraries(dmk_shared PUBLIC ${DMK_CUDA_JIT_TARGETS})
-endif()
+
+install(TARGETS dmk dmk_shared
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+install(FILES include/dmk.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/dmk)
+
 if (DMK_BUILD_TESTS)
   add_subdirectory(test)
 endif()
