@@ -20,6 +20,11 @@
 #include <stdexcept>
 #include <string>
 
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+#include "cuda/jit/direct_launcher.hpp"
+#include <cstdlib>
+#endif
+
 namespace dmk::cuda {
 
 template <typename C>
@@ -95,7 +100,7 @@ struct LaplacePolyEvaluator3DCuda {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
         const bool in_range = (R2 > thresh2) && (R2 < d2max);
         if (!in_range) {
-            u[0][0] = 0.0;  
+            u[0][0] = 0.0;
             return;
         }
         const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
@@ -140,7 +145,7 @@ struct SqrtLaplacePolyEvaluator3DCuda {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
         const bool in_range = (R2 > thresh2) && (R2 < d2max);
         if (!in_range) {
-            u[0][0] = 0.0;  
+            u[0][0] = 0.0;
             return;
         }
         const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
@@ -230,14 +235,11 @@ struct StressletPolyEvaluator3DCuda {
 // residual_evaluator_func getters that test_cuda.cpp uses for raw CPU-vs-GPU
 // accuracy comparison. Mirrors host EvalPairs in vector_kernels.hpp.
 template <int KERNEL_OUTPUT_DIM, DeviceKernelEvaluator Evaluator>
-__global__ void EvalPairsCuda(int n_src,
-                              const typename Evaluator::scalar_type *__restrict__ r_src,
+__global__ void EvalPairsCuda(int n_src, const typename Evaluator::scalar_type *__restrict__ r_src,
                               const typename Evaluator::scalar_type *__restrict__ v_src,
-                              const typename Evaluator::scalar_type *__restrict__ src_normals,
-                              int n_trg,
+                              const typename Evaluator::scalar_type *__restrict__ src_normals, int n_trg,
                               const typename Evaluator::scalar_type *__restrict__ r_trg,
-                              typename Evaluator::scalar_type *__restrict__ v_trg,
-                              Evaluator evaluator) {
+                              typename Evaluator::scalar_type *__restrict__ v_trg, Evaluator evaluator) {
     using Real = typename Evaluator::scalar_type;
     constexpr int SPATIAL_DIM = Evaluator::SPATIAL_DIM;
     constexpr int KERNEL_INPUT_DIM = Evaluator::KERNEL_INPUT_DIM;
@@ -318,8 +320,8 @@ inline void launch_eval_pairs(const Evaluator &evaluator, int n_src, const Real 
     const int grid = (n_trg + block_size - 1) / block_size;
     constexpr int row = Evaluator::SPATIAL_DIM + Evaluator::KERNEL_INPUT_DIM + Evaluator::NORMAL_DIM;
     const int smem = block_size * row * sizeof(Real);
-    EvalPairsCuda<KERNEL_OUTPUT_DIM, Evaluator><<<grid, block_size, smem, stream>>>(
-        n_src, r_src, charge, normals, n_trg, r_trg, pot, evaluator);
+    EvalPairsCuda<KERNEL_OUTPUT_DIM, Evaluator>
+        <<<grid, block_size, smem, stream>>>(n_src, r_src, charge, normals, n_trg, r_trg, pot, evaluator);
 }
 } // namespace detail
 
@@ -554,20 +556,62 @@ inline void launch_direct_by_box(const DirectByBoxArgs<Real> &args, cudaStream_t
         return;
 
     constexpr int block_size = 128;
+
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+    {
+        const char *disable = std::getenv("DMK_DISABLE_DIRECT_JIT");
+        const bool use_jit = !(disable && std::string(disable) == "1");
+
+        if (use_jit) {
+            static dmk::cuda::jit::JitCache jit_cache;
+
+            dmk::cuda::jit::launch_direct_by_box_jit<Evaluator, Real>(jit_cache, args, stream, SRC_TILE, block_size);
+
+            return;
+        }
+    }
+#endif
+
     constexpr int SPATIAL_DIM = Evaluator::SPATIAL_DIM;
     constexpr int KERNEL_INPUT_DIM = Evaluator::KERNEL_INPUT_DIM;
     constexpr int NORMAL_DIM = Evaluator::NORMAL_DIM;
     constexpr int values_per_source = SPATIAL_DIM + KERNEL_INPUT_DIM + NORMAL_DIM;
+
     const std::size_t shared_bytes = SRC_TILE * values_per_source * sizeof(Real);
 
     DirectResidualByBoxKernelTiled<Evaluator, SRC_TILE><<<args.n_work, block_size, shared_bytes, stream>>>(args);
 
     cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess)
+
+    if (err != cudaSuccess) {
         throw std::runtime_error(std::string("launch_direct_by_box: ") + cudaGetErrorString(err) +
                                  " shared_bytes=" + std::to_string(shared_bytes));
+    }
 }
+// template <typename Evaluator, typename Real = typename Evaluator::scalar_type, int SRC_TILE = 32>
+// inline void launch_direct_by_box(const DirectByBoxArgs<Real> &args, cudaStream_t stream = 0) {
+//     if (args.n_work == 0)
+//         return;
+
+//     constexpr int block_size = 128;
+//     constexpr int SPATIAL_DIM = Evaluator::SPATIAL_DIM;
+//     constexpr int KERNEL_INPUT_DIM = Evaluator::KERNEL_INPUT_DIM;
+//     constexpr int NORMAL_DIM = Evaluator::NORMAL_DIM;
+//     constexpr int values_per_source = SPATIAL_DIM + KERNEL_INPUT_DIM + NORMAL_DIM;
+//     const std::size_t shared_bytes = SRC_TILE * values_per_source * sizeof(Real);
+
+//     DirectResidualByBoxKernelTiled<Evaluator, SRC_TILE><<<args.n_work, block_size, shared_bytes, stream>>>(args);
+
+//     cudaError_t err = cudaGetLastError();
+//     if (err != cudaSuccess)
+//         throw std::runtime_error(std::string("launch_direct_by_box: ") + cudaGetErrorString(err) +
+//                                  " shared_bytes=" + std::to_string(shared_bytes));
+// }
 
 } // namespace dmk::cuda
+
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+#include "cuda/jit/direct_launcher.tpp"
+#endif
 
 #endif // DMK_CUDA_DIRECT_KERNELS_CUH

@@ -10,11 +10,7 @@ namespace dmk::cuda::jit {
 
 namespace {
 
-void throw_nvrtc(
-    nvrtcResult res,
-    const std::string& where,
-    const std::string& log = {}
-) {
+void throw_nvrtc(nvrtcResult res, const std::string &where, const std::string &log = {}) {
     std::string msg = where + ": " + nvrtcGetErrorString(res);
 
     if (!log.empty()) {
@@ -38,56 +34,42 @@ std::string get_program_log(nvrtcProgram prog) {
     return log;
 }
 
-} //namespace
+} // namespace
 
-CompiledBinary JitCompiler::compile(
-    const std::string& source,
-    const std::string& program_name,
-    int sm_major,
-    int sm_minor,
-    const std::vector<std::string>& extra_options
-) const {
+CompiledBinary JitCompiler::compile(const std::string &source, const std::string &program_name, int sm_major,
+                                    int sm_minor, const std::vector<std::string> &extra_options,
+                                    const std::string &name_expression) const {
     nvrtcProgram prog = nullptr;
 
-    nvrtcResult res = nvrtcCreateProgram(
-        &prog,
-        source.c_str(),
-        program_name.c_str(),
-        0,
-        nullptr,
-        nullptr
-    );
-
+    nvrtcResult res = nvrtcCreateProgram(&prog, source.c_str(), program_name.c_str(), 0, nullptr, nullptr);
     if (res != NVRTC_SUCCESS) {
         throw_nvrtc(res, "nvrtcCreateProgram");
+    }
+
+    if (!name_expression.empty()) {
+        res = nvrtcAddNameExpression(prog, name_expression.c_str());
+        if (res != NVRTC_SUCCESS) {
+            throw_nvrtc(res, "nvrtcAddNameExpression");
+        }
     }
 
     std::vector<std::string> options_storage;
 
     options_storage.push_back("--std=c++17");
-    options_storage.push_back(
-        "--gpu-architecture=sm_" + 
-        std::to_string(sm_major) + 
-        std::to_string(sm_minor)
-    );
+    options_storage.push_back("--gpu-architecture=sm_" + std::to_string(sm_major) + std::to_string(sm_minor));
 
-    for (const auto& opt : extra_options) {
+    for (const auto &opt : extra_options) {
         options_storage.push_back(opt);
     }
 
-    std::vector<const char*> options;
+    std::vector<const char *> options;
     options.reserve(options_storage.size());
 
-    for (const auto& opt : options_storage) {
+    for (const auto &opt : options_storage) {
         options.push_back(opt.c_str());
     }
 
-    res = nvrtcCompileProgram(
-        prog,
-        static_cast<int>(options.size()),
-        options.data()
-    );
-
+    res = nvrtcCompileProgram(prog, static_cast<int>(options.size()), options.data());
 
     std::string log = get_program_log(prog);
 
@@ -131,8 +113,18 @@ CompiledBinary JitCompiler::compile(
 
         out.is_cubin = false;
     }
+    if (!name_expression.empty()) {
+        const char *lowered = nullptr;
+
+        res = nvrtcGetLoweredName(prog, name_expression.c_str(), &lowered);
+        if (res != NVRTC_SUCCESS) {
+            throw_nvrtc(res, "nvrtcGetLoweredName");
+        }
+        out.lowered_name = lowered;
+    }
 
     nvrtcDestroyProgram(&prog);
+
     return out;
 }
 
