@@ -94,10 +94,14 @@ struct LaplacePolyEvaluator3DCuda {
     __device__ inline void operator()(Real (&u)[1][1], const Real (&dX)[3]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
         const bool in_range = (R2 > thresh2) && (R2 < d2max);
+        if (!in_range) {
+            u[0][0] = 0.0;  
+            return;
+        }
         const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
         const Real xmapped = (R2 * Rinv + cen) * rsc;
         const Real P = horner_const<Coeffs, Real>(xmapped);
-        u[0][0] = in_range ? P * Rinv : Real{0};
+        u[0][0] = P * Rinv;
     }
 };
 
@@ -135,10 +139,14 @@ struct SqrtLaplacePolyEvaluator3DCuda {
     __device__ inline void operator()(Real (&u)[1][1], const Real (&dX)[3]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
         const bool in_range = (R2 > thresh2) && (R2 < d2max);
+        if (!in_range) {
+            u[0][0] = 0.0;  
+            return;
+        }
         const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
         const Real R2inv = Rinv * Rinv;
         const Real arg = rsc * R2 + cen;
-        u[0][0] = in_range ? R2inv * horner_const<Coeffs, Real>(arg) : Real{0};
+        u[0][0] = R2inv * horner_const<Coeffs, Real>(arg);
     }
 };
 
@@ -545,7 +553,7 @@ inline void launch_direct_by_box(const DirectByBoxArgs<Real> &args, cudaStream_t
     if (args.n_work == 0)
         return;
 
-    constexpr int block_size = 256;
+    constexpr int block_size = 128;
     constexpr int SPATIAL_DIM = Evaluator::SPATIAL_DIM;
     constexpr int KERNEL_INPUT_DIM = Evaluator::KERNEL_INPUT_DIM;
     constexpr int NORMAL_DIM = Evaluator::NORMAL_DIM;
