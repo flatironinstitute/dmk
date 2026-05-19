@@ -8,6 +8,7 @@ std::string make_charge2proxy_source(const JitKey& key);
 std::string make_tensorprod_source(const JitKey& key);
 std::string make_proxy2pw_source(const JitKey& key);
 std::string make_pw2proxy_source(const JitKey& key);
+std::string make_shift_pw_source(const JitKey& key);
 
 std::string JitKey::to_string() const {
     std::ostringstream os;
@@ -156,6 +157,9 @@ std::string JitCache::make_source(const JitKey& key) const {
         key.name == "PwToProxyMultiLevelKernel"
     ) {
         return make_pw2proxy_source(key);
+    }
+    if (key.name == "ShiftPwKernel") {
+        return make_shift_pw_source(key);
     }
     throw std::runtime_error("Unknown JIT kernel family: " + key.name);
 }

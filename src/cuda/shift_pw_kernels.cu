@@ -16,7 +16,23 @@
 #include <string>
 #include <vector>
 
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+#include <cstdlib>
+#include "cuda/jit/shift_pw_launcher.hpp"
+#endif
+
 namespace dmk::cuda {
+
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+namespace {
+
+inline bool shift_pw_jit_enabled() {
+    const char* disable = std::getenv("DMK_DISABLE_SHIFT_PW_JIT");
+    return !(disable && std::string(disable) == "1");
+}
+
+} // namespace
+#endif
 
 using cuda_helpers::complx;
 
@@ -110,27 +126,91 @@ template void launch_shift_pw<double, 2>(const ShiftPwArgs<double> &, cudaStream
 template void launch_shift_pw<double, 3>(const ShiftPwArgs<double> &, cudaStream_t);
 
 template <typename Real, int DIM>
-void launch_shift_pw_multilevel(const std::vector<ShiftPwArgs<Real>> &args_h, ShiftPwArgs<Real> *d_args_scratch,
-                                cudaStream_t stream) {
+void launch_shift_pw_multilevel(
+    const std::vector<ShiftPwArgs<Real>> &args_h,
+    ShiftPwArgs<Real> *d_args_scratch,
+    cudaStream_t stream
+) {
     if (args_h.empty())
         return;
 
+    constexpr int block_size = 256;
+
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+    if (shift_pw_jit_enabled()) {
+        static dmk::cuda::jit::JitCache jit_cache;
+
+        dmk::cuda::jit::launch_shift_pw_multilevel_jit<Real>(
+            jit_cache,
+            args_h,
+            d_args_scratch,
+            stream,
+            block_size
+        );
+
+        return;
+    }
+#endif
+
     int max_boxes = 0;
-    for (const auto &a : args_h)
+
+    for (const auto &a : args_h) {
         max_boxes = std::max(max_boxes, a.n_boxes_at_level);
+    }
+
     if (max_boxes == 0)
         return;
 
-    DMK_CHECK_CUDA(cudaMemcpyAsync(d_args_scratch, args_h.data(), args_h.size() * sizeof(ShiftPwArgs<Real>),
-                                   cudaMemcpyHostToDevice, stream));
+    DMK_CHECK_CUDA(
+        cudaMemcpyAsync(
+            d_args_scratch,
+            args_h.data(),
+            args_h.size() * sizeof(ShiftPwArgs<Real>),
+            cudaMemcpyHostToDevice,
+            stream
+        )
+    );
 
-    constexpr int block_size = 256;
     dim3 grid(max_boxes, static_cast<int>(args_h.size()), 1);
-    ShiftPwMultiLevelKernel<Real><<<grid, block_size, 0, stream>>>(d_args_scratch, static_cast<int>(args_h.size()));
+
+    ShiftPwMultiLevelKernel<Real>
+        <<<grid, block_size, 0, stream>>>(
+            d_args_scratch,
+            static_cast<int>(args_h.size())
+        );
+
     cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess)
-        throw std::runtime_error(std::string("launch_shift_pw_multilevel: ") + cudaGetErrorString(err));
+
+    if (err != cudaSuccess) {
+        throw std::runtime_error(
+            std::string("launch_shift_pw_multilevel: ") +
+            cudaGetErrorString(err)
+        );
+    }
 }
+
+// template <typename Real, int DIM>
+// void launch_shift_pw_multilevel(const std::vector<ShiftPwArgs<Real>> &args_h, ShiftPwArgs<Real> *d_args_scratch,
+//                                 cudaStream_t stream) {
+//     if (args_h.empty())
+//         return;
+
+//     int max_boxes = 0;
+//     for (const auto &a : args_h)
+//         max_boxes = std::max(max_boxes, a.n_boxes_at_level);
+//     if (max_boxes == 0)
+//         return;
+
+//     DMK_CHECK_CUDA(cudaMemcpyAsync(d_args_scratch, args_h.data(), args_h.size() * sizeof(ShiftPwArgs<Real>),
+//                                    cudaMemcpyHostToDevice, stream));
+
+//     constexpr int block_size = 256;
+//     dim3 grid(max_boxes, static_cast<int>(args_h.size()), 1);
+//     ShiftPwMultiLevelKernel<Real><<<grid, block_size, 0, stream>>>(d_args_scratch, static_cast<int>(args_h.size()));
+//     cudaError_t err = cudaGetLastError();
+//     if (err != cudaSuccess)
+//         throw std::runtime_error(std::string("launch_shift_pw_multilevel: ") + cudaGetErrorString(err));
+// }
 
 template void launch_shift_pw_multilevel<float, 2>(const std::vector<ShiftPwArgs<float>> &, ShiftPwArgs<float> *,
                                                    cudaStream_t);
