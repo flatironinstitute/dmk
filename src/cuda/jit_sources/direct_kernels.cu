@@ -238,7 +238,7 @@ struct StressletPolyEvaluator3DCuda {
 
 using Evaluator = DMK_DIRECT_EVALUATOR;
 
-template <typename Eval, int SRC_TILE>
+template <typename Eval, int TILE>
 __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real> a) {
     constexpr int SPATIAL_DIM = Eval::SPATIAL_DIM;
     constexpr int KERNEL_INPUT_DIM = Eval::KERNEL_INPUT_DIM;
@@ -250,16 +250,16 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
     Real *smem = reinterpret_cast<Real *>(smem_raw);
 
     Real *s_r_src = smem;
-    smem += SRC_TILE * SPATIAL_DIM;
+    smem += TILE * SPATIAL_DIM;
 
     Real *s_charge = smem;
-    smem += SRC_TILE * KERNEL_INPUT_DIM;
+    smem += TILE * KERNEL_INPUT_DIM;
 
     Real *s_normal = nullptr;
 
     if constexpr (NORMAL_DIM > 0) {
         s_normal = smem;
-        smem += SRC_TILE * NORMAL_DIM;
+        smem += TILE * NORMAL_DIM;
     }
 
     const int trg_box_idx = blockIdx.x;
@@ -337,9 +337,9 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
 
             Eval evaluator{a.thresh2, d2max, rsc, cen};
 
-            for (int tile0 = 0; tile0 < n_src; tile0 += SRC_TILE) {
+            for (int tile0 = 0; tile0 < n_src; tile0 += TILE) {
                 const int rem = n_src - tile0;
-                const int tile_count = rem < SRC_TILE ? rem : SRC_TILE;
+                const int tile_count = rem < TILE ? rem : TILE;
 
                 for (int idx = threadIdx.x; idx < tile_count * SPATIAL_DIM; idx += blockDim.x) {
                     const int s = idx / SPATIAL_DIM;
@@ -428,11 +428,9 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
     }
 }
 
+using Evaluator = DMK_DIRECT_EVALUATOR;
 using DirectArgs = dmk::cuda::DirectByBoxArgs<Real>;
 
 // KERNEL_START
 
-template <typename Eval, int TILE>
-__global__ void DirectByBoxKernel(DirectArgs a) {
-    DirectByBoxBody<Eval, TILE>(a);
-}
+extern "C" __global__ void DMK_DIRECT_KERNEL_NAME(DirectArgs a) { DirectByBoxBody<Evaluator, SRC_TILE>(a); }
