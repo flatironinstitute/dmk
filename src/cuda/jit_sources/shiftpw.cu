@@ -4,14 +4,7 @@ struct alignas(2 * sizeof(Real)) complx {
     Real i;
 };
 
-// KERNEL_START
-
-extern "C" __global__ void ShiftPwKernel(const ShiftPwArgs<Real> *args, int n_args) {
-    const int box_idx = blockIdx.x;
-    const int arg_idx = blockIdx.y;
-    
-    const ShiftPwArgs<Real> a = args[arg_idx];
-
+__device__ __forceinline__ void ShiftPwBody(ShiftPwArgs<Real> a, int box_idx) {
     if (box_idx >= a.n_boxes_at_level)
         return;
 
@@ -67,4 +60,17 @@ extern "C" __global__ void ShiftPwKernel(const ShiftPwArgs<Real> *args, int n_ar
             pw_in[d_base + m] = acc;
         }
     }
+}
+
+// KERNEL_START
+
+extern "C" __global__ void ShiftPwByBoxKernel(ShiftPwArgs<Real> a) {
+    ShiftPwBody(a, blockIdx.x);
+}
+
+extern "C" __global__ void ShiftPwKernel(const ShiftPwArgs<Real> *args, int n_args) {
+    const int arg_idx = blockIdx.y;
+    if (arg_idx >= n_args)
+        return;
+    ShiftPwBody(args[arg_idx], blockIdx.x);
 }

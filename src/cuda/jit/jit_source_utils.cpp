@@ -1,8 +1,6 @@
 #include "jit_source_utils.hpp"
 
-#ifdef DMK_CUDA_USE_NVRTC_JIT
 #include <dmk_jit_config.hpp>
-#endif
 
 #include <cstdlib>
 #include <fstream>

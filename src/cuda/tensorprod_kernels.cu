@@ -1,122 +1,13 @@
-// Per-pair tensorprod: dst[i_x, j_y, k_z, d] +=
-//   sum_{ix, jy, kz} src[ix, jy, kz, d]
-//                  * umat_x[i_x, ix] * umat_y[j_y, jy] * umat_z[k_z, kz]
-//
-// Decomposed into 3 sequential axis transforms with ping-pong buffers ff/ff2
-// in a per-block slab of TensorprodArgs::scratch (global memory; the buffers
-// are too large for shared at typical n_order). Block size 128, threads
-// stride over the n_order^DIM output cells.
+// Per-pair tensorprod launcher. Kernel implementation lives in
+// src/cuda/jit_sources/tensorproduct.cu and is compiled with NVRTC.
 
 #include <dmk/cuda/tensorprod_kernels.hpp>
 
+#include "cuda/jit/tensorprod_launcher.hpp"
+
 #include <cuda_runtime.h>
 
-#include <stdexcept>
-#include <string>
-
-#ifdef DMK_CUDA_USE_NVRTC_JIT
-#include <cstdlib>
-#include "cuda/jit/tensorprod_launcher.hpp"
-#endif
-
 namespace dmk::cuda {
-
-#ifdef DMK_CUDA_USE_NVRTC_JIT
-namespace {
-
-inline bool tensorprod_jit_enabled() {
-    const char* disable = std::getenv("DMK_DISABLE_TENSORPROD_JIT");
-    return !(disable && std::string(disable) == "1");
-}
-
-} // namespace
-#endif
-
-template <typename Real>
-__global__ void TensorprodByPair3DKernel(TensorprodArgs<Real> a) {
-    const int N = a.n_order;
-    const int N2 = N * N;
-    const int N3 = N * N * N;
-
-    const int pair_idx = blockIdx.x;
-    if (pair_idx >= a.n_pairs)
-        return;
-
-    Real *ff = a.scratch + pair_idx * a.scratch_stride;
-    Real *ff2 = ff + N3;
-
-    const int src_box = a.src_boxes[pair_idx];
-    const int dst_box = a.dst_boxes[pair_idx];
-    const int oct = a.child_octants[pair_idx];
-
-    const Real *umat_oct = a.umat_flat + oct * 3 * N2;
-    const Real *umat_x = umat_oct + 0 * N2;
-    const Real *umat_y = umat_oct + 1 * N2;
-    const Real *umat_z = umat_oct + 2 * N2;
-
-    const Real *src_base = a.proxy_flat + a.proxy_offsets[src_box];
-    Real *dst_base = a.proxy_flat + a.proxy_offsets[dst_box];
-
-    for (int d = 0; d < a.n_charge_dim; ++d) {
-        const Real *fin = src_base + d * N3;
-        Real *fout = dst_base + d * N3;
-
-        for (int t = threadIdx.x; t < N3; t += blockDim.x) {
-            const int i = t % N;
-            const int j = (t / N) % N;
-            const int kout = t / N2;
-
-            Real acc = Real{0};
-
-            for (int k = 0; k < N; ++k) {
-                acc += fin[i + j * N + k * N2] *
-                       umat_z[kout + k * N];
-            }
-
-            ff[i + j * N + kout * N2] = acc;
-        }
-
-        __syncthreads();
-
-        for (int t = threadIdx.x; t < N3; t += blockDim.x) {
-            const int i = t % N;
-            const int jout = (t / N) % N;
-            const int kz = t / N2;
-
-            Real acc = Real{0};
-
-            for (int j = 0; j < N; ++j) {
-                acc += ff[i + j * N + kz * N2] *
-                       umat_y[jout + j * N];
-            }
-
-            ff2[i + jout * N + kz * N2] = acc;
-        }
-
-        __syncthreads();
-
-        for (int t = threadIdx.x; t < N3; t += blockDim.x) {
-            const int iout = t % N;
-            const int jy = (t / N) % N;
-            const int kz = t / N2;
-
-            Real acc = Real{0};
-
-            for (int i = 0; i < N; ++i) {
-                acc += ff2[i + jy * N + kz * N2] *
-                       umat_x[iout + i * N];
-            }
-
-            if (a.additive_atomic) {
-                atomicAdd(&fout[iout + jy * N + kz * N2], acc);
-            } else {
-                fout[iout + jy * N + kz * N2] += acc;
-            }
-        }
-
-        __syncthreads();
-    }
-}
 
 template <typename Real, int DIM>
 void launch_tensorprod(const TensorprodArgs<Real> &args, cudaStream_t stream) {
@@ -124,53 +15,19 @@ void launch_tensorprod(const TensorprodArgs<Real> &args, cudaStream_t stream) {
         return;
 
     constexpr int block_size = 512;
+    static dmk::cuda::jit::JitCache jit_cache;
 
-#ifdef DMK_CUDA_USE_NVRTC_JIT
-    if (tensorprod_jit_enabled()) {
-        static dmk::cuda::jit::JitCache jit_cache;
-
-        dmk::cuda::jit::launch_tensorprod_jit<Real>(
-            jit_cache,
-            args,
-            stream,
-            block_size
-        );
-
-        return;
-    }
-#endif
-
-    TensorprodByPair3DKernel<Real>
-        <<<args.n_pairs, block_size, 0, stream>>>(args);
-
-    cudaError_t err = cudaGetLastError();
-
-    if (err != cudaSuccess) {
-        throw std::runtime_error(
-            std::string("launch_tensorprod: ") +
-            cudaGetErrorString(err)
-        );
-    }
+    dmk::cuda::jit::launch_tensorprod_jit<Real>(
+        jit_cache,
+        args,
+        stream,
+        block_size
+    );
 }
 
-template void launch_tensorprod<float, 2>(
-    const TensorprodArgs<float> &,
-    cudaStream_t
-);
-
-template void launch_tensorprod<float, 3>(
-    const TensorprodArgs<float> &,
-    cudaStream_t
-);
-
-template void launch_tensorprod<double, 2>(
-    const TensorprodArgs<double> &,
-    cudaStream_t
-);
-
-template void launch_tensorprod<double, 3>(
-    const TensorprodArgs<double> &,
-    cudaStream_t
-);
+template void launch_tensorprod<float, 2>(const TensorprodArgs<float> &, cudaStream_t);
+template void launch_tensorprod<float, 3>(const TensorprodArgs<float> &, cudaStream_t);
+template void launch_tensorprod<double, 2>(const TensorprodArgs<double> &, cudaStream_t);
+template void launch_tensorprod<double, 3>(const TensorprodArgs<double> &, cudaStream_t);
 
 } // namespace dmk::cuda

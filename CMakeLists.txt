@@ -14,7 +14,6 @@ option(DMK_HAVE_OPENMP "Use OpenMP for parallelism" ON)
 option(DMK_BUILD_REFERENCE "Build reference Fortran implementation" OFF)
 option(DMK_USE_JIT "Use JIT compilation where supported (requires LLVM)" OFF)
 option(DMK_GPU_OFFLOAD "Enable GPU offloading via CUDA" OFF)
-option(DMK_CUDA_USE_NVRTC_JIT "Enable CUDA NVRTC JIT kernels" OFF)
 
 if (DMK_BUILD_REFERENCE)
   enable_language(Fortran)
@@ -76,45 +75,32 @@ if (DMK_GPU_OFFLOAD)
   set(CMAKE_CUDA_EXTENSIONS OFF)
   find_package(CUDAToolkit REQUIRED)
   set(DMK_GPU_TARGET CUDA::cudart)
-  set(DMK_CUDA_JIT_TARGETS "")
+  set(DMK_CUDA_JIT_TARGETS CUDA::cuda_driver CUDA::nvrtc)
   set(DMK_CUDA_JIT_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
-  if (DMK_CUDA_USE_NVRTC_JIT)
-    list(APPEND DMK_CXX_FLAGS "-DDMK_CUDA_USE_NVRTC_JIT")
-
-    configure_file(
-      ${PROJECT_SOURCE_DIR}/src/cuda/jit/dmk_jit_config.hpp.in
-      ${DMK_CUDA_JIT_GENERATED_INCLUDE_DIR}/dmk_jit_config.hpp
-      @ONLY
-    )
-
-    list(APPEND DMK_CUDA_JIT_TARGETS
-      CUDA::cuda_driver
-      CUDA::nvrtc
-      )
-  endif()
+  configure_file(
+    ${PROJECT_SOURCE_DIR}/src/cuda/jit/dmk_jit_config.hpp.in
+    ${DMK_CUDA_JIT_GENERATED_INCLUDE_DIR}/dmk_jit_config.hpp
+    @ONLY
+  )
   list(APPEND DMK_CXX_FLAGS "-DDMK_GPU_OFFLOAD")
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo -Xptxas=-warn-spills")
 endif()
 
-set(DMK_CUDA_JIT_SRC "")
-
-if (DMK_CUDA_USE_NVRTC_JIT)
-  list(APPEND DMK_CUDA_JIT_SRC
-    src/cuda/jit/jit_cache.cpp
-    src/cuda/jit/jit_compiler.cpp
-    src/cuda/jit/jit_kernel.cpp
-    src/cuda/jit/jit_source_utils.cpp
-    src/cuda/jit/charge2proxy_launcher.cpp
-    src/cuda/jit/tensorprod_launcher.cpp
-    src/cuda/jit/proxy2pw_launcher.cpp
-    src/cuda/jit/pw2proxy_launcher.cpp
-    src/cuda/jit/shift_pw_launcher.cpp
-    src/cuda/jit/eval_targets_launcher.cpp
-    src/cuda/jit/multiply_kernelft_launcher.cpp
-    src/cuda/jit/shared_state_launcher.cpp
-    src/cuda/jit/direct_source_registry.cpp
-  )
-endif()
+set(DMK_CUDA_JIT_SRC
+  src/cuda/jit/jit_cache.cpp
+  src/cuda/jit/jit_compiler.cpp
+  src/cuda/jit/jit_kernel.cpp
+  src/cuda/jit/jit_source_utils.cpp
+  src/cuda/jit/charge2proxy_launcher.cpp
+  src/cuda/jit/tensorprod_launcher.cpp
+  src/cuda/jit/proxy2pw_launcher.cpp
+  src/cuda/jit/pw2proxy_launcher.cpp
+  src/cuda/jit/shift_pw_launcher.cpp
+  src/cuda/jit/eval_targets_launcher.cpp
+  src/cuda/jit/multiply_kernelft_launcher.cpp
+  src/cuda/jit/shared_state_launcher.cpp
+  src/cuda/jit/direct_source_registry.cpp
+)
 
 find_package(BLAS REQUIRED)
 
@@ -242,12 +228,10 @@ if (DMK_GPU_OFFLOAD)
     ${DMK_INCLUDES}
   )
 
-  if (DMK_CUDA_USE_NVRTC_JIT)
-    target_include_directories(DMKOBJS_CUDA PRIVATE
-      ${PROJECT_SOURCE_DIR}/src
-      ${DMK_CUDA_JIT_GENERATED_INCLUDE_DIR}
-    )
-  endif()
+  target_include_directories(DMKOBJS_CUDA PRIVATE
+    ${PROJECT_SOURCE_DIR}/src
+    ${DMK_CUDA_JIT_GENERATED_INCLUDE_DIR}
+  )
 
   target_link_libraries(DMKOBJS_CUDA PUBLIC
     ${DMK_GPU_TARGET}

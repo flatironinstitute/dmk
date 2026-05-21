@@ -52,6 +52,40 @@ std::string make_shift_pw_source(const JitKey& key) {
 }
 
 template <typename Real>
+void launch_shift_pw_jit(
+    JitCache& cache,
+    const dmk::cuda::ShiftPwArgs<Real>& args,
+    cudaStream_t stream,
+    int blocksize
+) {
+    if (args.n_boxes_at_level == 0) {
+        return;
+    }
+
+    JitKey key;
+    key.name = "ShiftPwByBoxKernel";
+    key.real = jit_real_name<Real>();
+    key.sm_major = cache.sm_major();
+    key.sm_minor = cache.sm_minor();
+
+    key.params = {
+        {"BLOCK_SIZE", blocksize},
+        {"N_CHARGE_DIM", args.n_charge_dim},
+        {"N_PW_MODES", args.n_pw_modes},
+    };
+
+    auto kernel = cache.get_kernel(key);
+
+    kernel->launch(
+        dim3(args.n_boxes_at_level, 1, 1),
+        dim3(blocksize, 1, 1),
+        0,
+        stream,
+        args
+    );
+}
+
+template <typename Real>
 void launch_shift_pw_multilevel_jit(
     JitCache& cache,
     const std::vector<dmk::cuda::ShiftPwArgs<Real>>& args_h,
@@ -112,6 +146,20 @@ void launch_shift_pw_multilevel_jit(
         n_args
     );
 }
+
+template void launch_shift_pw_jit<float>(
+    JitCache&,
+    const dmk::cuda::ShiftPwArgs<float>&,
+    cudaStream_t,
+    int
+);
+
+template void launch_shift_pw_jit<double>(
+    JitCache&,
+    const dmk::cuda::ShiftPwArgs<double>&,
+    cudaStream_t,
+    int
+);
 
 template void launch_shift_pw_multilevel_jit<float>(
     JitCache&,

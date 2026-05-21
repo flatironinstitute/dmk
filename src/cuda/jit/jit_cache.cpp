@@ -189,7 +189,7 @@ std::string JitCache::make_source(const JitKey &key) const {
     if (key.name == "PwToProxyKernel" || key.name == "PwToProxyMultiLevelKernel") {
         return make_pw2proxy_source(key);
     }
-    if (key.name == "ShiftPwKernel") {
+    if (key.name == "ShiftPwKernel" || key.name == "ShiftPwByBoxKernel") {
         return make_shift_pw_source(key);
     }
     if (key.name.rfind("DirectByBoxKernel_", 0) == 0) {
