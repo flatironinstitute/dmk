@@ -3,6 +3,7 @@
 #include "direct_source_registry.hpp"
 #include "jit_cache.hpp"
 #include "jit_kernel.hpp"
+#include "jit_source_utils.hpp"
 #include "jit_types.hpp"
 
 #include <cuda_runtime.h>
@@ -15,19 +16,6 @@
 
 namespace dmk::cuda::jit {
 namespace detail {
-
-template <typename Real>
-inline const char *direct_real_name();
-
-template <>
-inline const char *direct_real_name<float>() {
-    return "float";
-}
-
-template <>
-inline const char *direct_real_name<double>() {
-    return "double";
-}
 
 template <typename Coeffs>
 std::string emit_coeff_tag(const char *name) {
@@ -147,7 +135,7 @@ const std::string &direct_kernel_name_for_type() {
     static const std::string name = [] {
         const int id = next_direct_kernel_id();
 
-        return std::string("DirectByBoxKernel_") + direct_real_name<Real>() + "_" + Traits::family() + "_" +
+        return std::string("DirectByBoxKernel_") + jit_real_name<Real>() + "_" + Traits::family() + "_" +
                std::to_string(id);
     }();
 
@@ -183,7 +171,7 @@ void launch_direct_by_box_jit(JitCache &cache, const dmk::cuda::DirectByBoxArgs<
 
     JitKey key;
     key.name = detail::direct_kernel_name_for_type<Evaluator>();
-    key.real = detail::direct_real_name<Real>();
+    key.real = jit_real_name<Real>();
     key.sm_major = cache.sm_major();
     key.sm_minor = cache.sm_minor();
 

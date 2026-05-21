@@ -1,15 +1,9 @@
 #include "direct_source_registry.hpp"
 
+#include "jit_source_utils.hpp"
 #include "jit_types.hpp"
 
-#ifdef DMK_CUDA_USE_NVRTC_JIT
-#include <dmk_jit_config.hpp>
-#endif
-
 #include <atomic>
-#include <cstdlib>
-#include <filesystem>
-#include <fstream>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
@@ -34,73 +28,10 @@ std::unordered_map<std::string, DirectSourceDescriptor>& registry() {
     return r;
 }
 
-std::filesystem::path jit_source_root() {
-#ifdef DMK_JIT_SOURCE_DIR
-    return std::filesystem::path(DMK_JIT_SOURCE_DIR);
-#else
-    if (const char* env = std::getenv("DMK_JIT_SOURCE_DIR")) {
-        return std::filesystem::path(env);
-    }
-
-    return std::filesystem::path("src/cuda/jit_sources");
-#endif
-}
-
-std::string read_text_file(const std::filesystem::path& path) {
-    std::ifstream in(path, std::ios::binary);
-
-    if (!in) {
-        throw std::runtime_error(
-            "DirectByBox JIT: failed to open source file: " + path.string()
-        );
-    }
-
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
-}
-
-struct SplitSource {
-    std::string header;
-    std::string kernel;
-};
-
-SplitSource split_at_kernel_start(const std::string& source) {
-    constexpr const char* marker = "// KERNEL_START";
-
-    const std::size_t pos = source.find(marker);
-
-    if (pos == std::string::npos) {
-        throw std::runtime_error(
-            "DirectByBox JIT source is missing // KERNEL_START marker"
-        );
-    }
-
-    return SplitSource{
-        source.substr(0, pos),
-        source.substr(pos)
-    };
-}
-
 const SplitSource& direct_by_box_split_source() {
-    static const SplitSource split = [] {
-        const auto source_path = jit_source_root() / "direct_kernels.cu";
-        return split_at_kernel_start(read_text_file(source_path));
-    }();
+    static const SplitSource split = load_split_jit_source("direct_kernels.cu", "DirectByBox");
 
     return split;
-}
-
-int required_param(const JitKey& key, const char* name) {
-    const auto it = key.params.find(name);
-
-    if (it == key.params.end()) {
-        throw std::runtime_error(
-            std::string("DirectByBox JIT key missing param: ") + name
-        );
-    }
-
-    return it->second;
 }
 
 } // namespace
@@ -146,8 +77,8 @@ std::string make_direct_by_box_source(const JitKey& key) {
     const DirectSourceDescriptor& desc =
         get_direct_source_descriptor(key.name);
 
-    const int src_tile = required_param(key, "SRC_TILE");
-    const int blocksize = required_param(key, "BLOCK_SIZE");
+    const int src_tile = required_int_param(key, "SRC_TILE", "DirectByBox");
+    const int blocksize = required_int_param(key, "BLOCK_SIZE", "DirectByBox");
 
     std::ostringstream prelude;
 

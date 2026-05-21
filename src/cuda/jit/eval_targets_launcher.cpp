@@ -2,18 +2,12 @@
 
 #include "jit_cache.hpp"
 #include "jit_kernel.hpp"
+#include "jit_source_utils.hpp"
 #include "jit_types.hpp"
-
-#ifdef DMK_CUDA_USE_NVRTC_JIT
-#include <dmk_jit_config.hpp>
-#endif
 
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-#include <cstdlib>
-#include <filesystem>
-#include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -21,85 +15,12 @@
 namespace dmk::cuda::jit {
 namespace {
 
-template <typename Real>
-const char* real_name();
-
-template <>
-const char* real_name<float>() {
-    return "float";
-}
-
-template <>
-const char* real_name<double>() {
-    return "double";
-}
-
-int get_required_param(const JitKey& key, const char* name) {
-    const auto it = key.params.find(name);
-
-    if (it == key.params.end()) {
-        throw std::runtime_error(
-            std::string("EvalTargets JIT key missing parameter: ") + name
-        );
-    }
-
-    return it->second;
-}
-
-std::string read_text_file(const std::filesystem::path& path) {
-    std::ifstream in(path, std::ios::binary);
-
-    if (!in) {
-        throw std::runtime_error(
-            "EvalTargets JIT: failed to open source file: " + path.string()
-        );
-    }
-
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
-}
-
-struct SplitSource {
-    std::string header;
-    std::string kernel;
-};
-
-SplitSource split_at_kernel_start(const std::string& source) {
-    constexpr const char* marker = "// KERNEL_START";
-
-    const std::size_t pos = source.find(marker);
-
-    if (pos == std::string::npos) {
-        throw std::runtime_error(
-            "EvalTargets JIT source is missing // KERNEL_START marker"
-        );
-    }
-
-    return SplitSource{
-        source.substr(0, pos),
-        source.substr(pos)
-    };
-}
-
-std::filesystem::path jit_source_root() {
-#ifdef DMK_JIT_SOURCE_DIR
-    return std::filesystem::path(DMK_JIT_SOURCE_DIR);
-#else
-    if (const char* env = std::getenv("DMK_JIT_SOURCE_DIR")) {
-        return std::filesystem::path(env);
-    }
-
-    return std::filesystem::path("src/cuda/jit_sources");
-#endif
-}
-
 std::string make_specialization_constants(const JitKey& key) {
-    const int dim          = get_required_param(key, "DIM");
-    const int eval_level   = get_required_param(key, "EVAL_LEVEL");
-    const int n_charge_dim = get_required_param(key, "N_CHARGE_DIM");
-    const int n_order      = get_required_param(key, "N_ORDER");
-    const int blocksize    = get_required_param(key, "BLOCK_SIZE");
+    const int dim          = required_int_param(key, "DIM", "EvalTargets");
+    const int eval_level   = required_int_param(key, "EVAL_LEVEL", "EvalTargets");
+    const int n_charge_dim = required_int_param(key, "N_CHARGE_DIM", "EvalTargets");
+    const int n_order      = required_int_param(key, "N_ORDER", "EvalTargets");
+    const int blocksize    = required_int_param(key, "BLOCK_SIZE", "EvalTargets");
 
     std::ostringstream ss;
 
@@ -116,7 +37,7 @@ std::string make_specialization_constants(const JitKey& key) {
 }
 
 std::string make_self_correction_specialization_constants(const JitKey& key) {
-    const int blocksize = get_required_param(key, "BLOCK_SIZE");
+    const int blocksize = required_int_param(key, "BLOCK_SIZE", "SelfCorrection");
 
     std::ostringstream ss;
 
@@ -139,7 +60,6 @@ void check_eval_targets_shape_or_throw(
     int dim,
     int eval_level,
     int n_charge_dim,
-    int blocksize,
     const char* real,
     int n_order,
     int n_eval_boxes
@@ -150,8 +70,7 @@ void check_eval_targets_shape_or_throw(
 
     if (!(dim == 2 || dim == 3) ||
         !supported_eval_shape ||
-        n_order <= 0 ||
-        blocksize <= 0) {
+        n_order <= 0) {
         throw std::runtime_error(
             std::string("EvalTargets JIT: unsupported shape") +
             " real=" + real +
@@ -159,8 +78,7 @@ void check_eval_targets_shape_or_throw(
             " eval_level=" + std::to_string(eval_level) +
             " n_charge_dim=" + std::to_string(n_charge_dim) +
             " n_order=" + std::to_string(n_order) +
-            " n_eval_boxes=" + std::to_string(n_eval_boxes) +
-            " blocksize=" + std::to_string(blocksize)
+            " n_eval_boxes=" + std::to_string(n_eval_boxes)
         );
     }
 }
@@ -200,10 +118,7 @@ void set_dynamic_smem_if_needed(
 } // namespace
 
 std::string make_eval_targets_source(const JitKey& key) {
-    const auto source_path = jit_source_root() / "eval_targets.cu";
-
-    const std::string file_source = read_text_file(source_path);
-    const SplitSource split = split_at_kernel_start(file_source);
+    const SplitSource split = load_split_jit_source("eval_targets.cu", "EvalTargets");
 
     std::ostringstream generated;
 
@@ -215,10 +130,7 @@ std::string make_eval_targets_source(const JitKey& key) {
 }
 
 std::string make_self_correction_source(const JitKey& key) {
-    const auto source_path = jit_source_root() / "self_correction.cu";
-
-    const std::string file_source = read_text_file(source_path);
-    const SplitSource split = split_at_kernel_start(file_source);
+    const SplitSource split = load_split_jit_source("self_correction.cu", "SelfCorrection");
 
     std::ostringstream generated;
 
@@ -246,15 +158,14 @@ void launch_eval_targets_jit(
         DIM,
         eval_level,
         n_charge_dim,
-        blocksize,
-        real_name<Real>(),
+        jit_real_name<Real>(),
         args.n_order,
         args.n_eval_boxes
     );
 
     JitKey key;
     key.name = "EvalTargetsByBoxKernel";
-    key.real = real_name<Real>();
+    key.real = jit_real_name<Real>();
     key.sm_major = cache.sm_major();
     key.sm_minor = cache.sm_minor();
 
@@ -296,15 +207,10 @@ void launch_self_correction_jit(
     if (args.n_direct_work == 0) {
         return;
     }
-    if (blocksize <= 0) {
-        throw std::runtime_error(
-            "launch_self_correction_jit: invalid blocksize=" + std::to_string(blocksize)
-        );
-    }
 
     JitKey key;
     key.name = "SelfCorrectionKernel";
-    key.real = real_name<Real>();
+    key.real = jit_real_name<Real>();
     key.sm_major = cache.sm_major();
     key.sm_minor = cache.sm_minor();
     key.params = {

@@ -2,11 +2,8 @@
 
 #include "jit_cache.hpp"
 #include "jit_kernel.hpp"
+#include "jit_source_utils.hpp"
 #include "jit_types.hpp"
-
-#ifdef DMK_CUDA_USE_NVRTC_JIT
-#include <dmk_jit_config.hpp>
-#endif
 
 #include <dmk/cuda/helpers.hpp>
 
@@ -14,9 +11,7 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
-#include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -25,90 +20,17 @@
 namespace dmk::cuda::jit {
 namespace {
 
-template <typename Real>
-const char* real_name();
-
-template <>
-const char* real_name<float>() {
-    return "float";
-}
-
-template <>
-const char* real_name<double>() {
-    return "double";
-}
-
-int get_required_param(const JitKey& key, const char* name) {
-    const auto it = key.params.find(name);
-
-    if (it == key.params.end()) {
-        throw std::runtime_error(
-            std::string("PwToProxy JIT key missing parameter: ") + name
-        );
-    }
-
-    return it->second;
-}
-
-std::string read_text_file(const std::filesystem::path& path) {
-    std::ifstream in(path, std::ios::binary);
-
-    if (!in) {
-        throw std::runtime_error(
-            "PwToProxy JIT: failed to open source file: " + path.string()
-        );
-    }
-
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
-}
-
-struct SplitSource {
-    std::string header;
-    std::string kernel;
-};
-
-SplitSource split_at_kernel_start(const std::string& source) {
-    constexpr const char* marker = "// KERNEL_START";
-
-    const std::size_t pos = source.find(marker);
-
-    if (pos == std::string::npos) {
-        throw std::runtime_error(
-            "PwToProxy JIT source is missing // KERNEL_START marker"
-        );
-    }
-
-    return SplitSource{
-        source.substr(0, pos),
-        source.substr(pos)
-    };
-}
-
-std::filesystem::path jit_source_root() {
-#ifdef DMK_JIT_SOURCE_DIR
-    return std::filesystem::path(DMK_JIT_SOURCE_DIR);
-#else
-    if (const char* env = std::getenv("DMK_JIT_SOURCE_DIR")) {
-        return std::filesystem::path(env);
-    }
-
-    return std::filesystem::path("src/cuda/jit_sources");
-#endif
-}
-
 std::string make_prelude(const JitKey& key) {
-    const int k1_tile   = get_required_param(key, "K1_TILE");
-    const int col_reg   = get_required_param(key, "COL_REG");
-    const int k2_tile   = get_required_param(key, "K2_TILE");
-    const int k3_tile   = get_required_param(key, "K3_TILE");
-    const int kr_tile   = get_required_param(key, "KR_TILE");
-    const int blocksize = get_required_param(key, "BLOCK_SIZE");
-    const int n_order      = get_required_param(key, "N_ORDER");
-    const int n_pw         = get_required_param(key, "N_PW");
-    const int n_pw2        = get_required_param(key, "N_PW2");
-    const int n_charge_dim = get_required_param(key, "N_CHARGE_DIM");
+    const int k1_tile   = required_int_param(key, "K1_TILE", "PwToProxy");
+    const int col_reg   = required_int_param(key, "COL_REG", "PwToProxy");
+    const int k2_tile   = required_int_param(key, "K2_TILE", "PwToProxy");
+    const int k3_tile   = required_int_param(key, "K3_TILE", "PwToProxy");
+    const int kr_tile   = required_int_param(key, "KR_TILE", "PwToProxy");
+    const int blocksize = required_int_param(key, "BLOCK_SIZE", "PwToProxy");
+    const int n_order      = required_int_param(key, "N_ORDER", "PwToProxy");
+    const int n_pw         = required_int_param(key, "N_PW", "PwToProxy");
+    const int n_pw2        = required_int_param(key, "N_PW2", "PwToProxy");
+    const int n_charge_dim = required_int_param(key, "N_CHARGE_DIM", "PwToProxy");
 
     std::ostringstream ss;
 
@@ -236,10 +158,7 @@ std::string make_pw2proxy_source(const JitKey& key) {
         );
     }
 
-    const auto source_path = jit_source_root() / filename;
-
-    const std::string file_source = read_text_file(source_path);
-    const SplitSource split = split_at_kernel_start(file_source);
+    const SplitSource split = load_split_jit_source(filename.string(), "PwToProxy");
 
     std::ostringstream generated;
 
@@ -270,7 +189,7 @@ void launch_pw_to_proxy_jit(
 
     JitKey key;
     key.name = "PwToProxyKernel";
-    key.real = real_name<Real>();
+    key.real = jit_real_name<Real>();
     key.sm_major = cache.sm_major();
     key.sm_minor = cache.sm_minor();
 
@@ -364,7 +283,7 @@ void launch_pw_to_proxy_multilevel_jit(
 
     JitKey key;
     key.name = "PwToProxyMultiLevelKernel";
-    key.real = real_name<Real>();
+    key.real = jit_real_name<Real>();
     key.sm_major = cache.sm_major();
     key.sm_minor = cache.sm_minor();
 
