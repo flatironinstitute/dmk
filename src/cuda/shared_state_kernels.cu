@@ -1,6 +1,24 @@
 #include <dmk/cuda/shared_state_kernels.hpp>
 
+#include <string>
+
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+#include "cuda/jit/shared_state_launcher.hpp"
+#include <cstdlib>
+#endif
+
 namespace dmk::cuda {
+
+namespace {
+
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+inline bool shared_state_jit_enabled() {
+    const char *disable = std::getenv("DMK_DISABLE_SHARED_STATE_JIT");
+    return !(disable && std::string(disable) == "1");
+}
+#endif
+
+} // namespace
 
 template <typename Real>
 __global__ void accumulate_and_scatter_kernel(Real *__restrict__ out, const Real *__restrict__ pot_eval,
@@ -21,6 +39,14 @@ void launch_accumulate_and_scatter(Real *out, const Real *pot_eval, const Real *
     if (n_particles == 0)
         return;
     constexpr int block = 256;
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+    if (shared_state_jit_enabled()) {
+        static dmk::cuda::jit::JitCache jit_cache;
+        dmk::cuda::jit::launch_accumulate_and_scatter_jit<Real>(jit_cache, out, pot_eval, pot_extra, scatter_index,
+                                                                dof, n_particles, stream, block);
+        return;
+    }
+#endif
     long grid = (n_particles + block - 1) / block;
     accumulate_and_scatter_kernel<<<grid, block, 0, stream>>>(out, pot_eval, pot_extra, scatter_index, dof,
                                                               n_particles);

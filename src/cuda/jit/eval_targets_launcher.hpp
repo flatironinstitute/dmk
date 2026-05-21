@@ -12,6 +12,7 @@
 namespace dmk::cuda::jit {
 
 std::string make_eval_targets_source(const JitKey& key);
+std::string make_self_correction_source(const JitKey& key);
 
 template <typename Real, int DIM>
 void launch_eval_targets_jit(
@@ -55,6 +56,28 @@ extern template void launch_eval_targets_jit<double, 3>(
     int,
     int,
     const dmk::cuda::EvalTargetsArgs<double>&,
+    cudaStream_t,
+    int
+);
+
+template <typename Real>
+void launch_self_correction_jit(
+    JitCache& cache,
+    const dmk::cuda::SelfCorrectionArgs<Real>& args,
+    cudaStream_t stream,
+    int blocksize
+);
+
+extern template void launch_self_correction_jit<float>(
+    JitCache&,
+    const dmk::cuda::SelfCorrectionArgs<float>&,
+    cudaStream_t,
+    int
+);
+
+extern template void launch_self_correction_jit<double>(
+    JitCache&,
+    const dmk::cuda::SelfCorrectionArgs<double>&,
     cudaStream_t,
     int
 );

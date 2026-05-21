@@ -390,6 +390,13 @@ void launch_self_correction(const SelfCorrectionArgs<Real> &args, cudaStream_t s
     if (args.n_direct_work == 0)
         return;
     constexpr int block = 128;
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+    if (eval_targets_jit_enabled()) {
+        static dmk::cuda::jit::JitCache jit_cache;
+        dmk::cuda::jit::launch_self_correction_jit<Real>(jit_cache, args, stream, block);
+        return;
+    }
+#endif
     self_correction_kernel<<<args.n_direct_work, block, 0, stream>>>(args);
 }
 

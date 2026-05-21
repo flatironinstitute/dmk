@@ -26,6 +26,21 @@ struct EvalTargetsArgs {
     const long *pot_offsets = nullptr; // [n_boxes]
 };
 
+template <typename Real>
+struct SelfCorrectionArgs {
+    const int *direct_work;          // [n_direct_work]
+    const Real *correction_factors;  // [n_direct_work]
+    const int *src_counts_owned;     // [n_boxes]
+    const int *src_counts_halo;      // [n_boxes]
+    const Real *charge_halo;         // flat, AoS stride = n_input_dim
+    const long *charge_halo_offsets; // [n_boxes]
+    Real *pot_src;                   // d_pot_src_eval, AoS stride = pot_stride
+    const long *pot_src_offsets;     // [n_boxes]
+    int n_direct_work;
+    int n_input_dim; // kernel_input_dim; also the charge AoS stride
+    int pot_stride;  // kernel_output_dim_src; the pot AoS stride
+};
+
 } // namespace dmk::cuda
 
 #endif // DMK_CUDA_EVAL_TARGETS_KERNELARGS_HPP

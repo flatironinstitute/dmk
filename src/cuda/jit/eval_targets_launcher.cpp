@@ -115,6 +115,19 @@ std::string make_specialization_constants(const JitKey& key) {
     return ss.str();
 }
 
+std::string make_self_correction_specialization_constants(const JitKey& key) {
+    const int blocksize = get_required_param(key, "BLOCK_SIZE");
+
+    std::ostringstream ss;
+
+    ss << "#include <dmk/cuda/eval_targets_kernelargs.hpp>\n";
+    ss << "using dmk::cuda::SelfCorrectionArgs;\n\n";
+    ss << "using Real = " << key.real << ";\n\n";
+    ss << "constexpr int BLOCK_SIZE = " << blocksize << ";\n\n";
+
+    return ss.str();
+}
+
 std::size_t eval_targets_shared_bytes(int dim, int n_order, std::size_t sizeof_real) {
     const int n2 = n_order * n_order;
     const int coeffs_stride_per_dim = (dim == 2) ? n2 : n2 * n_order;
@@ -201,6 +214,21 @@ std::string make_eval_targets_source(const JitKey& key) {
     return generated.str();
 }
 
+std::string make_self_correction_source(const JitKey& key) {
+    const auto source_path = jit_source_root() / "self_correction.cu";
+
+    const std::string file_source = read_text_file(source_path);
+    const SplitSource split = split_at_kernel_start(file_source);
+
+    std::ostringstream generated;
+
+    generated << make_self_correction_specialization_constants(key) << "\n";
+    generated << split.header << "\n";
+    generated << split.kernel << "\n";
+
+    return generated.str();
+}
+
 template <typename Real, int DIM>
 void launch_eval_targets_jit(
     JitCache& cache,
@@ -258,6 +286,42 @@ void launch_eval_targets_jit(
     );
 }
 
+template <typename Real>
+void launch_self_correction_jit(
+    JitCache& cache,
+    const dmk::cuda::SelfCorrectionArgs<Real>& args,
+    cudaStream_t stream,
+    int blocksize
+) {
+    if (args.n_direct_work == 0) {
+        return;
+    }
+    if (blocksize <= 0) {
+        throw std::runtime_error(
+            "launch_self_correction_jit: invalid blocksize=" + std::to_string(blocksize)
+        );
+    }
+
+    JitKey key;
+    key.name = "SelfCorrectionKernel";
+    key.real = real_name<Real>();
+    key.sm_major = cache.sm_major();
+    key.sm_minor = cache.sm_minor();
+    key.params = {
+        {"BLOCK_SIZE", blocksize},
+    };
+
+    auto kernel = cache.get_kernel(key);
+
+    kernel->launch(
+        dim3(args.n_direct_work, 1, 1),
+        dim3(blocksize, 1, 1),
+        0,
+        stream,
+        args
+    );
+}
+
 template void launch_eval_targets_jit<float, 2>(
     JitCache&,
     int,
@@ -290,6 +354,20 @@ template void launch_eval_targets_jit<double, 3>(
     int,
     int,
     const dmk::cuda::EvalTargetsArgs<double>&,
+    cudaStream_t,
+    int
+);
+
+template void launch_self_correction_jit<float>(
+    JitCache&,
+    const dmk::cuda::SelfCorrectionArgs<float>&,
+    cudaStream_t,
+    int
+);
+
+template void launch_self_correction_jit<double>(
+    JitCache&,
+    const dmk::cuda::SelfCorrectionArgs<double>&,
     cudaStream_t,
     int
 );

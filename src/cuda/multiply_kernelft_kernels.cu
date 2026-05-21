@@ -8,7 +8,23 @@
 #include <stdexcept>
 #include <string>
 
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+#include "cuda/jit/multiply_kernelft_launcher.hpp"
+#include <cstdlib>
+#endif
+
 namespace dmk::cuda {
+
+namespace {
+
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+inline bool multiply_kernelft_jit_enabled() {
+    const char *disable = std::getenv("DMK_DISABLE_MULTIPLY_KERNELFT_JIT");
+    return !(disable && std::string(disable) == "1");
+}
+#endif
+
+} // namespace
 
 // cd2p: pointwise complex × real.
 template <typename Real>
@@ -195,6 +211,13 @@ void launch_multiply_cd2p(const MultiplyCd2pArgs<Real> &args, cudaStream_t strea
     if (args.n_boxes_at_level == 0)
         return;
     constexpr int block_size = 128;
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+    if (multiply_kernelft_jit_enabled()) {
+        static dmk::cuda::jit::JitCache jit_cache;
+        dmk::cuda::jit::launch_multiply_cd2p_jit<Real, DIM>(jit_cache, args, stream, block_size);
+        return;
+    }
+#endif
     MultiplyCd2pByBoxKernel<Real><<<args.n_boxes_at_level, block_size, 0, stream>>>(args);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess)
@@ -207,6 +230,13 @@ void launch_multiply_stokeslet_3d(const MultiplyStokeslet3DArgs<Real> &args, cud
         return;
     constexpr int block_size = 128;
     const std::size_t shared_bytes = sizeof(Real) * 6; // cvec for windowed correction
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+    if (multiply_kernelft_jit_enabled()) {
+        static dmk::cuda::jit::JitCache jit_cache;
+        dmk::cuda::jit::launch_multiply_stokeslet_3d_jit<Real>(jit_cache, args, stream, block_size);
+        return;
+    }
+#endif
     MultiplyStokeslet3DByBoxKernel<Real><<<args.n_boxes_at_level, block_size, shared_bytes, stream>>>(args);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess)
@@ -218,6 +248,13 @@ void launch_multiply_stresslet_3d(const MultiplyStresslet3DArgs<Real> &args, cud
     if (args.n_boxes_at_level == 0)
         return;
     constexpr int block_size = 128;
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+    if (multiply_kernelft_jit_enabled()) {
+        static dmk::cuda::jit::JitCache jit_cache;
+        dmk::cuda::jit::launch_multiply_stresslet_3d_jit<Real>(jit_cache, args, stream, block_size);
+        return;
+    }
+#endif
     MultiplyStresslet3DByBoxKernel<Real><<<args.n_boxes_at_level, block_size, 0, stream>>>(args);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess)
