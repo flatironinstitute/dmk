@@ -10,6 +10,7 @@ std::string make_proxy2pw_source(const JitKey &key);
 std::string make_pw2proxy_source(const JitKey &key);
 std::string make_shift_pw_source(const JitKey &key);
 std::string make_direct_by_box_source(const JitKey& key);
+std::string make_eval_targets_source(const JitKey& key);
 
 std::string JitKey::to_string() const {
     std::ostringstream os;
@@ -190,6 +191,9 @@ std::string JitCache::make_source(const JitKey &key) const {
     }
     if (key.name.rfind("DirectByBoxKernel_", 0) == 0) {
         return make_direct_by_box_source(key);
+    }
+    if (key.name == "EvalTargetsByBoxKernel") {
+        return make_eval_targets_source(key);
     }
     throw std::runtime_error("Unknown JIT kernel family: " + key.name);
 }

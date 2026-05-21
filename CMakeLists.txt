@@ -108,6 +108,7 @@ if (DMK_CUDA_USE_NVRTC_JIT)
     src/cuda/jit/proxy2pw_launcher.cpp
     src/cuda/jit/pw2proxy_launcher.cpp
     src/cuda/jit/shift_pw_launcher.cpp
+    src/cuda/jit/eval_targets_launcher.cpp
     src/cuda/jit/direct_source_registry.cpp
   )
 endif()

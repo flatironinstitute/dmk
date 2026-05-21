@@ -19,7 +19,23 @@
 #include <stdexcept>
 #include <string>
 
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+#include "cuda/jit/eval_targets_launcher.hpp"
+#include <cstdlib>
+#endif
+
 namespace dmk::cuda {
+
+namespace {
+
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+inline bool eval_targets_jit_enabled() {
+    const char *disable = std::getenv("DMK_DISABLE_EVAL_TARGETS_JIT");
+    return !(disable && std::string(disable) == "1");
+}
+#endif
+
+} // namespace
 
 template <typename Real>
 __device__ __forceinline__ void cooperative_load_16B(Real *__restrict__ dst, const Real *__restrict__ src, int n) {
@@ -303,6 +319,25 @@ static void launch_eval_targets_kernel(const EvalTargetsArgs<Real> &args, cudaSt
 // below and lift the DIM=3 gate in the other GPU contexts.
 template <typename Real, int DIM>
 void launch_eval_targets(int eval_level, int n_charge_dim, const EvalTargetsArgs<Real> &args, cudaStream_t stream) {
+    constexpr int block_size = 640;
+
+#ifdef DMK_CUDA_USE_NVRTC_JIT
+    if (eval_targets_jit_enabled()) {
+        static dmk::cuda::jit::JitCache jit_cache;
+
+        dmk::cuda::jit::launch_eval_targets_jit<Real, DIM>(
+            jit_cache,
+            eval_level,
+            n_charge_dim,
+            args,
+            stream,
+            block_size
+        );
+
+        return;
+    }
+#endif
+
     if (n_charge_dim == 1 && eval_level == 1) {
         launch_eval_targets_kernel<Real, DIM, 1, 1>(args, stream);
         return;
