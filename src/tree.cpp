@@ -343,7 +343,7 @@ void DMKPtTree<Real, DIM>::compute_level_indices_and_boxsizes() {
     sctl::Profile::Scoped profile("compute_level_indices_and_boxsizes", &comm_);
     const auto &node_mid = this->GetNodeMID();
     level_indices.ReInit(SCTL_MAX_DEPTH);
-    int8_t max_depth = 0;
+    uint8_t max_depth = 0;
     for (int i = 0; i < n_boxes(); ++i) {
         level_indices[node_mid[i].Depth()].PushBack(i);
         max_depth = std::max(node_mid[i].Depth(), max_depth);
