@@ -74,8 +74,6 @@ void CudaUpwardContext<Real, DIM>::run() {
         cuda::launch_tensorprod<Real, DIM>(ta, s.downward_stream);
         nvtxRangePop();
     }
-
-    s.proxy_upward_resident_on_device = true;
 }
 
 template class CudaUpwardContext<float, 2>;

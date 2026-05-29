@@ -71,7 +71,6 @@ CudaEvalTargetsContext<Real, DIM>::CudaEvalTargetsContext(DMKPtTree<Real, DIM> &
 
 template <typename Real, int DIM>
 void CudaEvalTargetsContext<Real, DIM>::launch() {
-    auto &t = tree_;
     auto &shared = shared_;
 
     d_pot_src_eval_.zero_async(stream_);
@@ -80,17 +79,10 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
     if (n_eval_boxes_ == 0)
         return;
 
-    // If the GPU downward pass already populated d_proxy_coeffs_downward, we
-    // skip the host→device upload entirely. Otherwise (eval_targets-only
-    // path) we upload the CPU-built proxy_coeffs_downward into the shared
-    // buffer.
-    if (!shared.proxy_resident_on_device && shared.d_proxy_coeffs_downward) {
-        DMK_CHECK_CUDA(cudaMemcpyAsync(shared.d_proxy_coeffs_downward.data(), &t.proxy_coeffs_downward[0],
-                                       shared.d_proxy_coeffs_downward.size() * sizeof(Real), cudaMemcpyHostToDevice,
-                                       stream_));
-    } else if (shared.proxy_resident_on_device) {
-        // Downward kernels wrote to d_proxy on shared.downward_stream. Make
-        // eval_targets' stream wait for downward to complete before reading.
+    // Downward kernels wrote to d_proxy_coeffs_downward on
+    // shared.downward_stream. Make eval_targets' stream wait for downward to
+    // complete before reading it.
+    {
         auto evt = cuda_helpers::DeviceEvent::disable_timing();
         DMK_CHECK_CUDA(cudaEventRecord(evt, shared.downward_stream));
         DMK_CHECK_CUDA(cudaStreamWaitEvent(stream_, evt, 0));

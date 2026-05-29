@@ -82,16 +82,11 @@ struct CudaSharedDeviceState {
     DeviceBuffer<Real> d_pot_src_final;
     DeviceBuffer<Real> d_pot_trg_final;
 
-    // Downward-pass proxy expansion. Allocated zero-initialized at construction;
-    // populated either by host upload (current eval_targets path) or by GPU
-    // kernels writing to it directly (planewave_to_proxy / tensorprod). Read
-    // by eval_targets.
+    // Downward-pass proxy expansion. Allocated zero-initialized at
+    // construction and populated by the GPU downward path
+    // (planewave_to_proxy / tensorprod). Read by eval_targets.
     DeviceBuffer<Real> d_proxy_coeffs_downward;
     DeviceBuffer<long> d_proxy_offsets_downward;
-    // Set true once the GPU downward path has populated d_proxy_coeffs_downward
-    // and the host buffer is *not* the source of truth — eval_targets will
-    // then skip its H2D upload.
-    bool proxy_resident_on_device = false;
 
     int n_neighbors = 0;                          // sctl::pow<DIM>(3)
     DeviceBuffer<int> d_neighbors;                // [n_boxes * n_neighbors]; -1 = invalid
@@ -131,14 +126,10 @@ struct CudaSharedDeviceState {
     // c2p matrices, same layout. Used by the upward tensorprod sweep.
     DeviceBuffer<Real> d_c2p;
 
-    // Upward proxy coefficients. Allocated in the ctor, zero-initialized.
-    // Either populated by GPU upward (charge2proxy + tensorprod) or by
-    // upload_proxy_upward() (CPU fallback).
+    // Upward proxy coefficients. Allocated in the ctor, zero-initialized,
+    // and populated by GPU upward (charge2proxy + tensorprod).
     DeviceBuffer<Real> d_proxy_coeffs_upward;
     DeviceBuffer<long> d_proxy_offsets_upward;
-    // Set true once the GPU upward path has populated d_proxy_coeffs_upward;
-    // form_outgoing and any other consumer skip the H2D upload when set.
-    bool proxy_upward_resident_on_device = false;
 
     // Box centers and per-level inverse half-boxsize (= 2/boxsize[L]).
     // Used by charge2proxy and could later replace eval_targets's local copies.
@@ -267,11 +258,6 @@ struct CudaSharedDeviceState {
     /// are written by the GPU form_outgoing kernels (or pre-uploaded by the
     /// caller for non-GPU paths if anyone needs that).
     void allocate_pw_out(DMKPtTree<Real, DIM> &tree);
-
-    /// Upload tree.proxy_coeffs_upward to d_proxy_coeffs_upward. Allocates
-    /// the device buffer on first call, refills its contents on each call so
-    /// repeat evals see the latest charges.
-    void upload_proxy_upward(DMKPtTree<Real, DIM> &tree);
 
     /// Upload raw (unsorted) user charges/normals and sort them onto the tree
     void upload_and_sort_charges(dmk_ikernel kernel, const Real *charges, const Real *normals, long N);

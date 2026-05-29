@@ -27,8 +27,6 @@ void CudaFormOutgoingContext<Real, DIM>::run() {
     auto &s = shared_;
 
     s.allocate_pw_out(t);
-    if (!s.proxy_upward_resident_on_device)
-        s.upload_proxy_upward(t);
 
     // Reset both d_pw_out (covers boxes with no upward proxy: pw_out = 0)
     // and the root box's slot of d_proxy_coeffs_downward (the windowed

@@ -116,7 +116,6 @@ void CudaDownwardContext<Real, DIM>::run() {
         nvtxRangePop();
     }
 
-    s.proxy_resident_on_device = true;
     nvtxRangePop();
 }
 

@@ -475,16 +475,6 @@ void CudaSharedDeviceState<Real, DIM>::allocate_pw_out(DMKPtTree<Real, DIM> &tre
 }
 
 template <typename Real, int DIM>
-void CudaSharedDeviceState<Real, DIM>::upload_proxy_upward(DMKPtTree<Real, DIM> &tree) {
-    const std::size_t needed = tree.proxy_coeffs_upward.Dim();
-    if (!needed)
-        return;
-    if (!d_proxy_offsets_upward)
-        d_proxy_offsets_upward.upload((const long *)&tree.proxy_coeffs_offsets[0], tree.proxy_coeffs_offsets.Dim());
-    d_proxy_coeffs_upward.upload(&tree.proxy_coeffs_upward[0], needed);
-}
-
-template <typename Real, int DIM>
 void CudaSharedDeviceState<Real, DIM>::upload_and_sort_charges(dmk_ikernel kernel, const Real *charges,
                                                                const Real *normals, long N) {
     const int charge_dof = get_kernel_input_dim(DIM, kernel);
