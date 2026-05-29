@@ -30,18 +30,18 @@ struct DirectByBoxArgs {
     const Real *direct_cen = nullptr;   // [n_levels]
     const Real *direct_d2max = nullptr; // [n_levels]
 
-    // Source data with halo
-    const Real *r_src_halo_flat = nullptr;
-    const long *r_src_halo_offsets = nullptr;
-    const int *src_counts_halo = nullptr;
+    // Source data
+    const Real *r_src_flat = nullptr;
+    const long *r_src_offsets = nullptr;
+    const int *src_counts = nullptr;
 
-    const Real *charge_halo_flat = nullptr;
-    const long *charge_halo_offsets = nullptr;
+    const Real *charge_flat = nullptr;
+    const long *charge_offsets = nullptr;
 
-    const Real *normal_halo_flat = nullptr;    // null when normal_dim == 0
-    const long *normal_halo_offsets = nullptr; // null when normal_dim == 0
+    const Real *normal_flat = nullptr;    // null when normal_dim == 0
+    const long *normal_offsets = nullptr; // null when normal_dim == 0
 
-    // Target points (one of: r_src_owned (side=src), r_trg_owned (side=trg))
+    // Target points (one of: r_src (side=src), r_trg (side=trg))
     const Real *r_target_flat = nullptr;
     const long *r_target_offsets = nullptr;
     const int *target_counts = nullptr;

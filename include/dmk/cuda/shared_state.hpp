@@ -42,28 +42,27 @@ struct CudaSharedDeviceState {
     DeviceBuffer<Real> d_direct_cen;
     DeviceBuffer<Real> d_direct_d2max;
 
-    // Source data with halo
-    DeviceBuffer<Real> d_r_src_halo;
-    DeviceBuffer<long> d_r_src_halo_offsets;
-    DeviceBuffer<int> d_src_counts_halo;
+    // Source positions/counts.
+    DeviceBuffer<Real> d_r_src;
+    DeviceBuffer<long> d_r_src_offsets;
+    DeviceBuffer<int> d_src_counts;
 
-    // For non-stresslet kernels this holds charges; for stresslet it holds densities.
-    DeviceBuffer<Real> d_charge_halo;
-    DeviceBuffer<long> d_charge_halo_offsets;
+    // Raw input charges (n_input_dim components per source). For stresslet
+    // this is the force density; the premultiplied outer(force, normal) used
+    // by upward charge2proxy lives in d_charge_outer below.
+    DeviceBuffer<Real> d_charge;
+    DeviceBuffer<long> d_charge_offsets;
+    DeviceBuffer<Real> d_charge_input; // user input sorted charges
 
-    // Stresslet only.
-    DeviceBuffer<Real> d_normal_halo;
-    DeviceBuffer<long> d_normal_halo_offsets;
+    // Source normals. Stresslet only.
+    DeviceBuffer<Real> d_normal;
+    DeviceBuffer<long> d_normal_offsets;
+    DeviceBuffer<Real> d_normal_input; // user input sorted normals
 
-    // Owned source positions (target points for the pot_src side).
-    DeviceBuffer<Real> d_r_src_owned;
-    DeviceBuffer<long> d_r_src_owned_offsets;
-    DeviceBuffer<int> d_src_counts_owned;
-
-    // Owned target positions (target points for the pot_trg side).
-    DeviceBuffer<Real> d_r_trg_owned;
-    DeviceBuffer<long> d_r_trg_owned_offsets;
-    DeviceBuffer<int> d_trg_counts_owned;
+    // Target positions/counts (for the pot_trg side).
+    DeviceBuffer<Real> d_r_trg;
+    DeviceBuffer<long> d_r_trg_offsets;
+    DeviceBuffer<int> d_trg_counts;
 
     // Pot offsets (index into per-context output buffers).
     DeviceBuffer<long> d_pot_src_offsets;
@@ -146,10 +145,11 @@ struct CudaSharedDeviceState {
     DeviceBuffer<Real> d_centers;       // [n_boxes * DIM]
     DeviceBuffer<Real> d_inv_box_scale; // [n_levels]
 
-    // Owned source charges (analogue of d_charge_halo, but indexed by owned
-    // offsets/counts). Used by upward charge2proxy.
-    DeviceBuffer<Real> d_charge_owned;
-    DeviceBuffer<long> d_charge_owned_offsets;
+    // Stresslet only: outer(force, normal), n_tables_up = DIM*DIM components
+    // per source. Read by upward charge2proxy. Non-stresslet kernels point
+    // charge2proxy at d_charge directly.
+    DeviceBuffer<Real> d_charge_outer;
+    DeviceBuffer<long> d_charge_outer_offsets;
 
     // Per-group charge2proxy work lists (flattened across all levels).
     DeviceBuffer<int> d_c2p_center_boxes;          // [n_c2p_groups]
@@ -272,6 +272,8 @@ struct CudaSharedDeviceState {
     /// the device buffer on first call, refills its contents on each call so
     /// repeat evals see the latest charges.
     void upload_proxy_upward(DMKPtTree<Real, DIM> &tree);
+
+    void upload_and_sort_charges(dmk_ikernel kernel, Real *charges, Real *normals, long N);
 
     /// Re-upload the charge (and, for stresslet, density + normal) buffers
     /// from the tree's host-side sorted arrays. Call after

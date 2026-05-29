@@ -107,17 +107,17 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
     args.centers = shared.d_centers.data();
 
     // pot_src side
-    args.r_target_flat = shared.d_r_src_owned.data();
-    args.r_target_offsets = shared.d_r_src_owned_offsets.data();
-    args.target_counts = shared.d_src_counts_owned.data();
+    args.r_target_flat = shared.d_r_src.data();
+    args.r_target_offsets = shared.d_r_src_offsets.data();
+    args.target_counts = shared.d_src_counts.data();
     args.pot_flat = d_pot_src_eval_.data();
     args.pot_offsets = shared.d_pot_src_offsets.data();
     cuda::launch_eval_targets<Real, DIM>(eval_level_src_, n_charge_dim_, args, stream_);
 
     // pot_trg side
-    args.r_target_flat = shared.d_r_trg_owned.data();
-    args.r_target_offsets = shared.d_r_trg_owned_offsets.data();
-    args.target_counts = shared.d_trg_counts_owned.data();
+    args.r_target_flat = shared.d_r_trg.data();
+    args.r_target_offsets = shared.d_r_trg_offsets.data();
+    args.target_counts = shared.d_trg_counts.data();
     args.pot_flat = d_pot_trg_eval_.data();
     args.pot_offsets = shared.d_pot_trg_offsets.data();
     cuda::launch_eval_targets<Real, DIM>(eval_level_trg_, n_charge_dim_, args, stream_);
@@ -128,10 +128,9 @@ void CudaEvalTargetsContext<Real, DIM>::launch() {
         cuda::SelfCorrectionArgs<Real> sc_args;
         sc_args.direct_work = shared.d_direct_work.data();
         sc_args.correction_factors = d_self_correction_work_.data();
-        sc_args.src_counts_owned = shared.d_src_counts_owned.data();
-        sc_args.src_counts_halo = shared.d_src_counts_halo.data();
-        sc_args.charge_halo = shared.d_charge_halo.data();
-        sc_args.charge_halo_offsets = shared.d_charge_halo_offsets.data();
+        sc_args.src_counts = shared.d_src_counts.data();
+        sc_args.charge = shared.d_charge.data();
+        sc_args.charge_offsets = shared.d_charge_offsets.data();
         sc_args.pot_src = d_pot_src_eval_.data();
         sc_args.pot_src_offsets = shared.d_pot_src_offsets.data();
         sc_args.n_direct_work = shared.n_direct_work;

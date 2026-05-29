@@ -142,13 +142,13 @@ void run_direct_by_box_pair_eval(dmk_ikernel kernel, int dim, int n_digits, Real
     args.direct_rsc = d_rsc.p;
     args.direct_cen = d_cen.p;
     args.direct_d2max = d_d2max.p;
-    args.r_src_halo_flat = d_r_src;
-    args.r_src_halo_offsets = d_offset.p;
-    args.src_counts_halo = d_n_src.p;
-    args.charge_halo_flat = d_charges;
-    args.charge_halo_offsets = d_offset.p;
-    args.normal_halo_flat = d_normals;
-    args.normal_halo_offsets = d_normals ? d_offset.p : nullptr;
+    args.r_src_flat = d_r_src;
+    args.r_src_offsets = d_offset.p;
+    args.src_counts = d_n_src.p;
+    args.charge_flat = d_charges;
+    args.charge_offsets = d_offset.p;
+    args.normal_flat = d_normals;
+    args.normal_offsets = d_normals ? d_offset.p : nullptr;
     args.r_target_flat = d_r_trg;
     args.r_target_offsets = d_offset.p;
     args.target_counts = d_n_trg.p;
@@ -584,11 +584,11 @@ TEST_CASE_TEMPLATE("[CUDA] charge2proxy vs CPU", Real, double, float) {
     args.src_boxes_flat = d_sb_flat.p;
     args.centers = d_centers.p;
     args.inv_box_scale = d_inv_box.p;
-    args.r_src_owned = d_r_src.p;
-    args.r_src_owned_offsets = d_r_src_offsets.p;
-    args.src_counts_owned = d_src_counts.p;
-    args.charge_owned = d_charges.p;
-    args.charge_owned_offsets = d_charge_offsets.p;
+    args.r_src = d_r_src.p;
+    args.r_src_offsets = d_r_src_offsets.p;
+    args.src_counts = d_src_counts.p;
+    args.charge = d_charges.p;
+    args.charge_offsets = d_charge_offsets.p;
     args.proxy_flat = d_proxy.p;
     args.proxy_offsets = d_proxy_offsets.p;
     args.group_perm = nullptr; // identity = no work-balancing reorder

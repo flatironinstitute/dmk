@@ -16,8 +16,11 @@ CudaUpwardContext<Real, DIM>::CudaUpwardContext(DMKPtTree<Real, DIM> &tree, Cuda
     : tree_(tree), shared_(shared) {
     if (DIM != 3)
         throw std::runtime_error("CUDA upward: only DIM=3 supported");
-    if (!shared.d_charge_owned || !shared.d_charge_owned_offsets)
-        throw std::runtime_error("CUDA upward: owned charges not uploaded by shared state");
+    const bool is_stresslet = tree.params.kernel == DMK_STRESSLET;
+    const bool charges_ok = is_stresslet ? (shared.d_charge_outer && shared.d_charge_outer_offsets)
+                                         : (shared.d_charge && shared.d_charge_offsets);
+    if (!charges_ok)
+        throw std::runtime_error("CUDA upward: charges not uploaded by shared state");
 }
 
 template <typename Real, int DIM>
@@ -38,11 +41,12 @@ void CudaUpwardContext<Real, DIM>::run() {
         a.src_boxes_flat = s.d_c2p_src_boxes_flat.data();
         a.centers = s.d_centers.data();
         a.inv_box_scale = s.d_inv_box_scale.data();
-        a.r_src_owned = s.d_r_src_owned.data();
-        a.r_src_owned_offsets = s.d_r_src_owned_offsets.data();
-        a.src_counts_owned = s.d_src_counts_owned.data();
-        a.charge_owned = s.d_charge_owned.data();
-        a.charge_owned_offsets = s.d_charge_owned_offsets.data();
+        a.r_src = s.d_r_src.data();
+        a.r_src_offsets = s.d_r_src_offsets.data();
+        a.src_counts = s.d_src_counts.data();
+        const bool is_stresslet = tree_.params.kernel == DMK_STRESSLET;
+        a.charge = is_stresslet ? s.d_charge_outer.data() : s.d_charge.data();
+        a.charge_offsets = is_stresslet ? s.d_charge_outer_offsets.data() : s.d_charge_offsets.data();
         a.proxy_flat = s.d_proxy_coeffs_upward.data();
         a.proxy_offsets = s.d_proxy_offsets_upward.data();
         a.group_perm = s.d_c2p_group_perm.data();

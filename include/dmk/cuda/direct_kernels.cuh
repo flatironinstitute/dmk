@@ -448,14 +448,14 @@ __global__ void DirectResidualByBoxKernelTiled(DirectByBoxArgs<typename Evaluato
             if (src_level >= a.n_levels)
                 src_level = a.n_levels - 1;
 
-            const int n_src = a.src_counts_halo[src_box];
+            const int n_src = a.src_counts[src_box];
 
-            const Real *__restrict__ r_src = a.r_src_halo_flat + a.r_src_halo_offsets[src_box];
-            const Real *__restrict__ charge = a.charge_halo_flat + a.charge_halo_offsets[src_box];
+            const Real *__restrict__ r_src = a.r_src_flat + a.r_src_offsets[src_box];
+            const Real *__restrict__ charge = a.charge_flat + a.charge_offsets[src_box];
 
             const Real *__restrict__ normals = nullptr;
             if constexpr (NORMAL_DIM > 0)
-                normals = a.normal_halo_flat + a.normal_halo_offsets[src_box];
+                normals = a.normal_flat + a.normal_offsets[src_box];
 
             const Real rsc = a.direct_rsc[src_level];
             const Real cen = a.direct_cen[src_level];

@@ -26,11 +26,11 @@ struct Charge2ProxyArgs {
     // Shared device state.
     const Real *centers = nullptr;       // [n_boxes * DIM] F-major (axis, box)
     const Real *inv_box_scale = nullptr; // [n_levels]; = 2 / boxsize[L]
-    const Real *r_src_owned = nullptr;   // F-major positions per box
-    const long *r_src_owned_offsets = nullptr;
-    const int *src_counts_owned = nullptr;
-    const Real *charge_owned = nullptr; // F-major [n_charge_dim, n_src] per box
-    const long *charge_owned_offsets = nullptr;
+    const Real *r_src = nullptr;         // F-major positions per box
+    const long *r_src_offsets = nullptr;
+    const int *src_counts = nullptr;
+    const Real *charge = nullptr; // F-major [n_charge_dim, n_src] per box
+    const long *charge_offsets = nullptr;
 
     Real *proxy_flat = nullptr; // d_proxy_coeffs_upward (additive write)
     const long *proxy_offsets = nullptr;

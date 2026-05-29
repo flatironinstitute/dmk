@@ -1,6 +1,8 @@
+#include <dmk.h>
 #include <dmk/cuda/helpers.hpp>
 #include <dmk/cuda/shared_state.hpp>
 #include <dmk/cuda/shared_state_kernels.hpp>
+#include <dmk/direct.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/tree.hpp>
 
@@ -187,45 +189,34 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
     d_direct_cen.upload(&tree.direct_cen[0], tree.direct_cen.Dim());
     d_direct_d2max.upload(&tree.direct_d2max[0], tree.direct_d2max.Dim());
 
-    if (tree.r_src_sorted_with_halo.Dim())
-        d_r_src_halo.upload(&tree.r_src_sorted_with_halo[0], tree.r_src_sorted_with_halo.Dim());
-    d_r_src_halo_offsets.upload((const long *)&tree.r_src_offsets_with_halo[0], tree.r_src_offsets_with_halo.Dim());
+    if (tree.r_src_sorted_owned.Dim())
+        d_r_src.upload(&tree.r_src_sorted_owned[0], tree.r_src_sorted_owned.Dim());
+    d_r_src_offsets.upload((const long *)&tree.r_src_offsets_owned[0], tree.r_src_offsets_owned.Dim());
     {
-        auto h = sctl_int_vec_to_std(tree.src_counts_with_halo);
-        d_src_counts_halo.upload(h.data(), h.size());
+        auto h = sctl_int_vec_to_std(tree.src_counts_owned);
+        d_src_counts.upload(h.data(), h.size());
     }
 
     const bool is_stresslet = tree.params.kernel == DMK_STRESSLET;
     if (is_stresslet) {
         if (tree.density_sorted_with_halo.Dim())
-            d_charge_halo.upload(&tree.density_sorted_with_halo[0], tree.density_sorted_with_halo.Dim());
-        d_charge_halo_offsets.upload((const long *)&tree.density_offsets_with_halo[0],
-                                     tree.density_offsets_with_halo.Dim());
+            d_charge.upload(&tree.density_sorted_with_halo[0], tree.density_sorted_with_halo.Dim());
+        d_charge_offsets.upload((const long *)&tree.density_offsets_with_halo[0], tree.density_offsets_with_halo.Dim());
         if (tree.normal_sorted_with_halo.Dim())
-            d_normal_halo.upload(&tree.normal_sorted_with_halo[0], tree.normal_sorted_with_halo.Dim());
-        d_normal_halo_offsets.upload((const long *)&tree.normal_offsets_with_halo[0],
-                                     tree.normal_offsets_with_halo.Dim());
+            d_normal.upload(&tree.normal_sorted_with_halo[0], tree.normal_sorted_with_halo.Dim());
+        d_normal_offsets.upload((const long *)&tree.normal_offsets_with_halo[0], tree.normal_offsets_with_halo.Dim());
     } else {
-        if (tree.charge_sorted_with_halo.Dim())
-            d_charge_halo.upload(&tree.charge_sorted_with_halo[0], tree.charge_sorted_with_halo.Dim());
-        d_charge_halo_offsets.upload((const long *)&tree.charge_offsets_with_halo[0],
-                                     tree.charge_offsets_with_halo.Dim());
-    }
-
-    if (tree.r_src_sorted_owned.Dim())
-        d_r_src_owned.upload(&tree.r_src_sorted_owned[0], tree.r_src_sorted_owned.Dim());
-    d_r_src_owned_offsets.upload((const long *)&tree.r_src_offsets_owned[0], tree.r_src_offsets_owned.Dim());
-    {
-        auto h = sctl_int_vec_to_std(tree.src_counts_owned);
-        d_src_counts_owned.upload(h.data(), h.size());
+        if (tree.charge_sorted_owned.Dim())
+            d_charge.upload(&tree.charge_sorted_owned[0], tree.charge_sorted_owned.Dim());
+        d_charge_offsets.upload((const long *)&tree.charge_offsets_owned[0], tree.charge_offsets_owned.Dim());
     }
 
     if (tree.r_trg_sorted_owned.Dim())
-        d_r_trg_owned.upload(&tree.r_trg_sorted_owned[0], tree.r_trg_sorted_owned.Dim());
-    d_r_trg_owned_offsets.upload((const long *)&tree.r_trg_offsets_owned[0], tree.r_trg_offsets_owned.Dim());
+        d_r_trg.upload(&tree.r_trg_sorted_owned[0], tree.r_trg_sorted_owned.Dim());
+    d_r_trg_offsets.upload((const long *)&tree.r_trg_offsets_owned[0], tree.r_trg_offsets_owned.Dim());
     {
         auto h = sctl_int_vec_to_std(tree.trg_counts_owned);
-        d_trg_counts_owned.upload(h.data(), h.size());
+        d_trg_counts.upload(h.data(), h.size());
     }
 
     pot_src_size = tree.pot_src_sorted.Dim();
@@ -371,13 +362,15 @@ CudaSharedDeviceState<Real, DIM>::CudaSharedDeviceState(DMKPtTree<Real, DIM> &tr
         d_inv_box_scale.upload(sc_h.data(), sc_h.size());
     }
 
-    // Owned charges (used by GPU charge2proxy). For Stresslet this is the
-    // pre-multiplied force×normal product (n_tables_up = 9 components per
-    // source), exactly what the CPU upward path reads via charge_owned_view.
-    if (tree.charge_sorted_owned.Dim())
-        d_charge_owned.upload(&tree.charge_sorted_owned[0], tree.charge_sorted_owned.Dim());
-    if (tree.charge_offsets_owned.Dim())
-        d_charge_owned_offsets.upload((const long *)&tree.charge_offsets_owned[0], tree.charge_offsets_owned.Dim());
+    // Stresslet: upload the host's pre-multiplied force×normal product
+    // (n_tables_up = DIM*DIM) for upward charge2proxy. Non-stresslet kernels
+    // reuse d_charge (already uploaded above; n_tables_up == n_input_dim).
+    if (is_stresslet) {
+        if (tree.charge_sorted_owned.Dim())
+            d_charge_outer.upload(&tree.charge_sorted_owned[0], tree.charge_sorted_owned.Dim());
+        if (tree.charge_offsets_owned.Dim())
+            d_charge_outer_offsets.upload((const long *)&tree.charge_offsets_owned[0], tree.charge_offsets_owned.Dim());
+    }
 
     build_charge2proxy_groups(*this, tree);
     build_tp_up_pair_lists(*this, tree);
@@ -505,15 +498,35 @@ void CudaSharedDeviceState<Real, DIM>::upload_proxy_upward(DMKPtTree<Real, DIM> 
 }
 
 template <typename Real, int DIM>
+void CudaSharedDeviceState<Real, DIM>::upload_and_sort_charges(dmk_ikernel kernel, Real *charges, Real *normals,
+                                                               long N) {
+    d_charge_input.upload(charges, N);
+    if (kernel == DMK_STRESSLET) {
+        d_normal_input.upload(normals, N);
+        d_charge_outer.resize(N * DIM * DIM);
+        cuda::launch_scatter_forward_stresslet(d_charge_input.data(), d_normal_input.data(), d_charge_outer.data(),
+                                               d_scatter_index_src.data(), N, DIM, direct_stream.get());
+    } else {
+        const int charge_dim = get_kernel_input_dim(DIM, kernel);
+        cuda::launch_scatter_forward(d_charge_input.data(), d_charge.data(), d_scatter_index_src.data(), N, charge_dim,
+                                     direct_stream.get());
+    }
+}
+
+template <typename Real, int DIM>
 void CudaSharedDeviceState<Real, DIM>::upload_charges(DMKPtTree<Real, DIM> &tree) {
     const bool is_stresslet = tree.params.kernel == DMK_STRESSLET;
-    const auto &halo_src = is_stresslet ? tree.density_sorted_with_halo : tree.charge_sorted_with_halo;
-    if (d_charge_halo && halo_src.Dim())
-        d_charge_halo.upload(&halo_src[0], halo_src.Dim());
-    if (is_stresslet && d_normal_halo && tree.normal_sorted_with_halo.Dim())
-        d_normal_halo.upload(&tree.normal_sorted_with_halo[0], tree.normal_sorted_with_halo.Dim());
-    if (d_charge_owned && tree.charge_sorted_owned.Dim())
-        d_charge_owned.upload(&tree.charge_sorted_owned[0], tree.charge_sorted_owned.Dim());
+    if (is_stresslet) {
+        if (d_charge && tree.density_sorted_with_halo.Dim())
+            d_charge.upload(&tree.density_sorted_with_halo[0], tree.density_sorted_with_halo.Dim());
+        if (d_normal && tree.normal_sorted_with_halo.Dim())
+            d_normal.upload(&tree.normal_sorted_with_halo[0], tree.normal_sorted_with_halo.Dim());
+        if (d_charge_outer && tree.charge_sorted_owned.Dim())
+            d_charge_outer.upload(&tree.charge_sorted_owned[0], tree.charge_sorted_owned.Dim());
+    } else {
+        if (d_charge && tree.charge_sorted_owned.Dim())
+            d_charge.upload(&tree.charge_sorted_owned[0], tree.charge_sorted_owned.Dim());
+    }
 }
 
 template <typename Real, int DIM>

@@ -37,26 +37,26 @@ void CudaDirectContext<Real, DIM>::launch() {
     args.direct_rsc = shared.d_direct_rsc.data();
     args.direct_cen = shared.d_direct_cen.data();
     args.direct_d2max = shared.d_direct_d2max.data();
-    args.r_src_halo_flat = shared.d_r_src_halo.data();
-    args.r_src_halo_offsets = shared.d_r_src_halo_offsets.data();
-    args.src_counts_halo = shared.d_src_counts_halo.data();
-    args.charge_halo_flat = shared.d_charge_halo.data();
-    args.charge_halo_offsets = shared.d_charge_halo_offsets.data();
-    args.normal_halo_flat = shared.d_normal_halo.data();
-    args.normal_halo_offsets = shared.d_normal_halo_offsets.data();
+    args.r_src_flat = shared.d_r_src.data();
+    args.r_src_offsets = shared.d_r_src_offsets.data();
+    args.src_counts = shared.d_src_counts.data();
+    args.charge_flat = shared.d_charge.data();
+    args.charge_offsets = shared.d_charge_offsets.data();
+    args.normal_flat = shared.d_normal.data();
+    args.normal_offsets = shared.d_normal_offsets.data();
 
-    // pot_src side: target points are the trg_box's owned sources.
-    args.r_target_flat = shared.d_r_src_owned.data();
-    args.r_target_offsets = shared.d_r_src_owned_offsets.data();
-    args.target_counts = shared.d_src_counts_owned.data();
+    // pot_src side: target points are the trg_box's sources.
+    args.r_target_flat = shared.d_r_src.data();
+    args.r_target_offsets = shared.d_r_src_offsets.data();
+    args.target_counts = shared.d_src_counts.data();
     args.pot_flat = d_pot_src_direct_.data();
     args.pot_offsets = shared.d_pot_src_offsets.data();
     cuda::launch_direct_by_box_dispatch<Real>(t.params.kernel, DIM, t.n_digits, args, shared.direct_stream);
 
-    // pot_trg side: target points are the trg_box's owned targets.
-    args.r_target_flat = shared.d_r_trg_owned.data();
-    args.r_target_offsets = shared.d_r_trg_owned_offsets.data();
-    args.target_counts = shared.d_trg_counts_owned.data();
+    // pot_trg side: target points are the trg_box's targets.
+    args.r_target_flat = shared.d_r_trg.data();
+    args.r_target_offsets = shared.d_r_trg_offsets.data();
+    args.target_counts = shared.d_trg_counts.data();
     args.pot_flat = d_pot_trg_direct_.data();
     args.pot_offsets = shared.d_pot_trg_offsets.data();
     cuda::launch_direct_by_box_dispatch<Real>(t.params.kernel, DIM, t.n_digits, args, shared.direct_stream);

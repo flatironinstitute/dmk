@@ -80,13 +80,13 @@ __global__ void Charge2ProxyByGroup3DKernel_GemmMicroKTile(Charge2ProxyArgs<Real
 
     for (int sbi = 0; sbi < n_src_boxes; ++sbi) {
         const int sb = a.src_boxes_flat[sb_off + sbi];
-        const int n_src = a.src_counts_owned[sb];
+        const int n_src = a.src_counts[sb];
 
         if (n_src == 0)
             continue;
 
-        const Real *__restrict__ r_src = a.r_src_owned + a.r_src_owned_offsets[sb];
-        const Real *__restrict__ charge = a.charge_owned + a.charge_owned_offsets[sb];
+        const Real *__restrict__ r_src = a.r_src + a.r_src_offsets[sb];
+        const Real *__restrict__ charge = a.charge + a.charge_offsets[sb];
 
         for (int s_base = 0; s_base < n_src; s_base += CHUNK) {
             const int n_in_chunk = (s_base + CHUNK > n_src) ? (n_src - s_base) : CHUNK;
