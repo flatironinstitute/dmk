@@ -16,11 +16,6 @@ CudaUpwardContext<Real, DIM>::CudaUpwardContext(DMKPtTree<Real, DIM> &tree, Cuda
     : tree_(tree), shared_(shared) {
     if (DIM != 3)
         throw std::runtime_error("CUDA upward: only DIM=3 supported");
-    const bool is_stresslet = tree.params.kernel == DMK_STRESSLET;
-    const bool charges_ok = is_stresslet ? (shared.d_charge_outer && shared.d_charge_outer_offsets)
-                                         : (shared.d_charge && shared.d_charge_offsets);
-    if (!charges_ok)
-        throw std::runtime_error("CUDA upward: charges not uploaded by shared state");
 }
 
 template <typename Real, int DIM>

@@ -217,6 +217,31 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
 }
 
 template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::build_tree_for_gpu(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &r_trg) {
+    sctl::Profile::Scoped profile("build_tree_for_gpu", &comm_);
+    logger->info("gpu tree build started");
+
+    constexpr bool balance21 = true;
+    constexpr int halo = 0;
+
+    sctl::Profile::Tic("add_particles", &comm_);
+    this->AddParticles("pdmk_src", r_src);
+    this->AddParticles("pdmk_trg", r_trg);
+    sctl::Profile::Toc();
+
+    sctl::Profile::Tic("update_refinement", &comm_);
+    this->UpdateRefinement(r_src, params.n_per_leaf, balance21, params.use_periodic, halo);
+    sctl::Profile::Toc();
+
+    sctl::Profile::Tic("get_non_halo", &comm_);
+    this->GetData(r_src_sorted_owned, r_src_cnt_owned, "pdmk_src");
+    this->GetData(r_trg_sorted_owned, r_trg_cnt_owned, "pdmk_trg");
+    sctl::Profile::Toc();
+
+    logger->debug("gpu tree build completed");
+}
+
+template <typename Real, int DIM>
 DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, const sctl::Vector<Real> &r_src,
                                 const sctl::Vector<Real> &charge, const sctl::Vector<Real> &normal,
                                 const sctl::Vector<Real> &r_trg)
@@ -228,7 +253,6 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
       n_tables_up(get_table_count_up<DIM>(params.kernel)), n_tables_down(get_table_count_down<DIM>(params.kernel)),
       n_digits(std::round(log10(1.0 / params_.eps) - 0.1)), expansion_constants(params),
       logger(dmk::get_logger(comm, params.log_level)), rank_logger(dmk::get_rank_logger(comm, params.log_level)) {
-    sctl::Profile::Scoped profile("DMKPtTree::DMKPtTree", &comm_);
     debug_omit_pw = (params.debug_flags & DMK_DEBUG_OMIT_PW) || util::env_is_set("DMK_DEBUG_OMIT_PW");
     debug_omit_direct = (params.debug_flags & DMK_DEBUG_OMIT_DIRECT) || util::env_is_set("DMK_DEBUG_OMIT_DIRECT");
     debug_dump_tree = (params.debug_flags & DMK_DEBUG_DUMP_TREE) || util::env_is_set("DMK_DEBUG_DUMP_TREE");
@@ -238,27 +262,46 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
         logger->debug("Ignoring PW interactions");
     if (debug_omit_direct)
         logger->debug("Ignoring direct interactions");
-    build_tree(r_src, charge, normal, r_trg);
-    generate_metadata();
+    if (params.eval_path == DMK_EVAL_PATH_GPU) {
 #ifdef DMK_GPU_OFFLOAD
-    // GPU offload state lives for the lifetime of the tree: device buffers
-    // are allocated and topology is uploaded here exactly once. Per-eval the
-    // contexts only re-launch kernels and re-zero output buffers.
-    gpu_init_state();
+        build_tree_for_gpu(r_src, r_trg);
+        generate_metadata_for_gpu();
+        gpu_init_state();
+        if (cuda_shared_state_) {
+            const long n_src = r_src.Dim() / DIM;
+            const Real *normal_ptr = (params.kernel == DMK_STRESSLET && normal.Dim()) ? &normal[0] : nullptr;
+            const Real *charge_ptr = charge.Dim() ? &charge[0] : nullptr;
+            cuda_shared_state_->upload_and_sort_charges(params.kernel, charge_ptr, normal_ptr, n_src);
+        }
+#else
+        throw std::runtime_error("DMK was built without DMK_GPU_OFFLOAD; only DMK_EVAL_PATH_CPU is available");
 #endif
+    } else {
+        build_tree(r_src, charge, normal, r_trg);
+        generate_metadata();
+    }
     logger->info("tree build completed");
 }
 
 template <typename Real, int DIM>
 int DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal) {
-    if (normal) {
-        std::cerr << "normal updates not supported yet\n";
-        return 1;
-    }
     auto &logger = dmk::get_logger(comm_, params.log_level);
     logger->info("update_charges started");
 
     const int n_src = r_src_sorted_owned.Dim() / DIM;
+
+#ifdef DMK_GPU_OFFLOAD
+    if (params.eval_path == DMK_EVAL_PATH_GPU && cuda_shared_state_) {
+        cuda_shared_state_->upload_and_sort_charges(params.kernel, charge, normal, n_src);
+        logger->info("update_charges completed (gpu)");
+        return 0;
+    }
+#endif
+
+    if (normal) {
+        std::cerr << "normal updates not supported yet\n";
+        return 1;
+    }
 
     // Wrap the incoming (unsorted) charge data in a Vector without owning it
     sctl::Vector<Real> charge_vec(n_src * n_tables_up, const_cast<Real *>(charge), false);
@@ -292,11 +335,6 @@ int DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal)
     charge_offsets_with_halo[0] = 0;
     for (std::size_t i = 1; i < n_boxes(); ++i)
         charge_offsets_with_halo[i] = charge_offsets_with_halo[i - 1] + charge_cnt_with_halo[i - 1];
-
-#ifdef DMK_GPU_OFFLOAD
-    if (cuda_shared_state_)
-        cuda_shared_state_->upload_charges(*this);
-#endif
 
     logger->info("update_charges completed");
     return 0;
@@ -875,6 +913,11 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
         }
     }
 
+    // CPU evaluator lambdas — direct.cpp consumes these. The GPU direct path
+    // has its own kernels and ignores evaluator_by_level_*.
+    if (params.eval_path == DMK_EVAL_PATH_GPU)
+        return;
+
     try {
         auto src_eval = make_evaluator_aot<Real>(params.kernel, params.eval_src, DIM, n_digits, 3);
         auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.eval_trg, DIM, n_digits, 3);
@@ -999,6 +1042,50 @@ void DMKPtTree<Real, DIM>::generate_metadata() {
     build_self_correction_work_list();
 
     logger->debug("done generating tree traversal metadata and other constants");
+}
+
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::generate_metadata_for_gpu() {
+    sctl::Profile::Scoped profile("generate_metadata_for_gpu", &comm_);
+    logger->debug("generating GPU tree traversal metadata");
+    assert(
+        charge_sorted_owned.Dim() == 0 && pot_src_sorted.Dim() == 0 &&
+        "generate_metadata_for_gpu expects build_tree_for_gpu (positions only) — host charge/pot arrays must be empty");
+
+    // The CPU build registers charge/normal/density/pot particle data with
+    // PtTree, which populates these per-box count vectors via GetData. The
+    // GPU build skips those registrations (the data lives on the device), so
+    // mirror the per-box source/target counts here. Single-rank: no halo
+    // exchange, so "with_halo" counts equal "owned".
+    r_src_cnt_with_halo = r_src_cnt_owned;
+    charge_cnt_owned = r_src_cnt_owned;
+    charge_cnt_with_halo = r_src_cnt_owned;
+    pot_src_cnt = r_src_cnt_owned;
+    pot_trg_cnt = r_trg_cnt_owned;
+    if (params.kernel == DMK_STRESSLET) {
+        normal_cnt_with_halo = r_src_cnt_owned;
+        density_cnt_with_halo = r_src_cnt_owned;
+    }
+
+    compute_data_offsets();
+    compute_level_indices_and_boxsizes();
+    compute_box_centers();
+    accumulate_subtree_counts();
+    broadcast_global_leaf_status();
+    compute_proxy_expansion_flags();
+    compute_proxy_evaluation_flags();
+    build_direct_interaction_lists();
+    build_upward_pass_work_lists();
+    build_direct_work_lists();
+    allocate_proxy_coefficients();
+    std::tie(c2p, p2c) = dmk::chebyshev::get_c2p_p2c_matrices<Real>(DIM, expansion_constants.n_order);
+    fourier_data = FourierData<Real>(params.kernel, DIM, params.eps, expansion_constants.n_pw_win,
+                                     expansion_constants.n_pw_diff, params.fparam, expansion_constants.beta, boxsize);
+    precompute_window_difference_data();
+    build_evaluators();
+    build_self_correction_work_list();
+
+    logger->debug("done generating GPU tree traversal metadata");
 }
 
 /// @brief Fill out the proxy coefficients used in the upward pass

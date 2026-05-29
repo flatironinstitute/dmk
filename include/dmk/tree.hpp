@@ -674,6 +674,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void build_tree(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &charge,
                     const sctl::Vector<Real> &normals, const sctl::Vector<Real> &r_trg);
 
+    void build_tree_for_gpu(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &r_trg);
+
     // Metadata generation subroutines
     void compute_data_offsets();
     void compute_level_indices_and_boxsizes();
@@ -692,6 +694,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void build_evaluators();
     void build_self_correction_work_list();
     void generate_metadata();
+    void generate_metadata_for_gpu();
     void init_planewave_data();
 
     // Subtasks for downward pass
