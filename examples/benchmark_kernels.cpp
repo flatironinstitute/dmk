@@ -35,6 +35,7 @@ struct Config {
     dmk_eval_path eval_path = DMK_EVAL_PATH_CPU;
     bool bench_build = false;
     bool bench_eval = true;
+    bool bench_update_charges = false;
 };
 
 struct TimingResult {
@@ -262,9 +263,38 @@ double run_dmk(pdmk_tree tree, std::vector<Real> &pot, int n_src_per_rank, int k
     return ft - st;
 }
 
+template <typename Real>
+double run_update_charges(pdmk_tree tree, const std::vector<Real> &charges, const Real *normal) {
+#ifdef DMK_HAVE_MPI
+    MPI_Barrier(MYCOMM);
+#endif
+
+    double st = omp_get_wtime();
+    int rc;
+    if constexpr (std::is_same_v<Real, float>)
+        rc = pdmk_tree_update_chargesf(tree, charges.data(), normal);
+    else
+        rc = pdmk_tree_update_charges(tree, charges.data(), normal);
+    double ft = omp_get_wtime();
+
+    if (rc != 0) {
+        std::cerr << "pdmk_tree_update_charges failed with rc=" << rc << "\n";
+        std::exit(1);
+    }
+    return ft - st;
+}
+
 void print_build_csv_header(std::ostream &os) { os << "build_time,build_pts_s,build_pts_s_rank,build_pts_s_thread"; }
 
 void print_build_csv_row(const TimingResult &t, std::ostream &os) {
+    os << t.elapsed << "," << t.pts_per_sec << "," << t.pts_per_sec_per_rank << "," << t.pts_per_sec_per_thread;
+}
+
+void print_update_csv_header(std::ostream &os) {
+    os << "update_time,update_pts_s,update_pts_s_rank,update_pts_s_thread";
+}
+
+void print_update_csv_row(const TimingResult &t, std::ostream &os) {
     os << t.elapsed << "," << t.pts_per_sec << "," << t.pts_per_sec_per_rank << "," << t.pts_per_sec_per_thread;
 }
 
@@ -300,7 +330,8 @@ void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ost
        << "# log_level:            " << cfg.log_level << "\n"
        << "# eval_path:            " << cfg.eval_path << "\n"
        << "# bench_build:          " << cfg.bench_build << "\n"
-       << "# bench_eval:           " << cfg.bench_eval << "\n";
+       << "# bench_eval:           " << cfg.bench_eval << "\n"
+       << "# bench_update_charges: " << cfg.bench_update_charges << "\n";
 }
 
 void print_csv_header(std::ostream &os) {
@@ -411,10 +442,46 @@ void run_benchmark(const Config &cfg) {
         }
     }
 
-    if (!cfg.bench_eval)
-        return;
+    pdmk_tree tree = nullptr;
+    if (cfg.bench_update_charges || cfg.bench_eval)
+        tree = create_tree();
 
-    pdmk_tree tree = create_tree();
+    if (cfg.bench_update_charges) {
+        if (rank == 0) {
+            if (!cfg.bench_build)
+                print_csv_config_comment(cfg, np, n_threads, std::cout);
+            print_update_csv_header(std::cout);
+            std::cout << std::flush;
+        }
+        for (int run = 0; run < cfg.n_runs; ++run) {
+            sctl::Profile::reset();
+            const Real *normal_ptr = (cfg.kernel == DMK_STRESSLET) ? normals.data() : nullptr;
+            double dt = run_update_charges<Real>(tree, charges, normal_ptr);
+            TimingResult t = make_timing(dt, n_src, n_src_per_rank, n_threads);
+
+            if (run == 0) {
+                if (rank == 0)
+                    std::cout << ",";
+                pdmk_print_profile_data(MYCOMM, 'h');
+                if (rank == 0)
+                    std::cout << "\n";
+            }
+
+            if (rank == 0) {
+                print_update_csv_row(t, std::cout);
+                std::cout << ",";
+            }
+            pdmk_print_profile_data(MYCOMM, 'c');
+            if (rank == 0)
+                std::cout << "\n" << std::flush;
+        }
+    }
+
+    if (!cfg.bench_eval) {
+        if (tree)
+            pdmk_tree_destroy(tree);
+        return;
+    }
 
     // Direct reference
     std::vector<Real> pot_direct;
@@ -435,7 +502,7 @@ void run_benchmark(const Config &cfg) {
 #endif
 
     if (rank == 0) {
-        if (!cfg.bench_build)
+        if (!cfg.bench_build && !cfg.bench_update_charges)
             print_csv_config_comment(cfg, np, n_threads, std::cout);
         print_csv_header(std::cout);
         std::cout << std::flush;
@@ -486,6 +553,7 @@ Config parse_args(int argc, char *argv[]) {
         {"no-direct", no_argument, nullptr, 1002},
         {"bench-build", no_argument, nullptr, 1003},
         {"no-bench-eval", no_argument, nullptr, 1004},
+        {"bench-update-charges", no_argument, nullptr, 1005},
         {nullptr, 0, nullptr, 0},
     };
 
@@ -553,6 +621,9 @@ Config parse_args(int argc, char *argv[]) {
         case 1004:
             cfg.bench_eval = false;
             break;
+        case 1005:
+            cfg.bench_update_charges = true;
+            break;
         case 'h':
         case '?':
         default:
@@ -572,6 +643,7 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -p                    Evaluation path (c)pu, (g)pu, or (b)oth\n"
                       << "  --bench-build         Also benchmark tree build time\n"
                       << "  --no-bench-eval       Skip eval benchmark (build only)\n"
+                      << "  --bench-update-charges  Also benchmark pdmk_tree_update_charges\n"
                       << "  -h                    Help\n";
             exit(0);
         }

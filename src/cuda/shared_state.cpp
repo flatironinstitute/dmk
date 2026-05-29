@@ -492,6 +492,7 @@ void CudaSharedDeviceState<Real, DIM>::upload_and_sort_charges(dmk_ikernel kerne
         cuda::launch_scatter_forward_stresslet(d_charge_input.data(), d_normal_input.data(), d_charge_outer.data(),
                                                d_scatter_index_src.data(), N, DIM, direct_stream.get());
     }
+    direct_stream.sync();
 }
 
 template <typename Real, int DIM>
@@ -530,7 +531,7 @@ void CudaSharedDeviceState<Real, DIM>::finalize_pot(cudaStream_t eval_stream, co
                                                   d_scatter_index_trg.data(), pot_trg_dof, n, direct_stream);
     }
 
-    DMK_CHECK_CUDA(cudaStreamSynchronize(direct_stream));
+    direct_stream.sync();
 }
 
 template struct CudaSharedDeviceState<float, 2>;

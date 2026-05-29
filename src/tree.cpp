@@ -298,20 +298,37 @@ int DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal)
     }
 #endif
 
-    if (normal) {
-        std::cerr << "normal updates not supported yet\n";
-        return 1;
+    // Delete the old data and re-register with the new values. The PtTree
+    // already knows the sort permutation from the "pdmk_src" particle set,
+    // so AddParticleData will sort the new data into tree order automatically.
+    if (params.kernel == DMK_STRESSLET) {
+        if (!normal) {
+            std::cerr << "stresslet update_charges requires non-null normal\n";
+            return 1;
+        }
+
+        sctl::Vector<Real> normal_vec(n_src * DIM, const_cast<Real *>(normal), false);
+        sctl::Vector<Real> density_vec(n_src * DIM, const_cast<Real *>(charge), false);
+
+        sctl::Vector<Real> charge_normal(n_src * DIM * DIM);
+        Real *__restrict__ charge_normal_ptr = &charge_normal[0];
+#pragma omp parallel for schedule(static)
+        for (int i = 0; i < n_src; ++i)
+            for (int k = 0; k < DIM; ++k)
+                for (int j = 0; j < DIM; ++j)
+                    charge_normal_ptr[i * DIM * DIM + k * DIM + j] = charge[i * DIM + k] * normal[i * DIM + j];
+
+        this->DeleteParticleData("pdmk_normal");
+        this->DeleteParticleData("pdmk_density");
+        this->DeleteParticleData("pdmk_charge");
+        this->AddParticleData("pdmk_normal", "pdmk_src", normal_vec);
+        this->AddParticleData("pdmk_density", "pdmk_src", density_vec);
+        this->AddParticleData("pdmk_charge", "pdmk_src", charge_normal);
+    } else {
+        sctl::Vector<Real> charge_vec(n_src * n_tables_up, const_cast<Real *>(charge), false);
+        this->DeleteParticleData("pdmk_charge");
+        this->AddParticleData("pdmk_charge", "pdmk_src", charge_vec);
     }
-
-    // Wrap the incoming (unsorted) charge data in a Vector without owning it
-    sctl::Vector<Real> charge_vec(n_src * n_tables_up, const_cast<Real *>(charge), false);
-
-    // Delete the old charge data and re-register with the new values.
-    // The PtTree already knows the sort permutation from the "pdmk_src"
-    // particle set, so AddParticleData will sort the new charges into
-    // tree order automatically.
-    this->DeleteParticleData("pdmk_charge");
-    this->AddParticleData("pdmk_charge", "pdmk_src", charge_vec);
 
     // Retrieve the sorted owned charges
     {
@@ -322,19 +339,15 @@ int DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal)
         charge_cnt_owned = count;
     }
 
-    // Recompute charge offsets (owned)
-    charge_offsets_owned[0] = 0;
-    for (std::size_t i = 1; i < n_boxes(); ++i)
-        charge_offsets_owned[i] = charge_offsets_owned[i - 1] + charge_cnt_owned[i - 1];
-
     // Broadcast to halo/ghost nodes and retrieve
     this->template Broadcast<Real>("pdmk_charge");
     this->GetData(charge_sorted_with_halo, charge_cnt_with_halo, "pdmk_charge");
-
-    // Recompute charge offsets (with halo)
-    charge_offsets_with_halo[0] = 0;
-    for (std::size_t i = 1; i < n_boxes(); ++i)
-        charge_offsets_with_halo[i] = charge_offsets_with_halo[i - 1] + charge_cnt_with_halo[i - 1];
+    if (params.kernel == DMK_STRESSLET) {
+        this->template Broadcast<Real>("pdmk_normal");
+        this->template Broadcast<Real>("pdmk_density");
+        this->GetData(normal_sorted_with_halo, normal_cnt_with_halo, "pdmk_normal");
+        this->GetData(density_sorted_with_halo, density_cnt_with_halo, "pdmk_density");
+    }
 
     logger->info("update_charges completed");
     return 0;

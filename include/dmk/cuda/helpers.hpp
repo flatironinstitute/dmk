@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cuda_runtime_api.h>
 #include <fstream>
 #include <stdexcept>
 #include <string>
@@ -119,6 +120,11 @@ class DeviceStream {
         DeviceStream s;
         DMK_CHECK_CUDA(cudaStreamCreateWithFlags(&s.s_, cudaStreamNonBlocking));
         return s;
+    }
+
+    void sync() {
+        if (s_)
+            DMK_CHECK_CUDA(cudaStreamSynchronize(s_));
     }
 
     void reset() {
