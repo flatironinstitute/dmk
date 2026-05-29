@@ -55,7 +55,7 @@ __global__ void scatter_forward_stresslet_kernel(const Real *__restrict__ densit
         return;
 
     const long dst = i * DIM * DIM;
-    const long src = scatter_index[i] * DIM * DIM;
+    const long src = scatter_index[i] * DIM;
     for (int k = 0; k < DIM; ++k)
         for (int j = 0; j < DIM; ++j)
             out[dst + k * DIM + j] = densities[src + k] * normals[src + j];
