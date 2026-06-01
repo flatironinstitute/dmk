@@ -333,6 +333,33 @@ inline void vec_fma_3_grad(T *__restrict__ pot, T *__restrict__ gx, T *__restric
     }
 }
 
+// 2D fused inner kernel for the EVAL_LEVEL == 2 proxy accumulator.
+//   pot[k] += t[k]   * px[k]
+//   gx[k]  += t[k]   * dpx[k]    (reuses t)
+//   gy[k]  += t_y[k] * px[k]     (reuses px)
+template <typename T>
+inline void vec_fma_2_grad(T *__restrict__ pot, T *__restrict__ gx, T *__restrict__ gy, const T *__restrict__ t,
+                           const T *__restrict__ t_y, const T *__restrict__ px, const T *__restrict__ dpx, int n) {
+    using Vec = sctl::Vec<T, sctl::DefaultVecLen<T>()>;
+    constexpr int N = Vec::Size();
+    int i = 0;
+    for (; i + N <= n; i += N) {
+        Vec vt = Vec::Load(t + i);
+        Vec vty = Vec::Load(t_y + i);
+        Vec vpx = Vec::Load(px + i);
+        Vec vdpx = Vec::Load(dpx + i);
+
+        FMA(vt, vpx, Vec::Load(pot + i)).Store(pot + i);
+        FMA(vt, vdpx, Vec::Load(gx + i)).Store(gx + i);
+        FMA(vty, vpx, Vec::Load(gy + i)).Store(gy + i);
+    }
+    for (; i < n; ++i) {
+        pot[i] += t[i] * px[i];
+        gx[i] += t[i] * dpx[i];
+        gy[i] += t_y[i] * px[i];
+    }
+}
+
 #if defined(__AVX512F__)
 inline void complex_deinterleave(const __m512 &lo, const __m512 &hi, __m512 &real, __m512 &imag) {
     const __m512i idx_r = _mm512_setr_epi32(0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30);

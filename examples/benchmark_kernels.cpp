@@ -265,12 +265,12 @@ double run_dmk(pdmk_tree tree, std::vector<Real> &pot, int n_src_per_rank, int k
     MPI_Barrier(MYCOMM);
 #endif
 
-    double st = omp_get_wtime();
+    double st = MY_OMP_GET_WTIME();
     if constexpr (std::is_same_v<Real, float>)
         pdmk_tree_evalf(tree, pot.data(), nullptr);
     else
         pdmk_tree_eval(tree, pot.data(), nullptr);
-    double ft = omp_get_wtime();
+    double ft = MY_OMP_GET_WTIME();
 
     return ft - st;
 }
@@ -405,9 +405,9 @@ void run_benchmark(const Config &cfg) {
 #ifdef DMK_HAVE_MPI
             MPI_Barrier(MYCOMM);
 #endif
-            double st = omp_get_wtime();
+            double st = MY_OMP_GET_WTIME();
             pdmk_tree tree = create_tree();
-            double ft = omp_get_wtime();
+            double ft = MY_OMP_GET_WTIME();
             pdmk_tree_destroy(tree);
 
             TimingResult t = make_timing(ft - st, n_src, n_src_per_rank, n_threads);
