@@ -469,12 +469,9 @@ struct LaplacePolyEvaluator3D {
 
                 u[0][0] = sctl::select<Real, MaxVecLen>(in_range, FMA(E, Rinv, O), zero);
 
-                const vector_type Rinv3 = Rinv * Rinv * Rinv;
-                const vector_type half = Real{0.5};
-                const vector_type df_dR2 = FMA(dE, Rinv, dO) - half * E * Rinv3;
-                const vector_type two = Real{2.0};
+                const vector_type df_dR2 = Real{2.0} * FMA(dE, Rinv, dO) - E * Rinv * Rinv * Rinv;
                 for (int i = 0; i < 3; i++)
-                    u[0][1 + i] = sctl::select<Real, MaxVecLen>(in_range, two * dX[i] * df_dR2, zero);
+                    u[0][1 + i] = sctl::select<Real, MaxVecLen>(in_range, dX[i] * df_dR2, zero);
             }
         } else {
             const vector_type xmapped = FMA(R2, Rinv, cen_vec) * rsc_vec;
@@ -487,13 +484,9 @@ struct LaplacePolyEvaluator3D {
                 horner_val_deriv(xmapped, coeffs, n_coeffs, P, dP);
 
                 u[0][0] = sctl::select<Real, MaxVecLen>(in_range, P * Rinv, zero);
-
-                const vector_type Rinv2 = Rinv * Rinv;
-                const vector_type half = vector_type(Real{0.5});
-                const vector_type df_dR2 = half * Rinv2 * (dP * rsc_vec - P * Rinv);
-                const vector_type two = vector_type(Real{2.0});
+                const vector_type df_dR2 = Rinv * Rinv * (dP * rsc_vec - P * Rinv);
                 for (int i = 0; i < 3; i++)
-                    u[0][1 + i] = sctl::select<Real, MaxVecLen>(in_range, two * dX[i] * df_dR2, zero);
+                    u[0][1 + i] = sctl::select<Real, MaxVecLen>(in_range, dX[i] * df_dR2, zero);
             }
         }
     }

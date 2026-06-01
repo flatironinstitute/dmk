@@ -34,7 +34,14 @@ struct Config {
     double fparam = 6.0;
     bool bench_build = false;
     bool bench_eval = true;
+    bool with_grad = false;
 };
+
+inline dmk_eval_type get_eval_type(dmk_ikernel kernel, bool with_grad) {
+    if (kernel == DMK_STOKESLET || kernel == DMK_STRESSLET)
+        return DMK_VELOCITY;
+    return with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
+}
 
 struct TimingResult {
     double elapsed;
@@ -55,16 +62,23 @@ TimingResult make_timing(double elapsed, int n_total, int n_per_rank, int n_thre
 }
 
 template <typename Real>
-ErrorMetrics compute_error(const std::vector<Real> &computed, const std::vector<Real> &reference, int rank, int np) {
+ErrorMetrics compute_error(const std::vector<Real> &computed, const std::vector<Real> &reference, int rank, int np,
+                           int kdim = 1, int comp_begin = 0, int comp_end = -1) {
+    if (comp_end < 0)
+        comp_end = kdim;
     double local_err2 = 0.0, local_ref2 = 0.0, local_maxre = 0.0;
 
-    for (size_t i = 0; i < reference.size(); ++i) {
-        double diff = double(computed[i]) - double(reference[i]);
-        double ref = double(reference[i]);
-        local_err2 += diff * diff;
-        local_ref2 += ref * ref;
-        if (std::abs(ref) > 0.0)
-            local_maxre = std::max(local_maxre, std::abs(diff / ref));
+    const size_t n_pts = reference.size() / kdim;
+    for (size_t p = 0; p < n_pts; ++p) {
+        for (int c = comp_begin; c < comp_end; ++c) {
+            const size_t i = p * kdim + c;
+            double diff = double(computed[i]) - double(reference[i]);
+            double ref = double(reference[i]);
+            local_err2 += diff * diff;
+            local_ref2 += ref * ref;
+            if (std::abs(ref) > 0.0)
+                local_maxre = std::max(local_maxre, std::abs(diff / ref));
+        }
     }
 
 #ifdef DMK_HAVE_MPI
@@ -230,7 +244,7 @@ void run_direct(const Config &cfg, int n_dim, int charge_dim, const std::vector<
     std::vector<double> r_trg_d(r_trg.begin(), r_trg.end());
 
     // Evaluate: each rank handles its own local targets
-    const auto eval_level = (cfg.kernel == DMK_STOKESLET || cfg.kernel == DMK_STRESSLET) ? DMK_VELOCITY : DMK_POTENTIAL;
+    const auto eval_level = get_eval_type(cfg.kernel, cfg.with_grad);
     const int kdim = dmk::get_kernel_output_dim(n_dim, cfg.kernel, eval_level);
     std::vector<double> pot_d(n_trg_local * kdim, 0.0);
 
@@ -289,6 +303,7 @@ void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ost
        << "# n_src:                " << cfg.n_src << "\n"
        << "# n_dim:                " << cfg.n_dim << "\n"
        << "# kernel:               " << kernel_str << "\n"
+       << "# with_grad:            " << cfg.with_grad << "\n"
        << "# precision:            " << (cfg.prec == 'd' ? "double" : "float") << "\n"
        << "# uniform_dist:         " << cfg.uniform << "\n"
        << "# eps:                  " << cfg.eps << "\n"
@@ -301,17 +316,28 @@ void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ost
        << "# bench_eval:           " << cfg.bench_eval << "\n";
 }
 
-void print_csv_header(std::ostream &os) {
-    os << "dmk_time,dmk_pts_s,dmk_pts_s_rank,dmk_pts_s_thread,dmk_l2_rel_err,dmk_max_rel_err";
+void print_csv_header(std::ostream &os, bool with_grad) {
+    os << "dmk_time,dmk_pts_s,dmk_pts_s_rank,dmk_pts_s_thread,";
+    if (with_grad)
+        os << "dmk_l2_rel_err_pot,dmk_max_rel_err_pot,dmk_l2_rel_err_grad,dmk_max_rel_err_grad";
+    else
+        os << "dmk_l2_rel_err,dmk_max_rel_err";
 }
 
-void print_csv_row(const TimingResult &t, const ErrorMetrics *err, std::ostream &os) {
+void print_csv_row(const TimingResult &t, const ErrorMetrics *err_a, const ErrorMetrics *err_b, std::ostream &os) {
     auto nan = std::numeric_limits<double>::quiet_NaN();
+    auto emit = [&](const ErrorMetrics *e) {
+        if (e)
+            os << e->l2_rel << "," << e->max_rel;
+        else
+            os << nan << "," << nan;
+    };
     os << t.elapsed << "," << t.pts_per_sec << "," << t.pts_per_sec_per_rank << "," << t.pts_per_sec_per_thread << ",";
-    if (err)
-        os << err->l2_rel << "," << err->max_rel;
-    else
-        os << nan << "," << nan;
+    emit(err_a);
+    if (err_b) {
+        os << ",";
+        emit(err_b);
+    }
 }
 
 dmk_ikernel parse_kernel(const char *s) {
@@ -347,15 +373,11 @@ void run_benchmark(const Config &cfg) {
     params.n_dim = n_dim;
     params.n_per_leaf = cfg.n_per_leaf;
     params.log_level = cfg.log_level;
-    params.eval_src = DMK_POTENTIAL;
-    params.eval_trg = DMK_POTENTIAL;
     params.kernel = cfg.kernel;
+    params.eval_src = get_eval_type(cfg.kernel, cfg.with_grad);
+    params.eval_trg = params.eval_src;
     if (cfg.kernel == DMK_YUKAWA)
         params.fparam = cfg.fparam;
-    if (cfg.kernel == DMK_STOKESLET || cfg.kernel == DMK_STRESSLET) {
-        params.eval_src = DMK_VELOCITY;
-        params.eval_trg = DMK_VELOCITY;
-    }
 
     const int charge_dim = dmk::get_kernel_input_dim(n_dim, params.kernel);
     const int pot_dim = dmk::get_kernel_output_dim(n_dim, cfg.kernel, params.eval_src);
@@ -434,7 +456,7 @@ void run_benchmark(const Config &cfg) {
     if (rank == 0) {
         if (!cfg.bench_build)
             print_csv_config_comment(cfg, np, n_threads, std::cout);
-        print_csv_header(std::cout);
+        print_csv_header(std::cout, cfg.with_grad);
         std::cout << std::flush;
     }
 
@@ -452,18 +474,24 @@ void run_benchmark(const Config &cfg) {
                 std::cout << "\n";
         }
 
-        ErrorMetrics err{};
+        ErrorMetrics err_a{}, err_b{};
         bool have_err = false;
         if (cfg.enable_direct) {
             int n_compare = std::min(int(pot_direct.size()), int(pot_dmk.size()));
+            n_compare = (n_compare / pot_dim) * pot_dim;
             std::vector<Real> pot_dmk_sub(pot_dmk.begin(), pot_dmk.begin() + n_compare);
             std::vector<Real> pot_dir_sub(pot_direct.begin(), pot_direct.begin() + n_compare);
-            err = compute_error(pot_dmk_sub, pot_dir_sub, rank, np);
+            if (cfg.with_grad) {
+                err_a = compute_error(pot_dmk_sub, pot_dir_sub, rank, np, pot_dim, 0, 1);
+                err_b = compute_error(pot_dmk_sub, pot_dir_sub, rank, np, pot_dim, 1, pot_dim);
+            } else {
+                err_a = compute_error(pot_dmk_sub, pot_dir_sub, rank, np, pot_dim, 0, pot_dim);
+            }
             have_err = true;
         }
 
         if (rank == 0) {
-            print_csv_row(t, have_err ? &err : nullptr, std::cout);
+            print_csv_row(t, have_err ? &err_a : nullptr, (have_err && cfg.with_grad) ? &err_b : nullptr, std::cout);
         }
         if (rank == 0)
             std::cout << ",";
@@ -487,7 +515,7 @@ Config parse_args(int argc, char *argv[]) {
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "N:n:e:t:r:D:l:k:d:f:uh?", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "N:n:e:t:r:D:l:k:d:f:ugh?", long_opts, nullptr)) != -1) {
         switch (opt) {
         case 'N':
             cfg.n_src = int(std::atof(optarg));
@@ -529,6 +557,9 @@ Config parse_args(int argc, char *argv[]) {
         case 'u':
             cfg.uniform = true;
             break;
+        case 'g':
+            cfg.with_grad = true;
+            break;
         case 1001:
             cfg.enable_direct = true;
             break;
@@ -556,6 +587,7 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -D n_direct           Points for direct comparison\n"
                       << "  -l log_level          DMK log verbosity\n"
                       << "  -u                    Uniform distribution\n"
+                      << "  -g                    Evaluate potential + gradient (scalar kernels)\n"
                       << "  --direct/--no-direct  Enable/disable direct reference\n"
                       << "  --bench-build         Also benchmark tree build time\n"
                       << "  --no-bench-eval       Skip eval benchmark (build only)\n"
