@@ -11,6 +11,14 @@ table for dipole sources in the 3D Laplace case, passes that table
 through `pdmk_direct_c`, and uses coefficient-based charge and dipole
 local corrections when dipoles are present.
 
+The same file now chooses the 3D Laplace plane-wave order `npw` and
+proxy tensor order `norder` from the calibrated smooth-kernel table used
+by the adaptive smooth-DMK tests. The table interpolates in
+`log10(1/eps)` and has separate charge-only and dipole/combined order
+sets. The tight-tolerance dipole endpoint keeps the previous `pdmk4`
+plane-wave order needed by the `eps = 1e-12` validation case.
+Non-3D-Laplace kernels keep the previous `pdmk4` order choices.
+
 `src/pdmk/pdmk_local.f` adds Fortran wrappers for coefficient-driven
 3D Laplace local kernels and the PSWF coefficient initialization
 routines used by the dipole path.
