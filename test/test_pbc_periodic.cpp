@@ -408,7 +408,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level public API", 1) {
     params.use_periodic = true;
     params.log_level = 6;
 
-    pdmk_tree tree = pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &normal[0], n_trg, &r_trg[0]);
+    pdmk_tree tree = pdmk_tree_create(comm, &params, n_src, &r_src[0], &charges[0], &normal[0], n_trg, &r_trg[0]);
     pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
     pdmk_tree_destroy(tree);
 
@@ -462,6 +462,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level root pw_out must be ze
     std::fill(poisoned_tree.pw_out.begin(), poisoned_tree.pw_out.end(), poison);
 
     poisoned_tree.form_outgoing_expansions();
+    poisoned_tree.correct_for_self_interactions();
 
     const int n_pw = poisoned_tree.expansion_constants.n_pw_diff;
     const int n_order = poisoned_tree.expansion_constants.n_order;
@@ -654,7 +655,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
                 sctl::Vector<double> pot_src(n_src * odim), pot_trg(n_trg * odim);
 
                 pdmk_tree tree =
-                    pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
+                    pdmk_tree_create(comm, &params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
                 pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
                 pdmk_tree_destroy(tree);
 

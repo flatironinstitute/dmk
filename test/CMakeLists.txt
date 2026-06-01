@@ -1,2 +1,10 @@
-add_executable(test_all test_all.cpp test_pbc_periodic.cpp test_direct.cpp)
+set(DMK_TEST_SRCS test_all.cpp test_pbc_periodic.cpp test_direct.cpp)
+if (DMK_GPU_OFFLOAD)
+  list(APPEND DMK_TEST_SRCS test_cuda.cpp)
+endif()
+
+add_executable(test_all ${DMK_TEST_SRCS})
 target_link_libraries(test_all PRIVATE dmk_shared)
+if (DMK_GPU_OFFLOAD)
+  target_link_libraries(test_all PRIVATE ${DMK_GPU_TARGET})
+endif()

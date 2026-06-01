@@ -1,8 +1,9 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.28)
 
-project(dmk LANGUAGES CXX)
+project(dmk LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_EXTENSIONS OFF)
+include(GNUInstallDirs)
 
 option(DMK_BUILD_TESTS "Build tests" ON)
 option(DMK_BUILD_EXAMPLES "Build examples" ON)
@@ -12,6 +13,7 @@ option(DMK_HAVE_MPI "Use MPI for parallelism" ON)
 option(DMK_HAVE_OPENMP "Use OpenMP for parallelism" ON)
 option(DMK_BUILD_REFERENCE "Build reference Fortran implementation" OFF)
 option(DMK_USE_JIT "Use JIT compilation where supported (requires LLVM)" OFF)
+option(DMK_GPU_OFFLOAD "Enable GPU offloading via CUDA" OFF)
 
 if (DMK_BUILD_REFERENCE)
   enable_language(Fortran)
@@ -61,6 +63,22 @@ if (DMK_HAVE_MPI)
 else()
   set(MPISupport OFF CACHE BOOL "" FORCE)
 endif()
+
+set(DMK_GPU_TARGET "")
+if (DMK_GPU_OFFLOAD)
+  if (DMK_HAVE_MPI)
+    message(FATAL_ERROR "DMK_GPU_OFFLOAD and DMK_HAVE_MPI are mutually exclusive (the upward-pass MPI broadcast still needs a D2H/H2D path).")
+  endif()
+  enable_language(CUDA)
+  set(CMAKE_CUDA_STANDARD 20)
+  set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+  set(CMAKE_CUDA_EXTENSIONS OFF)
+  find_package(CUDAToolkit REQUIRED)
+  set(DMK_GPU_TARGET CUDA::cudart)
+  list(APPEND DMK_CXX_FLAGS "-DDMK_GPU_OFFLOAD")
+  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo -Xptxas=-warn-spills")
+endif()
+
 find_package(BLAS REQUIRED)
 
 if (DMK_BUILD_PVFMM)
@@ -69,6 +87,7 @@ if (DMK_BUILD_PVFMM)
     pvfmm_lib
     GIT_REPOSITORY https://github.com/dmalhotra/pvfmm.git
     GIT_TAG develop
+    EXCLUDE_FROM_ALL
   )
   FetchContent_MakeAvailable(pvfmm_lib)
 endif()
@@ -83,6 +102,7 @@ FetchContent_Declare(
   polyfit
   GIT_REPOSITORY https://github.com/DiamonDinoia/polyfit.git
   GIT_TAG        a2994771155ed4cd22c2b792b463c42eefca3067
+  EXCLUDE_FROM_ALL
 )
 set(MONOFIT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(MONOFIT_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -90,14 +110,14 @@ FetchContent_MakeAvailable(polyfit)
 
 add_subdirectory(extern/spdlog EXCLUDE_FROM_ALL)
 add_subdirectory(extern/nanobench EXCLUDE_FROM_ALL)
-add_subdirectory(extern/doctest)
-add_subdirectory(extern/nda)
+add_subdirectory(extern/doctest EXCLUDE_FROM_ALL)
+add_subdirectory(extern/nda EXCLUDE_FROM_ALL)
 if (DMK_USE_JIT)
   list(APPEND DMK_CXX_FLAGS "-DDMK_USE_JIT")
   set(RUFUS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(RUFUS_LINK_LLVM_SHARED ON CACHE BOOL "" FORCE)
   set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
-  add_subdirectory(extern/RuFuS)
+  add_subdirectory(extern/RuFuS EXCLUDE_FROM_ALL)
 
   rufus_embed_ir_as_header(jit_kernels src/jit_kernels.cpp
     INCLUDES ${DMK_INCLUDES}
@@ -149,7 +169,7 @@ set(DMK_AOT_SRC src/aot_evaluator.cpp src/aot_kernels.cpp)
 add_library(DMKOBJS_BOOTSTRAP OBJECT ${DMK_BOOTSTRAP_SRC})
 set_target_properties(DMKOBJS_BOOTSTRAP PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(DMKOBJS_BOOTSTRAP PUBLIC ${DMK_INCLUDES})
-target_link_libraries(DMKOBJS_BOOTSTRAP PUBLIC ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET}
+target_link_libraries(DMKOBJS_BOOTSTRAP PUBLIC ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET} ${DMK_GPU_TARGET}
   nda::nda_c spdlog::spdlog_header_only doctest::doctest BLAS::BLAS polyfit::polyfit
 )
 if (DMK_USE_JIT)
@@ -161,17 +181,47 @@ add_library(DMKOBJS_AOT OBJECT ${DMK_AOT_SRC})
 set_target_properties(DMKOBJS_AOT PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(DMKOBJS_AOT PUBLIC DMKOBJS_BOOTSTRAP)
 
-# Builds without src/aot_kernels.cpp; used by generate_aot_kernels to break the
-# bootstrap loop (so the generator can be rebuilt even when aot_kernels.cpp is stale/missing).
 add_library(dmk_bootstrap STATIC)
 target_link_libraries(dmk_bootstrap PUBLIC DMKOBJS_BOOTSTRAP)
 
+if (DMK_GPU_OFFLOAD)
+  add_library(DMKOBJS_CUDA OBJECT src/cuda/aot_kernels.cu src/cuda/direct.cpp src/cuda/shared_state.cpp
+              src/cuda/shared_state_kernels.cu
+              src/cuda/eval_targets.cpp src/cuda/eval_targets_kernels.cu
+              src/cuda/tensorprod_kernels.cu
+              src/cuda/shift_pw_kernels.cu
+              src/cuda/pw_to_proxy_kernels.cu
+              src/cuda/proxy2pw_kernels.cu
+              src/cuda/multiply_kernelft_kernels.cu
+              src/cuda/charge2proxy_kernels.cu
+              src/cuda/downward.cpp
+              src/cuda/form_outgoing.cpp
+              src/cuda/upward.cpp)
+  set_target_properties(DMKOBJS_CUDA PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_include_directories(DMKOBJS_CUDA PUBLIC ${DMK_INCLUDES})
+  target_link_libraries(DMKOBJS_CUDA PUBLIC ${DMK_GPU_TARGET} ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET}
+    nda::nda_c spdlog::spdlog_header_only)
+  target_compile_options(DMKOBJS_CUDA PUBLIC "${DMK_CXX_FLAGS}")
+endif()
+
+set(DMK_GPU_OBJS "")
+if (DMK_GPU_OFFLOAD)
+  list(APPEND DMK_GPU_OBJS DMKOBJS_CUDA)
+endif()
+
 add_library(dmk STATIC)
-target_link_libraries(dmk PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT)
+target_link_libraries(dmk PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT ${DMK_GPU_OBJS})
 
 add_library(dmk_shared SHARED)
 set_target_properties(dmk_shared PROPERTIES OUTPUT_NAME dmk)
-target_link_libraries(dmk_shared PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT)
+target_link_libraries(dmk_shared PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT ${DMK_GPU_OBJS})
+
+install(TARGETS dmk dmk_shared
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+install(FILES include/dmk.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/dmk)
 
 if (DMK_BUILD_TESTS)
   add_subdirectory(test)

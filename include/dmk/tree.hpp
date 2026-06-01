@@ -4,6 +4,7 @@
 #include <cmath>
 #include <complex>
 #include <dmk.h>
+#include <dmk/fourier_data.hpp>
 #include <dmk/logger.h>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
@@ -12,9 +13,17 @@
 #include <span>
 #include <stdexcept>
 
+#ifdef DMK_GPU_OFFLOAD
+#include <dmk/cuda/direct.hpp>
+#include <dmk/cuda/downward.hpp>
+#include <dmk/cuda/eval_targets.hpp>
+#include <dmk/cuda/form_outgoing.hpp>
+#include <dmk/cuda/shared_state.hpp>
+#include <dmk/cuda/upward.hpp>
+#include <memory>
+#endif
+
 namespace dmk {
-template <typename T>
-struct FourierData;
 
 template <int DIM>
 struct ExpansionConstants {
@@ -534,6 +543,10 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<Real> boxsize;
     sctl::Vector<Real> centers;
 
+    sctl::Vector<Real> direct_rsc;
+    sctl::Vector<Real> direct_cen;
+    sctl::Vector<Real> direct_d2max;
+
     sctl::Vector<int> src_counts_owned;
     sctl::Vector<int> trg_counts_owned;
     sctl::Vector<int> src_counts_with_halo;
@@ -595,6 +608,29 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     std::vector<int> direct_work;
 
+    // Per-work-item self-interaction correction factor for a given
+    // box, parallel to direct_work.  Precomputed from tree topology
+    // (depth, ifpwexp) and per-level kernel values.  Zero for
+    // STRESSLET (no correction needed).
+    std::vector<Real> self_correction_work;
+
+    // Boxes with iftensprodeval[b] == true, in tree order. Each entry is a
+    // leaf-of-eval where proxy::eval_targets runs on the proxy expansion.
+    // Precomputed once in build_evaluators(); consumed by the GPU eval_targets
+    // path (CPU path still iterates all boxes and checks the flag inline).
+    std::vector<int> eval_targets_box_list;
+
+    // Per-level list of (parent, child, child_octant) tuples for the
+    // tensorprod transforms: parent at level L, child at level L+1. Matches
+    // the per-box conditions in form_eval_expansions's CPU loop. One GPU
+    // tensorprod batch kernel per level consumes this list.
+    struct TensorprodPair {
+        int parent;
+        int child;
+        int child_octant; // 0..(2^DIM - 1); selects p2c slab
+    };
+    std::vector<std::vector<TensorprodPair>> tensorprod_pairs_per_level;
+
     sctl::Vector<bool> has_proxy_from_children;
     struct Charge2ProxyGroup {
         int center_box;
@@ -638,6 +674,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void build_tree(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &charge,
                     const sctl::Vector<Real> &normals, const sctl::Vector<Real> &r_trg);
 
+    void build_tree_for_gpu(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &r_trg);
+
     // Metadata generation subroutines
     void compute_data_offsets();
     void compute_level_indices_and_boxsizes();
@@ -654,7 +692,9 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void allocate_proxy_coefficients();
     void precompute_window_difference_data();
     void build_evaluators();
+    void build_self_correction_work_list();
     void generate_metadata();
+    void generate_metadata_for_gpu();
     void init_planewave_data();
 
     // Subtasks for downward pass
@@ -666,6 +706,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
                               Real boxsize, const ndview<std::complex<Real>, 2> &pw2poly_view,
                               const sctl::Vector<Real> &p2c);
     void evaluate_direct_interactions();
+    void correct_for_self_interactions();
 
     // User calls
     int update_charges(const Real *charge, const Real *normal);
@@ -787,13 +828,43 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
             static_assert(dmk::util::always_false<std::complex<Real>>, "Invalid DIM supplied");
     }
 
-    void dump() const;
+    void dump(const std::string &prefix = "") const;
+    const sctl::Comm &comm() const { return comm_; }
     void eval();
     void upward_pass();
     void downward_pass();
     void desort_potentials(Real *pot_src, Real *pot_trg);
 
+#ifdef DMK_GPU_OFFLOAD
+    // GPU offload state. Constructed at the start of upward_pass() and
+    // consumed at the end of downward_pass(). Shared state holds the
+    // device-side inputs/topology used by every per-operation context;
+    // contexts borrow pointers from it.
+    std::unique_ptr<CudaSharedDeviceState<Real, DIM>> cuda_shared_state_;
+    std::unique_ptr<CudaDirectContext<Real, DIM>> cuda_direct_ctx_;
+    std::unique_ptr<CudaEvalTargetsContext<Real, DIM>> cuda_eval_targets_ctx_;
+    std::unique_ptr<CudaDownwardContext<Real, DIM>> cuda_downward_ctx_;
+    std::unique_ptr<CudaFormOutgoingContext<Real, DIM>> cuda_form_outgoing_ctx_;
+    std::unique_ptr<CudaUpwardContext<Real, DIM>> cuda_upward_ctx_;
+#endif
+
   private:
+    // Path-specific pieces of upward_pass / downward_pass. The public
+    // upward_pass / downward_pass methods are dispatchers that call into
+    // these based on params.eval_path
+    void cpu_upward_pass();
+    void cpu_downward_pass();
+#ifdef DMK_GPU_OFFLOAD
+    // Build the cuda_*_ctx_ unique_ptrs once at tree construction. After this
+    // returns, cuda_shared_state_ is non-null iff the GPU is actually going to
+    // run for evals on this tree (params.eval_path != CPU and no debug flag
+    // disables it). All device buffers and topology uploads happen here; per
+    // eval the contexts only re-launch kernels and re-zero output buffers.
+    void gpu_init_state();
+    void gpu_upward_pass();
+    void gpu_downward_pass();
+#endif
+
     static constexpr int nlist1_max_ = sctl::pow<DIM>(4) - sctl::pow<DIM>(2) + 1;
     // list1 contains boxes that are neighbors for direct interaction
     std::vector<std::array<int, nlist1_max_>> list1_;
