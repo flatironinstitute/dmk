@@ -700,51 +700,7 @@ c
       
 c     calculate and allocate maximum memory for planewave expansions
 c     needed for one level
-      if (ikernel.eq.2.and.dim.eq.3) then
-         if (ndigits.le.3) then
-            npw=13
-            norder=9
-         elseif (ndigits.le.6) then
-            npw=27
-            norder=18
-         elseif (ndigits.le.9) then
-            npw=39
-            norder=28
-         elseif (ndigits.le.12) then
-            npw=55
-            norder=38
-         endif
-      else
-         if (ndigits.le.3) then
-            npw=13
-            norder=9
-         elseif (ndigits.le.6) then
-            npw=25
-            norder=18
-         elseif (ndigits.le.9) then
-            npw=39
-            norder=28
-         elseif (ndigits.le.12) then
-            npw=53
-            norder=38
-         endif
-      endif
-
-      if (ifdipole.eq.1) then
-         if (ndigits.le.3) then
-            npw=21
-            norder=12
-         elseif (ndigits.le.6) then
-            npw=35
-            norder=22
-         elseif (ndigits.le.9) then
-            npw=47
-            norder=32
-         elseif (ndigits.le.12) then
-            npw=61
-            norder=42
-         endif
-      endif
+      call pdmk_smooth_orders(eps,ikernel,dim,ifdipole,npw,norder)
       
       itype = 0
       call chebexps(itype,norder,xq,umat,vmat,wts)
@@ -1883,6 +1839,152 @@ c
          endif
       endif
       
+      return
+      end
+c
+c
+c
+c
+c------------------------------------------------------------------
+      subroutine pdmk_smooth_orders(eps,ikernel,dim,
+     1    ifdipole,npw,norder)
+c------------------------------------------------------------------
+c     Choose the plane-wave and tensor-product proxy orders.  The
+c     3D Laplace table uses smooth-kernel direct-reference tests and
+c     interpolates in d=log10(1/eps).  The tight-tolerance dipole
+c     endpoint keeps the full pdmk4 plane-wave order.  Other kernels
+c     retain the older pdmk4 order blocks.
+c------------------------------------------------------------------
+      implicit none
+      real *8 eps
+      integer ikernel,dim,ifdipole,npw,norder
+      integer ipw(11),iord(11),iseg,i0,ndigits
+      real *8 d,x0,x1,pwval,ordval,theta
+
+      if (ikernel.eq.1.and.dim.eq.3) then
+         if (ifdipole.eq.1) then
+            ipw(1) = 11
+            ipw(2) = 15
+            ipw(3) = 21
+            ipw(4) = 25
+            ipw(5) = 31
+            ipw(6) = 35
+            ipw(7) = 41
+            ipw(8) = 45
+            ipw(9) = 47
+            ipw(10) = 51
+            ipw(11) = 61
+            iord(1) = 7
+            iord(2) = 10
+            iord(3) = 14
+            iord(4) = 18
+            iord(5) = 20
+            iord(6) = 23
+            iord(7) = 26
+            iord(8) = 29
+            iord(9) = 32
+            iord(10) = 37
+            iord(11) = 42
+         else
+            ipw(1) = 9
+            ipw(2) = 13
+            ipw(3) = 19
+            ipw(4) = 23
+            ipw(5) = 27
+            ipw(6) = 33
+            ipw(7) = 39
+            ipw(8) = 41
+            ipw(9) = 45
+            ipw(10) = 51
+            ipw(11) = 53
+            iord(1) = 5
+            iord(2) = 8
+            iord(3) = 11
+            iord(4) = 14
+            iord(5) = 18
+            iord(6) = 21
+            iord(7) = 24
+            iord(8) = 26
+            iord(9) = 29
+            iord(10) = 35
+            iord(11) = 38
+         endif
+
+         d = dlog10(1.0d0/eps)
+         if (d.le.2.0d0) then
+            npw = ipw(1)
+            norder = iord(1)
+         else if (d.ge.12.0d0) then
+            npw = ipw(11)
+            norder = iord(11)
+         else
+            i0 = int(d)
+            if (i0.lt.2) i0 = 2
+            if (i0.gt.11) i0 = 11
+            iseg = i0 - 1
+            x0 = dble(i0)
+            x1 = dble(i0+1)
+            theta = (d-x0)/(x1-x0)
+            pwval = dble(ipw(iseg))
+     1          + theta*dble(ipw(iseg+1)-ipw(iseg))
+            npw = int(pwval)
+            if (dble(npw).lt.pwval) npw = npw + 1
+            if (mod(npw,2).eq.0) npw = npw + 1
+            ordval = dble(iord(iseg))
+     1          + theta*dble(iord(iseg+1)-iord(iseg))
+            norder = int(ordval)
+            if (dble(norder).lt.ordval) norder = norder + 1
+         endif
+         return
+      endif
+
+      ndigits = nint(dlog10(1.0d0/eps)-0.1d0)
+      if (ikernel.eq.2.and.dim.eq.3) then
+         if (ndigits.le.3) then
+            npw = 13
+            norder = 9
+         elseif (ndigits.le.6) then
+            npw = 27
+            norder = 18
+         elseif (ndigits.le.9) then
+            npw = 39
+            norder = 28
+         else
+            npw = 55
+            norder = 38
+         endif
+      else
+         if (ndigits.le.3) then
+            npw = 13
+            norder = 9
+         elseif (ndigits.le.6) then
+            npw = 25
+            norder = 18
+         elseif (ndigits.le.9) then
+            npw = 39
+            norder = 28
+         else
+            npw = 53
+            norder = 38
+         endif
+      endif
+
+      if (ifdipole.eq.1) then
+         if (ndigits.le.3) then
+            npw = 21
+            norder = 12
+         elseif (ndigits.le.6) then
+            npw = 35
+            norder = 22
+         elseif (ndigits.le.9) then
+            npw = 47
+            norder = 32
+         else
+            npw = 61
+            norder = 42
+         endif
+      endif
+
       return
       end
 c
