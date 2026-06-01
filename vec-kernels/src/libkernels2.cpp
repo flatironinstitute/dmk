@@ -1,5 +1,6 @@
 #include <kernels.h>
 #include <template-kernels2.hpp>
+#include <l3d_laplace_dipole_kernel.hpp>
 #define VECDIM 4
 
 #ifdef __AVX512F__
@@ -23,6 +24,18 @@ void l3d_local_kernel_directcp_cpp_(const int32_t* nd, const int32_t* ndim, cons
 
 void l3d_near_kernel_directcp_cpp_(const int32_t* nd, const int32_t* ndim, const int32_t* digits,const double* rsc,const double* cen, const double* bsizeinv, const double* d2max, const double* sources,const int32_t* ns, const double* charge, const double* xtarg,const double* ytarg,const double* ztarg,const int32_t* nt, double* pot){
   l3d_near_kernel_directcp_vec_cpp<double, VECDIM>(nd, ndim, digits,rsc, cen, bsizeinv, d2max, sources, ns, charge,xtarg, ytarg, ztarg, nt, pot);
+}
+
+void l3d_local_kernel_directdp_cpp_(const int32_t* nd, const int32_t* ndim, const int32_t* digits,const double* rsc,const double* cen, const double* d2max, const double* sources,const int32_t* ns, const double* dipvec, const double* xtarg,const double* ytarg,const double* ztarg,const int32_t* nt, double* pot, const double* thresh){
+  l3d_local_kernel_directdp_vec_cpp<double, VECDIM>(nd, ndim, digits,rsc, cen, d2max, sources, ns, dipvec,xtarg, ytarg, ztarg, nt, pot, thresh);
+}
+
+void l3d_local_kernel_directcp_coef_cpp_(const int32_t* nd, const int32_t* ndim, const int32_t* digits,const double* rsc,const double* cen, const double* d2max, const double* sources,const int32_t* ns, const double* charge, const double* xtarg,const double* ytarg,const double* ztarg,const int32_t* nt, const int32_t* ncoefs, const double* coefs, double* pot, const double* thresh){
+  l3d_local_kernel_directcp_coef_vec_cpp<double, VECDIM>(nd, ndim, digits,rsc, cen, d2max, sources, ns, charge,xtarg, ytarg, ztarg, nt, ncoefs, coefs, pot, thresh);
+}
+
+void l3d_local_kernel_directdp_coef_cpp_(const int32_t* nd, const int32_t* ndim, const int32_t* digits,const double* rsc,const double* cen, const double* d2max, const double* sources,const int32_t* ns, const double* dipvec, const double* xtarg,const double* ytarg,const double* ztarg,const int32_t* nt, const int32_t* ncoefs, const double* coefs, const int32_t* ncoefsd, const double* coefsd, double* pot, const double* thresh){
+  l3d_local_kernel_directdp_coef_vec_cpp<double, VECDIM>(nd, ndim, digits,rsc, cen, d2max, sources, ns, dipvec,xtarg, ytarg, ztarg, nt, ncoefs, coefs, ncoefsd, coefsd, pot, thresh);
 }
   
 void sl3d_local_kernel_directcp_cpp_(const int32_t* nd, const int32_t* ndim, const int32_t* digits,const double* rsc,const double* cen, const double* d2max, const double* sources,const int32_t* ns, const double* charge, const double* xtarg,const double* ytarg,const double* ztarg,const int32_t* nt, double* pot, const double* thresh){
@@ -69,4 +82,3 @@ void log_local_kernel_directdp_cpp_(const int32_t* nd, const int32_t* ndim, cons
 #ifdef __cplusplus
 }
 #endif
-

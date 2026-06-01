@@ -46,10 +46,95 @@ c
 
       call l3d_local_kernel_directcp_cpp(nd,dim,ndigits,rscale,center,
      1    d2max,sources,ns,charge,xtarg,ytarg,ztarg,ntarg,pot,threshsq)
+
+      return
+      end
+c
+c
+c
+c***********************************************************************
+c
+c     charge to potential with supplied local-kernel power coefficients
+c
+c**********************************************************************
+      subroutine l3d_local_kernel_directcp_coef(nd,dim,ndigits,rscale,
+     $    center,d2max,sources,ns,charge,xtarg,ytarg,ztarg,ntarg,
+     1    ncoefs,coefs,pot)
+      implicit none
+c**********************************************************************
+      integer ns,nd,ntarg
+      integer dim,ndigits,ncoefs
+      real *8 d2max,threshsq,rscale,center
+      real *8 sources(dim,ns),xtarg(*),ytarg(*),ztarg(*)
+      real *8 pot(nd,ntarg)
+      real *8 charge(nd,ns),coefs(*)
+c
+      threshsq = 1.0d-30
+
+      call l3d_local_kernel_directcp_coef_cpp(nd,dim,ndigits,rscale,
+     1    center,d2max,sources,ns,charge,xtarg,ytarg,ztarg,ntarg,
+     2    ncoefs,coefs,pot,threshsq)
+
+      return
+      end
+c
+c
+c
+c***********************************************************************
+c
+c     dipole to potential for the local PSWF kernel of 1/r
+c
+c**********************************************************************
+      subroutine l3d_local_kernel_directdp(nd,dim,ndigits,rscale,
+     $    center,d2max,sources,ns,dipvec,xtarg,ytarg,ztarg,ntarg,pot)
+      implicit none
+c**********************************************************************
+      integer i,ns,ii,nd,itarg,k,ntarg
+      integer dim,ndigits
+      real *8 bssrcinv,d2max,eps
+      real *8 sources(dim,ns),xtarg(*),ytarg(*),ztarg(*)
+      real *8 dr(10)
+      real *8 rtmp,fval,rscale,rr,rr2,threshsq,center
+      real *8 pot(nd,ntarg)
+      real *8 dipvec(nd,dim,ns)
+c
+      threshsq = 1.0d-30
+
+      call l3d_local_kernel_directdp_cpp(nd,dim,ndigits,rscale,center,
+     1    d2max,sources,ns,dipvec,xtarg,ytarg,ztarg,ntarg,pot,
+     2    threshsq)
       
       return
       end
 c     
+c
+c
+c***********************************************************************
+c
+c     dipole to potential with supplied local-kernel power coefficients
+c
+c**********************************************************************
+      subroutine l3d_local_kernel_directdp_coef(nd,dim,ndigits,rscale,
+     $    center,d2max,sources,ns,dipvec,xtarg,ytarg,ztarg,ntarg,
+     1    ncoefs,coefs,ncoefsd,coefsd,pot)
+      implicit none
+c**********************************************************************
+      integer ns,nd,ntarg
+      integer dim,ndigits,ncoefs,ncoefsd
+      real *8 d2max,threshsq,rscale,center
+      real *8 sources(dim,ns),xtarg(*),ytarg(*),ztarg(*)
+      real *8 pot(nd,ntarg)
+      real *8 dipvec(nd,dim,ns),coefs(*),coefsd(*)
+c
+      threshsq = 1.0d-30
+
+      call l3d_local_kernel_directdp_coef_cpp(nd,dim,ndigits,rscale,
+     1    center,d2max,sources,ns,dipvec,xtarg,ytarg,ztarg,ntarg,
+     2    ncoefs,coefs,ncoefsd,coefsd,pot,threshsq)
+
+      return
+      end
+c
 c
 c
 c**********************************************************************
@@ -73,6 +158,235 @@ c
       return
       end
 c     
+c
+c
+c
+c***********************************************************************
+c
+c     charge to potential for the local PSWF kernel of 1/r
+c
+c**********************************************************************
+      subroutine l3d_local_kernel_init(eps,c,ncoefs,coefs)
+      implicit none
+c**********************************************************************
+c     computes the numerator of the local kernel in the PSWF splitting
+c     of the 1/r kernel - initialization subroutine
+c
+c     input parameters:
+c     eps - desired precision of chebyshev expansions
+c     c - the parameter for the PSWF function
+c         for a given precision tol, c can be found via either
+c         the subroutine "provcget" or "proicget"
+c
+c     output parameters:
+c     ncoefs - number of chebyshev expansion coefficients
+c     coefs - chebyshev expansion coefficients
+      integer ncoefs
+      real *8 coefs(*)
+      real *8 eps,c
+      integer ier,lenw,keep,ltot
+      real *8 rlam20,rkhi,derpsi0
+      real *8 wprolate(5000)
+      real *8, allocatable :: x(:),w(:),u(:,:),v(:,:),f(:),coefs0(:)
+      real *8, allocatable :: coefs1(:)
+      real *8 xval,fval,c1
+      integer i,j,n,itype
+c
+      lenw = 5000
+      call prol0ini(ier,c,wprolate,rlam20,rkhi,lenw,keep,ltot)
+
+      itype = 2
+      n = 100
+      allocate(x(n),w(n),u(n,n),v(n,n),f(n),coefs0(n))
+      allocate(coefs1(n+1))
+      call chebexps(itype,n,x,u,v,w)
+
+c     compute psi_0^c(x) at Chebyshev nodes on [-1,1]
+      do i=1,n
+         call prol0eva(x(i),wprolate,f(i),derpsi0)
+      enddo
+
+c     find the chebyshev expansion coefficients of psi_0^c(x)
+      do i=1,n
+         coefs0(i) = 0
+         do j=1,n
+            coefs0(i) = coefs0(i) + u(i,j)*f(j)
+         enddo
+      enddo
+
+c     find the chebyshev expansion coefficients of the integral
+      call chebinte(coefs0,n-1,coefs1)
+      xval = 0.0d0
+      call chebexev(xval,fval,coefs1,n)
+c     This makes f(x) = int_0^x psi_0^c(t)dt
+      coefs1(1) = coefs1(1)-fval
+      xval = 1.0d0
+c     c1 = int_0^1 psi_0^c(x)dx
+      call chebexev(xval,c1,coefs1,n)
+
+c     this makes f(x) = 1-int_0^x psi_0^c(t)dt/c1
+      do i=1,n+1
+         coefs1(i) = -coefs1(i)/c1
+      enddo
+      coefs1(1) = 1+coefs1(1)
+
+c     Now calculate f(x) on Chebyshev points on [0,1]
+      do i=1,n
+         xval=(x(i)+1)/2
+         call chebexev(xval,f(i),coefs1,n)
+      enddo
+
+c     find its chebyshev expansion coefficients on [0,1]
+      do i=1,n
+         coefs0(i) = 0
+         do j=1,n
+            coefs0(i) = coefs0(i) + u(i,j)*f(j)
+         enddo
+      enddo
+
+      call find_chebyshev_expansion_length(eps,n,coefs0,ncoefs)
+      do i=1,ncoefs
+         coefs(i) = coefs0(i)
+      enddo
+
+      deallocate(x,w,u,v,f,coefs0,coefs1)
+
+      return
+      end
+c
+c
+c
+c**********************************************************************
+      subroutine l3d_local_kernel_init_power(eps,c,ncoefs,coefs)
+      implicit none
+c**********************************************************************
+      integer ncoefs
+      real *8 eps,c,coefs(*),cheb(200)
+c
+      call l3d_local_kernel_init(eps,c,ncoefs,cheb)
+      call l3d_cheb_to_power(ncoefs,cheb,coefs)
+
+      return
+      end
+c
+c
+c
+c**********************************************************************
+      subroutine l3d_local_kernel_init_power_dlp(eps,c,ncoefs,coefs,
+     1    ncoefsd,coefsd)
+      implicit none
+c**********************************************************************
+      integer ncoefs,ncoefsd
+      real *8 eps,c,coefs(*),coefsd(*),cheb(200),chebd(200)
+      integer ier,lenw,keep,ltot
+      real *8 rlam20,rkhi,derpsi0
+      real *8 wprolate(5000)
+      real *8, allocatable :: x(:),w(:),u(:,:),v(:,:),f(:),cpsi(:)
+      real *8, allocatable :: cint(:)
+      real *8 xval,fval,c1,qval,dqval
+      integer i,j,n,itype
+c
+      call l3d_local_kernel_init(eps,c,ncoefs,cheb)
+      call l3d_cheb_to_power(ncoefs,cheb,coefs)
+c
+      lenw = 5000
+      call prol0ini(ier,c,wprolate,rlam20,rkhi,lenw,keep,ltot)
+c
+      itype = 2
+      n = 100
+      allocate(x(n),w(n),u(n,n),v(n,n),f(n),cpsi(n))
+      allocate(cint(n+1))
+      call chebexps(itype,n,x,u,v,w)
+c
+      do i=1,n
+         call prol0eva(x(i),wprolate,f(i),derpsi0)
+      enddo
+c
+      do i=1,n
+         cpsi(i) = 0.0d0
+         do j=1,n
+            cpsi(i) = cpsi(i) + u(i,j)*f(j)
+         enddo
+      enddo
+c
+      call chebinte(cpsi,n-1,cint)
+      xval = 0.0d0
+      call chebexev(xval,fval,cint,n)
+      cint(1) = cint(1)-fval
+      xval = 1.0d0
+      call chebexev(xval,c1,cint,n)
+c
+      do i=1,n
+         xval=(x(i)+1.0d0)/2.0d0
+         call chebexev(xval,qval,cint,n)
+         qval = 1.0d0 - qval/c1
+         call prol0eva(xval,wprolate,fval,derpsi0)
+         dqval = -fval/(2.0d0*c1)
+         f(i) = qval - (x(i)+1.0d0)*dqval
+      enddo
+c
+      do i=1,n
+         chebd(i) = 0.0d0
+         do j=1,n
+            chebd(i) = chebd(i) + u(i,j)*f(j)
+         enddo
+      enddo
+c
+      call find_chebyshev_expansion_length(eps,n,chebd,ncoefsd)
+      call l3d_cheb_to_power(ncoefsd,chebd,coefsd)
+c
+      deallocate(x,w,u,v,f,cpsi,cint)
+
+      return
+      end
+c
+c
+c
+c**********************************************************************
+      subroutine l3d_cheb_to_power(ncoefs,cheb,power)
+      implicit none
+c**********************************************************************
+      integer ncoefs
+      integer i,k
+      real *8 cheb(*),power(*),t0(200),t1(200),t2(200)
+c
+      do i=1,ncoefs
+         power(i)=0.0d0
+         t0(i)=0.0d0
+         t1(i)=0.0d0
+         t2(i)=0.0d0
+      enddo
+c
+      t0(1)=1.0d0
+      do i=1,ncoefs
+         power(i)=power(i)+cheb(1)*t0(i)
+      enddo
+c
+      if (ncoefs.ge.2) then
+         t1(2)=1.0d0
+         do i=1,ncoefs
+            power(i)=power(i)+cheb(2)*t1(i)
+         enddo
+      endif
+c
+      do k=3,ncoefs
+         do i=1,ncoefs
+            t2(i)=-t0(i)
+         enddo
+         do i=1,ncoefs-1
+            t2(i+1)=t2(i+1)+2.0d0*t1(i)
+         enddo
+         do i=1,ncoefs
+            power(i)=power(i)+cheb(k)*t2(i)
+         enddo
+         do i=1,ncoefs
+            t0(i)=t1(i)
+            t1(i)=t2(i)
+         enddo
+      enddo
+
+      return
+      end
 c
 c
 c
