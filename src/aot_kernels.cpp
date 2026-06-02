@@ -1408,6 +1408,426 @@ residual_evaluator_func<Real> get_stresslet_3d_kernel(dmk_eval_type eval_level, 
     }
     throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
 }
+// beta: 5.634
+constexpr double laplace_dipole_2d_2[] = {3.13982699174314650e-01, -3.96433852452082069e-01, 9.92426154819550377e-02,
+                                          -1.90368403844127405e-02, 2.13177249723958250e-03};
+
+// beta: 8.298
+constexpr double laplace_dipole_2d_3[] = {3.34951846520722518e-01, -4.51425311660508977e-01, 1.58903913746138520e-01,
+                                          -5.64403577878143242e-02, 1.42225947874835106e-02};
+
+// beta: 10.962
+constexpr double laplace_dipole_2d_4[] = {3.42281810696065336e-01,  -4.78096715201645150e-01, 1.97779137306704961e-01,
+                                          -8.64773139989030160e-02, 3.29622925119338744e-02,  -1.11027177029749714e-02,
+                                          2.66035143382815312e-03};
+
+// beta: 13.626000000000001
+constexpr double laplace_dipole_2d_5[] = {3.44915842042819665e-01,  -4.89961369975528027e-01, 2.21480836889886956e-01,
+                                          -1.14394622555646933e-01, 5.37419473726064301e-02,  -2.20909817502120964e-02,
+                                          8.68893222440876058e-03,  -2.38434123821282566e-03};
+
+// beta: 16.29
+constexpr double laplace_dipole_2d_6[] = {3.45919386101466886e-01,  -4.95402969807283156e-01, 2.34698481783677582e-01,
+                                          -1.34144614252904887e-01, 7.44254544344874341e-02,  -3.68405773102182116e-02,
+                                          1.55070858412738963e-02,  -5.72102694789653789e-03, 2.10161274532129783e-03,
+                                          -5.43016405664242330e-04};
+
+// beta: 18.954
+constexpr double laplace_dipole_2d_7[] = {3.46309605610155224e-01,  -4.97894142081210078e-01, 2.42004772957524095e-01,
+                                          -1.47223285510184099e-01, 9.04992322165261154e-02,  -5.15970733773772269e-02,
+                                          2.62285491415453278e-02,  -1.16171240842201182e-02, 4.37704958272407043e-03,
+                                          -1.47657199336714384e-03, 5.16155202890721063e-04,  -1.27179066559064544e-04};
+
+// beta: 21.618000000000002
+constexpr double laplace_dipole_2d_8[] = {3.46465542185645459e-01,  -4.99035132663591008e-01, 2.45882072899040793e-01,
+                                          -1.55393224628365384e-01, 1.02514215430682176e-01,  -6.47292055179352205e-02,
+                                          3.73878506826006082e-02,  -1.93480188301886798e-02, 8.78913966227064594e-03,
+                                          -3.39457735346379097e-03, 1.21346253132454730e-03,  -4.78748932442096548e-04,
+                                          1.26630496274552024e-04};
+
+// beta: 24.282
+constexpr double laplace_dipole_2d_9[] = {3.46528846828475290e-01,  -4.99557977040003987e-01, 2.47905052833453571e-01,
+                                          -1.60284225913706196e-01, 1.10846135755074099e-01,  -7.54150698050898988e-02,
+                                          4.80865525877394173e-02,  -2.79232245364154502e-02, 1.45623181721780022e-02,
+                                          -6.79931168318733715e-03, 2.80441551454466446e-03,  -9.89738256485566499e-04,
+                                          3.29839686466982932e-04,  -1.25436314790291635e-04, 3.18225495247252316e-05};
+
+// beta: 26.946
+constexpr double laplace_dipole_2d_10[] = {3.46554885811630575e-01,  -4.99797464298173455e-01, 2.48944698681241722e-01,
+                                           -1.63125446206647234e-01, 1.16346774593003702e-01,  -8.34671988757569872e-02,
+                                           5.73882295658860106e-02,  -3.66610908749546716e-02, 2.13543038581039853e-02,
+                                           -1.12222679561388324e-02, 5.30517947282425906e-03,  -2.26374685941606269e-03,
+                                           8.61022869058034870e-04,  -2.81768838630406821e-04, 8.87191470372068481e-05,
+                                           -3.29018614557762698e-05, 8.07179489848754229e-06};
+
+// beta: 29.610000000000003
+constexpr double laplace_dipole_2d_11[] = {
+    3.46565709674464428e-01, -4.99907196210289839e-01, 2.49472734764018850e-01, -1.64733889213781792e-01,
+    1.19837338306038599e-01, -8.92269677062905442e-02, 6.49198653833157890e-02, -4.46941265869241558e-02,
+    2.85001358243681460e-02, -1.66176703156392692e-02, 8.79668798277245638e-03, -4.21256156538598117e-03,
+    1.82742664813772583e-03, -7.22659111899728260e-04, 2.56912723428001676e-04, -7.88574045760395340e-05,
+    2.37007778910783070e-05, -8.64819611048636306e-06, 2.06422790809902417e-06};
+
+// beta: 32.274
+constexpr double laplace_dipole_2d_12[] = {3.46570248057884389e-01,  -4.99957475122443762e-01, 2.49738364433143178e-01,
+                                           -1.65626336543615915e-01, 1.21983083621515789e-01,  -9.31667001765092706e-02,
+                                           7.06770768790406650e-02,  -5.15857979538693195e-02, 3.54026974664242433e-02,
+                                           -2.24978416961984090e-02, 1.31167910565566700e-02,  -6.98218022855232653e-03,
+                                           3.38578404329130389e-03,  -1.49440897266812575e-03, 6.02319291133440195e-04,
+                                           -2.23441579545037290e-04, 7.50610147733028798e-05,  -2.17998920378964566e-05,
+                                           6.30358375631785338e-06,  -2.27901245929962573e-06, 5.31730474006170036e-07};
+
+template <class Real, int MaxVecLen>
+residual_evaluator_func<Real> get_laplace_dipole_2d_kernel(dmk_eval_type eval_level, int n_digits) {
+    constexpr int UF = unroll_factor;
+    if (n_digits <= 2) {
+        constexpr int ND = 2, NC_TOTAL = 5;
+        constexpr int NC0 = 5;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_2d_2, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 3) {
+        constexpr int ND = 3, NC_TOTAL = 5;
+        constexpr int NC0 = 5;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_2d_3, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 4) {
+        constexpr int ND = 4, NC_TOTAL = 7;
+        constexpr int NC0 = 7;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_2d_4, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 5) {
+        constexpr int ND = 5, NC_TOTAL = 8;
+        constexpr int NC0 = 8;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_2d_5, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 6) {
+        constexpr int ND = 6, NC_TOTAL = 10;
+        constexpr int NC0 = 10;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_2d_6, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 7) {
+        constexpr int ND = 7, NC_TOTAL = 12;
+        constexpr int NC0 = 12;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_2d_7, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 8) {
+        constexpr int ND = 8, NC_TOTAL = 13;
+        constexpr int NC0 = 13;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_2d_8, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 9) {
+        constexpr int ND = 9, NC_TOTAL = 15;
+        constexpr int NC0 = 15;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_2d_9, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 10) {
+        constexpr int ND = 10, NC_TOTAL = 17;
+        constexpr int NC0 = 17;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_2d_10, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 11) {
+        constexpr int ND = 11, NC_TOTAL = 19;
+        constexpr int NC0 = 19;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_2d_11, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 12) {
+        constexpr int ND = 12, NC_TOTAL = 21;
+        constexpr int NC0 = 21;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_2d_12, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
+}
+// beta: 5.634
+constexpr double laplace_dipole_3d_2[] = {2.17998183953000496e-01, -5.01498435116888963e-01, 3.38241507826899823e-01,
+                                          1.03815575056770545e-03, -5.66276391535132859e-02};
+
+// beta: 8.298
+constexpr double laplace_dipole_3d_3[] = {1.35676693383068231e-01,  -4.22679758881918444e-01, 4.46694841556203426e-01,
+                                          -1.21102947058209454e-01, -8.26625453105883506e-02, 4.40644298701292625e-02};
+
+// beta: 10.962
+constexpr double laplace_dipole_3d_4[] = {8.61916042476558453e-02,  -3.39357689807749219e-01, 4.95769318253879487e-01,
+                                          -2.63353000669118043e-01, -7.92301496463873600e-02, 1.25856582628138036e-01,
+                                          -2.76665730002910318e-03, -2.31735239043814184e-02};
+
+// beta: 13.626000000000001
+constexpr double laplace_dipole_3d_5[] = {5.58390435893019663e-02,  -2.64586084955049261e-01, 4.87356384393162034e-01,
+                                          -3.84994597954706641e-01, 1.16315189240913750e-02,  1.85666658452653177e-01,
+                                          -8.23628275754923894e-02, -3.98393432987490456e-02, 3.31102704081132765e-02,
+                                          3.75332824122639758e-03,  -5.57532476536800898e-03};
+
+// beta: 16.29
+constexpr double laplace_dipole_3d_6[] = {3.65651153834013268e-02,  -2.02373828741634704e-01, 4.50680962873918789e-01,
+                                          -4.71259094659650657e-01, 1.31151290530008124e-01,  1.97006325911610741e-01,
+                                          -1.75941155471667859e-01, -1.49657566484197244e-02, 7.23405502287229746e-02,
+                                          -1.16581017499437639e-02, -1.68036765809427453e-02, 3.25068552699544610e-03,
+                                          2.00696867284461816e-03};
+
+// beta: 18.954
+constexpr double laplace_dipole_3d_7[] = {2.41435731559801123e-02,  -1.52729533229260889e-01, 3.98895426171370859e-01,
+                                          -5.19059925199433780e-01, 2.61759703204077210e-01,  1.53278369473923204e-01,
+                                          -2.67097148186365596e-01, 5.99652945526592748e-02,  1.00000753621406493e-01,
+                                          -5.88930498174368017e-02, -1.92963638496512387e-02, 2.06712499977083665e-02,
+                                          1.59403688932523418e-03,  -3.23248151527584038e-03};
+
+// beta: 21.618000000000002
+constexpr double laplace_dipole_3d_8[] = {1.60439437296675640e-02,  -1.14126073550636378e-01, 3.41987337192511121e-01,
+                                          -5.32522731286782625e-01, 3.82845035891724916e-01,  6.19184951923090338e-02,
+                                          -3.28185447928564689e-01, 1.72307149780891899e-01,  8.96059941698951201e-02,
+                                          -1.23461528598353215e-01, 7.59229237815524285e-03,  4.44741945776204600e-02,
+                                          -1.41898651813544500e-02, -9.64407308797441548e-03, 5.05118678882309890e-03,
+                                          1.05456872216903733e-03,  -7.50479469805201546e-04};
+
+// beta: 24.282
+constexpr double laplace_dipole_3d_9[] = {
+    1.07159462374928523e-02,  -8.46341160946152277e-02, 2.86172402632982548e-01,  -5.18876415012229586e-01,
+    4.81152338514268363e-01,  -6.26555153882026178e-02, -3.41806798659518574e-01, 3.02197463492700547e-01,
+    2.78618128968503437e-02,  -1.84360855208628632e-01, 6.88980134368040315e-02,  5.65882082276001064e-02,
+    -4.62859517784542374e-02, -8.22864098552431034e-03, 1.65706697984436407e-02,  -2.45712876778660994e-04,
+    -3.69762826634758429e-03, 2.15584244995764644e-04,  4.19195434991927001e-04};
+
+// beta: 26.946
+constexpr double laplace_dipole_3d_10[] = {
+    7.18708237059719791e-03,  -6.23865646673537194e-02, 2.34945455950023613e-01,  -4.86161809063531958e-01,
+    5.50172803263395238e-01,  -2.02350858567595993e-01, -3.00904600453594573e-01, 4.23072285773979484e-01,
+    -8.85142719163944380e-02, -2.14363943722174016e-01, 1.62465545958938223e-01,  3.54600844428899428e-02,
+    -8.91198361553773438e-02, 1.61613561954918085e-02,  2.92803322475974834e-02,  -1.34235174701271848e-02,
+    -6.29553570621151776e-03, 4.98393641198560753e-03,  8.34446597239230591e-04,  -1.11398751569548641e-03,
+    -5.14221535104267654e-05, 1.23018192605541074e-04};
+
+// beta: 29.610000000000003
+constexpr double laplace_dipole_3d_11[] = {
+    4.83699369429514345e-03,  -4.57629949245662096e-02, 1.89944134896976174e-01,  -4.41694820807374988e-01,
+    5.88938808524209989e-01,  -3.40295394858704248e-01, -2.09484233544280640e-01, 5.10379535704030496e-01,
+    -2.47274179951901069e-01, -1.90310301964979833e-01, 2.70493212718880660e-01,  -3.20750547444539069e-02,
+    -1.25666115771994574e-01, 6.59722816074232998e-02,  3.09799838816447737e-02,  -3.60662789129123224e-02,
+    -1.52631851038950955e-03, 1.24019732330262217e-02,  -1.83565084760144506e-03, -2.99799802313175561e-03,
+    6.85379511706281038e-04,  4.91463901760632997e-04,  -9.20146044351580157e-05, -4.24102106538326771e-05};
+
+// beta: 32.274
+constexpr double laplace_dipole_3d_12[] = {
+    3.26488932883790091e-03,  -3.34334184769561060e-02, 1.51628119161831165e-01,  -3.91438301385976573e-01,
+    6.00144886697036140e-01,  -4.63260754695098143e-01, -7.91094654958735960e-02, 5.46372213823562269e-01,
+    -4.25336253533089070e-01, -9.77574303076449019e-02, 3.64039081784227669e-01,  -1.51925312083628056e-01,
+    -1.30807301807728871e-01, 1.40036061648695781e-01,  5.66849557035009957e-03,  -6.42865124364210422e-02,
+    1.86967051122529301e-02,  1.88572407480448352e-02,  -1.12662015297383296e-02, -3.44125699098016269e-03,
+    3.78038404248679481e-03,  2.39078119218961082e-04,  -7.82727229555982935e-04, 4.93023050799382170e-05,
+    7.93878994049295519e-05,  -1.09102680236039761e-05};
+
+template <class Real, int MaxVecLen>
+residual_evaluator_func<Real> get_laplace_dipole_3d_kernel(dmk_eval_type eval_level, int n_digits) {
+    constexpr int UF = unroll_factor;
+    if (n_digits <= 2) {
+        constexpr int ND = 2, NC_TOTAL = 5;
+        constexpr int NC0 = 5;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_3d_2, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 3) {
+        constexpr int ND = 3, NC_TOTAL = 6;
+        constexpr int NC0 = 6;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_3d_3, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 4) {
+        constexpr int ND = 4, NC_TOTAL = 8;
+        constexpr int NC0 = 8;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_3d_4, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 5) {
+        constexpr int ND = 5, NC_TOTAL = 11;
+        constexpr int NC0 = 11;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_3d_5, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 6) {
+        constexpr int ND = 6, NC_TOTAL = 13;
+        constexpr int NC0 = 13;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_3d_6, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 7) {
+        constexpr int ND = 7, NC_TOTAL = 14;
+        constexpr int NC0 = 14;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_3d_7, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 8) {
+        constexpr int ND = 8, NC_TOTAL = 17;
+        constexpr int NC0 = 17;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_3d_8, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 9) {
+        constexpr int ND = 9, NC_TOTAL = 19;
+        constexpr int NC0 = 19;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_3d_9, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 10) {
+        constexpr int ND = 10, NC_TOTAL = 22;
+        constexpr int NC0 = 22;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_3d_10, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 11) {
+        constexpr int ND = 11, NC_TOTAL = 24;
+        constexpr int NC0 = 24;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_3d_11, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 12) {
+        constexpr int ND = 12, NC_TOTAL = 26;
+        constexpr int NC0 = 26;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(laplace_dipole_3d_12, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                       coeffs.data(), n_src, r_src, charge, normals,
+                                                                       n_trg, r_trg, pot, UF);
+        };
+    }
+    throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
+}
 
 // Explicit instantiations
 template residual_evaluator_func<float> get_laplace_2d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type, int);
@@ -1432,5 +1852,13 @@ template residual_evaluator_func<float> get_stresslet_3d_kernel<float, sctl::Def
                                                                                                      int);
 template residual_evaluator_func<double> get_stresslet_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type,
                                                                                                         int);
+template residual_evaluator_func<float> get_laplace_dipole_2d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type,
+                                                                                                          int);
+template residual_evaluator_func<double>
+get_laplace_dipole_2d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int);
+template residual_evaluator_func<float> get_laplace_dipole_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type,
+                                                                                                          int);
+template residual_evaluator_func<double>
+get_laplace_dipole_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int);
 
 } // namespace dmk

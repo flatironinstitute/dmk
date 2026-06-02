@@ -107,6 +107,8 @@ inline int get_table_count_up(dmk_ikernel kernel) {
         return DIM;
     if (kernel == DMK_STRESSLET)
         return DIM * DIM;
+    if (kernel == DMK_LAPLACE_DIPOLE)
+        return DIM;
     else
         return 1;
 }
@@ -266,19 +268,9 @@ int DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal)
         charge_cnt_owned = count;
     }
 
-    // Recompute charge offsets (owned)
-    charge_offsets_owned[0] = 0;
-    for (std::size_t i = 1; i < n_boxes(); ++i)
-        charge_offsets_owned[i] = charge_offsets_owned[i - 1] + charge_cnt_owned[i - 1];
-
     // Broadcast to halo/ghost nodes and retrieve
     this->template Broadcast<Real>("pdmk_charge");
     this->GetData(charge_sorted_with_halo, charge_cnt_with_halo, "pdmk_charge");
-
-    // Recompute charge offsets (with halo)
-    charge_offsets_with_halo[0] = 0;
-    for (std::size_t i = 1; i < n_boxes(); ++i)
-        charge_offsets_with_halo[i] = charge_offsets_with_halo[i - 1] + charge_cnt_with_halo[i - 1];
 
     logger->info("update_charges completed");
     return 0;
@@ -1090,6 +1082,12 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions() {
                 dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(0), p2pw, pw_in_win_view, workspaces_[0]);
                 stresslet_multiply_kernelFT<Real, DIM>(window_fourier_data.radialft, pw_in_win_view,
                                                        pw_out_win_view_eval, expansion_constants.hpw_win);
+            } else if (params.kernel == DMK_LAPLACE_DIPOLE) {
+                std::vector<std::complex<Real>> pw_in_win(n_pw_modes_win * n_tables_up);
+                auto pw_in_win_view = pw_view(n_pw_win, n_tables_up, pw_in_win);
+                dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(0), p2pw, pw_in_win_view, workspaces_[0]);
+                laplace_dipole_multiply_kernelFT<Real, DIM>(window_fourier_data.radialft, pw_in_win_view,
+                                                            pw_out_win_view_eval, expansion_constants.hpw_win);
             } else {
                 auto pw_out_win_view_form = pw_view(n_pw_win, n_tables_up, pw_out_win);
                 dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(0), p2pw, pw_out_win_view_form, workspaces_[0]);
@@ -1129,6 +1127,10 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions() {
                     stresslet_multiply_kernelFT<Real, DIM>(difference_fourier_data[level].radialft, pw_form_view,
                                                            pw_out_view(i_box),
                                                            expansion_constants.hpw_diff / boxsize[level]);
+                } else if (params.kernel == DMK_LAPLACE_DIPOLE) {
+                    laplace_dipole_multiply_kernelFT<Real, DIM>(difference_fourier_data[level].radialft, pw_form_view,
+                                                                pw_out_view(i_box),
+                                                                expansion_constants.hpw_diff / boxsize[level]);
                 } else {
                     if (params.kernel == DMK_STOKESLET)
                         stokeslet_multiply_kernelFT<Real, DIM, false>(difference_fourier_data[level].radialft,
@@ -1333,7 +1335,8 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                 Real cen = -bsize / Real{2};
                 const auto &cheb_coeffs = fourier_data.cheb_coeffs(src_level);
 
-                if ((params.kernel == DMK_SQRT_LAPLACE && DIM == 3) || (params.kernel == DMK_LAPLACE && DIM == 2)) {
+                if ((params.kernel == DMK_SQRT_LAPLACE && DIM == 3) || (params.kernel == DMK_LAPLACE && DIM == 2) ||
+                    (params.kernel == DMK_LAPLACE_DIPOLE && DIM == 2)) {
                     rsc = 2 * bsizeinv * bsizeinv;
                     cen = Real{-1.0};
                 } else if (params.kernel == DMK_YUKAWA)
@@ -1446,6 +1449,10 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                 continue;
 
             if (params.kernel == DMK_STRESSLET)
+                continue;
+            // Laplace-dipole self-correction is zero (grad of windowed kernel vanishes at R=0)
+            // and the per-component subtraction loop would over-index pot (output dim=1, input dim=DIM).
+            if (params.kernel == DMK_LAPLACE_DIPOLE)
                 continue;
 
             // Correct for self-evaluations

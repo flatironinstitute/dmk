@@ -460,6 +460,102 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace gradient", 1) {
     CHECK(l2_err_trg < 1e-3);
 }
 
+TEST_CASE_GENERIC("[DMK] pdmk Laplace dipole", 1) {
+    constexpr int n_src = 4000;
+    constexpr int n_trg = 3000;
+    constexpr bool uniform = true;
+    constexpr bool set_fixed_charges = false;
+    constexpr double thresh2 = 1e-30;
+
+#ifdef DMK_HAVE_MPI
+    auto comm = test_comm;
+#else
+    auto comm = nullptr;
+#endif
+
+    for (int n_dim : {2, 3}) {
+        const int nd = n_dim; // dipole strength components per source
+
+        sctl::Vector<double> r_src, dipoles, rnormal, r_trg;
+        dmk::util::init_test_data(n_dim, nd, n_src, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, dipoles,
+                                  0);
+
+        sctl::Vector<double> pot_src(n_src), pot_trg(n_trg);
+        pot_src.SetZero();
+        pot_trg.SetZero();
+
+        pdmk_params params;
+        params.eps = 1e-6;
+        params.n_dim = n_dim;
+        params.n_per_leaf = 280;
+        params.eval_src = DMK_POTENTIAL;
+        params.eval_trg = DMK_POTENTIAL;
+        params.kernel = DMK_LAPLACE_DIPOLE;
+        params.log_level = SPDLOG_LEVEL_OFF;
+
+        pdmk_tree tree = pdmk_tree_create(comm, params, n_src, &r_src[0], &dipoles[0], &rnormal[0], n_trg, &r_trg[0]);
+        pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
+        pdmk_tree_destroy(tree);
+
+        const int n_test_src = std::min(n_src, 64);
+        const int n_test_trg = std::min(n_trg, 64);
+        std::vector<double> direct_pot_src(n_test_src, 0.0);
+        std::vector<double> direct_pot_trg(n_test_trg, 0.0);
+
+        const auto accumulate_dipole = [&](const double *target, int i_out, std::vector<double> &out) {
+            for (int i_src = 0; i_src < n_src; ++i_src) {
+                double dx_arr[3] = {0, 0, 0};
+                double dr2 = 0.0;
+                for (int i_dim = 0; i_dim < n_dim; ++i_dim) {
+                    dx_arr[i_dim] = target[i_dim] - r_src[i_src * n_dim + i_dim];
+                    dr2 += dx_arr[i_dim] * dx_arr[i_dim];
+                }
+                if (dr2 <= thresh2)
+                    continue;
+
+                double dot = 0.0;
+                for (int i_dim = 0; i_dim < n_dim; ++i_dim)
+                    dot += dipoles[i_src * nd + i_dim] * dx_arr[i_dim];
+
+                if (n_dim == 3) {
+                    const double rinv = 1.0 / std::sqrt(dr2);
+                    const double rinv3 = rinv / dr2;
+                    out[i_out] += dot * rinv3;
+                } else {
+                    // 2D: phi = d . grad_s log(R) = -(d.dX)/R^2
+                    out[i_out] -= dot / dr2;
+                }
+            }
+        };
+
+        for (int i = 0; i < n_test_src; ++i)
+            accumulate_dipole(&r_src[i * n_dim], i, direct_pot_src);
+        for (int i = 0; i < n_test_trg; ++i)
+            accumulate_dipole(&r_trg[i * n_dim], i, direct_pot_trg);
+
+        auto relative_l2_error = [](const auto &approx, const auto &exact) {
+            double err2 = 0.0, ref2 = 0.0;
+            for (int i = 0; i < (int)exact.size(); ++i) {
+                err2 += sctl::pow<2>(approx[i] - exact[i]);
+                ref2 += sctl::pow<2>(exact[i]);
+            }
+            return std::sqrt(err2 / ref2);
+        };
+
+        std::vector<double> pot_src_prefix(direct_pot_src.size()), pot_trg_prefix(direct_pot_trg.size());
+        for (int i = 0; i < n_test_src; ++i)
+            pot_src_prefix[i] = pot_src[i];
+        for (int i = 0; i < n_test_trg; ++i)
+            pot_trg_prefix[i] = pot_trg[i];
+
+        const double l2_err_src = relative_l2_error(pot_src_prefix, direct_pot_src);
+        const double l2_err_trg = relative_l2_error(pot_trg_prefix, direct_pot_trg);
+
+        CHECK(l2_err_src < 10 * params.eps);
+        CHECK(l2_err_trg < 10 * params.eps);
+    }
+}
+
 template <typename Real>
 inline pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src, const Real *r_src,
                                   const Real *charge, const Real *normal, int n_trg, const Real *r_trg) {

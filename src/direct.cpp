@@ -433,6 +433,16 @@ std::vector<std::vector<Real>> get_local_correction_coeffs(dmk_ikernel kernel, i
             return {fit([&](double x) { return 1.0 - prolate_inf_inv * prolate_fun.int_eval(x); }, 0.0, 1.0)};
         }
         break;
+    case DMK_LAPLACE_DIPOLE:
+        if (n_dim == 2) {
+            return {fit([&](double x) { return -log_windowed_kernel<double>(std::sqrt(x), beta, 2, prolate_fun); }, 0.0,
+                        1.0)};
+        }
+        if (n_dim == 3) {
+            const double prolate_inf_inv = 1.0 / prolate_fun.int_eval(1.0);
+            return {fit([&](double x) { return 1.0 - prolate_inf_inv * prolate_fun.int_eval(x); }, 0.0, 1.0)};
+        }
+        break;
     case DMK_SQRT_LAPLACE:
         if (n_dim == 2) {
             const double prolate_inf_inv = 1.0 / prolate_fun.int_eval(1.0);
@@ -486,6 +496,8 @@ residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_ty
             return build_func_name(std::format("stokeslet_{}d_poly_all_pairs", n_dim), 2);
         case dmk_ikernel::DMK_STRESSLET:
             return build_func_name(std::format("stresslet_{}d_poly_all_pairs", n_dim), 2);
+        case dmk_ikernel::DMK_LAPLACE_DIPOLE:
+            return build_func_name(std::format("laplace_dipole_{}d_poly_all_pairs", n_dim), 1);
         default:
             throw std::runtime_error("Unsupported kernel for direct evaluator");
         }
@@ -587,6 +599,19 @@ direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_ty
                       const Real *r_trg, Real *pot) {
                 stresslet_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, normals, n_trg, r_trg, pot,
                                                                unroll_factor);
+            };
+    case dmk_ikernel::DMK_LAPLACE_DIPOLE:
+        if (n_dim == 2)
+            return [](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                      const Real *r_trg, Real *pot) {
+                laplace_dipole_2d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot,
+                                                                    unroll_factor);
+            };
+        if (n_dim == 3)
+            return [](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                      const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot,
+                                                                    unroll_factor);
             };
     default:
         throw std::runtime_error("Unsupported kernel for direct evaluator");

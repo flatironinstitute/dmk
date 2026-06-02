@@ -26,6 +26,8 @@ inline int get_kernel_input_dim(int dim, dmk_ikernel kernel) {
         return dim;
     case DMK_STRESSLET:
         return dim;
+    case DMK_LAPLACE_DIPOLE:
+        return dim;
     }
     throw std::runtime_error("Invalid kernel");
 }
@@ -63,6 +65,10 @@ inline int get_kernel_output_dim(int dim, dmk_ikernel kernel, dmk_eval_type flag
     case DMK_STRESSLET:
         if (flags == DMK_VELOCITY)
             return dim;
+        break;
+    case DMK_LAPLACE_DIPOLE:
+        if (flags == DMK_POTENTIAL)
+            return 1;
         break;
     }
     using dmk::util::to_string;

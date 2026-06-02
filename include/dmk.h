@@ -9,6 +9,7 @@ typedef enum : int {
     DMK_SQRT_LAPLACE = 2,
     DMK_STOKESLET = 3,
     DMK_STRESSLET = 4,
+    DMK_LAPLACE_DIPOLE = 5,
 } dmk_ikernel;
 
 typedef enum : int {

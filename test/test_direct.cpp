@@ -120,6 +120,44 @@ void naive_stokeslet_3d(const TestData &td, std::vector<double> &pot) {
     }
 }
 
+void naive_laplace_dipole_3d(const TestData &td, std::vector<double> &pot) {
+    pot.assign(N_TRG, 0.0);
+    for (int t = 0; t < N_TRG; ++t) {
+        const double *xt = &td.r_trg[t * 3];
+        for (int s = 0; s < N_SRC; ++s) {
+            const double *xs = &td.r_src[s * 3];
+            const double *d = &td.charges[s * 3];
+            double dx = xt[0] - xs[0], dy = xt[1] - xs[1], dz = xt[2] - xs[2];
+            double r2 = dx * dx + dy * dy + dz * dz;
+            if (r2 == 0.0)
+                continue;
+            double rinv = 1.0 / std::sqrt(r2);
+            double rinv3 = rinv * rinv * rinv;
+            double dot = d[0] * dx + d[1] * dy + d[2] * dz;
+            // phi = d . grad_s (1/R) = (d.dX) / R^3
+            pot[t] += dot * rinv3;
+        }
+    }
+}
+
+void naive_laplace_dipole_2d(const TestData &td, std::vector<double> &pot) {
+    pot.assign(N_TRG, 0.0);
+    for (int t = 0; t < N_TRG; ++t) {
+        const double *xt = &td.r_trg[t * 2];
+        for (int s = 0; s < N_SRC; ++s) {
+            const double *xs = &td.r_src[s * 2];
+            const double *d = &td.charges[s * 2];
+            double dx = xt[0] - xs[0], dy = xt[1] - xs[1];
+            double r2 = dx * dx + dy * dy;
+            if (r2 == 0.0)
+                continue;
+            double dot = d[0] * dx + d[1] * dy;
+            // phi = d . grad_s log(R) = -(d.dX) / R^2
+            pot[t] -= dot / r2;
+        }
+    }
+}
+
 void naive_stresslet_3d(const TestData &td, std::vector<double> &pot) {
     pot.assign(N_TRG * 3, 0.0);
     for (int t = 0; t < N_TRG; ++t) {
@@ -244,6 +282,32 @@ TEST_CASE("[DMK] direct eval: Stresslet 3D") {
     auto func = dmk::get_direct_evaluator<double>(DMK_STRESSLET, DMK_VELOCITY, 3, 0.0);
     test.assign(N_TRG * 3, 0.0);
     func(N_SRC, td.r_src.data(), td.charges.data(), td.normals.data(), N_TRG, td.r_trg.data(), test.data());
+
+    CHECK(rel_l2_error(test, ref) < 1e-12);
+}
+
+TEST_CASE("[DMK] direct eval: Laplace dipole 3D") {
+    TestData td(3, 3, SEED);
+
+    std::vector<double> ref, test;
+    naive_laplace_dipole_3d(td, ref);
+
+    auto func = dmk::get_direct_evaluator<double>(DMK_LAPLACE_DIPOLE, DMK_POTENTIAL, 3, 0.0);
+    test.assign(N_TRG, 0.0);
+    func(N_SRC, td.r_src.data(), td.charges.data(), nullptr, N_TRG, td.r_trg.data(), test.data());
+
+    CHECK(rel_l2_error(test, ref) < 1e-12);
+}
+
+TEST_CASE("[DMK] direct eval: Laplace dipole 2D") {
+    TestData td(2, 2, SEED);
+
+    std::vector<double> ref, test;
+    naive_laplace_dipole_2d(td, ref);
+
+    auto func = dmk::get_direct_evaluator<double>(DMK_LAPLACE_DIPOLE, DMK_POTENTIAL, 2, 0.0);
+    test.assign(N_TRG, 0.0);
+    func(N_SRC, td.r_src.data(), td.charges.data(), nullptr, N_TRG, td.r_trg.data(), test.data());
 
     CHECK(rel_l2_error(test, ref) < 1e-12);
 }

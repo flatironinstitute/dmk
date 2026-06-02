@@ -375,6 +375,57 @@ void stresslet_multiply_kernelFT(const sctl::Vector<Real> &radialft, const auto 
         stresslet_3d_multiply_kernelFT<Real>(radialft, pwexp_in, uhat_out, hpw);
 }
 
+// Convert DIM-wide source PW expansion of dipole strengths into the scalar
+// potential PW expansion via u(k) = -i f(k) (k . d) for windowed Laplace kernel f.
+template <typename Real, int DIM>
+void laplace_dipole_multiply_kernelFT(const sctl::Vector<Real> &radialft, const auto &pwexp_in, auto &&uhat_out,
+                                      Real hpw) {
+    const int n_pw = pwexp_in.extent(0);
+    const int nexp = radialft.Dim();
+    const int npw2 = n_pw / 2;
+    using Complex = std::complex<Real>;
+    const Complex *pw_in = reinterpret_cast<const Complex *>(pwexp_in.data());
+    Complex *u_out = reinterpret_cast<Complex *>(uhat_out.data());
+
+    auto ts = [&](int i) -> Real { return Real(i - npw2) * hpw; };
+
+    if constexpr (DIM == 3) {
+        int n = 0;
+        for (int iz = 0; iz <= npw2; ++iz) {
+            const Real kz = ts(iz);
+            for (int iy = 0; iy < n_pw; ++iy) {
+                const Real ky = ts(iy);
+                for (int ix = 0; ix < n_pw; ++ix, ++n) {
+                    const Real kx = ts(ix);
+                    const Real f = radialft[n];
+
+                    const Complex p0 = pw_in[n + nexp * 0];
+                    const Complex p1 = pw_in[n + nexp * 1];
+                    const Complex p2 = pw_in[n + nexp * 2];
+
+                    const Complex dot = kx * p0 + ky * p1 + kz * p2;
+                    u_out[n] = Complex(0, -f) * dot;
+                }
+            }
+        }
+    } else if constexpr (DIM == 2) {
+        int n = 0;
+        for (int iy = 0; iy <= npw2; ++iy) {
+            const Real ky = ts(iy);
+            for (int ix = 0; ix < n_pw; ++ix, ++n) {
+                const Real kx = ts(ix);
+                const Real f = radialft[n];
+
+                const Complex p0 = pw_in[n + nexp * 0];
+                const Complex p1 = pw_in[n + nexp * 1];
+
+                const Complex dot = kx * p0 + ky * p1;
+                u_out[n] = Complex(0, -f) * dot;
+            }
+        }
+    }
+}
+
 template <typename Real, int VecLen>
 inline void shift_planewave_impl(int nexp, int nd, const Real *__restrict__ pw1, Real *__restrict__ pw2,
                                  const Real *__restrict__ shift_r, const Real *__restrict__ shift_i) {
@@ -517,6 +568,8 @@ Real get_self_interaction_constant(FourierData<Real> &fourier_data, dmk_ikernel 
             if constexpr (DIM == 3)
                 return psi0 / (c[0] * bsize);
         } else if (kernel == DMK_STRESSLET) {
+            return 0.0;
+        } else if (kernel == DMK_LAPLACE_DIPOLE) {
             return 0.0;
         } else
             throw std::runtime_error("Unsupported kernel");

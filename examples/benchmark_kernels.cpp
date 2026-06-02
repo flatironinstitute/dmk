@@ -294,6 +294,8 @@ void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ost
             return "stokeslet";
         case DMK_STRESSLET:
             return "stresslet";
+        case DMK_LAPLACE_DIPOLE:
+            return "laplace_dipole";
         default:
             return "unknown";
         }
@@ -352,6 +354,8 @@ dmk_ikernel parse_kernel(const char *s) {
         return DMK_STOKESLET;
     if (k == "stresslet")
         return DMK_STRESSLET;
+    if (k == "laplace_dipole")
+        return DMK_LAPLACE_DIPOLE;
     throw std::runtime_error("Unknown kernel: " + k);
 }
 
