@@ -69,6 +69,8 @@ inline int get_kernel_output_dim(int dim, dmk_ikernel kernel, dmk_eval_type flag
     case DMK_LAPLACE_DIPOLE:
         if (flags == DMK_POTENTIAL)
             return 1;
+        if (flags == DMK_POTENTIAL_GRAD)
+            return 1 + dim;
         break;
     }
     using dmk::util::to_string;

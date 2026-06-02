@@ -103,6 +103,21 @@ DMK_ALWAYS_INLINE void horner_val_deriv(const VecType &x, const typename VecType
     }
 }
 
+// Simultaneous horner, derivative, and second derivative.
+// Recurrence: v_k = c_k + x v_{k+1}, dv_k = v_{k+1} + x dv_{k+1}, d2v_k = 2 dv_{k+1} + x d2v_{k+1}.
+template <typename VecType>
+DMK_ALWAYS_INLINE void horner_val_deriv2(const VecType &x, const typename VecType::ScalarType *coeffs, int n_coeffs,
+                                         VecType &value, VecType &derivative, VecType &derivative2) {
+    value = VecType::Load1(&coeffs[n_coeffs - 1]);
+    derivative = VecType::Zero();
+    derivative2 = VecType::Zero();
+    for (int i = n_coeffs - 2; i >= 0; --i) {
+        derivative2 = FMA(derivative2, x, derivative + derivative);
+        derivative = FMA(derivative, x, value);
+        value = FMA(value, x, VecType::Load1(&coeffs[i]));
+    }
+}
+
 // Simultaneous split horner val/derivative
 template <int shift, typename VecType>
 DMK_ALWAYS_INLINE void horner_split_val_deriv(const VecType &x2, const typename VecType::ScalarType *coeffs,
@@ -492,47 +507,75 @@ struct LaplacePolyEvaluator3D {
     }
 };
 
-template <typename Real, int MaxVecLen>
+template <typename Real, int MaxVecLen, dmk_eval_type EVAL_LEVEL = DMK_POTENTIAL>
 struct LaplaceDipoleEvaluator2D {
     using scalar_type = Real;
     using vector_type = sctl::Vec<Real, MaxVecLen>;
     static constexpr int SPATIAL_DIM = 2;
     static constexpr int KERNEL_INPUT_DIM = 2;
     static constexpr int NORMAL_DIM = 0;
-    static constexpr int KERNEL_OUTPUT_DIM = 1;
+    static constexpr int KERNEL_OUTPUT_DIM = EVAL_LEVEL == DMK_POTENTIAL ? 1 : 3;
     static constexpr Real scale_factor = 1.0;
 
     DMK_ALWAYS_INLINE void operator()(vector_type (&u)[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM],
                                       const vector_type (&dX)[SPATIAL_DIM]) const {
+        constexpr bool has_grad = (KERNEL_OUTPUT_DIM > 1);
         const vector_type R2 = FMA(dX[0], dX[0], dX[1] * dX[1]);
         const auto mask = R2 > vector_type::Zero();
         const vector_type Rinv = sctl::approx_rsqrt<-1>(R2, mask);
         const vector_type Rinv2 = Rinv * Rinv;
-        // dipole at source: phi_dip = d . grad_s log(R) = -(d.dX) / R^2
+        // pot per-component: U[k][0] = -dX[k] * Rinv^2  (gives phi = -(d.dX)/R^2)
         for (int k = 0; k < 2; k++)
             u[k][0] = -dX[k] * Rinv2;
+        if constexpr (has_grad) {
+            // grad[i] = -d_i / R^2 + 2 (d.dX) dX_i / R^4
+            // U[k][1+i] = -delta_{ki} Rinv^2 + 2 dX[k] dX[i] Rinv^4
+            const vector_type Rinv4 = Rinv2 * Rinv2;
+            for (int k = 0; k < 2; k++) {
+                for (int i = 0; i < 2; i++) {
+                    vector_type val = Real{2} * dX[k] * dX[i] * Rinv4;
+                    if (i == k)
+                        val = val - Rinv2;
+                    u[k][1 + i] = val;
+                }
+            }
+        }
     }
 };
 
-template <typename Real, int MaxVecLen>
+template <typename Real, int MaxVecLen, dmk_eval_type EVAL_LEVEL = DMK_POTENTIAL>
 struct LaplaceDipoleEvaluator3D {
     using scalar_type = Real;
     using vector_type = sctl::Vec<Real, MaxVecLen>;
     static constexpr int SPATIAL_DIM = 3;
     static constexpr int KERNEL_INPUT_DIM = 3;
     static constexpr int NORMAL_DIM = 0;
-    static constexpr int KERNEL_OUTPUT_DIM = 1;
+    static constexpr int KERNEL_OUTPUT_DIM = EVAL_LEVEL == DMK_POTENTIAL ? 1 : 4;
     static constexpr Real scale_factor = 1.0;
 
     DMK_ALWAYS_INLINE void operator()(vector_type (&u)[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM],
                                       const vector_type (&dX)[SPATIAL_DIM]) const {
+        constexpr bool has_grad = (KERNEL_OUTPUT_DIM > 1);
         const vector_type R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
         const auto mask = R2 > vector_type::Zero();
         const vector_type Rinv = sctl::approx_rsqrt<-1>(R2, mask);
         const vector_type Rinv3 = Rinv * Rinv * Rinv;
-        // dipole at source: phi_dip = d . grad_s (1/R) = (d.dX) / R^3
+        // pot per-component: U[k][0] = dX[k] * Rinv^3  (gives phi = (d.dX)/R^3)
         for (int k = 0; k < 3; k++)
             u[k][0] = dX[k] * Rinv3;
+        if constexpr (has_grad) {
+            // grad[i] = d_i / R^3 - 3 (d.dX) dX_i / R^5
+            // U[k][1+i] = delta_{ki} Rinv^3 - 3 dX[k] dX[i] Rinv^5
+            const vector_type Rinv5 = Rinv3 * Rinv * Rinv;
+            for (int k = 0; k < 3; k++) {
+                for (int i = 0; i < 3; i++) {
+                    vector_type val = -Real{3} * dX[k] * dX[i] * Rinv5;
+                    if (i == k)
+                        val = val + Rinv3;
+                    u[k][1 + i] = val;
+                }
+            }
+        }
     }
 };
 
@@ -543,7 +586,6 @@ struct LaplaceDipolePolyEvaluator2D {
     static constexpr int SPATIAL_DIM = 2;
     static constexpr int KERNEL_INPUT_DIM = 2;
     static constexpr int NORMAL_DIM = 0;
-    static constexpr int KERNEL_OUTPUT_DIM = 1;
     static constexpr Real scale_factor = 1.0;
 
     vector_type thresh2_vec, d2max_vec, rsc_vec, cen_vec;
@@ -551,24 +593,47 @@ struct LaplaceDipolePolyEvaluator2D {
     int n_coeffs;
     int n_digits;
 
+    template <int KERNEL_OUTPUT_DIM>
     DMK_ALWAYS_INLINE void operator()(vector_type (&u)[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM],
                                       const vector_type (&dX)[SPATIAL_DIM]) const {
+        constexpr bool has_grad = (KERNEL_OUTPUT_DIM > 1);
+        static_assert(KERNEL_OUTPUT_DIM == 1 || KERNEL_OUTPUT_DIM == 3);
+
         const vector_type R2 = FMA(dX[0], dX[0], dX[1] * dX[1]);
         const auto mask = (R2 > thresh2_vec) & (R2 < d2max_vec);
         const vector_type zero = vector_type::Zero();
-
-        // Polynomial is in R^2 (shift-scaled by wrapper). We only need dP/dR^2.
-        vector_type P, dP;
-        horner_val_deriv(R2, coeffs, n_coeffs, P, dP);
-        (void)P;
-
-        // 2D residual dipole: U[k][0] = -dX[k] * (R^-2 + 2*dP)
         const vector_type Rinv = my_approx_rsqrt(R2, n_digits);
         const vector_type R2inv = Rinv * Rinv;
-        const vector_type two = Real{2.0};
-        const vector_type df_dR2 = R2inv + two * dP;
-        for (int k = 0; k < 2; k++)
-            u[k][0] = sctl::select(mask, -dX[k] * df_dR2, zero);
+
+        if constexpr (!has_grad) {
+            // F(R^2) = -(R^-2 + 2 dP).  U[k][0] = dX[k] * F.
+            vector_type P, dP;
+            horner_val_deriv(R2, coeffs, n_coeffs, P, dP);
+            (void)P;
+            const vector_type F = -(R2inv + Real{2} * dP);
+            for (int k = 0; k < 2; k++)
+                u[k][0] = sctl::select(mask, dX[k] * F, zero);
+        } else {
+            // F(R^2)  = -(R^-2 + 2 dP)
+            // F'(R^2) =  R^-4 - 2 ddP
+            // U[k][0]   = dX[k] * F
+            // U[k][1+i] = delta_{ki} * F + 2 * dX[k] * dX[i] * F'
+            vector_type P, dP, ddP;
+            horner_val_deriv2(R2, coeffs, n_coeffs, P, dP, ddP);
+            (void)P;
+            const vector_type R4inv = R2inv * R2inv;
+            const vector_type F = -(R2inv + Real{2} * dP);
+            const vector_type Fprime = R4inv - Real{2} * ddP;
+            for (int k = 0; k < 2; k++) {
+                u[k][0] = sctl::select(mask, dX[k] * F, zero);
+                for (int i = 0; i < 2; i++) {
+                    vector_type val = Real{2} * dX[k] * dX[i] * Fprime;
+                    if (i == k)
+                        val = val + F;
+                    u[k][1 + i] = sctl::select(mask, val, zero);
+                }
+            }
+        }
     }
 };
 
@@ -579,7 +644,6 @@ struct LaplaceDipolePolyEvaluator3D {
     static constexpr int SPATIAL_DIM = 3;
     static constexpr int KERNEL_INPUT_DIM = 3;
     static constexpr int NORMAL_DIM = 0;
-    static constexpr int KERNEL_OUTPUT_DIM = 1;
     static constexpr Real scale_factor = 1.0;
 
     vector_type thresh2_vec, d2max_vec, rsc_vec, cen_vec;
@@ -587,22 +651,50 @@ struct LaplaceDipolePolyEvaluator3D {
     int n_coeffs;
     int n_digits;
 
+    template <int KERNEL_OUTPUT_DIM>
     DMK_ALWAYS_INLINE void operator()(vector_type (&u)[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM],
                                       const vector_type (&dX)[SPATIAL_DIM]) const {
+        constexpr bool has_grad = (KERNEL_OUTPUT_DIM > 1);
+        static_assert(KERNEL_OUTPUT_DIM == 1 || KERNEL_OUTPUT_DIM == 4);
+
         const vector_type R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
         const auto in_range = (R2 > thresh2_vec) & (R2 < d2max_vec);
         const vector_type Rinv = my_approx_rsqrt(R2, n_digits);
         const vector_type xmapped = FMA(R2, Rinv, cen_vec) * rsc_vec;
         const vector_type zero = vector_type::Zero();
-
-        vector_type P, dP;
-        horner_val_deriv(xmapped, coeffs, n_coeffs, P, dP);
-
-        // 3D residual dipole: U[k][0] = dX[k] * (P/R^3 - dP*rsc/R^2)
         const vector_type Rinv2 = Rinv * Rinv;
-        const vector_type dfac = Rinv2 * (P * Rinv - dP * rsc_vec);
-        for (int k = 0; k < 3; k++)
-            u[k][0] = sctl::select<Real, MaxVecLen>(in_range, dX[k] * dfac, zero);
+        const vector_type Rinv3 = Rinv2 * Rinv;
+
+        if constexpr (!has_grad) {
+            // F(R) = P*Rinv^3 - dP*rsc*Rinv^2.  U[k][0] = dX[k] * F.
+            vector_type P, dP;
+            horner_val_deriv(xmapped, coeffs, n_coeffs, P, dP);
+            const vector_type F = P * Rinv3 - dP * rsc_vec * Rinv2;
+            for (int k = 0; k < 3; k++)
+                u[k][0] = sctl::select<Real, MaxVecLen>(in_range, dX[k] * F, zero);
+        } else {
+            // F(R)   = P*Rinv^3 - dP*rsc*Rinv^2
+            // F'(R)  = 3 dP*rsc*Rinv^3 - 3 P*Rinv^4 - ddP*rsc^2*Rinv^2
+            // F'/R   = 3 dP*rsc*Rinv^4 - 3 P*Rinv^5 - ddP*rsc^2*Rinv^3
+            // U[k][0]   = dX[k] * F
+            // U[k][1+i] = delta_{ki} * F + dX[k] * dX[i] * (F'/R)
+            vector_type P, dP, ddP;
+            horner_val_deriv2(xmapped, coeffs, n_coeffs, P, dP, ddP);
+            const vector_type Rinv4 = Rinv2 * Rinv2;
+            const vector_type Rinv5 = Rinv4 * Rinv;
+            const vector_type F = P * Rinv3 - dP * rsc_vec * Rinv2;
+            const vector_type F_over_R =
+                Real{3} * dP * rsc_vec * Rinv4 - Real{3} * P * Rinv5 - ddP * rsc_vec * rsc_vec * Rinv3;
+            for (int k = 0; k < 3; k++) {
+                u[k][0] = sctl::select<Real, MaxVecLen>(in_range, dX[k] * F, zero);
+                for (int i = 0; i < 3; i++) {
+                    vector_type val = dX[k] * dX[i] * F_over_R;
+                    if (i == k)
+                        val = val + F;
+                    u[k][1 + i] = sctl::select<Real, MaxVecLen>(in_range, val, zero);
+                }
+            }
+        }
     }
 };
 
@@ -907,6 +999,7 @@ void laplace_dipole_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real r
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
+    const int eval_level = (EVAL_LEVEL > 0) ? EVAL_LEVEL : eval_level_rt;
 
     std::array<Real, 64> coeffs_mod;
     shift_scale_polynomial(coeffs, rsc, cen, coeffs_mod.data(), n_coeffs);
@@ -914,8 +1007,13 @@ void laplace_dipole_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real r
     LaplaceDipolePolyEvaluator2D<Real, MaxVecLen> evaluator{thresh2,           d2max,    rsc,     cen,
                                                             coeffs_mod.data(), n_coeffs, n_digits};
 
-    constexpr int KERNEL_OUTPUT_DIM = 1;
-    EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
+    if (eval_level == DMK_POTENTIAL) {
+        constexpr int KERNEL_OUTPUT_DIM = 1;
+        EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
+    } else {
+        constexpr int KERNEL_OUTPUT_DIM = 3;
+        EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
+    }
 }
 
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
@@ -926,11 +1024,17 @@ void laplace_dipole_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real r
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
+    const int eval_level = (EVAL_LEVEL > 0) ? EVAL_LEVEL : eval_level_rt;
 
     LaplaceDipolePolyEvaluator3D<Real, MaxVecLen> evaluator{thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits};
 
-    constexpr int KERNEL_OUTPUT_DIM = 1;
-    EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
+    if (eval_level == DMK_POTENTIAL) {
+        constexpr int KERNEL_OUTPUT_DIM = 1;
+        EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
+    } else {
+        constexpr int KERNEL_OUTPUT_DIM = 4;
+        EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
+    }
 }
 
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
@@ -1053,18 +1157,34 @@ inline void laplace_3d_all_pairs_direct(int n_src, const Real *r_src, const Real
 
 template <class Real, int MaxVecLen>
 inline void laplace_dipole_2d_all_pairs_direct(int n_src, const Real *r_src, const Real *charge, int n_trg,
-                                               const Real *r_trg, Real *pot, int unroll_factor) {
-    using Evaluator = LaplaceDipoleEvaluator2D<Real, MaxVecLen>;
-    EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
-                                            unroll_factor);
+                                               const Real *r_trg, Real *pot, int unroll_factor, int eval_level) {
+    if (eval_level == DMK_POTENTIAL) {
+        using Evaluator = LaplaceDipoleEvaluator2D<Real, MaxVecLen, DMK_POTENTIAL>;
+        return EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
+                                                       unroll_factor);
+    }
+    if (eval_level == DMK_POTENTIAL_GRAD) {
+        using Evaluator = LaplaceDipoleEvaluator2D<Real, MaxVecLen, DMK_POTENTIAL_GRAD>;
+        return EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
+                                                       unroll_factor);
+    }
+    throw std::runtime_error("Direct Laplace dipole evaluator only supports DMK_POTENTIAL/DMK_POTENTIAL_GRAD");
 }
 
 template <class Real, int MaxVecLen>
 inline void laplace_dipole_3d_all_pairs_direct(int n_src, const Real *r_src, const Real *charge, int n_trg,
-                                               const Real *r_trg, Real *pot, int unroll_factor) {
-    using Evaluator = LaplaceDipoleEvaluator3D<Real, MaxVecLen>;
-    EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
-                                            unroll_factor);
+                                               const Real *r_trg, Real *pot, int unroll_factor, int eval_level) {
+    if (eval_level == DMK_POTENTIAL) {
+        using Evaluator = LaplaceDipoleEvaluator3D<Real, MaxVecLen, DMK_POTENTIAL>;
+        return EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
+                                                       unroll_factor);
+    }
+    if (eval_level == DMK_POTENTIAL_GRAD) {
+        using Evaluator = LaplaceDipoleEvaluator3D<Real, MaxVecLen, DMK_POTENTIAL_GRAD>;
+        return EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
+                                                       unroll_factor);
+    }
+    throw std::runtime_error("Direct Laplace dipole evaluator only supports DMK_POTENTIAL/DMK_POTENTIAL_GRAD");
 }
 
 template <class Real, int MaxVecLen>

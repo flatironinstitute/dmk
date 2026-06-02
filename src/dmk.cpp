@@ -556,6 +556,111 @@ TEST_CASE_GENERIC("[DMK] pdmk Laplace dipole", 1) {
     }
 }
 
+TEST_CASE_GENERIC("[DMK] pdmk Laplace dipole gradient", 1) {
+    constexpr int n_src = 4000;
+    constexpr int n_trg = 3000;
+    constexpr bool uniform = true;
+    constexpr bool set_fixed_charges = false;
+    constexpr double thresh2 = 1e-30;
+
+#ifdef DMK_HAVE_MPI
+    auto comm = test_comm;
+#else
+    auto comm = nullptr;
+#endif
+
+    for (int n_dim : {2, 3}) {
+        const int nd = n_dim; // dipole strength components per source
+        const int output_dim = 1 + n_dim;
+
+        sctl::Vector<double> r_src, dipoles, rnormal, r_trg;
+        dmk::util::init_test_data(n_dim, nd, n_src, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, dipoles,
+                                  0);
+
+        sctl::Vector<double> pot_src(n_src * output_dim), pot_trg(n_trg * output_dim);
+        pot_src.SetZero();
+        pot_trg.SetZero();
+
+        pdmk_params params;
+        params.eps = 1e-6;
+        params.n_dim = n_dim;
+        params.n_per_leaf = 280;
+        params.eval_src = DMK_POTENTIAL_GRAD;
+        params.eval_trg = DMK_POTENTIAL_GRAD;
+        params.kernel = DMK_LAPLACE_DIPOLE;
+        params.log_level = SPDLOG_LEVEL_OFF;
+
+        pdmk_tree tree = pdmk_tree_create(comm, params, n_src, &r_src[0], &dipoles[0], &rnormal[0], n_trg, &r_trg[0]);
+        pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
+        pdmk_tree_destroy(tree);
+
+        const int n_test_src = std::min(n_src, 64);
+        const int n_test_trg = std::min(n_trg, 64);
+        std::vector<double> direct_src(n_test_src * output_dim, 0.0);
+        std::vector<double> direct_trg(n_test_trg * output_dim, 0.0);
+
+        const auto accumulate_dipole_grad = [&](const double *target, int i_out, std::vector<double> &out) {
+            for (int i_src = 0; i_src < n_src; ++i_src) {
+                double dx_arr[3] = {0, 0, 0};
+                double dr2 = 0.0;
+                for (int i_dim = 0; i_dim < n_dim; ++i_dim) {
+                    dx_arr[i_dim] = target[i_dim] - r_src[i_src * n_dim + i_dim];
+                    dr2 += dx_arr[i_dim] * dx_arr[i_dim];
+                }
+                if (dr2 <= thresh2)
+                    continue;
+
+                double dot = 0.0;
+                for (int i_dim = 0; i_dim < n_dim; ++i_dim)
+                    dot += dipoles[i_src * nd + i_dim] * dx_arr[i_dim];
+
+                if (n_dim == 3) {
+                    const double rinv = 1.0 / std::sqrt(dr2);
+                    const double rinv3 = rinv / dr2;
+                    const double rinv5 = rinv3 / dr2;
+                    out[i_out * output_dim + 0] += dot * rinv3;
+                    for (int i = 0; i < 3; ++i)
+                        out[i_out * output_dim + 1 + i] +=
+                            dipoles[i_src * nd + i] * rinv3 - 3.0 * dot * dx_arr[i] * rinv5;
+                } else {
+                    const double r2inv = 1.0 / dr2;
+                    const double r4inv = r2inv * r2inv;
+                    out[i_out * output_dim + 0] -= dot * r2inv;
+                    for (int i = 0; i < 2; ++i)
+                        out[i_out * output_dim + 1 + i] +=
+                            -dipoles[i_src * nd + i] * r2inv + 2.0 * dot * dx_arr[i] * r4inv;
+                }
+            }
+        };
+
+        for (int i = 0; i < n_test_src; ++i)
+            accumulate_dipole_grad(&r_src[i * n_dim], i, direct_src);
+        for (int i = 0; i < n_test_trg; ++i)
+            accumulate_dipole_grad(&r_trg[i * n_dim], i, direct_trg);
+
+        auto relative_l2_error = [](const auto &approx, const auto &exact) {
+            double err2 = 0.0, ref2 = 0.0;
+            for (int i = 0; i < (int)exact.size(); ++i) {
+                err2 += sctl::pow<2>(approx[i] - exact[i]);
+                ref2 += sctl::pow<2>(exact[i]);
+            }
+            return std::sqrt(err2 / ref2);
+        };
+
+        std::vector<double> src_prefix(direct_src.size()), trg_prefix(direct_trg.size());
+        for (int i = 0; i < n_test_src * output_dim; ++i)
+            src_prefix[i] = pot_src[i];
+        for (int i = 0; i < n_test_trg * output_dim; ++i)
+            trg_prefix[i] = pot_trg[i];
+
+        const double l2_err_src = relative_l2_error(src_prefix, direct_src);
+        const double l2_err_trg = relative_l2_error(trg_prefix, direct_trg);
+
+        CHECK(l2_err_src < params.eps);
+        CHECK(l2_err_trg < params.eps);
+    }
+}
+
 template <typename Real>
 inline pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src, const Real *r_src,
                                   const Real *charge, const Real *normal, int n_trg, const Real *r_trg) {

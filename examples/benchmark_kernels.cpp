@@ -584,7 +584,7 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -n n_per_leaf         DMK leaf size\n"
                       << "  -e eps                Tolerance\n"
                       << "  -t f|d                Precision\n"
-                      << "  -k kernel             laplace, sqrt_laplace, yukawa, stokeslet, stresslet\n"
+                      << "  -k kernel             laplace, sqrt_laplace, yukawa, stokeslet, stresslet, laplace_dipole\n"
                       << "  -d dim                2 or 3\n"
                       << "  -f fparam             Yukawa parameter (default: 6.0)\n"
                       << "  -r n_runs             Benchmark iterations\n"
