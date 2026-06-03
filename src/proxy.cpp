@@ -371,7 +371,7 @@ inline void dispatch_order_impl(int order, F &&f, std::integer_sequence<int, Is.
 
 template <class F>
 inline void dispatch_order(int order, F &&f) {
-    dispatch_order_impl(order, std::forward<F>(f), std::make_integer_sequence<int, 41>{});
+    dispatch_order_impl(order, std::forward<F>(f), std::make_integer_sequence<int, 51>{});
 }
 
 template <typename T, int EVAL_LEVEL = 1>

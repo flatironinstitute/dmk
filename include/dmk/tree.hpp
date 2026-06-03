@@ -579,6 +579,25 @@ Real get_self_interaction_constant(FourierData<Real> &fourier_data, dmk_ikernel 
 }
 
 template <typename Real, int DIM>
+Real get_dipole_grad_self_constant(FourierData<Real> &fourier_data, dmk_ikernel kernel, int i_level, Real boxsize) {
+    if (kernel != DMK_LAPLACE_DIPOLE)
+        return Real{0};
+    const Real bsize = i_level == 0 ? Real{0.5} * boxsize : boxsize;
+
+    // Exploit evenness of psi0 to get second derivative
+    const Real delta = Real{1e-4};
+    const Real fd1 = fourier_data.prolate0_fun.eval_derivative(delta);
+    const Real fd2 = fourier_data.prolate0_fun.eval_derivative(Real{2} * delta);
+    const Real ddpsi0 = (Real{8} * fd1 - fd2) / (Real{6} * delta);
+    const auto c = fourier_data.prolate0_fun.int_eval(1);
+    if constexpr (DIM == 3)
+        return -ddpsi0 / (Real{3} * c * bsize * bsize * bsize);
+    else if constexpr (DIM == 2)
+        throw std::runtime_error("2D laplace dipole grad self interaction not implemented");
+    return Real{0};
+}
+
+template <typename Real, int DIM>
 struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     static constexpr int NCHILD = sctl::pow<DIM>(2);
     static constexpr int NCOLLEAGUE = sctl::pow<DIM>(3);

@@ -473,7 +473,7 @@ TEST_CASE_GENERIC("[DMK] pdmk Laplace dipole", 1) {
     auto comm = nullptr;
 #endif
 
-    for (int n_dim : {2, 3}) {
+    for (int n_dim : {3}) {
         const int nd = n_dim; // dipole strength components per source
 
         sctl::Vector<double> r_src, dipoles, rnormal, r_trg;
@@ -557,11 +557,12 @@ TEST_CASE_GENERIC("[DMK] pdmk Laplace dipole", 1) {
 }
 
 TEST_CASE_GENERIC("[DMK] pdmk Laplace dipole gradient", 1) {
-    constexpr int n_src = 4000;
-    constexpr int n_trg = 3000;
+    constexpr int n_src = 10000;
+    constexpr int n_trg = 10000;
     constexpr bool uniform = true;
     constexpr bool set_fixed_charges = false;
     constexpr double thresh2 = 1e-30;
+    constexpr int n_to_compare = 10000;
 
 #ifdef DMK_HAVE_MPI
     auto comm = test_comm;
@@ -569,7 +570,7 @@ TEST_CASE_GENERIC("[DMK] pdmk Laplace dipole gradient", 1) {
     auto comm = nullptr;
 #endif
 
-    for (int n_dim : {2, 3}) {
+    for (int n_dim : {3}) {
         const int nd = n_dim; // dipole strength components per source
         const int output_dim = 1 + n_dim;
 
@@ -594,8 +595,8 @@ TEST_CASE_GENERIC("[DMK] pdmk Laplace dipole gradient", 1) {
         pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
         pdmk_tree_destroy(tree);
 
-        const int n_test_src = std::min(n_src, 64);
-        const int n_test_trg = std::min(n_trg, 64);
+        const int n_test_src = std::min(n_src, n_to_compare);
+        const int n_test_trg = std::min(n_trg, n_to_compare);
         std::vector<double> direct_src(n_test_src * output_dim, 0.0);
         std::vector<double> direct_trg(n_test_trg * output_dim, 0.0);
 
@@ -638,26 +639,30 @@ TEST_CASE_GENERIC("[DMK] pdmk Laplace dipole gradient", 1) {
         for (int i = 0; i < n_test_trg; ++i)
             accumulate_dipole_grad(&r_trg[i * n_dim], i, direct_trg);
 
-        auto relative_l2_error = [](const auto &approx, const auto &exact) {
+        // Compute relative L2 error over a component range [comp_begin, comp_end),
+        auto relative_l2_error_range = [&](const sctl::Vector<double> &approx, const std::vector<double> &exact,
+                                           int n_pts, int comp_begin, int comp_end) {
             double err2 = 0.0, ref2 = 0.0;
-            for (int i = 0; i < (int)exact.size(); ++i) {
-                err2 += sctl::pow<2>(approx[i] - exact[i]);
-                ref2 += sctl::pow<2>(exact[i]);
+            for (int i = 0; i < n_pts; ++i) {
+                for (int c = comp_begin; c < comp_end; ++c) {
+                    const double a = approx[i * output_dim + c];
+                    const double e = exact[i * output_dim + c];
+                    err2 += sctl::pow<2>(a - e);
+                    ref2 += sctl::pow<2>(e);
+                }
             }
             return std::sqrt(err2 / ref2);
         };
 
-        std::vector<double> src_prefix(direct_src.size()), trg_prefix(direct_trg.size());
-        for (int i = 0; i < n_test_src * output_dim; ++i)
-            src_prefix[i] = pot_src[i];
-        for (int i = 0; i < n_test_trg * output_dim; ++i)
-            trg_prefix[i] = pot_trg[i];
+        const double pot_err_src = relative_l2_error_range(pot_src, direct_src, n_test_src, 0, 1);
+        const double grad_err_src = relative_l2_error_range(pot_src, direct_src, n_test_src, 1, output_dim);
+        const double pot_err_trg = relative_l2_error_range(pot_trg, direct_trg, n_test_trg, 0, 1);
+        const double grad_err_trg = relative_l2_error_range(pot_trg, direct_trg, n_test_trg, 1, output_dim);
 
-        const double l2_err_src = relative_l2_error(src_prefix, direct_src);
-        const double l2_err_trg = relative_l2_error(trg_prefix, direct_trg);
-
-        CHECK(l2_err_src < params.eps);
-        CHECK(l2_err_trg < params.eps);
+        CHECK(pot_err_src < params.eps);
+        CHECK(grad_err_src < params.eps);
+        CHECK(pot_err_trg < params.eps);
+        CHECK(grad_err_trg < params.eps);
     }
 }
 

@@ -8,7 +8,6 @@
 #include <getopt.h>
 #include <iostream>
 #include <limits>
-#include <random>
 #include <type_traits>
 #include <vector>
 
@@ -37,6 +36,7 @@ struct Config {
     bool bench_eval = true;
     bool with_grad = false;
     long seed = 0;
+    int n_show_outliers = 0; // print top-N worst points per block to stderr (0 = off)
 };
 
 inline dmk_eval_type get_eval_type(dmk_ikernel kernel, bool with_grad) {
@@ -95,99 +95,157 @@ ErrorMetrics compute_error(const std::vector<Real> &computed, const std::vector<
     return {std::sqrt(glob_err2 / glob_ref2), glob_maxre};
 }
 
+// Brute-force nearest-source distance to a point at r_pts[p*n_dim..]. O(n_src). Diagnostics
+// only. If r_pts and r_src are the same array, also skip the self-pair (R == 0).
 template <typename Real>
-void generate_and_scatter(int n_dim, int nd, size_t n_src, bool uniform, bool set_fixed_charges,
-                          std::vector<Real> &r_src, std::vector<Real> &charges, std::vector<Real> &normals, long seed,
-                          int rank, int np) {
-    const int n_local = local_count(n_src, np, rank);
+double nearest_source_dist(const std::vector<Real> &r_pts, int p, const std::vector<Real> &r_src, int n_dim,
+                           bool same_set) {
+    const int n_src = int(r_src.size() / n_dim);
+    double best2 = std::numeric_limits<double>::infinity();
+    for (int s = 0; s < n_src; ++s) {
+        double d2 = 0.0;
+        for (int d = 0; d < n_dim; ++d) {
+            const double dx = double(r_pts[p * n_dim + d]) - double(r_src[s * n_dim + d]);
+            d2 += dx * dx;
+        }
+        if (same_set && d2 == 0.0)
+            continue; // self pair
+        if (d2 < best2)
+            best2 = d2;
+    }
+    return std::sqrt(best2);
+}
 
-    std::vector<Real> r_all, c_all, n_all;
+template <typename Real>
+void print_outliers(const std::vector<Real> &computed, const std::vector<Real> &reference,
+                    const std::vector<Real> &r_pts, const std::vector<Real> &r_src, bool same_set,
+                    const std::vector<Real> &pt_charges, int charge_dim, int n_dim, int kdim, int comp_begin,
+                    int comp_end, int n_show, const std::string &label, int rank, std::ostream &os) {
+    if (rank != 0 || n_show <= 0 || reference.empty() || computed.empty())
+        return;
+
+    const int n_pts = std::min(computed.size() / kdim, reference.size() / kdim);
+    std::vector<std::pair<double, int>> ranked; // (|diff|, point_index)
+    ranked.reserve(n_pts);
+    for (int p = 0; p < n_pts; ++p) {
+        double diff2 = 0.0;
+        for (int c = comp_begin; c < comp_end; ++c) {
+            const double d = double(computed[p * kdim + c]) - double(reference[p * kdim + c]);
+            diff2 += d * d;
+        }
+        ranked.emplace_back(std::sqrt(diff2), p);
+    }
+    std::sort(ranked.begin(), ranked.end(), [](const auto &a, const auto &b) { return a.first > b.first; });
+
+    const bool has_charges = !pt_charges.empty() && charge_dim > 0;
+    const int n = std::min(n_show, int(ranked.size()));
+    os << "# " << label << " top " << n << " outliers (by |dmk - ref| over comps " << comp_begin << ".." << comp_end
+       << "):\n";
+    std::vector<double> nn_outliers(n);
+    for (int k = 0; k < n; ++k) {
+        const int p = ranked[k].second;
+        const double absdiff = ranked[k].first;
+
+        double refnorm = 0.0;
+        for (int c = comp_begin; c < comp_end; ++c) {
+            const double e = double(reference[p * kdim + c]);
+            refnorm += e * e;
+        }
+        refnorm = std::sqrt(refnorm);
+        const double relerr = refnorm > 0 ? absdiff / refnorm : std::numeric_limits<double>::infinity();
+
+        const double r_nn = nearest_source_dist(r_pts, p, r_src, n_dim, same_set);
+        nn_outliers[k] = r_nn;
+
+        os << "#   [" << k << "] idx=" << p << " pos=(";
+        for (int d = 0; d < n_dim; ++d)
+            os << (d ? ", " : "") << double(r_pts[p * n_dim + d]);
+        os << ") |diff|=" << absdiff << " |ref|=" << refnorm << " relerr=" << relerr;
+        os << " r_nn_src=" << r_nn;
+        os << "\n#       dmk=(";
+        for (int c = comp_begin; c < comp_end; ++c)
+            os << (c > comp_begin ? ", " : "") << double(computed[p * kdim + c]);
+        os << ")\n#       ref=(";
+        for (int c = comp_begin; c < comp_end; ++c)
+            os << (c > comp_begin ? ", " : "") << double(reference[p * kdim + c]);
+        os << ")\n";
+
+        // If the point has an associated input vector (e.g. source dipole), print it and the
+        // per-component ratio (diff_i / d_i). For an additive self-correction `c · d`, these
+        // ratios should equal a single constant across all sources.
+        if (has_charges) {
+            os << "#       d=(";
+            for (int c = 0; c < charge_dim; ++c)
+                os << (c ? ", " : "") << double(pt_charges[p * charge_dim + c]);
+            os << ")";
+            // Ratio diff_i / d_i across the matching component range. Best when
+            // (comp_end - comp_begin) == charge_dim (e.g. dipole grad: 3 grad components, 3 d).
+            const int n_match = std::min(charge_dim, comp_end - comp_begin);
+            if (n_match > 0) {
+                os << "\n#       diff_i / d_i = (";
+                for (int i = 0; i < n_match; ++i) {
+                    const double d_i = double(pt_charges[p * charge_dim + i]);
+                    const double diff_i =
+                        double(computed[p * kdim + (comp_begin + i)]) - double(reference[p * kdim + (comp_begin + i)]);
+                    const double ratio = (std::abs(d_i) > 0) ? diff_i / d_i : std::numeric_limits<double>::quiet_NaN();
+                    os << (i ? ", " : "") << ratio;
+                }
+                os << ")";
+            }
+            os << "\n";
+        }
+    }
+
+    // Summary: compare outlier nn-distance distribution vs the full set.
+    const int sample = std::min(n_pts, 1024);
+    std::vector<double> nn_all;
+    nn_all.reserve(sample);
+    for (int p = 0; p < sample; ++p)
+        nn_all.push_back(nearest_source_dist(r_pts, p, r_src, n_dim, same_set));
+    std::sort(nn_outliers.begin(), nn_outliers.end());
+    std::sort(nn_all.begin(), nn_all.end());
+    auto med = [](const std::vector<double> &v) { return v.empty() ? 0.0 : v[v.size() / 2]; };
+    os << "#   nn_src distance summary: outliers min=" << (nn_outliers.empty() ? 0.0 : nn_outliers.front())
+       << " median=" << med(nn_outliers) << " | sample(" << sample
+       << ") min=" << (nn_all.empty() ? 0.0 : nn_all.front()) << " median=" << med(nn_all) << "\n";
+}
+
+template <typename Real>
+void generate_and_scatter(int n_dim, int charge_dim, size_t n_src, size_t n_trg, bool uniform, bool set_fixed_charges,
+                          std::vector<Real> &r_src, std::vector<Real> &r_trg, std::vector<Real> &charges,
+                          std::vector<Real> &normals, long seed, int rank, int np) {
+    const int n_src_local = local_count(n_src, np, rank);
+    const int n_trg_local = local_count(n_trg, np, rank);
+
+    std::vector<Real> r_src_all, r_trg_all, charges_all, normals_all;
 
     if (rank == 0) {
-        r_all.resize(n_dim * n_src);
-        c_all.resize(nd * n_src);
-        n_all.resize(n_dim * n_src);
-
-        const double rin = 0.45;
-        std::default_random_engine eng(seed);
-        std::uniform_real_distribution<double> rng;
-
-        for (int i = 0; i < n_src; ++i) {
-            if (!uniform && n_dim == 3) {
-                double theta = rng(eng) * M_PI;
-                double ct = std::cos(theta), st = std::sin(theta);
-                double phi = rng(eng) * 2.0 * M_PI;
-                r_all[i * n_dim + 0] = Real(rin * st * std::cos(phi) + 0.5);
-                r_all[i * n_dim + 1] = Real(rin * st * std::sin(phi) + 0.5);
-                r_all[i * n_dim + 2] = Real(rin * ct + 0.5);
-            } else if (!uniform && n_dim == 2) {
-                double phi = rng(eng) * 2.0 * M_PI;
-                r_all[i * n_dim + 0] = Real(rin * std::cos(phi) + 0.5);
-                r_all[i * n_dim + 1] = Real(rin * std::sin(phi) + 0.5);
-            } else {
-                for (int j = 0; j < n_dim; ++j)
-                    r_all[i * n_dim + j] = Real(rng(eng));
-            }
-            for (int j = 0; j < nd; ++j)
-                c_all[i * nd + j] = Real(rng(eng) - 0.5);
-
-            if (n_dim == 2) {
-                double phi = rng(eng) * 2.0 * M_PI;
-                n_all[i * n_dim + 0] = std::cos(phi);
-                n_all[i * n_dim + 1] = std::sin(phi);
-            } else if (n_dim == 3) {
-                double theta = rng(eng) * M_PI;
-                double ct = std::cos(theta), st = std::sin(theta);
-                double phi = rng(eng) * 2.0 * M_PI;
-
-                n_all[i * n_dim + 0] = st * std::cos(phi);
-                n_all[i * n_dim + 1] = st * std::sin(phi);
-                n_all[i * n_dim + 2] = ct;
-            }
-        }
-
-        if (set_fixed_charges && n_src > 0)
-            for (int j = 0; j < n_dim; ++j)
-                r_all[j] = Real(0);
-        if (set_fixed_charges && n_src > 1)
-            for (int j = 0; j < n_dim; ++j)
-                r_all[n_dim + j] = Real(1) - std::numeric_limits<Real>::epsilon();
-        if (set_fixed_charges && n_src > 2)
-            for (int j = 0; j < n_dim; ++j)
-                r_all[2 * n_dim + j] = Real(0.05);
+        dmk::util::init_test_data(n_dim, charge_dim, int(n_src), int(n_trg), uniform, set_fixed_charges, r_src_all,
+                                  r_trg_all, normals_all, charges_all, seed);
     }
 
 #ifdef DMK_HAVE_MPI
-    std::vector<int> sendcounts_r(np), displs_r(np);
-    std::vector<int> sendcounts_c(np), displs_c(np);
-    std::vector<int> sendcounts_n(np), displs_n(np);
-    for (int i = 0; i < np; ++i) {
-        int ni = local_count(n_src, np, i);
-        sendcounts_r[i] = ni * n_dim;
-        sendcounts_c[i] = ni * nd;
-        sendcounts_n[i] = ni * n_dim;
-    }
-    displs_r[0] = displs_c[0] = displs_n[0] = 0;
-    for (int i = 1; i < np; ++i) {
-        displs_r[i] = displs_r[i - 1] + sendcounts_r[i - 1];
-        displs_c[i] = displs_c[i - 1] + sendcounts_c[i - 1];
-        displs_n[i] = displs_n[i - 1] + sendcounts_n[i - 1];
-    }
-
-    auto mpi_t = std::is_same_v<Real, float> ? MPI_FLOAT : MPI_DOUBLE;
-    r_src.resize(size_t(n_dim) * n_local);
-    charges.resize(size_t(nd) * n_local);
-    normals.resize(size_t(n_dim) * n_local);
-    MPI_Scatterv(rank == 0 ? r_all.data() : nullptr, sendcounts_r.data(), displs_r.data(), mpi_t, r_src.data(),
-                 n_local * n_dim, mpi_t, 0, MYCOMM);
-    MPI_Scatterv(rank == 0 ? c_all.data() : nullptr, sendcounts_c.data(), displs_c.data(), mpi_t, charges.data(),
-                 n_local * nd, mpi_t, 0, MYCOMM);
-    MPI_Scatterv(rank == 0 ? n_all.data() : nullptr, sendcounts_n.data(), displs_n.data(), mpi_t, normals.data(),
-                 n_local * n_dim, mpi_t, 0, MYCOMM);
+    const auto mpi_t = std::is_same_v<Real, float> ? MPI_FLOAT : MPI_DOUBLE;
+    auto scatter = [&](const std::vector<Real> &src_all, std::vector<Real> &dst_local, size_t n_total, int stride) {
+        std::vector<int> counts(np), displs(np);
+        for (int i = 0; i < np; ++i)
+            counts[i] = local_count(n_total, np, i) * stride;
+        displs[0] = 0;
+        for (int i = 1; i < np; ++i)
+            displs[i] = displs[i - 1] + counts[i - 1];
+        dst_local.resize(size_t(local_count(n_total, np, rank)) * stride);
+        MPI_Scatterv(rank == 0 ? const_cast<Real *>(src_all.data()) : nullptr, counts.data(), displs.data(), mpi_t,
+                     dst_local.data(), int(dst_local.size()), mpi_t, 0, MYCOMM);
+    };
+    scatter(r_src_all, r_src, n_src, n_dim);
+    scatter(r_trg_all, r_trg, n_trg, n_dim);
+    scatter(charges_all, charges, n_src, charge_dim);
+    scatter(normals_all, normals, n_src, n_dim);
 #else
-    r_src = std::move(r_all);
-    charges = std::move(c_all);
-    normals = std::move(n_all);
+    r_src = std::move(r_src_all);
+    r_trg = std::move(r_trg_all);
+    charges = std::move(charges_all);
+    normals = std::move(normals_all);
 #endif
 }
 
@@ -311,14 +369,17 @@ void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ost
        << "# n_trg:                " << cfg.n_trg << "\n"
        << "# n_dim:                " << cfg.n_dim << "\n"
        << "# kernel:               " << kernel_str << "\n"
+       << "# fparam:               " << cfg.fparam << "\n"
        << "# with_grad:            " << cfg.with_grad << "\n"
        << "# precision:            " << (cfg.prec == 'd' ? "double" : "float") << "\n"
        << "# uniform_dist:         " << cfg.uniform << "\n"
+       << "# seed:                 " << cfg.seed << "\n"
        << "# eps:                  " << cfg.eps << "\n"
        << "# n_per_leaf:           " << cfg.n_per_leaf << "\n"
        << "# n_runs:               " << cfg.n_runs << "\n"
        << "# direct_enabled:       " << cfg.enable_direct << "\n"
        << "# n_direct:             " << cfg.n_direct << "\n"
+       << "# n_show_outliers:      " << cfg.n_show_outliers << "\n"
        << "# log_level:            " << cfg.log_level << "\n"
        << "# bench_build:          " << cfg.bench_build << "\n"
        << "# bench_eval:           " << cfg.bench_eval << "\n";
@@ -411,16 +472,9 @@ void run_benchmark(const Config &cfg) {
     const int charge_dim = dmk::get_kernel_input_dim(n_dim, params.kernel);
     const int pot_dim = dmk::get_kernel_output_dim(n_dim, cfg.kernel, params.eval_src);
 
-    std::vector<Real> r_src, charges, normals;
-    generate_and_scatter<Real>(n_dim, charge_dim, n_src, cfg.uniform, true, r_src, charges, normals, cfg.seed, rank,
-                               np);
-
-    std::vector<Real> r_trg;
-    if (with_trg) {
-        std::vector<Real> trg_charges_unused, trg_normals_unused;
-        generate_and_scatter<Real>(n_dim, charge_dim, n_trg, cfg.uniform, false, r_trg, trg_charges_unused,
-                                   trg_normals_unused, cfg.seed + 1, rank, np);
-    }
+    std::vector<Real> r_src, r_trg, charges, normals;
+    generate_and_scatter<Real>(n_dim, charge_dim, n_src, n_trg, cfg.uniform, true, r_src, r_trg, charges, normals,
+                               cfg.seed, rank, np);
 
     auto create_tree = [&]() -> pdmk_tree {
         const Real *r_trg_ptr = with_trg ? r_trg.data() : nullptr;
@@ -544,6 +598,23 @@ void run_benchmark(const Config &cfg) {
                 fill_block(pot_dmk_trg, pot_direct_trg, trg_err);
         }
 
+        if (run == 0 && cfg.enable_direct && cfg.n_show_outliers > 0) {
+            const int n_show = cfg.n_show_outliers;
+            const std::vector<Real> empty_charges;
+            print_outliers(pot_dmk_src, pot_direct_src, r_src, r_src, /*same_set=*/true, charges, charge_dim, n_dim,
+                           pot_dim, 0, cfg.with_grad ? 1 : pot_dim, n_show, "src pot", rank, std::cerr);
+            if (cfg.with_grad)
+                print_outliers(pot_dmk_src, pot_direct_src, r_src, r_src, /*same_set=*/true, charges, charge_dim, n_dim,
+                               pot_dim, 1, pot_dim, n_show, "src grad", rank, std::cerr);
+            if (with_trg) {
+                print_outliers(pot_dmk_trg, pot_direct_trg, r_trg, r_src, /*same_set=*/false, empty_charges, 0, n_dim,
+                               pot_dim, 0, cfg.with_grad ? 1 : pot_dim, n_show, "trg pot", rank, std::cerr);
+                if (cfg.with_grad)
+                    print_outliers(pot_dmk_trg, pot_direct_trg, r_trg, r_src, /*same_set=*/false, empty_charges, 0,
+                                   n_dim, pot_dim, 1, pot_dim, n_show, "trg grad", rank, std::cerr);
+            }
+        }
+
         if (rank == 0)
             print_csv_row(t, src_err, with_trg ? &trg_err : nullptr, cfg.with_grad, std::cout);
         if (rank == 0)
@@ -568,13 +639,16 @@ Config parse_args(int argc, char *argv[]) {
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "N:T:n:e:t:r:D:l:s:k:d:f:ugh?", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "N:T:n:e:t:r:D:l:s:k:d:f:O:ugh?", long_opts, nullptr)) != -1) {
         switch (opt) {
         case 'N':
             cfg.n_src = int(std::atof(optarg));
             break;
         case 'T':
             cfg.n_trg = int(std::atof(optarg));
+            break;
+        case 'O':
+            cfg.n_show_outliers = std::atoi(optarg);
             break;
         case 'n':
             cfg.n_per_leaf = std::atoi(optarg);
@@ -650,6 +724,7 @@ Config parse_args(int argc, char *argv[]) {
                 << "  -s seed               integer seed for random numbers\n"
                 << "  -u                    Uniform distribution\n"
                 << "  -g                    Evaluate potential + gradient (scalar kernels)\n"
+                << "  -O n_outliers         Print top-N worst points per block to stderr (default: 0 = off)\n"
                 << "  --direct/--no-direct  Enable/disable direct reference\n"
                 << "  --bench-build         Also benchmark tree build time\n"
                 << "  --no-bench-eval       Skip eval benchmark (build only)\n"

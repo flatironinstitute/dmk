@@ -191,8 +191,19 @@ inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform
                 r_src[i * n_dim + j] = rng(eng);
         }
 
-        for (int j = 0; j < n_dim; ++j)
-            rnormal[i * n_dim + j] = rng(eng);
+        // Unit normals (sphere-distributed) — required for stresslet, harmless otherwise.
+        if (n_dim == 2) {
+            const double phi_n = rng(eng) * 2 * M_PI;
+            rnormal[i * 2 + 0] = std::cos(phi_n);
+            rnormal[i * 2 + 1] = std::sin(phi_n);
+        } else if (n_dim == 3) {
+            const double theta_n = rng(eng) * M_PI;
+            const double ct_n = std::cos(theta_n), st_n = std::sin(theta_n);
+            const double phi_n = rng(eng) * 2 * M_PI;
+            rnormal[i * 3 + 0] = st_n * std::cos(phi_n);
+            rnormal[i * 3 + 1] = st_n * std::sin(phi_n);
+            rnormal[i * 3 + 2] = ct_n;
+        }
 
         for (int j = 0; j < nd; ++j) {
             charges[i * nd + j] = rng(eng) - 0.5;

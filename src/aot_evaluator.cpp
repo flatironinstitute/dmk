@@ -30,8 +30,6 @@ residual_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_eval_ty
         if (n_dim == 3)
             return get_stresslet_3d_kernel<Real, MaxVecLen>(eval_level, n_digits);
     case dmk_ikernel::DMK_LAPLACE_DIPOLE:
-        if (n_dim == 2)
-            return get_laplace_dipole_2d_kernel<Real, MaxVecLen>(eval_level, n_digits);
         if (n_dim == 3)
             return get_laplace_dipole_3d_kernel<Real, MaxVecLen>(eval_level, n_digits);
     default:

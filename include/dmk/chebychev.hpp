@@ -98,7 +98,7 @@ inline auto get_polynomial_calculator_impl(int order, std::integer_sequence<int,
 
 template <typename T>
 inline auto get_polynomial_calculator(int order) {
-    return get_polynomial_calculator_impl<T>(order, std::make_integer_sequence<int, 41>{});
+    return get_polynomial_calculator_impl<T>(order, std::make_integer_sequence<int, 51>{});
 }
 
 template <typename T>

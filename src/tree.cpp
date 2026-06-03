@@ -1272,9 +1272,13 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
     const auto &node_lists = this->GetNodeLists();
 
     Real w0[SCTL_MAX_DEPTH];
+    Real w0_grad[SCTL_MAX_DEPTH] = {};
     // Fill for n_levels+1, note boxsize is already n_levels+1 in size
-    for (int i_level = 0; i_level < std::min(SCTL_MAX_DEPTH, n_levels() + 1); ++i_level)
+    for (int i_level = 0; i_level < std::min(SCTL_MAX_DEPTH, n_levels() + 1); ++i_level) {
         w0[i_level] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
+        w0_grad[i_level] =
+            get_dipole_grad_self_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
+    }
 
     // For PBC: precompute the periodic shift for each (trg_box, nbr_index) pair.
     // The nbr array index k encodes a direction (dx,dy,dz) ∈ {-1,0,+1}^DIM.
@@ -1452,10 +1456,20 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
 
             if (params.kernel == DMK_STRESSLET)
                 continue;
-            // Laplace-dipole self-correction is zero (grad of windowed kernel vanishes at R=0)
-            // and the per-component subtraction loop would over-index pot (output dim=1, input dim=DIM).
-            if (params.kernel == DMK_LAPLACE_DIPOLE)
+
+            // FIXME: The self correction logic should be merged to one loop
+            if (params.kernel == DMK_LAPLACE_DIPOLE) {
+                if (params.eval_src >= DMK_POTENTIAL_GRAD) {
+                    const auto depth = node_mid[trg_box].Depth() + ifpwexp[trg_box];
+                    const Real c_grad = w0_grad[depth];
+                    auto pot = pot_src_view(trg_box);
+                    auto dip = charge_with_halo_view(trg_box);
+                    for (int i_src = 0; i_src < r_src_cnt_with_halo[trg_box]; ++i_src)
+                        for (int i = 0; i < DIM; ++i)
+                            pot(1 + i, i_src) -= c_grad * dip(i, i_src);
+                }
                 continue;
+            }
 
             // Correct for self-evaluations
             auto pot = pot_src_view(trg_box);
