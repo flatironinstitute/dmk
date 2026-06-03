@@ -21,6 +21,7 @@
 
 struct Config {
     int n_src = 1'000'000;
+    int n_trg = 0;
     int n_per_leaf = 280;
     double eps = 1e-5;
     char prec = 'f';
@@ -35,6 +36,7 @@ struct Config {
     bool bench_build = false;
     bool bench_eval = true;
     bool with_grad = false;
+    long seed = 0;
 };
 
 inline dmk_eval_type get_eval_type(dmk_ikernel kernel, bool with_grad) {
@@ -258,18 +260,21 @@ void run_direct(const Config &cfg, int n_dim, int charge_dim, const std::vector<
 }
 
 template <typename Real>
-double run_dmk(pdmk_tree tree, std::vector<Real> &pot, int n_src_per_rank, int kdim, int rank, int np) {
-    pot.resize(n_src_per_rank * kdim);
+double run_dmk(pdmk_tree tree, std::vector<Real> &pot_src, std::vector<Real> &pot_trg, int n_src_per_rank,
+               int n_trg_per_rank, int kdim, int rank, int np) {
+    pot_src.resize(size_t(n_src_per_rank) * kdim);
+    pot_trg.resize(size_t(n_trg_per_rank) * kdim);
 
 #ifdef DMK_HAVE_MPI
     MPI_Barrier(MYCOMM);
 #endif
 
+    Real *pot_trg_ptr = n_trg_per_rank > 0 ? pot_trg.data() : nullptr;
     double st = MY_OMP_GET_WTIME();
     if constexpr (std::is_same_v<Real, float>)
-        pdmk_tree_evalf(tree, pot.data(), nullptr);
+        pdmk_tree_evalf(tree, pot_src.data(), pot_trg_ptr);
     else
-        pdmk_tree_eval(tree, pot.data(), nullptr);
+        pdmk_tree_eval(tree, pot_src.data(), pot_trg_ptr);
     double ft = MY_OMP_GET_WTIME();
 
     return ft - st;
@@ -303,6 +308,7 @@ void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ost
     os << "# mpi_ranks:            " << np << "\n"
        << "# omp_threads_per_rank: " << n_threads << "\n"
        << "# n_src:                " << cfg.n_src << "\n"
+       << "# n_trg:                " << cfg.n_trg << "\n"
        << "# n_dim:                " << cfg.n_dim << "\n"
        << "# kernel:               " << kernel_str << "\n"
        << "# with_grad:            " << cfg.with_grad << "\n"
@@ -318,28 +324,44 @@ void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ost
        << "# bench_eval:           " << cfg.bench_eval << "\n";
 }
 
-void print_csv_header(std::ostream &os, bool with_grad) {
-    os << "dmk_time,dmk_pts_s,dmk_pts_s_rank,dmk_pts_s_thread,";
+struct ErrorBlock {
+    bool have = false;
+    ErrorMetrics pot{};
+    ErrorMetrics grad{}; // only meaningful when with_grad
+};
+
+void print_csv_header_block(std::ostream &os, const std::string &prefix, bool with_grad) {
+    os << "," << prefix << "_l2_rel_err," << prefix << "_max_rel_err";
     if (with_grad)
-        os << "dmk_l2_rel_err_pot,dmk_max_rel_err_pot,dmk_l2_rel_err_grad,dmk_max_rel_err_grad";
-    else
-        os << "dmk_l2_rel_err,dmk_max_rel_err";
+        os << "," << prefix << "_l2_rel_err_grad," << prefix << "_max_rel_err_grad";
 }
 
-void print_csv_row(const TimingResult &t, const ErrorMetrics *err_a, const ErrorMetrics *err_b, std::ostream &os) {
-    auto nan = std::numeric_limits<double>::quiet_NaN();
-    auto emit = [&](const ErrorMetrics *e) {
-        if (e)
-            os << e->l2_rel << "," << e->max_rel;
+void print_csv_block(std::ostream &os, const ErrorBlock &b, bool with_grad) {
+    const auto nan = std::numeric_limits<double>::quiet_NaN();
+    auto emit = [&](const ErrorMetrics &e) {
+        if (b.have)
+            os << "," << e.l2_rel << "," << e.max_rel;
         else
-            os << nan << "," << nan;
+            os << "," << nan << "," << nan;
     };
-    os << t.elapsed << "," << t.pts_per_sec << "," << t.pts_per_sec_per_rank << "," << t.pts_per_sec_per_thread << ",";
-    emit(err_a);
-    if (err_b) {
-        os << ",";
-        emit(err_b);
-    }
+    emit(b.pot);
+    if (with_grad)
+        emit(b.grad);
+}
+
+void print_csv_header(std::ostream &os, bool with_grad, bool with_trg) {
+    os << "dmk_time,dmk_pts_s,dmk_pts_s_rank,dmk_pts_s_thread";
+    print_csv_header_block(os, "src", with_grad);
+    if (with_trg)
+        print_csv_header_block(os, "trg", with_grad);
+}
+
+void print_csv_row(const TimingResult &t, const ErrorBlock &src, const ErrorBlock *trg, bool with_grad,
+                   std::ostream &os) {
+    os << t.elapsed << "," << t.pts_per_sec << "," << t.pts_per_sec_per_rank << "," << t.pts_per_sec_per_thread;
+    print_csv_block(os, src, with_grad);
+    if (trg)
+        print_csv_block(os, *trg, with_grad);
 }
 
 dmk_ikernel parse_kernel(const char *s) {
@@ -370,7 +392,10 @@ void run_benchmark(const Config &cfg) {
     const int n_dim = cfg.n_dim;
     const int n_threads = MY_OMP_GET_MAX_THREADS();
     const int n_src = cfg.n_src;
+    const int n_trg = cfg.n_trg;
     const int n_src_per_rank = local_count(n_src, np, rank);
+    const int n_trg_per_rank = local_count(n_trg, np, rank);
+    const bool with_trg = n_trg > 0;
 
     pdmk_params params{};
     params.eps = cfg.eps;
@@ -387,15 +412,24 @@ void run_benchmark(const Config &cfg) {
     const int pot_dim = dmk::get_kernel_output_dim(n_dim, cfg.kernel, params.eval_src);
 
     std::vector<Real> r_src, charges, normals;
-    generate_and_scatter<Real>(n_dim, charge_dim, n_src, cfg.uniform, true, r_src, charges, normals, 0, rank, np);
+    generate_and_scatter<Real>(n_dim, charge_dim, n_src, cfg.uniform, true, r_src, charges, normals, cfg.seed, rank,
+                               np);
+
+    std::vector<Real> r_trg;
+    if (with_trg) {
+        std::vector<Real> trg_charges_unused, trg_normals_unused;
+        generate_and_scatter<Real>(n_dim, charge_dim, n_trg, cfg.uniform, false, r_trg, trg_charges_unused,
+                                   trg_normals_unused, cfg.seed + 1, rank, np);
+    }
 
     auto create_tree = [&]() -> pdmk_tree {
+        const Real *r_trg_ptr = with_trg ? r_trg.data() : nullptr;
         if constexpr (std::is_same_v<Real, float>)
-            return pdmk_tree_createf(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), normals.data(), 0,
-                                     nullptr);
+            return pdmk_tree_createf(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), normals.data(),
+                                     n_trg_per_rank, r_trg_ptr);
         else
-            return pdmk_tree_create(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), normals.data(), 0,
-                                    nullptr);
+            return pdmk_tree_create(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), normals.data(),
+                                    n_trg_per_rank, r_trg_ptr);
     };
 
     if (cfg.bench_build) {
@@ -439,17 +473,24 @@ void run_benchmark(const Config &cfg) {
 
     pdmk_tree tree = create_tree();
 
-    // Direct reference
-    std::vector<Real> pot_direct;
+    // Direct reference at source positions, and at target positions if requested.
+    std::vector<Real> pot_direct_src, pot_direct_trg;
     if (cfg.enable_direct) {
-        int n_direct_global = (cfg.n_direct > 0) ? cfg.n_direct : n_src;
-        int n_direct_per_rank = local_count(n_direct_global, np, rank);
+        const int n_direct_global = (cfg.n_direct > 0) ? cfg.n_direct : n_src;
+        const int n_direct_per_rank = local_count(n_direct_global, np, rank);
 
         if (n_direct_global == n_src) {
-            run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_src, pot_direct, rank, np);
+            run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_src, pot_direct_src, rank, np);
         } else {
-            std::vector<Real> r_trg(r_src.begin(), r_src.begin() + n_direct_per_rank * n_dim);
-            run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_trg, pot_direct, rank, np);
+            std::vector<Real> r_eval(r_src.begin(), r_src.begin() + size_t(n_direct_per_rank) * n_dim);
+            run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_eval, pot_direct_src, rank, np);
+        }
+
+        if (with_trg) {
+            const int n_direct_trg_global = std::min(n_direct_global, n_trg);
+            const int n_direct_trg_per_rank = local_count(n_direct_trg_global, np, rank);
+            std::vector<Real> r_eval(r_trg.begin(), r_trg.begin() + size_t(n_direct_trg_per_rank) * n_dim);
+            run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_eval, pot_direct_trg, rank, np);
         }
     }
 
@@ -460,15 +501,33 @@ void run_benchmark(const Config &cfg) {
     if (rank == 0) {
         if (!cfg.bench_build)
             print_csv_config_comment(cfg, np, n_threads, std::cout);
-        print_csv_header(std::cout, cfg.with_grad);
+        print_csv_header(std::cout, cfg.with_grad, with_trg);
         std::cout << std::flush;
     }
 
+    auto fill_block = [&](const std::vector<Real> &pot_dmk, const std::vector<Real> &pot_dir, ErrorBlock &out) {
+        if (pot_dmk.empty() || pot_dir.empty())
+            return;
+        int n_compare = std::min(int(pot_dir.size()), int(pot_dmk.size()));
+        n_compare = (n_compare / pot_dim) * pot_dim;
+        if (n_compare == 0)
+            return;
+        std::vector<Real> dmk_sub(pot_dmk.begin(), pot_dmk.begin() + n_compare);
+        std::vector<Real> dir_sub(pot_dir.begin(), pot_dir.begin() + n_compare);
+        if (cfg.with_grad) {
+            out.pot = compute_error(dmk_sub, dir_sub, rank, np, pot_dim, 0, 1);
+            out.grad = compute_error(dmk_sub, dir_sub, rank, np, pot_dim, 1, pot_dim);
+        } else {
+            out.pot = compute_error(dmk_sub, dir_sub, rank, np, pot_dim, 0, pot_dim);
+        }
+        out.have = true;
+    };
+
     for (int run = 0; run < cfg.n_runs; ++run) {
-        std::vector<Real> pot_dmk;
+        std::vector<Real> pot_dmk_src, pot_dmk_trg;
         sctl::Profile::reset();
-        double dt = run_dmk<Real>(tree, pot_dmk, n_src_per_rank, pot_dim, rank, np);
-        TimingResult t = make_timing(dt, n_src, n_src_per_rank, n_threads);
+        double dt = run_dmk<Real>(tree, pot_dmk_src, pot_dmk_trg, n_src_per_rank, n_trg_per_rank, pot_dim, rank, np);
+        TimingResult t = make_timing(dt, n_src + n_trg, n_src_per_rank + n_trg_per_rank, n_threads);
 
         if (run == 0) {
             if (rank == 0)
@@ -478,25 +537,15 @@ void run_benchmark(const Config &cfg) {
                 std::cout << "\n";
         }
 
-        ErrorMetrics err_a{}, err_b{};
-        bool have_err = false;
+        ErrorBlock src_err, trg_err;
         if (cfg.enable_direct) {
-            int n_compare = std::min(int(pot_direct.size()), int(pot_dmk.size()));
-            n_compare = (n_compare / pot_dim) * pot_dim;
-            std::vector<Real> pot_dmk_sub(pot_dmk.begin(), pot_dmk.begin() + n_compare);
-            std::vector<Real> pot_dir_sub(pot_direct.begin(), pot_direct.begin() + n_compare);
-            if (cfg.with_grad) {
-                err_a = compute_error(pot_dmk_sub, pot_dir_sub, rank, np, pot_dim, 0, 1);
-                err_b = compute_error(pot_dmk_sub, pot_dir_sub, rank, np, pot_dim, 1, pot_dim);
-            } else {
-                err_a = compute_error(pot_dmk_sub, pot_dir_sub, rank, np, pot_dim, 0, pot_dim);
-            }
-            have_err = true;
+            fill_block(pot_dmk_src, pot_direct_src, src_err);
+            if (with_trg)
+                fill_block(pot_dmk_trg, pot_direct_trg, trg_err);
         }
 
-        if (rank == 0) {
-            print_csv_row(t, have_err ? &err_a : nullptr, (have_err && cfg.with_grad) ? &err_b : nullptr, std::cout);
-        }
+        if (rank == 0)
+            print_csv_row(t, src_err, with_trg ? &trg_err : nullptr, cfg.with_grad, std::cout);
         if (rank == 0)
             std::cout << ",";
         pdmk_print_profile_data(MYCOMM, 'c');
@@ -519,10 +568,13 @@ Config parse_args(int argc, char *argv[]) {
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "N:n:e:t:r:D:l:k:d:f:ugh?", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "N:T:n:e:t:r:D:l:s:k:d:f:ugh?", long_opts, nullptr)) != -1) {
         switch (opt) {
         case 'N':
             cfg.n_src = int(std::atof(optarg));
+            break;
+        case 'T':
+            cfg.n_trg = int(std::atof(optarg));
             break;
         case 'n':
             cfg.n_per_leaf = std::atoi(optarg);
@@ -538,6 +590,9 @@ Config parse_args(int argc, char *argv[]) {
             break;
         case 'l':
             cfg.log_level = std::atoi(optarg);
+            break;
+        case 's':
+            cfg.seed = std::atol(optarg);
             break;
         case 'k':
             cfg.kernel = parse_kernel(optarg);
@@ -579,23 +634,26 @@ Config parse_args(int argc, char *argv[]) {
         case 'h':
         case '?':
         default:
-            std::cout << "Usage: " << argv[0] << "\n"
-                      << "  -N n_src              Number of source points\n"
-                      << "  -n n_per_leaf         DMK leaf size\n"
-                      << "  -e eps                Tolerance\n"
-                      << "  -t f|d                Precision\n"
-                      << "  -k kernel             laplace, sqrt_laplace, yukawa, stokeslet, stresslet, laplace_dipole\n"
-                      << "  -d dim                2 or 3\n"
-                      << "  -f fparam             Yukawa parameter (default: 6.0)\n"
-                      << "  -r n_runs             Benchmark iterations\n"
-                      << "  -D n_direct           Points for direct comparison\n"
-                      << "  -l log_level          DMK log verbosity\n"
-                      << "  -u                    Uniform distribution\n"
-                      << "  -g                    Evaluate potential + gradient (scalar kernels)\n"
-                      << "  --direct/--no-direct  Enable/disable direct reference\n"
-                      << "  --bench-build         Also benchmark tree build time\n"
-                      << "  --no-bench-eval       Skip eval benchmark (build only)\n"
-                      << "  -h                    Help\n";
+            std::cout
+                << "Usage: " << argv[0] << "\n"
+                << "  -N n_src              Number of source points\n"
+                << "  -T n_trg              Number of separate target points (default: 0 = source self-eval only)\n"
+                << "  -n n_per_leaf         DMK leaf size\n"
+                << "  -e eps                Tolerance\n"
+                << "  -t f|d                Precision\n"
+                << "  -k kernel             laplace, sqrt_laplace, yukawa, stokeslet, stresslet, laplace_dipole\n"
+                << "  -d dim                2 or 3\n"
+                << "  -f fparam             Yukawa parameter (default: 6.0)\n"
+                << "  -r n_runs             Benchmark iterations\n"
+                << "  -D n_direct           Points for direct comparison\n"
+                << "  -l log_level          DMK log verbosity\n"
+                << "  -s seed               integer seed for random numbers\n"
+                << "  -u                    Uniform distribution\n"
+                << "  -g                    Evaluate potential + gradient (scalar kernels)\n"
+                << "  --direct/--no-direct  Enable/disable direct reference\n"
+                << "  --bench-build         Also benchmark tree build time\n"
+                << "  --no-bench-eval       Skip eval benchmark (build only)\n"
+                << "  -h                    Help\n";
             exit(0);
         }
     }
