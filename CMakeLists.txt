@@ -36,7 +36,7 @@ else()
 endif()
 
 find_package(OpenMP REQUIRED)
-find_package(MPI REQUIRED)
+find_package(MPI COMPONENTS CXX REQUIRED)
 find_package(BLAS REQUIRED)
 
 add_library(
