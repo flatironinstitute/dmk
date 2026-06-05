@@ -592,7 +592,8 @@ std::vector<Real> compute_green_func(int N, Real r_cut, Real c,
 
                 const Real k_mag = std::sqrt(mode_sq);
                 const Real psi_val = pswf.eval_val(r_cut * k_mag / c);
-                G[i + N*(j + N*w)] = 4*M_PI * pswf.rlam20 * psi_val / (c0 * mode_sq);
+                //G[i + N*(j + N*w)] = 4*M_PI * pswf.rlam20 * psi_val / (c0 * mode_sq);
+                G[i + N*(j + N*w)] = pswf.rlam20 * psi_val / (c0 * mode_sq);
             }
         }
     }
@@ -868,22 +869,39 @@ void pme_poisson3d_lagrange(
     Real c =  13.739999771118164; // choose c based on desired precision; this value ensures 6-digit accuracy (based on DMK paper, Table 1) - c is computed based on the desired precision to be obtained
     dmk::Prolate0Fun pswf(c, 10000); //initialize the prolate spheroidal wave function with the chosen c and a large number of points for accurate interpolation
     Real c0 = pswf.int_eval(1.0); // normalization constant = \int_0^1 \psi_0^c(x) dx; this is used to normalize the potential contribution of the short-range part, so that the total potential is correct
+    double lambda_0 = pswf.rlam20;
     
+    std::cout << "c = " << c << std::endl;
+    std::cout << "c0 = " << c0 << std::endl;
+    std::cout << "lambda_0 = " << lambda_0 << std::endl;
+
     // short-range interaction - ESP
     ShortRangeSystem<Real> Short = initialize_short_range_esp(System, r_cut, N, n_dim);
     std::vector<Real> pot_short = evaluate_short_range_esp(System, Short, r_cut, vectorized, c0, pswf);
+
+    std::cout << "pot_short (esp) = ";
+    for (auto v : pot_short) std::cout << v << " ";
+    std::cout << std::endl;
 
     // long-range interaction - ESP
     std::vector<Real> G_hat = compute_green_func(N, r_cut, c, pswf, c0, length);
     std::vector<Real> pot_long = evaluate_long_range(G_hat, System, N, P);  //unchanged, I think?
 
+    std::cout << "pot_long (esp) = ";
+    for (auto v : pot_long) std::cout << v << " ";
+    std::cout << std::endl;
+
     // self-interaction term
-    const Real inv_sqrt_pi = 1 / std::sqrt(M_PI);
+    const Real psi0_at_0 = pswf.eval_val(0.0);
     std::vector<Real> self_interaction(System.n_src, 0.0);
     for (size_t i = 0; i < System.n_src; ++i) {
-        self_interaction[i] = 2 * alpha * inv_sqrt_pi * System.charges[i];
+        self_interaction[i] = psi0_at_0 / (r_cut * c0) * charges[i];
     }
 
+    std::cout << "self_interaction (esp) = ";
+    for (auto v : self_interaction) std::cout << v << " ";
+    std::cout << std::endl;
+    
     // add all terms
     for (size_t i = 0; i < System.n_trg; ++i) {
         pot[i] = pot_short[i] + pot_long[i] - self_interaction[i];
@@ -1249,8 +1267,35 @@ int test_pme_poisson3d_lagrange(int argc, char *argv[]) {
 
 }
 
+// int main(int argc, char *argv[]) {
+//     const int n_sources = 2;
+//     const int n_dim = 3;
+//     const double length = 1.0;
+//     const double alpha = 10.0;
+//     const double r_cut = 0.20;
+//     const int N = 16;
+//     const int P = 4;
+//     const int uniform = 0;
+//     const int vectorized = 0;
+
+//     double r_sources[6] = {0.1, 0.2, 0.3, 0.7, 0.8, 0.9};
+//     double charges[2] = {1.0, -1.0};
+//     std::vector<double> pot(n_sources, 0.0);
+
+//     pme_poisson3d_lagrange(pot.data(), n_sources, n_dim, length, alpha, r_cut, N, P,
+//                            uniform, vectorized, r_sources, charges);
+
+//     std::cout << "pot =";
+//     for (int i = 0; i < n_sources; ++i) {
+//         std::cout << " " << pot[i];
+//     }
+//     std::cout << std::endl;
+
+//     return 0;
+// }
+
 int main(int argc, char *argv[]) {
-    const int n_sources = 2;
+    const int n_sources = 4;
     const int n_dim = 3;
     const double length = 1.0;
     const double alpha = 10.0;
@@ -1260,8 +1305,13 @@ int main(int argc, char *argv[]) {
     const int uniform = 0;
     const int vectorized = 0;
 
-    double r_sources[6] = {0.1, 0.2, 0.3, 0.7, 0.8, 0.9};
-    double charges[2] = {1.0, -1.0};
+    double r_sources[12] = {
+        0.1, 0.4, 0.6, 0.8,
+        0.1, 0.4, 0.6, 0.8,
+        0.1, 0.4, 0.6, 0.8
+    };
+    double charges[4] = {1.0, -1.0, 1.0, -1.0};
+
     std::vector<double> pot(n_sources, 0.0);
 
     pme_poisson3d_lagrange(pot.data(), n_sources, n_dim, length, alpha, r_cut, N, P,

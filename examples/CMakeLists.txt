@@ -5,9 +5,13 @@ add_library(ewald STATIC ewald_esp.cpp)
 target_link_libraries(ewald PUBLIC dmk dmk_ref BLAS::BLAS MPI::MPI_CXX nanobench OpenMP::OpenMP_CXX ducc0 ${PAPI_TARGET})
 target_include_directories(ewald PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_executable(ewald_runner ewald_esp.cpp)
-target_link_libraries(ewald_runner PUBLIC dmk dmk_ref BLAS::BLAS MPI::MPI_CXX nanobench OpenMP::OpenMP_CXX ducc0 ${PAPI_TARGET})
-target_include_directories(ewald_runner PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+add_executable(ewald_esp ewald_esp.cpp)
+target_link_libraries(ewald_esp PUBLIC dmk dmk_ref BLAS::BLAS MPI::MPI_CXX nanobench OpenMP::OpenMP_CXX ducc0 ${PAPI_TARGET})
+target_include_directories(ewald_esp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(ewald_original ewald_total.cpp)
+target_link_libraries(ewald_original PUBLIC dmk dmk_ref BLAS::BLAS MPI::MPI_CXX nanobench OpenMP::OpenMP_CXX ducc0 ${PAPI_TARGET})
+target_include_directories(ewald_original PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(fft_parallel_2D_f fft_parallel_2D_factored.cpp)
 target_link_libraries(fft_parallel_2D_f MPI::MPI_CXX OpenMP::OpenMP_CXX ducc0 ${PAPI_TARGET})

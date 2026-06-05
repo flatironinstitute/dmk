@@ -856,9 +856,17 @@ void pme_poisson3d_lagrange(
     ShortRangeSystem<Real> Short = initialize_short_range(System, alpha, r_cut, N, n_dim);
     std::vector<Real> pot_short = evaluate_short_range(System, Short, r_cut, alpha, vectorized);
 
+    std::cout << "pot_short (original code) = ";
+    for (auto v : pot_short) std::cout << v << " ";
+    std::cout << std::endl;
+
     // long-range interaction
     std::vector<Real> G_hat = compute_green_func(N, alpha, length);
     std::vector<Real> pot_long = evaluate_long_range(G_hat, System, N, P);
+
+    std::cout << "pot_long (original code) = ";
+    for (auto v : pot_long) std::cout << v << " ";
+    std::cout << std::endl;
 
     // self-interaction term
     const Real inv_sqrt_pi = 1 / std::sqrt(M_PI);
@@ -866,6 +874,10 @@ void pme_poisson3d_lagrange(
     for (size_t i = 0; i < System.n_src; ++i) {
         self_interaction[i] = 2 * alpha * inv_sqrt_pi * System.charges[i];
     }
+
+    std::cout << "self_interaction (original code) = ";
+    for (auto v : self_interaction) std::cout << v << " ";
+    std::cout << std::endl;
 
     // add all terms
     for (size_t i = 0; i < System.n_trg; ++i) {
@@ -1180,51 +1192,109 @@ void pme_poisson3d_lagrange(
     pme_poisson3d_lagrange<double>(pot, n_sources, n_dim, length, alpha, r_cut, N, P, uniform, vectorized, r_sources, charges);
 }
 
-int test_pme_poisson3d_lagrange(int argc, char *argv[]) {
-    if (argc == 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h")) {
-        TestOptions::print_help();
-        return EXIT_FAILURE;
-    }
+// int test_pme_poisson3d_lagrange(int argc, char *argv[]) {
+//     if (argc == 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h")) {
+//         TestOptions::print_help();
+//         return EXIT_FAILURE;
+//     }
 
-    TestOptions options(argc, argv);
-    std::cout << options;
+//     TestOptions options(argc, argv);
+//     std::cout << options;
 
-    if (options.test_num == 0) {
-        if (options.prec == 'f')
-            run_test_case_00<float>(options);
-        else
-            run_test_case_00<double>(options);
-    } else if (options.test_num == 1) {
-        if (options.prec == 'f')
-            run_test_case_01<float>(options);
-        else
-            run_test_case_01<double>(options);
-    } else if (options.test_num == 2) {
-        if (options.prec == 'f')
-            run_test_case_02<float>(options);
-        else
-            run_test_case_02<double>(options);
-    } else if (options.test_num == 3) {
-        if (options.prec == 'f')
-            run_test_case_03<float>(options);
-        else
-            run_test_case_03<double>(options);
-    } else if (options.test_num == 4) {
-        if (options.prec == 'f')
-            run_test_case_04<float>(options);
-        else
-            run_test_case_04<double>(options);
-    } else if (options.test_num == 5) {
-        if (options.prec == 'f')
-            run_test_case_05<float>(options);
-        else
-            run_test_case_05<double>(options);
-    } else {
-        std::cerr << "Invalid test number: " << options.test_num << std::endl;
-        return EXIT_FAILURE;
-    }
+//     if (options.test_num == 0) {
+//         if (options.prec == 'f')
+//             run_test_case_00<float>(options);
+//         else
+//             run_test_case_00<double>(options);
+//     } else if (options.test_num == 1) {
+//         if (options.prec == 'f')
+//             run_test_case_01<float>(options);
+//         else
+//             run_test_case_01<double>(options);
+//     } else if (options.test_num == 2) {
+//         if (options.prec == 'f')
+//             run_test_case_02<float>(options);
+//         else
+//             run_test_case_02<double>(options);
+//     } else if (options.test_num == 3) {
+//         if (options.prec == 'f')
+//             run_test_case_03<float>(options);
+//         else
+//             run_test_case_03<double>(options);
+//     } else if (options.test_num == 4) {
+//         if (options.prec == 'f')
+//             run_test_case_04<float>(options);
+//         else
+//             run_test_case_04<double>(options);
+//     } else if (options.test_num == 5) {
+//         if (options.prec == 'f')
+//             run_test_case_05<float>(options);
+//         else
+//             run_test_case_05<double>(options);
+//     } else {
+//         std::cerr << "Invalid test number: " << options.test_num << std::endl;
+//         return EXIT_FAILURE;
+//     }
 
-    return EXIT_SUCCESS;
+//     return EXIT_SUCCESS;
+// }
+
 }
 
+
+// int main(int argc, char *argv[]) {
+//     const int n_sources = 2;
+//     const int n_dim = 3;
+//     const double length = 1.0;
+//     const double alpha = 10.0;
+//     const double r_cut = 0.20;
+//     const int N = 16;
+//     const int P = 4;
+//     const int uniform = 0;
+//     const int vectorized = 0;
+
+//     double r_sources[6] = {0.1, 0.2, 0.3, 0.7, 0.8, 0.9};
+//     double charges[2] = {1.0, -1.0};
+//     std::vector<double> pot(n_sources, 0.0);
+
+//     pme_poisson3d_lagrange<double>(pot.data(), n_sources, n_dim, length, alpha, r_cut, N, P, uniform, vectorized, r_sources, charges);
+
+//     std::cout << "pot =";
+//     for (int i = 0; i < n_sources; ++i) {
+//         std::cout << " " << pot[i];
+//     }
+//     std::cout << std::endl;
+
+//     return 0;
+// }
+
+int main(int argc, char *argv[]) {
+    const int n_sources = 4;
+    const int n_dim = 3;
+    const double length = 1.0;
+    const double alpha = 10.0;
+    const double r_cut = 0.20;
+    const int N = 16;
+    const int P = 4;
+    const int uniform = 0;
+    const int vectorized = 0;
+
+    double r_sources[12] = {
+        0.1, 0.4, 0.6, 0.8,
+        0.1, 0.4, 0.6, 0.8,
+        0.1, 0.4, 0.6, 0.8
+    };
+    double charges[4] = {1.0, -1.0, 1.0, -1.0};
+
+    std::vector<double> pot(n_sources, 0.0);
+
+    pme_poisson3d_lagrange<double>(pot.data(), n_sources, n_dim, length, alpha, r_cut, N, P, uniform, vectorized, r_sources, charges);
+
+    std::cout << "pot =";
+    for (int i = 0; i < n_sources; ++i) {
+        std::cout << " " << pot[i];
+    }
+    std::cout << std::endl;
+
+    return 0;
 }
