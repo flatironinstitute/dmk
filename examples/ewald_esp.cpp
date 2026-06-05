@@ -560,7 +560,9 @@ std::vector<Real> evaluate_short_range_esp(const TestCaseSystem<Real> &System, S
 
 /* adapted from https://doi.org/10.1063/1.477414 (page 6) */
 template <typename Real>
-std::vector<Real> compute_green_func(int N, Real alpha, Real L) {
+std::vector<Real> compute_green_func(int N, Real r_cut, Real c, 
+                                      const dmk::Prolate0Fun &pswf,
+                                      Real c0, Real L) {
     // TODO: generalize to different box lengths
     const Real h = L / N;
     const Real TWOPI_L = 2 * M_PI / L;
@@ -585,8 +587,12 @@ std::vector<Real> compute_green_func(int N, Real alpha, Real L) {
                     continue;
                 }
 
-                // update G_hat
-                G[i + N * (j + N * w)] = 4 * M_PI / mode_sq * std::exp(-mode_sq / (4 * alpha * alpha));
+                // Gaussian
+                //G[i + N * (j + N * w)] = 4 * M_PI / mode_sq * std::exp(-mode_sq / (4 * alpha * alpha));
+
+                const Real k_mag = std::sqrt(mode_sq);
+                const Real psi_val = pswf.eval_val(r_cut * k_mag / c);
+                G[i + N*(j + N*w)] = 4*M_PI * pswf.rlam20 * psi_val / (c0 * mode_sq);
             }
         }
     }
@@ -728,7 +734,7 @@ void back_interpolate(std::vector<Real> &r_trg, std::vector<Real> &pot, std::vec
         const Real y = r_trg[n_trg + ind];
         const Real z = r_trg[n_trg * 2 + ind];
 
-        // identify the middle point
+        // identify the middle point, aka convert physical coordinate to a grid index
         // round to the nearest integer
         // TODO: generalize for odd p / polynomial order
         const int middle_x = int(x / L * N + 0.50) % N; // e.g., if x=0.99, middle_x=0
@@ -790,7 +796,7 @@ std::vector<std::complex<Real>> run_fft(const std::vector<std::complex<Real>> &i
 template <typename Real>
 std::vector<Real> evaluate_long_range(const std::vector<Real> &G, TestCaseSystem<Real> System, const int N,
                                       const int p) {
-    const Real h = System.L / N;
+    const Real h = System.L / N; //N^3 grid with spacing h covering the box [0, L]^3
     const int n_dim = System.n_dim;
     const int n_trg = System.n_trg;
     std::vector<Real> charges = System.charges;
@@ -867,9 +873,9 @@ void pme_poisson3d_lagrange(
     ShortRangeSystem<Real> Short = initialize_short_range_esp(System, r_cut, N, n_dim);
     std::vector<Real> pot_short = evaluate_short_range_esp(System, Short, r_cut, vectorized, c0, pswf);
 
-    // long-range interaction
-    std::vector<Real> G_hat = compute_green_func(N, alpha, length);
-    std::vector<Real> pot_long = evaluate_long_range(G_hat, System, N, P);
+    // long-range interaction - ESP
+    std::vector<Real> G_hat = compute_green_func(N, r_cut, c, pswf, c0, length);
+    std::vector<Real> pot_long = evaluate_long_range(G_hat, System, N, P);  //unchanged, I think?
 
     // self-interaction term
     const Real inv_sqrt_pi = 1 / std::sqrt(M_PI);
