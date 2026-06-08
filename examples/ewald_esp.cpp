@@ -869,7 +869,8 @@ void pme_poisson3d_lagrange(
     Real c =  13.739999771118164; // choose c based on desired precision; this value ensures 6-digit accuracy (based on DMK paper, Table 1) - c is computed based on the desired precision to be obtained
     dmk::Prolate0Fun pswf(c, 10000); //initialize the prolate spheroidal wave function with the chosen c and a large number of points for accurate interpolation
     Real c0 = pswf.int_eval(1.0); // normalization constant = \int_0^1 \psi_0^c(x) dx; this is used to normalize the potential contribution of the short-range part, so that the total potential is correct
-    double lambda_0 = pswf.rlam20;
+    double mu = pswf.rlam20;
+    double lambda_0 = std::sqrt(2 * M_PI * mu / c); //hopefully correct now? to be checked?
     
     std::cout << "c = " << c << std::endl;
     std::cout << "c0 = " << c0 << std::endl;
@@ -1066,7 +1067,7 @@ void run_test_case_03(const TestOptions &opts) {
 
     // custom coordinates for small tests
     std::vector<Real> r_src = {0.131538, 0.45865, 0.218959, 0.678865, 0.934693, 0.519416, 0.0345721, 0.5297, 0.00769819, 0.0668422, 0.686773, 0.930436, 0.526929, 0.653919, 0.701191, 0.762198, 0.0474645, 0.328234, 0.75641, 0.365339, 0.98255, 0.753356, 0.0726859, 0.884707, 0.436411, 0.477732, 0.274907, 0.166507, 0.897656, 0.0605643};
-    std::vector<Real> charges = {0.196104 , -0.174876 ,  0.175012 , -0.631476 , -0.665444 , -0.0446574,  1.01469  ,  0.11595  , -0.712774 ,  0.727467};
+    std::vector<Real> charges = {0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5, 0.1, -0.1};
 
     const Real alpha = opts.alpha;
     const Real r_cut = opts.r_cut;
@@ -1294,34 +1295,40 @@ int test_pme_poisson3d_lagrange(int argc, char *argv[]) {
 //     return 0;
 // }
 
+// int main(int argc, char *argv[]) {
+//     const int n_sources = 4;
+//     const int n_dim = 3;
+//     const double length = 1.0;
+//     const double alpha = 10.0;
+//     const double r_cut = 0.20;
+//     const int N = 16;
+//     const int P = 4;
+//     const int uniform = 0;
+//     const int vectorized = 0;
+
+//     double r_sources[12] = {
+//         0.1, 0.4, 0.6, 0.8,
+//         0.1, 0.4, 0.6, 0.8,
+//         0.1, 0.4, 0.6, 0.8
+//     };
+//     double charges[4] = {1.0, -1.0, 1.0, -1.0};
+
+//     std::vector<double> pot(n_sources, 0.0);
+
+//     pme_poisson3d_lagrange(pot.data(), n_sources, n_dim, length, alpha, r_cut, N, P,
+//                            uniform, vectorized, r_sources, charges);
+
+//     std::cout << "pot =";
+//     for (int i = 0; i < n_sources; ++i) {
+//         std::cout << " " << pot[i];
+//     }
+//     std::cout << std::endl;
+
+//     return 0;
+// }
+
 int main(int argc, char *argv[]) {
-    const int n_sources = 4;
-    const int n_dim = 3;
-    const double length = 1.0;
-    const double alpha = 10.0;
-    const double r_cut = 0.20;
-    const int N = 16;
-    const int P = 4;
-    const int uniform = 0;
-    const int vectorized = 0;
-
-    double r_sources[12] = {
-        0.1, 0.4, 0.6, 0.8,
-        0.1, 0.4, 0.6, 0.8,
-        0.1, 0.4, 0.6, 0.8
-    };
-    double charges[4] = {1.0, -1.0, 1.0, -1.0};
-
-    std::vector<double> pot(n_sources, 0.0);
-
-    pme_poisson3d_lagrange(pot.data(), n_sources, n_dim, length, alpha, r_cut, N, P,
-                           uniform, vectorized, r_sources, charges);
-
-    std::cout << "pot =";
-    for (int i = 0; i < n_sources; ++i) {
-        std::cout << " " << pot[i];
-    }
-    std::cout << std::endl;
-
+    TestOptions opts(argc, argv);
+    run_test_case_03<double>(opts);
     return 0;
 }
