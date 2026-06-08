@@ -562,7 +562,7 @@ std::vector<Real> evaluate_short_range_esp(const TestCaseSystem<Real> &System, S
 template <typename Real>
 std::vector<Real> compute_green_func(int N, Real r_cut, Real c, 
                                       const dmk::Prolate0Fun &pswf,
-                                      Real c0, Real L) {
+                                      Real c0, Real L, Real lambda0) {
     // TODO: generalize to different box lengths
     const Real h = L / N;
     const Real TWOPI_L = 2 * M_PI / L;
@@ -593,14 +593,83 @@ std::vector<Real> compute_green_func(int N, Real r_cut, Real c,
                 const Real k_mag = std::sqrt(mode_sq);
                 const Real psi_val = pswf.eval_val(r_cut * k_mag / c);
                 //G[i + N*(j + N*w)] = 4*M_PI * pswf.rlam20 * psi_val / (c0 * mode_sq);
-                G[i + N*(j + N*w)] = pswf.rlam20 * psi_val / (c0 * mode_sq);
+                G[i + N*(j + N*w)] = lambda0 * psi_val / (c0 * mode_sq); //should i divide by c0?
             }
         }
     }
+    //print G
+    std::cout << "Math trick: G_hat = ";
+    for (size_t i = 0; i < G.size(); ++i) {
+        std::cout << G[i] << " ";
+    }
+    std::cout << std::endl;
 
     return G;
 }
 
+
+template <typename Real>
+std::vector<Real> compute_green_func_dft(int N, Real r_cut, Real c,
+                                          const dmk::Prolate0Fun &pswf,
+                                          Real c0, Real L) {
+    const Real TWOPI_L = 2 * M_PI / L;
+    std::vector<Real> G_dft(N * N * N, 0.0);
+
+    // compute n_f per eq. (14) of the paper
+    const int n_f = static_cast<int>(std::ceil(c * L / (M_PI * r_cut)));
+    const Real dt = L / n_f;
+
+    // 1D grid centered at 0, supported on [-r_cut, r_cut]
+    // mirrors Python: j = np.arange(n_f) - n_f//2, t = j * dt
+    std::vector<Real> t(N);
+    std::vector<Real> psi_t(N);
+    for (int j = 0; j < n_f; ++j) {
+        t[j] = (j - n_f/2) * dt;
+        psi_t[j] = (std::abs(t[j]) <= r_cut) ? 
+                     pswf.eval_val(std::abs(t[j]) / r_cut) : 0.0;  //unsure if i should divide by r_cut
+    }
+    Real max_imag = 0.0;  // track max imaginary part for consistency check
+    // outer loop: Fourier modes
+    for (size_t w = 0; w < N; ++w) {
+        for (size_t jj = 0; jj < N; ++jj) {
+            for (size_t ii = 0; ii < N; ++ii) {
+                const int i_new = (ii > (N/2)) ? ii - N : ii;
+                const int j_new = (jj > (N/2)) ? jj - N : jj;
+                const int w_new = (w  > (N/2)) ? w  - N : w;
+
+                const Real k_x = TWOPI_L * i_new;
+                const Real k_y = TWOPI_L * j_new;
+                const Real k_z = TWOPI_L * w_new;
+                const Real k_mag = std::sqrt(k_x*k_x + k_y*k_y + k_z*k_z);
+
+                if (k_mag == 0) continue;
+
+                // 1D DFT of pswf at r_c * |k|
+                // mirrors Python: acc += psi_t[jj] * np.exp(-1j * k[m] * t[jj])
+                std::complex<Real> acc = 0.0;
+                for (int jjj = 0; jjj < n_f; ++jjj) {
+                    acc += psi_t[jjj] * std::exp(std::complex<Real>(0, -k_mag * r_cut * t[jjj]));
+                }
+                const Real chi_hat = (dt * acc).real();
+
+                // consistency check: imaginary part should be ~0 since psi is even
+                max_imag = std::max(max_imag, std::abs((dt * acc).imag()));
+
+                // Ŝ(ξ) = χ̂(r_c|ξ|) / |ξ|²
+                G_dft[ii + N*(jj + N*w)] = chi_hat / (k_mag * k_mag);
+            }
+        }
+    }
+    std::cout << "DFT consistency check - max imaginary part: " << max_imag << std::endl;
+
+    //print G
+    std::cout << "DFT: G_hat = ";
+    for (size_t i = 0; i < G_dft.size(); ++i) {
+        std::cout << G_dft[i] << " ";
+    }
+    std::cout << std::endl;
+    return G_dft;
+}
 // ------------------------------------------------------------------------------------------ //
 
 // Lagrange polynomials -- order 4 (5 points)
@@ -885,8 +954,9 @@ void pme_poisson3d_lagrange(
     std::cout << std::endl;
 
     // long-range interaction - ESP
-    std::vector<Real> G_hat = compute_green_func(N, r_cut, c, pswf, c0, length);
-    std::vector<Real> pot_long = evaluate_long_range(G_hat, System, N, P);  //unchanged, I think?
+    std::vector<Real> G_hat = compute_green_func(N, r_cut, c, pswf, c0, length, lambda_0);
+    std::vector<Real> G_hat_dft = compute_green_func_dft(N, r_cut, c, pswf, c0, length);
+    std::vector<Real> pot_long = evaluate_long_range(G_hat_dft, System, N, P);  //unchanged, I think?  //segfault bc G_hat_dft size is wrong -- check the size of G_hat_dft
 
     std::cout << "pot_long (esp) = ";
     for (auto v : pot_long) std::cout << v << " ";
