@@ -37,7 +37,7 @@ def min_image_distance(r_i, r_j, L):
 def short_range(distance, r_c, pswf):
     if distance > r_c:
         return 0.0
-    return (1 - pswf.integral(0.0, distance / r_c)) / (4 * np.pi * distance)  # division by c0 ensures the short-range potential smoothly transitions to zero at r_c
+    return (1 - pswf.integral(0.0, distance / r_c)) / (4 * np.pi * distance) 
 
 def S_hat(k_vec, lambda_0, pswf, c, r_c):
     k_mag = np.linalg.norm(k_vec)
@@ -81,7 +81,7 @@ def init_PSWF(eps=1e-6, L=1.0, r_c=0.2):
     return pswf, lambda0, n_f, r_c, c, L
 
 def main():
-    n, r_src, charges = get_test1_input()
+    n, r_src, charges = get_input()
     pswf, lambda0, n_f, r_c, c, L = init_PSWF()
 
     print(n_f, lambda0, c, L)
