@@ -37,13 +37,13 @@ def min_image_distance(r_i, r_j, L):
 def short_range(distance, r_c, pswf):
     if distance > r_c:
         return 0.0
-    return (1 - pswf.integral(0.0, distance / r_c)) / (4 * np.pi * distance)
+    return (1 - pswf.integral(0.0, distance / r_c)) / (4 * np.pi * distance)  # division by c0 ensures the short-range potential smoothly transitions to zero at r_c
 
 def S_hat(k_vec, lambda_0, pswf, c, r_c):
     k_mag = np.linalg.norm(k_vec)
-    return lambda_0 * pswf(k_mag * r_c / c) / k_mag**2
+    return lambda_0 * pswf(k_mag * r_c / c) / (k_mag**2)
 
-def long_range(r_i, r_src, charges, L, n, n_f, r_c, pswf, lambda0, c):
+def long_range(i, r_i, r_src, charges, L, n, n_f, r_c, pswf, lambda0, c):
     long_range_potential = 0.0
     k_idx = np.arange(-n_f//2, n_f//2)  # -n_f/2, ..., n_f/2 - 1
     for kx in k_idx:
@@ -56,9 +56,13 @@ def long_range(r_i, r_src, charges, L, n, n_f, r_c, pswf, lambda0, c):
                 
                 interior_sum = 0.0
                 for j in range(n):
+                    #if i == j:
+                    #    continue # skip self-interaction
                     r_j = r_src[j]
                     interior_sum += np.exp(1j * 2 * np.pi * np.dot(r_j, k) / L) * charges[j]
-                long_range_potential += np.exp(1j * 2 * np.pi * np.dot(r_i, k) / L) * interior_sum * S_hat(2 * np.pi * k / L, lambda0, pswf, c, r_c) / (L**3)
+                
+                s = S_hat(2 * np.pi * k / L, lambda0, pswf, c, r_c) 
+                long_range_potential += np.exp(-1j * 2 * np.pi * np.dot(r_i, k) / L) * interior_sum * s / (L**3)
     return long_range_potential.real
 
 
@@ -67,12 +71,19 @@ def init_PSWF(eps=1e-6, L=1.0, r_c=0.2):
     c, mu = pswf.c, pswf.eigenvalue
     lambda0 = np.sqrt(2 * np.pi * mu / c)
     n_f = int(np.ceil(c * L / (np.pi * r_c)))
-    pswf = pswf.normalize()  # use the returned normalized copy 
+    
+    # normalize so that ∫_0^1 χ(x)dx = 1 (paper's convention)
+    c0 = pswf.integral(0.0, 1.0)
+    pswf._poly = pswf._poly / c0
+    pswf._dpoly = pswf._dpoly / c0
+    pswf._ipoly = pswf._ipoly / c0
+    
     return pswf, lambda0, n_f, r_c, c, L
 
 def main():
     n, r_src, charges = get_test1_input()
     pswf, lambda0, n_f, r_c, c, L = init_PSWF()
+
     print(n_f, lambda0, c, L)
     print(f"pswf(0) = {pswf(0.0)}")
     print(f"pswf(1) = {pswf(1.0)}")
@@ -94,7 +105,8 @@ def main():
 
             potential_brute_force += charges[j] / (4 * np.pi * distance)
         
-        potential_long_range = long_range(r_i, r_src, charges, L, n=n, n_f=n_f, r_c=r_c, pswf=pswf, lambda0=lambda0, c=c)            
+        potential_long_range = long_range(i, r_i, r_src, charges, L, n=n, n_f=n_f, r_c=r_c, pswf=pswf, lambda0=lambda0, c=c)            
+        #potential_self_interaction = charges[i] * pswf(0) / (r_c * c0)
 
         potential = potential_short_range + potential_long_range
         print(f"Potential short-range at point {i}: {potential_short_range}")
