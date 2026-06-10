@@ -3,6 +3,7 @@ from prolate0 import Prolate0
 import sys
 sys.path.append('./perilap3d')
 from perilap3d import lap3d3p
+import finufft
 
 
 def get_test1_input():
@@ -67,7 +68,33 @@ def long_range(i, r_i, r_src, charges, L, n, n_f, r_c, pswf, lambda0, c):
 
     return (long_range_potential).real
 
+import finufft
 
+def long_range_nufft(r_src, charges, L, n_f, r_c, pswf, lambda0, c):
+    x = 2 * np.pi * r_src[:, 0] / L
+    y = 2 * np.pi * r_src[:, 1] / L
+    z = 2 * np.pi * r_src[:, 2] / L
+
+    # step 1: NUFFT type 1 - nonuniform to uniform
+    F = finufft.nufft3d1(x, y, z, charges.astype(complex), n_modes=(n_f, n_f, n_f))
+
+    # step 2: diagonal scaling by S_hat / L^3
+    k_idx = np.arange(-n_f//2, n_f//2)
+    kx, ky, kz = np.meshgrid(k_idx, k_idx, k_idx, indexing='ij')
+    k_vecs = 2 * np.pi * np.stack([kx, ky, kz], axis=-1) / L  # shape (n_f, n_f, n_f, 3)
+
+    s = np.zeros((n_f, n_f, n_f))
+    for idx in np.ndindex(n_f, n_f, n_f):
+        k_vec = k_vecs[idx]
+        if np.any(k_vec != 0):
+            s[idx] = S_hat(k_vec, lambda0, pswf, c, r_c)
+
+    F_scaled = F * s / L**3
+
+    # step 3: NUFFT type 2 - uniform to nonuniform
+    pot = finufft.nufft3d2(x, y, z, F_scaled)
+
+    return pot.real
 
 def init_PSWF(eps=1e-6, L=1.0, r_c=0.2):
     pswf = Prolate0.from_eps(eps)
@@ -100,6 +127,8 @@ def main():
     pot = pot - 0.5 * sum(pot)
     print("pot =", pot)
     
+    potential_long_range_nufft = long_range_nufft(r_src, charges, L, n_f, r_c, pswf, lambda0, c)
+
     for i in range(n):
         r_i = r_src[i]
         potential_short_range = 0.0
@@ -118,6 +147,7 @@ def main():
         potential = potential_short_range + potential_long_range - potential_self_interaction
         print(f"Potential short-range at point {i}: {potential_short_range}")
         print(f"Potential long-range at point {i}: {potential_long_range}")
+        print(f"Potential long-range (NUFFT) at point {i}: {potential_long_range_nufft[i]}")
         print(f"Potential analytic self-interaction at point {i}: {potential_self_interaction}")
         print(f"Potential at point {i}: {potential}")
         print(f"Potential error at point {i}: {potential - pot[i]}")
