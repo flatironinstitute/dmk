@@ -86,7 +86,8 @@ class Prolate0:
     def normalize(self):
         """Return a copy scaled so psi(0) = 1 (range [0, 1] on [-1, 1])."""
         other = copy.copy(self)
-        s = 1.0 / self._poly(0.0)
+        #s = 1.0 / self.integral(0.0, 1.0)
+        s = 1.0 / self._poly(0.0)  # alternative normalization so psi(0) = 1
         other._poly = self._poly * s
         other._dpoly = self._dpoly * s
         other._ipoly = self._ipoly * s
