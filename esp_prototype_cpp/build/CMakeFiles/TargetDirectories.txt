@@ -1,0 +1,3 @@
+/mnt/home/ipopa/dmk/esp_prototype_cpp/build/CMakeFiles/esp.dir
+/mnt/home/ipopa/dmk/esp_prototype_cpp/build/CMakeFiles/edit_cache.dir
+/mnt/home/ipopa/dmk/esp_prototype_cpp/build/CMakeFiles/rebuild_cache.dir
