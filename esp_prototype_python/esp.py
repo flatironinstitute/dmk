@@ -120,7 +120,9 @@ def precompute_phi_hat_1d(k_idx, n_f, r_c, pswf, L, P, h, lambda0, c, c0):
     return phi_hat_1d
 
 def precompute_scaling_coefficients(n_f, r_c, pswf, lambda0, c, L, P, h, c0):
-    k_idx = np.arange(-n_f//2, n_f//2)
+    #k_idx = np.arange(-n_f//2, n_f//2)
+    k_idx = np.fft.fftfreq(n_f, d=1.0/n_f).astype(int)  # FFT order directly
+    print("k_idx:", k_idx)
     kx, ky, kz = np.meshgrid(k_idx, k_idx, k_idx, indexing='ij')
     k_vecs = np.stack([kx, ky, kz], axis=-1)  # (n_f, n_f, n_f, 3)
 
@@ -135,8 +137,8 @@ def precompute_scaling_coefficients(n_f, r_c, pswf, lambda0, c, L, P, h, c0):
         if np.any(k_vec != 0):
             s = S_hat(2 * np.pi * k_vec / L, lambda0, pswf, c, r_c, c0)
             phi_hat = phi_hat_1d[idx[0]] * phi_hat_1d[idx[1]] * phi_hat_1d[idx[2]]
-            p[idx] = s / (L**3 * phi_hat**2)
-
+            p[idx] = s / (L**3 * phi_hat**2 * n_f**3) # not sure why we have to divide by n_f^3 here, but it seems to be necessary to match the direct sum results. 
+            
             #equilavence check
             #k_vec_mag = np.linalg.norm(k_vec)
             #numerator = pswf_hat(r_c * k_vec_mag * 2 * np.pi / L, pswf, lambda0, c, c0) / c0
@@ -204,7 +206,6 @@ def long_range_fast(r_src, charges, L, n_f, r_c, pswf, lambda0, c, c0, P):
     print("b_hat max:", np.abs(b_hat).max())
     
     p = precompute_scaling_coefficients(n_f, r_c, pswf, lambda0, c, L, P, L/n_f, c0)
-    #p = np.fft.ifftshift(p)   # centered k-grid -> numpy FFT order
     print("p max:", np.abs(p).max(), "p min:", np.abs(p).min())
     
     b_hat_scaled = b_hat * p
@@ -231,7 +232,7 @@ def init_PSWF(eps=1e-6, L=1.0, r_c=0.2):
     return pswf, lambda0, n_f, r_c, c, c0, L
 
 def main():
-    n, r_src, charges = get_input()
+    n, r_src, charges = get_test1_input()
     pswf, lambda0, n_f, r_c, c, c0, L = init_PSWF(1e-6, 1.0, 0.2)
     h = L / n_f #grid spacing
     #P = r_c * 2 / h #the number of grid points per dimension each particle contributes to
