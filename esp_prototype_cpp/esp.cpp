@@ -13,15 +13,6 @@
 #include <vector>
 
 // ---------------------------------------------------------------------------
-// Forward declarations for external dependencies
-// ---------------------------------------------------------------------------
-// 3D FFT (replace with your preferred FFT library, e.g. FFTW)
-// We assume an interface like:
-//   fftn(in, out, {nx, ny, nz})   – forward
-//   ifftn(in, out, {nx, ny, nz})  – inverse (unnormalised → divide by N^3)
-// and FINUFFT wrappers if you want long_range_nufft; those are left as stubs.
-
-// ---------------------------------------------------------------------------
 // PSWFKernel – thin wrapper around dmk::Prolate0Fun
 // ---------------------------------------------------------------------------
 struct PSWFKernel {
