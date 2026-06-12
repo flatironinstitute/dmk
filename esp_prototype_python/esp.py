@@ -73,17 +73,54 @@ def min_image_vector(r_i, r_j, L):
     delta = delta - L * np.round(delta / L)  # wrap to [-L/2, L/2]
     return delta  # return vector, not norm
 
-def short_range(r_src, charges,pswf, params):
+def build_cell_list(r_src, params):
+    n_cells = int(np.floor(params.L / params.r_c))
+    cell_size = params.L / n_cells
+    
+    # each cell is a list of particle indices
+    cells = {}
+    for j in range(params.n):
+        # shift from [-L/2, L/2] to [0, L] first
+        cell_idx = tuple(
+            (np.floor((r_src[j] + params.L/2) / cell_size).astype(int)) % n_cells
+        )
+        if cell_idx not in cells:
+            cells[cell_idx] = []
+        cells[cell_idx].append(j)
+    
+    return cells, n_cells
+
+def build_neighbor_list(r_src, params):
+    cells, n_cells = build_cell_list(r_src, params)
+    neighbors = [[] for _ in range(params.n)]
+    
+    for i in range(params.n):
+        cell_size = params.L / n_cells
+        cell_idx = (np.floor((r_src[i] + params.L/2) / cell_size).astype(int)) % n_cells
+        
+        # check all 27 neighboring cells
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                for dz in [-1, 0, 1]:
+                    neighbor_cell = tuple((cell_idx + np.array([dx, dy, dz])) % n_cells)
+                    for j in cells.get(neighbor_cell, []):
+                        if i == j:
+                            continue
+                        if min_image_distance(r_src[i], r_src[j], params.L) <= params.r_c:
+                            neighbors[i].append(j)
+    
+    return neighbors
+
+
+def short_range(r_src, charges,pswf, params, neighbors):
     potential_short_range = np.zeros(params.n)
     for i in range(params.n):
         r_i = r_src[i]
-        for j in range(params.n):
+        for j in neighbors[i]:
             if i == j:
                 continue
             r_j = r_src[j]
             distance = min_image_distance(r_i, r_j, params.L)
-            if distance > params.r_c:
-                continue
             x = (1 - pswf.integral(0.0, distance / params.r_c) / params.c0) / (4 * np.pi * distance)
             potential_short_range[i] += charges[j] * x
     return potential_short_range 
@@ -96,9 +133,21 @@ def S_hat(pswf, params, k_vec):
 
 def long_range_slow(r_src, charges, pswf, params):
     potential_long_range = np.zeros(params.n)
+
+    k_idx = np.arange(-params.n_f//2, params.n_f//2)  # -n_f/2, ..., n_f/2 - 1
+
+    # Precompute S_hat for all k in the grid
+    s = np.zeros((params.n_f, params.n_f, params.n_f))
+    for kx in k_idx:
+        for ky in k_idx:
+            for kz in k_idx:
+                if kx == 0 and ky == 0 and kz == 0:
+                    continue
+                k = np.array([kx, ky, kz])
+                s[kx, ky, kz] = S_hat(pswf, params, 2 * np.pi * k / params.L)
+
     for i in range(params.n):
         r_i = r_src[i]
-        k_idx = np.arange(-params.n_f//2, params.n_f//2)  # -n_f/2, ..., n_f/2 - 1
         for kx in k_idx:
             for ky in k_idx:
                 for kz in k_idx:
@@ -110,8 +159,7 @@ def long_range_slow(r_src, charges, pswf, params):
                     for j in range(params.n):
                         interior_sum += np.exp(1j * 2 * np.pi * np.dot(r_src[j], k) / params.L) * charges[j]
 
-                    s = S_hat(pswf, params, 2 * np.pi * k / params.L)
-                    potential_long_range[i] += (np.exp(-1j * 2 * np.pi * np.dot(r_i, k) / params.L) * interior_sum * s / (params.L**3)).real
+                    potential_long_range[i] += (np.exp(-1j * 2 * np.pi * np.dot(r_i, k) / params.L) * interior_sum * s[kx, ky, kz] / (params.L**3)).real
 
     return potential_long_range
 
@@ -190,13 +238,12 @@ def stencil_offsets(P):
 
 def spreading(r_src, charges, pswf, params):
     b = np.zeros((params.n_f, params.n_f, params.n_f), dtype=complex)
-    
+    offsets = stencil_offsets(params.P)  # shape (P,)
     for j in range(len(charges)):
         # nearest grid point in each dimension
         l_center = np.round(r_src[j] / params.h).astype(int)
         
         # P neighbors in each dimension
-        offsets = stencil_offsets(params.P)  # shape (P,)
         lx = (l_center[0] + offsets) % params.n_f
         ly = (l_center[1] + offsets) % params.n_f
         lz = (l_center[2] + offsets) % params.n_f
@@ -213,12 +260,12 @@ def spreading(r_src, charges, pswf, params):
 
 def interpolation(c, r_src, pswf, params):
     pot = np.zeros(len(r_src))
+    offsets = stencil_offsets(params.P)  # shape (P,)
     for i in range(len(r_src)):
         # evaluate phi at each of the P^3 neighbors
         l_center = np.round(r_src[i] / params.h).astype(int)
         
         # P neighbors in each dimension
-        offsets = stencil_offsets(params.P)  # shape (P,)
         lx = (l_center[0] + offsets) % params.n_f
         ly = (l_center[1] + offsets) % params.n_f
         lz = (l_center[2] + offsets) % params.n_f
@@ -257,7 +304,7 @@ def reference_potential(r_src, charges):
 
 
 def main():
-    n, r_src, charges = get_test1_input()
+    n, r_src, charges = get_test2_input()
     pswf = PSWFKernel(1e-6)
     params = ESPParams(L=1.0, r_c=0.2, P=5, pswf=pswf, n=charges.size)
 
@@ -272,7 +319,9 @@ def main():
     potential_long_range_fast = long_range_fast(r_src, charges, pswf, params)
     potential_long_range_slow = long_range_slow(r_src, charges, pswf, params)
     potential_self_interaction = self_interaction(r_src, charges, pswf, params)
-    potential_short_range = short_range(r_src, charges, pswf, params)  # distance is not used in this function, so we can just pass 0
+
+    neighbors = build_neighbor_list(r_src, params)
+    potential_short_range = short_range(r_src, charges, pswf, params, neighbors)
     total_potential = potential_short_range + potential_long_range_fast - potential_self_interaction
 
     for i in range(params.n):
