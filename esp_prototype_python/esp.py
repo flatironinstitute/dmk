@@ -5,7 +5,6 @@ sys.path.append('./perilap3d')
 from perilap3d import lap3d3p
 import finufft
 
-
 def get_test1_input():
     n = 2
     r_src = np.array([
@@ -74,10 +73,20 @@ def min_image_vector(r_i, r_j, L):
     delta = delta - L * np.round(delta / L)  # wrap to [-L/2, L/2]
     return delta  # return vector, not norm
 
-def short_range(distance, pswf, params):
-    if distance > params.r_c:
-        return 0.0
-    return (1 - pswf.integral(0.0, distance / params.r_c) / params.c0) / (4 * np.pi * distance) 
+def short_range(r_src, charges,pswf, params):
+    potential_short_range = np.zeros(params.n)
+    for i in range(params.n):
+        r_i = r_src[i]
+        for j in range(params.n):
+            if i == j:
+                continue
+            r_j = r_src[j]
+            distance = min_image_distance(r_i, r_j, params.L)
+            if distance > params.r_c:
+                continue
+            x = (1 - pswf.integral(0.0, distance / params.r_c) / params.c0) / (4 * np.pi * distance)
+            potential_short_range[i] += charges[j] * x
+    return potential_short_range 
 
 def S_hat(pswf, params, k_vec):
     k_mag = np.linalg.norm(k_vec)
@@ -85,26 +94,26 @@ def S_hat(pswf, params, k_vec):
     s = pswf.pswf_hat(k_mag * params.r_c) / (2 * k_mag**2) / params.c0
     return s
 
-def long_range(i, r_i, r_src, charges, pswf, params):
-    long_range_potential = 0.0
-    k_idx = np.arange(-params.n_f//2, params.n_f//2)  # -n_f/2, ..., n_f/2 - 1
-    for kx in k_idx:
-        for ky in k_idx:
-            for kz in k_idx:
-                if kx == 0 and ky == 0 and kz == 0:
-                    continue
-                k = np.array([kx, ky, kz])
+def long_range_slow(r_src, charges, pswf, params):
+    potential_long_range = np.zeros(params.n)
+    for i in range(params.n):
+        r_i = r_src[i]
+        k_idx = np.arange(-params.n_f//2, params.n_f//2)  # -n_f/2, ..., n_f/2 - 1
+        for kx in k_idx:
+            for ky in k_idx:
+                for kz in k_idx:
+                    if kx == 0 and ky == 0 and kz == 0:
+                        continue
+                    k = np.array([kx, ky, kz])
 
-                interior_sum = 0.0
-                for j in range(params.n):
-                    interior_sum += np.exp(1j * 2 * np.pi * np.dot(r_src[j], k) / params.L) * charges[j]
+                    interior_sum = 0.0
+                    for j in range(params.n):
+                        interior_sum += np.exp(1j * 2 * np.pi * np.dot(r_src[j], k) / params.L) * charges[j]
 
-                s = S_hat(pswf, params, 2 * np.pi * k / params.L)
-                long_range_potential += np.exp(-1j * 2 * np.pi * np.dot(r_i, k) / params.L) * interior_sum * s / (params.L**3)
+                    s = S_hat(pswf, params, 2 * np.pi * k / params.L)
+                    potential_long_range[i] += (np.exp(-1j * 2 * np.pi * np.dot(r_i, k) / params.L) * interior_sum * s / (params.L**3)).real
 
-    return (long_range_potential).real
-
-import finufft
+    return potential_long_range
 
 def long_range_nufft(r_src, charges, pswf, params):
     #get positions from [-L/2, L/2] to [-pi, pi] interval for NUFFT
@@ -150,13 +159,10 @@ def precompute_phi_hat_1d(k_idx, pswf, params):
 def precompute_scaling_coefficients(pswf, params):
     #k_idx = np.arange(-n_f//2, n_f//2)
     k_idx = np.fft.fftfreq(params.n_f, d=1.0/params.n_f).astype(int)  # FFT order directly
-    print("k_idx:", k_idx)
     kx, ky, kz = np.meshgrid(k_idx, k_idx, k_idx, indexing='ij')
     k_vecs = np.stack([kx, ky, kz], axis=-1)  # (n_f, n_f, n_f, 3)
 
     phi_hat_1d = precompute_phi_hat_1d(k_idx, pswf, params) 
-    print("phi_hat_1d min/max:", phi_hat_1d.min(), phi_hat_1d.max())
-    print("phi_hat_1d:", phi_hat_1d) 
 
     S = np.zeros((params.n_f, params.n_f, params.n_f))
     p = np.zeros((params.n_f, params.n_f, params.n_f))
@@ -226,23 +232,29 @@ def interpolation(c, r_src, pswf, params):
 
 def long_range_fast(r_src, charges, pswf, params):
     b = spreading(r_src, charges, pswf, params)
-    print("b sum:", b.sum(), "b max:", np.abs(b).max())
-    
     b_hat = np.fft.fftn(b)
-    print("b_hat max:", np.abs(b_hat).max())
-    
     p = precompute_scaling_coefficients(pswf, params)
-    print("p max:", np.abs(p).max(), "p min:", np.abs(p).min())
-    
     b_hat_scaled = b_hat * p
-    print("b_hat_scaled max:", np.abs(b_hat_scaled).max())
-    
     grid = np.fft.ifftn(b_hat_scaled)
-    print("grid max:", np.abs(grid).max())
-    
     long_range_pot = interpolation(grid, r_src, pswf, params)
-    print("long_range_pot:", long_range_pot)
     return long_range_pot
+
+def self_interaction(r_src, charges, pswf, params):
+    self_interaction = np.zeros(params.n)
+    for i in range(params.n):
+        r_i = r_src[i]
+        self_interaction[i] = charges[i] * pswf(0) / (params.r_c * 4 * np.pi * params.c0)
+    return self_interaction
+
+def reference_potential(r_src, charges):
+    box = np.array([[1,0,0],[0,1,0],[0,0,1]])
+    p = lap3d3p(box)
+    p.precomp(tol=1e-6)
+
+    pot, grad = p.eval(r_src, None, None, charges)
+    pot = pot - 0.5 * sum(pot)
+    return pot
+
 
 def main():
     n, r_src, charges = get_test1_input()
@@ -255,41 +267,23 @@ def main():
     #print(f"integral(0,1) = {pswf.integral(0.0, 1.0)}")
     #print(f"integral(0, 0.05) = {pswf.integral(0.0, 0.05)}")
 
-
-    box = np.array([[1,0,0],[0,1,0],[0,0,1]])
-    p = lap3d3p(box)
-    p.precomp(tol=1e-6)
-
-    pot, grad = p.eval(r_src, None, None, charges)
-    pot = pot - 0.5 * sum(pot)
-    print("pot =", pot)
-    
+    potential_reference = reference_potential(r_src, charges)
     potential_long_range_nufft = long_range_nufft(r_src, charges, pswf, params)
     potential_long_range_fast = long_range_fast(r_src, charges, pswf, params)
-    
-    for i in range(params.n):
-        r_i = r_src[i]
-        potential_short_range = 0.0
-        potential_long_range = 0.0
-        for j in range(params.n):
-            if i == j:
-                continue
-            r_j = r_src[j]
-            distance = min_image_distance(r_i, r_j, params.L)
-            
-            potential_short_range += charges[j] * short_range(distance, pswf, params)
-        
-        potential_long_range = long_range(i, r_i, r_src, charges, pswf, params)            
-        potential_self_interaction = charges[i] * pswf(0) / (params.r_c * 4 * np.pi * params.c0)
+    potential_long_range_slow = long_range_slow(r_src, charges, pswf, params)
+    potential_self_interaction = self_interaction(r_src, charges, pswf, params)
+    potential_short_range = short_range(r_src, charges, pswf, params)  # distance is not used in this function, so we can just pass 0
+    total_potential = potential_short_range + potential_long_range_fast - potential_self_interaction
 
-        potential = potential_short_range + potential_long_range - potential_self_interaction
-        print(f"Potential short-range at point {i}: {potential_short_range}")
-        print(f"Potential long-range at point {i}: {potential_long_range}")
+    for i in range(params.n):
+        print(f"Reference total potential at point {i} (perilap3d): {potential_reference[i]}")
+        print(f"Potential short-range at point {i}: {potential_short_range[i]}")
+        print(f"Potential long-range (slow) at point {i}: {potential_long_range_slow[i]}")
         print(f"Potential long-range (NUFFT) at point {i}: {potential_long_range_nufft[i]}")
         print(f"Potential long-range (fast) at point {i}: {potential_long_range_fast[i]}")
-        print(f"Potential analytic self-interaction at point {i}: {potential_self_interaction}")
-        print(f"Potential at point {i}: {potential}")
-        print(f"Potential error at point {i}: {potential - pot[i]}")
+        print(f"Potential analytic self-interaction at point {i}: {potential_self_interaction[i]}")
+        print(f"Potential at point {i}: {total_potential[i]}")
+        print(f"Potential error at point {i}: {total_potential[i] - potential_reference[i]}")
         print()
 
 if __name__ == "__main__":
