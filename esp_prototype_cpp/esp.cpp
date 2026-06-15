@@ -11,6 +11,7 @@
 #include <tuple>
 #include <unordered_map>
 #include <vector>
+#include <omp.h>
 
 // ---------------------------------------------------------------------------
 // PSWFKernel – thin wrapper around dmk::Prolate0Fun
@@ -255,6 +256,54 @@ static CGrid spreading(const std::vector<Vec3> &r_src,
     return b;
 }
 
+static CGrid spreading_parallel(const std::vector<Vec3> &r_src,
+                        const std::vector<double> &charges,
+                        const PSWFKernel &pswf,
+                        const ESPParams &params) {
+    int nf = params.n_f;
+    int ntot = nf * nf * nf;
+    CGrid b(ntot, 0.0);
+    auto offsets = stencil_offsets(params.P);
+
+    #pragma omp parallel //spawns T threads, each executes everything below
+    {
+        CGrid b_local(ntot, 0.0); //each thread creates its OWN b_local, T separate arrays in memory
+
+        #pragma omp for //divides the N particles across T threads
+        for (int j = 0; j < params.n; ++j) { //thread 0 gets particles 0..N/T, thread 1 gets N/T..2N/T, etc.
+            //identify closest grid-point to the source
+            std::array<int,3> l_center;
+            for (int d = 0; d < 3; ++d)
+                l_center[d] = static_cast<int>(std::round(r_src[j][d] / params.h));
+
+            std::array<std::vector<int>,3> lx;
+            for (int d = 0; d < 3; ++d) {
+                lx[d].resize(offsets.size());
+                for (size_t k = 0; k < offsets.size(); ++k)
+                    lx[d][k] = ((l_center[d] + offsets[k]) % nf + nf) % nf;
+            }
+
+            for (size_t ix = 0; ix < offsets.size(); ++ix)
+            for (size_t iy = 0; iy < offsets.size(); ++iy)
+            for (size_t iz = 0; iz < offsets.size(); ++iz) {
+                Vec3 grid_pt = { params.h * lx[0][ix],
+                                 params.h * lx[1][iy],
+                                 params.h * lx[2][iz] };
+                Vec3 disp = min_image_vector(r_src[j], grid_pt, params.L);
+                double pv = phi_val(disp, pswf, params);
+                b_local[grid_idx(lx[0][ix], lx[1][iy], lx[2][iz], nf)] += charges[j] * pv;
+            }
+        }
+
+        // reduce thread-local grids into global grid
+        #pragma omp critical //one thread at a time
+        for (int i = 0; i < ntot; ++i)
+            b[i] += b_local[i]; //each thread adds its local result to global b
+    }
+
+    return b;
+}
+
 // ---------------------------------------------------------------------------
 // Interpolation (uniform grid -> particle potentials)
 // ---------------------------------------------------------------------------
@@ -267,6 +316,7 @@ interpolation(const CGrid &c_grid,
     std::vector<double> pot(params.n, 0.0);
     auto offsets = stencil_offsets(params.P);
 
+    #pragma omp parallel for
     for (int i = 0; i < params.n; ++i) {
         std::array<int,3> l_center;
         for (int d = 0; d < 3; ++d)
@@ -363,7 +413,7 @@ long_range_fast(const std::vector<Vec3> &r_src,
                 const PSWFKernel &pswf,
                 const ESPParams &params) {
     // 1. Spread charges onto grid
-    CGrid b = spreading(r_src, charges, pswf, params);
+    CGrid b = spreading_parallel(r_src, charges, pswf, params);
 
     // 2. Forward FFT
     int nf = params.n_f;
