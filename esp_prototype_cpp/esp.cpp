@@ -1,6 +1,5 @@
 #include <dmk/prolate0_fun.hpp>
 #include <dmk/prolate.hpp>
-
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -12,6 +11,10 @@
 #include <unordered_map>
 #include <vector>
 #include <omp.h>
+#include <chrono>
+
+using Clock = std::chrono::high_resolution_clock;
+using Ms    = std::chrono::duration<double, std::milli>;
 
 // ---------------------------------------------------------------------------
 // PSWFKernel – thin wrapper around dmk::Prolate0Fun
@@ -101,6 +104,11 @@ static inline double min_image_distance(const Vec3 &ri, const Vec3 &rj, double L
     return std::sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
 }
 
+static inline double min_image_distance_sq(const Vec3 &ri, const Vec3 &rj, double L) {
+    auto d = min_image_vector(ri, rj, L);
+    return d[0]*d[0] + d[1]*d[1] + d[2]*d[2];
+}
+
 // ---------------------------------------------------------------------------
 // Cell / neighbour list
 // ---------------------------------------------------------------------------
@@ -124,18 +132,19 @@ build_neighbor_list(const std::vector<Vec3> &r_src, const ESPParams &params) {
     int n_cells = static_cast<int>(std::floor(params.L / params.r_c));
     if (n_cells < 1) n_cells = 1;
 
-    // Map cell -> list of particle indices
-    std::unordered_map<int, std::vector<int>> cells;
     auto cell_key = [&](int cx, int cy, int cz) {
         return cx * n_cells * n_cells + cy * n_cells + cz;
     };
 
+    std::vector<std::vector<int>> cells(n_cells * n_cells * n_cells);
     for (int j = 0; j < params.n; ++j) {
         auto ci = particle_cell(r_src[j], params.L, n_cells);
         cells[cell_key(ci.x, ci.y, ci.z)].push_back(j);
     }
 
     std::vector<std::vector<int>> neighbors(params.n);
+    auto r_c_squared = params.r_c * params.r_c;
+    #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < params.n; ++i) {
         auto ci = particle_cell(r_src[i], params.L, n_cells);
         for (int dx = -1; dx <= 1; ++dx)
@@ -144,11 +153,9 @@ build_neighbor_list(const std::vector<Vec3> &r_src, const ESPParams &params) {
             int nx = ((ci.x + dx) % n_cells + n_cells) % n_cells;
             int ny = ((ci.y + dy) % n_cells + n_cells) % n_cells;
             int nz = ((ci.z + dz) % n_cells + n_cells) % n_cells;
-            auto it = cells.find(cell_key(nx, ny, nz));
-            if (it == cells.end()) continue;
-            for (int j : it->second) {
+            for (int j : cells[cell_key(nx, ny, nz)]) {
                 if (j == i) continue;
-                if (min_image_distance(r_src[i], r_src[j], params.L) <= params.r_c)
+                if (min_image_distance_sq(r_src[i], r_src[j], params.L) <= r_c_squared)
                     neighbors[i].push_back(j);
             }
         }
@@ -159,17 +166,33 @@ build_neighbor_list(const std::vector<Vec3> &r_src, const ESPParams &params) {
 // ---------------------------------------------------------------------------
 // Short-range sum
 // ---------------------------------------------------------------------------
+
 static std::vector<double>
 short_range(const std::vector<Vec3> &r_src,
             const std::vector<double> &charges,
             const PSWFKernel &pswf,
             const ESPParams &params,
             const std::vector<std::vector<int>> &neighbors) {
+
+    // precompute integral table: table[i] = pswf.integral(0, i/(N-1))
+    const int TABLE_SIZE = 10000;
+    std::vector<double> table(TABLE_SIZE);
+    for (int i = 0; i < TABLE_SIZE; ++i)
+        table[i] = pswf.integral(0.0, (double)i / (TABLE_SIZE - 1));
+
     std::vector<double> pot(params.n, 0.0);
+    #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < params.n; ++i) {
         for (int j : neighbors[i]) {
             double dist = min_image_distance(r_src[i], r_src[j], params.L);
-            double intval = pswf.integral(0.0, dist / params.r_c) / params.c0;
+            double t = dist / params.r_c;  // in [0, 1]
+
+            // linear interpolation into the table
+            double pos = t * (TABLE_SIZE - 1);
+            int idx = (int)pos;
+            double frac = pos - idx;
+            double intval = (table[idx] * (1.0 - frac) + table[idx + 1] * frac) / params.c0;
+
             double x = (1.0 - intval) / (4.0 * M_PI * dist);
             pot[i] += charges[j] * x;
         }
@@ -413,7 +436,18 @@ long_range_fast(const std::vector<Vec3> &r_src,
                 const PSWFKernel &pswf,
                 const ESPParams &params) {
     // 1. Spread charges onto grid
+
+    // auto t0 = Clock::now();
+    // CGrid b = spreading(r_src, charges, pswf, params);
+    // double t_serial = Ms(Clock::now() - t0).count();
+
+    //t0 = Clock::now();
     CGrid b = spreading_parallel(r_src, charges, pswf, params);
+    //double t_parallel = Ms(Clock::now() - t0).count();
+
+    // printf("spreading serial:   %.3f ms\n", t_serial);
+    // printf("spreading parallel: %.3f ms\n", t_parallel);
+    // printf("speedup: %.2fx\n", t_serial / t_parallel);
 
     // 2. Forward FFT
     int nf = params.n_f;
@@ -422,6 +456,7 @@ long_range_fast(const std::vector<Vec3> &r_src,
 
     // 3. Diagonal scaling
     DGrid p = precompute_scaling_coefficients(pswf, params);
+    #pragma omp parallel for
     for (int idx = 0; idx < nf*nf*nf; ++idx)
         b_hat[idx] *= p[idx];
 
@@ -485,10 +520,21 @@ ESPResult esp_potential(const std::vector<Vec3> &r_src,
     int n = static_cast<int>(charges.size());
     ESPParams params(L, r_c, P, pswf, n);
 
-    auto neighbors  = build_neighbor_list(r_src, params);
-    auto pot_sr     = short_range(r_src, charges, pswf, params, neighbors);
-    auto pot_lr     = long_range_fast(r_src, charges, pswf, params);
+    auto t0 = Clock::now();
+    auto neighbors = build_neighbor_list(r_src, params);
+    printf("neighbor list:  %.2f ms\n", Ms(Clock::now()-t0).count());
+
+    t0 = Clock::now();
+    auto pot_sr = short_range(r_src, charges, pswf, params, neighbors);
+    printf("short range:    %.2f ms\n", Ms(Clock::now()-t0).count());
+
+    t0 = Clock::now();
+    auto pot_lr = long_range_fast(r_src, charges, pswf, params);
+    printf("long range:     %.2f ms\n", Ms(Clock::now()-t0).count());
+
+    t0 = Clock::now();
     auto pot_self   = self_interaction(r_src, charges, pswf, params);
+    printf("self-interaction:     %.2f ms\n", Ms(Clock::now()-t0).count());
 
     std::vector<double> total(n);
     for (int i = 0; i < n; ++i)

@@ -7,5 +7,5 @@
 #SBATCH --mem=8G
 #SBATCH --time=00:30:00
 
-export OMP_NUM_THREADS=4
+export OMP_NUM_THREADS=8
 ./build/esp
