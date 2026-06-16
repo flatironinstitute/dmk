@@ -306,13 +306,15 @@ def reference_potential(r_src, charges):
 def main():
     n, r_src, charges = get_test2_input()
     pswf = PSWFKernel(1e-6)
-    params = ESPParams(L=1.0, r_c=0.2, P=5, pswf=pswf, n=charges.size)
+    params = ESPParams(L=1.0, r_c=0.2, P=7, pswf=pswf, n=charges.size)
 
-    #print(params.h, params.P, params.n_f, params.lambda0, params.c, params.L)
-    #print(f"pswf(0) = {pswf(0.0)}")
-    #print(f"pswf(1) = {pswf(1.0)}")
-    #print(f"integral(0,1) = {pswf.integral(0.0, 1.0)}")
-    #print(f"integral(0, 0.05) = {pswf.integral(0.0, 0.05)}")
+    print(f"c           = {pswf.c:.6f}")
+    print(f"lambda0     = {pswf.lambda0:.6f}")
+    print(f"c0          = {pswf.c0:.6f}")
+    print(f"pswf(0)     = {pswf(0.0):.6f}")
+    print(f"pswf(1)     = {pswf(1.0):.6e}")
+    print(f"pswf_hat(0) = {pswf.pswf_hat(0.0):.6f}")
+    print("mu - eigenvalue", pswf.pswf.eigenvalue)
 
     potential_reference = reference_potential(r_src, charges)
     potential_long_range_nufft = long_range_nufft(r_src, charges, pswf, params)
@@ -322,7 +324,8 @@ def main():
 
     neighbors = build_neighbor_list(r_src, params)
     potential_short_range = short_range(r_src, charges, pswf, params, neighbors)
-    total_potential = potential_short_range + potential_long_range_fast - potential_self_interaction
+    total_potential = potential_short_range + potential_long_range_slow - potential_self_interaction
+
 
     for i in range(params.n):
         print(f"Reference total potential at point {i} (perilap3d): {potential_reference[i]}")
@@ -332,6 +335,7 @@ def main():
         print(f"Potential long-range (fast) at point {i}: {potential_long_range_fast[i]}")
         print(f"Potential analytic self-interaction at point {i}: {potential_self_interaction[i]}")
         print(f"Potential at point {i}: {total_potential[i]}")
+        print(f"Potential error: long-range (slow) - long range (fast) at point {i}: {potential_long_range_slow[i] - potential_long_range_fast[i]}")
         print(f"Potential error at point {i}: {total_potential[i] - potential_reference[i]}")
         print()
 
