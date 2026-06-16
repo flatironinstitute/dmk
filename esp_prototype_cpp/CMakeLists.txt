@@ -15,7 +15,9 @@ pkg_check_modules(FFTW REQUIRED fftw3)
 
 set(DMK_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/../include" CACHE PATH "dmk include dir")
 set(DMK_LIB         "${CMAKE_SOURCE_DIR}/../build/libdmk.a" CACHE FILEPATH "dmk library")
+set(FINUFFT_INCLUDE_DIR "/mnt/home/ipopa/finufft/include" CACHE PATH "finufft include dir")
 
+# --- main esp executable ---
 add_executable(esp
     main.cpp
     esp.cpp
@@ -25,11 +27,28 @@ add_executable(esp
 target_include_directories(esp PRIVATE
     ${DMK_INCLUDE_DIR}
     ${FFTW_INCLUDE_DIRS}
+    ${FINUFFT_INCLUDE_DIR}
 )
 
 target_link_libraries(esp PRIVATE
     ${DMK_LIB}
     ${FFTW_LIBRARIES}
+    OpenMP::OpenMP_CXX
+    m
+)
+
+# --- test polynomial approximation of the pswf using FINUFFT ---
+add_executable(test_poly
+    test_poly_pswf.cpp
+)
+
+target_include_directories(test_poly PRIVATE
+    ${DMK_INCLUDE_DIR}
+    ${FINUFFT_INCLUDE_DIR}
+)
+
+target_link_libraries(test_poly PRIVATE
+    ${DMK_LIB}
     OpenMP::OpenMP_CXX
     m
 )

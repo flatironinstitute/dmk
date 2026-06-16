@@ -1,5 +1,6 @@
 #include <dmk/prolate0_fun.hpp>
 #include <dmk/prolate.hpp>
+#include <finufft_common/kernel.h>
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -25,6 +26,7 @@ struct PSWFKernel {
     double lambda0;  // F_c eigenvalue: sqrt(2*pi*mu/c), adjusted for normalisation
     double c0;       // integral of normalised pswf over [0,1]
     double scale;    // 1 / pswf(0), so that (*this)(0) == 1
+    std::vector<double> pswf_poly_coeffs ; //computed by FINUFFT
 
     explicit PSWFKernel(double eps, int lenw = 8000) {
         double c_val;
@@ -45,9 +47,23 @@ struct PSWFKernel {
 
         // c0 = integral of normalised pswf over [0, 1]
         c0 = pswf.int_eval(1.0) * scale;
+
+        int nc = 32; //number of polynomial coefficients to use to approximate the pswf
+        auto pswf_lambda = [&](double x) {
+            return pswf.eval_val(std::abs(x)) * scale;
+        };
+        pswf_poly_coeffs = finufft::kernel::poly_fit<double>(pswf_lambda, nc);
     }
 
-    double operator()(double x) const { return pswf.eval_val(x) * scale; }
+    //double operator()(double x) const { return pswf.eval_val(x) * scale; }
+
+    double operator()(double x) const { 
+        double result = pswf_poly_coeffs[0];
+        int nc = pswf_poly_coeffs.size();
+        for (int j = 1; j < nc; ++j)
+            result = result * x + pswf_poly_coeffs[j];
+        return result;
+    }
 
     double integral(double a, double b) const {
         double va = (a == 0.0) ? 0.0 : pswf.int_eval(a);
@@ -229,6 +245,12 @@ static inline double phi_val(const Vec3 &disp, const PSWFKernel &pswf,
     double Ph = params.P * params.h;
     return pswf(2*disp[0]/Ph) * pswf(2*disp[1]/Ph) * pswf(2*disp[2]/Ph);
 }
+
+// static inline double phi_val_finufft(const Vec3 &disp, const PSWFKernel &pswf,
+//                               const ESPParams &params) {
+//     double Ph = params.P * params.h;
+//     return pswf.horner_eval(2*disp[0]/Ph) * pswf.horner_eval(2*disp[1]/Ph) * pswf.horner_eval(2*disp[2]/Ph);
+// }
 
 // ---------------------------------------------------------------------------
 // 3-D complex grid helpers (row-major: ix * n_f*n_f + iy * n_f + iz)
@@ -437,17 +459,16 @@ long_range_fast(const std::vector<Vec3> &r_src,
                 const ESPParams &params) {
     // 1. Spread charges onto grid
 
-    // auto t0 = Clock::now();
-    // CGrid b = spreading(r_src, charges, pswf, params);
-    // double t_serial = Ms(Clock::now() - t0).count();
+    auto t0 = Clock::now();
+    CGrid c = spreading(r_src, charges, pswf, params);
+    double t_serial = Ms(Clock::now() - t0).count();
 
-    //t0 = Clock::now();
+    t0 = Clock::now();
     CGrid b = spreading_parallel(r_src, charges, pswf, params);
-    //double t_parallel = Ms(Clock::now() - t0).count();
+    double t_parallel = Ms(Clock::now() - t0).count();
 
-    // printf("spreading serial:   %.3f ms\n", t_serial);
-    // printf("spreading parallel: %.3f ms\n", t_parallel);
-    // printf("speedup: %.2fx\n", t_serial / t_parallel);
+    printf("spreading serial:   %.3f ms\n", t_serial);
+    printf("spreading parallel + finufft: %.3f ms\n", t_parallel);
 
     // 2. Forward FFT
     int nf = params.n_f;
