@@ -34,6 +34,19 @@ int main() {
     }};
     std::vector<double> charges = { 0.2,-0.2, 0.3,-0.3, 0.4,-0.4, 0.5,-0.5, 0.1,-0.1 };
 
+    const double reference[] = { //from python calculation (based on long range slow, which is surely accurate)
+        0.055690493646334494,
+        -0.006852575660153015,
+        -0.044049084122909810,
+        0.040206609732000410,
+        -0.057055432216358340,
+        0.063424832953350830,
+        -0.069352639532568540,
+        0.092150894505931390,
+        0.060859529062051890,
+        0.109678060779027990
+    };
+
     //Test 2 - 10000 particles (random positions)
     // const int N = 10000;
     // srand(42);
@@ -48,7 +61,7 @@ int main() {
     //}
 
     auto res = esp_potential(r_src, charges,
-                             /*L=*/1.0, /*r_c=*/0.1, /*P=*/5, /*eps=*/1e-6);
+                             /*L=*/1.0, /*r_c=*/0.2, /*P=*/7, /*eps=*/1e-6);
 
     int n = static_cast<int>(charges.size());
     for (int i = 0; i < n; ++i) {
@@ -57,6 +70,7 @@ int main() {
         printf("  long-range  : %+.8f\n", res.long_range_pot[i]);
         printf("  self        : %+.8f\n", res.self_pot[i]);
         printf("  total       : %+.8f\n", res.total[i]);
+        printf("  error       : %+.2e\n", res.total[i] - reference[i]);
         printf("\n");
     }
 
