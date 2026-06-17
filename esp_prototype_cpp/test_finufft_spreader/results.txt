@@ -1,0 +1,14 @@
+Spreading 10 NU pts to 32x32x32 grid...
+Interpolating back to 10 NU pts...
+
+Results (ratio recovered/input should be constant = kernel mass):
+  pt 0: in=0.2000  out=2.0354  ratio=10.176959
+  pt 1: in=-0.2000  out=-2.0264  ratio=10.132064
+  pt 2: in=0.3000  out=3.0406  ratio=10.135234
+  pt 3: in=-0.3000  out=-3.0396  ratio=10.132064
+  pt 4: in=0.4000  out=4.0528  ratio=10.132064
+  pt 5: in=-0.4000  out=-4.0528  ratio=10.132064
+  pt 6: in=0.5000  out=5.0660  ratio=10.132064
+  pt 7: in=-0.5000  out=-5.0660  ratio=10.132064
+  pt 8: in=0.1000  out=1.0280  ratio=10.279925
+  pt 9: in=-0.1000  out=-1.0129  ratio=10.128870
