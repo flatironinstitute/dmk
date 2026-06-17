@@ -73,43 +73,43 @@ CMakeFiles/esp.dir/main.cpp.o: CMakeFiles/esp.dir/flags.make
 CMakeFiles/esp.dir/main.cpp.o: /mnt/home/ipopa/dmk/esp_prototype_cpp/main.cpp
 CMakeFiles/esp.dir/main.cpp.o: CMakeFiles/esp.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/mnt/home/ipopa/dmk/esp_prototype_cpp/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/esp.dir/main.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/esp.dir/main.cpp.o -MF CMakeFiles/esp.dir/main.cpp.o.d -o CMakeFiles/esp.dir/main.cpp.o -c /mnt/home/ipopa/dmk/esp_prototype_cpp/main.cpp
+	/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/esp.dir/main.cpp.o -MF CMakeFiles/esp.dir/main.cpp.o.d -o CMakeFiles/esp.dir/main.cpp.o -c /mnt/home/ipopa/dmk/esp_prototype_cpp/main.cpp
 
 CMakeFiles/esp.dir/main.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/esp.dir/main.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /mnt/home/ipopa/dmk/esp_prototype_cpp/main.cpp > CMakeFiles/esp.dir/main.cpp.i
+	/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /mnt/home/ipopa/dmk/esp_prototype_cpp/main.cpp > CMakeFiles/esp.dir/main.cpp.i
 
 CMakeFiles/esp.dir/main.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/esp.dir/main.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /mnt/home/ipopa/dmk/esp_prototype_cpp/main.cpp -o CMakeFiles/esp.dir/main.cpp.s
+	/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /mnt/home/ipopa/dmk/esp_prototype_cpp/main.cpp -o CMakeFiles/esp.dir/main.cpp.s
 
 CMakeFiles/esp.dir/esp.cpp.o: CMakeFiles/esp.dir/flags.make
 CMakeFiles/esp.dir/esp.cpp.o: /mnt/home/ipopa/dmk/esp_prototype_cpp/esp.cpp
 CMakeFiles/esp.dir/esp.cpp.o: CMakeFiles/esp.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/mnt/home/ipopa/dmk/esp_prototype_cpp/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building CXX object CMakeFiles/esp.dir/esp.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/esp.dir/esp.cpp.o -MF CMakeFiles/esp.dir/esp.cpp.o.d -o CMakeFiles/esp.dir/esp.cpp.o -c /mnt/home/ipopa/dmk/esp_prototype_cpp/esp.cpp
+	/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/esp.dir/esp.cpp.o -MF CMakeFiles/esp.dir/esp.cpp.o.d -o CMakeFiles/esp.dir/esp.cpp.o -c /mnt/home/ipopa/dmk/esp_prototype_cpp/esp.cpp
 
 CMakeFiles/esp.dir/esp.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/esp.dir/esp.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /mnt/home/ipopa/dmk/esp_prototype_cpp/esp.cpp > CMakeFiles/esp.dir/esp.cpp.i
+	/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /mnt/home/ipopa/dmk/esp_prototype_cpp/esp.cpp > CMakeFiles/esp.dir/esp.cpp.i
 
 CMakeFiles/esp.dir/esp.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/esp.dir/esp.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /mnt/home/ipopa/dmk/esp_prototype_cpp/esp.cpp -o CMakeFiles/esp.dir/esp.cpp.s
+	/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /mnt/home/ipopa/dmk/esp_prototype_cpp/esp.cpp -o CMakeFiles/esp.dir/esp.cpp.s
 
 CMakeFiles/esp.dir/fft_fftw.cpp.o: CMakeFiles/esp.dir/flags.make
 CMakeFiles/esp.dir/fft_fftw.cpp.o: /mnt/home/ipopa/dmk/esp_prototype_cpp/fft_fftw.cpp
 CMakeFiles/esp.dir/fft_fftw.cpp.o: CMakeFiles/esp.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/mnt/home/ipopa/dmk/esp_prototype_cpp/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building CXX object CMakeFiles/esp.dir/fft_fftw.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/esp.dir/fft_fftw.cpp.o -MF CMakeFiles/esp.dir/fft_fftw.cpp.o.d -o CMakeFiles/esp.dir/fft_fftw.cpp.o -c /mnt/home/ipopa/dmk/esp_prototype_cpp/fft_fftw.cpp
+	/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/esp.dir/fft_fftw.cpp.o -MF CMakeFiles/esp.dir/fft_fftw.cpp.o.d -o CMakeFiles/esp.dir/fft_fftw.cpp.o -c /mnt/home/ipopa/dmk/esp_prototype_cpp/fft_fftw.cpp
 
 CMakeFiles/esp.dir/fft_fftw.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/esp.dir/fft_fftw.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /mnt/home/ipopa/dmk/esp_prototype_cpp/fft_fftw.cpp > CMakeFiles/esp.dir/fft_fftw.cpp.i
+	/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /mnt/home/ipopa/dmk/esp_prototype_cpp/fft_fftw.cpp > CMakeFiles/esp.dir/fft_fftw.cpp.i
 
 CMakeFiles/esp.dir/fft_fftw.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/esp.dir/fft_fftw.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /mnt/home/ipopa/dmk/esp_prototype_cpp/fft_fftw.cpp -o CMakeFiles/esp.dir/fft_fftw.cpp.s
+	/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /mnt/home/ipopa/dmk/esp_prototype_cpp/fft_fftw.cpp -o CMakeFiles/esp.dir/fft_fftw.cpp.s
 
 # Object files for target esp
 esp_OBJECTS = \
@@ -125,8 +125,10 @@ esp: CMakeFiles/esp.dir/esp.cpp.o
 esp: CMakeFiles/esp.dir/fft_fftw.cpp.o
 esp: CMakeFiles/esp.dir/build.make
 esp: /mnt/home/ipopa/dmk/esp_prototype_cpp/../build/libdmk.a
-esp: /usr/lib/gcc/x86_64-redhat-linux/8/libgomp.so
-esp: /usr/lib64/libpthread.so
+esp: /mnt/home/ipopa/finufft/build/src/libfinufft.a
+esp: /mnt/home/ipopa/finufft/build/src/common/libfinufft_common.a
+esp: /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/libgomp.so
+esp: /lib64/libpthread.so
 esp: CMakeFiles/esp.dir/link.txt
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/mnt/home/ipopa/dmk/esp_prototype_cpp/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Linking CXX executable esp"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/esp.dir/link.txt --verbose=$(VERBOSE)

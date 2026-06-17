@@ -1,6 +1,6 @@
 #include <dmk/prolate0_fun.hpp>
 #include <dmk/prolate.hpp>
-#include <finufft_common/kernel.h>
+
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -11,12 +11,6 @@
 #include <tuple>
 #include <unordered_map>
 #include <vector>
-#include <omp.h>
-#include <chrono>
-#include <finufft.h>
-
-using Clock = std::chrono::high_resolution_clock;
-using Ms    = std::chrono::duration<double, std::milli>;
 
 // ---------------------------------------------------------------------------
 // PSWFKernel – thin wrapper around dmk::Prolate0Fun
@@ -27,7 +21,6 @@ struct PSWFKernel {
     double lambda0;  // F_c eigenvalue: sqrt(2*pi*mu/c), adjusted for normalisation
     double c0;       // integral of normalised pswf over [0,1]
     double scale;    // 1 / pswf(0), so that (*this)(0) == 1
-    std::vector<double> pswf_poly_coeffs ; //computed by FINUFFT
 
     explicit PSWFKernel(double eps, int lenw = 8000) {
         double c_val;
@@ -48,23 +41,9 @@ struct PSWFKernel {
 
         // c0 = integral of normalised pswf over [0, 1]
         c0 = pswf.int_eval(1.0) * scale;
-
-        int nc = 32; //number of polynomial coefficients to use to approximate the pswf
-        auto pswf_lambda = [&](double x) {
-            return pswf.eval_val(std::abs(x)) * scale;
-        };
-        pswf_poly_coeffs = finufft::kernel::poly_fit<double>(pswf_lambda, nc);
     }
 
-    //double operator()(double x) const { return pswf.eval_val(x) * scale; }
-
-    double operator()(double x) const { 
-        double result = pswf_poly_coeffs[0];
-        int nc = pswf_poly_coeffs.size();
-        for (int j = 1; j < nc; ++j)
-            result = result * x + pswf_poly_coeffs[j];
-        return result;
-    }
+    double operator()(double x) const { return pswf.eval_val(x) * scale; }
 
     double integral(double a, double b) const {
         double va = (a == 0.0) ? 0.0 : pswf.int_eval(a);
@@ -121,11 +100,6 @@ static inline double min_image_distance(const Vec3 &ri, const Vec3 &rj, double L
     return std::sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
 }
 
-static inline double min_image_distance_sq(const Vec3 &ri, const Vec3 &rj, double L) {
-    auto d = min_image_vector(ri, rj, L);
-    return d[0]*d[0] + d[1]*d[1] + d[2]*d[2];
-}
-
 // ---------------------------------------------------------------------------
 // Cell / neighbour list
 // ---------------------------------------------------------------------------
@@ -149,19 +123,18 @@ build_neighbor_list(const std::vector<Vec3> &r_src, const ESPParams &params) {
     int n_cells = static_cast<int>(std::floor(params.L / params.r_c));
     if (n_cells < 1) n_cells = 1;
 
+    // Map cell -> list of particle indices
+    std::unordered_map<int, std::vector<int>> cells;
     auto cell_key = [&](int cx, int cy, int cz) {
         return cx * n_cells * n_cells + cy * n_cells + cz;
     };
 
-    std::vector<std::vector<int>> cells(n_cells * n_cells * n_cells);
     for (int j = 0; j < params.n; ++j) {
         auto ci = particle_cell(r_src[j], params.L, n_cells);
         cells[cell_key(ci.x, ci.y, ci.z)].push_back(j);
     }
 
     std::vector<std::vector<int>> neighbors(params.n);
-    auto r_c_squared = params.r_c * params.r_c;
-    #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < params.n; ++i) {
         auto ci = particle_cell(r_src[i], params.L, n_cells);
         for (int dx = -1; dx <= 1; ++dx)
@@ -170,9 +143,11 @@ build_neighbor_list(const std::vector<Vec3> &r_src, const ESPParams &params) {
             int nx = ((ci.x + dx) % n_cells + n_cells) % n_cells;
             int ny = ((ci.y + dy) % n_cells + n_cells) % n_cells;
             int nz = ((ci.z + dz) % n_cells + n_cells) % n_cells;
-            for (int j : cells[cell_key(nx, ny, nz)]) {
+            auto it = cells.find(cell_key(nx, ny, nz));
+            if (it == cells.end()) continue;
+            for (int j : it->second) {
                 if (j == i) continue;
-                if (min_image_distance_sq(r_src[i], r_src[j], params.L) <= r_c_squared)
+                if (min_image_distance(r_src[i], r_src[j], params.L) <= params.r_c)
                     neighbors[i].push_back(j);
             }
         }
@@ -183,33 +158,17 @@ build_neighbor_list(const std::vector<Vec3> &r_src, const ESPParams &params) {
 // ---------------------------------------------------------------------------
 // Short-range sum
 // ---------------------------------------------------------------------------
-
 static std::vector<double>
 short_range(const std::vector<Vec3> &r_src,
             const std::vector<double> &charges,
             const PSWFKernel &pswf,
             const ESPParams &params,
             const std::vector<std::vector<int>> &neighbors) {
-
-    // precompute integral table: table[i] = pswf.integral(0, i/(N-1))
-    const int TABLE_SIZE = 10000;
-    std::vector<double> table(TABLE_SIZE);
-    for (int i = 0; i < TABLE_SIZE; ++i)
-        table[i] = pswf.integral(0.0, (double)i / (TABLE_SIZE - 1));
-
     std::vector<double> pot(params.n, 0.0);
-    #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < params.n; ++i) {
         for (int j : neighbors[i]) {
             double dist = min_image_distance(r_src[i], r_src[j], params.L);
-            double t = dist / params.r_c;  // in [0, 1]
-
-            // linear interpolation into the table
-            double pos = t * (TABLE_SIZE - 1);
-            int idx = (int)pos;
-            double frac = pos - idx;
-            double intval = (table[idx] * (1.0 - frac) + table[idx + 1] * frac) / params.c0;
-
+            double intval = pswf.integral(0.0, dist / params.r_c) / params.c0;
             double x = (1.0 - intval) / (4.0 * M_PI * dist);
             pot[i] += charges[j] * x;
         }
@@ -246,12 +205,6 @@ static inline double phi_val(const Vec3 &disp, const PSWFKernel &pswf,
     double Ph = params.P * params.h;
     return pswf(2*disp[0]/Ph) * pswf(2*disp[1]/Ph) * pswf(2*disp[2]/Ph);
 }
-
-// static inline double phi_val_finufft(const Vec3 &disp, const PSWFKernel &pswf,
-//                               const ESPParams &params) {
-//     double Ph = params.P * params.h;
-//     return pswf.horner_eval(2*disp[0]/Ph) * pswf.horner_eval(2*disp[1]/Ph) * pswf.horner_eval(2*disp[2]/Ph);
-// }
 
 // ---------------------------------------------------------------------------
 // 3-D complex grid helpers (row-major: ix * n_f*n_f + iy * n_f + iz)
@@ -302,54 +255,6 @@ static CGrid spreading(const std::vector<Vec3> &r_src,
     return b;
 }
 
-static CGrid spreading_parallel(const std::vector<Vec3> &r_src,
-                        const std::vector<double> &charges,
-                        const PSWFKernel &pswf,
-                        const ESPParams &params) {
-    int nf = params.n_f;
-    int ntot = nf * nf * nf;
-    CGrid b(ntot, 0.0);
-    auto offsets = stencil_offsets(params.P);
-
-    #pragma omp parallel //spawns T threads, each executes everything below
-    {
-        CGrid b_local(ntot, 0.0); //each thread creates its OWN b_local, T separate arrays in memory
-
-        #pragma omp for //divides the N particles across T threads
-        for (int j = 0; j < params.n; ++j) { //thread 0 gets particles 0..N/T, thread 1 gets N/T..2N/T, etc.
-            //identify closest grid-point to the source
-            std::array<int,3> l_center;
-            for (int d = 0; d < 3; ++d)
-                l_center[d] = static_cast<int>(std::round(r_src[j][d] / params.h));
-
-            std::array<std::vector<int>,3> lx;
-            for (int d = 0; d < 3; ++d) {
-                lx[d].resize(offsets.size());
-                for (size_t k = 0; k < offsets.size(); ++k)
-                    lx[d][k] = ((l_center[d] + offsets[k]) % nf + nf) % nf;
-            }
-
-            for (size_t ix = 0; ix < offsets.size(); ++ix)
-            for (size_t iy = 0; iy < offsets.size(); ++iy)
-            for (size_t iz = 0; iz < offsets.size(); ++iz) {
-                Vec3 grid_pt = { params.h * lx[0][ix],
-                                 params.h * lx[1][iy],
-                                 params.h * lx[2][iz] };
-                Vec3 disp = min_image_vector(r_src[j], grid_pt, params.L);
-                double pv = phi_val(disp, pswf, params);
-                b_local[grid_idx(lx[0][ix], lx[1][iy], lx[2][iz], nf)] += charges[j] * pv;
-            }
-        }
-
-        // reduce thread-local grids into global grid
-        #pragma omp critical //one thread at a time
-        for (int i = 0; i < ntot; ++i)
-            b[i] += b_local[i]; //each thread adds its local result to global b
-    }
-
-    return b;
-}
-
 // ---------------------------------------------------------------------------
 // Interpolation (uniform grid -> particle potentials)
 // ---------------------------------------------------------------------------
@@ -362,7 +267,6 @@ interpolation(const CGrid &c_grid,
     std::vector<double> pot(params.n, 0.0);
     auto offsets = stencil_offsets(params.P);
 
-    #pragma omp parallel for
     for (int i = 0; i < params.n; ++i) {
         std::array<int,3> l_center;
         for (int d = 0; d < 3; ++d)
@@ -459,17 +363,7 @@ long_range_fast(const std::vector<Vec3> &r_src,
                 const PSWFKernel &pswf,
                 const ESPParams &params) {
     // 1. Spread charges onto grid
-
-    auto t0 = Clock::now();
-    CGrid c = spreading(r_src, charges, pswf, params);
-    double t_serial = Ms(Clock::now() - t0).count();
-
-    t0 = Clock::now();
-    CGrid b = spreading_parallel(r_src, charges, pswf, params);
-    double t_parallel = Ms(Clock::now() - t0).count();
-
-    printf("spreading serial:   %.3f ms\n", t_serial);
-    printf("spreading parallel + finufft: %.3f ms\n", t_parallel);
+    CGrid b = spreading(r_src, charges, pswf, params);
 
     // 2. Forward FFT
     int nf = params.n_f;
@@ -478,7 +372,6 @@ long_range_fast(const std::vector<Vec3> &r_src,
 
     // 3. Diagonal scaling
     DGrid p = precompute_scaling_coefficients(pswf, params);
-    #pragma omp parallel for
     for (int idx = 0; idx < nf*nf*nf; ++idx)
         b_hat[idx] *= p[idx];
 
@@ -490,74 +383,6 @@ long_range_fast(const std::vector<Vec3> &r_src,
     return interpolation(grid, r_src, pswf, params);
 }
 
-// ---------------------------------------------------------------------------
-// Long-range contribution - computed using FINUFFT spreader and interpolator
-// ---------------------------------------------------------------------------
-static std::vector<double>
-long_range_finufft(const std::vector<Vec3> &r_src,
-                   const std::vector<double> &charges,
-                   const PSWFKernel &pswf,
-                   const ESPParams &params) {
-    int n = params.n;
-    int nf = params.n_f;
-    int ntot = nf * nf * nf;
-
-    // convert positions from [-L/2, L/2] to [-pi, pi) for FINUFFT
-    double scale = 2.0 * M_PI / params.L;
-    std::vector<double> x(n), y(n), z(n);
-    for (int j = 0; j < n; j++) {
-        x[j] = r_src[j][0] * scale;
-        y[j] = r_src[j][1] * scale;
-        z[j] = r_src[j][2] * scale;
-    }
-
-    // charges as complex (imaginary part = 0)
-    std::vector<std::complex<double>> c(n);
-    for (int j = 0; j < n; j++)
-        c[j] = {charges[j], 0.0};
-
-    finufft_opts opts;
-    finufft_default_opts(&opts);
-    opts.spreadinterponly = 1;
-    //opts.spread_kerformula = 8;  // use PSWF kernel - actually no effect, this is already the default
-    opts.debug = 1;
-    double tol = 1e-6; // or derive from pswf.eps
-
-    // 1. Spread: NU pts -> uniform grid (type 1)
-    std::vector<std::complex<double>> b(ntot, 0.0);
-    int ier = finufft3d1(n, x.data(), y.data(), z.data(),
-                         c.data(), +1, tol,
-                         nf, nf, nf, b.data(), &opts);
-    if (ier > 1) throw std::runtime_error("finufft3d1 spread failed, ier=" + std::to_string(ier));
-
-    // 2. Forward FFT
-    CGrid b_hat(ntot);
-    fftn_3d(b, b_hat, nf);  // b is already std::vector<std::complex<double>>
-
-    // 3. Diagonal scaling
-    DGrid p = precompute_scaling_coefficients(pswf, params);
-    #pragma omp parallel for
-    for (int idx = 0; idx < ntot; ++idx)
-        b_hat[idx] *= p[idx];
-
-    // 4. Inverse FFT
-    CGrid grid(ntot);
-    ifftn_3d(b_hat, grid, nf);
-
-    // 5. Interpolate: uniform grid -> NU pts (type 2)
-    std::vector<std::complex<double>> pot_c(n);
-    ier = finufft3d2(n, x.data(), y.data(), z.data(),
-                     pot_c.data(), +1, tol,
-                     nf, nf, nf, grid.data(), &opts);
-    if (ier > 1) throw std::runtime_error("finufft3d2 interp failed, ier=" + std::to_string(ier));
-
-    // extract real part
-    std::vector<double> pot(n);
-    for (int j = 0; j < n; j++)
-        pot[j] = pot_c[j].real();
-
-    return pot;
-}
 // ---------------------------------------------------------------------------
 // Self-interaction correction
 // ---------------------------------------------------------------------------
@@ -610,34 +435,10 @@ ESPResult esp_potential(const std::vector<Vec3> &r_src,
     int n = static_cast<int>(charges.size());
     ESPParams params(L, r_c, P, pswf, n);
 
-    auto t0 = Clock::now();
-    auto neighbors = build_neighbor_list(r_src, params);
-    printf("neighbor list:  %.2f ms\n", Ms(Clock::now()-t0).count());
-
-    t0 = Clock::now();
-    auto pot_sr = short_range(r_src, charges, pswf, params, neighbors);
-    printf("short range:    %.2f ms\n", Ms(Clock::now()-t0).count());
-
-    t0 = Clock::now();
-    auto pot_lr = long_range_fast(r_src, charges, pswf, params);
-    printf("long range:     %.2f ms\n", Ms(Clock::now()-t0).count());
-
-    t0 = Clock::now();
-    auto pot_lr_finufft = long_range_finufft(r_src, charges, pswf, params);
-    printf("long range - finufft:     %.2f ms\n", Ms(Clock::now()-t0).count());
-
-    printf("\nlong_range_fast vs long_range_finufft:\n");
-    for (int i = 0; i < params.n; i++) {
-        double err = std::abs(pot_lr[i] - pot_lr_finufft[i]);
-        printf("  pt %d: fast=%.8f  finufft=%.8f  err=%.2e\n",
-            i, pot_lr[i], pot_lr_finufft[i], err);
-    }
-    for (int i = 0; i < params.n; i++)
-    printf("  pt %d: ratio=%.6f\n", i, pot_lr_finufft[i] / pot_lr[i]);
-
-    t0 = Clock::now();
+    auto neighbors  = build_neighbor_list(r_src, params);
+    auto pot_sr     = short_range(r_src, charges, pswf, params, neighbors);
+    auto pot_lr     = long_range_fast(r_src, charges, pswf, params);
     auto pot_self   = self_interaction(r_src, charges, pswf, params);
-    printf("self-interaction:     %.2f ms\n", Ms(Clock::now()-t0).count());
 
     std::vector<double> total(n);
     for (int i = 0; i < n; ++i)

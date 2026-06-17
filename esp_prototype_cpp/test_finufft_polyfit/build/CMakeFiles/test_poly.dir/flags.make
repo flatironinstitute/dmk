@@ -4,7 +4,7 @@
 # compile CXX with /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++
 CXX_DEFINES = 
 
-CXX_INCLUDES = -I/mnt/home/ipopa/dmk/esp_prototype_cpp/../include -I/mnt/home/ipopa/finufft/include
+CXX_INCLUDES = -I/mnt/home/ipopa/dmk/include -I/mnt/home/ipopa/finufft/include
 
 CXX_FLAGS = -O3 -DNDEBUG -std=gnu++17 -O3 -fopenmp
 
