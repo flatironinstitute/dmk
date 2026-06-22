@@ -437,11 +437,13 @@ void DMKPtTree<Real, DIM>::accumulate_subtree_counts() {
     trg_counts_owned.ReInit(n_boxes());
     trg_counts_owned.SetZero();
 
+    n_trg_max_ = 0;
     for (int i_level = n_levels() - 1; i_level >= 0; --i_level) {
         for (auto i_node : level_indices[i_level]) {
             src_counts_with_halo[i_node] += r_src_cnt_with_halo[i_node];
             src_counts_owned[i_node] += r_src_cnt_owned[i_node];
             trg_counts_owned[i_node] += r_trg_cnt_owned[i_node];
+            n_trg_max_ = std::max(r_trg_cnt_owned[i_node], n_trg_max_);
 
             const int parent = node_lists[i_node].parent;
             if (parent != -1) {
@@ -1566,13 +1568,14 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
         const bool is_stresslet = params.kernel == DMK_STRESSLET;
         const int normal_dim = is_stresslet ? DIM : 0;
         const int direct_charge_dim = kernel_input_dim;
+        const long trg_buff_cnt = std::max(long(params.n_per_leaf), n_trg_max_);
 
         util::StackOrHeapBuffer<Real, DIM * MAX_PTS> r_buf(DIM * params.n_per_leaf);
         util::StackOrHeapBuffer<Real, MAX_CHARGE_DIM * MAX_PTS> charge_buf(direct_charge_dim * params.n_per_leaf);
         util::StackOrHeapBuffer<Real, DIM * MAX_PTS> normal_buf(DIM * params.n_per_leaf);
-        util::StackOrHeapBuffer<Real, DIM * MAX_PTS> r_trg_buf(DIM * params.n_per_leaf);
-        util::StackOrHeapBuffer<Real, MAX_OUTPUT_DIM * MAX_PTS> pot_buf(kernel_output_dim_max * params.n_per_leaf);
-        util::StackOrHeapBuffer<int, MAX_PTS> index_map(params.n_per_leaf);
+        util::StackOrHeapBuffer<Real, DIM * MAX_PTS> r_trg_buf(DIM * trg_buff_cnt);
+        util::StackOrHeapBuffer<Real, MAX_OUTPUT_DIM * MAX_PTS> pot_buf(kernel_output_dim_max * trg_buff_cnt);
+        util::StackOrHeapBuffer<int, MAX_PTS> index_map(trg_buff_cnt);
 
         // Buffer for periodically shifted source positions
         std::vector<Real> r_src_shifted;

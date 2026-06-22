@@ -879,6 +879,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     std::vector<std::array<int, nlistpw_max_>> listpw_;
     std::vector<int> nlistpw_;
 
+    long n_trg_max_;
+
     // If proxy_view_downward(i_box) has been zeroed yet.
     std::vector<int> proxy_down_zeroed;
 
