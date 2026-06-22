@@ -1145,7 +1145,7 @@ void DMKPtTree<Real, DIM>::gpu_init_state() {
     nvtxRangePop();
 
     const bool want_gpu = params.eval_path == DMK_EVAL_PATH_GPU;
-    if (!want_gpu || debug_omit_direct || debug_force_aot)
+    if (!want_gpu)
         return;
 
     nvtxRangePush("device_init");
