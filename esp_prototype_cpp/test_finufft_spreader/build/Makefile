@@ -117,41 +117,41 @@ depend:
 .PHONY : depend
 
 #=============================================================================
-# Target rules for targets named test_finufft_spreader
+# Target rules for targets named test_binsort
 
 # Build rule for target.
-test_finufft_spreader: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_finufft_spreader
-.PHONY : test_finufft_spreader
+test_binsort: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_binsort
+.PHONY : test_binsort
 
 # fast build rule for target.
-test_finufft_spreader/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_finufft_spreader.dir/build.make CMakeFiles/test_finufft_spreader.dir/build
-.PHONY : test_finufft_spreader/fast
+test_binsort/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_binsort.dir/build.make CMakeFiles/test_binsort.dir/build
+.PHONY : test_binsort/fast
 
-test_finufft_spreader.o: test_finufft_spreader.cpp.o
-.PHONY : test_finufft_spreader.o
+main.o: main.cpp.o
+.PHONY : main.o
 
 # target to build an object file
-test_finufft_spreader.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_finufft_spreader.dir/build.make CMakeFiles/test_finufft_spreader.dir/test_finufft_spreader.cpp.o
-.PHONY : test_finufft_spreader.cpp.o
+main.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_binsort.dir/build.make CMakeFiles/test_binsort.dir/main.cpp.o
+.PHONY : main.cpp.o
 
-test_finufft_spreader.i: test_finufft_spreader.cpp.i
-.PHONY : test_finufft_spreader.i
+main.i: main.cpp.i
+.PHONY : main.i
 
 # target to preprocess a source file
-test_finufft_spreader.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_finufft_spreader.dir/build.make CMakeFiles/test_finufft_spreader.dir/test_finufft_spreader.cpp.i
-.PHONY : test_finufft_spreader.cpp.i
+main.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_binsort.dir/build.make CMakeFiles/test_binsort.dir/main.cpp.i
+.PHONY : main.cpp.i
 
-test_finufft_spreader.s: test_finufft_spreader.cpp.s
-.PHONY : test_finufft_spreader.s
+main.s: main.cpp.s
+.PHONY : main.s
 
 # target to generate assembly for a file
-test_finufft_spreader.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_finufft_spreader.dir/build.make CMakeFiles/test_finufft_spreader.dir/test_finufft_spreader.cpp.s
-.PHONY : test_finufft_spreader.cpp.s
+main.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_binsort.dir/build.make CMakeFiles/test_binsort.dir/main.cpp.s
+.PHONY : main.cpp.s
 
 # Help Target
 help:
@@ -161,10 +161,10 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
-	@echo "... test_finufft_spreader"
-	@echo "... test_finufft_spreader.o"
-	@echo "... test_finufft_spreader.i"
-	@echo "... test_finufft_spreader.s"
+	@echo "... test_binsort"
+	@echo "... main.o"
+	@echo "... main.i"
+	@echo "... main.s"
 .PHONY : help
 
 

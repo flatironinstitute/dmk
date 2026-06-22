@@ -57,10 +57,10 @@ RM = /usr/bin/cmake -E rm -f
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /mnt/home/ipopa/dmk/esp_prototype_cpp
+CMAKE_SOURCE_DIR = /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /mnt/home/ipopa/dmk/esp_prototype_cpp/build
+CMAKE_BINARY_DIR = /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build
 
 #=============================================================================
 # Targets provided globally by CMake.
@@ -87,9 +87,9 @@ rebuild_cache/fast: rebuild_cache
 
 # The main all target
 all: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /mnt/home/ipopa/dmk/esp_prototype_cpp/build/CMakeFiles /mnt/home/ipopa/dmk/esp_prototype_cpp/build//CMakeFiles/progress.marks
+	$(CMAKE_COMMAND) -E cmake_progress_start /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build//CMakeFiles/progress.marks
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 all
-	$(CMAKE_COMMAND) -E cmake_progress_start /mnt/home/ipopa/dmk/esp_prototype_cpp/build/CMakeFiles 0
+	$(CMAKE_COMMAND) -E cmake_progress_start /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles 0
 .PHONY : all
 
 # The main clean target
@@ -117,89 +117,41 @@ depend:
 .PHONY : depend
 
 #=============================================================================
-# Target rules for targets named esp
+# Target rules for targets named test_finufft_spreader
 
 # Build rule for target.
-esp: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 esp
-.PHONY : esp
+test_finufft_spreader: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_finufft_spreader
+.PHONY : test_finufft_spreader
 
 # fast build rule for target.
-esp/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/esp.dir/build.make CMakeFiles/esp.dir/build
-.PHONY : esp/fast
+test_finufft_spreader/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_finufft_spreader.dir/build.make CMakeFiles/test_finufft_spreader.dir/build
+.PHONY : test_finufft_spreader/fast
 
-esp.o: esp.cpp.o
-.PHONY : esp.o
-
-# target to build an object file
-esp.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/esp.dir/build.make CMakeFiles/esp.dir/esp.cpp.o
-.PHONY : esp.cpp.o
-
-esp.i: esp.cpp.i
-.PHONY : esp.i
-
-# target to preprocess a source file
-esp.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/esp.dir/build.make CMakeFiles/esp.dir/esp.cpp.i
-.PHONY : esp.cpp.i
-
-esp.s: esp.cpp.s
-.PHONY : esp.s
-
-# target to generate assembly for a file
-esp.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/esp.dir/build.make CMakeFiles/esp.dir/esp.cpp.s
-.PHONY : esp.cpp.s
-
-fft_fftw.o: fft_fftw.cpp.o
-.PHONY : fft_fftw.o
+test_finufft_spreader.o: test_finufft_spreader.cpp.o
+.PHONY : test_finufft_spreader.o
 
 # target to build an object file
-fft_fftw.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/esp.dir/build.make CMakeFiles/esp.dir/fft_fftw.cpp.o
-.PHONY : fft_fftw.cpp.o
+test_finufft_spreader.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_finufft_spreader.dir/build.make CMakeFiles/test_finufft_spreader.dir/test_finufft_spreader.cpp.o
+.PHONY : test_finufft_spreader.cpp.o
 
-fft_fftw.i: fft_fftw.cpp.i
-.PHONY : fft_fftw.i
-
-# target to preprocess a source file
-fft_fftw.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/esp.dir/build.make CMakeFiles/esp.dir/fft_fftw.cpp.i
-.PHONY : fft_fftw.cpp.i
-
-fft_fftw.s: fft_fftw.cpp.s
-.PHONY : fft_fftw.s
-
-# target to generate assembly for a file
-fft_fftw.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/esp.dir/build.make CMakeFiles/esp.dir/fft_fftw.cpp.s
-.PHONY : fft_fftw.cpp.s
-
-main.o: main.cpp.o
-.PHONY : main.o
-
-# target to build an object file
-main.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/esp.dir/build.make CMakeFiles/esp.dir/main.cpp.o
-.PHONY : main.cpp.o
-
-main.i: main.cpp.i
-.PHONY : main.i
+test_finufft_spreader.i: test_finufft_spreader.cpp.i
+.PHONY : test_finufft_spreader.i
 
 # target to preprocess a source file
-main.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/esp.dir/build.make CMakeFiles/esp.dir/main.cpp.i
-.PHONY : main.cpp.i
+test_finufft_spreader.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_finufft_spreader.dir/build.make CMakeFiles/test_finufft_spreader.dir/test_finufft_spreader.cpp.i
+.PHONY : test_finufft_spreader.cpp.i
 
-main.s: main.cpp.s
-.PHONY : main.s
+test_finufft_spreader.s: test_finufft_spreader.cpp.s
+.PHONY : test_finufft_spreader.s
 
 # target to generate assembly for a file
-main.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/esp.dir/build.make CMakeFiles/esp.dir/main.cpp.s
-.PHONY : main.cpp.s
+test_finufft_spreader.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_finufft_spreader.dir/build.make CMakeFiles/test_finufft_spreader.dir/test_finufft_spreader.cpp.s
+.PHONY : test_finufft_spreader.cpp.s
 
 # Help Target
 help:
@@ -209,16 +161,10 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
-	@echo "... esp"
-	@echo "... esp.o"
-	@echo "... esp.i"
-	@echo "... esp.s"
-	@echo "... fft_fftw.o"
-	@echo "... fft_fftw.i"
-	@echo "... fft_fftw.s"
-	@echo "... main.o"
-	@echo "... main.i"
-	@echo "... main.s"
+	@echo "... test_finufft_spreader"
+	@echo "... test_finufft_spreader.o"
+	@echo "... test_finufft_spreader.i"
+	@echo "... test_finufft_spreader.s"
 .PHONY : help
 
 

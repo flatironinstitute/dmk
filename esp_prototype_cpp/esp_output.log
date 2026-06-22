@@ -1,137 +1,137 @@
 === PSWFKernel / ESPParams debug ===
-c           = 16.894000
-mu (rlam20) = 3.141567
-lambda0     = 0.609848
-c0          = 0.304925
+c           = 16.443361
+mu (rlam20) = 3.141575
+lambda0     = 0.618149
+c0          = 0.309076
 pswf(0)     = 1.000000
-pswf(1)     = 6.603504e-07
-pswf_hat(0) = 0.609848
+pswf(1)     = 1.021927e-06
+pswf_hat(0) = 0.618149
 n_f         = 27
 h           = 0.037037
 ====================================
 
-neighbor list:  0.83 ms
-short range:    455.84 ms
-spreading serial:   0.484 ms
-spreading parallel + finufft: 1.637 ms
-long range:     8.58 ms
+neighbor list:  0.42 ms
+short range:    352.49 ms
+spreading serial:   0.267 ms
+spreading parallel + finufft: 1.334 ms
+long range:     10.64 ms
 [FINUFFT_PLAN_T] new plan: FINUFFT version 2.6.0-dev .................
-[setpts] selected best upsampfac=1.25 (density=0.000508, nj=10)
+		user locked upsampfac=2
 [setup_spreadinterp]	kerformula=8: PSWF (beta shift)...
-			tol=1e-06 sigma=1.25: chose ns=11 beta=20.7
-[precompute_horner_coeffs] ns=11:	7.3e-05 s
-		nc_fit=14 (trim to nc=10), simd_size=4, padded_ns=12
+			tol=1e-06 sigma=2: chose ns=7 beta=16.4
+[precompute_horner_coeffs] ns=7:	3.8e-05 s
+		nc_fit=10 (trim to nc=10), simd_size=4, padded_ns=8
 [init_grid_kerFT_FFT] 3d spreadinterponly(dir=1): (ms,mt,mu)=(27,27,27)
-               ntrans=1 nthr=8 batchSize=1 kernel width ns=11
-[setpts] sort (didSort=1):		3.1e-05 s
+               ntrans=1 nthr=8 batchSize=1 kernel width ns=7
+[setpts] sort (didSort=1):		3e-05 s
 [execute] start ntrans=1 (1 batches, bsize=1)...
-[execute] done. tot spread:		0.00129 s
+[execute] done. tot spread:		0.000891 s
                 tot FFT:		0 s
                 tot deconvolve:		0 s
 [FINUFFT_PLAN_T] new plan: FINUFFT version 2.6.0-dev .................
-[setpts] selected best upsampfac=1.25 (density=0.000508, nj=10)
+		user locked upsampfac=2
 [setup_spreadinterp]	kerformula=8: PSWF (beta shift)...
-			tol=1e-06 sigma=1.25: chose ns=11 beta=20.7
-[precompute_horner_coeffs] ns=11:	5.5e-05 s
-		nc_fit=14 (trim to nc=10), simd_size=4, padded_ns=12
+			tol=1e-06 sigma=2: chose ns=7 beta=16.4
+[precompute_horner_coeffs] ns=7:	2.7e-05 s
+		nc_fit=10 (trim to nc=10), simd_size=4, padded_ns=8
 [init_grid_kerFT_FFT] 3d spreadinterponly(dir=2): (ms,mt,mu)=(27,27,27)
-               ntrans=1 nthr=8 batchSize=1 kernel width ns=11
-[setpts] sort (didSort=1):		-6.22e-12 s
+               ntrans=1 nthr=8 batchSize=1 kernel width ns=7
+[setpts] sort (didSort=1):		1e-06 s
 [execute] start ntrans=1 (1 batches, bsize=1)...
 [execute] done. tot deconvolve:		0 s
                 tot FFT:		0 s
-                tot interp:		0.000528 s
-long range - finufft:     6.25 ms
+                tot interp:		0.000323 s
+long range - finufft:     4.27 ms
 
 long_range_fast vs long_range_finufft:
-  pt 0: fast=0.31666853  finufft=2.03894923  err=1.72e+00
-  pt 1: fast=-0.26783230  finufft=-1.64322856  err=1.38e+00
-  pt 2: fast=0.34741501  finufft=2.01844568  err=1.67e+00
-  pt 3: fast=-0.35126145  finufft=-2.05066403  err=1.70e+00
-  pt 4: fast=0.46489853  finufft=2.70590901  err=2.24e+00
-  pt 5: fast=-0.45852965  finufft=-2.65366081  err=2.20e+00
-  pt 6: fast=0.58309378  finufft=3.39849688  err=2.82e+00
-  pt 7: fast=-0.56029653  finufft=-3.21145513  err=2.65e+00
-  pt 8: fast=0.19133987  finufft=1.28518690  err=1.09e+00
-  pt 9: fast=-0.02080893  finufft=0.10604663  err=1.27e-01
-  pt 0: ratio=6.438749
-  pt 1: ratio=6.135289
-  pt 2: ratio=5.809898
-  pt 3: ratio=5.837999
-  pt 4: ratio=5.820429
-  pt 5: ratio=5.787327
-  pt 6: ratio=5.828388
-  pt 7: ratio=5.731706
-  pt 8: ratio=6.716775
-  pt 9: ratio=-5.096207
+  pt 0: fast=0.31315948  finufft=0.31315568  err=3.79e-06
+  pt 1: fast=-0.26432602  finufft=-0.26432541  err=6.09e-07
+  pt 2: fast=0.34215799  finufft=0.34216158  err=3.59e-06
+  pt 3: fast=-0.34600260  finufft=-0.34600213  err=4.67e-07
+  pt 4: fast=0.45788832  finufft=0.45789124  err=2.92e-06
+  pt 5: fast=-0.45151914  finufft=-0.45152149  err=2.35e-06
+  pt 6: fast=0.57432918  finufft=0.57432870  err=4.79e-07
+  pt 7: fast=-0.55153143  finufft=-0.55152908  err=2.35e-06
+  pt 8: fast=0.18958383  finufft=0.18958321  err=6.23e-07
+  pt 9: fast=-0.01905677  finufft=-0.01905700  err=2.26e-07
+  pt 0: ratio=0.999988
+  pt 1: ratio=0.999998
+  pt 2: ratio=1.000010
+  pt 3: ratio=0.999999
+  pt 4: ratio=1.000006
+  pt 5: ratio=1.000005
+  pt 6: ratio=0.999999
+  pt 7: ratio=0.999996
+  pt 8: ratio=0.999997
+  pt 9: ratio=1.000012
 self-interaction:     0.00 ms
 Point 0
-  short-range : +0.00000542
-  long-range  : +0.31666853
-  self        : +0.26097352
-  total       : +0.05570043
-  error       : +9.94e-06
+  short-range : +0.00000668
+  long-range  : +0.31315948
+  self        : +0.25746933
+  total       : +0.05569304
+  error       : +2.55e-06
 
 Point 1
   short-range : +0.00000000
-  long-range  : -0.26783230
-  self        : -0.26097352
-  total       : -0.00685878
-  error       : -6.20e-06
+  long-range  : -0.26432602
+  self        : -0.25746933
+  total       : -0.00685608
+  error       : -3.51e-06
 
 Point 2
   short-range : +0.00000000
-  long-range  : +0.34741501
-  self        : +0.39146028
-  total       : -0.04404527
-  error       : +3.81e-06
+  long-range  : +0.34215799
+  self        : +0.38620399
+  total       : -0.04404241
+  error       : +6.68e-06
 
 Point 3
   short-range : +0.00000000
-  long-range  : -0.35126145
-  self        : -0.39146028
-  total       : +0.04019883
-  error       : -7.78e-06
+  long-range  : -0.34600260
+  self        : -0.38620399
+  total       : +0.04020186
+  error       : -4.75e-06
 
 Point 4
   short-range : +0.00000000
-  long-range  : +0.46489853
-  self        : +0.52194704
-  total       : -0.05704850
-  error       : +6.93e-06
+  long-range  : +0.45788832
+  self        : +0.51493866
+  total       : -0.05704742
+  error       : +8.01e-06
 
 Point 5
   short-range : +0.00000000
-  long-range  : -0.45852965
-  self        : -0.52194704
-  total       : +0.06341739
-  error       : -7.45e-06
+  long-range  : -0.45151914
+  self        : -0.51493866
+  total       : +0.06341717
+  error       : -7.66e-06
 
 Point 6
   short-range : +0.00000000
-  long-range  : +0.58309378
-  self        : +0.65243380
-  total       : -0.06934002
-  error       : +1.26e-05
+  long-range  : +0.57432918
+  self        : +0.64367332
+  total       : -0.06934462
+  error       : +8.02e-06
 
 Point 7
   short-range : +0.00000000
-  long-range  : -0.56029653
-  self        : -0.65243380
-  total       : +0.09213727
-  error       : -1.36e-05
+  long-range  : -0.55153143
+  self        : -0.64367332
+  total       : +0.09214424
+  error       : -6.65e-06
 
 Point 8
-  short-range : +0.00001084
-  long-range  : +0.19133987
-  self        : +0.13048676
-  total       : +0.06086395
-  error       : +4.42e-06
+  short-range : +0.00001336
+  long-range  : +0.18958383
+  self        : +0.12873466
+  total       : +0.06086191
+  error       : +2.38e-06
 
 Point 9
   short-range : +0.00000000
-  long-range  : -0.02080893
-  self        : -0.13048676
-  total       : +0.10967783
-  error       : -2.33e-07
+  long-range  : -0.01905677
+  self        : -0.12873466
+  total       : +0.10967766
+  error       : -3.96e-07
 

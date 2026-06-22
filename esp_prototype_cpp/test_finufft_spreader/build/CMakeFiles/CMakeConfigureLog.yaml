@@ -13,28 +13,6 @@ events:
     backtrace:
       - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
       - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
-      - "/usr/share/cmake/Modules/CMakeDetermineCCompiler.cmake:123 (CMAKE_DETERMINE_COMPILER_ID)"
-      - "CMakeLists.txt:2 (project)"
-    message: |
-      Compiling the C compiler identification source file "CMakeCCompilerId.c" succeeded.
-      Compiler: /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc 
-      Build flags: 
-      Id flags:  
-      
-      The output was:
-      0
-      
-      
-      Compilation of the C compiler identification source "CMakeCCompilerId.c" produced "a.out"
-      
-      The C compiler identification is GNU, found in:
-        /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/3.26.5/CompilerIdC/a.out
-      
-  -
-    kind: "message-v1"
-    backtrace:
-      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
-      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
       - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:126 (CMAKE_DETERMINE_COMPILER_ID)"
       - "CMakeLists.txt:2 (project)"
     message: |
@@ -56,244 +34,13 @@ events:
     kind: "try_compile-v1"
     backtrace:
       - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:57 (try_compile)"
-      - "/usr/share/cmake/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
-      - "CMakeLists.txt:2 (project)"
-    checks:
-      - "Detecting C compiler ABI info"
-    directories:
-      source: "/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-mMNNzc"
-      binary: "/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-mMNNzc"
-    cmakeVariables:
-      CMAKE_C_FLAGS: ""
-      CMAKE_C_FLAGS_DEBUG: "-g"
-      CMAKE_EXE_LINKER_FLAGS: ""
-    buildResult:
-      variable: "CMAKE_C_ABI_COMPILED"
-      cached: true
-      stdout: |
-        Change Dir: /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-mMNNzc
-        
-        Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_61a7c/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_61a7c.dir/build.make CMakeFiles/cmTC_61a7c.dir/build
-        gmake[1]: Entering directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-mMNNzc'
-        Building C object CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.o
-        /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc   -v -o CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.o -c /usr/share/cmake/Modules/CMakeCCompilerABI.c
-        Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/specs
-        COLLECT_GCC=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc
-        Target: x86_64-pc-linux-gnu
-        Configured with: /dev/shm/nix-build-gcc-11.5.0.drv-0/nixbld3/spack-stage-gcc-11.5.0-ipl77l9qp6sgyb3nx7h47p8h5jajrr0w/spack-src/configure --prefix=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0 --with-pkgversion='Spack GCC' --with-bugurl=https://github.com/spack/spack/issues --disable-multilib --enable-languages=c,c++,fortran,jit --disable-nls --disable-canonical-system-headers --with-system-zlib --with-zstd-include=/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/include --with-zstd-lib=/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib --enable-host-shared --enable-bootstrap --with-mpfr-include=/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/include --with-mpfr-lib=/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib --with-gmp-include=/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/include --with-gmp-lib=/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib --with-mpc-include=/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/include --with-mpc-lib=/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib --without-isl --with-stage1-ldflags='-Wl,-rpath,/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -Wl,-rpath,/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -Wl,-rpath,/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib -Wl,-rpath,/mnt/sw/nix/store/vp96y6y1vqzg84cjlfd85akggsa9jyn7-zlib-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib' --with-boot-ldflags='-Wl,-rpath,/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -Wl,-rpath,/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -Wl,-rpath,/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib -Wl,-rpath,/mnt/sw/nix/store/vp96y6y1vqzg84cjlfd85akggsa9jyn7-zlib-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib -static-libstdc++ -static-libgcc' --with-build-config=spack --with-arch=broadwell --with-tune=broadwell
-        Thread model: posix
-        Supported LTO compression algorithms: zlib zstd
-        gcc version 11.5.0 (Spack GCC) 
-        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_61a7c.dir/'
-         /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/cc1 -quiet -v /usr/share/cmake/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_61a7c.dir/ -dumpbase CMakeCCompilerABI.c.c -dumpbase-ext .c -mtune=broadwell -march=broadwell -version -o /tmp/ccVKZdVf.s
-        GNU C17 (Spack GCC) version 11.5.0 (x86_64-pc-linux-gnu)
-        	compiled by GNU C version 11.5.0, GMP version 6.3.0, MPFR version 4.2.1, MPC version 1.3.1, isl version none
-        GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
-        ignoring duplicate directory "/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/include"
-        ignoring nonexistent directory "/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../x86_64-pc-linux-gnu/include"
-        #include "..." search starts here:
-        #include <...> search starts here:
-         /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/include
-         /mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/include
-         /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/include
-         /usr/local/include
-         /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/include-fixed
-         /usr/include
-        End of search list.
-        GNU C17 (Spack GCC) version 11.5.0 (x86_64-pc-linux-gnu)
-        	compiled by GNU C version 11.5.0, GMP version 6.3.0, MPFR version 4.2.1, MPC version 1.3.1, isl version none
-        GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
-        Compiler executable checksum: e6d2f5ab1481c079e32bcec30a13b04b
-        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_61a7c.dir/'
-         as -v --64 -o CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.o /tmp/ccVKZdVf.s
-        GNU assembler version 2.30 (x86_64-redhat-linux) using BFD version version 2.30-128.el8_10
-        COMPILER_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/
-        LIBRARY_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/:/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../:/lib/:/usr/lib/
-        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.'
-        Linking C executable cmTC_61a7c
-        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_61a7c.dir/link.txt --verbose=1
-        /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc  -v CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.o -o cmTC_61a7c 
-        Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/specs
-        COLLECT_GCC=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc
-        COLLECT_LTO_WRAPPER=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper
-        Target: x86_64-pc-linux-gnu
-        Configured with: /dev/shm/nix-build-gcc-11.5.0.drv-0/nixbld3/spack-stage-gcc-11.5.0-ipl77l9qp6sgyb3nx7h47p8h5jajrr0w/spack-src/configure --prefix=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0 --with-pkgversion='Spack GCC' --with-bugurl=https://github.com/spack/spack/issues --disable-multilib --enable-languages=c,c++,fortran,jit --disable-nls --disable-canonical-system-headers --with-system-zlib --with-zstd-include=/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/include --with-zstd-lib=/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib --enable-host-shared --enable-bootstrap --with-mpfr-include=/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/include --with-mpfr-lib=/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib --with-gmp-include=/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/include --with-gmp-lib=/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib --with-mpc-include=/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/include --with-mpc-lib=/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib --without-isl --with-stage1-ldflags='-Wl,-rpath,/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -Wl,-rpath,/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -Wl,-rpath,/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib -Wl,-rpath,/mnt/sw/nix/store/vp96y6y1vqzg84cjlfd85akggsa9jyn7-zlib-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib' --with-boot-ldflags='-Wl,-rpath,/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -Wl,-rpath,/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -Wl,-rpath,/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib -Wl,-rpath,/mnt/sw/nix/store/vp96y6y1vqzg84cjlfd85akggsa9jyn7-zlib-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib -static-libstdc++ -static-libgcc' --with-build-config=spack --with-arch=broadwell --with-tune=broadwell
-        Thread model: posix
-        Supported LTO compression algorithms: zlib zstd
-        gcc version 11.5.0 (Spack GCC) 
-        COMPILER_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/
-        LIBRARY_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/:/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../:/lib/:/usr/lib/
-        COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_61a7c' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'cmTC_61a7c.'
-         /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/collect2 -plugin /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/liblto_plugin.so -plugin-opt=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper -plugin-opt=-fresolution=/tmp/cc3KlBH2.res -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s --eh-frame-hdr -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_61a7c /lib/../lib64/crt1.o /lib/../lib64/crti.o /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtbegin.o -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -L/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../.. -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.o -lgcc --push-state --as-needed -lgcc_s --pop-state -lc -lgcc --push-state --as-needed -lgcc_s --pop-state /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtend.o /lib/../lib64/crtn.o
-        COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_61a7c' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'cmTC_61a7c.'
-        gmake[1]: Leaving directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-mMNNzc'
-        
-      exitCode: 0
-  -
-    kind: "message-v1"
-    backtrace:
-      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:127 (message)"
-      - "/usr/share/cmake/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
-      - "CMakeLists.txt:2 (project)"
-    message: |
-      Parsed C implicit include dir info: rv=done
-        found start of include info
-        found start of implicit include info
-          add: [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/include]
-          add: [/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/include]
-          add: [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/include]
-          add: [/usr/local/include]
-          add: [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/include-fixed]
-          add: [/usr/include]
-        end of search list found
-        collapse include dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/include] ==> [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/include]
-        collapse include dir [/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/include] ==> [/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/include]
-        collapse include dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/include] ==> [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/include]
-        collapse include dir [/usr/local/include] ==> [/usr/local/include]
-        collapse include dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/include-fixed] ==> [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/include-fixed]
-        collapse include dir [/usr/include] ==> [/usr/include]
-        implicit include dirs: [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/include;/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/include;/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/include;/usr/local/include;/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/include-fixed;/usr/include]
-      
-      
-  -
-    kind: "message-v1"
-    backtrace:
-      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:152 (message)"
-      - "/usr/share/cmake/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
-      - "CMakeLists.txt:2 (project)"
-    message: |
-      Parsed C implicit link information:
-        link line regex: [^( *|.*[/\\])(ld|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
-        ignore line: [Change Dir: /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-mMNNzc]
-        ignore line: []
-        ignore line: [Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_61a7c/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_61a7c.dir/build.make CMakeFiles/cmTC_61a7c.dir/build]
-        ignore line: [gmake[1]: Entering directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-mMNNzc']
-        ignore line: [Building C object CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.o]
-        ignore line: [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc   -v -o CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.o -c /usr/share/cmake/Modules/CMakeCCompilerABI.c]
-        ignore line: [Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/specs]
-        ignore line: [COLLECT_GCC=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc]
-        ignore line: [Target: x86_64-pc-linux-gnu]
-        ignore line: [Configured with: /dev/shm/nix-build-gcc-11.5.0.drv-0/nixbld3/spack-stage-gcc-11.5.0-ipl77l9qp6sgyb3nx7h47p8h5jajrr0w/spack-src/configure --prefix=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0 --with-pkgversion='Spack GCC' --with-bugurl=https://github.com/spack/spack/issues --disable-multilib --enable-languages=c c++ fortran jit --disable-nls --disable-canonical-system-headers --with-system-zlib --with-zstd-include=/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/include --with-zstd-lib=/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib --enable-host-shared --enable-bootstrap --with-mpfr-include=/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/include --with-mpfr-lib=/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib --with-gmp-include=/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/include --with-gmp-lib=/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib --with-mpc-include=/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/include --with-mpc-lib=/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib --without-isl --with-stage1-ldflags='-Wl -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -Wl -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -Wl -rpath /mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib -Wl -rpath /mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib -Wl -rpath /mnt/sw/nix/store/vp96y6y1vqzg84cjlfd85akggsa9jyn7-zlib-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib' --with-boot-ldflags='-Wl -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -Wl -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -Wl -rpath /mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib -Wl -rpath /mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib -Wl -rpath /mnt/sw/nix/store/vp96y6y1vqzg84cjlfd85akggsa9jyn7-zlib-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib -static-libstdc++ -static-libgcc' --with-build-config=spack --with-arch=broadwell --with-tune=broadwell]
-        ignore line: [Thread model: posix]
-        ignore line: [Supported LTO compression algorithms: zlib zstd]
-        ignore line: [gcc version 11.5.0 (Spack GCC) ]
-        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_61a7c.dir/']
-        ignore line: [ /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/cc1 -quiet -v /usr/share/cmake/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_61a7c.dir/ -dumpbase CMakeCCompilerABI.c.c -dumpbase-ext .c -mtune=broadwell -march=broadwell -version -o /tmp/ccVKZdVf.s]
-        ignore line: [GNU C17 (Spack GCC) version 11.5.0 (x86_64-pc-linux-gnu)]
-        ignore line: [	compiled by GNU C version 11.5.0  GMP version 6.3.0  MPFR version 4.2.1  MPC version 1.3.1  isl version none]
-        ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
-        ignore line: [ignoring duplicate directory "/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/include"]
-        ignore line: [ignoring nonexistent directory "/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../x86_64-pc-linux-gnu/include"]
-        ignore line: [#include "..." search starts here:]
-        ignore line: [#include <...> search starts here:]
-        ignore line: [ /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/include]
-        ignore line: [ /mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/include]
-        ignore line: [ /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/include]
-        ignore line: [ /usr/local/include]
-        ignore line: [ /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/include-fixed]
-        ignore line: [ /usr/include]
-        ignore line: [End of search list.]
-        ignore line: [GNU C17 (Spack GCC) version 11.5.0 (x86_64-pc-linux-gnu)]
-        ignore line: [	compiled by GNU C version 11.5.0  GMP version 6.3.0  MPFR version 4.2.1  MPC version 1.3.1  isl version none]
-        ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
-        ignore line: [Compiler executable checksum: e6d2f5ab1481c079e32bcec30a13b04b]
-        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_61a7c.dir/']
-        ignore line: [ as -v --64 -o CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.o /tmp/ccVKZdVf.s]
-        ignore line: [GNU assembler version 2.30 (x86_64-redhat-linux) using BFD version version 2.30-128.el8_10]
-        ignore line: [COMPILER_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/]
-        ignore line: [LIBRARY_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/:/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../:/lib/:/usr/lib/]
-        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.']
-        ignore line: [Linking C executable cmTC_61a7c]
-        ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_61a7c.dir/link.txt --verbose=1]
-        ignore line: [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc  -v CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.o -o cmTC_61a7c ]
-        ignore line: [Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/specs]
-        ignore line: [COLLECT_GCC=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc]
-        ignore line: [COLLECT_LTO_WRAPPER=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper]
-        ignore line: [Target: x86_64-pc-linux-gnu]
-        ignore line: [Configured with: /dev/shm/nix-build-gcc-11.5.0.drv-0/nixbld3/spack-stage-gcc-11.5.0-ipl77l9qp6sgyb3nx7h47p8h5jajrr0w/spack-src/configure --prefix=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0 --with-pkgversion='Spack GCC' --with-bugurl=https://github.com/spack/spack/issues --disable-multilib --enable-languages=c c++ fortran jit --disable-nls --disable-canonical-system-headers --with-system-zlib --with-zstd-include=/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/include --with-zstd-lib=/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib --enable-host-shared --enable-bootstrap --with-mpfr-include=/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/include --with-mpfr-lib=/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib --with-gmp-include=/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/include --with-gmp-lib=/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib --with-mpc-include=/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/include --with-mpc-lib=/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib --without-isl --with-stage1-ldflags='-Wl -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -Wl -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -Wl -rpath /mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib -Wl -rpath /mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib -Wl -rpath /mnt/sw/nix/store/vp96y6y1vqzg84cjlfd85akggsa9jyn7-zlib-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib' --with-boot-ldflags='-Wl -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -Wl -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -Wl -rpath /mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib -Wl -rpath /mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib -Wl -rpath /mnt/sw/nix/store/vp96y6y1vqzg84cjlfd85akggsa9jyn7-zlib-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib -static-libstdc++ -static-libgcc' --with-build-config=spack --with-arch=broadwell --with-tune=broadwell]
-        ignore line: [Thread model: posix]
-        ignore line: [Supported LTO compression algorithms: zlib zstd]
-        ignore line: [gcc version 11.5.0 (Spack GCC) ]
-        ignore line: [COMPILER_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/]
-        ignore line: [LIBRARY_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/:/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../:/lib/:/usr/lib/]
-        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_61a7c' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'cmTC_61a7c.']
-        link line: [ /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/collect2 -plugin /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/liblto_plugin.so -plugin-opt=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper -plugin-opt=-fresolution=/tmp/cc3KlBH2.res -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s --eh-frame-hdr -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_61a7c /lib/../lib64/crt1.o /lib/../lib64/crti.o /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtbegin.o -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -L/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../.. -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.o -lgcc --push-state --as-needed -lgcc_s --pop-state -lc -lgcc --push-state --as-needed -lgcc_s --pop-state /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtend.o /lib/../lib64/crtn.o]
-          arg [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/collect2] ==> ignore
-          arg [-plugin] ==> ignore
-          arg [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/liblto_plugin.so] ==> ignore
-          arg [-plugin-opt=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper] ==> ignore
-          arg [-plugin-opt=-fresolution=/tmp/cc3KlBH2.res] ==> ignore
-          arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
-          arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
-          arg [-plugin-opt=-pass-through=-lc] ==> ignore
-          arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
-          arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
-          arg [--eh-frame-hdr] ==> ignore
-          arg [-m] ==> ignore
-          arg [elf_x86_64] ==> ignore
-          arg [-dynamic-linker] ==> ignore
-          arg [/lib64/ld-linux-x86-64.so.2] ==> ignore
-          arg [-o] ==> ignore
-          arg [cmTC_61a7c] ==> ignore
-          arg [/lib/../lib64/crt1.o] ==> obj [/lib/../lib64/crt1.o]
-          arg [/lib/../lib64/crti.o] ==> obj [/lib/../lib64/crti.o]
-          arg [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtbegin.o] ==> obj [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtbegin.o]
-          arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64]
-          arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64]
-          arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0]
-          arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64]
-          arg [-L/lib/../lib64] ==> dir [/lib/../lib64]
-          arg [-L/usr/lib/../lib64] ==> dir [/usr/lib/../lib64]
-          arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64]
-          arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib]
-          arg [-L/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib] ==> dir [/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib]
-          arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../..] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../..]
-          arg [-rpath] ==> ignore
-          arg [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64] ==> ignore
-          arg [CMakeFiles/cmTC_61a7c.dir/CMakeCCompilerABI.c.o] ==> ignore
-          arg [-lgcc] ==> lib [gcc]
-          arg [--push-state] ==> ignore
-          arg [--as-needed] ==> ignore
-          arg [-lgcc_s] ==> lib [gcc_s]
-          arg [--pop-state] ==> ignore
-          arg [-lc] ==> lib [c]
-          arg [-lgcc] ==> lib [gcc]
-          arg [--push-state] ==> ignore
-          arg [--as-needed] ==> ignore
-          arg [-lgcc_s] ==> lib [gcc_s]
-          arg [--pop-state] ==> ignore
-          arg [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtend.o] ==> obj [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtend.o]
-          arg [/lib/../lib64/crtn.o] ==> obj [/lib/../lib64/crtn.o]
-        collapse obj [/lib/../lib64/crt1.o] ==> [/lib64/crt1.o]
-        collapse obj [/lib/../lib64/crti.o] ==> [/lib64/crti.o]
-        collapse obj [/lib/../lib64/crtn.o] ==> [/lib64/crtn.o]
-        collapse library dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64] ==> [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64]
-        collapse library dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64] ==> [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64]
-        collapse library dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0] ==> [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0]
-        collapse library dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64] ==> [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64]
-        collapse library dir [/lib/../lib64] ==> [/lib64]
-        collapse library dir [/usr/lib/../lib64] ==> [/usr/lib64]
-        collapse library dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64] ==> [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64]
-        collapse library dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib] ==> [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib]
-        collapse library dir [/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib] ==> [/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib]
-        collapse library dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../..] ==> [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib]
-        implicit libs: [gcc;gcc_s;c;gcc;gcc_s]
-        implicit objs: [/lib64/crt1.o;/lib64/crti.o;/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtbegin.o;/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtend.o;/lib64/crtn.o]
-        implicit dirs: [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64;/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0;/lib64;/usr/lib64;/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib;/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib]
-        implicit fwks: []
-      
-      
-  -
-    kind: "try_compile-v1"
-    backtrace:
-      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:57 (try_compile)"
       - "/usr/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
       - "CMakeLists.txt:2 (project)"
     checks:
       - "Detecting CXX compiler ABI info"
     directories:
-      source: "/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-WTksSs"
-      binary: "/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-WTksSs"
+      source: "/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-bIy6tW"
+      binary: "/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-bIy6tW"
     cmakeVariables:
       CMAKE_CXX_FLAGS: ""
       CMAKE_CXX_FLAGS_DEBUG: "-g"
@@ -302,12 +49,12 @@ events:
       variable: "CMAKE_CXX_ABI_COMPILED"
       cached: true
       stdout: |
-        Change Dir: /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-WTksSs
+        Change Dir: /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-bIy6tW
         
-        Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_08143/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_08143.dir/build.make CMakeFiles/cmTC_08143.dir/build
-        gmake[1]: Entering directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-WTksSs'
-        Building CXX object CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.o
-        /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++   -v -o CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.o -c /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp
+        Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_0cc5f/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_0cc5f.dir/build.make CMakeFiles/cmTC_0cc5f.dir/build
+        gmake[1]: Entering directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-bIy6tW'
+        Building CXX object CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.o
+        /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++   -v -o CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.o -c /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp
         Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/specs
         COLLECT_GCC=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++
         Target: x86_64-pc-linux-gnu
@@ -315,8 +62,8 @@ events:
         Thread model: posix
         Supported LTO compression algorithms: zlib zstd
         gcc version 11.5.0 (Spack GCC) 
-        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_08143.dir/'
-         /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/cc1plus -quiet -v -D_GNU_SOURCE /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp -quiet -dumpdir CMakeFiles/cmTC_08143.dir/ -dumpbase CMakeCXXCompilerABI.cpp.cpp -dumpbase-ext .cpp -mtune=broadwell -march=broadwell -version -o /tmp/ccDCDdcl.s
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_0cc5f.dir/'
+         /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/cc1plus -quiet -v -D_GNU_SOURCE /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp -quiet -dumpdir CMakeFiles/cmTC_0cc5f.dir/ -dumpbase CMakeCXXCompilerABI.cpp.cpp -dumpbase-ext .cpp -mtune=broadwell -march=broadwell -version -o /tmp/ccqNwhLz.s
         GNU C++17 (Spack GCC) version 11.5.0 (x86_64-pc-linux-gnu)
         	compiled by GNU C version 11.5.0, GMP version 6.3.0, MPFR version 4.2.1, MPC version 1.3.1, isl version none
         GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
@@ -338,15 +85,15 @@ events:
         	compiled by GNU C version 11.5.0, GMP version 6.3.0, MPFR version 4.2.1, MPC version 1.3.1, isl version none
         GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
         Compiler executable checksum: 98a4d3195540e9a99bed9ec80900b955
-        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_08143.dir/'
-         as -v --64 -o CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.o /tmp/ccDCDdcl.s
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_0cc5f.dir/'
+         as -v --64 -o CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.o /tmp/ccqNwhLz.s
         GNU assembler version 2.30 (x86_64-redhat-linux) using BFD version version 2.30-128.el8_10
         COMPILER_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/
         LIBRARY_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/:/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../:/lib/:/usr/lib/
-        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.'
-        Linking CXX executable cmTC_08143
-        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_08143.dir/link.txt --verbose=1
-        /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++  -v CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.o -o cmTC_08143 
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.'
+        Linking CXX executable cmTC_0cc5f
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_0cc5f.dir/link.txt --verbose=1
+        /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++  -v CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.o -o cmTC_0cc5f 
         Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/specs
         COLLECT_GCC=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++
         COLLECT_LTO_WRAPPER=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper
@@ -357,10 +104,10 @@ events:
         gcc version 11.5.0 (Spack GCC) 
         COMPILER_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/
         LIBRARY_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/:/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../:/lib/:/usr/lib/
-        COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_08143' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'cmTC_08143.'
-         /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/collect2 -plugin /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/liblto_plugin.so -plugin-opt=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper -plugin-opt=-fresolution=/tmp/ccNljuxt.res -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc --eh-frame-hdr -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_08143 /lib/../lib64/crt1.o /lib/../lib64/crti.o /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtbegin.o -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -L/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../.. -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.o -lstdc++ -lm -lgcc_s -lgcc -lc -lgcc_s -lgcc /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtend.o /lib/../lib64/crtn.o
-        COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_08143' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'cmTC_08143.'
-        gmake[1]: Leaving directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-WTksSs'
+        COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_0cc5f' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'cmTC_0cc5f.'
+         /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/collect2 -plugin /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/liblto_plugin.so -plugin-opt=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper -plugin-opt=-fresolution=/tmp/ccloGqKp.res -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc --eh-frame-hdr -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_0cc5f /lib/../lib64/crt1.o /lib/../lib64/crti.o /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtbegin.o -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -L/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../.. -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.o -lstdc++ -lm -lgcc_s -lgcc -lc -lgcc_s -lgcc /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtend.o /lib/../lib64/crtn.o
+        COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_0cc5f' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'cmTC_0cc5f.'
+        gmake[1]: Leaving directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-bIy6tW'
         
       exitCode: 0
   -
@@ -404,12 +151,12 @@ events:
     message: |
       Parsed CXX implicit link information:
         link line regex: [^( *|.*[/\\])(ld|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
-        ignore line: [Change Dir: /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-WTksSs]
+        ignore line: [Change Dir: /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-bIy6tW]
         ignore line: []
-        ignore line: [Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_08143/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_08143.dir/build.make CMakeFiles/cmTC_08143.dir/build]
-        ignore line: [gmake[1]: Entering directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-WTksSs']
-        ignore line: [Building CXX object CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.o]
-        ignore line: [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++   -v -o CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.o -c /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp]
+        ignore line: [Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_0cc5f/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_0cc5f.dir/build.make CMakeFiles/cmTC_0cc5f.dir/build]
+        ignore line: [gmake[1]: Entering directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-bIy6tW']
+        ignore line: [Building CXX object CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.o]
+        ignore line: [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++   -v -o CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.o -c /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp]
         ignore line: [Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/specs]
         ignore line: [COLLECT_GCC=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++]
         ignore line: [Target: x86_64-pc-linux-gnu]
@@ -417,8 +164,8 @@ events:
         ignore line: [Thread model: posix]
         ignore line: [Supported LTO compression algorithms: zlib zstd]
         ignore line: [gcc version 11.5.0 (Spack GCC) ]
-        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_08143.dir/']
-        ignore line: [ /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/cc1plus -quiet -v -D_GNU_SOURCE /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp -quiet -dumpdir CMakeFiles/cmTC_08143.dir/ -dumpbase CMakeCXXCompilerABI.cpp.cpp -dumpbase-ext .cpp -mtune=broadwell -march=broadwell -version -o /tmp/ccDCDdcl.s]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_0cc5f.dir/']
+        ignore line: [ /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/cc1plus -quiet -v -D_GNU_SOURCE /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp -quiet -dumpdir CMakeFiles/cmTC_0cc5f.dir/ -dumpbase CMakeCXXCompilerABI.cpp.cpp -dumpbase-ext .cpp -mtune=broadwell -march=broadwell -version -o /tmp/ccqNwhLz.s]
         ignore line: [GNU C++17 (Spack GCC) version 11.5.0 (x86_64-pc-linux-gnu)]
         ignore line: [	compiled by GNU C version 11.5.0  GMP version 6.3.0  MPFR version 4.2.1  MPC version 1.3.1  isl version none]
         ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
@@ -440,15 +187,15 @@ events:
         ignore line: [	compiled by GNU C version 11.5.0  GMP version 6.3.0  MPFR version 4.2.1  MPC version 1.3.1  isl version none]
         ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
         ignore line: [Compiler executable checksum: 98a4d3195540e9a99bed9ec80900b955]
-        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_08143.dir/']
-        ignore line: [ as -v --64 -o CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.o /tmp/ccDCDdcl.s]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_0cc5f.dir/']
+        ignore line: [ as -v --64 -o CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.o /tmp/ccqNwhLz.s]
         ignore line: [GNU assembler version 2.30 (x86_64-redhat-linux) using BFD version version 2.30-128.el8_10]
         ignore line: [COMPILER_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/]
         ignore line: [LIBRARY_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/:/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../:/lib/:/usr/lib/]
-        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.']
-        ignore line: [Linking CXX executable cmTC_08143]
-        ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_08143.dir/link.txt --verbose=1]
-        ignore line: [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++  -v CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.o -o cmTC_08143 ]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.']
+        ignore line: [Linking CXX executable cmTC_0cc5f]
+        ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_0cc5f.dir/link.txt --verbose=1]
+        ignore line: [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++  -v CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.o -o cmTC_0cc5f ]
         ignore line: [Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/specs]
         ignore line: [COLLECT_GCC=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++]
         ignore line: [COLLECT_LTO_WRAPPER=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper]
@@ -459,13 +206,13 @@ events:
         ignore line: [gcc version 11.5.0 (Spack GCC) ]
         ignore line: [COMPILER_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/]
         ignore line: [LIBRARY_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/:/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../:/lib/:/usr/lib/]
-        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_08143' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'cmTC_08143.']
-        link line: [ /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/collect2 -plugin /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/liblto_plugin.so -plugin-opt=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper -plugin-opt=-fresolution=/tmp/ccNljuxt.res -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc --eh-frame-hdr -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_08143 /lib/../lib64/crt1.o /lib/../lib64/crti.o /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtbegin.o -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -L/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../.. -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.o -lstdc++ -lm -lgcc_s -lgcc -lc -lgcc_s -lgcc /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtend.o /lib/../lib64/crtn.o]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_0cc5f' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'cmTC_0cc5f.']
+        link line: [ /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/collect2 -plugin /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/liblto_plugin.so -plugin-opt=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper -plugin-opt=-fresolution=/tmp/ccloGqKp.res -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc --eh-frame-hdr -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_0cc5f /lib/../lib64/crt1.o /lib/../lib64/crti.o /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtbegin.o -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -L/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../.. -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.o -lstdc++ -lm -lgcc_s -lgcc -lc -lgcc_s -lgcc /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtend.o /lib/../lib64/crtn.o]
           arg [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/collect2] ==> ignore
           arg [-plugin] ==> ignore
           arg [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/liblto_plugin.so] ==> ignore
           arg [-plugin-opt=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper] ==> ignore
-          arg [-plugin-opt=-fresolution=/tmp/ccNljuxt.res] ==> ignore
+          arg [-plugin-opt=-fresolution=/tmp/ccloGqKp.res] ==> ignore
           arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
           arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
           arg [-plugin-opt=-pass-through=-lc] ==> ignore
@@ -477,7 +224,7 @@ events:
           arg [-dynamic-linker] ==> ignore
           arg [/lib64/ld-linux-x86-64.so.2] ==> ignore
           arg [-o] ==> ignore
-          arg [cmTC_08143] ==> ignore
+          arg [cmTC_0cc5f] ==> ignore
           arg [/lib/../lib64/crt1.o] ==> obj [/lib/../lib64/crt1.o]
           arg [/lib/../lib64/crti.o] ==> obj [/lib/../lib64/crti.o]
           arg [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtbegin.o] ==> obj [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtbegin.o]
@@ -493,7 +240,7 @@ events:
           arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../..] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../..]
           arg [-rpath] ==> ignore
           arg [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64] ==> ignore
-          arg [CMakeFiles/cmTC_08143.dir/CMakeCXXCompilerABI.cpp.o] ==> ignore
+          arg [CMakeFiles/cmTC_0cc5f.dir/CMakeCXXCompilerABI.cpp.o] ==> ignore
           arg [-lstdc++] ==> lib [stdc++]
           arg [-lm] ==> lib [m]
           arg [-lgcc_s] ==> lib [gcc_s]
@@ -527,212 +274,11 @@ events:
     backtrace:
       - "/usr/share/cmake/Modules/FindOpenMP.cmake:219 (try_compile)"
       - "/usr/share/cmake/Modules/FindOpenMP.cmake:483 (_OPENMP_GET_FLAGS)"
-      - "CMakeLists.txt:6 (find_package)"
-    description: "Detecting C OpenMP compiler info"
-    directories:
-      source: "/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-Pq9NPf"
-      binary: "/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-Pq9NPf"
-    cmakeVariables:
-      CMAKE_C_FLAGS: ""
-      CMAKE_C_FLAGS_DEBUG: "-g"
-      CMAKE_EXE_LINKER_FLAGS: ""
-    buildResult:
-      variable: "OpenMP_COMPILE_RESULT_C_fopenmp"
-      cached: true
-      stdout: |
-        Change Dir: /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-Pq9NPf
-        
-        Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_662cf/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_662cf.dir/build.make CMakeFiles/cmTC_662cf.dir/build
-        gmake[1]: Entering directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-Pq9NPf'
-        Building C object CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.o
-        /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc   -fopenmp -v -o CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.o -c /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-Pq9NPf/OpenMPTryFlag.c
-        Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/specs
-        COLLECT_GCC=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc
-        Target: x86_64-pc-linux-gnu
-        Configured with: /dev/shm/nix-build-gcc-11.5.0.drv-0/nixbld3/spack-stage-gcc-11.5.0-ipl77l9qp6sgyb3nx7h47p8h5jajrr0w/spack-src/configure --prefix=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0 --with-pkgversion='Spack GCC' --with-bugurl=https://github.com/spack/spack/issues --disable-multilib --enable-languages=c,c++,fortran,jit --disable-nls --disable-canonical-system-headers --with-system-zlib --with-zstd-include=/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/include --with-zstd-lib=/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib --enable-host-shared --enable-bootstrap --with-mpfr-include=/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/include --with-mpfr-lib=/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib --with-gmp-include=/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/include --with-gmp-lib=/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib --with-mpc-include=/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/include --with-mpc-lib=/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib --without-isl --with-stage1-ldflags='-Wl,-rpath,/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -Wl,-rpath,/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -Wl,-rpath,/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib -Wl,-rpath,/mnt/sw/nix/store/vp96y6y1vqzg84cjlfd85akggsa9jyn7-zlib-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib' --with-boot-ldflags='-Wl,-rpath,/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -Wl,-rpath,/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -Wl,-rpath,/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib -Wl,-rpath,/mnt/sw/nix/store/vp96y6y1vqzg84cjlfd85akggsa9jyn7-zlib-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib -static-libstdc++ -static-libgcc' --with-build-config=spack --with-arch=broadwell --with-tune=broadwell
-        Thread model: posix
-        Supported LTO compression algorithms: zlib zstd
-        gcc version 11.5.0 (Spack GCC) 
-        COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-o' 'CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.o' '-c' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'CMakeFiles/cmTC_662cf.dir/'
-         /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/cc1 -quiet -v -D_REENTRANT /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-Pq9NPf/OpenMPTryFlag.c -quiet -dumpdir CMakeFiles/cmTC_662cf.dir/ -dumpbase OpenMPTryFlag.c.c -dumpbase-ext .c -mtune=broadwell -march=broadwell -version -fopenmp -o /tmp/ccoGcxbd.s
-        GNU C17 (Spack GCC) version 11.5.0 (x86_64-pc-linux-gnu)
-        	compiled by GNU C version 11.5.0, GMP version 6.3.0, MPFR version 4.2.1, MPC version 1.3.1, isl version none
-        GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
-        ignoring duplicate directory "/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/include"
-        ignoring nonexistent directory "/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../x86_64-pc-linux-gnu/include"
-        #include "..." search starts here:
-        #include <...> search starts here:
-         /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/include
-         /mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/include
-         /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/include
-         /usr/local/include
-         /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/include-fixed
-         /usr/include
-        End of search list.
-        GNU C17 (Spack GCC) version 11.5.0 (x86_64-pc-linux-gnu)
-        	compiled by GNU C version 11.5.0, GMP version 6.3.0, MPFR version 4.2.1, MPC version 1.3.1, isl version none
-        GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
-        Compiler executable checksum: e6d2f5ab1481c079e32bcec30a13b04b
-        COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-o' 'CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.o' '-c' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'CMakeFiles/cmTC_662cf.dir/'
-         as -v --64 -o CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.o /tmp/ccoGcxbd.s
-        GNU assembler version 2.30 (x86_64-redhat-linux) using BFD version version 2.30-128.el8_10
-        COMPILER_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/
-        LIBRARY_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/:/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../:/lib/:/usr/lib/
-        COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-o' 'CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.o' '-c' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.'
-        Linking C executable cmTC_662cf
-        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_662cf.dir/link.txt --verbose=1
-        /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc  -fopenmp -v CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.o -o cmTC_662cf  -v 
-        Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/specs
-        COLLECT_GCC=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc
-        COLLECT_LTO_WRAPPER=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper
-        Target: x86_64-pc-linux-gnu
-        Configured with: /dev/shm/nix-build-gcc-11.5.0.drv-0/nixbld3/spack-stage-gcc-11.5.0-ipl77l9qp6sgyb3nx7h47p8h5jajrr0w/spack-src/configure --prefix=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0 --with-pkgversion='Spack GCC' --with-bugurl=https://github.com/spack/spack/issues --disable-multilib --enable-languages=c,c++,fortran,jit --disable-nls --disable-canonical-system-headers --with-system-zlib --with-zstd-include=/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/include --with-zstd-lib=/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib --enable-host-shared --enable-bootstrap --with-mpfr-include=/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/include --with-mpfr-lib=/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib --with-gmp-include=/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/include --with-gmp-lib=/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib --with-mpc-include=/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/include --with-mpc-lib=/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib --without-isl --with-stage1-ldflags='-Wl,-rpath,/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -Wl,-rpath,/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -Wl,-rpath,/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib -Wl,-rpath,/mnt/sw/nix/store/vp96y6y1vqzg84cjlfd85akggsa9jyn7-zlib-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib' --with-boot-ldflags='-Wl,-rpath,/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -Wl,-rpath,/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -Wl,-rpath,/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib -Wl,-rpath,/mnt/sw/nix/store/vp96y6y1vqzg84cjlfd85akggsa9jyn7-zlib-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib -static-libstdc++ -static-libgcc' --with-build-config=spack --with-arch=broadwell --with-tune=broadwell
-        Thread model: posix
-        Supported LTO compression algorithms: zlib zstd
-        gcc version 11.5.0 (Spack GCC) 
-        COMPILER_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/
-        LIBRARY_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/:/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../:/lib/:/usr/lib/
-        Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/libgomp.spec
-        COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-o' 'cmTC_662cf' '-v' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'cmTC_662cf.'
-         /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/collect2 -plugin /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/liblto_plugin.so -plugin-opt=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper -plugin-opt=-fresolution=/tmp/cc078giW.res -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lpthread -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s --eh-frame-hdr -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_662cf /lib/../lib64/crt1.o /lib/../lib64/crti.o /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtbegin.o -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -L/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../.. -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.o -lgomp -lgcc --push-state --as-needed -lgcc_s --pop-state -lpthread -lc -lgcc --push-state --as-needed -lgcc_s --pop-state /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtend.o /lib/../lib64/crtn.o
-        COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-o' 'cmTC_662cf' '-v' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'cmTC_662cf.'
-        gmake[1]: Leaving directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-Pq9NPf'
-        
-      exitCode: 0
-  -
-    kind: "message-v1"
-    backtrace:
-      - "/usr/share/cmake/Modules/FindOpenMP.cmake:262 (message)"
-      - "/usr/share/cmake/Modules/FindOpenMP.cmake:483 (_OPENMP_GET_FLAGS)"
-      - "CMakeLists.txt:6 (find_package)"
-    message: |
-      Parsed C OpenMP implicit link information from above output:
-        link line regex: [^( *|.*[/\\])(ld|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
-        ignore line: [Change Dir: /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-Pq9NPf]
-        ignore line: []
-        ignore line: [Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_662cf/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_662cf.dir/build.make CMakeFiles/cmTC_662cf.dir/build]
-        ignore line: [gmake[1]: Entering directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-Pq9NPf']
-        ignore line: [Building C object CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.o]
-        ignore line: [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc   -fopenmp -v -o CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.o -c /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-Pq9NPf/OpenMPTryFlag.c]
-        ignore line: [Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/specs]
-        ignore line: [COLLECT_GCC=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc]
-        ignore line: [Target: x86_64-pc-linux-gnu]
-        ignore line: [Configured with: /dev/shm/nix-build-gcc-11.5.0.drv-0/nixbld3/spack-stage-gcc-11.5.0-ipl77l9qp6sgyb3nx7h47p8h5jajrr0w/spack-src/configure --prefix=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0 --with-pkgversion='Spack GCC' --with-bugurl=https://github.com/spack/spack/issues --disable-multilib --enable-languages=c c++ fortran jit --disable-nls --disable-canonical-system-headers --with-system-zlib --with-zstd-include=/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/include --with-zstd-lib=/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib --enable-host-shared --enable-bootstrap --with-mpfr-include=/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/include --with-mpfr-lib=/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib --with-gmp-include=/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/include --with-gmp-lib=/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib --with-mpc-include=/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/include --with-mpc-lib=/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib --without-isl --with-stage1-ldflags='-Wl -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -Wl -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -Wl -rpath /mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib -Wl -rpath /mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib -Wl -rpath /mnt/sw/nix/store/vp96y6y1vqzg84cjlfd85akggsa9jyn7-zlib-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib' --with-boot-ldflags='-Wl -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -Wl -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -Wl -rpath /mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib -Wl -rpath /mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib -Wl -rpath /mnt/sw/nix/store/vp96y6y1vqzg84cjlfd85akggsa9jyn7-zlib-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib -static-libstdc++ -static-libgcc' --with-build-config=spack --with-arch=broadwell --with-tune=broadwell]
-        ignore line: [Thread model: posix]
-        ignore line: [Supported LTO compression algorithms: zlib zstd]
-        ignore line: [gcc version 11.5.0 (Spack GCC) ]
-        ignore line: [COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-o' 'CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.o' '-c' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'CMakeFiles/cmTC_662cf.dir/']
-        ignore line: [ /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/cc1 -quiet -v -D_REENTRANT /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-Pq9NPf/OpenMPTryFlag.c -quiet -dumpdir CMakeFiles/cmTC_662cf.dir/ -dumpbase OpenMPTryFlag.c.c -dumpbase-ext .c -mtune=broadwell -march=broadwell -version -fopenmp -o /tmp/ccoGcxbd.s]
-        ignore line: [GNU C17 (Spack GCC) version 11.5.0 (x86_64-pc-linux-gnu)]
-        ignore line: [	compiled by GNU C version 11.5.0  GMP version 6.3.0  MPFR version 4.2.1  MPC version 1.3.1  isl version none]
-        ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
-        ignore line: [ignoring duplicate directory "/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/include"]
-        ignore line: [ignoring nonexistent directory "/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../x86_64-pc-linux-gnu/include"]
-        ignore line: [#include "..." search starts here:]
-        ignore line: [#include <...> search starts here:]
-        ignore line: [ /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/include]
-        ignore line: [ /mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/include]
-        ignore line: [ /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/include]
-        ignore line: [ /usr/local/include]
-        ignore line: [ /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/include-fixed]
-        ignore line: [ /usr/include]
-        ignore line: [End of search list.]
-        ignore line: [GNU C17 (Spack GCC) version 11.5.0 (x86_64-pc-linux-gnu)]
-        ignore line: [	compiled by GNU C version 11.5.0  GMP version 6.3.0  MPFR version 4.2.1  MPC version 1.3.1  isl version none]
-        ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
-        ignore line: [Compiler executable checksum: e6d2f5ab1481c079e32bcec30a13b04b]
-        ignore line: [COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-o' 'CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.o' '-c' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'CMakeFiles/cmTC_662cf.dir/']
-        ignore line: [ as -v --64 -o CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.o /tmp/ccoGcxbd.s]
-        ignore line: [GNU assembler version 2.30 (x86_64-redhat-linux) using BFD version version 2.30-128.el8_10]
-        ignore line: [COMPILER_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/]
-        ignore line: [LIBRARY_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/:/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../:/lib/:/usr/lib/]
-        ignore line: [COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-o' 'CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.o' '-c' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.']
-        ignore line: [Linking C executable cmTC_662cf]
-        ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_662cf.dir/link.txt --verbose=1]
-        ignore line: [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc  -fopenmp -v CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.o -o cmTC_662cf  -v ]
-        ignore line: [Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/specs]
-        ignore line: [COLLECT_GCC=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc]
-        ignore line: [COLLECT_LTO_WRAPPER=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper]
-        ignore line: [Target: x86_64-pc-linux-gnu]
-        ignore line: [Configured with: /dev/shm/nix-build-gcc-11.5.0.drv-0/nixbld3/spack-stage-gcc-11.5.0-ipl77l9qp6sgyb3nx7h47p8h5jajrr0w/spack-src/configure --prefix=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0 --with-pkgversion='Spack GCC' --with-bugurl=https://github.com/spack/spack/issues --disable-multilib --enable-languages=c c++ fortran jit --disable-nls --disable-canonical-system-headers --with-system-zlib --with-zstd-include=/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/include --with-zstd-lib=/mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib --enable-host-shared --enable-bootstrap --with-mpfr-include=/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/include --with-mpfr-lib=/mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib --with-gmp-include=/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/include --with-gmp-lib=/mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib --with-mpc-include=/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/include --with-mpc-lib=/mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib --without-isl --with-stage1-ldflags='-Wl -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -Wl -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -Wl -rpath /mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib -Wl -rpath /mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib -Wl -rpath /mnt/sw/nix/store/vp96y6y1vqzg84cjlfd85akggsa9jyn7-zlib-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib' --with-boot-ldflags='-Wl -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -Wl -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -Wl -rpath /mnt/sw/nix/store/zdyfpzfxp0r5k16s10xb66l7qih5ldan-gmp-6.3.0/lib -Wl -rpath /mnt/sw/nix/store/v0136bvazqyy3j2fhy9wq3l4wk9s0hlf-mpc-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/4iz2s3sj7kg8l2arw69sk2ll4pm21zib-mpfr-4.2.1/lib -Wl -rpath /mnt/sw/nix/store/vp96y6y1vqzg84cjlfd85akggsa9jyn7-zlib-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/yv8wkrkcyjjxddk34dya580xnd0h3pnx-zstd-1.5.6/lib -static-libstdc++ -static-libgcc' --with-build-config=spack --with-arch=broadwell --with-tune=broadwell]
-        ignore line: [Thread model: posix]
-        ignore line: [Supported LTO compression algorithms: zlib zstd]
-        ignore line: [gcc version 11.5.0 (Spack GCC) ]
-        ignore line: [COMPILER_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/]
-        ignore line: [LIBRARY_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/:/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../:/lib/:/usr/lib/]
-        ignore line: [Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/libgomp.spec]
-        ignore line: [COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-o' 'cmTC_662cf' '-v' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'cmTC_662cf.']
-        link line: [ /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/collect2 -plugin /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/liblto_plugin.so -plugin-opt=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper -plugin-opt=-fresolution=/tmp/cc078giW.res -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lpthread -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s --eh-frame-hdr -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_662cf /lib/../lib64/crt1.o /lib/../lib64/crti.o /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtbegin.o -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -L/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../.. -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.o -lgomp -lgcc --push-state --as-needed -lgcc_s --pop-state -lpthread -lc -lgcc --push-state --as-needed -lgcc_s --pop-state /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtend.o /lib/../lib64/crtn.o]
-          arg [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/collect2] ==> ignore
-          arg [-plugin] ==> ignore
-          arg [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/liblto_plugin.so] ==> ignore
-          arg [-plugin-opt=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper] ==> ignore
-          arg [-plugin-opt=-fresolution=/tmp/cc078giW.res] ==> ignore
-          arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
-          arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
-          arg [-plugin-opt=-pass-through=-lpthread] ==> ignore
-          arg [-plugin-opt=-pass-through=-lc] ==> ignore
-          arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
-          arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
-          arg [--eh-frame-hdr] ==> ignore
-          arg [-m] ==> ignore
-          arg [elf_x86_64] ==> ignore
-          arg [-dynamic-linker] ==> ignore
-          arg [/lib64/ld-linux-x86-64.so.2] ==> ignore
-          arg [-o] ==> ignore
-          arg [cmTC_662cf] ==> ignore
-          arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64]
-          arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64]
-          arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0]
-          arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64]
-          arg [-L/lib/../lib64] ==> dir [/lib/../lib64]
-          arg [-L/usr/lib/../lib64] ==> dir [/usr/lib/../lib64]
-          arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64]
-          arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib]
-          arg [-L/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib] ==> dir [/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib]
-          arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../..] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../..]
-          arg [-rpath] ==> ignore
-          arg [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64] ==> ignore
-          arg [CMakeFiles/cmTC_662cf.dir/OpenMPTryFlag.c.o] ==> ignore
-          arg [-lgomp] ==> lib [gomp]
-          arg [-lgcc] ==> lib [gcc]
-          arg [--push-state] ==> ignore
-          arg [--as-needed] ==> ignore
-          arg [-lgcc_s] ==> lib [gcc_s]
-          arg [--pop-state] ==> ignore
-          arg [-lpthread] ==> lib [pthread]
-          arg [-lc] ==> lib [c]
-          arg [-lgcc] ==> lib [gcc]
-          arg [--push-state] ==> ignore
-          arg [--as-needed] ==> ignore
-          arg [-lgcc_s] ==> lib [gcc_s]
-          arg [--pop-state] ==> ignore
-        collapse library dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64] ==> [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64]
-        collapse library dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64] ==> [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64]
-        collapse library dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0] ==> [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0]
-        collapse library dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64] ==> [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64]
-        collapse library dir [/lib/../lib64] ==> [/lib64]
-        collapse library dir [/usr/lib/../lib64] ==> [/usr/lib64]
-        collapse library dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64] ==> [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64]
-        collapse library dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib] ==> [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib]
-        collapse library dir [/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib] ==> [/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib]
-        collapse library dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../..] ==> [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib]
-        implicit libs: [gomp;gcc;gcc_s;pthread;c;gcc;gcc_s]
-        implicit objs: []
-        implicit dirs: [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64;/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0;/lib64;/usr/lib64;/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib;/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib]
-        implicit fwks: []
-      
-      
-  -
-    kind: "try_compile-v1"
-    backtrace:
-      - "/usr/share/cmake/Modules/FindOpenMP.cmake:219 (try_compile)"
-      - "/usr/share/cmake/Modules/FindOpenMP.cmake:483 (_OPENMP_GET_FLAGS)"
-      - "CMakeLists.txt:6 (find_package)"
+      - "CMakeLists.txt:12 (find_package)"
     description: "Detecting CXX OpenMP compiler info"
     directories:
-      source: "/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-TPvaR5"
-      binary: "/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-TPvaR5"
+      source: "/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-wQiR0F"
+      binary: "/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-wQiR0F"
     cmakeVariables:
       CMAKE_CXX_FLAGS: ""
       CMAKE_CXX_FLAGS_DEBUG: "-g"
@@ -741,12 +287,12 @@ events:
       variable: "OpenMP_COMPILE_RESULT_CXX_fopenmp"
       cached: true
       stdout: |
-        Change Dir: /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-TPvaR5
+        Change Dir: /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-wQiR0F
         
-        Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_78756/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_78756.dir/build.make CMakeFiles/cmTC_78756.dir/build
-        gmake[1]: Entering directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-TPvaR5'
-        Building CXX object CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.o
-        /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++   -fopenmp -v -std=gnu++17 -o CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.o -c /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-TPvaR5/OpenMPTryFlag.cpp
+        Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_c26e5/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_c26e5.dir/build.make CMakeFiles/cmTC_c26e5.dir/build
+        gmake[1]: Entering directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-wQiR0F'
+        Building CXX object CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.o
+        /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++   -fopenmp -v -std=gnu++17 -o CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.o -c /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-wQiR0F/OpenMPTryFlag.cpp
         Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/specs
         COLLECT_GCC=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++
         Target: x86_64-pc-linux-gnu
@@ -754,8 +300,8 @@ events:
         Thread model: posix
         Supported LTO compression algorithms: zlib zstd
         gcc version 11.5.0 (Spack GCC) 
-        COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-std=gnu++17' '-o' 'CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'CMakeFiles/cmTC_78756.dir/'
-         /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/cc1plus -quiet -v -D_GNU_SOURCE -D_REENTRANT /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-TPvaR5/OpenMPTryFlag.cpp -quiet -dumpdir CMakeFiles/cmTC_78756.dir/ -dumpbase OpenMPTryFlag.cpp.cpp -dumpbase-ext .cpp -mtune=broadwell -march=broadwell -std=gnu++17 -version -fopenmp -o /tmp/ccGN7M4T.s
+        COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-std=gnu++17' '-o' 'CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'CMakeFiles/cmTC_c26e5.dir/'
+         /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/cc1plus -quiet -v -D_GNU_SOURCE -D_REENTRANT /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-wQiR0F/OpenMPTryFlag.cpp -quiet -dumpdir CMakeFiles/cmTC_c26e5.dir/ -dumpbase OpenMPTryFlag.cpp.cpp -dumpbase-ext .cpp -mtune=broadwell -march=broadwell -std=gnu++17 -version -fopenmp -o /tmp/ccpF8g0a.s
         GNU C++17 (Spack GCC) version 11.5.0 (x86_64-pc-linux-gnu)
         	compiled by GNU C version 11.5.0, GMP version 6.3.0, MPFR version 4.2.1, MPC version 1.3.1, isl version none
         GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
@@ -777,15 +323,15 @@ events:
         	compiled by GNU C version 11.5.0, GMP version 6.3.0, MPFR version 4.2.1, MPC version 1.3.1, isl version none
         GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
         Compiler executable checksum: 98a4d3195540e9a99bed9ec80900b955
-        COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-std=gnu++17' '-o' 'CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'CMakeFiles/cmTC_78756.dir/'
-         as -v --64 -o CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.o /tmp/ccGN7M4T.s
+        COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-std=gnu++17' '-o' 'CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'CMakeFiles/cmTC_c26e5.dir/'
+         as -v --64 -o CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.o /tmp/ccpF8g0a.s
         GNU assembler version 2.30 (x86_64-redhat-linux) using BFD version version 2.30-128.el8_10
         COMPILER_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/
         LIBRARY_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/:/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../:/lib/:/usr/lib/
-        COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-std=gnu++17' '-o' 'CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.'
-        Linking CXX executable cmTC_78756
-        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_78756.dir/link.txt --verbose=1
-        /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++  -fopenmp -v CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.o -o cmTC_78756  -v 
+        COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-std=gnu++17' '-o' 'CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.'
+        Linking CXX executable cmTC_c26e5
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_c26e5.dir/link.txt --verbose=1
+        /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++  -fopenmp -v CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.o -o cmTC_c26e5  -v 
         Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/specs
         COLLECT_GCC=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++
         COLLECT_LTO_WRAPPER=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper
@@ -797,10 +343,10 @@ events:
         COMPILER_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/
         LIBRARY_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/:/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../:/lib/:/usr/lib/
         Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/libgomp.spec
-        COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-o' 'cmTC_78756' '-v' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'cmTC_78756.'
-         /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/collect2 -plugin /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/liblto_plugin.so -plugin-opt=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper -plugin-opt=-fresolution=/tmp/cc0fuyWv.res -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lpthread -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc --eh-frame-hdr -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_78756 /lib/../lib64/crt1.o /lib/../lib64/crti.o /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtbegin.o -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -L/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../.. -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.o -lstdc++ -lm -lgomp -lgcc_s -lgcc -lpthread -lc -lgcc_s -lgcc /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtend.o /lib/../lib64/crtn.o
-        COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-o' 'cmTC_78756' '-v' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'cmTC_78756.'
-        gmake[1]: Leaving directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-TPvaR5'
+        COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-o' 'cmTC_c26e5' '-v' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'cmTC_c26e5.'
+         /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/collect2 -plugin /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/liblto_plugin.so -plugin-opt=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper -plugin-opt=-fresolution=/tmp/ccyQn9c7.res -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lpthread -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc --eh-frame-hdr -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_c26e5 /lib/../lib64/crt1.o /lib/../lib64/crti.o /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtbegin.o -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -L/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../.. -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.o -lstdc++ -lm -lgomp -lgcc_s -lgcc -lpthread -lc -lgcc_s -lgcc /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtend.o /lib/../lib64/crtn.o
+        COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-o' 'cmTC_c26e5' '-v' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'cmTC_c26e5.'
+        gmake[1]: Leaving directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-wQiR0F'
         
       exitCode: 0
   -
@@ -808,16 +354,16 @@ events:
     backtrace:
       - "/usr/share/cmake/Modules/FindOpenMP.cmake:262 (message)"
       - "/usr/share/cmake/Modules/FindOpenMP.cmake:483 (_OPENMP_GET_FLAGS)"
-      - "CMakeLists.txt:6 (find_package)"
+      - "CMakeLists.txt:12 (find_package)"
     message: |
       Parsed CXX OpenMP implicit link information from above output:
         link line regex: [^( *|.*[/\\])(ld|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
-        ignore line: [Change Dir: /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-TPvaR5]
+        ignore line: [Change Dir: /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-wQiR0F]
         ignore line: []
-        ignore line: [Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_78756/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_78756.dir/build.make CMakeFiles/cmTC_78756.dir/build]
-        ignore line: [gmake[1]: Entering directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-TPvaR5']
-        ignore line: [Building CXX object CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.o]
-        ignore line: [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++   -fopenmp -v -std=gnu++17 -o CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.o -c /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-TPvaR5/OpenMPTryFlag.cpp]
+        ignore line: [Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_c26e5/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_c26e5.dir/build.make CMakeFiles/cmTC_c26e5.dir/build]
+        ignore line: [gmake[1]: Entering directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-wQiR0F']
+        ignore line: [Building CXX object CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.o]
+        ignore line: [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++   -fopenmp -v -std=gnu++17 -o CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.o -c /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-wQiR0F/OpenMPTryFlag.cpp]
         ignore line: [Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/specs]
         ignore line: [COLLECT_GCC=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++]
         ignore line: [Target: x86_64-pc-linux-gnu]
@@ -825,8 +371,8 @@ events:
         ignore line: [Thread model: posix]
         ignore line: [Supported LTO compression algorithms: zlib zstd]
         ignore line: [gcc version 11.5.0 (Spack GCC) ]
-        ignore line: [COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-std=gnu++17' '-o' 'CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'CMakeFiles/cmTC_78756.dir/']
-        ignore line: [ /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/cc1plus -quiet -v -D_GNU_SOURCE -D_REENTRANT /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-TPvaR5/OpenMPTryFlag.cpp -quiet -dumpdir CMakeFiles/cmTC_78756.dir/ -dumpbase OpenMPTryFlag.cpp.cpp -dumpbase-ext .cpp -mtune=broadwell -march=broadwell -std=gnu++17 -version -fopenmp -o /tmp/ccGN7M4T.s]
+        ignore line: [COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-std=gnu++17' '-o' 'CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'CMakeFiles/cmTC_c26e5.dir/']
+        ignore line: [ /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/cc1plus -quiet -v -D_GNU_SOURCE -D_REENTRANT /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-wQiR0F/OpenMPTryFlag.cpp -quiet -dumpdir CMakeFiles/cmTC_c26e5.dir/ -dumpbase OpenMPTryFlag.cpp.cpp -dumpbase-ext .cpp -mtune=broadwell -march=broadwell -std=gnu++17 -version -fopenmp -o /tmp/ccpF8g0a.s]
         ignore line: [GNU C++17 (Spack GCC) version 11.5.0 (x86_64-pc-linux-gnu)]
         ignore line: [	compiled by GNU C version 11.5.0  GMP version 6.3.0  MPFR version 4.2.1  MPC version 1.3.1  isl version none]
         ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
@@ -848,15 +394,15 @@ events:
         ignore line: [	compiled by GNU C version 11.5.0  GMP version 6.3.0  MPFR version 4.2.1  MPC version 1.3.1  isl version none]
         ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
         ignore line: [Compiler executable checksum: 98a4d3195540e9a99bed9ec80900b955]
-        ignore line: [COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-std=gnu++17' '-o' 'CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'CMakeFiles/cmTC_78756.dir/']
-        ignore line: [ as -v --64 -o CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.o /tmp/ccGN7M4T.s]
+        ignore line: [COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-std=gnu++17' '-o' 'CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'CMakeFiles/cmTC_c26e5.dir/']
+        ignore line: [ as -v --64 -o CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.o /tmp/ccpF8g0a.s]
         ignore line: [GNU assembler version 2.30 (x86_64-redhat-linux) using BFD version version 2.30-128.el8_10]
         ignore line: [COMPILER_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/]
         ignore line: [LIBRARY_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/:/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../:/lib/:/usr/lib/]
-        ignore line: [COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-std=gnu++17' '-o' 'CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.']
-        ignore line: [Linking CXX executable cmTC_78756]
-        ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_78756.dir/link.txt --verbose=1]
-        ignore line: [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++  -fopenmp -v CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.o -o cmTC_78756  -v ]
+        ignore line: [COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-std=gnu++17' '-o' 'CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.']
+        ignore line: [Linking CXX executable cmTC_c26e5]
+        ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_c26e5.dir/link.txt --verbose=1]
+        ignore line: [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++  -fopenmp -v CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.o -o cmTC_c26e5  -v ]
         ignore line: [Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/specs]
         ignore line: [COLLECT_GCC=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++]
         ignore line: [COLLECT_LTO_WRAPPER=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper]
@@ -868,13 +414,13 @@ events:
         ignore line: [COMPILER_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/]
         ignore line: [LIBRARY_PATH=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/:/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib/:/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../:/lib/:/usr/lib/]
         ignore line: [Reading specs from /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64/libgomp.spec]
-        ignore line: [COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-o' 'cmTC_78756' '-v' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'cmTC_78756.']
-        link line: [ /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/collect2 -plugin /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/liblto_plugin.so -plugin-opt=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper -plugin-opt=-fresolution=/tmp/cc0fuyWv.res -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lpthread -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc --eh-frame-hdr -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_78756 /lib/../lib64/crt1.o /lib/../lib64/crti.o /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtbegin.o -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -L/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../.. -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.o -lstdc++ -lm -lgomp -lgcc_s -lgcc -lpthread -lc -lgcc_s -lgcc /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtend.o /lib/../lib64/crtn.o]
+        ignore line: [COLLECT_GCC_OPTIONS='-fopenmp' '-v' '-o' 'cmTC_c26e5' '-v' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-pthread' '-dumpdir' 'cmTC_c26e5.']
+        link line: [ /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/collect2 -plugin /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/liblto_plugin.so -plugin-opt=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper -plugin-opt=-fresolution=/tmp/ccyQn9c7.res -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lpthread -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc --eh-frame-hdr -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_c26e5 /lib/../lib64/crt1.o /lib/../lib64/crti.o /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtbegin.o -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib -L/mnt/sw/nix/store/1fjr9h1k55mcxz6kvyszh7qb4cvnl4wp-openblas-0.3.29/lib -L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../.. -rpath /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64 CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.o -lstdc++ -lm -lgomp -lgcc_s -lgcc -lpthread -lc -lgcc_s -lgcc /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/crtend.o /lib/../lib64/crtn.o]
           arg [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/collect2] ==> ignore
           arg [-plugin] ==> ignore
           arg [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/liblto_plugin.so] ==> ignore
           arg [-plugin-opt=/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/libexec/gcc/x86_64-pc-linux-gnu/11.5.0/lto-wrapper] ==> ignore
-          arg [-plugin-opt=-fresolution=/tmp/cc0fuyWv.res] ==> ignore
+          arg [-plugin-opt=-fresolution=/tmp/ccyQn9c7.res] ==> ignore
           arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
           arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
           arg [-plugin-opt=-pass-through=-lpthread] ==> ignore
@@ -887,7 +433,7 @@ events:
           arg [-dynamic-linker] ==> ignore
           arg [/lib64/ld-linux-x86-64.so.2] ==> ignore
           arg [-o] ==> ignore
-          arg [cmTC_78756] ==> ignore
+          arg [cmTC_c26e5] ==> ignore
           arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/../lib64]
           arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/../lib64]
           arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0]
@@ -900,7 +446,7 @@ events:
           arg [-L/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../..] ==> dir [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib/gcc/x86_64-pc-linux-gnu/11.5.0/../../..]
           arg [-rpath] ==> ignore
           arg [/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64] ==> ignore
-          arg [CMakeFiles/cmTC_78756.dir/OpenMPTryFlag.cpp.o] ==> ignore
+          arg [CMakeFiles/cmTC_c26e5.dir/OpenMPTryFlag.cpp.o] ==> ignore
           arg [-lstdc++] ==> lib [stdc++]
           arg [-lm] ==> lib [m]
           arg [-lgomp] ==> lib [gomp]
@@ -931,41 +477,11 @@ events:
     backtrace:
       - "/usr/share/cmake/Modules/FindOpenMP.cmake:419 (try_compile)"
       - "/usr/share/cmake/Modules/FindOpenMP.cmake:557 (_OPENMP_GET_SPEC_DATE)"
-      - "CMakeLists.txt:6 (find_package)"
-    description: "Detecting C OpenMP version"
-    directories:
-      source: "/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-EFLpa4"
-      binary: "/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-EFLpa4"
-    cmakeVariables:
-      CMAKE_C_FLAGS: ""
-      CMAKE_C_FLAGS_DEBUG: "-g"
-      CMAKE_EXE_LINKER_FLAGS: ""
-    buildResult:
-      variable: "OpenMP_SPECTEST_C_"
-      cached: true
-      stdout: |
-        Change Dir: /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-EFLpa4
-        
-        Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_a369a/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_a369a.dir/build.make CMakeFiles/cmTC_a369a.dir/build
-        gmake[1]: Entering directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-EFLpa4'
-        Building C object CMakeFiles/cmTC_a369a.dir/OpenMPCheckVersion.c.o
-        /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc   -fopenmp -o CMakeFiles/cmTC_a369a.dir/OpenMPCheckVersion.c.o -c /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-EFLpa4/OpenMPCheckVersion.c
-        Linking C executable cmTC_a369a
-        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_a369a.dir/link.txt --verbose=1
-        /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/cc  -fopenmp CMakeFiles/cmTC_a369a.dir/OpenMPCheckVersion.c.o -o cmTC_a369a 
-        gmake[1]: Leaving directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-EFLpa4'
-        
-      exitCode: 0
-  -
-    kind: "try_compile-v1"
-    backtrace:
-      - "/usr/share/cmake/Modules/FindOpenMP.cmake:419 (try_compile)"
-      - "/usr/share/cmake/Modules/FindOpenMP.cmake:557 (_OPENMP_GET_SPEC_DATE)"
-      - "CMakeLists.txt:6 (find_package)"
+      - "CMakeLists.txt:12 (find_package)"
     description: "Detecting CXX OpenMP version"
     directories:
-      source: "/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-pzEsyG"
-      binary: "/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-pzEsyG"
+      source: "/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-v6uaNm"
+      binary: "/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-v6uaNm"
     cmakeVariables:
       CMAKE_CXX_FLAGS: ""
       CMAKE_CXX_FLAGS_DEBUG: "-g"
@@ -974,16 +490,16 @@ events:
       variable: "OpenMP_SPECTEST_CXX_"
       cached: true
       stdout: |
-        Change Dir: /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-pzEsyG
+        Change Dir: /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-v6uaNm
         
-        Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_09bc5/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_09bc5.dir/build.make CMakeFiles/cmTC_09bc5.dir/build
-        gmake[1]: Entering directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-pzEsyG'
-        Building CXX object CMakeFiles/cmTC_09bc5.dir/OpenMPCheckVersion.cpp.o
-        /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++   -fopenmp -std=gnu++17 -o CMakeFiles/cmTC_09bc5.dir/OpenMPCheckVersion.cpp.o -c /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-pzEsyG/OpenMPCheckVersion.cpp
-        Linking CXX executable cmTC_09bc5
-        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_09bc5.dir/link.txt --verbose=1
-        /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++  -fopenmp CMakeFiles/cmTC_09bc5.dir/OpenMPCheckVersion.cpp.o -o cmTC_09bc5 
-        gmake[1]: Leaving directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-pzEsyG'
+        Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_aedcd/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_aedcd.dir/build.make CMakeFiles/cmTC_aedcd.dir/build
+        gmake[1]: Entering directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-v6uaNm'
+        Building CXX object CMakeFiles/cmTC_aedcd.dir/OpenMPCheckVersion.cpp.o
+        /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++   -fopenmp -std=gnu++17 -o CMakeFiles/cmTC_aedcd.dir/OpenMPCheckVersion.cpp.o -c /mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-v6uaNm/OpenMPCheckVersion.cpp
+        Linking CXX executable cmTC_aedcd
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_aedcd.dir/link.txt --verbose=1
+        /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++  -fopenmp CMakeFiles/cmTC_aedcd.dir/OpenMPCheckVersion.cpp.o -o cmTC_aedcd 
+        gmake[1]: Leaving directory '/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/CMakeScratch/TryCompile-v6uaNm'
         
       exitCode: 0
 ...

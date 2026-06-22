@@ -11,10 +11,14 @@ add_compile_options(-O3)
 
 find_package(OpenMP REQUIRED)
 find_package(PkgConfig REQUIRED)
+find_package(MPI REQUIRED)
 pkg_check_modules(FFTW REQUIRED fftw3)
+find_package(BLAS REQUIRED)
+find_package(LAPACK REQUIRED)
 
 set(DMK_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/../include" CACHE PATH "dmk include dir")
 set(DMK_LIB         "${CMAKE_SOURCE_DIR}/../build/libdmk.a" CACHE FILEPATH "dmk library")
+set(DMK_REF_LIB "${CMAKE_SOURCE_DIR}/../build/libdmk_ref.a" CACHE FILEPATH "dmk ref library")
 set(FINUFFT_DIR "/mnt/home/ipopa/finufft" CACHE PATH "finufft root dir")
 
 set(FINUFFT_INCLUDE_DIR "${FINUFFT_DIR}/include")
@@ -36,6 +40,7 @@ target_include_directories(esp PRIVATE
 
 target_link_libraries(esp PRIVATE
     ${DMK_LIB}
+    ${DMK_REF_LIB}
     ${FINUFFT_LIB}
     ${FINUFFT_COMMON_LIB}
     ${FFTW_LIBRARIES}
@@ -43,5 +48,9 @@ target_link_libraries(esp PRIVATE
     fftw3_omp
     fftw3f_omp
     OpenMP::OpenMP_CXX
+    BLAS::BLAS
+    LAPACK::LAPACK
+    gfortran
+    MPI::MPI_CXX
     m
 )

@@ -29,11 +29,13 @@ struct PSWFKernel {
     double scale;    // 1 / pswf(0), so that (*this)(0) == 1
     std::vector<double> pswf_poly_coeffs ; //computed by FINUFFT
 
-    explicit PSWFKernel(double eps, int lenw = 8000) {
-        double c_val;
-        dmk::prolc180(eps, c_val);
-        c = c_val;
-        pswf = dmk::Prolate0Fun(c_val, lenw);
+    explicit PSWFKernel(double eps, int P, int lenw = 8000) {
+        //double c_val;
+        //dmk::prolc180(eps, c_val);
+        //c = c_val;
+        int sigma = 2; //FINUFFT default
+        c = M_PI * P * (1.0 - 1.0/(2*sigma))-0.05; // value: c = 16.4433614313;
+        pswf = dmk::Prolate0Fun(c, lenw);
 
         // Normalise so that pswf(0) = 1, matching Python's pswf.normalize()
         scale = 1.0 / pswf.eval_val(0.0);
@@ -471,8 +473,10 @@ long_range_fast(const std::vector<Vec3> &r_src,
     printf("spreading serial:   %.3f ms\n", t_serial);
     printf("spreading parallel + finufft: %.3f ms\n", t_parallel);
 
-    // 2. Forward FFT
     int nf = params.n_f;
+
+    // 2. Forward FFT
+    //int nf = params.n_f;
     CGrid b_hat(nf * nf * nf);
     fftn_3d(b, b_hat, nf);
 
@@ -519,20 +523,27 @@ long_range_finufft(const std::vector<Vec3> &r_src,
     finufft_opts opts;
     finufft_default_opts(&opts);
     opts.spreadinterponly = 1;
-    //opts.spread_kerformula = 8;  // use PSWF kernel - actually no effect, this is already the default
+    opts.upsampfac = 2;  // only affects kernel shape, NOT grid size, before: 2.0 (this worked the best so far!)
     opts.debug = 1;
-    double tol = 1e-6; // or derive from pswf.eps
+
+    // reverse-engineer tol to get your desired ns
+    // ns = round(2*(c + 0.05)/PI) = 11 for c=16.894
+    // tol = 0.3528 * exp(-(ns-1) * PI * sqrt(0.5))
+    double ns_target = std::round(2*(pswf.c + 0.05) / M_PI);
+    double tolfac = 0.18 * std::pow(1.4, 2.0);  // dim=3
+    //double tol = tolfac * std::exp(-(ns_target - 1) * M_PI * std::sqrt(0.5));
+    double tol = 1e-6;
 
     // 1. Spread: NU pts -> uniform grid (type 1)
-    std::vector<std::complex<double>> b(ntot, 0.0);
+    std::vector<std::complex<double>> b_finufft(ntot, 0.0);
     int ier = finufft3d1(n, x.data(), y.data(), z.data(),
                          c.data(), +1, tol,
-                         nf, nf, nf, b.data(), &opts);
+                         nf, nf, nf, b_finufft.data(), &opts);
     if (ier > 1) throw std::runtime_error("finufft3d1 spread failed, ier=" + std::to_string(ier));
 
     // 2. Forward FFT
     CGrid b_hat(ntot);
-    fftn_3d(b, b_hat, nf);  // b is already std::vector<std::complex<double>>
+    fftn_3d(b_finufft, b_hat, nf);  // b is already std::vector<std::complex<double>>
 
     // 3. Diagonal scaling
     DGrid p = precompute_scaling_coefficients(pswf, params);
@@ -577,7 +588,7 @@ self_interaction(const std::vector<Vec3> &/*r_src*/,
 // Debug: print internal kernel/params values for cross-checking with Python
 // ---------------------------------------------------------------------------
 void debug_pswf(double eps, double L, double r_c, int P, int n) {
-    PSWFKernel pswf(eps);
+    PSWFKernel pswf(eps, P);
     ESPParams params(L, r_c, P, pswf, n);
 
     printf("=== PSWFKernel / ESPParams debug ===\n");
@@ -606,7 +617,7 @@ struct ESPResult {
 ESPResult esp_potential(const std::vector<Vec3> &r_src,
                         const std::vector<double> &charges,
                         double L, double r_c, int P, double eps) {
-    PSWFKernel pswf(eps);
+    PSWFKernel pswf(eps, P);
     int n = static_cast<int>(charges.size());
     ESPParams params(L, r_c, P, pswf, n);
 
@@ -641,7 +652,7 @@ ESPResult esp_potential(const std::vector<Vec3> &r_src,
 
     std::vector<double> total(n);
     for (int i = 0; i < n; ++i)
-        total[i] = pot_sr[i] + pot_lr[i] - pot_self[i];
+        total[i] = pot_sr[i] + pot_lr_finufft[i] - pot_self[i];
 
     return { total, pot_sr, pot_lr, pot_self };
 }

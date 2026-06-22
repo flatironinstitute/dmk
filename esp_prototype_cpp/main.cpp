@@ -18,7 +18,7 @@ ESPResult esp_potential(const std::vector<Vec3> &r_src,
 void debug_pswf(double eps, double L, double r_c, int P, int n);
 
 int main() {
-    debug_pswf(1e-6, 1.0, 0.2, 5, 10);
+    debug_pswf(1e-6, 1.0, 0.2, 7, 10);
     // Test 1 - 10 particles
     std::vector<Vec3> r_src = {{
         { 0.131538-0.5, 0.686773-0.5, 0.98255 -0.5 },
