@@ -19,20 +19,36 @@ using Clock = std::chrono::high_resolution_clock;
 using Ms    = std::chrono::duration<double, std::milli>;
 
 // ---------------------------------------------------------------------------
+// Auto-select P (PSWF stencil width) from eps.
+// Uses FINUFFT v2.5.0's formula for kerformula=8 (PSWF), upsampfac=2, dim=3.
+// Inverse of: tol = tolfac * exp(-(ns-1) * PI * sqrt(1 - 1/sigma))
+// ---------------------------------------------------------------------------
+static int esp_ns_from_eps(double eps) {
+    const double tolfac = 0.18 * 1.96;  // 0.18 * 1.4^(dim-1) for dim=3
+    int ns = static_cast<int>(std::ceil(
+        std::log(tolfac / eps) / (M_PI * std::sqrt(0.5)) + 1.0));
+    ns = std::max(2, ns);  // clip to MIN_NSPREAD = 2
+    printf("[esp_ns_from_eps] eps=%.2e -> P=%d\n", eps, ns);
+    return ns;
+}
+
+// ---------------------------------------------------------------------------
 // PSWFKernel – thin wrapper around dmk::Prolate0Fun
 // ---------------------------------------------------------------------------
 struct PSWFKernel {
     dmk::Prolate0Fun pswf;
+    int    P;        // stencil width (auto-derived from eps when P_hint == 0)
+    double eps;      // tolerance used to select P
     double c;        // bandwidth parameter
     double lambda0;  // F_c eigenvalue: sqrt(2*pi*mu/c), adjusted for normalisation
     double c0;       // integral of normalised pswf over [0,1]
     double scale;    // 1 / pswf(0), so that (*this)(0) == 1
     std::vector<double> pswf_poly_coeffs ; //computed by FINUFFT
 
-    explicit PSWFKernel(double eps, int P, int lenw = 8000) {
-        //double c_val;
-        //dmk::prolc180(eps, c_val);
-        //c = c_val;
+    // P_hint == 0: auto-derive P from eps using FINUFFT's formula.
+    explicit PSWFKernel(double eps_, int P_hint = 0, int lenw = 8000)
+        : eps(eps_) {
+        P = (P_hint == 0) ? esp_ns_from_eps(eps_) : P_hint;
         int sigma = 2; //FINUFFT default
         c = M_PI * P * (1.0 - 1.0/(2 * sigma)) - 0.05; // value: c = 16.4433614313;
         pswf = dmk::Prolate0Fun(c, lenw);
@@ -522,16 +538,11 @@ long_range_finufft(const std::vector<Vec3> &r_src,
     finufft_opts opts;
     finufft_default_opts(&opts);
     opts.spreadinterponly = 1;
-    opts.upsampfac = 2;  // only affects kernel shape, NOT grid size, before: 2.0 (this worked the best so far!)
-   // opts.debug = 1;
+    opts.upsampfac = 2;
+    opts.debug = 1;  // prints "chose ns=..." so we can verify it matches pswf.P
 
-    // reverse-engineer tol to get your desired ns
-    // ns = round(2*(c + 0.05)/PI) = 11 for c=16.894
-    // tol = 0.3528 * exp(-(ns-1) * PI * sqrt(0.5))
-    double ns_target = std::round(2*(pswf.c + 0.05) / M_PI);
-    double tolfac = 0.18 * std::pow(1.4, 2.0);  // dim=3
-    //double tol = tolfac * std::exp(-(ns_target - 1) * M_PI * std::sqrt(0.5));
-    double tol = 1e-6;
+    // Use eps directly: FINUFFT will choose the same ns as esp_ns_from_eps(eps).
+    double tol = pswf.eps;
 
     // 1. Spread: NU pts -> uniform grid (type 1)
     std::vector<std::complex<double>> b_finufft(ntot, 0.0);
@@ -615,10 +626,10 @@ struct ESPResult {
 
 ESPResult esp_potential(const std::vector<Vec3> &r_src,
                         const std::vector<double> &charges,
-                        double L, double r_c, int P, double eps) {
-    PSWFKernel pswf(eps, P);
+                        double L, double r_c, double eps) {
+    PSWFKernel pswf(eps);  // P auto-derived from eps via esp_ns_from_eps
     int n = static_cast<int>(charges.size());
-    ESPParams params(L, r_c, P, pswf, n);
+    ESPParams params(L, r_c, pswf.P, pswf, n);
 
     auto t0 = Clock::now();
     auto neighbors = build_neighbor_list(r_src, params);

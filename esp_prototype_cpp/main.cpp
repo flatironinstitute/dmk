@@ -15,7 +15,7 @@ struct ESPResult {
 };
 ESPResult esp_potential(const std::vector<Vec3> &r_src,
                         const std::vector<double> &charges,
-                        double L, double r_c, int P, double eps);
+                        double L, double r_c, double eps);
 
 void debug_pswf(double eps, double L, double r_c, int P, int n);
 
@@ -77,10 +77,10 @@ static TestCase make_test_random(int N) {
 // Runner
 // ---------------------------------------------------------------------------
 static void run_test(const TestCase &tc,
-                     double L, double r_c, int P, double eps) {
+                     double L, double r_c, double eps) {
     printf("=== Test: %s (N=%zu) ===\n", tc.name, tc.charges.size());
 
-    auto res = esp_potential(tc.r_src, tc.charges, L, r_c, P, eps);
+    auto res = esp_potential(tc.r_src, tc.charges, L, r_c, eps);
 
     const bool has_ref = !tc.reference.empty();
     const int  n       = static_cast<int>(tc.charges.size());
@@ -109,19 +109,19 @@ static void run_test(const TestCase &tc,
 
 // ---------------------------------------------------------------------------
 int main(int argc, char** argv) {
-    // Pick the test from argv[1], default to the random benchmark.
-    // Usage:  ./esp [test10 | random | pswf]
-    const char* which = "test10";
+    // Usage: ./esp [test10 | random | pswf] [eps]
+    const char* which = (argc >= 2) ? argv[1] : "test10";
 
-    const double L = 1.0, r_c = 0.2, eps = 1e-6;
-    const int    P = 7;
+    const double L = 1.0, r_c = 0.2;
+    double eps = (argc >= 3) ? std::atof(argv[2]) : 1e-6;
+    printf("--- eps=%.2e ---\n", eps);
 
     if (std::strcmp(which, "pswf") == 0) {
-        debug_pswf(eps, L, r_c, P, 10);
+        debug_pswf(eps, L, r_c, 7, 10);  // explicit P=7 for debug cross-check only
     } else if (std::strcmp(which, "test10") == 0) {
-        run_test(make_test_10(), L, r_c, P, eps);
+        run_test(make_test_10(), L, r_c, eps);
     } else if (std::strcmp(which, "random") == 0) {
-        run_test(make_test_random(10000), L, r_c, P, eps);
+        run_test(make_test_random(10000), L, r_c, eps);
     } else {
         fprintf(stderr, "unknown test '%s' (use: test10 | random | pswf)\n", which);
         return 1;
