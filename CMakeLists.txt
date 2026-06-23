@@ -111,12 +111,9 @@ add_library(dmk_ref_shared SHARED $<TARGET_OBJECTS:dmk_ref_common> $<TARGET_OBJE
 set_target_properties(dmk_ref_shared PROPERTIES OUTPUT_NAME dmk_ref)
 
 if(DMK_WITH_FINUFFT)
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(FFTW REQUIRED fftw3)
-
   include(FetchContent)
-  # Use ducc0 backend — FINUFFT will detect the existing ducc0 target
-  # defined above and reuse it rather than fetching its own copy.
+  # Use ducc0 backend so FINUFFT reuses DMK's existing dmk_ducc0 headers
+  # and avoids any FFTW dependency.
   set(FINUFFT_USE_DUCC0 ON CACHE BOOL "" FORCE)
   FetchContent_Declare(
     finufft
@@ -132,7 +129,7 @@ set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp s
 )
 
 if(DMK_WITH_FINUFFT)
-  list(APPEND DMK_SRC src/esp.cpp src/esp_fft.cpp)
+  list(APPEND DMK_SRC src/esp.cpp)
 endif()
 add_library(DMKOBJS OBJECT ${DMK_SRC})
 set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -142,7 +139,7 @@ target_compile_options(DMKOBJS PUBLIC "-DSCTL_HAVE_MPI;-DSCTL_MAX_DEPTH=62;-funr
 
 if(DMK_WITH_FINUFFT)
   target_compile_definitions(DMKOBJS PUBLIC DMK_WITH_FINUFFT)
-  target_include_directories(DMKOBJS PRIVATE ${FFTW_INCLUDE_DIRS})
+  target_include_directories(DMKOBJS PRIVATE ${PROJECT_SOURCE_DIR}/extern/ducc0/src)
   target_link_libraries(DMKOBJS PUBLIC finufft::finufft)
 endif()
 
@@ -153,10 +150,6 @@ add_library(dmk_shared SHARED)
 set_target_properties(${PROJECT_NAME}_shared PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
 target_link_libraries(${PROJECT_NAME}_shared DMKOBJS dmk_ref_common OpenMP::OpenMP_CXX MPI::MPI_CXX BLAS::BLAS spdlog doctest ${PAPI_TARGET})
 
-if(DMK_WITH_FINUFFT)
-  target_link_libraries(${PROJECT_NAME} ${FFTW_LIBRARIES})
-  target_link_libraries(${PROJECT_NAME}_shared ${FFTW_LIBRARIES})
-endif()
 
 if(${DMK_BUILD_TESTS})
   add_subdirectory(test)

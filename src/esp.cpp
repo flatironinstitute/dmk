@@ -16,9 +16,8 @@
 #include <unordered_map>
 #include <vector>
 #include <omp.h>
+#include <ducc0/fft/fft.h>
 
-// These types and FFT wrappers live in the global namespace so that the
-// extern declarations here match the definitions in esp_fft.cpp.
 using CGrid = std::vector<std::complex<double>>;
 using DGrid = std::vector<double>;
 
@@ -26,8 +25,17 @@ static inline int grid_idx(int ix, int iy, int iz, int n_f) {
     return ix * n_f * n_f + iy * n_f + iz;
 }
 
-extern void fftn_3d (const CGrid &in, CGrid &out, int n);
-extern void ifftn_3d(const CGrid &in, CGrid &out, int n);
+static void fftn_3d(const CGrid &in, CGrid &out, int n) {
+    out = in;
+    ducc0::vfmav<std::complex<double>> v(out.data(), {(size_t)n, (size_t)n, (size_t)n});
+    ducc0::c2c(v, v, {0, 1, 2}, true, 1.0);
+}
+
+static void ifftn_3d(const CGrid &in, CGrid &out, int n) {
+    out = in;
+    ducc0::vfmav<std::complex<double>> v(out.data(), {(size_t)n, (size_t)n, (size_t)n});
+    ducc0::c2c(v, v, {0, 1, 2}, false, 1.0 / ((double)n * n * n));
+}
 
 namespace dmk {
 
