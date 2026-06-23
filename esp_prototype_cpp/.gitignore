@@ -3,5 +3,5 @@ esp_error.log
 esp_output.log
 esp_original.cpp
 test_finufft_library/
-test_finufft_polyit/
+test_finufft_polyfit/
 test_finufft_spreader/
