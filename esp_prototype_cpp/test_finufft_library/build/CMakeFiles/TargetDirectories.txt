@@ -1,3 +1,0 @@
-/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/test_finufft_spreader.dir
-/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/edit_cache.dir
-/mnt/home/ipopa/dmk/esp_prototype_cpp/test_finufft_spreader/build/CMakeFiles/rebuild_cache.dir

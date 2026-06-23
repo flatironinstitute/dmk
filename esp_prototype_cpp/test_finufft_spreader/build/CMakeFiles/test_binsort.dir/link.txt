@@ -1,1 +1,0 @@
-/mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/bin/c++ -O3 -DNDEBUG CMakeFiles/test_binsort.dir/main.cpp.o -o test_binsort  /mnt/sw/nix/store/ipl77l9qp6sgyb3nx7h47p8h5jajrr0w-gcc-11.5.0/lib64/libgomp.so /lib64/libpthread.so 
