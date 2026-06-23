@@ -17,7 +17,7 @@ struct ESPResult { //we might only want to return total potential
 
 ESPResult esp_potential(const std::vector<Vec3> &r_src,
                         const std::vector<double> &charges,
-                        double L, double r_c, int P, double eps);
+                        double L, double r_c, double eps);
 
 } // namespace dmk
 

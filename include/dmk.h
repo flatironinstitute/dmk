@@ -72,8 +72,7 @@ typedef struct pdmk_esp_params {
     int    n_mfm;      // charge dimensions per source point (currently unused, reserved for future)
     double L;          // periodic box side length
     double r_c;        // real-space cutoff radius
-    int    P;          // PSWF stencil width (window support = P grid spacings)
-    double eps;        // target precision
+    double eps;        // target precision (P is auto-derived via FINUFFT's formula)
     int    log_level;  // 0: trace … 6: off (matches dmk_log_level)
 } pdmk_esp_params;
 

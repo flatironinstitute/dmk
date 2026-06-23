@@ -423,7 +423,7 @@ void pdmk_esp(MPI_Comm comm, pdmk_esp_params params, int n,
     for (int i = 0; i < n; ++i)
         r[i] = {r_src[3*i], r_src[3*i+1], r_src[3*i+2]};
     std::vector<double> q(charges, charges + n);
-    auto res = dmk::esp_potential(r, q, params.L, params.r_c, params.P, params.eps);
+    auto res = dmk::esp_potential(r, q, params.L, params.r_c, params.eps);
     std::copy(res.total.begin(), res.total.end(), pot_src);
 }
 #endif // DMK_WITH_FINUFFT

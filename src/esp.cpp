@@ -40,17 +40,31 @@ static void ifftn_3d(const CGrid &in, CGrid &out, int n) {
 namespace dmk {
 
 // ---------------------------------------------------------------------------
+// Auto-select P (PSWF stencil width) from eps.
+// Uses FINUFFT v2.5.0's formula for kerformula=8 (PSWF), upsampfac=2, dim=3.
+// ---------------------------------------------------------------------------
+static int esp_ns_from_eps(double eps) {
+    const double tolfac = 0.18 * 1.96;  // 0.18 * 1.4^(dim-1) for dim=3
+    int ns = static_cast<int>(std::ceil(
+        std::log(tolfac / eps) / (M_PI * std::sqrt(0.5)) + 1.0));
+    return std::max(2, ns);
+}
+
+// ---------------------------------------------------------------------------
 // PSWFKernel – thin wrapper around dmk::Prolate0Fun
 // ---------------------------------------------------------------------------
 struct PSWFKernel {
     dmk::Prolate0Fun pswf;
+    int    P;    // stencil width, auto-derived from eps
+    double eps;  // tolerance used to select P
     double c;
     double lambda0;
     double c0;
     double scale;
     std::vector<double> pswf_poly_coeffs;
 
-    explicit PSWFKernel(double eps, int P, int lenw = 8000) {
+    explicit PSWFKernel(double eps_, int lenw = 8000) : eps(eps_) {
+        P = esp_ns_from_eps(eps_);
         int sigma = 2;
         c = M_PI * P * (1.0 - 1.0 / (2 * sigma)) - 0.05;
         pswf = dmk::Prolate0Fun(c, lenw);
@@ -293,7 +307,7 @@ long_range(const std::vector<Vec3> &r_src,
     finufft_default_opts(&opts);
     opts.spreadinterponly = 1;
     opts.upsampfac = 2;
-    double tol = 1e-6;
+    double tol = pswf.eps;
 
     // 1. Spread: NU points -> uniform grid (type 1)
     std::vector<std::complex<double>> b(ntot, 0.0);
@@ -350,10 +364,10 @@ self_interaction(const std::vector<double> &charges,
 // ---------------------------------------------------------------------------
 ESPResult esp_potential(const std::vector<Vec3> &r_src,
                         const std::vector<double> &charges,
-                        double L, double r_c, int P, double eps) {
-    PSWFKernel pswf(eps, P);
+                        double L, double r_c, double eps) {
+    PSWFKernel pswf(eps);  // P auto-derived from eps via esp_ns_from_eps
     int n = static_cast<int>(charges.size());
-    ESPParams params(L, r_c, P, pswf, n);
+    ESPParams params(L, r_c, pswf.P, pswf, n);
 
     auto neighbors  = build_neighbor_list(r_src, params);
     auto pot_sr     = short_range(r_src, charges, pswf, params, neighbors);
@@ -380,7 +394,7 @@ ESPResult esp_potential(const std::vector<Vec3> &r_src,
 
 MPI_TEST_CASE("[ESP] pdmk_esp 10-particle reference", 1) {
     const double L = 1.0, r_c = 0.2, eps = 1e-6;
-    const int P = 7, n = 10;
+    const int n = 10;
 
     const double r_src[30] = {
         0.131538-0.5, 0.686773-0.5, 0.98255 -0.5,
@@ -406,7 +420,6 @@ MPI_TEST_CASE("[ESP] pdmk_esp 10-particle reference", 1) {
     pdmk_esp_params params{};
     params.L   = L;
     params.r_c = r_c;
-    params.P   = P;
     params.eps = eps;
 
     double pot[10] = {};
