@@ -34,7 +34,7 @@ struct PSWFKernel {
         //dmk::prolc180(eps, c_val);
         //c = c_val;
         int sigma = 2; //FINUFFT default
-        c = M_PI * P * (1.0 - 1.0/(2*sigma))-0.05; // value: c = 16.4433614313;
+        c = M_PI * P * (1.0 - 1.0/(2 * sigma)) - 0.05; // value: c = 16.4433614313;
         pswf = dmk::Prolate0Fun(c, lenw);
 
         // Normalise so that pswf(0) = 1, matching Python's pswf.normalize()
@@ -442,13 +442,12 @@ static DGrid precompute_scaling_coefficients(const PSWFKernel &pswf,
 }
 
 // ---------------------------------------------------------------------------
-// FFT interface – replace with your FFT library (e.g. FFTW)
+// FFT interface
 // Signatures follow numpy convention:
 //   fftn:  forward, no normalisation
 //   ifftn: inverse, divide by N (already done inside or caller must do it)
 // ---------------------------------------------------------------------------
-// These are declared extern; provide an implementation file that links
-// against FFTW or another library.
+// These are declared extern; fft_fftw.cpp links against FFTW.
 extern void fftn_3d (const CGrid &in, CGrid &out, int n);
 extern void ifftn_3d(const CGrid &in, CGrid &out, int n);
 
@@ -524,7 +523,7 @@ long_range_finufft(const std::vector<Vec3> &r_src,
     finufft_default_opts(&opts);
     opts.spreadinterponly = 1;
     opts.upsampfac = 2;  // only affects kernel shape, NOT grid size, before: 2.0 (this worked the best so far!)
-    opts.debug = 1;
+   // opts.debug = 1;
 
     // reverse-engineer tol to get your desired ns
     // ns = round(2*(c + 0.05)/PI) = 11 for c=16.894
@@ -637,14 +636,14 @@ ESPResult esp_potential(const std::vector<Vec3> &r_src,
     auto pot_lr_finufft = long_range_finufft(r_src, charges, pswf, params);
     printf("long range - finufft:     %.2f ms\n", Ms(Clock::now()-t0).count());
 
-    printf("\nlong_range_fast vs long_range_finufft:\n");
-    for (int i = 0; i < params.n; i++) {
-        double err = std::abs(pot_lr[i] - pot_lr_finufft[i]);
-        printf("  pt %d: fast=%.8f  finufft=%.8f  err=%.2e\n",
-            i, pot_lr[i], pot_lr_finufft[i], err);
-    }
-    for (int i = 0; i < params.n; i++)
-    printf("  pt %d: ratio=%.6f\n", i, pot_lr_finufft[i] / pot_lr[i]);
+    // printf("\nlong_range_fast vs long_range_finufft:\n");
+    // for (int i = 0; i < params.n; i++) {
+    //     double err = std::abs(pot_lr[i] - pot_lr_finufft[i]);
+    //     printf("  pt %d: fast=%.8f  finufft=%.8f  err=%.2e\n",
+    //         i, pot_lr[i], pot_lr_finufft[i], err);
+    // }
+    // for (int i = 0; i < params.n; i++)
+    // printf("  pt %d: ratio=%.6f\n", i, pot_lr_finufft[i] / pot_lr[i]);
 
     t0 = Clock::now();
     auto pot_self   = self_interaction(r_src, charges, pswf, params);

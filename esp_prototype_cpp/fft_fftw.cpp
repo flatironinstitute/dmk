@@ -16,7 +16,7 @@ void fftn_3d(const CGrid &in, CGrid &out, int n) {
     fftw_destroy_plan(plan);
 }
 
-// Inverse 3-D FFT, normalised by 1/N^3 (matches numpy.fft.ifftn)
+// Inverse 3-D FFT, normalised by 1/N^3 
 void ifftn_3d(const CGrid &in, CGrid &out, int n) {
     out.resize(in.size());
     fftw_plan plan = fftw_plan_dft_3d(

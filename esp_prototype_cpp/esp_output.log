@@ -1,69 +1,10 @@
-=== PSWFKernel / ESPParams debug ===
-c           = 16.443361
-mu (rlam20) = 3.141575
-lambda0     = 0.618149
-c0          = 0.309076
-pswf(0)     = 1.000000
-pswf(1)     = 1.021927e-06
-pswf_hat(0) = 0.618149
-n_f         = 27
-h           = 0.037037
-====================================
-
-neighbor list:  0.42 ms
-short range:    352.49 ms
-spreading serial:   0.267 ms
-spreading parallel + finufft: 1.334 ms
-long range:     10.64 ms
-[FINUFFT_PLAN_T] new plan: FINUFFT version 2.6.0-dev .................
-		user locked upsampfac=2
-[setup_spreadinterp]	kerformula=8: PSWF (beta shift)...
-			tol=1e-06 sigma=2: chose ns=7 beta=16.4
-[precompute_horner_coeffs] ns=7:	3.8e-05 s
-		nc_fit=10 (trim to nc=10), simd_size=4, padded_ns=8
-[init_grid_kerFT_FFT] 3d spreadinterponly(dir=1): (ms,mt,mu)=(27,27,27)
-               ntrans=1 nthr=8 batchSize=1 kernel width ns=7
-[setpts] sort (didSort=1):		3e-05 s
-[execute] start ntrans=1 (1 batches, bsize=1)...
-[execute] done. tot spread:		0.000891 s
-                tot FFT:		0 s
-                tot deconvolve:		0 s
-[FINUFFT_PLAN_T] new plan: FINUFFT version 2.6.0-dev .................
-		user locked upsampfac=2
-[setup_spreadinterp]	kerformula=8: PSWF (beta shift)...
-			tol=1e-06 sigma=2: chose ns=7 beta=16.4
-[precompute_horner_coeffs] ns=7:	2.7e-05 s
-		nc_fit=10 (trim to nc=10), simd_size=4, padded_ns=8
-[init_grid_kerFT_FFT] 3d spreadinterponly(dir=2): (ms,mt,mu)=(27,27,27)
-               ntrans=1 nthr=8 batchSize=1 kernel width ns=7
-[setpts] sort (didSort=1):		1e-06 s
-[execute] start ntrans=1 (1 batches, bsize=1)...
-[execute] done. tot deconvolve:		0 s
-                tot FFT:		0 s
-                tot interp:		0.000323 s
-long range - finufft:     4.27 ms
-
-long_range_fast vs long_range_finufft:
-  pt 0: fast=0.31315948  finufft=0.31315568  err=3.79e-06
-  pt 1: fast=-0.26432602  finufft=-0.26432541  err=6.09e-07
-  pt 2: fast=0.34215799  finufft=0.34216158  err=3.59e-06
-  pt 3: fast=-0.34600260  finufft=-0.34600213  err=4.67e-07
-  pt 4: fast=0.45788832  finufft=0.45789124  err=2.92e-06
-  pt 5: fast=-0.45151914  finufft=-0.45152149  err=2.35e-06
-  pt 6: fast=0.57432918  finufft=0.57432870  err=4.79e-07
-  pt 7: fast=-0.55153143  finufft=-0.55152908  err=2.35e-06
-  pt 8: fast=0.18958383  finufft=0.18958321  err=6.23e-07
-  pt 9: fast=-0.01905677  finufft=-0.01905700  err=2.26e-07
-  pt 0: ratio=0.999988
-  pt 1: ratio=0.999998
-  pt 2: ratio=1.000010
-  pt 3: ratio=0.999999
-  pt 4: ratio=1.000006
-  pt 5: ratio=1.000005
-  pt 6: ratio=0.999999
-  pt 7: ratio=0.999996
-  pt 8: ratio=0.999997
-  pt 9: ratio=1.000012
+=== Test: 10 particles (fixed, with reference) (N=10) ===
+neighbor list:  0.49 ms
+short range:    396.46 ms
+spreading serial:   0.228 ms
+spreading parallel + finufft: 1.260 ms
+long range:     6.73 ms
+long range - finufft:     5.04 ms
 self-interaction:     0.00 ms
 Point 0
   short-range : +0.00000668
@@ -135,3 +76,4 @@ Point 9
   total       : +0.10967766
   error       : -3.96e-07
 
+max |error| vs reference: 8.018e-06
