@@ -913,6 +913,38 @@ std::vector<Real> evaluate_long_range(const std::vector<Real> &G, TestCaseSystem
     return trg_pot;
 }
 
+struct PSWFKernel {
+    dmk::Prolate0Fun pswf;
+    double c;
+    double c0;
+    double lambda0;
+    double norm;  // = pswf(0) before normalization
+
+    PSWFKernel(double eps) {
+        dmk::prolc180(eps, c);
+        pswf = dmk::Prolate0Fun(c, 10000);
+        norm = pswf.eval_val(0.0);          // pswf(0) before normalization
+        c0 = pswf.int_eval(1.0) / norm;     // integral after normalization
+        double mu = pswf.rlam20;
+        lambda0 = std::sqrt(2 * M_PI * mu / c);
+    }
+
+    // evaluate normalized pswf
+    double eval(double x) const {
+        return pswf.eval_val(x) / norm;
+    }
+
+    // evaluate integral of normalized pswf from 0 to r
+    double integral(double r) const {
+        return pswf.int_eval(r) / norm;
+    }
+
+    // Fourier transform: lambda0 * pswf_normalized(k/c)
+    double pswf_hat(double k) const {
+        return lambda0 * eval(std::abs(k) / c);
+    }
+};
+
 template <typename Real>
 void pme_poisson3d_lagrange(
         Real *pot,
@@ -934,16 +966,11 @@ void pme_poisson3d_lagrange(
         System.add_positions_and_charges(r_sources, charges);
     }
 
-    // initialize the prolate spheroidal wave function
-    Real c =  13.739999771118164; // choose c based on desired precision; this value ensures 6-digit accuracy (based on DMK paper, Table 1) - c is computed based on the desired precision to be obtained
-    dmk::Prolate0Fun pswf(c, 10000); //initialize the prolate spheroidal wave function with the chosen c and a large number of points for accurate interpolation
-    Real c0 = pswf.int_eval(1.0); // normalization constant = \int_0^1 \psi_0^c(x) dx; this is used to normalize the potential contribution of the short-range part, so that the total potential is correct
-    double mu = pswf.rlam20;
-    double lambda_0 = std::sqrt(2 * M_PI * mu / c); //hopefully correct now? to be checked?
-    
-    std::cout << "c = " << c << std::endl;
-    std::cout << "c0 = " << c0 << std::endl;
-    std::cout << "lambda_0 = " << lambda_0 << std::endl;
+    PSWFKernel pswf(1e-6);  // initialize with desired precision eps
+
+    std::cout << "c = " << pswf.c << std::endl;
+    std::cout << "c0 = " << pswf.c0 << std::endl;
+    std::cout << "lambda_0 = " << pswf.lambda_0 << std::endl;
 
     // short-range interaction - ESP
     ShortRangeSystem<Real> Short = initialize_short_range_esp(System, r_cut, N, n_dim);

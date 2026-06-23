@@ -62,6 +62,25 @@ void pdmk(MPI_Comm comm, pdmk_params params, int n_src, const double *r_src, con
 void pdmkf(MPI_Comm comm, pdmk_params params, int n_src, const float *r_src, const float *charge, const float *normal,
            const float *dipole_str, int n_trg, const float *r_trg, float *pot_src, float *grad_src, float *hess_src,
            float *pot_trg, float *grad_trg, float *hess_trg);
+
+#ifdef DMK_WITH_FINUFFT
+// ESP (Ewald Sum with PSWF kernels) — periodic Coulomb solver.
+// Particles lie in the cubic box [-L/2, L/2)^3.
+// r_src is a flat array of 3*n doubles: [x0,y0,z0, x1,y1,z1, ...].
+// pot_src receives the total potential at each particle (length n).
+typedef struct pdmk_esp_params {
+    int    n_mfm;      // charge dimensions per source point (currently unused, reserved for future)
+    double L;          // periodic box side length
+    double r_c;        // real-space cutoff radius
+    int    P;          // PSWF stencil width (window support = P grid spacings)
+    double eps;        // target precision
+    int    log_level;  // 0: trace … 6: off (matches dmk_log_level)
+} pdmk_esp_params;
+
+void pdmk_esp(MPI_Comm comm, pdmk_esp_params params, int n,
+              const double *r_src, const double *charges, double *pot_src);
+#endif // DMK_WITH_FINUFFT
+
 #ifdef __cplusplus
 }
 #endif

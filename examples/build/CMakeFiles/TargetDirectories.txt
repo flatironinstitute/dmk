@@ -1,0 +1,10 @@
+/mnt/home/ipopa/dmk/examples/build/CMakeFiles/dmk_example.dir
+/mnt/home/ipopa/dmk/examples/build/CMakeFiles/ewald.dir
+/mnt/home/ipopa/dmk/examples/build/CMakeFiles/ewald_esp.dir
+/mnt/home/ipopa/dmk/examples/build/CMakeFiles/ewald_original.dir
+/mnt/home/ipopa/dmk/examples/build/CMakeFiles/fft_parallel_2D_f.dir
+/mnt/home/ipopa/dmk/examples/build/CMakeFiles/fft_parallel_3D.dir
+/mnt/home/ipopa/dmk/examples/build/CMakeFiles/transp.dir
+/mnt/home/ipopa/dmk/examples/build/CMakeFiles/transp3D.dir
+/mnt/home/ipopa/dmk/examples/build/CMakeFiles/edit_cache.dir
+/mnt/home/ipopa/dmk/examples/build/CMakeFiles/rebuild_cache.dir

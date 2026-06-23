@@ -17,6 +17,7 @@ option(DMK_BUILD_TESTS "Build tests" ON)
 option(DMK_BUILD_EXAMPLES "Build examples" ON)
 option(DMK_INSTRUMENT "Instrument the code. Requires PAPI" OFF)
 option(DMK_BUILD_PVFMM "Build PVFMM for comparison. Useless without DMK_BUILD_EXAMPLES" OFF)
+option(DMK_WITH_FINUFFT "Build ESP (Ewald Sum with PSWF) solver. Requires FINUFFT and FFTW." OFF)
 
 if (NOT ${DMK_BUILD_TESTS})
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DDOCTEST_CONFIG_DISABLE")
@@ -40,7 +41,7 @@ find_package(MPI COMPONENTS CXX REQUIRED)
 find_package(BLAS REQUIRED)
 
 add_library(
-  ducc0
+  dmk_ducc0
   STATIC
   ${PROJECT_SOURCE_DIR}/extern/ducc0/src/ducc0/infra/string_utils.cc
   ${PROJECT_SOURCE_DIR}/extern/ducc0/src/ducc0/infra/threading.cc
@@ -48,17 +49,17 @@ add_library(
   ${PROJECT_SOURCE_DIR}/extern/ducc0/src/ducc0/math/gridding_kernel.cc
   ${PROJECT_SOURCE_DIR}/extern/ducc0/src/ducc0/math/gl_integrator.cc
 )
-target_include_directories(ducc0 PUBLIC ${PROJECT_SOURCE_DIR}/extern/ducc0/src)
-target_compile_features(ducc0 PRIVATE cxx_std_17)
+target_include_directories(dmk_ducc0 PUBLIC ${PROJECT_SOURCE_DIR}/extern/ducc0/src)
+target_compile_features(dmk_ducc0 PRIVATE cxx_std_17)
 
 # private because we do not want to propagate this requirement
 set_target_properties(
-  ducc0
+  dmk_ducc0
   PROPERTIES
   POSITION_INDEPENDENT_CODE ON
 )
 
-target_compile_options(ducc0 PRIVATE -ffast-math)
+target_compile_options(dmk_ducc0 PRIVATE -ffast-math)
 
 
 if(${DMK_BUILD_PVFMM})
@@ -109,15 +110,41 @@ add_library(dmk_ref STATIC $<TARGET_OBJECTS:dmk_ref_common> $<TARGET_OBJECTS:dmk
 add_library(dmk_ref_shared SHARED $<TARGET_OBJECTS:dmk_ref_common> $<TARGET_OBJECTS:dmk_ref_pdmk> $<TARGET_OBJECTS:dmk_ref_bdmk>)
 set_target_properties(dmk_ref_shared PROPERTIES OUTPUT_NAME dmk_ref)
 
+if(DMK_WITH_FINUFFT)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(FFTW REQUIRED fftw3)
+
+  include(FetchContent)
+  # Use ducc0 backend — FINUFFT will detect the existing ducc0 target
+  # defined above and reuse it rather than fetching its own copy.
+  set(FINUFFT_USE_DUCC0 ON CACHE BOOL "" FORCE)
+  FetchContent_Declare(
+    finufft
+    GIT_REPOSITORY https://github.com/flatironinstitute/finufft.git
+    GIT_TAG v2.5.0
+  )
+  FetchContent_MakeAvailable(finufft)
+endif()
+
 set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp src/legeexps.cpp
   src/fourier_data.cpp src/tensorprod.cpp src/planewave.cpp src/direct.cpp src/prolate.cpp src/prolate0_eval.cpp
   ${DMK_TEST_SRC}
 )
+
+if(DMK_WITH_FINUFFT)
+  list(APPEND DMK_SRC src/esp.cpp src/esp_fft.cpp)
+endif()
 add_library(DMKOBJS OBJECT ${DMK_SRC})
 set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES} ${MPI_CXX_INCLUDE_DIRS} ${PAPI_INCLUDEDIR})
 target_link_libraries(DMKOBJS PUBLIC OpenMP::OpenMP_CXX ${PAPI_TARGET})
 target_compile_options(DMKOBJS PUBLIC "-DSCTL_HAVE_MPI;-DSCTL_MAX_DEPTH=62;-funroll-loops")
+
+if(DMK_WITH_FINUFFT)
+  target_compile_definitions(DMKOBJS PUBLIC DMK_WITH_FINUFFT)
+  target_include_directories(DMKOBJS PRIVATE ${FFTW_INCLUDE_DIRS})
+  target_link_libraries(DMKOBJS PUBLIC finufft::finufft)
+endif()
 
 add_library(dmk STATIC)
 target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX DMKOBJS dmk_ref_common spdlog::spdlog)
@@ -125,6 +152,11 @@ target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX DMKOBJS dmk_ref_common 
 add_library(dmk_shared SHARED)
 set_target_properties(${PROJECT_NAME}_shared PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
 target_link_libraries(${PROJECT_NAME}_shared DMKOBJS dmk_ref_common OpenMP::OpenMP_CXX MPI::MPI_CXX BLAS::BLAS spdlog doctest ${PAPI_TARGET})
+
+if(DMK_WITH_FINUFFT)
+  target_link_libraries(${PROJECT_NAME} ${FFTW_LIBRARIES})
+  target_link_libraries(${PROJECT_NAME}_shared ${FFTW_LIBRARIES})
+endif()
 
 if(${DMK_BUILD_TESTS})
   add_subdirectory(test)

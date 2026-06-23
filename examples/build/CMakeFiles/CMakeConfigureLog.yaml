@@ -1,0 +1,575 @@
+
+---
+events:
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineSystem.cmake:204 (message)"
+      - "CMakeLists.txt"
+    message: |
+      The system is: Linux - 6.6.127.1.fi - x86_64
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCCompiler.cmake:123 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt"
+    message: |
+      Compiling the C compiler identification source file "CMakeCCompilerId.c" succeeded.
+      Compiler: /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/cc 
+      Build flags: 
+      Id flags:  
+      
+      The output was:
+      0
+      
+      
+      Compilation of the C compiler identification source "CMakeCCompilerId.c" produced "a.out"
+      
+      The C compiler identification is GNU, found in:
+        /mnt/home/ipopa/dmk/examples/build/CMakeFiles/3.26.5/CompilerIdC/a.out
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:126 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" succeeded.
+      Compiler: /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/c++ 
+      Build flags: 
+      Id flags:  
+      
+      The output was:
+      0
+      
+      
+      Compilation of the CXX compiler identification source "CMakeCXXCompilerId.cpp" produced "a.out"
+      
+      The CXX compiler identification is GNU, found in:
+        /mnt/home/ipopa/dmk/examples/build/CMakeFiles/3.26.5/CompilerIdCXX/a.out
+      
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:57 (try_compile)"
+      - "/usr/share/cmake/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt"
+    checks:
+      - "Detecting C compiler ABI info"
+    directories:
+      source: "/mnt/home/ipopa/dmk/examples/build/CMakeFiles/CMakeScratch/TryCompile-XuU8bT"
+      binary: "/mnt/home/ipopa/dmk/examples/build/CMakeFiles/CMakeScratch/TryCompile-XuU8bT"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+    buildResult:
+      variable: "CMAKE_C_ABI_COMPILED"
+      cached: true
+      stdout: |
+        Change Dir: /mnt/home/ipopa/dmk/examples/build/CMakeFiles/CMakeScratch/TryCompile-XuU8bT
+        
+        Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_0bc93/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_0bc93.dir/build.make CMakeFiles/cmTC_0bc93.dir/build
+        gmake[1]: Entering directory '/mnt/home/ipopa/dmk/examples/build/CMakeFiles/CMakeScratch/TryCompile-XuU8bT'
+        Building C object CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.o
+        /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/cc   -v -o CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.o -c /usr/share/cmake/Modules/CMakeCCompilerABI.c
+        Reading specs from /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/specs
+        COLLECT_GCC=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/cc
+        Target: x86_64-pc-linux-gnu
+        Configured with: /dev/shm/nix-build-gcc-13.3.0.drv-1/nixbld2/spack-stage-gcc-13.3.0-pxl9ndpq5yassys69ibkr3kcz34jh385/spack-src/configure --prefix=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0 --with-pkgversion='Spack GCC' --with-bugurl=https://github.com/spack/spack/issues --disable-multilib --enable-languages=c,c++,fortran,jit --disable-nls --disable-canonical-system-headers --with-system-zlib --with-zstd-include=/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/include --with-zstd-lib=/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib --enable-host-shared --enable-bootstrap --with-mpfr-include=/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/include --with-mpfr-lib=/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib --with-gmp-include=/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/include --with-gmp-lib=/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib --with-mpc-include=/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/include --with-mpc-lib=/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib --without-isl --with-stage1-ldflags='-Wl,-rpath,/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -Wl,-rpath,/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib -Wl,-rpath,/usr/lib -Wl,-rpath,/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib -Wl,-rpath,/usr/lib64' --with-boot-ldflags='-Wl,-rpath,/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -Wl,-rpath,/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib -Wl,-rpath,/usr/lib -Wl,-rpath,/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib -Wl,-rpath,/usr/lib64 -static-libstdc++ -static-libgcc' --with-build-config=spack --with-arch=broadwell --with-tune=broadwell
+        Thread model: posix
+        Supported LTO compression algorithms: zlib zstd
+        gcc version 13.3.0 (Spack GCC) 
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_0bc93.dir/'
+         /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/cc1 -quiet -v /usr/share/cmake/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_0bc93.dir/ -dumpbase CMakeCCompilerABI.c.c -dumpbase-ext .c -mtune=broadwell -march=broadwell -version -o /tmp/cciZvvIT.s
+        GNU C17 (Spack GCC) version 13.3.0 (x86_64-pc-linux-gnu)
+        	compiled by GNU C version 13.3.0, GMP version 6.3.0, MPFR version 4.2.1, MPC version 1.3.1, isl version none
+        GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
+        ignoring duplicate directory "/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include"
+        ignoring nonexistent directory "/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../x86_64-pc-linux-gnu/include"
+        ignoring duplicate directory "."
+        #include "..." search starts here:
+        #include <...> search starts here:
+         /mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/include
+         /mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/include
+         .
+         /mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/include
+         /mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/include
+         /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include
+         /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include
+         /usr/local/include
+         /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include-fixed
+         /usr/include
+        End of search list.
+        Compiler executable checksum: 00b81b8a840523ccfd906e0a7b0eafcf
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_0bc93.dir/'
+         as -v --64 -o CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.o /tmp/cciZvvIT.s
+        GNU assembler version 2.30 (x86_64-redhat-linux) using BFD version version 2.30-128.el8_10
+        COMPILER_PATH=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/
+        LIBRARY_PATH=/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/../lib64/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib/:/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib/:/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib/:/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../:/lib/:/usr/lib/
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.'
+        Linking C executable cmTC_0bc93
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_0bc93.dir/link.txt --verbose=1
+        /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/cc  -v -rdynamic CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.o -o cmTC_0bc93 
+        Reading specs from /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/specs
+        COLLECT_GCC=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/cc
+        COLLECT_LTO_WRAPPER=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/lto-wrapper
+        Target: x86_64-pc-linux-gnu
+        Configured with: /dev/shm/nix-build-gcc-13.3.0.drv-1/nixbld2/spack-stage-gcc-13.3.0-pxl9ndpq5yassys69ibkr3kcz34jh385/spack-src/configure --prefix=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0 --with-pkgversion='Spack GCC' --with-bugurl=https://github.com/spack/spack/issues --disable-multilib --enable-languages=c,c++,fortran,jit --disable-nls --disable-canonical-system-headers --with-system-zlib --with-zstd-include=/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/include --with-zstd-lib=/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib --enable-host-shared --enable-bootstrap --with-mpfr-include=/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/include --with-mpfr-lib=/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib --with-gmp-include=/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/include --with-gmp-lib=/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib --with-mpc-include=/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/include --with-mpc-lib=/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib --without-isl --with-stage1-ldflags='-Wl,-rpath,/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -Wl,-rpath,/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib -Wl,-rpath,/usr/lib -Wl,-rpath,/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib -Wl,-rpath,/usr/lib64' --with-boot-ldflags='-Wl,-rpath,/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -Wl,-rpath,/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib -Wl,-rpath,/usr/lib -Wl,-rpath,/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib -Wl,-rpath,/usr/lib64 -static-libstdc++ -static-libgcc' --with-build-config=spack --with-arch=broadwell --with-tune=broadwell
+        Thread model: posix
+        Supported LTO compression algorithms: zlib zstd
+        gcc version 13.3.0 (Spack GCC) 
+        COMPILER_PATH=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/
+        LIBRARY_PATH=/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/../lib64/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib/:/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib/:/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib/:/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../:/lib/:/usr/lib/
+        COLLECT_GCC_OPTIONS='-v' '-rdynamic' '-o' 'cmTC_0bc93' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'cmTC_0bc93.'
+         /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/collect2 -plugin /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/liblto_plugin.so -plugin-opt=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/lto-wrapper -plugin-opt=-fresolution=/tmp/ccLJZnTe.res -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s --eh-frame-hdr -m elf_x86_64 -export-dynamic -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_0bc93 /lib/../lib64/crt1.o /lib/../lib64/crti.o /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtbegin.o -L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/../lib64 -L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/../lib64 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/../lib64 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/../lib64 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib -L/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib -L/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib -L/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib -L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64 -L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../.. -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.o -lgcc --push-state --as-needed -lgcc_s --pop-state -lc -lgcc --push-state --as-needed -lgcc_s --pop-state /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtend.o /lib/../lib64/crtn.o
+        COLLECT_GCC_OPTIONS='-v' '-rdynamic' '-o' 'cmTC_0bc93' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'cmTC_0bc93.'
+        gmake[1]: Leaving directory '/mnt/home/ipopa/dmk/examples/build/CMakeFiles/CMakeScratch/TryCompile-XuU8bT'
+        
+      exitCode: 0
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:127 (message)"
+      - "/usr/share/cmake/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt"
+    message: |
+      Parsed C implicit include dir info: rv=done
+        found start of include info
+        found start of implicit include info
+          add: [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/include]
+          add: [/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/include]
+          add: [.]
+          add: [/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/include]
+          add: [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/include]
+          add: [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include]
+          add: [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include]
+          add: [/usr/local/include]
+          add: [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include-fixed]
+          add: [/usr/include]
+        end of search list found
+        collapse include dir [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/include] ==> [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/include]
+        collapse include dir [/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/include] ==> [/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/include]
+        skipping relative include dir [.]
+        collapse include dir [/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/include] ==> [/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/include]
+        collapse include dir [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/include] ==> [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/include]
+        collapse include dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include]
+        collapse include dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include]
+        collapse include dir [/usr/local/include] ==> [/usr/local/include]
+        collapse include dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include-fixed] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include-fixed]
+        collapse include dir [/usr/include] ==> [/usr/include]
+        implicit include dirs: [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/include;/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/include;/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/include;/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/include;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include;/usr/local/include;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include-fixed;/usr/include]
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:152 (message)"
+      - "/usr/share/cmake/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt"
+    message: |
+      Parsed C implicit link information:
+        link line regex: [^( *|.*[/\\])(ld|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
+        ignore line: [Change Dir: /mnt/home/ipopa/dmk/examples/build/CMakeFiles/CMakeScratch/TryCompile-XuU8bT]
+        ignore line: []
+        ignore line: [Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_0bc93/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_0bc93.dir/build.make CMakeFiles/cmTC_0bc93.dir/build]
+        ignore line: [gmake[1]: Entering directory '/mnt/home/ipopa/dmk/examples/build/CMakeFiles/CMakeScratch/TryCompile-XuU8bT']
+        ignore line: [Building C object CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.o]
+        ignore line: [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/cc   -v -o CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.o -c /usr/share/cmake/Modules/CMakeCCompilerABI.c]
+        ignore line: [Reading specs from /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/specs]
+        ignore line: [COLLECT_GCC=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/cc]
+        ignore line: [Target: x86_64-pc-linux-gnu]
+        ignore line: [Configured with: /dev/shm/nix-build-gcc-13.3.0.drv-1/nixbld2/spack-stage-gcc-13.3.0-pxl9ndpq5yassys69ibkr3kcz34jh385/spack-src/configure --prefix=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0 --with-pkgversion='Spack GCC' --with-bugurl=https://github.com/spack/spack/issues --disable-multilib --enable-languages=c c++ fortran jit --disable-nls --disable-canonical-system-headers --with-system-zlib --with-zstd-include=/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/include --with-zstd-lib=/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib --enable-host-shared --enable-bootstrap --with-mpfr-include=/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/include --with-mpfr-lib=/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib --with-gmp-include=/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/include --with-gmp-lib=/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib --with-mpc-include=/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/include --with-mpc-lib=/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib --without-isl --with-stage1-ldflags='-Wl -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -Wl -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -Wl -rpath /mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib -Wl -rpath /mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib -Wl -rpath /usr/lib -Wl -rpath /mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib -Wl -rpath /usr/lib64' --with-boot-ldflags='-Wl -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -Wl -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -Wl -rpath /mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib -Wl -rpath /mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib -Wl -rpath /usr/lib -Wl -rpath /mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib -Wl -rpath /usr/lib64 -static-libstdc++ -static-libgcc' --with-build-config=spack --with-arch=broadwell --with-tune=broadwell]
+        ignore line: [Thread model: posix]
+        ignore line: [Supported LTO compression algorithms: zlib zstd]
+        ignore line: [gcc version 13.3.0 (Spack GCC) ]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_0bc93.dir/']
+        ignore line: [ /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/cc1 -quiet -v /usr/share/cmake/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_0bc93.dir/ -dumpbase CMakeCCompilerABI.c.c -dumpbase-ext .c -mtune=broadwell -march=broadwell -version -o /tmp/cciZvvIT.s]
+        ignore line: [GNU C17 (Spack GCC) version 13.3.0 (x86_64-pc-linux-gnu)]
+        ignore line: [	compiled by GNU C version 13.3.0  GMP version 6.3.0  MPFR version 4.2.1  MPC version 1.3.1  isl version none]
+        ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
+        ignore line: [ignoring duplicate directory "/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include"]
+        ignore line: [ignoring nonexistent directory "/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../x86_64-pc-linux-gnu/include"]
+        ignore line: [ignoring duplicate directory "."]
+        ignore line: [#include "..." search starts here:]
+        ignore line: [#include <...> search starts here:]
+        ignore line: [ /mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/include]
+        ignore line: [ /mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/include]
+        ignore line: [ .]
+        ignore line: [ /mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/include]
+        ignore line: [ /mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/include]
+        ignore line: [ /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include]
+        ignore line: [ /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include]
+        ignore line: [ /usr/local/include]
+        ignore line: [ /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include-fixed]
+        ignore line: [ /usr/include]
+        ignore line: [End of search list.]
+        ignore line: [Compiler executable checksum: 00b81b8a840523ccfd906e0a7b0eafcf]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_0bc93.dir/']
+        ignore line: [ as -v --64 -o CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.o /tmp/cciZvvIT.s]
+        ignore line: [GNU assembler version 2.30 (x86_64-redhat-linux) using BFD version version 2.30-128.el8_10]
+        ignore line: [COMPILER_PATH=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/]
+        ignore line: [LIBRARY_PATH=/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/../lib64/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib/:/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib/:/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib/:/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../:/lib/:/usr/lib/]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.']
+        ignore line: [Linking C executable cmTC_0bc93]
+        ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_0bc93.dir/link.txt --verbose=1]
+        ignore line: [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/cc  -v -rdynamic CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.o -o cmTC_0bc93 ]
+        ignore line: [Reading specs from /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/specs]
+        ignore line: [COLLECT_GCC=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/cc]
+        ignore line: [COLLECT_LTO_WRAPPER=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/lto-wrapper]
+        ignore line: [Target: x86_64-pc-linux-gnu]
+        ignore line: [Configured with: /dev/shm/nix-build-gcc-13.3.0.drv-1/nixbld2/spack-stage-gcc-13.3.0-pxl9ndpq5yassys69ibkr3kcz34jh385/spack-src/configure --prefix=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0 --with-pkgversion='Spack GCC' --with-bugurl=https://github.com/spack/spack/issues --disable-multilib --enable-languages=c c++ fortran jit --disable-nls --disable-canonical-system-headers --with-system-zlib --with-zstd-include=/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/include --with-zstd-lib=/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib --enable-host-shared --enable-bootstrap --with-mpfr-include=/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/include --with-mpfr-lib=/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib --with-gmp-include=/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/include --with-gmp-lib=/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib --with-mpc-include=/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/include --with-mpc-lib=/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib --without-isl --with-stage1-ldflags='-Wl -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -Wl -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -Wl -rpath /mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib -Wl -rpath /mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib -Wl -rpath /usr/lib -Wl -rpath /mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib -Wl -rpath /usr/lib64' --with-boot-ldflags='-Wl -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -Wl -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -Wl -rpath /mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib -Wl -rpath /mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib -Wl -rpath /usr/lib -Wl -rpath /mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib -Wl -rpath /usr/lib64 -static-libstdc++ -static-libgcc' --with-build-config=spack --with-arch=broadwell --with-tune=broadwell]
+        ignore line: [Thread model: posix]
+        ignore line: [Supported LTO compression algorithms: zlib zstd]
+        ignore line: [gcc version 13.3.0 (Spack GCC) ]
+        ignore line: [COMPILER_PATH=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/]
+        ignore line: [LIBRARY_PATH=/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/../lib64/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib/:/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib/:/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib/:/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../:/lib/:/usr/lib/]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-rdynamic' '-o' 'cmTC_0bc93' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'cmTC_0bc93.']
+        link line: [ /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/collect2 -plugin /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/liblto_plugin.so -plugin-opt=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/lto-wrapper -plugin-opt=-fresolution=/tmp/ccLJZnTe.res -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s --eh-frame-hdr -m elf_x86_64 -export-dynamic -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_0bc93 /lib/../lib64/crt1.o /lib/../lib64/crti.o /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtbegin.o -L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/../lib64 -L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/../lib64 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/../lib64 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/../lib64 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib -L/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib -L/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib -L/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib -L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64 -L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../.. -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.o -lgcc --push-state --as-needed -lgcc_s --pop-state -lc -lgcc --push-state --as-needed -lgcc_s --pop-state /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtend.o /lib/../lib64/crtn.o]
+          arg [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/collect2] ==> ignore
+          arg [-plugin] ==> ignore
+          arg [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/liblto_plugin.so] ==> ignore
+          arg [-plugin-opt=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/lto-wrapper] ==> ignore
+          arg [-plugin-opt=-fresolution=/tmp/ccLJZnTe.res] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
+          arg [-plugin-opt=-pass-through=-lc] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
+          arg [--eh-frame-hdr] ==> ignore
+          arg [-m] ==> ignore
+          arg [elf_x86_64] ==> ignore
+          arg [-export-dynamic] ==> ignore
+          arg [-dynamic-linker] ==> ignore
+          arg [/lib64/ld-linux-x86-64.so.2] ==> ignore
+          arg [-o] ==> ignore
+          arg [cmTC_0bc93] ==> ignore
+          arg [/lib/../lib64/crt1.o] ==> obj [/lib/../lib64/crt1.o]
+          arg [/lib/../lib64/crti.o] ==> obj [/lib/../lib64/crti.o]
+          arg [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtbegin.o] ==> obj [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtbegin.o]
+          arg [-L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/../lib64] ==> dir [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/../lib64]
+          arg [-L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/../lib64] ==> dir [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/../lib64]
+          arg [-L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/../lib64] ==> dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/../lib64]
+          arg [-L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/../lib64] ==> dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/../lib64]
+          arg [-L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0] ==> dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0]
+          arg [-L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../lib64] ==> dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../lib64]
+          arg [-L/lib/../lib64] ==> dir [/lib/../lib64]
+          arg [-L/usr/lib/../lib64] ==> dir [/usr/lib/../lib64]
+          arg [-L/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib] ==> dir [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib]
+          arg [-L/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib] ==> dir [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib]
+          arg [-L/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib] ==> dir [/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib]
+          arg [-L/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib] ==> dir [/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib]
+          arg [-L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64] ==> dir [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64]
+          arg [-L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib] ==> dir [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib]
+          arg [-L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64] ==> dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64]
+          arg [-L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib] ==> dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib]
+          arg [-L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../..] ==> dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../..]
+          arg [-rpath] ==> ignore
+          arg [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64] ==> ignore
+          arg [CMakeFiles/cmTC_0bc93.dir/CMakeCCompilerABI.c.o] ==> ignore
+          arg [-lgcc] ==> lib [gcc]
+          arg [--push-state] ==> ignore
+          arg [--as-needed] ==> ignore
+          arg [-lgcc_s] ==> lib [gcc_s]
+          arg [--pop-state] ==> ignore
+          arg [-lc] ==> lib [c]
+          arg [-lgcc] ==> lib [gcc]
+          arg [--push-state] ==> ignore
+          arg [--as-needed] ==> ignore
+          arg [-lgcc_s] ==> lib [gcc_s]
+          arg [--pop-state] ==> ignore
+          arg [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtend.o] ==> obj [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtend.o]
+          arg [/lib/../lib64/crtn.o] ==> obj [/lib/../lib64/crtn.o]
+        collapse obj [/lib/../lib64/crt1.o] ==> [/lib64/crt1.o]
+        collapse obj [/lib/../lib64/crti.o] ==> [/lib64/crti.o]
+        collapse obj [/lib/../lib64/crtn.o] ==> [/lib64/crtn.o]
+        collapse library dir [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/../lib64] ==> [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64]
+        collapse library dir [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/../lib64] ==> [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64]
+        collapse library dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/../lib64] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64]
+        collapse library dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/../lib64] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64]
+        collapse library dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0]
+        collapse library dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../lib64] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64]
+        collapse library dir [/lib/../lib64] ==> [/lib64]
+        collapse library dir [/usr/lib/../lib64] ==> [/usr/lib64]
+        collapse library dir [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib] ==> [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib]
+        collapse library dir [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib] ==> [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib]
+        collapse library dir [/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib] ==> [/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib]
+        collapse library dir [/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib] ==> [/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib]
+        collapse library dir [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64] ==> [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64]
+        collapse library dir [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib] ==> [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib]
+        collapse library dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64]
+        collapse library dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib]
+        collapse library dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../..] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib]
+        implicit libs: [gcc;gcc_s;c;gcc;gcc_s]
+        implicit objs: [/lib64/crt1.o;/lib64/crti.o;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtbegin.o;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtend.o;/lib64/crtn.o]
+        implicit dirs: [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0;/lib64;/usr/lib64;/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib;/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib;/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib;/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib;/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib]
+        implicit fwks: []
+      
+      
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:57 (try_compile)"
+      - "/usr/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt"
+    checks:
+      - "Detecting CXX compiler ABI info"
+    directories:
+      source: "/mnt/home/ipopa/dmk/examples/build/CMakeFiles/CMakeScratch/TryCompile-r542Zf"
+      binary: "/mnt/home/ipopa/dmk/examples/build/CMakeFiles/CMakeScratch/TryCompile-r542Zf"
+    cmakeVariables:
+      CMAKE_CXX_FLAGS: ""
+    buildResult:
+      variable: "CMAKE_CXX_ABI_COMPILED"
+      cached: true
+      stdout: |
+        Change Dir: /mnt/home/ipopa/dmk/examples/build/CMakeFiles/CMakeScratch/TryCompile-r542Zf
+        
+        Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_75f88/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_75f88.dir/build.make CMakeFiles/cmTC_75f88.dir/build
+        gmake[1]: Entering directory '/mnt/home/ipopa/dmk/examples/build/CMakeFiles/CMakeScratch/TryCompile-r542Zf'
+        Building CXX object CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.o
+        /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/c++   -v -o CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.o -c /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp
+        Reading specs from /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/specs
+        COLLECT_GCC=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/c++
+        Target: x86_64-pc-linux-gnu
+        Configured with: /dev/shm/nix-build-gcc-13.3.0.drv-1/nixbld2/spack-stage-gcc-13.3.0-pxl9ndpq5yassys69ibkr3kcz34jh385/spack-src/configure --prefix=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0 --with-pkgversion='Spack GCC' --with-bugurl=https://github.com/spack/spack/issues --disable-multilib --enable-languages=c,c++,fortran,jit --disable-nls --disable-canonical-system-headers --with-system-zlib --with-zstd-include=/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/include --with-zstd-lib=/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib --enable-host-shared --enable-bootstrap --with-mpfr-include=/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/include --with-mpfr-lib=/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib --with-gmp-include=/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/include --with-gmp-lib=/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib --with-mpc-include=/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/include --with-mpc-lib=/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib --without-isl --with-stage1-ldflags='-Wl,-rpath,/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -Wl,-rpath,/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib -Wl,-rpath,/usr/lib -Wl,-rpath,/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib -Wl,-rpath,/usr/lib64' --with-boot-ldflags='-Wl,-rpath,/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -Wl,-rpath,/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib -Wl,-rpath,/usr/lib -Wl,-rpath,/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib -Wl,-rpath,/usr/lib64 -static-libstdc++ -static-libgcc' --with-build-config=spack --with-arch=broadwell --with-tune=broadwell
+        Thread model: posix
+        Supported LTO compression algorithms: zlib zstd
+        gcc version 13.3.0 (Spack GCC) 
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_75f88.dir/'
+         /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/cc1plus -quiet -v -D_GNU_SOURCE /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp -quiet -dumpdir CMakeFiles/cmTC_75f88.dir/ -dumpbase CMakeCXXCompilerABI.cpp.cpp -dumpbase-ext .cpp -mtune=broadwell -march=broadwell -version -o /tmp/ccS9VUky.s
+        GNU C++17 (Spack GCC) version 13.3.0 (x86_64-pc-linux-gnu)
+        	compiled by GNU C version 13.3.0, GMP version 6.3.0, MPFR version 4.2.1, MPC version 1.3.1, isl version none
+        GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
+        ignoring duplicate directory "/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include"
+        ignoring nonexistent directory "/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../x86_64-pc-linux-gnu/include"
+        ignoring duplicate directory "."
+        #include "..." search starts here:
+        #include <...> search starts here:
+         /mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/include
+         /mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/include
+         .
+         /mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/include
+         /mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/include
+         /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include
+         /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../include/c++/13.3.0
+         /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../include/c++/13.3.0/x86_64-pc-linux-gnu
+         /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../include/c++/13.3.0/backward
+         /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include
+         /usr/local/include
+         /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include-fixed
+         /usr/include
+        End of search list.
+        Compiler executable checksum: c31e6a6f5bd5e998201625903162bfab
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_75f88.dir/'
+         as -v --64 -o CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.o /tmp/ccS9VUky.s
+        GNU assembler version 2.30 (x86_64-redhat-linux) using BFD version version 2.30-128.el8_10
+        COMPILER_PATH=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/
+        LIBRARY_PATH=/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/../lib64/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib/:/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib/:/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib/:/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../:/lib/:/usr/lib/
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.'
+        Linking CXX executable cmTC_75f88
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_75f88.dir/link.txt --verbose=1
+        /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/c++  -v -rdynamic CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.o -o cmTC_75f88 
+        Reading specs from /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/specs
+        COLLECT_GCC=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/c++
+        COLLECT_LTO_WRAPPER=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/lto-wrapper
+        Target: x86_64-pc-linux-gnu
+        Configured with: /dev/shm/nix-build-gcc-13.3.0.drv-1/nixbld2/spack-stage-gcc-13.3.0-pxl9ndpq5yassys69ibkr3kcz34jh385/spack-src/configure --prefix=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0 --with-pkgversion='Spack GCC' --with-bugurl=https://github.com/spack/spack/issues --disable-multilib --enable-languages=c,c++,fortran,jit --disable-nls --disable-canonical-system-headers --with-system-zlib --with-zstd-include=/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/include --with-zstd-lib=/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib --enable-host-shared --enable-bootstrap --with-mpfr-include=/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/include --with-mpfr-lib=/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib --with-gmp-include=/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/include --with-gmp-lib=/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib --with-mpc-include=/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/include --with-mpc-lib=/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib --without-isl --with-stage1-ldflags='-Wl,-rpath,/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -Wl,-rpath,/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib -Wl,-rpath,/usr/lib -Wl,-rpath,/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib -Wl,-rpath,/usr/lib64' --with-boot-ldflags='-Wl,-rpath,/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -Wl,-rpath,/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib -Wl,-rpath,/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib -Wl,-rpath,/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib -Wl,-rpath,/usr/lib -Wl,-rpath,/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib -Wl,-rpath,/usr/lib64 -static-libstdc++ -static-libgcc' --with-build-config=spack --with-arch=broadwell --with-tune=broadwell
+        Thread model: posix
+        Supported LTO compression algorithms: zlib zstd
+        gcc version 13.3.0 (Spack GCC) 
+        COMPILER_PATH=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/
+        LIBRARY_PATH=/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/../lib64/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib/:/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib/:/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib/:/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../:/lib/:/usr/lib/
+        COLLECT_GCC_OPTIONS='-v' '-rdynamic' '-o' 'cmTC_75f88' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'cmTC_75f88.'
+         /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/collect2 -plugin /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/liblto_plugin.so -plugin-opt=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/lto-wrapper -plugin-opt=-fresolution=/tmp/cc5ZJTMT.res -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc --eh-frame-hdr -m elf_x86_64 -export-dynamic -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_75f88 /lib/../lib64/crt1.o /lib/../lib64/crti.o /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtbegin.o -L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/../lib64 -L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/../lib64 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/../lib64 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/../lib64 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib -L/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib -L/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib -L/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib -L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64 -L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../.. -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.o -lstdc++ -lm -lgcc_s -lgcc -lc -lgcc_s -lgcc /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtend.o /lib/../lib64/crtn.o
+        COLLECT_GCC_OPTIONS='-v' '-rdynamic' '-o' 'cmTC_75f88' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'cmTC_75f88.'
+        gmake[1]: Leaving directory '/mnt/home/ipopa/dmk/examples/build/CMakeFiles/CMakeScratch/TryCompile-r542Zf'
+        
+      exitCode: 0
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:127 (message)"
+      - "/usr/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt"
+    message: |
+      Parsed CXX implicit include dir info: rv=done
+        found start of include info
+        found start of implicit include info
+          add: [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/include]
+          add: [/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/include]
+          add: [.]
+          add: [/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/include]
+          add: [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/include]
+          add: [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include]
+          add: [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../include/c++/13.3.0]
+          add: [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../include/c++/13.3.0/x86_64-pc-linux-gnu]
+          add: [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../include/c++/13.3.0/backward]
+          add: [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include]
+          add: [/usr/local/include]
+          add: [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include-fixed]
+          add: [/usr/include]
+        end of search list found
+        collapse include dir [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/include] ==> [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/include]
+        collapse include dir [/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/include] ==> [/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/include]
+        skipping relative include dir [.]
+        collapse include dir [/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/include] ==> [/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/include]
+        collapse include dir [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/include] ==> [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/include]
+        collapse include dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include]
+        collapse include dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../include/c++/13.3.0] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include/c++/13.3.0]
+        collapse include dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../include/c++/13.3.0/x86_64-pc-linux-gnu] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include/c++/13.3.0/x86_64-pc-linux-gnu]
+        collapse include dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../include/c++/13.3.0/backward] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include/c++/13.3.0/backward]
+        collapse include dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include]
+        collapse include dir [/usr/local/include] ==> [/usr/local/include]
+        collapse include dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include-fixed] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include-fixed]
+        collapse include dir [/usr/include] ==> [/usr/include]
+        implicit include dirs: [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/include;/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/include;/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/include;/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/include;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include/c++/13.3.0;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include/c++/13.3.0/x86_64-pc-linux-gnu;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include/c++/13.3.0/backward;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include;/usr/local/include;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include-fixed;/usr/include]
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:152 (message)"
+      - "/usr/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt"
+    message: |
+      Parsed CXX implicit link information:
+        link line regex: [^( *|.*[/\\])(ld|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
+        ignore line: [Change Dir: /mnt/home/ipopa/dmk/examples/build/CMakeFiles/CMakeScratch/TryCompile-r542Zf]
+        ignore line: []
+        ignore line: [Run Build Command(s):/usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_75f88/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_75f88.dir/build.make CMakeFiles/cmTC_75f88.dir/build]
+        ignore line: [gmake[1]: Entering directory '/mnt/home/ipopa/dmk/examples/build/CMakeFiles/CMakeScratch/TryCompile-r542Zf']
+        ignore line: [Building CXX object CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.o]
+        ignore line: [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/c++   -v -o CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.o -c /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp]
+        ignore line: [Reading specs from /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/specs]
+        ignore line: [COLLECT_GCC=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/c++]
+        ignore line: [Target: x86_64-pc-linux-gnu]
+        ignore line: [Configured with: /dev/shm/nix-build-gcc-13.3.0.drv-1/nixbld2/spack-stage-gcc-13.3.0-pxl9ndpq5yassys69ibkr3kcz34jh385/spack-src/configure --prefix=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0 --with-pkgversion='Spack GCC' --with-bugurl=https://github.com/spack/spack/issues --disable-multilib --enable-languages=c c++ fortran jit --disable-nls --disable-canonical-system-headers --with-system-zlib --with-zstd-include=/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/include --with-zstd-lib=/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib --enable-host-shared --enable-bootstrap --with-mpfr-include=/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/include --with-mpfr-lib=/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib --with-gmp-include=/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/include --with-gmp-lib=/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib --with-mpc-include=/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/include --with-mpc-lib=/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib --without-isl --with-stage1-ldflags='-Wl -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -Wl -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -Wl -rpath /mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib -Wl -rpath /mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib -Wl -rpath /usr/lib -Wl -rpath /mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib -Wl -rpath /usr/lib64' --with-boot-ldflags='-Wl -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -Wl -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -Wl -rpath /mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib -Wl -rpath /mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib -Wl -rpath /usr/lib -Wl -rpath /mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib -Wl -rpath /usr/lib64 -static-libstdc++ -static-libgcc' --with-build-config=spack --with-arch=broadwell --with-tune=broadwell]
+        ignore line: [Thread model: posix]
+        ignore line: [Supported LTO compression algorithms: zlib zstd]
+        ignore line: [gcc version 13.3.0 (Spack GCC) ]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_75f88.dir/']
+        ignore line: [ /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/cc1plus -quiet -v -D_GNU_SOURCE /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp -quiet -dumpdir CMakeFiles/cmTC_75f88.dir/ -dumpbase CMakeCXXCompilerABI.cpp.cpp -dumpbase-ext .cpp -mtune=broadwell -march=broadwell -version -o /tmp/ccS9VUky.s]
+        ignore line: [GNU C++17 (Spack GCC) version 13.3.0 (x86_64-pc-linux-gnu)]
+        ignore line: [	compiled by GNU C version 13.3.0  GMP version 6.3.0  MPFR version 4.2.1  MPC version 1.3.1  isl version none]
+        ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
+        ignore line: [ignoring duplicate directory "/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include"]
+        ignore line: [ignoring nonexistent directory "/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../x86_64-pc-linux-gnu/include"]
+        ignore line: [ignoring duplicate directory "."]
+        ignore line: [#include "..." search starts here:]
+        ignore line: [#include <...> search starts here:]
+        ignore line: [ /mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/include]
+        ignore line: [ /mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/include]
+        ignore line: [ .]
+        ignore line: [ /mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/include]
+        ignore line: [ /mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/include]
+        ignore line: [ /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/include]
+        ignore line: [ /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../include/c++/13.3.0]
+        ignore line: [ /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../include/c++/13.3.0/x86_64-pc-linux-gnu]
+        ignore line: [ /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../include/c++/13.3.0/backward]
+        ignore line: [ /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include]
+        ignore line: [ /usr/local/include]
+        ignore line: [ /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/include-fixed]
+        ignore line: [ /usr/include]
+        ignore line: [End of search list.]
+        ignore line: [Compiler executable checksum: c31e6a6f5bd5e998201625903162bfab]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_75f88.dir/']
+        ignore line: [ as -v --64 -o CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.o /tmp/ccS9VUky.s]
+        ignore line: [GNU assembler version 2.30 (x86_64-redhat-linux) using BFD version version 2.30-128.el8_10]
+        ignore line: [COMPILER_PATH=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/]
+        ignore line: [LIBRARY_PATH=/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/../lib64/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib/:/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib/:/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib/:/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../:/lib/:/usr/lib/]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.']
+        ignore line: [Linking CXX executable cmTC_75f88]
+        ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_75f88.dir/link.txt --verbose=1]
+        ignore line: [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/c++  -v -rdynamic CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.o -o cmTC_75f88 ]
+        ignore line: [Reading specs from /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/specs]
+        ignore line: [COLLECT_GCC=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/c++]
+        ignore line: [COLLECT_LTO_WRAPPER=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/lto-wrapper]
+        ignore line: [Target: x86_64-pc-linux-gnu]
+        ignore line: [Configured with: /dev/shm/nix-build-gcc-13.3.0.drv-1/nixbld2/spack-stage-gcc-13.3.0-pxl9ndpq5yassys69ibkr3kcz34jh385/spack-src/configure --prefix=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0 --with-pkgversion='Spack GCC' --with-bugurl=https://github.com/spack/spack/issues --disable-multilib --enable-languages=c c++ fortran jit --disable-nls --disable-canonical-system-headers --with-system-zlib --with-zstd-include=/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/include --with-zstd-lib=/mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib --enable-host-shared --enable-bootstrap --with-mpfr-include=/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/include --with-mpfr-lib=/mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib --with-gmp-include=/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/include --with-gmp-lib=/mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib --with-mpc-include=/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/include --with-mpc-lib=/mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib --without-isl --with-stage1-ldflags='-Wl -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -Wl -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -Wl -rpath /mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib -Wl -rpath /mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib -Wl -rpath /usr/lib -Wl -rpath /mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib -Wl -rpath /usr/lib64' --with-boot-ldflags='-Wl -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -Wl -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -Wl -rpath /mnt/sw/nix/store/43dvw5cp72gr88jgdlx4y1biirpx0fh3-gmp-6.3.0/lib -Wl -rpath /mnt/sw/nix/store/6a0jq1jbqdnwcqpinl52f6jj4v1sihny-mpc-1.3.1/lib -Wl -rpath /mnt/sw/nix/store/70qv8hczmkhdcg7ax8nghzpw1qli0vjj-mpfr-4.2.1/lib -Wl -rpath /usr/lib -Wl -rpath /mnt/sw/nix/store/csfqvaghb73g9cvnqv3xny8w1zrgk8ad-zstd-1.5.6/lib -Wl -rpath /usr/lib64 -static-libstdc++ -static-libgcc' --with-build-config=spack --with-arch=broadwell --with-tune=broadwell]
+        ignore line: [Thread model: posix]
+        ignore line: [Supported LTO compression algorithms: zlib zstd]
+        ignore line: [gcc version 13.3.0 (Spack GCC) ]
+        ignore line: [COMPILER_PATH=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/]
+        ignore line: [LIBRARY_PATH=/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/../lib64/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/../lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib/:/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib/:/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib/:/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/:/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/:/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../:/lib/:/usr/lib/]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-rdynamic' '-o' 'cmTC_75f88' '-shared-libgcc' '-mtune=broadwell' '-march=broadwell' '-dumpdir' 'cmTC_75f88.']
+        link line: [ /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/collect2 -plugin /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/liblto_plugin.so -plugin-opt=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/lto-wrapper -plugin-opt=-fresolution=/tmp/cc5ZJTMT.res -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc --eh-frame-hdr -m elf_x86_64 -export-dynamic -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_75f88 /lib/../lib64/crt1.o /lib/../lib64/crti.o /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtbegin.o -L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/../lib64 -L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/../lib64 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/../lib64 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/../lib64 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib -L/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib -L/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib -L/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib -L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64 -L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib -L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../.. -rpath /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64 CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.o -lstdc++ -lm -lgcc_s -lgcc -lc -lgcc_s -lgcc /mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtend.o /lib/../lib64/crtn.o]
+          arg [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/collect2] ==> ignore
+          arg [-plugin] ==> ignore
+          arg [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/liblto_plugin.so] ==> ignore
+          arg [-plugin-opt=/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/libexec/gcc/x86_64-pc-linux-gnu/13.3.0/lto-wrapper] ==> ignore
+          arg [-plugin-opt=-fresolution=/tmp/cc5ZJTMT.res] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
+          arg [-plugin-opt=-pass-through=-lc] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
+          arg [--eh-frame-hdr] ==> ignore
+          arg [-m] ==> ignore
+          arg [elf_x86_64] ==> ignore
+          arg [-export-dynamic] ==> ignore
+          arg [-dynamic-linker] ==> ignore
+          arg [/lib64/ld-linux-x86-64.so.2] ==> ignore
+          arg [-o] ==> ignore
+          arg [cmTC_75f88] ==> ignore
+          arg [/lib/../lib64/crt1.o] ==> obj [/lib/../lib64/crt1.o]
+          arg [/lib/../lib64/crti.o] ==> obj [/lib/../lib64/crti.o]
+          arg [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtbegin.o] ==> obj [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtbegin.o]
+          arg [-L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/../lib64] ==> dir [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/../lib64]
+          arg [-L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/../lib64] ==> dir [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/../lib64]
+          arg [-L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/../lib64] ==> dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/../lib64]
+          arg [-L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/../lib64] ==> dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/../lib64]
+          arg [-L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0] ==> dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0]
+          arg [-L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../lib64] ==> dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../lib64]
+          arg [-L/lib/../lib64] ==> dir [/lib/../lib64]
+          arg [-L/usr/lib/../lib64] ==> dir [/usr/lib/../lib64]
+          arg [-L/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib] ==> dir [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib]
+          arg [-L/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib] ==> dir [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib]
+          arg [-L/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib] ==> dir [/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib]
+          arg [-L/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib] ==> dir [/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib]
+          arg [-L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64] ==> dir [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64]
+          arg [-L/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib] ==> dir [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib]
+          arg [-L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64] ==> dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64]
+          arg [-L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib] ==> dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib]
+          arg [-L/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../..] ==> dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../..]
+          arg [-rpath] ==> ignore
+          arg [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64] ==> ignore
+          arg [CMakeFiles/cmTC_75f88.dir/CMakeCXXCompilerABI.cpp.o] ==> ignore
+          arg [-lstdc++] ==> lib [stdc++]
+          arg [-lm] ==> lib [m]
+          arg [-lgcc_s] ==> lib [gcc_s]
+          arg [-lgcc] ==> lib [gcc]
+          arg [-lc] ==> lib [c]
+          arg [-lgcc_s] ==> lib [gcc_s]
+          arg [-lgcc] ==> lib [gcc]
+          arg [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtend.o] ==> obj [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtend.o]
+          arg [/lib/../lib64/crtn.o] ==> obj [/lib/../lib64/crtn.o]
+        collapse obj [/lib/../lib64/crt1.o] ==> [/lib64/crt1.o]
+        collapse obj [/lib/../lib64/crti.o] ==> [/lib64/crti.o]
+        collapse obj [/lib/../lib64/crtn.o] ==> [/lib64/crtn.o]
+        collapse library dir [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64/../lib64] ==> [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64]
+        collapse library dir [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib/../lib64] ==> [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64]
+        collapse library dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64/../lib64] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64]
+        collapse library dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/../lib64] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64]
+        collapse library dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0]
+        collapse library dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../../../lib64] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64]
+        collapse library dir [/lib/../lib64] ==> [/lib64]
+        collapse library dir [/usr/lib/../lib64] ==> [/usr/lib64]
+        collapse library dir [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib] ==> [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib]
+        collapse library dir [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib] ==> [/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib]
+        collapse library dir [/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib] ==> [/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib]
+        collapse library dir [/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib] ==> [/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib]
+        collapse library dir [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64] ==> [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64]
+        collapse library dir [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib] ==> [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib]
+        collapse library dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64]
+        collapse library dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib]
+        collapse library dir [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/../../..] ==> [/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib]
+        implicit libs: [stdc++;m;gcc_s;gcc;c;gcc_s;gcc]
+        implicit objs: [/lib64/crt1.o;/lib64/crti.o;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtbegin.o;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0/crtend.o;/lib64/crtn.o]
+        implicit dirs: [/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib64;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib64;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib/gcc/x86_64-pc-linux-gnu/13.3.0;/lib64;/usr/lib64;/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/umf/0.9/lib;/mnt/sw/nix/store/1cjw3h7w9g437g4h2i9q81gaqcpfa9ik-intel-oneapi-compilers-2025.0.4/compiler/2025.0/lib;/mnt/sw/nix/store/dwd607jzx9m5bdd100br72s3b6g05zrf-intel-oneapi-mkl-2024.2.2/mkl/2024.2/lib;/mnt/sw/nix/store/pa59vldasm7gxpr7dkijhk09q5qq63q1-openmpi-4.1.8/lib;/mnt/sw/nix/store/7kfpfhj104s5hynnhr5jzsrm25p4vwla-python-3.11.11-view/lib;/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/lib]
+        implicit fwks: []
+      
+      
+...

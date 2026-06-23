@@ -1,0 +1,2 @@
+/usr/bin/ar qc libducc0.a CMakeFiles/ducc0.dir/extern/ducc0/src/ducc0/infra/string_utils.cc.o CMakeFiles/ducc0.dir/extern/ducc0/src/ducc0/infra/threading.cc.o CMakeFiles/ducc0.dir/extern/ducc0/src/ducc0/infra/mav.cc.o CMakeFiles/ducc0.dir/extern/ducc0/src/ducc0/math/gridding_kernel.cc.o CMakeFiles/ducc0.dir/extern/ducc0/src/ducc0/math/gl_integrator.cc.o
+/usr/bin/ranlib libducc0.a

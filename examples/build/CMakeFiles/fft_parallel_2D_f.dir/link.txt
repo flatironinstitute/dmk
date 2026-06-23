@@ -1,0 +1,1 @@
+/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/c++ -O2 -g -DNDEBUG -rdynamic CMakeFiles/fft_parallel_2D_f.dir/fft_parallel_2D_factored.o -o fft_parallel_2D_f  -lMPI::MPI_CXX -lOpenMP::OpenMP_CXX -lducc0 
