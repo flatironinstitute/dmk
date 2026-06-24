@@ -1,0 +1,18 @@
+#!/bin/sh
+set -e
+
+command -v clang-format >/dev/null 2>&1 || exit 0
+
+git diff --cached --name-only --diff-filter=ACM | grep -E '\.(cpp|hpp|h|c)$' | while read -r f; do
+    if git diff --quiet -- "$f"; then
+        # No unstaged changes: safe to format the file and re-stage it.
+        clang-format -i "$f"
+        git add "$f"
+    else
+        # Mixed staged/unstaged changes: format only the staged blob and
+        # re-stage it via the index, so unstaged hunks are not pulled in.
+        mode=$(git ls-files --stage -- "$f" | cut -d' ' -f1)
+        blob=$(git show ":$f" | clang-format --assume-filename="$f" | git hash-object -w --stdin)
+        git update-index --cacheinfo "$mode,$blob,$f"
+    fi
+done

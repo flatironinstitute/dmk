@@ -1,68 +1,70 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.20)
 
-project(dmk LANGUAGES CXX Fortran)
+project(dmk LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-if (CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
-  set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -std=legacy")
-endif()
-if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
-  add_compile_options("-DSCTL_HAVE_SVML")
-else()
-  add_compile_options("-DSCTL_HAVE_LIBMVEC")
-endif()
-
 option(DMK_BUILD_TESTS "Build tests" ON)
 option(DMK_BUILD_EXAMPLES "Build examples" ON)
-option(DMK_INSTRUMENT "Instrument the code. Requires PAPI" OFF)
+option(DMK_INSTRUMENT "Instrument the code" OFF)
 option(DMK_BUILD_PVFMM "Build PVFMM for comparison. Useless without DMK_BUILD_EXAMPLES" OFF)
-option(DMK_WITH_FINUFFT "Build ESP (Ewald Sum with PSWF) solver. Requires FINUFFT and FFTW." OFF)
+option(DMK_BUILD_ESP "Build Ewald Summation with PSWF" OFF)
+option(DMK_HAVE_MPI "Use MPI for parallelism" ON)
+option(DMK_HAVE_OPENMP "Use OpenMP for parallelism" ON)
+option(DMK_BUILD_REFERENCE "Build reference Fortran implementation" OFF)
+option(DMK_USE_JIT "Use JIT compilation where supported (requires LLVM)" OFF)
 
-if (NOT ${DMK_BUILD_TESTS})
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DDOCTEST_CONFIG_DISABLE")
-  set(DMK_TEST_SRC)
+if (DMK_BUILD_REFERENCE)
+  enable_language(Fortran)
+  if (CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -std=legacy")
+  endif()
+endif()
+
+if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
+  set(DMK_VECLIB_DEFINE "SCTL_HAVE_SVML")
 else()
+  set(DMK_VECLIB_DEFINE "SCTL_HAVE_LIBMVEC")
+endif()
+
+# Disable google tests and HDF5 for NDA
+set(Build_Tests OFF CACHE BOOL "" FORCE)
+set(HDF5Support OFF CACHE BOOL "" FORCE)
+
+set(DMK_CXX_FLAGS "-DSCTL_MAX_DEPTH=62;-D${DMK_VECLIB_DEFINE}")
+if (DMK_BUILD_TESTS)
   set(DMK_TEST_SRC src/doctest.cpp)
-endif()
-
-add_compile_options("-march=native")
-if(${DMK_INSTRUMENT})
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(PAPI REQUIRED IMPORTED_TARGET papi)
-  set(PAPI_TARGET papi)
-  add_compile_options("-DSCTL_PROFILE=5;-DDMK_INSTRUMENT")
 else()
-  set(PAPI_TARGET "")
+  set(DMK_TEST_SRC)
+  list(APPEND DMK_CXX_FLAGS "-DDOCTEST_CONFIG_DISABLE")
 endif()
 
-find_package(OpenMP REQUIRED)
-find_package(MPI COMPONENTS CXX REQUIRED)
+if (DMK_INSTRUMENT)
+  list(APPEND DMK_CXX_FLAGS "-DSCTL_PROFILE=5" "-DDMK_INSTRUMENT")
+endif()
+
+set(DMK_OPENMP_TARGET "")
+if (DMK_HAVE_OPENMP)
+  find_package(OpenMP REQUIRED)
+  set(DMK_OPENMP_TARGET OpenMP::OpenMP_CXX)
+  list(APPEND DMK_CXX_FLAGS "-DDMK_HAVE_OPENMP")
+  set(OpenMPSupport ON CACHE BOOL "" FORCE)
+else()
+  set(OpenMPSupport OFF CACHE BOOL "" FORCE)
+endif()
+
+set(DMK_MPI_TARGET "")
+if (DMK_HAVE_MPI)
+  find_package(MPI REQUIRED)
+  set(DMK_MPI_TARGET MPI::MPI_CXX)
+  list(APPEND DMK_CXX_FLAGS "-DSCTL_HAVE_MPI" "-DDMK_HAVE_MPI")
+  set(MPISupport ON CACHE BOOL "" FORCE)
+else()
+  set(MPISupport OFF CACHE BOOL "" FORCE)
+endif()
 find_package(BLAS REQUIRED)
 
-add_library(
-  dmk_ducc0
-  STATIC
-  ${PROJECT_SOURCE_DIR}/extern/ducc0/src/ducc0/infra/string_utils.cc
-  ${PROJECT_SOURCE_DIR}/extern/ducc0/src/ducc0/infra/threading.cc
-  ${PROJECT_SOURCE_DIR}/extern/ducc0/src/ducc0/infra/mav.cc
-  ${PROJECT_SOURCE_DIR}/extern/ducc0/src/ducc0/math/gridding_kernel.cc
-  ${PROJECT_SOURCE_DIR}/extern/ducc0/src/ducc0/math/gl_integrator.cc
-)
-target_include_directories(dmk_ducc0 PUBLIC ${PROJECT_SOURCE_DIR}/extern/ducc0/src)
-target_compile_features(dmk_ducc0 PRIVATE cxx_std_17)
-
-# private because we do not want to propagate this requirement
-set_target_properties(
-  dmk_ducc0
-  PROPERTIES
-  POSITION_INDEPENDENT_CODE ON
-)
-
-target_compile_options(dmk_ducc0 PRIVATE -ffast-math)
-
-
-if(${DMK_BUILD_PVFMM})
+if (DMK_BUILD_PVFMM)
   include(FetchContent)
   FetchContent_Declare(
     pvfmm_lib
@@ -74,87 +76,129 @@ endif()
 
 set(DMK_INCLUDES
   ${PROJECT_SOURCE_DIR}/include
-  ${PROJECT_SOURCE_DIR}/extern/eigen
   ${PROJECT_SOURCE_DIR}/extern/SCTL/include
-  ${PROJECT_SOURCE_DIR}/extern/spdlog/include
-  ${PROJECT_SOURCE_DIR}/extern/doctest
-  ${PROJECT_SOURCE_DIR}/extern/ducc0/include
 )
+
+include(FetchContent)
+if (DMK_BUILD_ESP)
+  FetchContent_Declare(
+	finufft
+	GIT_REPOSITORY https://github.com/flatironinstitute/finufft.git
+	GIT_TAG v2.5.1
+  )
+  FetchContent_MakeAvailable(finufft)
+  set(DMK_ESP_TARGET finufft::finufft)
+  set(DMK_ESP_SRC src/esp.cpp)
+else()
+  set(DMK_ESP_SRC)
+  set(DMK_ESP_TARGET)
+endif()
+
+
+FetchContent_Declare(
+  polyfit
+  GIT_REPOSITORY https://github.com/DiamonDinoia/polyfit.git
+  GIT_TAG        a2994771155ed4cd22c2b792b463c42eefca3067
+)
+set(MONOFIT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(MONOFIT_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(polyfit)
 
 add_subdirectory(extern/spdlog EXCLUDE_FROM_ALL)
 add_subdirectory(extern/nanobench EXCLUDE_FROM_ALL)
 add_subdirectory(extern/doctest)
+add_subdirectory(extern/nda)
+if (DMK_USE_JIT)
+  list(APPEND DMK_CXX_FLAGS "-DDMK_USE_JIT")
+  set(RUFUS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(RUFUS_LINK_LLVM_SHARED ON CACHE BOOL "" FORCE)
+  set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+  add_subdirectory(extern/RuFuS)
 
-file(GLOB_RECURSE DMK_REF_COMMON_SRC "src/common/*.f*" "vec-kernels/src/libkernels2.cpp")
-add_library(dmk_ref_common OBJECT ${DMK_REF_COMMON_SRC})
-set_target_properties(dmk_ref_common PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(dmk_ref_common PRIVATE "extern/VCL/version2" "vec-kernels/include")
-
-file(GLOB_RECURSE DMK_REF_PDMK_SRC "src/pdmk/*.f")
-list(REMOVE_ITEM DMK_REF_PDMK_SRC
-  "${CMAKE_SOURCE_DIR}/src/pdmk/kernelevaluation/l3dkernels_fast.f"
-  "${CMAKE_SOURCE_DIR}/src/pdmk/pdmk.f"
-  "${CMAKE_SOURCE_DIR}/src/pdmk/pdmk4.f"
-)
-add_library(dmk_ref_pdmk OBJECT ${DMK_REF_PDMK_SRC})
-set_target_properties(dmk_ref_pdmk PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-file(GLOB_RECURSE DMK_REF_BDMK_SRC "src/bdmk/*.f")
-list(REMOVE_ITEM DMK_REF_BDMK_SRC
-  "${CMAKE_SOURCE_DIR}/src/bdmk/bdmk4.f"
-)
-add_library(dmk_ref_bdmk OBJECT ${DMK_REF_BDMK_SRC})
-set_target_properties(dmk_ref_bdmk PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-add_library(dmk_ref STATIC $<TARGET_OBJECTS:dmk_ref_common> $<TARGET_OBJECTS:dmk_ref_pdmk> $<TARGET_OBJECTS:dmk_ref_bdmk>)
-add_library(dmk_ref_shared SHARED $<TARGET_OBJECTS:dmk_ref_common> $<TARGET_OBJECTS:dmk_ref_pdmk> $<TARGET_OBJECTS:dmk_ref_bdmk>)
-set_target_properties(dmk_ref_shared PROPERTIES OUTPUT_NAME dmk_ref)
-
-if(DMK_WITH_FINUFFT)
-  include(FetchContent)
-  # Use ducc0 backend so FINUFFT reuses DMK's existing dmk_ducc0 headers
-  # and avoids any FFTW dependency.
-  set(FINUFFT_USE_DUCC0 ON CACHE BOOL "" FORCE)
-  FetchContent_Declare(
-    finufft
-    GIT_REPOSITORY https://github.com/flatironinstitute/finufft.git
-    GIT_TAG v2.5.0
+  rufus_embed_ir_as_header(jit_kernels src/jit_kernels.cpp
+    INCLUDES ${DMK_INCLUDES}
+    DEFINITIONS ${DMK_VECLIB_DEFINE}
+    FROM_TARGET nda::nda_c
   )
-  FetchContent_MakeAvailable(finufft)
 endif()
 
-set(DMK_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp src/legeexps.cpp
+if (DMK_BUILD_REFERENCE)
+  list(APPEND DMK_CXX_FLAGS "-DDMK_HAVE_REFERENCE")
+  file(GLOB_RECURSE DMK_REF_COMMON_SRC CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/src/common/*.f*"
+    "${PROJECT_SOURCE_DIR}/vec-kernels/src/libkernels2.cpp")
+  add_library(dmk_ref_common OBJECT ${DMK_REF_COMMON_SRC})
+  set_target_properties(dmk_ref_common PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_include_directories(dmk_ref_common PRIVATE
+    "${PROJECT_SOURCE_DIR}/extern/VCL/version2"
+    "${PROJECT_SOURCE_DIR}/vec-kernels/include")
+
+  file(GLOB_RECURSE DMK_REF_PDMK_SRC CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/pdmk/*.f")
+  list(REMOVE_ITEM DMK_REF_PDMK_SRC
+    "${PROJECT_SOURCE_DIR}/src/pdmk/kernelevaluation/l3dkernels_fast.f"
+    "${PROJECT_SOURCE_DIR}/src/pdmk/pdmk.f"
+    "${PROJECT_SOURCE_DIR}/src/pdmk/pdmk3.f"
+  )
+  add_library(dmk_ref_pdmk OBJECT ${DMK_REF_PDMK_SRC})
+  set_target_properties(dmk_ref_pdmk PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+  file(GLOB_RECURSE DMK_REF_BDMK_SRC CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/bdmk/*.f")
+  list(REMOVE_ITEM DMK_REF_BDMK_SRC
+    "${PROJECT_SOURCE_DIR}/src/bdmk/bdmk4.f"
+  )
+  add_library(dmk_ref_bdmk OBJECT ${DMK_REF_BDMK_SRC})
+  set_target_properties(dmk_ref_bdmk PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+  add_library(dmk_ref STATIC
+    $<TARGET_OBJECTS:dmk_ref_common>
+    $<TARGET_OBJECTS:dmk_ref_pdmk>
+    $<TARGET_OBJECTS:dmk_ref_bdmk>)
+endif()
+
+set(DMK_BOOTSTRAP_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp src/legeexps.cpp
   src/fourier_data.cpp src/tensorprod.cpp src/planewave.cpp src/direct.cpp src/prolate.cpp src/prolate0_eval.cpp
+  src/timing.cpp
   ${DMK_TEST_SRC}
+  ${DMK_ESP_SRC}
 )
+set(DMK_AOT_SRC src/aot_evaluator.cpp src/aot_kernels.cpp)
 
-if(DMK_WITH_FINUFFT)
-  list(APPEND DMK_SRC src/esp.cpp)
+add_library(DMKOBJS_BOOTSTRAP OBJECT ${DMK_BOOTSTRAP_SRC})
+set_target_properties(DMKOBJS_BOOTSTRAP PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(DMKOBJS_BOOTSTRAP PUBLIC ${DMK_INCLUDES})
+target_link_libraries(DMKOBJS_BOOTSTRAP PUBLIC ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET} ${DMK_ESP_TARGET}
+  nda::nda_c spdlog::spdlog_header_only doctest::doctest BLAS::BLAS polyfit::polyfit
+)
+if (DMK_USE_JIT)
+  target_link_libraries(DMKOBJS_BOOTSTRAP PUBLIC RuFuS::rufus jit_kernels)
 endif()
-add_library(DMKOBJS OBJECT ${DMK_SRC})
-set_target_properties(DMKOBJS PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(DMKOBJS PUBLIC ${DMK_INCLUDES} ${MPI_CXX_INCLUDE_DIRS} ${PAPI_INCLUDEDIR})
-target_link_libraries(DMKOBJS PUBLIC OpenMP::OpenMP_CXX ${PAPI_TARGET})
-target_compile_options(DMKOBJS PUBLIC "-DSCTL_HAVE_MPI;-DSCTL_MAX_DEPTH=62;-funroll-loops")
+target_compile_options(DMKOBJS_BOOTSTRAP PUBLIC "${DMK_CXX_FLAGS}")
 
-if(DMK_WITH_FINUFFT)
-  target_compile_definitions(DMKOBJS PUBLIC DMK_WITH_FINUFFT)
-  target_include_directories(DMKOBJS PRIVATE ${PROJECT_SOURCE_DIR}/extern/ducc0/src)
-  target_link_libraries(DMKOBJS PUBLIC finufft::finufft)
-endif()
+add_library(DMKOBJS_AOT OBJECT ${DMK_AOT_SRC})
+set_target_properties(DMKOBJS_AOT PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(DMKOBJS_AOT PUBLIC DMKOBJS_BOOTSTRAP)
+
+# Builds without src/aot_kernels.cpp; used by generate_aot_kernels to break the
+# bootstrap loop (so the generator can be rebuilt even when aot_kernels.cpp is stale/missing).
+add_library(dmk_bootstrap STATIC)
+target_link_libraries(dmk_bootstrap PUBLIC DMKOBJS_BOOTSTRAP)
 
 add_library(dmk STATIC)
-target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX DMKOBJS dmk_ref_common spdlog::spdlog)
+target_link_libraries(dmk PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT)
 
 add_library(dmk_shared SHARED)
-set_target_properties(${PROJECT_NAME}_shared PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
-target_link_libraries(${PROJECT_NAME}_shared DMKOBJS dmk_ref_common OpenMP::OpenMP_CXX MPI::MPI_CXX BLAS::BLAS spdlog doctest ${PAPI_TARGET})
+set_target_properties(dmk_shared PROPERTIES OUTPUT_NAME dmk)
+target_link_libraries(dmk_shared PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT)
 
-
-if(${DMK_BUILD_TESTS})
+if (DMK_BUILD_TESTS)
   add_subdirectory(test)
 endif()
 
-if(${DMK_BUILD_EXAMPLES})
+if (DMK_BUILD_EXAMPLES)
   add_subdirectory(examples)
+  add_subdirectory(scripts)
+endif()
+
+if (DMK_USE_JIT)
+  add_subdirectory(perf)
 endif()

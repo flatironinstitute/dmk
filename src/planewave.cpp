@@ -1,4 +1,3 @@
-#include <Eigen/Core>
 #include <dmk/chebychev.hpp>
 #include <dmk/fortran.h>
 #include <dmk/gemm.hpp>
@@ -9,8 +8,8 @@
 namespace dmk {
 
 template <typename Real>
-void pw2proxypot_2d(const ndview<const std::complex<Real>, 3> &pw_expansion,
-                    const ndview<const std::complex<Real>, 2> &pw_to_coefs_mat, const ndview<Real, 3> &proxy_coeffs,
+void pw2proxypot_2d(const ndview<std::complex<Real>, 3> &pw_expansion,
+                    const ndview<std::complex<Real>, 2> &pw_to_coefs_mat, ndview<Real, 3> &proxy_coeffs,
                     sctl::Vector<Real> &workspace) {
     using dmk::gemm::gemm;
 
@@ -22,8 +21,8 @@ void pw2proxypot_2d(const ndview<const std::complex<Real>, 3> &pw_expansion,
     sctl::Vector<std::complex<Real>> ff_(n_order * n_pw2);
     sctl::Vector<std::complex<Real>> zcoefs_(n_order * n_order);
 
-    ndview<std::complex<Real>, 2> ff(&ff_[0], n_order, n_pw2);
-    ndview<std::complex<Real>, 2> zcoefs(&zcoefs_[0], n_order, n_order);
+    ndview<std::complex<Real>, 2> ff({n_order, n_pw2}, &ff_[0]);
+    ndview<std::complex<Real>, 2> zcoefs({n_order, n_order}, &zcoefs_[0]);
 
     const int npw_half = n_pw / 2;
 
@@ -48,8 +47,8 @@ void pw2proxypot_2d(const ndview<const std::complex<Real>, 3> &pw_expansion,
 }
 
 template <typename Real>
-void pw2proxypot_3d(const ndview<const std::complex<Real>, 4> &pw_expansion,
-                    const ndview<const std::complex<Real>, 2> &pw_to_coefs_mat, const ndview<Real, 4> &proxy_coeffs,
+void pw2proxypot_3d(const ndview<std::complex<Real>, 4> &pw_expansion,
+                    const ndview<std::complex<Real>, 2> &pw_to_coefs_mat, ndview<Real, 4> &proxy_coeffs,
                     sctl::Vector<Real> &workspace) {
     using dmk::gemm::gemm;
 
@@ -59,11 +58,11 @@ void pw2proxypot_3d(const ndview<const std::complex<Real>, 4> &pw_expansion,
     const int n_pw2 = pw_expansion.extent(2);
 
     workspace.ReInit(2 * (2 * n_order * n_pw * n_pw2 + 2 * n_order * n_pw2 * n_order + n_order * n_order * n_order));
-    ndview<std::complex<Real>, 3> ff((std::complex<Real> *)(&workspace[0]), n_order, n_pw, n_pw2);
-    ndview<std::complex<Real>, 3> fft(ff.data_handle() + ff.size(), n_pw, n_pw2, n_order);
-    ndview<std::complex<Real>, 3> ff2t(fft.data_handle() + fft.size(), n_order, n_pw2, n_order);
-    ndview<std::complex<Real>, 3> ff2(ff2t.data_handle() + ff2t.size(), n_order, n_order, n_pw2);
-    ndview<std::complex<Real>, 3> zcoefs(ff2.data_handle() + ff2.size(), n_order, n_order, n_order);
+    ndview<std::complex<Real>, 3> ff({n_order, n_pw, n_pw2}, (std::complex<Real> *)(&workspace[0]));
+    ndview<std::complex<Real>, 3> fft({n_pw, n_pw2, n_order}, ff.data() + ff.size());
+    ndview<std::complex<Real>, 3> ff2t({n_order, n_pw2, n_order}, fft.data() + fft.size());
+    ndview<std::complex<Real>, 3> ff2({n_order, n_order, n_pw2}, ff2t.data() + ff2t.size());
+    ndview<std::complex<Real>, 3> zcoefs({n_order, n_order, n_order}, ff2.data() + ff2.size());
 
     const int npw_half = n_pw / 2;
     const std::complex<Real> alpha = {1.0, 0.0};
@@ -106,10 +105,9 @@ void pw2proxypot_3d(const ndview<const std::complex<Real>, 4> &pw_expansion,
 }
 
 template <typename Real, int DIM>
-void planewave_to_proxy_potential(const ndview<const std::complex<Real>, DIM + 1> &pw_expansion,
-                                  const ndview<const std::complex<Real>, 2> &pw_to_coefs_mat,
-                                  const ndview<Real, DIM + 1> &proxy_coeffs, sctl::Vector<Real> &workspace) {
-    // dmk::util::PAPICounter papi_counter;
+void planewave_to_proxy_potential(const ndview<std::complex<Real>, DIM + 1> &pw_expansion,
+                                  const ndview<std::complex<Real>, 2> &pw_to_coefs_mat,
+                                  ndview<Real, DIM + 1> proxy_coeffs, sctl::Vector<Real> &workspace) {
     if constexpr (DIM == 2)
         return pw2proxypot_2d(pw_expansion, pw_to_coefs_mat, proxy_coeffs, workspace);
     if constexpr (DIM == 3)
@@ -123,12 +121,12 @@ void calc_planewave_coeff_matrices(T boxsize, T hpw, int n_pw, int n_order, sctl
     assert(n_pw * n_order == prox2pw_vec.Dim());
     assert(n_pw * n_order == pw2poly_vec.Dim());
 
-    using matrix_t = Eigen::MatrixX<std::complex<T>>;
+    using matrix_t = ndamatrix<std::complex<T>>;
     const T dsq = 0.5 * boxsize;
     const auto xs = dmk::chebyshev::get_cheb_nodes(n_order, -1.0, 1.0);
 
-    Eigen::Map<matrix_t> prox2pw(&prox2pw_vec[0], n_pw, n_order);
-    Eigen::Map<matrix_t> pw2poly(&pw2poly_vec[0], n_pw, n_order);
+    matrixview<std::complex<T>> prox2pw({n_pw, n_order}, &prox2pw_vec[0]);
+    matrixview<std::complex<T>> pw2poly({n_pw, n_order}, &pw2poly_vec[0]);
 
     matrix_t tmp(n_pw, n_order);
     const int shift = n_pw / 2;
@@ -139,73 +137,108 @@ void calc_planewave_coeff_matrices(T boxsize, T hpw, int n_pw, int n_order, sctl
     }
 
     const auto &[vmat, umat_lu] = chebyshev::get_vandermonde_and_LU<T>(n_order);
-    // Can't use umat_lu.solve() because eigen doesn't support LU with mixed complex/real types
-    const Eigen::MatrixX<T> umat = umat_lu.inverse();
-    pw2poly = tmp * umat.transpose();
+    // FIXME: see if we can just use the LU decomposition directly with mixed complex/real types
+    matrix_t umat = umat_lu.lu;
+    nda::lapack::getri(umat, umat_lu.pivots);
+    pw2poly = tmp * nda::transpose(umat);
 
-    for (int i = 0; i < n_order * n_pw; ++i)
-        prox2pw(i) = std::conj(pw2poly(i));
+    prox2pw = nda::conj(pw2poly);
 }
 
 template <int DIM, typename T>
 void calc_planewave_translation_matrix(int nmax, T xmin, int npw, T hpw, sctl::Vector<std::complex<T>> &shift_vec) {
     static_assert(DIM > 0 && DIM <= 3, "Invalid DIM");
-    assert(((npw + 1) / 2) * sctl::pow<DIM - 1>(npw) * sctl::pow<DIM>(2 * nmax + 1) == shift_vec.Dim());
-    const int shift = npw / 2;
+    const int n_pw_modes = ((npw + 1) / 2) * sctl::pow<DIM - 1>(npw);
+    const int n_translations = sctl::pow<DIM>(2 * nmax + 1);
+    assert(n_pw_modes * n_translations == shift_vec.Dim());
+    const int npw_2 = npw / 2;
 
-    // Temporary array precomp
+    // Precompute exp(i * ts * xmin)^k for each frequency and translation offset
+    // ww(j, k) = exp(i * (j - half) * hpw * xmin)^k   for k in [-nmax, nmax]
     sctl::Vector<std::complex<T>> ww(npw * (2 * nmax + 1));
-    for (int j1 = 0; j1 < npw; ++j1) {
-        T ts = (j1 - shift) * hpw;
-        std::complex<T> ztmp = std::exp<T>(std::complex<T>{0.0, ts * xmin});
-        ww[j1 + npw * nmax] = 1;
-        for (int k1 = 1; k1 <= nmax; ++k1) {
-            ww[j1 + npw * (nmax + k1)] = ztmp;
-            ww[j1 + npw * (nmax - k1)] = conj(ztmp);
-            ztmp *= ztmp;
+    for (int j = 0; j < npw; ++j) {
+        T ts = (j - npw_2) * hpw;
+        std::complex<T> base = std::exp(std::complex<T>{0, ts * xmin});
+        ww[j + npw * nmax] = 1;
+        for (int k = 1; k <= nmax; ++k) {
+            ww[j + npw * (nmax + k)] = base;
+            ww[j + npw * (nmax - k)] = conj(base);
+            base *= base;
         }
     }
 
-    // Calculating wshift
-    if constexpr (DIM == 1)
-        for (int k1 = 0, i = 0; k1 <= 2 * nmax; ++k1)
-            for (int j1 = 0; j1 < (npw + 1) / 2; ++j1)
-                shift_vec[i++] = ww[j1 + npw * k1];
-    else if constexpr (DIM == 2)
-        for (int k1 = 0, i = 0; k1 <= 2 * nmax; ++k1)
-            for (int k2 = 0; k2 <= 2 * nmax; ++k2)
-                for (int j1 = 0; j1 < (npw + 1) / 2; ++j1)
-                    for (int j2 = 0; j2 < npw; ++j2)
-                        shift_vec[i++] = ww[j1 + npw * k1] * ww[j2 + npw * k2];
-    else if constexpr (DIM == 3)
-        for (int k1 = 0, i = 0; k1 <= 2 * nmax; ++k1)
-            for (int k2 = 0; k2 <= 2 * nmax; ++k2)
-                for (int k3 = 0; k3 <= 2 * nmax; ++k3)
-                    for (int j1 = 0; j1 < (npw + 1) / 2; ++j1)
-                        for (int j2 = 0; j2 < npw; ++j2)
-                            for (int j3 = 0; j3 < npw; ++j3)
-                                shift_vec[i++] = ww[j1 + npw * k1] * ww[j2 + npw * k2] * ww[j3 + npw * k3];
+    auto ww_at = [&](int j, int k) -> std::complex<T> { return ww[j + npw * k]; };
+
+    // For each translation vector, compute the outer product of 1D phase shifts
+    // across all plane wave modes, and store in per-block SoA layout:
+    //   [real_0 ... real_{M-1} imag_0 ... imag_{M-1}]
+    // where M = n_pw_modes
+#pragma omp parallel for schedule(static)
+    for (int t = 0; t < n_translations; ++t) {
+        T *block = reinterpret_cast<T *>(shift_vec.begin()) + t * n_pw_modes * 2;
+        T *block_r = block;
+        T *block_i = block + n_pw_modes;
+
+        // Decode translation vector indices from flat index
+        int k[DIM];
+        int tmp = t;
+        for (int d = DIM - 1; d >= 0; --d) {
+            k[d] = tmp % (2 * nmax + 1);
+            tmp /= (2 * nmax + 1);
+        }
+
+        // Compute product of 1D phase shifts for each mode
+        int m = 0;
+        if constexpr (DIM == 1) {
+            for (int j0 = 0; j0 < (npw + 1) / 2; ++j0, ++m) {
+                auto val = ww_at(j0, k[0]);
+                block_r[m] = val.real();
+                block_i[m] = val.imag();
+            }
+        } else if constexpr (DIM == 2) {
+            for (int j0 = 0; j0 < (npw + 1) / 2; ++j0) {
+                auto w0 = ww_at(j0, k[0]);
+                for (int j1 = 0; j1 < npw; ++j1, ++m) {
+                    auto val = w0 * ww_at(j1, k[1]);
+                    block_r[m] = val.real();
+                    block_i[m] = val.imag();
+                }
+            }
+        } else if constexpr (DIM == 3) {
+            for (int j0 = 0; j0 < (npw + 1) / 2; ++j0) {
+                auto w0 = ww_at(j0, k[0]);
+                for (int j1 = 0; j1 < npw; ++j1) {
+                    auto w01 = w0 * ww_at(j1, k[1]);
+                    for (int j2 = 0; j2 < npw; ++j2, ++m) {
+                        auto val = w01 * ww_at(j2, k[2]);
+                        block_r[m] = val.real();
+                        block_i[m] = val.imag();
+                    }
+                }
+            }
+        }
+    }
 
     // Estimate exp(complex) ~ 1 cos + 1 sin, which are ~64 flops in stl
     sctl::Profile::IncrementCounter(sctl::ProfileCounter::FLOP, npw * 128 + (DIM - 1) * shift_vec.Dim());
 }
 } // namespace dmk
 
-template void dmk::planewave_to_proxy_potential<float, 2>(const ndview<const std::complex<float>, 3> &pw_expansion,
-                                                          const ndview<const std::complex<float>, 2> &pw_to_coefs_mat,
-                                                          const ndview<float, 3> &proxy_coeffs,
+template void dmk::planewave_to_proxy_potential<float, 2>(const ndview<std::complex<float>, 3> &pw_expansion,
+                                                          const ndview<std::complex<float>, 2> &pw_to_coefs_mat,
+                                                          ndview<float, 3> proxy_coeffs,
                                                           sctl::Vector<float> &workspace);
-template void dmk::planewave_to_proxy_potential<float, 3>(const ndview<const std::complex<float>, 4> &pw_expansion,
-                                                          const ndview<const std::complex<float>, 2> &pw_to_coefs_mat,
-                                                          const ndview<float, 4> &proxy_coeffs,
+template void dmk::planewave_to_proxy_potential<float, 3>(const ndview<std::complex<float>, 4> &pw_expansion,
+                                                          const ndview<std::complex<float>, 2> &pw_to_coefs_mat,
+                                                          ndview<float, 4> proxy_coeffs,
                                                           sctl::Vector<float> &workspace);
-template void dmk::planewave_to_proxy_potential<double, 2>(const ndview<const std::complex<double>, 3> &pw_expansion,
-                                                           const ndview<const std::complex<double>, 2> &pw_to_coefs_mat,
-                                                           const ndview<double, 3> &proxy_coeffs,
+template void dmk::planewave_to_proxy_potential<double, 2>(const ndview<std::complex<double>, 3> &pw_expansion,
+                                                           const ndview<std::complex<double>, 2> &pw_to_coefs_mat,
+                                                           ndview<double, 3> proxy_coeffs,
                                                            sctl::Vector<double> &workspace);
-template void dmk::planewave_to_proxy_potential<double, 3>(const ndview<const std::complex<double>, 4> &pw_expansion,
-                                                           const ndview<const std::complex<double>, 2> &pw_to_coefs_mat,
-                                                           const ndview<double, 4> &proxy_coeffs,
+template void dmk::planewave_to_proxy_potential<double, 3>(const ndview<std::complex<double>, 4> &pw_expansion,
+                                                           const ndview<std::complex<double>, 2> &pw_to_coefs_mat,
+                                                           ndview<double, 4> proxy_coeffs,
                                                            sctl::Vector<double> &workspace);
 template void dmk::calc_planewave_translation_matrix<2>(int, float, int, float, sctl::Vector<std::complex<float>> &);
 template void dmk::calc_planewave_translation_matrix<3>(int, float, int, float, sctl::Vector<std::complex<float>> &);
@@ -219,6 +252,7 @@ template void dmk::calc_planewave_coeff_matrices<double>(double boxsize, double 
                                                          sctl::Vector<std::complex<double>> &prox2pw_vec,
                                                          sctl::Vector<std::complex<double>> &pw2poly_vec);
 
+#ifdef DMK_HAVE_REFERENCE
 TEST_CASE("[DMK] planewave_to_proxy_potential") {
     const int n_pw = 10;
     const int n_charge_dim = 1;
@@ -231,32 +265,31 @@ TEST_CASE("[DMK] planewave_to_proxy_potential") {
             const int n_proxy_terms = dmk::util::int_pow(n_order, n_dim);
             sctl::Vector<std::complex<double>> pw_expansion(n_pw_terms);
             sctl::Vector<std::complex<double>> pw_to_coefs_mat(n_order * n_pw);
-            Eigen::VectorX<double> proxy_coeffs(n_proxy_terms), proxy_coeffs_fort(n_proxy_terms);
+            nda::vector<double> proxy_coeffs(n_proxy_terms), proxy_coeffs_fort(n_proxy_terms);
 
             for (auto &elem : pw_expansion)
                 elem = std::complex<double>{rand() / double(RAND_MAX), rand() / double(RAND_MAX)};
             for (auto &elem : pw_to_coefs_mat)
                 elem = std::complex<double>{rand() / double(RAND_MAX), rand() / double(RAND_MAX)};
 
-            proxy_coeffs.setZero();
-            proxy_coeffs_fort.setZero();
+            proxy_coeffs = 0;
+            proxy_coeffs_fort = 0;
             sctl::Vector<double> workspace;
 
             if (n_dim == 2) {
-                dmk::ndview<const std::complex<double>, 3> pw_expansion_view(&pw_expansion[0], n_pw, n_pw2,
-                                                                             n_charge_dim);
-                dmk::ndview<const std::complex<double>, 2> pw_to_coefs_mat_view(&pw_to_coefs_mat[0], n_pw, n_order);
-                dmk::ndview<double, 3> proxy_coeffs_view(&proxy_coeffs[0], n_order, n_order, n_charge_dim);
+                dmk::ndview<std::complex<double>, 3> pw_expansion_view({n_pw, n_pw2, n_charge_dim}, &pw_expansion[0]);
+                dmk::ndview<std::complex<double>, 2> pw_to_coefs_mat_view({n_pw, n_order}, &pw_to_coefs_mat[0]);
+                dmk::ndview<double, 3> proxy_coeffs_view({n_order, n_order, n_charge_dim}, &proxy_coeffs[0]);
 
                 dmk::planewave_to_proxy_potential<double, 2>(pw_expansion_view, pw_to_coefs_mat_view, proxy_coeffs_view,
                                                              workspace);
             }
 
             if (n_dim == 3) {
-                dmk::ndview<const std::complex<double>, 4> pw_expansion_view(&pw_expansion[0], n_pw, n_pw, n_pw2,
-                                                                             n_charge_dim);
-                dmk::ndview<const std::complex<double>, 2> pw_to_coefs_mat_view(&pw_to_coefs_mat[0], n_pw, n_order);
-                dmk::ndview<double, 4> proxy_coeffs_view(&proxy_coeffs[0], n_order, n_order, n_order, n_charge_dim);
+                dmk::ndview<std::complex<double>, 4> pw_expansion_view({n_pw, n_pw, n_pw2, n_charge_dim},
+                                                                       &pw_expansion[0]);
+                dmk::ndview<std::complex<double>, 2> pw_to_coefs_mat_view({n_pw, n_order}, &pw_to_coefs_mat[0]);
+                dmk::ndview<double, 4> proxy_coeffs_view({n_order, n_order, n_order, n_charge_dim}, &proxy_coeffs[0]);
 
                 dmk::planewave_to_proxy_potential<double, 3>(pw_expansion_view, pw_to_coefs_mat_view, proxy_coeffs_view,
                                                              workspace);
@@ -265,8 +298,9 @@ TEST_CASE("[DMK] planewave_to_proxy_potential") {
             dmk_pw2proxypot_(&n_dim, &n_charge_dim, &n_order, &n_pw, (double *)&pw_expansion[0],
                              (double *)&pw_to_coefs_mat[0], &proxy_coeffs_fort[0]);
 
-            const double l2 = (proxy_coeffs - proxy_coeffs_fort).norm() / proxy_coeffs.size();
+            const double l2 = nda::linalg::norm(proxy_coeffs - proxy_coeffs_fort) / proxy_coeffs.size();
             CHECK(l2 < std::numeric_limits<double>::epsilon());
         }
     }
 }
+#endif

@@ -1,34 +1,15 @@
-add_executable(dmk_example main.cpp)
-target_link_libraries(dmk_example dmk dmk_ref BLAS::BLAS OpenMP::OpenMP_CXX MPI::MPI_CXX ${PAPI_TARGET})
+if (DMK_HAVE_MPI AND DMK_HAVE_OPENMP)
+  add_executable(dmk_example main.cpp)
+  target_link_libraries(dmk_example PRIVATE dmk)
 
-add_library(ewald STATIC ewald_esp.cpp)
-target_link_libraries(ewald PUBLIC dmk dmk_ref BLAS::BLAS MPI::MPI_CXX nanobench OpenMP::OpenMP_CXX ducc0 ${PAPI_TARGET})
-target_include_directories(ewald PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-
-add_executable(ewald_esp ewald_esp.cpp)
-target_link_libraries(ewald_esp PUBLIC dmk dmk_ref BLAS::BLAS MPI::MPI_CXX nanobench OpenMP::OpenMP_CXX ducc0 ${PAPI_TARGET})
-target_include_directories(ewald_esp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-
-add_executable(ewald_original ewald_total.cpp)
-target_link_libraries(ewald_original PUBLIC dmk dmk_ref BLAS::BLAS MPI::MPI_CXX nanobench OpenMP::OpenMP_CXX ducc0 ${PAPI_TARGET})
-target_include_directories(ewald_original PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-
-add_executable(fft_parallel_2D_f fft_parallel_2D_factored.cpp)
-target_link_libraries(fft_parallel_2D_f MPI::MPI_CXX OpenMP::OpenMP_CXX ducc0 ${PAPI_TARGET})
-
-add_executable(fft_parallel_3D fft_parallel_3D.cpp)
-target_link_libraries(fft_parallel_3D MPI::MPI_CXX OpenMP::OpenMP_CXX ducc0 ${PAPI_TARGET})
-
-add_executable(transp parallel_transpose.cpp)
-target_link_libraries(transp MPI::MPI_CXX OpenMP::OpenMP_CXX ${PAPI_TARGET})
-
-add_executable(transp3D parallel_transpose_3D.cpp)
-target_link_libraries(transp3D MPI::MPI_CXX OpenMP::OpenMP_CXX ${PAPI_TARGET})
-
-#add_executable(ewald_final_test test_ewald.cpp)
-#target_link_libraries(ewald_final_test ewald)
-
-if(${DMK_BUILD_PVFMM})
-  add_executable(compare_dmk_pvfmm compare_dmk_pvfmm.cpp)
-  target_link_libraries(compare_dmk_pvfmm dmk dmk_ref BLAS::BLAS OpenMP::OpenMP_CXX MPI::MPI_CXX ${PAPI_TARGET} pvfmmStatic)
+  add_executable(measure_error measure_error.cpp)
+  target_link_libraries(measure_error PRIVATE dmk)
 endif()
+
+if (DMK_HAVE_MPI AND DMK_HAVE_OPENMP AND DMK_BUILD_PVFMM)
+  add_executable(compare_dmk_pvfmm compare_dmk_pvfmm.cpp)
+  target_link_libraries(compare_dmk_pvfmm PRIVATE dmk pvfmmStatic)
+endif()
+
+add_executable(benchmark_kernels benchmark_kernels.cpp)
+target_link_libraries(benchmark_kernels PRIVATE dmk)

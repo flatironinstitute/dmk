@@ -1,0 +1,2 @@
+add_executable(direct_kernel_bench direct_kernel_bench.cpp)
+target_link_libraries(direct_kernel_bench PRIVATE dmk nanobench)

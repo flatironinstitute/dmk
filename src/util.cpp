@@ -1,5 +1,3 @@
-#include <Eigen/Core>
-
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
 #include <dmk/fortran.h>
@@ -10,6 +8,18 @@
 
 namespace dmk::util {
 using dmk::ndview;
+
+double calc_bandlimiting(const pdmk_params &p) {
+    if (p.debug_flags & DMK_DEBUG_OVERRIDE_BETA)
+        return p.debug_params[DMK_DEBUG_BETA_SLOT];
+    double d = -std::log10(p.eps);
+    if (p.kernel == DMK_STOKESLET || p.kernel == DMK_STRESSLET) {
+        return M_PI / 3.0 * std::ceil(3.0 / M_PI * (0.69 + d) / 0.39);
+    }
+    const double beta = 2.664 * d + 0.306;
+    return beta;
+}
+
 template <typename Real>
 void mesh_2d(const ndview<const Real, 1> &x, const ndview<const Real, 1> &y, const ndview<Real, 2> &xy) {
     int nx = x.extent(0);
@@ -74,7 +84,7 @@ void mesh_nd(int dim, Real *in, int size, Real *out) {
 }
 
 template <typename Real>
-void mk_tensor_product_fourier_transform_1d(int npw, const ndview<const Real, 1> &fhat, const ndview<Real, 1> &pswfft) {
+void mk_tensor_product_fourier_transform_1d(int npw, const ndview<Real, 1> &fhat, ndview<Real, 1> &pswfft) {
     int npw2 = npw / 2;
     int ind = 0;
     for (int j1 = -npw2; j1 <= 0; ++j1) {
@@ -84,7 +94,7 @@ void mk_tensor_product_fourier_transform_1d(int npw, const ndview<const Real, 1>
 }
 
 template <typename Real>
-void mk_tensor_product_fourier_transform_2d(int npw, const ndview<const Real, 1> &fhat, const ndview<Real, 1> &pswfft) {
+void mk_tensor_product_fourier_transform_2d(int npw, const ndview<Real, 1> &fhat, ndview<Real, 1> &pswfft) {
     int npw2 = npw / 2;
     int npw3 = (npw - 1) / 2;
     int ind = 0;
@@ -98,7 +108,7 @@ void mk_tensor_product_fourier_transform_2d(int npw, const ndview<const Real, 1>
 }
 
 template <typename Real>
-void mk_tensor_product_fourier_transform_3d(int npw, const ndview<const Real, 1> &fhat, const ndview<Real, 1> &pswfft) {
+void mk_tensor_product_fourier_transform_3d(int npw, const ndview<Real, 1> &fhat, ndview<Real, 1> &pswfft) {
     int npw2 = npw / 2;
     int npw3 = (npw - 1) / 2;
     int ind = 0;
@@ -115,8 +125,7 @@ void mk_tensor_product_fourier_transform_3d(int npw, const ndview<const Real, 1>
 }
 
 template <typename Real>
-void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const Real, 1> &fhat,
-                                         const ndview<Real, 1> &pswfft) {
+void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<Real, 1> &fhat, ndview<Real, 1> pswfft) {
     if (dim == 1)
         return mk_tensor_product_fourier_transform_1d(npw, fhat, pswfft);
     if (dim == 2)
@@ -145,13 +154,12 @@ void mk_tensor_product_fourier_transform(int dim, int npw, int nfourier, Real *f
 
 template <typename Real>
 void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
-                    sctl::Vector<Real> &r_src, sctl::Vector<Real> &r_trg, sctl::Vector<Real> &rnormal,
-                    sctl::Vector<Real> &charges, sctl::Vector<Real> &dipstr, long seed) {
-    r_src.ReInit(n_dim * n_src);
-    r_trg.ReInit(n_dim * n_trg);
-    charges.ReInit(nd * n_src);
-    rnormal.ReInit(n_dim * n_src);
-    dipstr.ReInit(nd * n_src);
+                    std::vector<Real> &r_src, std::vector<Real> &r_trg, std::vector<Real> &rnormal,
+                    std::vector<Real> &charges, long seed) {
+    r_src.resize(n_dim * n_src);
+    r_trg.resize(n_dim * n_trg);
+    charges.resize(nd * n_src);
+    rnormal.resize(n_dim * n_src);
 
     double rin = 0.45;
     double wrig = 0.12;
@@ -163,9 +171,9 @@ void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool 
     for (int i = 0; i < n_src; ++i) {
         if (!uniform) {
             if (n_dim == 2) {
-                double phi = rng(eng) * 2 * M_PI;
-                r_src[i * 3 + 0] = cos(phi);
-                r_src[i * 3 + 1] = sin(phi);
+                const double phi = rng(eng) * 2 * M_PI;
+                r_src[i * 2 + 0] = 0.5 * (cos(phi) + 1.0);
+                r_src[i * 2 + 1] = 0.5 * (sin(phi) + 1.0);
             }
             if (n_dim == 3) {
                 double theta = rng(eng) * M_PI;
@@ -190,7 +198,6 @@ void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool 
 
         for (int j = 0; j < nd; ++j) {
             charges[i * nd + j] = rng(eng) - 0.5;
-            dipstr[i * nd + j] = rng(eng);
         }
     }
 
@@ -198,8 +205,8 @@ void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool 
         if (!uniform) {
             if (n_dim == 2) {
                 double phi = rng(eng) * 2 * M_PI;
-                r_trg[i_trg * 3 + 0] = cos(phi);
-                r_trg[i_trg * 3 + 1] = sin(phi);
+                r_trg[i_trg * 2 + 0] = 0.5 * (cos(phi) + 1.0);
+                r_trg[i_trg * 2 + 1] = 0.5 * (sin(phi) + 1.0);
             }
             if (n_dim == 3) {
                 double theta = rng(eng) * M_PI;
@@ -231,19 +238,9 @@ void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool 
             r_src[i] = 0.05;
 }
 
-template void init_test_data<float>(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
-                                    sctl::Vector<float> &r_src, sctl::Vector<float> &r_trg,
-                                    sctl::Vector<float> &rnormal, sctl::Vector<float> &charges,
-                                    sctl::Vector<float> &dipstr, long seed);
-
-template void init_test_data<double>(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
-                                     sctl::Vector<double> &r_src, sctl::Vector<double> &r_trg,
-                                     sctl::Vector<double> &rnormal, sctl::Vector<double> &charges,
-                                     sctl::Vector<double> &dipstr, long seed);
-
-template void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const double, 1> &fhat,
-                                                  const ndview<double, 1> &pswfft);
-template void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<const float, 1> &fhat,
-                                                  const ndview<float, 1> &pswfft);
+template void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<float, 1> &fhat,
+                                                  ndview<float, 1> pswfft);
+template void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<double, 1> &fhat,
+                                                  ndview<double, 1> pswfft);
 
 } // namespace dmk::util

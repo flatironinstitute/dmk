@@ -1,13 +1,13 @@
 #ifndef TENSORPROD_HPP
 #define TENSORPROD_HPP
 
-#include <sctl.hpp>
 #include <dmk/types.hpp>
+#include <sctl.hpp>
 
 namespace dmk::tensorprod {
 template <typename T, int DIM>
-void transform(int nvec, int add_flag, const ndview<const T, DIM + 1> &fin, const ndview<const T, 2> &umat,
-               const ndview<T, DIM + 1> &fout, sctl::Vector<T> &workspace);
+void transform(int nvec, int add_flag, const ndview<T, DIM + 1> &fin, const ndview<T, 2> &umat, ndview<T, DIM + 1> fout,
+               sctl::Vector<T> &workspace);
 }
 
 #endif

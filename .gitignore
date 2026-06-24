@@ -48,5 +48,5 @@ out
 # Build and various utilities
 /compile_commands.json
 /.cache
-/build
-esp_prototype_python/
+/build*
+/docs
