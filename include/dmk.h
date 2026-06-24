@@ -76,6 +76,22 @@ typedef struct pdmk_esp_params {
     int    log_level;  // 0: trace … 6: off (matches dmk_log_level)
 } pdmk_esp_params;
 
+// Opaque plan handle (heap-allocated internally).
+typedef void *pdmk_esp_plan;
+
+// Create a plan: derives P, builds PSWFKernel, precomputes scaling grid.
+// No particle data needed at this stage.
+pdmk_esp_plan pdmk_esp_plan_create(MPI_Comm comm, pdmk_esp_params params);
+
+// Evaluate potentials for n particles using a pre-built plan.
+// Can be called repeatedly with different r_src / charges for the same geometry.
+void pdmk_esp_eval(MPI_Comm comm, pdmk_esp_plan plan, int n,
+                   const double *r_src, const double *charges, double *pot_src);
+
+// Free the plan.
+void pdmk_esp_plan_destroy(pdmk_esp_plan plan);
+
+// Convenience one-shot (create + eval + destroy).
 void pdmk_esp(MPI_Comm comm, pdmk_esp_params params, int n,
               const double *r_src, const double *charges, double *pot_src);
 #endif // DMK_WITH_FINUFFT

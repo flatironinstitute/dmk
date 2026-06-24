@@ -417,14 +417,29 @@ void pdmk(MPI_Comm comm, pdmk_params params, int n_src, const double *r_src, con
 }
 
 #ifdef DMK_WITH_FINUFFT
-void pdmk_esp(MPI_Comm comm, pdmk_esp_params params, int n,
-              const double *r_src, const double *charges, double *pot_src) {
+pdmk_esp_plan pdmk_esp_plan_create(MPI_Comm /*comm*/, pdmk_esp_params params) {
+    return static_cast<void *>(dmk::esp_create_plan(params.L, params.r_c, params.eps));
+}
+
+void pdmk_esp_eval(MPI_Comm /*comm*/, pdmk_esp_plan plan, int n,
+                   const double *r_src, const double *charges, double *pot_src) {
     std::vector<dmk::Vec3> r(n);
     for (int i = 0; i < n; ++i)
         r[i] = {r_src[3*i], r_src[3*i+1], r_src[3*i+2]};
     std::vector<double> q(charges, charges + n);
-    auto res = dmk::esp_potential(r, q, params.L, params.r_c, params.eps);
-    std::copy(res.total.begin(), res.total.end(), pot_src);
+    auto pot = dmk::esp_eval(static_cast<dmk::EspPlan *>(plan), r, q);
+    std::copy(pot.begin(), pot.end(), pot_src);
+}
+
+void pdmk_esp_plan_destroy(pdmk_esp_plan plan) {
+    dmk::esp_destroy_plan(static_cast<dmk::EspPlan *>(plan));
+}
+
+void pdmk_esp(MPI_Comm comm, pdmk_esp_params params, int n,
+              const double *r_src, const double *charges, double *pot_src) {
+    auto plan = pdmk_esp_plan_create(comm, params);
+    pdmk_esp_eval(comm, plan, n, r_src, charges, pot_src);
+    pdmk_esp_plan_destroy(plan);
 }
 #endif // DMK_WITH_FINUFFT
 

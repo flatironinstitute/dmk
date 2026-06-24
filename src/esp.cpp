@@ -286,7 +286,8 @@ static std::vector<double>
 long_range(const std::vector<Vec3> &r_src,
            const std::vector<double> &charges,
            const PSWFKernel &pswf,
-           const ESPParams &params) {
+           const ESPParams &params,
+           const DGrid &scaling_coeffs) {
     int n    = params.n;
     int nf   = params.n_f;
     int ntot = nf * nf * nf;
@@ -321,11 +322,10 @@ long_range(const std::vector<Vec3> &r_src,
     CGrid b_hat(ntot);
     fftn_3d(b, b_hat, nf);
 
-    // 3. Diagonal scaling
-    DGrid p = precompute_scaling_coefficients(pswf, params);
+    // 3. Diagonal scaling (precomputed in plan)
     #pragma omp parallel for
     for (int idx = 0; idx < ntot; ++idx)
-        b_hat[idx] *= p[idx];
+        b_hat[idx] *= scaling_coeffs[idx];
 
     // 4. Inverse FFT
     CGrid grid(ntot);
@@ -360,25 +360,53 @@ self_interaction(const std::vector<double> &charges,
 }
 
 // ---------------------------------------------------------------------------
-// Public entry point
+// EspPlan — caches everything independent of particle positions/charges.
 // ---------------------------------------------------------------------------
-ESPResult esp_potential(const std::vector<Vec3> &r_src,
-                        const std::vector<double> &charges,
-                        double L, double r_c, double eps) {
-    PSWFKernel pswf(eps);  // P auto-derived from eps via esp_ns_from_eps
-    int n = static_cast<int>(charges.size());
-    ESPParams params(L, r_c, pswf.P, pswf, n);
+struct EspPlan {
+    PSWFKernel pswf;
+    ESPParams  params_base;  // n=0 placeholder; n_f/h/kernel params pre-filled
+    DGrid      scaling_coeffs;
 
-    auto neighbors  = build_neighbor_list(r_src, params);
-    auto pot_sr     = short_range(r_src, charges, pswf, params, neighbors);
-    auto pot_lr     = long_range(r_src, charges, pswf, params);
-    auto pot_self   = self_interaction(charges, pswf, params);
+    EspPlan(double L, double r_c, double eps)
+        : pswf(eps), params_base(L, r_c, pswf.P, pswf, 0) {
+        scaling_coeffs = precompute_scaling_coefficients(pswf, params_base);
+    }
+};
+
+EspPlan *esp_create_plan(double L, double r_c, double eps) {
+    return new EspPlan(L, r_c, eps);
+}
+
+void esp_destroy_plan(EspPlan *plan) { delete plan; }
+
+std::vector<double> esp_eval(EspPlan *plan,
+                             const std::vector<Vec3> &r_src,
+                             const std::vector<double> &charges) {
+    int n = static_cast<int>(charges.size());
+    ESPParams params = plan->params_base;
+    params.n = n;
+
+    auto neighbors = build_neighbor_list(r_src, params);
+    auto pot_sr    = short_range(r_src, charges, plan->pswf, params, neighbors);
+    auto pot_lr    = long_range(r_src, charges, plan->pswf, params, plan->scaling_coeffs);
+    auto pot_self  = self_interaction(charges, plan->pswf, params);
 
     std::vector<double> total(n);
     for (int i = 0; i < n; ++i)
         total[i] = pot_sr[i] + pot_lr[i] - pot_self[i];
+    return total;
+}
 
-    return { total, pot_sr, pot_lr, pot_self };
+// ---------------------------------------------------------------------------
+// Convenience one-shot entry point (create + eval + destroy).
+// ---------------------------------------------------------------------------
+std::vector<double> esp_potential(const std::vector<Vec3> &r_src,
+                                   const std::vector<double> &charges,
+                                   double L, double r_c, double eps) {
+    auto *plan = esp_create_plan(L, r_c, eps);
+    auto result = esp_eval(plan, r_src, charges);
+    esp_destroy_plan(plan);
+    return result;
 }
 
 } // namespace dmk
@@ -422,8 +450,10 @@ MPI_TEST_CASE("[ESP] pdmk_esp 10-particle reference", 1) {
     params.r_c = r_c;
     params.eps = eps;
 
+    auto plan = pdmk_esp_plan_create(test_comm, params);
     double pot[10] = {};
-    pdmk_esp(test_comm, params, n, r_src, charges, pot);
+    pdmk_esp_eval(test_comm, plan, n, r_src, charges, pot);
+    pdmk_esp_plan_destroy(plan);
 
     double max_err = 0.0;
     for (int i = 0; i < n; ++i)
