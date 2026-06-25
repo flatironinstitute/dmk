@@ -202,7 +202,7 @@ build_neighbor_list(const std::vector<Vec3T<Real>> &r_src, const ESPParams &para
 }
 
 // ---------------------------------------------------------------------------
-// Short-range sum
+// Short-range sum (fallback: neighbor-list based, used when nc < 3)
 // ---------------------------------------------------------------------------
 template <typename Real>
 static std::vector<Real>
@@ -234,6 +234,143 @@ short_range(const std::vector<Vec3T<Real>> &r_src,
             pot[i] += charges[j] * Real((1.0 - intval) / (4.0 * M_PI * double(dist)));
         }
     }
+    return pot;
+}
+
+// ---------------------------------------------------------------------------
+// Cell list: particles sorted into cubic cells for cache-friendly traversal.
+// ---------------------------------------------------------------------------
+template <typename Real>
+struct CellList {
+    int n_cells;
+    std::vector<int>  cell_start; // size n_cells^3 + 1 (exclusive prefix sum)
+    std::vector<Real> xs, ys, zs, qs; // particle data reordered by cell
+    std::vector<int>  orig;        // orig[slot] = original particle index
+};
+
+template <typename Real>
+static CellList<Real> build_cell_list(const std::vector<Vec3T<Real>> &r_src,
+                                       const std::vector<Real> &charges,
+                                       const ESPParams &params, int nc) {
+    CellList<Real> cl;
+    cl.n_cells = nc;
+    const int ncells = nc * nc * nc;
+    const int n = params.n;
+    const Real L_r = Real(params.L);
+
+    auto cell_of = [&](const Vec3T<Real> &r) {
+        CellIndex ci = particle_cell<Real>(r, L_r, nc);
+        return (ci.x * nc + ci.y) * nc + ci.z;
+    };
+
+    // pass 1: count per cell
+    std::vector<int> count(ncells, 0), cidx(n);
+    for (int j = 0; j < n; ++j) {
+        int c = cell_of(r_src[j]);
+        cidx[j] = c;
+        ++count[c];
+    }
+
+    // pass 2: exclusive prefix sum -> cell start offsets
+    cl.cell_start.assign(ncells + 1, 0);
+    for (int c = 0; c < ncells; ++c)
+        cl.cell_start[c + 1] = cl.cell_start[c] + count[c];
+
+    // pass 3: scatter into sorted arrays
+    cl.xs.resize(n); cl.ys.resize(n); cl.zs.resize(n);
+    cl.qs.resize(n); cl.orig.resize(n);
+    std::vector<int> cursor(cl.cell_start.begin(), cl.cell_start.end() - 1);
+    for (int j = 0; j < n; ++j) {
+        int slot = cursor[cidx[j]]++;
+        cl.xs[slot] = r_src[j][0];
+        cl.ys[slot] = r_src[j][1];
+        cl.zs[slot] = r_src[j][2];
+        cl.qs[slot] = charges[j];
+        cl.orig[slot] = j;
+    }
+    return cl;
+}
+
+// ---------------------------------------------------------------------------
+// Short-range sum (fast path: cell-list / box-reordering, no neighbor list).
+// Parallelizes over home cells — each cell's output slots are disjoint across
+// threads, so pot_sorted[a] is written by exactly one thread (no atomics).
+// Falls back to the neighbor-list path when r_c > L/3 (nc < 3).
+// ---------------------------------------------------------------------------
+template <typename Real>
+static std::vector<Real>
+short_range_fast(const std::vector<Vec3T<Real>> &r_src,
+                 const std::vector<Real> &charges,
+                 const PSWFKernel &pswf,
+                 const ESPParams &params) {
+    // 27-cell stencil requires nc >= 3 so periodic images aren't double-counted
+    const int nc = static_cast<int>(std::floor(params.L / params.r_c));
+    if (nc < 3) {
+        auto neighbors = build_neighbor_list<Real>(r_src, params);
+        return short_range<Real>(r_src, charges, pswf, params, neighbors);
+    }
+
+    const int TS = 10000;
+    std::vector<double> table(TS);
+    for (int i = 0; i < TS; ++i)
+        table[i] = pswf.integral(0.0, double(i) / (TS - 1));
+
+    CellList<Real> cl = build_cell_list<Real>(r_src, charges, params, nc);
+
+    const Real   L      = Real(params.L);
+    const Real   r_c_sq = Real(params.r_c) * Real(params.r_c);
+    const double inv_rc = 1.0 / params.r_c;
+    const double inv_c0 = 1.0 / params.c0;
+    const int    n      = params.n;
+
+    std::vector<Real> pot_sorted(n, Real(0));
+
+    #pragma omp parallel for schedule(dynamic) collapse(3)
+    for (int cx = 0; cx < nc; ++cx)
+    for (int cy = 0; cy < nc; ++cy)
+    for (int cz = 0; cz < nc; ++cz) {
+        const int home = (cx * nc + cy) * nc + cz;
+        const int hbeg = cl.cell_start[home], hend = cl.cell_start[home + 1];
+
+        for (int a = hbeg; a < hend; ++a) {
+            const Real xi = cl.xs[a], yi = cl.ys[a], zi = cl.zs[a];
+            Real acc = Real(0);
+
+            for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy)
+            for (int dz = -1; dz <= 1; ++dz) {
+                const int nx = (cx + dx + nc) % nc;
+                const int ny = (cy + dy + nc) % nc;
+                const int nz = (cz + dz + nc) % nc;
+                const int nb   = (nx * nc + ny) * nc + nz;
+                const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
+
+                for (int b = nbeg; b < nend; ++b) {
+                    if (nb == home && a == b) continue;
+                    Real ddx = xi - cl.xs[b]; ddx -= L * std::round(ddx / L);
+                    Real ddy = yi - cl.ys[b]; ddy -= L * std::round(ddy / L);
+                    Real ddz = zi - cl.zs[b]; ddz -= L * std::round(ddz / L);
+                    Real d2  = ddx * ddx + ddy * ddy + ddz * ddz;
+                    if (d2 > r_c_sq) continue;
+
+                    double dist = std::sqrt(double(d2));
+                    double pos  = dist * inv_rc * (TS - 1);
+                    int    idx  = int(pos);
+                    if (idx > TS - 2) idx = TS - 2; // guard at dist == r_c
+                    double frac   = pos - idx;
+                    double intval = (table[idx] * (1.0 - frac) + table[idx + 1] * frac) * inv_c0;
+
+                    acc += cl.qs[b] * Real((1.0 - intval) / (4.0 * M_PI * dist));
+                }
+            }
+            pot_sorted[a] = acc;
+        }
+    }
+
+    // restore original particle ordering
+    std::vector<Real> pot(n, Real(0));
+    for (int a = 0; a < n; ++a)
+        pot[cl.orig[a]] = pot_sorted[a];
     return pot;
 }
 
@@ -379,26 +516,27 @@ template <typename Real>
 std::vector<Real> esp_eval(EspPlan *plan,
                             const std::vector<Vec3T<Real>> &r_src,
                             const std::vector<Real> &charges,
-                            EspTimings *timings) {
+                            EspTimings *timings,
+                            bool fast_sr) {
     int n = static_cast<int>(charges.size());
     ESPParams params = plan->params_base;
     params.n = n;
 
     double t0 = omp_get_wtime();
-    auto neighbors = build_neighbor_list<Real>(r_src, params);
+    auto pot_sr = fast_sr
+        ? short_range_fast<Real>(r_src, charges, plan->pswf, params)
+        : [&]{ auto nb = build_neighbor_list<Real>(r_src, params);
+               return short_range<Real>(r_src, charges, plan->pswf, params, nb); }();
     double t1 = omp_get_wtime();
-    auto pot_sr    = short_range<Real>(r_src, charges, plan->pswf, params, neighbors);
+    auto pot_lr   = long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs);
     double t2 = omp_get_wtime();
-    auto pot_lr    = long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs);
+    auto pot_self = self_interaction<Real>(charges, plan->pswf, params);
     double t3 = omp_get_wtime();
-    auto pot_self  = self_interaction<Real>(charges, plan->pswf, params);
-    double t4 = omp_get_wtime();
 
     if (timings) {
-        timings->t_neighbors = t1 - t0;
-        timings->t_short     = t2 - t1;
-        timings->t_long      = t3 - t2;
-        timings->t_self      = t4 - t3;
+        timings->t_short     = t1 - t0;
+        timings->t_long      = t2 - t1;
+        timings->t_self      = t3 - t2;
     }
 
     std::vector<Real> total(n);
@@ -420,8 +558,8 @@ std::vector<Real> esp_potential(const std::vector<Vec3T<Real>> &r_src,
     return result;
 }
 
-template std::vector<float>  esp_eval<float> (EspPlan *, const std::vector<Vec3T<float>>  &, const std::vector<float>  &, EspTimings *);
-template std::vector<double> esp_eval<double>(EspPlan *, const std::vector<Vec3T<double>> &, const std::vector<double> &, EspTimings *);
+template std::vector<float>  esp_eval<float> (EspPlan *, const std::vector<Vec3T<float>>  &, const std::vector<float>  &, EspTimings *, bool);
+template std::vector<double> esp_eval<double>(EspPlan *, const std::vector<Vec3T<double>> &, const std::vector<double> &, EspTimings *, bool);
 template std::vector<float>  esp_potential<float> (const std::vector<Vec3T<float>>  &, const std::vector<float>  &, double, double, double);
 template std::vector<double> esp_potential<double>(const std::vector<Vec3T<double>> &, const std::vector<double> &, double, double, double);
 

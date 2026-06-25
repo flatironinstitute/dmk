@@ -19,7 +19,7 @@
 struct Config {
     int n_src = 100'000;
     double L = 1.0;
-    double r_c = 0.05;
+    double r_c = 0.2;
     double eps = 1e-6;
     int n_runs = 10;
     char prec = 'd';
@@ -92,11 +92,29 @@ void run_benchmark(const Config &cfg) {
     // ---- Eval benchmark ----------------------------------------------------
     dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps);
 
+    // ---- SR comparison: reference (neighbor-list) vs fast (cell-list) ---------
     if (rank == 0) {
         if (!cfg.bench_plan)
             print_config(cfg, np, n_threads, std::cout);
+        std::cout << "# phase: sr_comparison\n"
+                  << "run,sr_ref_time,sr_fast_time,speedup\n" << std::flush;
+    }
+    for (int run = 0; run < cfg.n_runs; ++run) {
+        dmk::EspTimings t_ref{}, t_fast{};
+        dmk::esp_eval<Real>(plan, r_src, charges, &t_ref,  /*fast_sr=*/false);
+        dmk::esp_eval<Real>(plan, r_src, charges, &t_fast, /*fast_sr=*/true);
+        if (rank == 0) {
+            std::cout << run << ","
+                      << t_ref.t_short << ","
+                      << t_fast.t_short << ","
+                      << t_ref.t_short / t_fast.t_short << "\n" << std::flush;
+        }
+    }
+
+    // ---- Full eval benchmark --------------------------------------------------
+    if (rank == 0) {
         std::cout << "# phase: eval\n"
-                  << "run,total_time,pts_per_s,neighbor_time,sr_time,lr_time,self_time\n"
+                  << "run,total_time,pts_per_s,sr_time,lr_time,self_time\n"
                   << std::flush;
     }
 
@@ -111,7 +129,6 @@ void run_benchmark(const Config &cfg) {
             std::cout << run << ","
                       << (t1 - t0) << ","
                       << n / (t1 - t0) << ","
-                      << timings.t_neighbors << ","
                       << timings.t_short << ","
                       << timings.t_long << ","
                       << timings.t_self << "\n" << std::flush;
@@ -151,7 +168,7 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -h         Help\n"
                       << "\n"
                       << "Output CSV columns (eval phase):\n"
-                      << "  run, total_time, pts_per_s, neighbor_time, sr_time, lr_time, self_time\n";
+                      << "  run, total_time, pts_per_s, sr_time, lr_time, self_time\n";
             exit(0);
         }
     }
