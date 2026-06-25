@@ -175,6 +175,7 @@ if (DMK_USE_JIT)
   target_link_libraries(DMKOBJS_BOOTSTRAP PUBLIC RuFuS::rufus jit_kernels)
 endif()
 target_compile_options(DMKOBJS_BOOTSTRAP PUBLIC "${DMK_CXX_FLAGS}")
+target_compile_definitions(DMKOBJS_BOOTSTRAP PUBLIC $<$<BOOL:${DMK_BUILD_ESP}>:DMK_BUILD_ESP>)
 
 add_library(DMKOBJS_AOT OBJECT ${DMK_AOT_SRC})
 set_target_properties(DMKOBJS_AOT PROPERTIES POSITION_INDEPENDENT_CODE ON)

@@ -94,20 +94,26 @@ typedef struct pdmk_esp_params {
 typedef void *pdmk_esp_plan;
 
 // Create a plan: derives P, builds PSWFKernel, precomputes scaling grid.
-// No particle data needed at this stage.
-pdmk_esp_plan pdmk_esp_plan_create(MPI_Comm comm, pdmk_esp_params params);
+// No particle data needed at this stage. Plan is always double precision internally.
+pdmk_esp_plan  pdmk_esp_plan_create(dmk_communicator comm, pdmk_esp_params params);
+pdmk_esp_plan  pdmk_esp_plan_createf(dmk_communicator comm, pdmk_esp_params params);
 
 // Evaluate potentials for n particles using a pre-built plan.
 // Can be called repeatedly with different r_src / charges for the same geometry.
-void pdmk_esp_eval(MPI_Comm comm, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
-                   double *pot_src);
+void pdmk_esp_eval(dmk_communicator comm, pdmk_esp_plan plan, int n, const double *r_src,
+                   const double *charges, double *pot_src);
+void pdmk_esp_evalf(dmk_communicator comm, pdmk_esp_plan plan, int n, const float *r_src,
+                    const float *charges, float *pot_src);
 
 // Free the plan.
 void pdmk_esp_plan_destroy(pdmk_esp_plan plan);
+void pdmk_esp_plan_destroyf(pdmk_esp_plan plan);
 
 // Convenience one-shot (create + eval + destroy).
-void pdmk_esp(MPI_Comm comm, pdmk_esp_params params, int n, const double *r_src, const double *charges,
-              double *pot_src);
+void pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double *r_src,
+              const double *charges, double *pot_src);
+void pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const float *r_src,
+               const float *charges, float *pot_src);
 #endif // DMK_BUILD_ESP
 
 int pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const double *normal);
