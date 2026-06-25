@@ -648,4 +648,5 @@ void pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double
     pdmk_esp_eval(comm, plan, n, r_src, charges, pot_src);
     pdmk_esp_plan_destroy(plan);
 }
+#endif //DMK_BUILD_ESP
 }

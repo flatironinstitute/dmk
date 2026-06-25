@@ -378,15 +378,28 @@ void esp_destroy_plan(EspPlan *plan) { delete plan; }
 template <typename Real>
 std::vector<Real> esp_eval(EspPlan *plan,
                             const std::vector<Vec3T<Real>> &r_src,
-                            const std::vector<Real> &charges) {
+                            const std::vector<Real> &charges,
+                            EspTimings *timings) {
     int n = static_cast<int>(charges.size());
     ESPParams params = plan->params_base;
     params.n = n;
 
+    double t0 = omp_get_wtime();
     auto neighbors = build_neighbor_list<Real>(r_src, params);
+    double t1 = omp_get_wtime();
     auto pot_sr    = short_range<Real>(r_src, charges, plan->pswf, params, neighbors);
+    double t2 = omp_get_wtime();
     auto pot_lr    = long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs);
+    double t3 = omp_get_wtime();
     auto pot_self  = self_interaction<Real>(charges, plan->pswf, params);
+    double t4 = omp_get_wtime();
+
+    if (timings) {
+        timings->t_neighbors = t1 - t0;
+        timings->t_short     = t2 - t1;
+        timings->t_long      = t3 - t2;
+        timings->t_self      = t4 - t3;
+    }
 
     std::vector<Real> total(n);
     for (int i = 0; i < n; ++i)
@@ -407,8 +420,8 @@ std::vector<Real> esp_potential(const std::vector<Vec3T<Real>> &r_src,
     return result;
 }
 
-template std::vector<float>  esp_eval<float> (EspPlan *, const std::vector<Vec3T<float>>  &, const std::vector<float>  &);
-template std::vector<double> esp_eval<double>(EspPlan *, const std::vector<Vec3T<double>> &, const std::vector<double> &);
+template std::vector<float>  esp_eval<float> (EspPlan *, const std::vector<Vec3T<float>>  &, const std::vector<float>  &, EspTimings *);
+template std::vector<double> esp_eval<double>(EspPlan *, const std::vector<Vec3T<double>> &, const std::vector<double> &, EspTimings *);
 template std::vector<float>  esp_potential<float> (const std::vector<Vec3T<float>>  &, const std::vector<float>  &, double, double, double);
 template std::vector<double> esp_potential<double>(const std::vector<Vec3T<double>> &, const std::vector<double> &, double, double, double);
 
