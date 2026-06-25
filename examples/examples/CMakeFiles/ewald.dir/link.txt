@@ -1,2 +1,0 @@
-/usr/bin/ar qc libewald.a CMakeFiles/ewald.dir/ewald_esp.cpp.o
-/usr/bin/ranlib libewald.a
