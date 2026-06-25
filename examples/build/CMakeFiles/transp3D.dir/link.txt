@@ -1,1 +1,0 @@
-/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/c++ -O2 -g -DNDEBUG -rdynamic CMakeFiles/transp3D.dir/parallel_transpose_3D.o -o transp3D  -lMPI::MPI_CXX -lOpenMP::OpenMP_CXX 

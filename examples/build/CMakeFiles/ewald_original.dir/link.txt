@@ -1,1 +1,0 @@
-/mnt/sw/nix/store/pxl9ndpq5yassys69ibkr3kcz34jh385-gcc-13.3.0/bin/c++ -O2 -g -DNDEBUG -rdynamic CMakeFiles/ewald_original.dir/ewald_total.o -o ewald_original  -ldmk -ldmk_ref -lBLAS::BLAS -lMPI::MPI_CXX -lnanobench -lOpenMP::OpenMP_CXX -lducc0 
