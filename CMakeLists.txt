@@ -81,14 +81,16 @@ set(DMK_INCLUDES
 
 include(FetchContent)
 if (DMK_BUILD_ESP)
+  set(FINUFFT_USE_DUCC0 ON CACHE BOOL "" FORCE)
   FetchContent_Declare(
 	finufft
 	GIT_REPOSITORY https://github.com/flatironinstitute/finufft.git
 	GIT_TAG v2.5.1
   )
   FetchContent_MakeAvailable(finufft)
-  set(DMK_ESP_TARGET finufft::finufft)
+  set(DMK_ESP_TARGET finufft::finufft ducc0)
   set(DMK_ESP_SRC src/esp.cpp)
+  list(APPEND DMK_CXX_FLAGS "-DDMK_BUILD_ESP")
 else()
   set(DMK_ESP_SRC)
   set(DMK_ESP_TARGET)

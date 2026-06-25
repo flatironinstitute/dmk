@@ -1,5 +1,4 @@
 #pragma once
-#ifdef DMK_WITH_FINUFFT
 
 #include <array>
 #include <vector>
@@ -13,18 +12,13 @@ using Vec3 = std::array<double, 3>;
 struct EspPlan;
 
 EspPlan *esp_create_plan(double L, double r_c, double eps);
-void     esp_destroy_plan(EspPlan *plan);
+void esp_destroy_plan(EspPlan *plan);
 
 // Returns the total potential at each particle (length = charges.size()).
-std::vector<double> esp_eval(EspPlan *plan,
-                              const std::vector<Vec3> &r_src,
-                              const std::vector<double> &charges);
+std::vector<double> esp_eval(EspPlan *plan, const std::vector<Vec3> &r_src, const std::vector<double> &charges);
 
 // Convenience one-shot wrapper (create + eval + destroy).
-std::vector<double> esp_potential(const std::vector<Vec3> &r_src,
-                                   const std::vector<double> &charges,
-                                   double L, double r_c, double eps);
+std::vector<double> esp_potential(const std::vector<Vec3> &r_src, const std::vector<double> &charges, double L,
+                                  double r_c, double eps);
 
 } // namespace dmk
-
-#endif // DMK_WITH_FINUFFT

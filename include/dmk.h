@@ -77,7 +77,7 @@ void pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *pot_trg);
 pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src,
                            const double *charge, const double *normal, int n_trg, const double *r_trg);
 
-#ifdef DMK_WITH_FINUFFT
+#ifdef DMK_BUILD_ESP
 // ESP (Ewald Sum with PSWF kernels) — periodic Coulomb solver.
 // Particles lie in the cubic box [-L/2, L/2)^3.
 // r_src is a flat array of 3*n doubles: [x0,y0,z0, x1,y1,z1, ...].
@@ -108,7 +108,7 @@ void pdmk_esp_plan_destroy(pdmk_esp_plan plan);
 // Convenience one-shot (create + eval + destroy).
 void pdmk_esp(MPI_Comm comm, pdmk_esp_params params, int n, const double *r_src, const double *charges,
               double *pot_src);
-#endif // DMK_WITH_FINUFFT
+#endif // DMK_BUILD_ESP
 
 int pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const double *normal);
 int pdmk_tree_update_chargesf(pdmk_tree tree, const float *charge, const float *normal);

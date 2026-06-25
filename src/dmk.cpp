@@ -5,11 +5,9 @@
 #include <variant>
 
 #include <dmk.h>
-#ifdef DMK_WITH_FINUFFT
-#include <dmk/esp.hpp>
-#endif
 #include <dmk/chebychev.hpp>
 #include <dmk/direct.hpp>
+#include <dmk/esp.hpp>
 #include <dmk/fortran.h>
 #include <dmk/fourier_data.hpp>
 #include <dmk/logger.h>
@@ -611,7 +609,7 @@ void pdmk(dmk_communicator comm, pdmk_params params, int n_src, const double *r_
         return dmk::pdmk<double, 3>(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg);
 }
 
-#ifdef DMK_WITH_FINUFFT
+#ifdef DMK_BUILD_ESP
 pdmk_esp_plan pdmk_esp_plan_create(MPI_Comm /*comm*/, pdmk_esp_params params) {
     return static_cast<void *>(dmk::esp_create_plan(params.L, params.r_c, params.eps));
 }
@@ -634,5 +632,5 @@ void pdmk_esp(MPI_Comm comm, pdmk_esp_params params, int n, const double *r_src,
     pdmk_esp_eval(comm, plan, n, r_src, charges, pot_src);
     pdmk_esp_plan_destroy(plan);
 }
-#endif // DMK_WITH_FINUFFT
+#endif // DMK_BUILD_ESP
 }
