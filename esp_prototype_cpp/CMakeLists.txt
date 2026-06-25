@@ -32,7 +32,8 @@ FetchContent_MakeAvailable(finufft)
 
 set(DMK_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/../include" CACHE PATH "dmk include dir")
 set(DMK_LIB         "${CMAKE_SOURCE_DIR}/../build/libdmk.a" CACHE FILEPATH "dmk library")
-set(DMK_REF_LIB     "${CMAKE_SOURCE_DIR}/../build/libdmk_ref.a" CACHE FILEPATH "dmk ref library")
+set(NDA_C_LIB       "${CMAKE_SOURCE_DIR}/../build/extern/nda/c++/nda/libnda_c.a" CACHE FILEPATH "nda_c library")
+#set(DMK_REF_LIB     "${CMAKE_SOURCE_DIR}/../build/libdmk_ref.a" CACHE FILEPATH "dmk ref library")
 
 # --- main esp executable ---
 
@@ -49,7 +50,7 @@ target_include_directories(esp PRIVATE
 
 target_link_libraries(esp PRIVATE
     ${DMK_LIB}
-    ${DMK_REF_LIB}
+    ${NDA_C_LIB}
     finufft::finufft
     ${FFTW_LIBRARIES}
     fftw3f

@@ -235,6 +235,130 @@ short_range(const std::vector<Vec3> &r_src,
     return pot;
 }
 
+struct CellList {
+    int n_cells;                          // cells per dimension
+    std::vector<int>    cell_start;       // size n_cells^3 + 1 (prefix sum)
+    std::vector<double> xs, ys, zs, qs;   // particle data, sorted by cell 
+    std::vector<int>    orig;             // orig[slot] = original particle index
+};
+
+static CellList build_cell_list(const std::vector<Vec3>  &r_src,
+                                const std::vector<double> &charges,
+                                const ESPParams &params, int nc) {
+    CellList cl;
+    cl.n_cells = nc;
+    const int ncells = nc * nc * nc;
+    const int n = params.n;
+
+    auto cell_of = [&](const Vec3 &r) {
+        CellIndex ci = particle_cell(r, params.L, nc);  
+        return (ci.x * nc + ci.y) * nc + ci.z;
+    };
+
+    // pass 1: count per cell, remember each particle's cell
+    std::vector<int> count(ncells, 0), cidx(n);
+    for (int j = 0; j < n; ++j) { int c = cell_of(r_src[j]); cidx[j] = c; ++count[c]; }
+
+    // pass 2: prefix sum -> starting offsets
+    cl.cell_start.assign(ncells + 1, 0);
+    for (int c = 0; c < ncells; ++c) cl.cell_start[c+1] = cl.cell_start[c] + count[c];
+
+    // pass 3: scatter into sorted arrays
+    cl.xs.resize(n); cl.ys.resize(n); cl.zs.resize(n); cl.qs.resize(n); cl.orig.resize(n);
+    std::vector<int> cursor(cl.cell_start.begin(), cl.cell_start.end() - 1);
+    for (int j = 0; j < n; ++j) {
+        int slot = cursor[cidx[j]]++;
+        cl.xs[slot] = r_src[j][0];
+        cl.ys[slot] = r_src[j][1];
+        cl.zs[slot] = r_src[j][2];
+        cl.qs[slot] = charges[j];
+        cl.orig[slot] = j;
+    }
+    return cl;
+}
+
+static std::vector<double>
+short_range_fast(const std::vector<Vec3> &r_src,
+                 const std::vector<double> &charges,
+                 const PSWFKernel &pswf,
+                 const ESPParams &params) {
+
+    // cell-list validity: need cell width >= r_c (so 27-stencil captures all
+    // pairs within r_c) AND >= 3 cells/dim (so periodic min-image isn't
+    // double-counted). Both => floor(L/r_c) >= 3.
+    const int nc = static_cast<int>(std::floor(params.L / params.r_c));
+    if (nc < 3) {
+        // r_c > L/3: cell list doesn't apply. Fall back to your old path.
+        auto neighbors = build_neighbor_list(r_src, params);
+        return short_range(r_src, charges, pswf, params, neighbors);
+    }
+
+    // PSWF integral table. NOTE: depends only on pswf, NOT on charges/positions.
+    // This belongs in my create/plan step — should be maybe moved!
+    const int TS = 10000;
+    std::vector<double> table(TS);
+    for (int i = 0; i < TS; ++i)
+        table[i] = pswf.integral(0.0, (double)i / (TS - 1));
+
+    CellList cl = build_cell_list(r_src, charges, params, nc);
+
+    const double L       = params.L;
+    const double r_c_sq  = params.r_c * params.r_c;
+    const double inv_rc  = 1.0 / params.r_c;
+    const double inv_c0  = 1.0 / params.c0;
+    const int    n       = params.n;
+
+    std::vector<double> pot_sorted(n, 0.0);
+
+    // Parallelize over home cells. Each home cell's particles live in a disjoint
+    // slot range, so each pot_sorted[a] is written by exactly one thread -> no race.
+    #pragma omp parallel for schedule(dynamic) collapse(3)
+    for (int cx = 0; cx < nc; ++cx)
+    for (int cy = 0; cy < nc; ++cy)
+    for (int cz = 0; cz < nc; ++cz) {
+        const int home = (cx*nc + cy)*nc + cz;
+        const int hbeg = cl.cell_start[home], hend = cl.cell_start[home+1];
+
+        for (int a = hbeg; a < hend; ++a) {
+            const double xi = cl.xs[a], yi = cl.ys[a], zi = cl.zs[a];
+            double acc = 0.0;
+
+            for (int dx=-1; dx<=1; ++dx)
+            for (int dy=-1; dy<=1; ++dy)
+            for (int dz=-1; dz<=1; ++dz) {
+                const int nx = (cx+dx+nc)%nc, ny = (cy+dy+nc)%nc, nz = (cz+dz+nc)%nc;
+                const int nb = (nx*nc + ny)*nc + nz;
+                const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb+1];
+
+                // contiguous, in-order sweep over neighbor-cell particles -> SIMD-friendly
+                for (int b = nbeg; b < nend; ++b) {
+                    if (nb == home && a == b) continue;          // skip self
+                    double ddx = xi - cl.xs[b]; ddx -= L*std::round(ddx/L);
+                    double ddy = yi - cl.ys[b]; ddy -= L*std::round(ddy/L);
+                    double ddz = zi - cl.zs[b]; ddz -= L*std::round(ddz/L);
+                    double d2 = ddx*ddx + ddy*ddy + ddz*ddz;
+                    if (d2 > r_c_sq) continue;                   // cutoff 
+
+                    double dist = std::sqrt(d2);
+                    double pos  = (dist * inv_rc) * (TS - 1);
+                    int    idx  = (int)pos;
+                    if (idx > TS - 2) idx = TS - 2;              // guard table[idx+1] OOB at dist==r_c
+                    double frac = pos - idx;
+                    double intval = (table[idx]*(1.0-frac) + table[idx+1]*frac) * inv_c0;
+
+                    acc += cl.qs[b] * (1.0 - intval) / (4.0 * M_PI * dist);
+                }
+            }
+            pot_sorted[a] = acc;   // written once
+        }
+    }
+
+    // de-sort back to caller's original ordering
+    std::vector<double> pot(n, 0.0);
+    for (int a = 0; a < n; ++a) pot[cl.orig[a]] = pot_sorted[a];
+    return pot;
+}
+
 // ---------------------------------------------------------------------------
 // S_hat(k_vec)  – spectral Green's function factor
 // ---------------------------------------------------------------------------
@@ -640,21 +764,23 @@ ESPResult esp_potential(const std::vector<Vec3> &r_src,
     printf("short range:    %.2f ms\n", Ms(Clock::now()-t0).count());
 
     t0 = Clock::now();
+    auto pot_sr_fast = short_range_fast(r_src, charges, pswf, params);
+    printf("short range - fast:    %.2f ms\n", Ms(Clock::now()-t0).count());
+
+    // printf("\nshort_range vs short_range_fast:\n");
+    // for (int i = 0; i < params.n; i++) {
+    //     double err = std::abs(pot_sr[i] - pot_sr_fast[i]);
+    //     printf("  pt %d: slow=%.8f  fast=%.8f  err=%.2e\n",
+    //         i, pot_sr[i], pot_sr_fast[i], err);
+    // }
+
+    t0 = Clock::now();
     auto pot_lr = long_range_fast(r_src, charges, pswf, params);
     printf("long range:     %.2f ms\n", Ms(Clock::now()-t0).count());
 
     t0 = Clock::now();
     auto pot_lr_finufft = long_range_finufft(r_src, charges, pswf, params);
     printf("long range - finufft:     %.2f ms\n", Ms(Clock::now()-t0).count());
-
-    // printf("\nlong_range_fast vs long_range_finufft:\n");
-    // for (int i = 0; i < params.n; i++) {
-    //     double err = std::abs(pot_lr[i] - pot_lr_finufft[i]);
-    //     printf("  pt %d: fast=%.8f  finufft=%.8f  err=%.2e\n",
-    //         i, pot_lr[i], pot_lr_finufft[i], err);
-    // }
-    // for (int i = 0; i < params.n; i++)
-    // printf("  pt %d: ratio=%.6f\n", i, pot_lr_finufft[i] / pot_lr[i]);
 
     t0 = Clock::now();
     auto pot_self   = self_interaction(r_src, charges, pswf, params);
