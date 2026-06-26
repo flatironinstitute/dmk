@@ -19,16 +19,19 @@ struct KernelDef {
     int dim;
     std::string func_name;
     std::string getter_name;
+    std::string prefix; // coefficient-array name prefix
 };
 
 static const std::vector<KernelDef> all_kernels = {
-    {DMK_LAPLACE, "DMK_LAPLACE", 2, "laplace_2d_poly_all_pairs", "get_laplace_2d_kernel"},
-    {DMK_LAPLACE, "DMK_LAPLACE", 3, "laplace_3d_poly_all_pairs", "get_laplace_3d_kernel"},
-    {DMK_SQRT_LAPLACE, "DMK_SQRT_LAPLACE", 2, "sqrt_laplace_2d_poly_all_pairs", "get_sqrt_laplace_2d_kernel"},
-    {DMK_SQRT_LAPLACE, "DMK_SQRT_LAPLACE", 3, "sqrt_laplace_3d_poly_all_pairs", "get_sqrt_laplace_3d_kernel"},
-    // {DMK_STOKES, "DMK_STOKES", 2, "stokeslet_2d_poly_all_pairs", "get_stokeslet_2d_kernel"},
-    {DMK_STOKESLET, "DMK_STOKESLET", 3, "stokeslet_3d_poly_all_pairs", "get_stokeslet_3d_kernel"},
-    {DMK_STRESSLET, "DMK_STRESSLET", 3, "stresslet_3d_poly_all_pairs", "get_stresslet_3d_kernel"},
+    {DMK_LAPLACE, "DMK_LAPLACE", 2, "laplace_2d_poly_all_pairs", "get_laplace_2d_kernel", "laplace"},
+    {DMK_LAPLACE, "DMK_LAPLACE", 3, "laplace_3d_poly_all_pairs", "get_laplace_3d_kernel", "laplace"},
+    {DMK_SQRT_LAPLACE, "DMK_SQRT_LAPLACE", 2, "sqrt_laplace_2d_poly_all_pairs", "get_sqrt_laplace_2d_kernel",
+     "sqrt_laplace"},
+    {DMK_SQRT_LAPLACE, "DMK_SQRT_LAPLACE", 3, "sqrt_laplace_3d_poly_all_pairs", "get_sqrt_laplace_3d_kernel",
+     "sqrt_laplace"},
+    // {DMK_STOKES, "DMK_STOKES", 2, "stokeslet_2d_poly_all_pairs", "get_stokeslet_2d_kernel", "stokeslet"},
+    {DMK_STOKESLET, "DMK_STOKESLET", 3, "stokeslet_3d_poly_all_pairs", "get_stokeslet_3d_kernel", "stokeslet"},
+    {DMK_STRESSLET, "DMK_STRESSLET", 3, "stresslet_3d_poly_all_pairs", "get_stresslet_3d_kernel", "stresslet"},
 };
 
 constexpr int min_digits = 2;
@@ -58,25 +61,7 @@ void emit_coeffs_array(const std::string &name, const std::vector<std::vector<do
     std::cout << "\n};\n\n";
 }
 
-std::string coeff_name(const KernelDef &k, int digits) {
-    return std::format(
-        "{}_{}d_{}",
-        [&] {
-            switch (k.kernel) {
-            case DMK_LAPLACE:
-                return "laplace";
-            case DMK_SQRT_LAPLACE:
-                return "sqrt_laplace";
-            case DMK_STOKESLET:
-                return "stokeslet";
-            case DMK_STRESSLET:
-                return "stresslet";
-            default:
-                return "unknown";
-            }
-        }(),
-        k.dim, digits);
-}
+std::string coeff_name(const KernelDef &k, int digits) { return std::format("{}_{}d_{}", k.prefix, k.dim, digits); }
 
 void emit_getter(const KernelDef &k, const std::vector<CoeffsInfo> &infos) {
     std::cout << std::format(R"(
@@ -167,6 +152,34 @@ constexpr int unroll_factor = 3;
         emit_getter(k, infos);
     }
 
+    // ESP short-range Laplace correction. Not a dmk_ikernel: it reuses the
+    // laplace_3d evaluator but with FINUFFT-derived PSWF coefficients, so the
+    // coefficient source differs and it is emitted separately.
+    const KernelDef esp_k{DMK_LAPLACE, "DMK_LAPLACE", 3, "laplace_3d_poly_all_pairs", "get_esp_3d_kernel", "esp"};
+    {
+        std::vector<CoeffsInfo> infos;
+        for (int digits = min_digits; digits <= max_digits; ++digits) {
+            try {
+                const auto coeffs = dmk::get_esp_correction_coeffs<double>(digits);
+
+                CoeffsInfo info;
+                info.digits = digits;
+                info.beta = 0.0;
+                info.total_size = 0;
+                for (const auto &cvec : coeffs) {
+                    info.sub_sizes.push_back(cvec.size());
+                    info.total_size += cvec.size();
+                }
+
+                emit_coeffs_array(coeff_name(esp_k, digits), coeffs, 0.0);
+                infos.push_back(std::move(info));
+            } catch (std::exception &e) {
+                std::cerr << std::format("// Skipped {} digits={}: {}\n", esp_k.getter_name, digits, e.what());
+            }
+        }
+        emit_getter(esp_k, infos);
+    }
+
     // Emit explicit instantiations
     std::cout << "\n// Explicit instantiations\n";
     for (auto &k : all_kernels) {
@@ -175,6 +188,11 @@ constexpr int unroll_factor = 3;
                                      "{1}<{0}, sctl::DefaultVecLen<{0}>()>(dmk_eval_type, int);\n",
                                      type, k.getter_name);
         }
+    }
+    for (auto type : {"float", "double"}) {
+        std::cout << std::format("template residual_evaluator_func<{0}>\n"
+                                 "{1}<{0}, sctl::DefaultVecLen<{0}>()>(dmk_eval_type, int);\n",
+                                 type, esp_k.getter_name);
     }
 
     std::cout << "\n} // namespace dmk\n";

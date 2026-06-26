@@ -1408,6 +1408,220 @@ residual_evaluator_func<Real> get_stresslet_3d_kernel(dmk_eval_type eval_level, 
     }
     throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
 }
+// beta: 0
+constexpr double esp_3d_2[] = {1.34884994505452809e-02, -3.73599311867344047e-02, 3.22420636095540128e-02,
+                               -2.53304289872698617e-03, -5.98747380360737519e-03};
+
+// beta: 0
+constexpr double esp_3d_3[] = {8.97145827314507933e-03,  -3.09473440794271019e-02, 3.76409582459690598e-02,
+                               -1.38019495476561921e-02, -6.84142480576845503e-03, 4.99508475283452682e-03};
+
+// beta: 0
+constexpr double esp_3d_4[] = {6.03902607818881422e-03,  -2.51963851123542075e-02, 3.96934349981230561e-02,
+                               -2.39429177302463991e-02, -5.18686499287017606e-03, 1.14725753682859092e-02,
+                               -7.61449401895036436e-04, -2.12449799851328804e-03};
+
+// beta: 0
+constexpr double esp_3d_5[] = {4.12659621865275536e-03,  -2.01237328316271162e-02, 3.84094927703552691e-02,
+                               -3.20462216139881587e-02, 2.41638558806670780e-03,  1.52486415936692512e-02,
+                               -7.71541598405257271e-03, -3.12264606780770365e-03, 3.07087636205676104e-03,
+                               2.55199294517731337e-04,  -5.19287099370275900e-04};
+
+// beta: 0
+constexpr double esp_3d_6[] = {2.84047688612056514e-03,  -1.58506386146951665e-02, 3.56502535054326330e-02,
+                               -3.78035211788415315e-02, 1.10284886191384345e-02,  1.56025082931540039e-02,
+                               -1.44428684968205701e-02, -9.77132897815768042e-04, 5.91891728616086334e-03,
+                               -1.04188767272233576e-03, -1.36887529678175138e-03, 2.81956074886362338e-04,
+                               1.62347633101365409e-04};
+
+// beta: 0
+constexpr double esp_3d_7[] = {1.96770526903428241e-03,  -1.23574537822621570e-02, 3.19992843022129519e-02,
+                               -4.11640673828528453e-02, 2.02340973654797918e-02,  1.25090280400528917e-02,
+                               -2.08753799642465952e-02, 4.34333130746635682e-03,  7.87850031089381772e-03,
+                               -4.44058163748343136e-03, -1.54971361328697316e-03, 1.56619046953147150e-03,
+                               1.34241052591822774e-04,  -2.45188540562929675e-04};
+
+// beta: 0
+constexpr double esp_3d_8[] = {1.37002006343894269e-03,  -9.55853673764268594e-03, 2.80047443836125357e-02,
+                               -4.23635083683627026e-02, 2.89009388349900920e-02,  6.41643110062058326e-03,
+                               -2.55102617177952497e-02, 1.20097586963948122e-02,  7.53016595589485124e-03,
+                               -8.91376397116200488e-03, 7.40108356533040324e-05,  3.26020728953857735e-03,
+                               -8.52978755712520235e-04, -7.19869593601617881e-04, 3.20299187139482964e-04,
+                               8.05459610729276573e-05,  -4.82031711978609065e-05};
+
+// beta: 0
+constexpr double esp_3d_9[] = {
+    9.57825495302928702e-04,  -7.34787110830131211e-03, 2.40281895449173284e-02,  -4.17885477279212741e-02,
+    3.62538041130253327e-02,  -1.93245124165582422e-03, -2.73262366883067001e-02, 2.10372378743409610e-02,
+    4.09545451815666438e-03,  -1.34193995782963451e-02, 3.78783367839457142e-03,  4.40713963562933998e-03,
+    -2.84636189512865083e-03, -8.02678043420788911e-04, 1.04860365385855796e-03,  5.29789301051716263e-05,
+    -2.37643740494003248e-04, 4.85550418574576568e-06,  2.72671099845800253e-05};
+
+// beta: 0
+constexpr double esp_3d_10[] = {6.71949156447112670e-04,  -5.62020984536175470e-03, 2.02907946221869487e-02,
+                                -3.98842263212983092e-02, 4.18528609419467484e-02,  -1.15507404709795508e-02,
+                                -2.57810835638452897e-02, 2.99945677349908492e-02,  -2.81173580055956536e-03,
+                                -1.65151613803752075e-02, 9.67420447449137723e-03,  3.89728251721839806e-03,
+                                -5.68344586642116449e-03, 2.48098561895679544e-04,  1.97157674567447578e-03,
+                                -5.05423534419910088e-04, -4.62220974874595386e-04, 1.70374614819108241e-04,
+                                7.16405783091608115e-05,  -2.32976546778918820e-05, -5.80454066878260741e-06};
+
+// beta: 0
+constexpr double esp_3d_11[] = {
+    4.72766791177545306e-04,  -4.28098675262499496e-03, 1.69122028256100780e-02,  -3.70742316833949370e-02,
+    4.55540984481008562e-02,  -2.14605495241180777e-02, -2.09099407628793935e-02, 3.74384311137191672e-02,
+    -1.27829790177350390e-02, -1.67741496661923638e-02, 1.70347482184099452e-02,  7.63464259759047653e-04,
+    -8.65503959590898861e-03, 2.91652292912089692e-03,  2.56280720433408726e-03,  -1.84785615019180511e-03,
+    -4.11049449593844983e-04, 6.75336560658383340e-04,  -3.20636628371459818e-06, -1.71732488054425313e-04,
+    1.71689417283353673e-05,  2.97296559422382795e-05,  -2.84146408949680673e-06, -2.71402764072040541e-06};
+
+// beta: 0
+constexpr double esp_3d_12[] = {
+    3.33455827992048864e-04,  -3.24955399689246796e-03, 1.39429582588901212e-02,  -3.37240753585498487e-02,
+    4.74276304367909976e-02,  -3.08269313089648660e-02, -1.31887145810062438e-02, 4.21818259072164747e-02,
+    -2.47747726983796150e-02, -1.31166274975110190e-02, 2.45046457167220760e-02,  -5.56285131262588585e-03,
+    -1.05425835533859303e-02, 7.21667146189540216e-03,  2.02281485547026185e-03,  -3.67788665436793701e-03,
+    3.35674138741696027e-04,  1.20872244442510042e-03,  -3.94024446751143926e-04, -2.76901217197586167e-04,
+    1.51608665522582264e-04,  4.21946135323601597e-05,  -3.35157492786694849e-05, -3.32285394602361020e-06,
+    3.55890168702989032e-06};
+
+template <class Real, int MaxVecLen>
+residual_evaluator_func<Real> get_esp_3d_kernel(dmk_eval_type eval_level, int n_digits) {
+    constexpr int UF = unroll_factor;
+    if (n_digits <= 2) {
+        constexpr int ND = 2, NC_TOTAL = 5;
+        constexpr int NC0 = 5;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(esp_3d_2, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 3) {
+        constexpr int ND = 3, NC_TOTAL = 6;
+        constexpr int NC0 = 6;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(esp_3d_3, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 4) {
+        constexpr int ND = 4, NC_TOTAL = 8;
+        constexpr int NC0 = 8;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(esp_3d_4, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 5) {
+        constexpr int ND = 5, NC_TOTAL = 11;
+        constexpr int NC0 = 11;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(esp_3d_5, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 6) {
+        constexpr int ND = 6, NC_TOTAL = 13;
+        constexpr int NC0 = 13;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(esp_3d_6, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 7) {
+        constexpr int ND = 7, NC_TOTAL = 14;
+        constexpr int NC0 = 14;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(esp_3d_7, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 8) {
+        constexpr int ND = 8, NC_TOTAL = 17;
+        constexpr int NC0 = 17;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(esp_3d_8, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 9) {
+        constexpr int ND = 9, NC_TOTAL = 19;
+        constexpr int NC0 = 19;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(esp_3d_9, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 10) {
+        constexpr int ND = 10, NC_TOTAL = 21;
+        constexpr int NC0 = 21;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(esp_3d_10, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 11) {
+        constexpr int ND = 11, NC_TOTAL = 24;
+        constexpr int NC0 = 24;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(esp_3d_11, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
+        };
+    }
+    if (n_digits <= 12) {
+        constexpr int ND = 12, NC_TOTAL = 25;
+        constexpr int NC0 = 25;
+        std::array<Real, NC_TOTAL> coeffs;
+        std::copy_n(esp_3d_12, NC_TOTAL, coeffs.data());
+        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
+                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                                                                r_trg, pot, UF);
+        };
+    }
+    throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
+}
 
 // Explicit instantiations
 template residual_evaluator_func<float> get_laplace_2d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type, int);
@@ -1432,5 +1646,7 @@ template residual_evaluator_func<float> get_stresslet_3d_kernel<float, sctl::Def
                                                                                                      int);
 template residual_evaluator_func<double> get_stresslet_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type,
                                                                                                         int);
+template residual_evaluator_func<float> get_esp_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type, int);
+template residual_evaluator_func<double> get_esp_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int);
 
 } // namespace dmk

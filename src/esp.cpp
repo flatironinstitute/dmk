@@ -1,3 +1,5 @@
+#include <dmk.h>
+#include <dmk/aot_kernels.hpp>
 #include <dmk/esp.hpp>
 #include <dmk/prolate.hpp>
 #include <dmk/prolate0_fun.hpp>
@@ -10,6 +12,7 @@
 #include <complex>
 #include <ducc0/fft/fft.h>
 #include <omp.h>
+#include <sctl.hpp>
 #include <stdexcept>
 #include <vector>
 
@@ -34,17 +37,8 @@ static void ifftn_3d(const CGrid &in, CGrid &out, int n) {
 namespace dmk {
 
 // ---------------------------------------------------------------------------
-// Auto-select P (PSWF stencil width) from eps.
-// Uses FINUFFT v2.5.0's formula for kerformula=8 (PSWF), upsampfac=2, dim=3.
-// ---------------------------------------------------------------------------
-static int esp_ns_from_eps(double eps) {
-    const double tolfac = 0.18 * 1.96; // 0.18 * 1.4^(dim-1) for dim=3
-    int ns = static_cast<int>(std::ceil(std::log(tolfac / eps) / (M_PI * std::sqrt(0.5)) + 1.0));
-    return std::max(2, ns);
-}
-
-// ---------------------------------------------------------------------------
-// PSWFKernel – thin wrapper around dmk::Prolate0Fun
+// PSWFKernel – thin wrapper around dmk::Prolate0Fun.
+// P and c are derived from eps (see esp.hpp), matching FINUFFT's PSWF spreader.
 // ---------------------------------------------------------------------------
 struct PSWFKernel {
     dmk::Prolate0Fun pswf;
@@ -59,8 +53,7 @@ struct PSWFKernel {
 
     explicit PSWFKernel(double eps_, int lenw = 8000) : eps(eps_) {
         P = esp_ns_from_eps(eps_);
-        int sigma = 2;
-        c = M_PI * P * (1.0 - 1.0 / (2 * sigma)) - 0.05;
+        c = esp_pswf_c_from_eps(eps_);
         pswf = dmk::Prolate0Fun(c, lenw);
 
         scale = 1.0 / pswf.eval_val(0.0);
@@ -217,7 +210,7 @@ static CellList<Real> build_cell_list(const std::vector<Vec3T<Real>> &r_src, con
 // ---------------------------------------------------------------------------
 template <typename Real>
 static std::vector<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                                          const PSWFKernel &pswf, const ESPParams &params) {
+                                          const ESPParams &params, int n_digits) {
     // 27-cell stencil requires nc >= 3 so periodic images aren't double-counted
     const int nc = static_cast<int>(std::floor(params.L / params.r_c));
     if (nc < 3)
@@ -227,70 +220,91 @@ static std::vector<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src,
 
     const Real L = Real(params.L);
     const Real r_c_sq = Real(params.r_c) * Real(params.r_c);
-    const double inv_rc = 1.0 / params.r_c;
-    const double inv_c0 = 1.0 / params.c0;
     const int n = params.n;
+
+    // Precompiled SIMD evaluator: u = P(t)/(R), t = R/r_c, with the (1 - I(t)/c0)/(4*pi)
+    // correction baked into P. Maps onto the Laplace-3D form with cen=0, rsc=1/r_c.
+    constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
+    auto evaluator = get_esp_3d_kernel<Real, MaxVecLen>(DMK_POTENTIAL, n_digits);
+    const Real rsc = Real(1.0 / params.r_c);
 
     std::vector<Real> pot_sorted(n, Real(0));
 
     // For each cell coordinate c in [0, nc) and each delta d in {-1,0,+1} (stored as d=0,1,2):
     // nbc_tab[c*3+d] = neighbor cell index, off_tab[c*3+d] = image shift to subtract.
     // Precomputed once; all three dimensions share the same table since they share nc.
-    std::vector<int>  nbc_tab(nc * 3);
+    std::vector<int> nbc_tab(nc * 3);
     std::vector<Real> off_tab(nc * 3);
     for (int c = 0; c < nc; ++c) {
         for (int d = 0; d < 3; ++d) {
             int ci = c + d - 1;
-            if      (ci < 0)   { nbc_tab[c*3+d] = ci + nc; off_tab[c*3+d] = -L; }
-            else if (ci >= nc) { nbc_tab[c*3+d] = ci - nc; off_tab[c*3+d] =  L; }
-            else               { nbc_tab[c*3+d] = ci;      off_tab[c*3+d] =  Real(0); }
+            if (ci < 0) {
+                nbc_tab[c * 3 + d] = ci + nc;
+                off_tab[c * 3 + d] = -L;
+            } else if (ci >= nc) {
+                nbc_tab[c * 3 + d] = ci - nc;
+                off_tab[c * 3 + d] = L;
+            } else {
+                nbc_tab[c * 3 + d] = ci;
+                off_tab[c * 3 + d] = Real(0);
+            }
         }
     }
 
-#pragma omp parallel for schedule(dynamic) collapse(3)
-    for (int cx = 0; cx < nc; ++cx)
-        for (int cy = 0; cy < nc; ++cy)
-            for (int cz = 0; cz < nc; ++cz) {
-                const int home = (cx * nc + cy) * nc + cz;
-                const int hbeg = cl.cell_start[home], hend = cl.cell_start[home + 1];
+#pragma omp parallel
+    {
+        // Per-thread scratch: home targets and the gathered, image-shifted neighbor
+        // sources (one evaluator call per home cell amortizes the SIMD setup).
+        std::vector<Real> r_trg, r_src_g, charge_g, pot_local;
+#pragma omp for schedule(dynamic) collapse(3)
+        for (int cx = 0; cx < nc; ++cx)
+            for (int cy = 0; cy < nc; ++cy)
+                for (int cz = 0; cz < nc; ++cz) {
+                    const int home = (cx * nc + cy) * nc + cz;
+                    const int hbeg = cl.cell_start[home], hend = cl.cell_start[home + 1];
+                    const int n_trg = hend - hbeg;
+                    if (n_trg == 0)
+                        continue;
 
-                const int  *nbc_cx = &nbc_tab[cx * 3];
-                const int  *nbc_cy = &nbc_tab[cy * 3];
-                const int  *nbc_cz = &nbc_tab[cz * 3];
-                const Real *off_cx = &off_tab[cx * 3];
-                const Real *off_cy = &off_tab[cy * 3];
-                const Real *off_cz = &off_tab[cz * 3];
+                    r_trg.clear();
+                    for (int a = hbeg; a < hend; ++a) {
+                        r_trg.push_back(cl.xs[a]);
+                        r_trg.push_back(cl.ys[a]);
+                        r_trg.push_back(cl.zs[a]);
+                    }
 
-                for (int a = hbeg; a < hend; ++a) {
-                    const Real xi = cl.xs[a], yi = cl.ys[a], zi = cl.zs[a];
-                    Real acc = Real(0);
+                    const int *nbc_cx = &nbc_tab[cx * 3];
+                    const int *nbc_cy = &nbc_tab[cy * 3];
+                    const int *nbc_cz = &nbc_tab[cz * 3];
+                    const Real *off_cx = &off_tab[cx * 3];
+                    const Real *off_cy = &off_tab[cy * 3];
+                    const Real *off_cz = &off_tab[cz * 3];
 
+                    r_src_g.clear();
+                    charge_g.clear();
                     for (int dx = 0; dx < 3; ++dx)
                         for (int dy = 0; dy < 3; ++dy)
                             for (int dz = 0; dz < 3; ++dz) {
                                 const int nb = (nbc_cx[dx] * nc + nbc_cy[dy]) * nc + nbc_cz[dz];
                                 const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
-
                                 for (int b = nbeg; b < nend; ++b) {
-                                    if (nb == home && a == b)
-                                        continue;
-                                    const Real ddx = xi - cl.xs[b] - off_cx[dx];
-                                    const Real ddy = yi - cl.ys[b] - off_cy[dy];
-                                    const Real ddz = zi - cl.zs[b] - off_cz[dz];
-                                    const Real d2 = ddx * ddx + ddy * ddy + ddz * ddz;
-                                    if (d2 > r_c_sq)
-                                        continue;
-
-                                    double dist = std::sqrt(double(d2));
-                                    double t = dist * inv_rc;
-                                    double intval = pswf.integral(0.0, t) * inv_c0;
-
-                                    acc += cl.qs[b] * Real((1.0 - intval) / (4.0 * M_PI * dist));
+                                    r_src_g.push_back(cl.xs[b] + off_cx[dx]);
+                                    r_src_g.push_back(cl.ys[b] + off_cy[dy]);
+                                    r_src_g.push_back(cl.zs[b] + off_cz[dz]);
+                                    charge_g.push_back(cl.qs[b]);
                                 }
                             }
-                    pot_sorted[a] = acc;
+
+                    // d2max = r_c^2 enforces the cutoff; thresh2 = 0 drops the self pair
+                    // (R2 == 0). The self-interaction term is corrected separately.
+                    pot_local.assign(n_trg, Real(0));
+                    evaluator(rsc, Real(0), r_c_sq, Real(0), static_cast<int>(charge_g.size()), r_src_g.data(),
+                              charge_g.data(), nullptr, n_trg, r_trg.data(), pot_local.data());
+
+                    for (int k = 0; k < n_trg; ++k)
+                        pot_sorted[hbeg + k] = pot_local[k];
                 }
-            }
+    }
 
     // restore original particle ordering
     std::vector<Real> pot(n, Real(0));
@@ -418,11 +432,16 @@ static std::vector<Real> self_interaction(const std::vector<Real> &charges, cons
 // EspPlan — caches everything independent of particle positions/charges.
 // ---------------------------------------------------------------------------
 struct EspPlan {
+    int n_digits; // tolerance bucket selecting the precompiled short-range evaluator
     PSWFKernel pswf;
     ESPParams params_base; // n=0 placeholder; n_f/h/kernel params pre-filled
     DGrid scaling_coeffs;
 
-    EspPlan(double L, double r_c, double eps) : pswf(eps), params_base(L, r_c, pswf.P, pswf, 0) {
+    // eps is snapped to 10^-n_digits so the short-range PSWF window (baked into the
+    // precompiled evaluator at that bucket) matches the long-range window exactly.
+    EspPlan(double L, double r_c, double eps)
+        : n_digits(esp_digits_from_eps(eps)), pswf(std::pow(10.0, -double(n_digits))),
+          params_base(L, r_c, pswf.P, pswf, 0) {
         scaling_coeffs = precompute_scaling_coefficients(pswf, params_base);
     }
 };
@@ -439,7 +458,7 @@ std::vector<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src,
     params.n = n;
 
     double t0 = omp_get_wtime();
-    auto pot_sr = short_range_fast<Real>(r_src, charges, plan->pswf, params);
+    auto pot_sr = short_range_fast<Real>(r_src, charges, params, plan->n_digits);
     double t1 = omp_get_wtime();
     auto pot_lr = long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs);
     double t2 = omp_get_wtime();
