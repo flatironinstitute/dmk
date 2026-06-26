@@ -12,7 +12,7 @@
 
 namespace dmk::cuda::jit {
 
-std::string make_pw_to_proxy_source(const JitKey& key);
+std::string make_pw2proxy_source(const JitKey& key);
 
 template <typename Real>
 void launch_pw_to_proxy_jit(
