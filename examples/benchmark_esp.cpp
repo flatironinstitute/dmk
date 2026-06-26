@@ -68,7 +68,7 @@ void run_benchmark(const Config &cfg) {
     const int n_threads = MY_OMP_GET_MAX_THREADS();
     const int n = cfg.n_src;
 
-    auto r_src  = generate_positions<Real>(n, cfg.L);
+    auto r_src = generate_positions<Real>(n, cfg.L);
     auto charges = generate_charges<Real>(n);
 
     // ---- Optionally benchmark plan creation --------------------------------
@@ -76,7 +76,8 @@ void run_benchmark(const Config &cfg) {
         if (rank == 0) {
             print_config(cfg, np, n_threads, std::cout);
             std::cout << "# phase: plan_create\n"
-                      << "run,plan_time,pts_per_s\n" << std::flush;
+                      << "run,plan_time,pts_per_s\n"
+                      << std::flush;
         }
         for (int run = 0; run < cfg.n_runs; ++run) {
             double t0 = MY_OMP_GET_WTIME();
@@ -91,25 +92,6 @@ void run_benchmark(const Config &cfg) {
 
     // ---- Eval benchmark ----------------------------------------------------
     dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps);
-
-    // ---- SR comparison: reference (neighbor-list) vs fast (cell-list) ---------
-    if (rank == 0) {
-        if (!cfg.bench_plan)
-            print_config(cfg, np, n_threads, std::cout);
-        std::cout << "# phase: sr_comparison\n"
-                  << "run,sr_ref_time,sr_fast_time,speedup\n" << std::flush;
-    }
-    for (int run = 0; run < cfg.n_runs; ++run) {
-        dmk::EspTimings t_ref{}, t_fast{};
-        dmk::esp_eval<Real>(plan, r_src, charges, &t_ref,  /*fast_sr=*/false);
-        dmk::esp_eval<Real>(plan, r_src, charges, &t_fast, /*fast_sr=*/true);
-        if (rank == 0) {
-            std::cout << run << ","
-                      << t_ref.t_short << ","
-                      << t_fast.t_short << ","
-                      << t_ref.t_short / t_fast.t_short << "\n" << std::flush;
-        }
-    }
 
     // ---- Full eval benchmark --------------------------------------------------
     if (rank == 0) {
@@ -126,12 +108,9 @@ void run_benchmark(const Config &cfg) {
         (void)pot;
 
         if (rank == 0) {
-            std::cout << run << ","
-                      << (t1 - t0) << ","
-                      << n / (t1 - t0) << ","
-                      << timings.t_short << ","
-                      << timings.t_long << ","
-                      << timings.t_self << "\n" << std::flush;
+            std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0) << "," << timings.t_short << ","
+                      << timings.t_long << "," << timings.t_self << "\n"
+                      << std::flush;
         }
     }
 
@@ -143,19 +122,40 @@ Config parse_args(int argc, char *argv[]) {
     int opt;
     while ((opt = getopt(argc, argv, "N:L:c:e:r:t:l:ph?")) != -1) {
         switch (opt) {
-        case 'N': cfg.n_src  = int(std::atof(optarg)); break;
-        case 'L': cfg.L      = std::atof(optarg); break;
-        case 'c': cfg.r_c    = std::atof(optarg); break;
-        case 'e': cfg.eps    = std::atof(optarg); break;
-        case 'r': cfg.n_runs = std::atoi(optarg); break;
-        case 'l': cfg.log_level = std::atoi(optarg); break;
-        case 'p': cfg.bench_plan = true; break;
-        case 't':
-            if (optarg[0] == 'd')      cfg.prec = 'd';
-            else if (optarg[0] == 'f') cfg.prec = 'f';
-            else { std::cerr << "Unknown precision: " << optarg << "\n"; exit(1); }
+        case 'N':
+            cfg.n_src = int(std::atof(optarg));
             break;
-        case 'h': case '?': default:
+        case 'L':
+            cfg.L = std::atof(optarg);
+            break;
+        case 'c':
+            cfg.r_c = std::atof(optarg);
+            break;
+        case 'e':
+            cfg.eps = std::atof(optarg);
+            break;
+        case 'r':
+            cfg.n_runs = std::atoi(optarg);
+            break;
+        case 'l':
+            cfg.log_level = std::atoi(optarg);
+            break;
+        case 'p':
+            cfg.bench_plan = true;
+            break;
+        case 't':
+            if (optarg[0] == 'd')
+                cfg.prec = 'd';
+            else if (optarg[0] == 'f')
+                cfg.prec = 'f';
+            else {
+                std::cerr << "Unknown precision: " << optarg << "\n";
+                exit(1);
+            }
+            break;
+        case 'h':
+        case '?':
+        default:
             std::cout << "Usage: " << argv[0] << " [options]\n"
                       << "  -N n       Number of particles (default 100000)\n"
                       << "  -L L       Box side length (default 1.0)\n"
