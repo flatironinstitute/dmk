@@ -12,7 +12,7 @@
 #include <dmk/cuda/aot_kernels.hpp>
 #include <dmk/cuda/charge2proxy_kernels.hpp>
 #include <dmk/cuda/direct_kernels.hpp>
-#include <dmk/cuda/pw_to_proxy_kernels.hpp>
+#include <dmk/cuda/pw2proxy_kernels.hpp>
 #include <dmk/cuda/shift_pw_kernels.hpp>
 #include <dmk/cuda/tensorprod_kernels.hpp>
 #include <dmk/direct.hpp>

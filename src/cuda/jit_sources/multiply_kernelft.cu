@@ -1,18 +1,6 @@
-// Per-box multiply_kernelFT family: pointwise complex × real multiplies that
-// apply the radial kernel-Fourier-transform factor to plane-wave coefficients.
+// KERNEL_START
 
-#include <dmk/cuda/multiply_kernelft_kernels.hpp>
-
-#include <cuda_runtime.h>
-
-#include <stdexcept>
-#include <string>
-
-namespace dmk::cuda {
-
-// cd2p: pointwise complex × real.
-template <typename Real>
-__global__ void MultiplyCd2pByBoxKernel(MultiplyCd2pArgs<Real> a) {
+extern "C" __global__ void MultiplyCd2pByBoxKernel(MultiplyCd2pArgs<Real> a) {
     const int box_idx = blockIdx.x;
     if (box_idx >= a.n_boxes_at_level)
         return;
@@ -30,16 +18,9 @@ __global__ void MultiplyCd2pByBoxKernel(MultiplyCd2pArgs<Real> a) {
     }
 }
 
-// Stokeslet 3D. For each (m1, m2, m3):
-//     dot = p0*kx + p1*ky + p2*kz   (complex)
-//     dd  = (kx² + ky² + kz²) * f
-//     pw[d] = dot * (k_d * f) - p_d * dd  for d = x, y, z
-//   Windowed variant additionally adds (1/rl) * pre-multiply value at the
-//   n0-th mode (the "DC" plane wave at the centre slot).
-template <typename Real>
-__global__ void MultiplyStokeslet3DByBoxKernel(MultiplyStokeslet3DArgs<Real> a) {
+extern "C" __global__ void MultiplyStokeslet3DByBoxKernel(MultiplyStokeslet3DArgs<Real> a) {
     extern __shared__ unsigned char shared_raw[];
-    Real *cvec = reinterpret_cast<Real *>(shared_raw); // 6 reals (3 complex) for windowed correction
+    Real *cvec = reinterpret_cast<Real *>(shared_raw);
 
     const int box_idx = blockIdx.x;
     if (box_idx >= a.n_boxes_at_level)
@@ -56,8 +37,6 @@ __global__ void MultiplyStokeslet3DByBoxKernel(MultiplyStokeslet3DArgs<Real> a) 
     const Real hpw = a.hpw;
     auto ts = [&](int i) { return Real(i - npw_half) * hpw; };
 
-    // n0 is the centre-mode index used by the windowed correction: it
-    // corresponds to ix=iy=npw_half, iz=npw_half (the unique "DC" point).
     const int n0 = npw_half + n_pw * npw_half + n_pw * n_pw * npw_half;
 
     if (a.is_windowed && threadIdx.x == 0) {
@@ -99,7 +78,6 @@ __global__ void MultiplyStokeslet3DByBoxKernel(MultiplyStokeslet3DArgs<Real> a) 
     if (a.is_windowed) {
         __syncthreads();
         if (threadIdx.x == 0) {
-            // rl = sqrt(3) + 1; cval = 1/rl.
             const Real cval = Real(1) / (Real(1.7320508075688772935) + Real(1));
             for (int d = 0; d < 3; ++d) {
                 pw[2 * (n0 + d * n_pw_modes)] += cval * cvec[2 * d + 0];
@@ -109,12 +87,7 @@ __global__ void MultiplyStokeslet3DByBoxKernel(MultiplyStokeslet3DArgs<Real> a) 
     }
 }
 
-// Stresslet 3D. Reads 9 input tables, writes 3 output tables. For each (m1, m2, m3) and
-//   k = (kx, ky, kz), with P_{ij} = src[m, i + 3*j]:
-//     u_i = -i f * (k_i * (|k|² tr(P) - 2 k^T P k) + |k|² ((P+P^T)k)_i)
-//   (See stresslet_3d_multiply_kernelFT in tree.hpp for the host reference.)
-template <typename Real>
-__global__ void MultiplyStresslet3DByBoxKernel(MultiplyStresslet3DArgs<Real> a) {
+extern "C" __global__ void MultiplyStresslet3DByBoxKernel(MultiplyStresslet3DArgs<Real> a) {
     const int box_idx = blockIdx.x;
     if (box_idx >= a.n_boxes_at_level)
         return;
@@ -143,7 +116,6 @@ __global__ void MultiplyStresslet3DByBoxKernel(MultiplyStresslet3DArgs<Real> a) 
         const Real rksq = kx * kx + ky * ky + kz * kz;
         const Real k[3] = {kx, ky, kz};
 
-        // Load P[i][j] = src[n_idx + n_pw_modes * (i + 3*j)] (complex).
         Real Pr[3][3], Pi[3][3];
         for (int j = 0; j < 3; ++j) {
             for (int i = 0; i < 3; ++i) {
@@ -153,7 +125,6 @@ __global__ void MultiplyStresslet3DByBoxKernel(MultiplyStresslet3DArgs<Real> a) 
             }
         }
 
-        // k^T P k (complex)
         Real ddr = 0, ddi = 0;
         for (int j = 0; j < 3; ++j)
             for (int i = 0; i < 3; ++i) {
@@ -162,11 +133,9 @@ __global__ void MultiplyStresslet3DByBoxKernel(MultiplyStresslet3DArgs<Real> a) 
                 ddi += Pi[i][j] * w;
             }
 
-        // tr(P) (complex)
         Real tr_r = Pr[0][0] + Pr[1][1] + Pr[2][2];
         Real tr_i = Pi[0][0] + Pi[1][1] + Pi[2][2];
 
-        // ((P + P^T) k)_i
         Real prod_r[3]{}, prod_i[3]{};
         for (int i = 0; i < 3; ++i)
             for (int j = 0; j < 3; ++j) {
@@ -174,12 +143,9 @@ __global__ void MultiplyStresslet3DByBoxKernel(MultiplyStresslet3DArgs<Real> a) 
                 prod_i[i] += (Pi[i][j] + Pi[j][i]) * k[j];
             }
 
-        // zz = rksq * tr(P) - 2 * ddot
         const Real zz_r = rksq * tr_r - Real(2) * ddr;
         const Real zz_i = rksq * tr_i - Real(2) * ddi;
 
-        // u_i = -i f * (k_i * zz + rksq * prod_i)
-        // multiplying by -i = (0, -1) means: (a + b i) * (0, -1) = (b, -a).
         for (int i = 0; i < 3; ++i) {
             const Real ar = k[i] * zz_r + rksq * prod_r[i];
             const Real ai = k[i] * zz_i + rksq * prod_i[i];
@@ -189,48 +155,3 @@ __global__ void MultiplyStresslet3DByBoxKernel(MultiplyStresslet3DArgs<Real> a) 
         }
     }
 }
-
-template <typename Real, int DIM>
-void launch_multiply_cd2p(const MultiplyCd2pArgs<Real> &args, cudaStream_t stream) {
-    if (args.n_boxes_at_level == 0)
-        return;
-    constexpr int block_size = 128;
-    MultiplyCd2pByBoxKernel<Real><<<args.n_boxes_at_level, block_size, 0, stream>>>(args);
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess)
-        throw std::runtime_error(std::string("launch_multiply_cd2p: ") + cudaGetErrorString(err));
-}
-
-template <typename Real>
-void launch_multiply_stokeslet_3d(const MultiplyStokeslet3DArgs<Real> &args, cudaStream_t stream) {
-    if (args.n_boxes_at_level == 0)
-        return;
-    constexpr int block_size = 128;
-    const std::size_t shared_bytes = sizeof(Real) * 6; // cvec for windowed correction
-    MultiplyStokeslet3DByBoxKernel<Real><<<args.n_boxes_at_level, block_size, shared_bytes, stream>>>(args);
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess)
-        throw std::runtime_error(std::string("launch_multiply_stokeslet_3d: ") + cudaGetErrorString(err));
-}
-
-template <typename Real>
-void launch_multiply_stresslet_3d(const MultiplyStresslet3DArgs<Real> &args, cudaStream_t stream) {
-    if (args.n_boxes_at_level == 0)
-        return;
-    constexpr int block_size = 128;
-    MultiplyStresslet3DByBoxKernel<Real><<<args.n_boxes_at_level, block_size, 0, stream>>>(args);
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess)
-        throw std::runtime_error(std::string("launch_multiply_stresslet_3d: ") + cudaGetErrorString(err));
-}
-
-template void launch_multiply_cd2p<float, 2>(const MultiplyCd2pArgs<float> &, cudaStream_t);
-template void launch_multiply_cd2p<float, 3>(const MultiplyCd2pArgs<float> &, cudaStream_t);
-template void launch_multiply_cd2p<double, 2>(const MultiplyCd2pArgs<double> &, cudaStream_t);
-template void launch_multiply_cd2p<double, 3>(const MultiplyCd2pArgs<double> &, cudaStream_t);
-template void launch_multiply_stokeslet_3d<float>(const MultiplyStokeslet3DArgs<float> &, cudaStream_t);
-template void launch_multiply_stokeslet_3d<double>(const MultiplyStokeslet3DArgs<double> &, cudaStream_t);
-template void launch_multiply_stresslet_3d<float>(const MultiplyStresslet3DArgs<float> &, cudaStream_t);
-template void launch_multiply_stresslet_3d<double>(const MultiplyStresslet3DArgs<double> &, cudaStream_t);
-
-} // namespace dmk::cuda

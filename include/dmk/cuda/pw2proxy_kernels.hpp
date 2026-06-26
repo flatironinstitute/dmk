@@ -21,32 +21,9 @@
 // 2 * n_order * n_pw2 (ff2 slab) reals — a few KB even for large n_pw.
 
 #include <cuda_runtime.h>
+#include <dmk/cuda/pw2proxy_kernelargs.hpp>
 #include <vector>
-
 namespace dmk::cuda {
-
-template <typename Real>
-struct PwToProxyArgs {
-    int n_boxes_at_level = 0; // gridDim.x
-    int n_order = 0;
-    int n_pw = 0;
-    int n_pw2 = 0; // (n_pw + 1) / 2
-    int n_charge_dim = 0;
-    long pw_in_stride = 0; // reals per pw_in_pool slot = 2 * n_charge_dim * n_pw * n_pw * n_pw2
-
-    const int *box_ids = nullptr; // [n_boxes_at_level]
-
-    // Filled earlier on the same stream by ShiftPwByBoxKernel.
-    const Real *pw_in_pool = nullptr;
-
-    // pw2poly for THIS level: (n_pw rows, n_order cols), F-major, interleaved
-    // complex (real, imag, real, imag, ...).
-    const Real *pw2poly = nullptr;
-
-    // d_proxy_coeffs_downward in shared state. Additive write.
-    Real *proxy_flat = nullptr;
-    const long *proxy_offsets = nullptr;
-};
 
 template <typename Real, int DIM>
 void launch_pw_to_proxy(const PwToProxyArgs<Real> &args, cudaStream_t stream);
