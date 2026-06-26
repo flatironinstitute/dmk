@@ -15,7 +15,7 @@ struct JitKey {
     // compile time params
     std::map<std::string, int> params;
 
-    std::map<std::string, std::string> tags; //to resolve templates
+    std::map<std::string, std::string> tags; // to resolve templates
     std::string to_string() const;
 };
 

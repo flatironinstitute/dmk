@@ -237,12 +237,9 @@ struct StressletPolyEvaluator3DCuda {
 };
 
 template <typename Eval>
-__device__ __forceinline__ void direct_eval_accumulate(
-    const Eval &evaluator,
-    Real (&vt)[Eval::KERNEL_OUTPUT_DIM],
-    const Real (&dX)[Eval::SPATIAL_DIM],
-    const Real (&vs)[Eval::KERNEL_INPUT_DIM]
-) {
+__device__ __forceinline__ void direct_eval_accumulate(const Eval &evaluator, Real (&vt)[Eval::KERNEL_OUTPUT_DIM],
+                                                       const Real (&dX)[Eval::SPATIAL_DIM],
+                                                       const Real (&vs)[Eval::KERNEL_INPUT_DIM]) {
     Real U[Eval::KERNEL_INPUT_DIM][Eval::KERNEL_OUTPUT_DIM];
     evaluator(U, dX);
 
@@ -256,13 +253,9 @@ __device__ __forceinline__ void direct_eval_accumulate(
 }
 
 template <typename Eval>
-__device__ __forceinline__ void direct_eval_accumulate(
-    const Eval &evaluator,
-    Real (&vt)[Eval::KERNEL_OUTPUT_DIM],
-    const Real (&dX)[Eval::SPATIAL_DIM],
-    const Real (&vs)[Eval::KERNEL_INPUT_DIM],
-    const Real (&ns)[Eval::NORMAL_DIM]
-) {
+__device__ __forceinline__ void
+direct_eval_accumulate(const Eval &evaluator, Real (&vt)[Eval::KERNEL_OUTPUT_DIM], const Real (&dX)[Eval::SPATIAL_DIM],
+                       const Real (&vs)[Eval::KERNEL_INPUT_DIM], const Real (&ns)[Eval::NORMAL_DIM]) {
     Real U[Eval::KERNEL_INPUT_DIM][Eval::KERNEL_OUTPUT_DIM];
     evaluator(U, dX, ns);
 
@@ -276,12 +269,9 @@ __device__ __forceinline__ void direct_eval_accumulate(
 }
 
 template <typename CoeffsDiag, typename CoeffsOffdiag>
-__device__ __forceinline__ void direct_eval_accumulate(
-    const StokesletPolyEvaluator3DCuda<CoeffsDiag, CoeffsOffdiag> &evaluator,
-    Real (&vt)[3],
-    const Real (&dX)[3],
-    const Real (&vs)[3]
-) {
+__device__ __forceinline__ void
+direct_eval_accumulate(const StokesletPolyEvaluator3DCuda<CoeffsDiag, CoeffsOffdiag> &evaluator, Real (&vt)[3],
+                       const Real (&dX)[3], const Real (&vs)[3]) {
     const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
     const bool in_range = (R2 > evaluator.thresh2) && (R2 < evaluator.d2max);
 
@@ -306,13 +296,9 @@ __device__ __forceinline__ void direct_eval_accumulate(
 }
 
 template <typename CoeffsDiag, typename CoeffsOffdiag>
-__device__ __forceinline__ void direct_eval_accumulate(
-    const StressletPolyEvaluator3DCuda<CoeffsDiag, CoeffsOffdiag> &evaluator,
-    Real (&vt)[3],
-    const Real (&dX)[3],
-    const Real (&vs)[3],
-    const Real (&ns)[3]
-) {
+__device__ __forceinline__ void
+direct_eval_accumulate(const StressletPolyEvaluator3DCuda<CoeffsDiag, CoeffsOffdiag> &evaluator, Real (&vt)[3],
+                       const Real (&dX)[3], const Real (&vs)[3], const Real (&ns)[3]) {
     const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
     const bool in_range = (R2 > evaluator.thresh2) && (R2 < evaluator.d2max);
 

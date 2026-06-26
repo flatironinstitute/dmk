@@ -10,8 +10,7 @@ void JitKernel::unload() {
     }
 }
 
-
-}
+} // namespace dmk::cuda::jit
 
 // API should eventually look sth like this:
 /*
@@ -38,4 +37,3 @@ kernel.launch(
     group_perm
 );
 */
-

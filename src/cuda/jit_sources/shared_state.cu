@@ -1,9 +1,9 @@
 // KERNEL_START
 
 extern "C" __global__ void AccumulateAndScatterKernel(Real *__restrict__ out, const Real *__restrict__ pot_eval,
-                                                       const Real *__restrict__ pot_extra,
-                                                       const long *__restrict__ scatter_index, int dof,
-                                                       long n_particles) {
+                                                      const Real *__restrict__ pot_extra,
+                                                      const long *__restrict__ scatter_index, int dof,
+                                                      long n_particles) {
     long i = blockIdx.x * (long)blockDim.x + threadIdx.x;
     if (i >= n_particles)
         return;

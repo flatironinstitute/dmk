@@ -9,7 +9,7 @@
 namespace dmk::cuda::jit {
 namespace {
 
-std::string json_escape(const std::string& in) {
+std::string json_escape(const std::string &in) {
     std::string out;
     out.reserve(in.size() + 8);
     for (char c : in) {
@@ -37,7 +37,7 @@ std::string json_escape(const std::string& in) {
     return out;
 }
 
-std::optional<std::string> json_string_field(const std::string& line, const std::string& field) {
+std::optional<std::string> json_string_field(const std::string &line, const std::string &field) {
     const std::string marker = "\"" + field + "\":\"";
     const std::size_t start = line.find(marker);
     if (start == std::string::npos) {
@@ -75,7 +75,7 @@ std::optional<std::string> json_string_field(const std::string& line, const std:
     return std::nullopt;
 }
 
-std::optional<double> json_double_field(const std::string& line, const std::string& field) {
+std::optional<double> json_double_field(const std::string &line, const std::string &field) {
     const std::string marker = "\"" + field + "\":";
     const std::size_t start = line.find(marker);
     if (start == std::string::npos) {
@@ -94,7 +94,7 @@ std::optional<double> json_double_field(const std::string& line, const std::stri
     }
 }
 
-std::optional<TuningParams> json_params_field(const std::string& line) {
+std::optional<TuningParams> json_params_field(const std::string &line) {
     const std::string marker = "\"params\":{";
     const std::size_t start = line.find(marker);
     if (start == std::string::npos) {
@@ -147,7 +147,7 @@ std::optional<TuningParams> json_params_field(const std::string& line) {
     return params;
 }
 
-std::optional<CachedTuneResult> parse_cache_line(const std::string& line) {
+std::optional<CachedTuneResult> parse_cache_line(const std::string &line) {
     auto key = json_string_field(line, "key");
     auto kernel = json_string_field(line, "kernel");
     auto device = json_string_field(line, "device");
@@ -161,15 +161,13 @@ std::optional<CachedTuneResult> parse_cache_line(const std::string& line) {
     return CachedTuneResult{*key, *kernel, *device, *runtime_ms, *params};
 }
 
-void append_json_line(std::ostream& out, const CachedTuneResult& result) {
-    out << "{\"key\":\"" << json_escape(result.key)
-        << "\",\"kernel\":\"" << json_escape(result.kernel)
-        << "\",\"device\":\"" << json_escape(result.device)
-        << "\",\"runtime_ms\":" << result.runtime_ms
+void append_json_line(std::ostream &out, const CachedTuneResult &result) {
+    out << "{\"key\":\"" << json_escape(result.key) << "\",\"kernel\":\"" << json_escape(result.kernel)
+        << "\",\"device\":\"" << json_escape(result.device) << "\",\"runtime_ms\":" << result.runtime_ms
         << ",\"params\":{";
 
     bool first = true;
-    for (const auto& [name, value] : result.params) {
+    for (const auto &[name, value] : result.params) {
         if (!first) {
             out << ',';
         }
@@ -179,32 +177,25 @@ void append_json_line(std::ostream& out, const CachedTuneResult& result) {
     out << "}}\n";
 }
 
-std::string env_or_empty(const char* name) {
-    const char* value = std::getenv(name);
+std::string env_or_empty(const char *name) {
+    const char *value = std::getenv(name);
     return value ? std::string(value) : std::string();
 }
 
 constexpr std::filesystem::perms cache_directory_perms =
-    std::filesystem::perms::owner_all |
-    std::filesystem::perms::group_read |
-    std::filesystem::perms::group_exec |
-    std::filesystem::perms::others_read |
-    std::filesystem::perms::others_exec;
+    std::filesystem::perms::owner_all | std::filesystem::perms::group_read | std::filesystem::perms::group_exec |
+    std::filesystem::perms::others_read | std::filesystem::perms::others_exec;
 
-void create_cache_directories(const std::filesystem::path& path) {
+void create_cache_directories(const std::filesystem::path &path) {
     std::filesystem::path current;
-    for (const auto& component : path) {
+    for (const auto &component : path) {
         current /= component;
         if (current.empty() || std::filesystem::exists(current)) {
             continue;
         }
 
         if (std::filesystem::create_directory(current)) {
-            std::filesystem::permissions(
-                current,
-                cache_directory_perms,
-                std::filesystem::perm_options::replace
-            );
+            std::filesystem::permissions(current, cache_directory_perms, std::filesystem::perm_options::replace);
         }
     }
 }
@@ -213,7 +204,7 @@ void create_cache_directories(const std::filesystem::path& path) {
 
 JsonTuningCache::JsonTuningCache(std::filesystem::path path) : path_(std::move(path)) {}
 
-std::optional<CachedTuneResult> JsonTuningCache::get(const std::string& key) {
+std::optional<CachedTuneResult> JsonTuningCache::get(const std::string &key) {
     std::ifstream in(path_);
     if (!in) {
         return std::nullopt;
@@ -230,7 +221,7 @@ std::optional<CachedTuneResult> JsonTuningCache::get(const std::string& key) {
     return latest;
 }
 
-void JsonTuningCache::put(const CachedTuneResult& result) {
+void JsonTuningCache::put(const CachedTuneResult &result) {
     if (path_.has_parent_path()) {
         create_cache_directories(path_.parent_path());
     }
@@ -269,20 +260,18 @@ std::string current_cuda_device_key() {
     check_cuda(cudaGetDeviceProperties(&prop, device), "cudaGetDeviceProperties");
 
     std::ostringstream os;
-    os << "device=" << device
-       << "|name=" << prop.name
-       << "|sm=" << prop.major << prop.minor
+    os << "device=" << device << "|name=" << prop.name << "|sm=" << prop.major << prop.minor
        << "|sms=" << prop.multiProcessorCount;
     return os.str();
 }
 
-bool env_flag_enabled(const char* name) {
+bool env_flag_enabled(const char *name) {
     const std::string value = env_or_empty(name);
-    return value == "1" || value == "true" || value == "TRUE" || value == "on" || value == "ON" ||
-           value == "yes" || value == "YES";
+    return value == "1" || value == "true" || value == "TRUE" || value == "on" || value == "ON" || value == "yes" ||
+           value == "YES";
 }
 
-std::vector<TuningParams> expand_grid(const std::vector<TuningParameter>& space) {
+std::vector<TuningParams> expand_grid(const std::vector<TuningParameter> &space) {
     std::vector<TuningParams> out;
     TuningParams current;
 
@@ -292,7 +281,7 @@ std::vector<TuningParams> expand_grid(const std::vector<TuningParameter>& space)
             return;
         }
 
-        const TuningParameter& parameter = space[i];
+        const TuningParameter &parameter = space[i];
         if (parameter.values.empty()) {
             return;
         }
@@ -308,10 +297,10 @@ std::vector<TuningParams> expand_grid(const std::vector<TuningParameter>& space)
     return out;
 }
 
-std::string tuning_params_to_string(const TuningParams& params) {
+std::string tuning_params_to_string(const TuningParams &params) {
     std::ostringstream os;
     bool first = true;
-    for (const auto& [name, value] : params) {
+    for (const auto &[name, value] : params) {
         if (!first) {
             os << ",";
         }
@@ -321,7 +310,7 @@ std::string tuning_params_to_string(const TuningParams& params) {
     return os.str();
 }
 
-void check_cuda(cudaError_t err, const char* where) {
+void check_cuda(cudaError_t err, const char *where) {
     if (err != cudaSuccess) {
         throw std::runtime_error(std::string(where) + ": " + cudaGetErrorString(err));
     }

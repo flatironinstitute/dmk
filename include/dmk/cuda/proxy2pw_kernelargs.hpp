@@ -19,4 +19,4 @@ struct Proxy2PwArgs {
     long dst_stride_complex = 0;       // if dst_offsets is null, use box_idx * dst_stride_complex
 };
 
-}
+} // namespace dmk::cuda

@@ -33,4 +33,4 @@ struct TensorprodArgs {
     bool additive_atomic = false;
 };
 
-}
+} // namespace dmk::cuda

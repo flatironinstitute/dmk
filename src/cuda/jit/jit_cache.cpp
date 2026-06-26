@@ -9,11 +9,11 @@ std::string make_tensorprod_source(const JitKey &key);
 std::string make_proxy2pw_source(const JitKey &key);
 std::string make_pw2proxy_source(const JitKey &key);
 std::string make_shift_pw_source(const JitKey &key);
-std::string make_direct_by_box_source(const JitKey& key);
-std::string make_eval_targets_source(const JitKey& key);
-std::string make_self_correction_source(const JitKey& key);
-std::string make_multiply_kernelft_source(const JitKey& key);
-std::string make_shared_state_source(const JitKey& key);
+std::string make_direct_by_box_source(const JitKey &key);
+std::string make_eval_targets_source(const JitKey &key);
+std::string make_self_correction_source(const JitKey &key);
+std::string make_multiply_kernelft_source(const JitKey &key);
+std::string make_shared_state_source(const JitKey &key);
 
 std::string JitKey::to_string() const {
     std::ostringstream os;
@@ -213,13 +213,11 @@ std::string JitCache::make_source(const JitKey &key) const {
     if (key.name == "SelfCorrectionKernel") {
         return make_self_correction_source(key);
     }
-    if (key.name == "MultiplyCd2pByBoxKernel" ||
-        key.name == "MultiplyStokeslet3DByBoxKernel" ||
+    if (key.name == "MultiplyCd2pByBoxKernel" || key.name == "MultiplyStokeslet3DByBoxKernel" ||
         key.name == "MultiplyStresslet3DByBoxKernel") {
         return make_multiply_kernelft_source(key);
     }
-    if (key.name == "AccumulateAndScatterKernel" ||
-        key.name == "ScatterForwardKernel" ||
+    if (key.name == "AccumulateAndScatterKernel" || key.name == "ScatterForwardKernel" ||
         key.name == "ScatterForwardStressletKernel") {
         return make_shared_state_source(key);
     }

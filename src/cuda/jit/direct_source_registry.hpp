@@ -13,15 +13,10 @@ struct DirectSourceDescriptor {
 
 int next_direct_kernel_id();
 
-void register_direct_source_descriptor(
-    const std::string& kernel_name,
-    DirectSourceDescriptor descriptor
-);
+void register_direct_source_descriptor(const std::string &kernel_name, DirectSourceDescriptor descriptor);
 
-const DirectSourceDescriptor& get_direct_source_descriptor(
-    const std::string& kernel_name
-);
+const DirectSourceDescriptor &get_direct_source_descriptor(const std::string &kernel_name);
 
-std::string make_direct_by_box_source(const JitKey& key);
+std::string make_direct_by_box_source(const JitKey &key);
 
 } // namespace dmk::cuda::jit

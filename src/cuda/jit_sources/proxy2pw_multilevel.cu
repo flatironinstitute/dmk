@@ -20,21 +20,13 @@ __device__ __forceinline__ void p2pw_store(Real *__restrict__ p, int idx, p2pw_c
 }
 
 template <typename Real>
-__device__ __forceinline__ void p2pw_madd_real(
-    p2pw_complex<Real> &acc,
-    Real a,
-    p2pw_complex<Real> b
-) {
+__device__ __forceinline__ void p2pw_madd_real(p2pw_complex<Real> &acc, Real a, p2pw_complex<Real> b) {
     acc.r = fma(a, b.r, acc.r);
     acc.i = fma(a, b.i, acc.i);
 }
 
 template <typename Real>
-__device__ __forceinline__ void p2pw_madd(
-    p2pw_complex<Real> &acc,
-    p2pw_complex<Real> a,
-    p2pw_complex<Real> b
-) {
+__device__ __forceinline__ void p2pw_madd(p2pw_complex<Real> &acc, p2pw_complex<Real> a, p2pw_complex<Real> b) {
     acc.r = fma(a.r, b.r, acc.r);
     acc.r = fma(-a.i, b.i, acc.r);
     acc.i = fma(a.r, b.i, acc.i);
@@ -91,8 +83,7 @@ extern "C" __global__ void Proxy2PwMultiLevelKernel(const Proxy2PwArgs<Real> *__
         Real *pw_d = pw_dst + 2 * d * n_pw_modes;
 
         for (int m3_base = 0; m3_base < n_pw2; m3_base += PROXY2PW_Z_TILE) {
-            const int z_count =
-                (m3_base + PROXY2PW_Z_TILE <= n_pw2) ? PROXY2PW_Z_TILE : (n_pw2 - m3_base);
+            const int z_count = (m3_base + PROXY2PW_Z_TILE <= n_pw2) ? PROXY2PW_Z_TILE : (n_pw2 - m3_base);
 
             // Phase 1: ff(zr, i, j) = sum_k proxy(i, j, k, d) * poly2pw(m3_base + zr, k).
             for (int ij = threadIdx.x; ij < n_order2; ij += blockDim.x) {

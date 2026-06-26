@@ -10,7 +10,6 @@
 #include <vector>
 namespace dmk::cuda {
 
-
 template <typename Real, int DIM>
 void launch_proxy2pw(const Proxy2PwArgs<Real> &args, cudaStream_t stream);
 

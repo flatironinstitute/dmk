@@ -15,7 +15,7 @@
 namespace dmk::cuda::jit {
 namespace {
 
-std::string make_specialization_constants(const JitKey& key) {
+std::string make_specialization_constants(const JitKey &key) {
     const int blocksize = required_int_param(key, "BLOCK_SIZE", "SharedState");
 
     std::ostringstream ss;
@@ -28,7 +28,7 @@ std::string make_specialization_constants(const JitKey& key) {
 
 } // namespace
 
-std::string make_shared_state_source(const JitKey& key) {
+std::string make_shared_state_source(const JitKey &key) {
     const SplitSource split = load_split_jit_source("shared_state.cu", "SharedState");
 
     std::ostringstream generated;
@@ -41,17 +41,9 @@ std::string make_shared_state_source(const JitKey& key) {
 }
 
 template <typename Real>
-void launch_accumulate_and_scatter_jit(
-    JitCache& cache,
-    Real* out,
-    const Real* pot_eval,
-    const Real* pot_extra,
-    const long* scatter_index,
-    int dof,
-    long n_particles,
-    cudaStream_t stream,
-    int blocksize
-) {
+void launch_accumulate_and_scatter_jit(JitCache &cache, Real *out, const Real *pot_eval, const Real *pot_extra,
+                                       const long *scatter_index, int dof, long n_particles, cudaStream_t stream,
+                                       int blocksize) {
     if (n_particles == 0) {
         return;
     }
@@ -69,55 +61,19 @@ void launch_accumulate_and_scatter_jit(
 
     const long grid = (n_particles + blocksize - 1) / blocksize;
 
-    kernel->launch(
-        dim3(grid, 1, 1),
-        dim3(blocksize, 1, 1),
-        0,
-        stream,
-        out,
-        pot_eval,
-        pot_extra,
-        scatter_index,
-        dof,
-        n_particles
-    );
+    kernel->launch(dim3(grid, 1, 1), dim3(blocksize, 1, 1), 0, stream, out, pot_eval, pot_extra, scatter_index, dof,
+                   n_particles);
 }
 
-template void launch_accumulate_and_scatter_jit<float>(
-    JitCache&,
-    float*,
-    const float*,
-    const float*,
-    const long*,
-    int,
-    long,
-    cudaStream_t,
-    int
-);
+template void launch_accumulate_and_scatter_jit<float>(JitCache &, float *, const float *, const float *, const long *,
+                                                       int, long, cudaStream_t, int);
 
-template void launch_accumulate_and_scatter_jit<double>(
-    JitCache&,
-    double*,
-    const double*,
-    const double*,
-    const long*,
-    int,
-    long,
-    cudaStream_t,
-    int
-);
+template void launch_accumulate_and_scatter_jit<double>(JitCache &, double *, const double *, const double *,
+                                                        const long *, int, long, cudaStream_t, int);
 
 template <typename Real>
-void launch_scatter_forward_jit(
-    JitCache& cache,
-    const Real* in,
-    Real* out,
-    const long* scatter_index,
-    long n_particles,
-    int dof,
-    cudaStream_t stream,
-    int blocksize
-) {
+void launch_scatter_forward_jit(JitCache &cache, const Real *in, Real *out, const long *scatter_index, long n_particles,
+                                int dof, cudaStream_t stream, int blocksize) {
     if (n_particles == 0) {
         return;
     }
@@ -135,53 +91,19 @@ void launch_scatter_forward_jit(
 
     const long grid = (n_particles + blocksize - 1) / blocksize;
 
-    kernel->launch(
-        dim3(grid, 1, 1),
-        dim3(blocksize, 1, 1),
-        0,
-        stream,
-        in,
-        out,
-        scatter_index,
-        n_particles,
-        dof
-    );
+    kernel->launch(dim3(grid, 1, 1), dim3(blocksize, 1, 1), 0, stream, in, out, scatter_index, n_particles, dof);
 }
 
-template void launch_scatter_forward_jit<float>(
-    JitCache&,
-    const float*,
-    float*,
-    const long*,
-    long,
-    int,
-    cudaStream_t,
-    int
-);
+template void launch_scatter_forward_jit<float>(JitCache &, const float *, float *, const long *, long, int,
+                                                cudaStream_t, int);
 
-template void launch_scatter_forward_jit<double>(
-    JitCache&,
-    const double*,
-    double*,
-    const long*,
-    long,
-    int,
-    cudaStream_t,
-    int
-);
+template void launch_scatter_forward_jit<double>(JitCache &, const double *, double *, const long *, long, int,
+                                                 cudaStream_t, int);
 
 template <typename Real>
-void launch_scatter_forward_stresslet_jit(
-    JitCache& cache,
-    const Real* densities,
-    const Real* normals,
-    Real* out,
-    const long* scatter_index,
-    long n_particles,
-    int dim,
-    cudaStream_t stream,
-    int blocksize
-) {
+void launch_scatter_forward_stresslet_jit(JitCache &cache, const Real *densities, const Real *normals, Real *out,
+                                          const long *scatter_index, long n_particles, int dim, cudaStream_t stream,
+                                          int blocksize) {
     if (n_particles == 0) {
         return;
     }
@@ -199,43 +121,15 @@ void launch_scatter_forward_stresslet_jit(
 
     const long grid = (n_particles + blocksize - 1) / blocksize;
 
-    kernel->launch(
-        dim3(grid, 1, 1),
-        dim3(blocksize, 1, 1),
-        0,
-        stream,
-        densities,
-        normals,
-        out,
-        scatter_index,
-        n_particles,
-        dim
-    );
+    kernel->launch(dim3(grid, 1, 1), dim3(blocksize, 1, 1), 0, stream, densities, normals, out, scatter_index,
+                   n_particles, dim);
 }
 
-template void launch_scatter_forward_stresslet_jit<float>(
-    JitCache&,
-    const float*,
-    const float*,
-    float*,
-    const long*,
-    long,
-    int,
-    cudaStream_t,
-    int
-);
+template void launch_scatter_forward_stresslet_jit<float>(JitCache &, const float *, const float *, float *,
+                                                          const long *, long, int, cudaStream_t, int);
 
-template void launch_scatter_forward_stresslet_jit<double>(
-    JitCache&,
-    const double*,
-    const double*,
-    double*,
-    const long*,
-    long,
-    int,
-    cudaStream_t,
-    int
-);
+template void launch_scatter_forward_stresslet_jit<double>(JitCache &, const double *, const double *, double *,
+                                                           const long *, long, int, cudaStream_t, int);
 
 } // namespace dmk::cuda::jit
 
@@ -276,8 +170,8 @@ template void launch_scatter_forward<float>(const float *, float *, const long *
 template void launch_scatter_forward<double>(const double *, double *, const long *, long, int, cudaStream_t);
 
 template <typename Real>
-void launch_scatter_forward_stresslet(const Real *densities, const Real *normals, Real *out,
-                                      const long *scatter_index, long n_particles, int dim, cudaStream_t stream) {
+void launch_scatter_forward_stresslet(const Real *densities, const Real *normals, Real *out, const long *scatter_index,
+                                      long n_particles, int dim, cudaStream_t stream) {
     if (n_particles == 0)
         return;
 

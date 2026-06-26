@@ -60,8 +60,8 @@ class JsonTuningCache {
   public:
     explicit JsonTuningCache(std::filesystem::path path);
 
-    std::optional<CachedTuneResult> get(const std::string& key);
-    void put(const CachedTuneResult& result);
+    std::optional<CachedTuneResult> get(const std::string &key);
+    void put(const CachedTuneResult &result);
 
   private:
     std::filesystem::path path_;
@@ -69,28 +69,26 @@ class JsonTuningCache {
 
 std::filesystem::path default_tuning_cache_path();
 std::string current_cuda_device_key();
-bool env_flag_enabled(const char* name);
-std::vector<TuningParams> expand_grid(const std::vector<TuningParameter>& space);
-std::string tuning_params_to_string(const TuningParams& params);
+bool env_flag_enabled(const char *name);
+std::vector<TuningParams> expand_grid(const std::vector<TuningParameter> &space);
+std::string tuning_params_to_string(const TuningParams &params);
 
-void check_cuda(cudaError_t err, const char* where);
+void check_cuda(cudaError_t err, const char *where);
 
 template <typename Real>
 class AutotuneDeviceRangeSnapshot {
   public:
-    AutotuneDeviceRangeSnapshot(Real* base, long offset, std::size_t count, Real* data)
+    AutotuneDeviceRangeSnapshot(Real *base, long offset, std::size_t count, Real *data)
         : base_(base), offset_(offset), count_(count), data_(data) {}
 
-    AutotuneDeviceRangeSnapshot(const AutotuneDeviceRangeSnapshot&) = delete;
-    AutotuneDeviceRangeSnapshot& operator=(const AutotuneDeviceRangeSnapshot&) = delete;
+    AutotuneDeviceRangeSnapshot(const AutotuneDeviceRangeSnapshot &) = delete;
+    AutotuneDeviceRangeSnapshot &operator=(const AutotuneDeviceRangeSnapshot &) = delete;
 
-    AutotuneDeviceRangeSnapshot(AutotuneDeviceRangeSnapshot&& other) noexcept
-        : base_(other.base_),
-          offset_(other.offset_),
-          count_(other.count_),
-          data_(std::exchange(other.data_, nullptr)) {}
+    AutotuneDeviceRangeSnapshot(AutotuneDeviceRangeSnapshot &&other) noexcept
+        : base_(other.base_), offset_(other.offset_), count_(other.count_), data_(std::exchange(other.data_, nullptr)) {
+    }
 
-    AutotuneDeviceRangeSnapshot& operator=(AutotuneDeviceRangeSnapshot&& other) noexcept {
+    AutotuneDeviceRangeSnapshot &operator=(AutotuneDeviceRangeSnapshot &&other) noexcept {
         if (this != &other) {
             release();
             base_ = other.base_;
@@ -101,28 +99,18 @@ class AutotuneDeviceRangeSnapshot {
         return *this;
     }
 
-    ~AutotuneDeviceRangeSnapshot() {
-        release();
-    }
+    ~AutotuneDeviceRangeSnapshot() { release(); }
 
     void restore(cudaStream_t stream) const {
-        check_cuda(
-            cudaMemcpyAsync(
-                base_ + offset_,
-                data_,
-                count_ * sizeof(Real),
-                cudaMemcpyDeviceToDevice,
-                stream
-            ),
-            "AutotuneDeviceRangeSnapshot restore"
-        );
+        check_cuda(cudaMemcpyAsync(base_ + offset_, data_, count_ * sizeof(Real), cudaMemcpyDeviceToDevice, stream),
+                   "AutotuneDeviceRangeSnapshot restore");
     }
 
   private:
-    Real* base_ = nullptr;
+    Real *base_ = nullptr;
     long offset_ = 0;
     std::size_t count_ = 0;
-    Real* data_ = nullptr;
+    Real *data_ = nullptr;
 
     void release() noexcept {
         if (data_ != nullptr) {
@@ -136,55 +124,30 @@ template <typename Real>
 using AutotuneDeviceRangeSnapshots = std::vector<AutotuneDeviceRangeSnapshot<Real>>;
 
 template <typename Real>
-AutotuneDeviceRangeSnapshots<Real> make_device_range_snapshots(
-    std::vector<std::pair<Real*, long>> ranges,
-    std::size_t count,
-    cudaStream_t stream
-) {
-    ranges.erase(
-        std::remove_if(
-            ranges.begin(),
-            ranges.end(),
-            [](const auto& range) {
-                return range.first == nullptr || range.second < 0;
-            }
-        ),
-        ranges.end()
-    );
+AutotuneDeviceRangeSnapshots<Real> make_device_range_snapshots(std::vector<std::pair<Real *, long>> ranges,
+                                                               std::size_t count, cudaStream_t stream) {
+    ranges.erase(std::remove_if(ranges.begin(), ranges.end(),
+                                [](const auto &range) { return range.first == nullptr || range.second < 0; }),
+                 ranges.end());
 
-    std::sort(
-        ranges.begin(),
-        ranges.end(),
-        [](const auto& a, const auto& b) {
-            const auto ap = reinterpret_cast<std::uintptr_t>(a.first);
-            const auto bp = reinterpret_cast<std::uintptr_t>(b.first);
-            return ap < bp || (ap == bp && a.second < b.second);
-        }
-    );
+    std::sort(ranges.begin(), ranges.end(), [](const auto &a, const auto &b) {
+        const auto ap = reinterpret_cast<std::uintptr_t>(a.first);
+        const auto bp = reinterpret_cast<std::uintptr_t>(b.first);
+        return ap < bp || (ap == bp && a.second < b.second);
+    });
     ranges.erase(std::unique(ranges.begin(), ranges.end()), ranges.end());
 
     AutotuneDeviceRangeSnapshots<Real> snapshots;
     snapshots.reserve(ranges.size());
 
-    for (const auto& [base, offset] : ranges) {
-        void* raw = nullptr;
-        check_cuda(
-            cudaMalloc(&raw, count * sizeof(Real)),
-            "make_device_range_snapshots cudaMalloc"
-        );
+    for (const auto &[base, offset] : ranges) {
+        void *raw = nullptr;
+        check_cuda(cudaMalloc(&raw, count * sizeof(Real)), "make_device_range_snapshots cudaMalloc");
 
-        Real* saved = static_cast<Real*>(raw);
+        Real *saved = static_cast<Real *>(raw);
         try {
-            check_cuda(
-                cudaMemcpyAsync(
-                    saved,
-                    base + offset,
-                    count * sizeof(Real),
-                    cudaMemcpyDeviceToDevice,
-                    stream
-                ),
-                "make_device_range_snapshots cudaMemcpyAsync"
-            );
+            check_cuda(cudaMemcpyAsync(saved, base + offset, count * sizeof(Real), cudaMemcpyDeviceToDevice, stream),
+                       "make_device_range_snapshots cudaMemcpyAsync");
         } catch (...) {
             cudaFree(saved);
             throw;
@@ -198,19 +161,16 @@ AutotuneDeviceRangeSnapshots<Real> make_device_range_snapshots(
 }
 
 template <typename Real>
-void restore_device_range_snapshots(
-    const AutotuneDeviceRangeSnapshots<Real>& snapshots,
-    cudaStream_t stream
-) {
-    for (const auto& snapshot : snapshots) {
+void restore_device_range_snapshots(const AutotuneDeviceRangeSnapshots<Real> &snapshots, cudaStream_t stream) {
+    for (const auto &snapshot : snapshots) {
         snapshot.restore(stream);
     }
     check_cuda(cudaStreamSynchronize(stream), "restore_device_range_snapshots sync");
 }
 
 template <class Launch>
-void invoke_cuda_launch(Launch& launch, cudaStream_t stream) {
-    if constexpr (std::is_invocable_v<Launch&, cudaStream_t>) {
+void invoke_cuda_launch(Launch &launch, cudaStream_t stream) {
+    if constexpr (std::is_invocable_v<Launch &, cudaStream_t>) {
         launch(stream);
     } else {
         launch();
@@ -218,7 +178,7 @@ void invoke_cuda_launch(Launch& launch, cudaStream_t stream) {
 }
 
 template <class Launch>
-double benchmark_cuda_ms(cudaStream_t stream, const CudaBenchmarkOptions& options, Launch&& launch) {
+double benchmark_cuda_ms(cudaStream_t stream, const CudaBenchmarkOptions &options, Launch &&launch) {
     if (options.warmup < 0 || options.repeats <= 0) {
         throw std::runtime_error("benchmark_cuda_ms: invalid benchmark options");
     }
@@ -255,13 +215,8 @@ double benchmark_cuda_ms(cudaStream_t stream, const CudaBenchmarkOptions& option
 }
 
 template <class Constraint, class Benchmark>
-GridTuneDecision tune_grid(
-    const GridTuneOptions& options,
-    const std::vector<TuningParameter>& space,
-    const TuningParams& default_params,
-    Constraint&& constraint,
-    Benchmark&& benchmark
-) {
+GridTuneDecision tune_grid(const GridTuneOptions &options, const std::vector<TuningParameter> &space,
+                           const TuningParams &default_params, Constraint &&constraint, Benchmark &&benchmark) {
     if (options.disable || env_flag_enabled("DMK_JIT_AUTOTUNE_DISABLE")) {
         return GridTuneDecision{default_params, 0.0, false, false};
     }
@@ -286,7 +241,7 @@ GridTuneDecision tune_grid(
     }
 
     std::optional<GridTuneDecision> best;
-    for (const TuningParams& params : expand_grid(space)) {
+    for (const TuningParams &params : expand_grid(space)) {
         bool accepted = false;
         try {
             accepted = std::invoke(constraint, params);
@@ -301,8 +256,7 @@ GridTuneDecision tune_grid(
             const double runtime_ms = std::invoke(benchmark, params);
             if (verbose) {
                 std::cout << "[dmk jit autotune] candidate kernel=" << options.kernel
-                          << " params=" << tuning_params_to_string(params)
-                          << " runtime_ms=" << runtime_ms << "\n";
+                          << " params=" << tuning_params_to_string(params) << " runtime_ms=" << runtime_ms << "\n";
             }
             if (!best || runtime_ms < best->runtime_ms) {
                 best = GridTuneDecision{params, runtime_ms, false, true};
@@ -325,8 +279,7 @@ GridTuneDecision tune_grid(
 
     if (verbose) {
         std::cerr << "[dmk jit autotune] tuned kernel=" << options.kernel
-                  << " params=" << tuning_params_to_string(best->params)
-                  << " runtime_ms=" << best->runtime_ms << "\n";
+                  << " params=" << tuning_params_to_string(best->params) << " runtime_ms=" << best->runtime_ms << "\n";
     }
 
     cache.put(CachedTuneResult{

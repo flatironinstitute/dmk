@@ -72,8 +72,7 @@ __device__ __forceinline__ void ShiftPwBody(ShiftPwArgs<Real> a, int box_idx) {
             const Real *__restrict__ shift_i = shift_r + n_pw_modes;
             const Real sr = shift_r[m];
             const Real si = shift_i[m];
-            const complx<Real> *__restrict__ nbr_pw =
-                reinterpret_cast<const complx<Real> *>(pw_out_flat + 2 * nbr_off);
+            const complx<Real> *__restrict__ nbr_pw = reinterpret_cast<const complx<Real> *>(pw_out_flat + 2 * nbr_off);
 
 #pragma unroll
             for (int d = 0; d < n_charge_dim; ++d) {
@@ -95,9 +94,7 @@ __device__ __forceinline__ void ShiftPwBody(ShiftPwArgs<Real> a, int box_idx) {
 
 // KERNEL_START
 
-extern "C" __global__ void ShiftPwByBoxKernel(ShiftPwArgs<Real> a) {
-    ShiftPwBody(a, blockIdx.x);
-}
+extern "C" __global__ void ShiftPwByBoxKernel(ShiftPwArgs<Real> a) { ShiftPwBody(a, blockIdx.x); }
 
 extern "C" __global__ void ShiftPwKernel(const ShiftPwArgs<Real> *args, int n_args) {
     const int arg_idx = blockIdx.y;

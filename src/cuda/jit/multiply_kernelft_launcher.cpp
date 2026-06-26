@@ -15,7 +15,7 @@
 namespace dmk::cuda::jit {
 namespace {
 
-std::string make_specialization_constants(const JitKey& key) {
+std::string make_specialization_constants(const JitKey &key) {
     const int blocksize = required_int_param(key, "BLOCK_SIZE", "MultiplyKernelFT");
 
     std::ostringstream ss;
@@ -30,13 +30,11 @@ std::string make_specialization_constants(const JitKey& key) {
     return ss.str();
 }
 
-std::size_t stokeslet_shared_bytes(std::size_t sizeof_real) {
-    return sizeof_real * 6;
-}
+std::size_t stokeslet_shared_bytes(std::size_t sizeof_real) { return sizeof_real * 6; }
 
 } // namespace
 
-std::string make_multiply_kernelft_source(const JitKey& key) {
+std::string make_multiply_kernelft_source(const JitKey &key) {
     const SplitSource split = load_split_jit_source("multiply_kernelft.cu", "MultiplyKernelFT");
 
     std::ostringstream generated;
@@ -49,12 +47,8 @@ std::string make_multiply_kernelft_source(const JitKey& key) {
 }
 
 template <typename Real, int DIM>
-void launch_multiply_cd2p_jit(
-    JitCache& cache,
-    const dmk::cuda::MultiplyCd2pArgs<Real>& args,
-    cudaStream_t stream,
-    int blocksize
-) {
+void launch_multiply_cd2p_jit(JitCache &cache, const dmk::cuda::MultiplyCd2pArgs<Real> &args, cudaStream_t stream,
+                              int blocksize) {
     if (args.n_boxes_at_level == 0) {
         return;
     }
@@ -71,22 +65,12 @@ void launch_multiply_cd2p_jit(
 
     auto kernel = cache.get_kernel(key);
 
-    kernel->launch(
-        dim3(args.n_boxes_at_level, 1, 1),
-        dim3(blocksize, 1, 1),
-        0,
-        stream,
-        args
-    );
+    kernel->launch(dim3(args.n_boxes_at_level, 1, 1), dim3(blocksize, 1, 1), 0, stream, args);
 }
 
 template <typename Real>
-void launch_multiply_stokeslet_3d_jit(
-    JitCache& cache,
-    const dmk::cuda::MultiplyStokeslet3DArgs<Real>& args,
-    cudaStream_t stream,
-    int blocksize
-) {
+void launch_multiply_stokeslet_3d_jit(JitCache &cache, const dmk::cuda::MultiplyStokeslet3DArgs<Real> &args,
+                                      cudaStream_t stream, int blocksize) {
     if (args.n_boxes_at_level == 0) {
         return;
     }
@@ -102,22 +86,13 @@ void launch_multiply_stokeslet_3d_jit(
 
     auto kernel = cache.get_kernel(key);
 
-    kernel->launch(
-        dim3(args.n_boxes_at_level, 1, 1),
-        dim3(blocksize, 1, 1),
-        stokeslet_shared_bytes(sizeof(Real)),
-        stream,
-        args
-    );
+    kernel->launch(dim3(args.n_boxes_at_level, 1, 1), dim3(blocksize, 1, 1), stokeslet_shared_bytes(sizeof(Real)),
+                   stream, args);
 }
 
 template <typename Real>
-void launch_multiply_stresslet_3d_jit(
-    JitCache& cache,
-    const dmk::cuda::MultiplyStresslet3DArgs<Real>& args,
-    cudaStream_t stream,
-    int blocksize
-) {
+void launch_multiply_stresslet_3d_jit(JitCache &cache, const dmk::cuda::MultiplyStresslet3DArgs<Real> &args,
+                                      cudaStream_t stream, int blocksize) {
     if (args.n_boxes_at_level == 0) {
         return;
     }
@@ -133,70 +108,32 @@ void launch_multiply_stresslet_3d_jit(
 
     auto kernel = cache.get_kernel(key);
 
-    kernel->launch(
-        dim3(args.n_boxes_at_level, 1, 1),
-        dim3(blocksize, 1, 1),
-        0,
-        stream,
-        args
-    );
+    kernel->launch(dim3(args.n_boxes_at_level, 1, 1), dim3(blocksize, 1, 1), 0, stream, args);
 }
 
-template void launch_multiply_cd2p_jit<float, 2>(
-    JitCache&,
-    const dmk::cuda::MultiplyCd2pArgs<float>&,
-    cudaStream_t,
-    int
-);
+template void launch_multiply_cd2p_jit<float, 2>(JitCache &, const dmk::cuda::MultiplyCd2pArgs<float> &, cudaStream_t,
+                                                 int);
 
-template void launch_multiply_cd2p_jit<float, 3>(
-    JitCache&,
-    const dmk::cuda::MultiplyCd2pArgs<float>&,
-    cudaStream_t,
-    int
-);
+template void launch_multiply_cd2p_jit<float, 3>(JitCache &, const dmk::cuda::MultiplyCd2pArgs<float> &, cudaStream_t,
+                                                 int);
 
-template void launch_multiply_cd2p_jit<double, 2>(
-    JitCache&,
-    const dmk::cuda::MultiplyCd2pArgs<double>&,
-    cudaStream_t,
-    int
-);
+template void launch_multiply_cd2p_jit<double, 2>(JitCache &, const dmk::cuda::MultiplyCd2pArgs<double> &, cudaStream_t,
+                                                  int);
 
-template void launch_multiply_cd2p_jit<double, 3>(
-    JitCache&,
-    const dmk::cuda::MultiplyCd2pArgs<double>&,
-    cudaStream_t,
-    int
-);
+template void launch_multiply_cd2p_jit<double, 3>(JitCache &, const dmk::cuda::MultiplyCd2pArgs<double> &, cudaStream_t,
+                                                  int);
 
-template void launch_multiply_stokeslet_3d_jit<float>(
-    JitCache&,
-    const dmk::cuda::MultiplyStokeslet3DArgs<float>&,
-    cudaStream_t,
-    int
-);
+template void launch_multiply_stokeslet_3d_jit<float>(JitCache &, const dmk::cuda::MultiplyStokeslet3DArgs<float> &,
+                                                      cudaStream_t, int);
 
-template void launch_multiply_stokeslet_3d_jit<double>(
-    JitCache&,
-    const dmk::cuda::MultiplyStokeslet3DArgs<double>&,
-    cudaStream_t,
-    int
-);
+template void launch_multiply_stokeslet_3d_jit<double>(JitCache &, const dmk::cuda::MultiplyStokeslet3DArgs<double> &,
+                                                       cudaStream_t, int);
 
-template void launch_multiply_stresslet_3d_jit<float>(
-    JitCache&,
-    const dmk::cuda::MultiplyStresslet3DArgs<float>&,
-    cudaStream_t,
-    int
-);
+template void launch_multiply_stresslet_3d_jit<float>(JitCache &, const dmk::cuda::MultiplyStresslet3DArgs<float> &,
+                                                      cudaStream_t, int);
 
-template void launch_multiply_stresslet_3d_jit<double>(
-    JitCache&,
-    const dmk::cuda::MultiplyStresslet3DArgs<double>&,
-    cudaStream_t,
-    int
-);
+template void launch_multiply_stresslet_3d_jit<double>(JitCache &, const dmk::cuda::MultiplyStresslet3DArgs<double> &,
+                                                       cudaStream_t, int);
 
 } // namespace dmk::cuda::jit
 

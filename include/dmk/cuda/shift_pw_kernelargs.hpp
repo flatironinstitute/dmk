@@ -21,4 +21,4 @@ struct ShiftPwArgs {
 
     Real *pw_in_pool = nullptr;
 };
-}
+} // namespace dmk::cuda

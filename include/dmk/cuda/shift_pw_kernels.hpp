@@ -18,8 +18,8 @@
 
 #include <cuda_runtime.h>
 
-#include <vector>
 #include <dmk/cuda/shift_pw_kernelargs.hpp>
+#include <vector>
 namespace dmk::cuda {
 
 template <typename Real, int DIM>

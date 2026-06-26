@@ -36,8 +36,7 @@ extern "C" __global__ void TensorprodKernel(TensorprodArgs<Real> a) {
         Real *fout = dst_base + d * N3;
 
         for (int z_base = 0; z_base < N; z_base += TENSOR_Z_TILE) {
-            const int z_count =
-                (z_base + TENSOR_Z_TILE <= N) ? TENSOR_Z_TILE : (N - z_base);
+            const int z_count = (z_base + TENSOR_Z_TILE <= N) ? TENSOR_Z_TILE : (N - z_base);
 
             // Phase 1: ff(zr, i, j) = sum_k fin(i, j, k) * umat_z(z_base + zr, k).
             for (int ij = threadIdx.x; ij < N2; ij += blockDim.x) {

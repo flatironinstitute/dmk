@@ -10,23 +10,15 @@ __device__ __forceinline__ c2p_real2<Real> c2p_load2(const Real *__restrict__ p)
 }
 
 template <typename Real, int IT, int JT, int KT, int N, int LD>
-__device__ __forceinline__ void charge2proxy_accum_source_pair(
-    Real (&acc)[KT][IT][JT],
-    const Real *__restrict__ poly_x,
-    const Real *__restrict__ poly_y,
-    const Real *__restrict__ poly_z,
-    const Real *__restrict__ charges_s,
-    int i0,
-    int j0,
-    int k0,
-    int d,
-    int s
-) {
+__device__ __forceinline__ void
+charge2proxy_accum_source_pair(Real (&acc)[KT][IT][JT], const Real *__restrict__ poly_x,
+                               const Real *__restrict__ poly_y, const Real *__restrict__ poly_z,
+                               const Real *__restrict__ charges_s, int i0, int j0, int k0, int d, int s) {
     c2p_real2<Real> xreg[IT] = {};
     c2p_real2<Real> yreg[JT] = {};
     c2p_real2<Real> zqreg[KT] = {};
 
-    #pragma unroll
+#pragma unroll
     for (int r = 0; r < IT; ++r) {
         const int i = i0 + r;
 
@@ -34,7 +26,7 @@ __device__ __forceinline__ void charge2proxy_accum_source_pair(
             xreg[r] = c2p_load2<Real>(poly_x + i * LD + s);
     }
 
-    #pragma unroll
+#pragma unroll
     for (int c = 0; c < JT; ++c) {
         const int j = j0 + c;
 
@@ -44,7 +36,7 @@ __device__ __forceinline__ void charge2proxy_accum_source_pair(
 
     const c2p_real2<Real> q = c2p_load2<Real>(charges_s + d * LD + s);
 
-    #pragma unroll
+#pragma unroll
     for (int kk = 0; kk < KT; ++kk) {
         const int k = k0 + kk;
 
@@ -55,14 +47,14 @@ __device__ __forceinline__ void charge2proxy_accum_source_pair(
         }
     }
 
-    #pragma unroll
+#pragma unroll
     for (int kk = 0; kk < KT; ++kk) {
-        #pragma unroll
+#pragma unroll
         for (int c = 0; c < JT; ++c) {
             const Real yzq0 = yreg[c].lo * zqreg[kk].lo;
             const Real yzq1 = yreg[c].hi * zqreg[kk].hi;
 
-            #pragma unroll
+#pragma unroll
             for (int r = 0; r < IT; ++r) {
                 Real a = acc[kk][r][c];
                 a = fma(xreg[r].lo, yzq0, a);
@@ -74,23 +66,15 @@ __device__ __forceinline__ void charge2proxy_accum_source_pair(
 }
 
 template <typename Real, int IT, int JT, int KT, int N, int LD>
-__device__ __forceinline__ void charge2proxy_accum_source_scalar(
-    Real (&acc)[KT][IT][JT],
-    const Real *__restrict__ poly_x,
-    const Real *__restrict__ poly_y,
-    const Real *__restrict__ poly_z,
-    const Real *__restrict__ charges_s,
-    int i0,
-    int j0,
-    int k0,
-    int d,
-    int s
-) {
+__device__ __forceinline__ void
+charge2proxy_accum_source_scalar(Real (&acc)[KT][IT][JT], const Real *__restrict__ poly_x,
+                                 const Real *__restrict__ poly_y, const Real *__restrict__ poly_z,
+                                 const Real *__restrict__ charges_s, int i0, int j0, int k0, int d, int s) {
     Real xreg[IT] = {Real{0}};
     Real yreg[JT] = {Real{0}};
     Real zqreg[KT] = {Real{0}};
 
-    #pragma unroll
+#pragma unroll
     for (int r = 0; r < IT; ++r) {
         const int i = i0 + r;
 
@@ -98,7 +82,7 @@ __device__ __forceinline__ void charge2proxy_accum_source_scalar(
             xreg[r] = poly_x[i * LD + s];
     }
 
-    #pragma unroll
+#pragma unroll
     for (int c = 0; c < JT; ++c) {
         const int j = j0 + c;
 
@@ -108,7 +92,7 @@ __device__ __forceinline__ void charge2proxy_accum_source_scalar(
 
     const Real q = charges_s[d * LD + s];
 
-    #pragma unroll
+#pragma unroll
     for (int kk = 0; kk < KT; ++kk) {
         const int k = k0 + kk;
 
@@ -116,13 +100,13 @@ __device__ __forceinline__ void charge2proxy_accum_source_scalar(
             zqreg[kk] = poly_z[k * LD + s] * q;
     }
 
-    #pragma unroll
+#pragma unroll
     for (int kk = 0; kk < KT; ++kk) {
-        #pragma unroll
+#pragma unroll
         for (int c = 0; c < JT; ++c) {
             const Real yzq = yreg[c] * zqreg[kk];
 
-            #pragma unroll
+#pragma unroll
             for (int r = 0; r < IT; ++r) {
                 acc[kk][r][c] = fma(xreg[r], yzq, acc[kk][r][c]);
             }
@@ -148,16 +132,13 @@ __device__ inline void chebyshev_fill_strided(Real x, Real *out, int n, int stri
 
 // KERNEL_START
 
-extern "C" __global__ void Charge2ProxyKernel(
-    Charge2ProxyArgs<Real> a,
-    const int *__restrict__ group_perm
-) {
+extern "C" __global__ void Charge2ProxyKernel(Charge2ProxyArgs<Real> a, const int *__restrict__ group_perm) {
     // constexpr int CHUNK = 128;
     constexpr int S_VEC = 2;
     constexpr int LD = CHUNK + S_VEC;
     constexpr int DIM = 3;
 
-    constexpr int N  = N_ORDER;
+    constexpr int N = N_ORDER;
     constexpr int NC = N_CHARGE_DIM;
     constexpr int N2 = N * N;
     constexpr int N3 = N2 * N;
@@ -193,8 +174,7 @@ extern "C" __global__ void Charge2ProxyKernel(
 
     const Real scale = a.inv_box_scale[level];
 
-    Real *__restrict__ proxy =
-        a.proxy_flat + a.proxy_offsets[center_box];
+    Real *__restrict__ proxy = a.proxy_flat + a.proxy_offsets[center_box];
 
     for (int sbi = 0; sbi < n_src_boxes; ++sbi) {
         const int sb = a.src_boxes_flat[sb_off + sbi];
@@ -203,15 +183,12 @@ extern "C" __global__ void Charge2ProxyKernel(
         if (n_src == 0)
             continue;
 
-        const Real *__restrict__ r_src =
-            a.r_src + a.r_src_offsets[sb];
+        const Real *__restrict__ r_src = a.r_src + a.r_src_offsets[sb];
 
-        const Real *__restrict__ charge =
-            a.charge + a.charge_offsets[sb];
+        const Real *__restrict__ charge = a.charge + a.charge_offsets[sb];
 
         for (int s_base = 0; s_base < n_src; s_base += CHUNK) {
-            const int n_in_chunk =
-                (s_base + CHUNK > n_src) ? (n_src - s_base) : CHUNK;
+            const int n_in_chunk = (s_base + CHUNK > n_src) ? (n_src - s_base) : CHUNK;
 
             // Build Chebyshev tables for this source chunk.
             for (int s = threadIdx.x; s < n_in_chunk; s += blockDim.x) {
@@ -256,51 +233,42 @@ extern "C" __global__ void Charge2ProxyKernel(
 
                 Real acc[K_TILE][I_TILE][J_TILE] = {Real{0}};
 
-
                 if (n_in_chunk == CHUNK) {
-                    #pragma unroll 4
+#pragma unroll 4
                     for (int s = 0; s < CHUNK_PAIR_END; s += S_VEC) {
                         charge2proxy_accum_source_pair<Real, I_TILE, J_TILE, K_TILE, N, LD>(
-                            acc, poly_x, poly_y, poly_z, charges_s,
-                            i0, j0, k0, d, s
-                        );
+                            acc, poly_x, poly_y, poly_z, charges_s, i0, j0, k0, d, s);
                     }
 
                     if constexpr ((CHUNK % S_VEC) != 0) {
                         charge2proxy_accum_source_scalar<Real, I_TILE, J_TILE, K_TILE, N, LD>(
-                            acc, poly_x, poly_y, poly_z, charges_s,
-                            i0, j0, k0, d, CHUNK_PAIR_END
-                        );
+                            acc, poly_x, poly_y, poly_z, charges_s, i0, j0, k0, d, CHUNK_PAIR_END);
                     }
                 } else {
                     int s = 0;
 
                     for (; s + 1 < n_in_chunk; s += S_VEC) {
                         charge2proxy_accum_source_pair<Real, I_TILE, J_TILE, K_TILE, N, LD>(
-                            acc, poly_x, poly_y, poly_z, charges_s,
-                            i0, j0, k0, d, s
-                        );
+                            acc, poly_x, poly_y, poly_z, charges_s, i0, j0, k0, d, s);
                     }
 
                     if (s < n_in_chunk) {
                         charge2proxy_accum_source_scalar<Real, I_TILE, J_TILE, K_TILE, N, LD>(
-                            acc, poly_x, poly_y, poly_z, charges_s,
-                            i0, j0, k0, d, s
-                        );
+                            acc, poly_x, poly_y, poly_z, charges_s, i0, j0, k0, d, s);
                     }
                 }
 
-                #pragma unroll
+#pragma unroll
                 for (int kk = 0; kk < K_TILE; ++kk) {
                     const int k = k0 + kk;
 
                     if (k < N) {
-                        #pragma unroll
+#pragma unroll
                         for (int r = 0; r < I_TILE; ++r) {
                             const int i = i0 + r;
 
                             if (i < N) {
-                                #pragma unroll
+#pragma unroll
                                 for (int c = 0; c < J_TILE; ++c) {
                                     const int j = j0 + c;
 
