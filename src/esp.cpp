@@ -251,9 +251,8 @@ static std::vector<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src,
 
 #pragma omp parallel
     {
-        // Per-thread scratch: home targets and the gathered, image-shifted neighbor
-        // sources (one evaluator call per home cell amortizes the SIMD setup).
-        std::vector<Real> r_trg, r_src_g, charge_g, pot_local;
+        // Per-thread scratch: the gathered, image-shifted neighbor sources
+        std::vector<Real> r_src_g, charge_g;
 #pragma omp for schedule(dynamic) collapse(3)
         for (int cx = 0; cx < nc; ++cx)
             for (int cy = 0; cy < nc; ++cy)
@@ -264,10 +263,7 @@ static std::vector<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src,
                     if (n_trg == 0)
                         continue;
 
-                    r_trg.resize(3 * (hend - hbeg));
-                    Real *__restrict__ r_trg_ptr = r_trg.data();
-                    for (int a = 3 * hbeg; a < 3 * hend; ++a)
-                        r_trg_ptr[a - 3 * hbeg] = cl.rs[a];
+                    const Real *__restrict__ r_trg_ptr = cl.rs.data() + 3 * hbeg;
 
                     const int *__restrict__ nbc_cx = &nbc_tab[cx * 3];
                     const int *__restrict__ nbc_cy = &nbc_tab[cy * 3];
@@ -311,14 +307,8 @@ static std::vector<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src,
                         }
                     }
 
-                    // d2max = r_c^2 enforces the cutoff; thresh2 = 0 drops the self pair
-                    // (R2 == 0). The self-interaction term is corrected separately.
-                    pot_local.assign(n_trg, Real(0));
                     evaluator(rsc, Real(0), r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, n_trg, r_trg_ptr,
-                              pot_local.data());
-
-                    for (int k = 0; k < n_trg; ++k)
-                        pot_sorted[hbeg + k] = pot_local[k];
+                              pot_sorted.data() + hbeg);
                 }
     }
 
