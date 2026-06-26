@@ -25,13 +25,11 @@ struct EspTimings {
 
 // Returns the total potential at each particle (length = charges.size()).
 // Real may be float or double; float inputs are promoted to double internally.
-// fast_sr=true (default): cell-list short-range. false: neighbor-list (reference).
 template <typename Real>
 std::vector<Real> esp_eval(EspPlan *plan,
                             const std::vector<Vec3T<Real>> &r_src,
                             const std::vector<Real> &charges,
-                            EspTimings *timings = nullptr,
-                            bool fast_sr = true);
+                            EspTimings *timings = nullptr);
 
 // Convenience one-shot wrapper (create + eval + destroy).
 template <typename Real>

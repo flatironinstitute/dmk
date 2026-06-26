@@ -70,7 +70,7 @@ struct PSWFKernel {
 
         c0 = pswf.int_eval(1.0) * scale;
 
-        int nc = 32;
+        int nc = 16;
         auto pswf_lambda = [&](double x) { return pswf.eval_val(std::abs(x)) * scale; };
         pswf_poly_coeffs = finufft::kernel::poly_fit<double>(pswf_lambda, nc);
 
@@ -131,32 +131,7 @@ struct ESPParams {
 };
 
 // ---------------------------------------------------------------------------
-// Geometry helpers
-// ---------------------------------------------------------------------------
-template <typename Real>
-static inline Vec3T<Real> min_image_vector(const Vec3T<Real> &ri, const Vec3T<Real> &rj, Real L) {
-    Vec3T<Real> d;
-    for (int k = 0; k < 3; ++k) {
-        d[k] = ri[k] - rj[k];
-        d[k] -= L * std::round(d[k] / L);
-    }
-    return d;
-}
-
-template <typename Real>
-static inline Real min_image_distance(const Vec3T<Real> &ri, const Vec3T<Real> &rj, Real L) {
-    auto d = min_image_vector<Real>(ri, rj, L);
-    return std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-}
-
-template <typename Real>
-static inline Real min_image_distance_sq(const Vec3T<Real> &ri, const Vec3T<Real> &rj, Real L) {
-    auto d = min_image_vector<Real>(ri, rj, L);
-    return d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
-}
-
-// ---------------------------------------------------------------------------
-// Cell / neighbour list
+// Cell list
 // ---------------------------------------------------------------------------
 struct CellIndex {
     int x, y, z;
@@ -176,67 +151,6 @@ static inline CellIndex particle_cell(const Vec3T<Real> &r, Real L, int n_cells)
     if (ci.z < 0)
         ci.z += n_cells;
     return ci;
-}
-
-template <typename Real>
-static std::vector<std::vector<int>> build_neighbor_list(const std::vector<Vec3T<Real>> &r_src,
-                                                         const ESPParams &params) {
-    int n_cells = static_cast<int>(std::floor(params.L / params.r_c));
-    if (n_cells < 1)
-        n_cells = 1;
-    const Real L = Real(params.L);
-    const Real r_c = Real(params.r_c);
-
-    auto cell_key = [&](int cx, int cy, int cz) { return cx * n_cells * n_cells + cy * n_cells + cz; };
-
-    std::vector<std::vector<int>> cells(n_cells * n_cells * n_cells);
-    for (int j = 0; j < params.n; ++j) {
-        auto ci = particle_cell<Real>(r_src[j], L, n_cells);
-        cells[cell_key(ci.x, ci.y, ci.z)].push_back(j);
-    }
-
-    std::vector<std::vector<int>> neighbors(params.n);
-    const Real r_c_sq = r_c * r_c;
-#pragma omp parallel for schedule(dynamic)
-    for (int i = 0; i < params.n; ++i) {
-        auto ci = particle_cell<Real>(r_src[i], L, n_cells);
-        for (int dx = -1; dx <= 1; ++dx)
-            for (int dy = -1; dy <= 1; ++dy)
-                for (int dz = -1; dz <= 1; ++dz) {
-                    int nx = ((ci.x + dx) % n_cells + n_cells) % n_cells;
-                    int ny = ((ci.y + dy) % n_cells + n_cells) % n_cells;
-                    int nz = ((ci.z + dz) % n_cells + n_cells) % n_cells;
-                    for (int j : cells[cell_key(nx, ny, nz)]) {
-                        if (j == i)
-                            continue;
-                        if (min_image_distance_sq<Real>(r_src[i], r_src[j], L) <= r_c_sq)
-                            neighbors[i].push_back(j);
-                    }
-                }
-    }
-    return neighbors;
-}
-
-// ---------------------------------------------------------------------------
-// Short-range sum (fallback: neighbor-list based, used when nc < 3)
-// ---------------------------------------------------------------------------
-template <typename Real>
-static std::vector<Real> short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                                     const PSWFKernel &pswf, const ESPParams &params,
-                                     const std::vector<std::vector<int>> &neighbors) {
-    const Real L = Real(params.L);
-    const Real r_c = Real(params.r_c);
-    std::vector<Real> pot(params.n, Real(0));
-#pragma omp parallel for schedule(dynamic)
-    for (int i = 0; i < params.n; ++i) {
-        for (int j : neighbors[i]) {
-            Real dist = min_image_distance<Real>(r_src[i], r_src[j], L);
-            double t = double(dist) / params.r_c;
-            double intval = pswf.integral(0.0, t) / params.c0;
-            pot[i] += charges[j] * Real((1.0 - intval) / (4.0 * M_PI * double(dist)));
-        }
-    }
-    return pot;
 }
 
 // ---------------------------------------------------------------------------
@@ -306,10 +220,8 @@ static std::vector<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src,
                                           const PSWFKernel &pswf, const ESPParams &params) {
     // 27-cell stencil requires nc >= 3 so periodic images aren't double-counted
     const int nc = static_cast<int>(std::floor(params.L / params.r_c));
-    if (nc < 3) {
-        auto neighbors = build_neighbor_list<Real>(r_src, params);
-        return short_range<Real>(r_src, charges, pswf, params, neighbors);
-    }
+    if (nc < 3)
+        throw std::runtime_error("short_range_fast requires r_c <= L/3 (nc >= 3)");
 
     CellList<Real> cl = build_cell_list<Real>(r_src, charges, params, nc);
 
@@ -321,6 +233,20 @@ static std::vector<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src,
 
     std::vector<Real> pot_sorted(n, Real(0));
 
+    // For each cell coordinate c in [0, nc) and each delta d in {-1,0,+1} (stored as d=0,1,2):
+    // nbc_tab[c*3+d] = neighbor cell index, off_tab[c*3+d] = image shift to subtract.
+    // Precomputed once; all three dimensions share the same table since they share nc.
+    std::vector<int>  nbc_tab(nc * 3);
+    std::vector<Real> off_tab(nc * 3);
+    for (int c = 0; c < nc; ++c) {
+        for (int d = 0; d < 3; ++d) {
+            int ci = c + d - 1;
+            if      (ci < 0)   { nbc_tab[c*3+d] = ci + nc; off_tab[c*3+d] = -L; }
+            else if (ci >= nc) { nbc_tab[c*3+d] = ci - nc; off_tab[c*3+d] =  L; }
+            else               { nbc_tab[c*3+d] = ci;      off_tab[c*3+d] =  Real(0); }
+        }
+    }
+
 #pragma omp parallel for schedule(dynamic) collapse(3)
     for (int cx = 0; cx < nc; ++cx)
         for (int cy = 0; cy < nc; ++cy)
@@ -328,34 +254,35 @@ static std::vector<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src,
                 const int home = (cx * nc + cy) * nc + cz;
                 const int hbeg = cl.cell_start[home], hend = cl.cell_start[home + 1];
 
+                const int  *nbc_cx = &nbc_tab[cx * 3];
+                const int  *nbc_cy = &nbc_tab[cy * 3];
+                const int  *nbc_cz = &nbc_tab[cz * 3];
+                const Real *off_cx = &off_tab[cx * 3];
+                const Real *off_cy = &off_tab[cy * 3];
+                const Real *off_cz = &off_tab[cz * 3];
+
                 for (int a = hbeg; a < hend; ++a) {
                     const Real xi = cl.xs[a], yi = cl.ys[a], zi = cl.zs[a];
                     Real acc = Real(0);
 
-                    for (int dx = -1; dx <= 1; ++dx)
-                        for (int dy = -1; dy <= 1; ++dy)
-                            for (int dz = -1; dz <= 1; ++dz) {
-                                const int nx = (cx + dx + nc) % nc;
-                                const int ny = (cy + dy + nc) % nc;
-                                const int nz = (cz + dz + nc) % nc;
-                                const int nb = (nx * nc + ny) * nc + nz;
+                    for (int dx = 0; dx < 3; ++dx)
+                        for (int dy = 0; dy < 3; ++dy)
+                            for (int dz = 0; dz < 3; ++dz) {
+                                const int nb = (nbc_cx[dx] * nc + nbc_cy[dy]) * nc + nbc_cz[dz];
                                 const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
 
                                 for (int b = nbeg; b < nend; ++b) {
                                     if (nb == home && a == b)
                                         continue;
-                                    Real ddx = xi - cl.xs[b];
-                                    ddx -= L * std::round(ddx / L);
-                                    Real ddy = yi - cl.ys[b];
-                                    ddy -= L * std::round(ddy / L);
-                                    Real ddz = zi - cl.zs[b];
-                                    ddz -= L * std::round(ddz / L);
-                                    Real d2 = ddx * ddx + ddy * ddy + ddz * ddz;
+                                    const Real ddx = xi - cl.xs[b] - off_cx[dx];
+                                    const Real ddy = yi - cl.ys[b] - off_cy[dy];
+                                    const Real ddz = zi - cl.zs[b] - off_cz[dz];
+                                    const Real d2 = ddx * ddx + ddy * ddy + ddz * ddz;
                                     if (d2 > r_c_sq)
                                         continue;
 
                                     double dist = std::sqrt(double(d2));
-                                    double t = dist * inv_rc; // in [0, 1]
+                                    double t = dist * inv_rc;
                                     double intval = pswf.integral(0.0, t) * inv_c0;
 
                                     acc += cl.qs[b] * Real((1.0 - intval) / (4.0 * M_PI * dist));
@@ -506,16 +433,13 @@ void esp_destroy_plan(EspPlan *plan) { delete plan; }
 
 template <typename Real>
 std::vector<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                           EspTimings *timings, bool fast_sr) {
+                           EspTimings *timings) {
     int n = static_cast<int>(charges.size());
     ESPParams params = plan->params_base;
     params.n = n;
 
     double t0 = omp_get_wtime();
-    auto pot_sr = fast_sr ? short_range_fast<Real>(r_src, charges, plan->pswf, params) : [&] {
-        auto nb = build_neighbor_list<Real>(r_src, params);
-        return short_range<Real>(r_src, charges, plan->pswf, params, nb);
-    }();
+    auto pot_sr = short_range_fast<Real>(r_src, charges, plan->pswf, params);
     double t1 = omp_get_wtime();
     auto pot_lr = long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs);
     double t2 = omp_get_wtime();
@@ -547,9 +471,9 @@ std::vector<Real> esp_potential(const std::vector<Vec3T<Real>> &r_src, const std
 }
 
 template std::vector<float> esp_eval<float>(EspPlan *, const std::vector<Vec3T<float>> &, const std::vector<float> &,
-                                            EspTimings *, bool);
+                                            EspTimings *);
 template std::vector<double> esp_eval<double>(EspPlan *, const std::vector<Vec3T<double>> &,
-                                              const std::vector<double> &, EspTimings *, bool);
+                                              const std::vector<double> &, EspTimings *);
 template std::vector<float> esp_potential<float>(const std::vector<Vec3T<float>> &, const std::vector<float> &, double,
                                                  double, double);
 template std::vector<double> esp_potential<double>(const std::vector<Vec3T<double>> &, const std::vector<double> &,
