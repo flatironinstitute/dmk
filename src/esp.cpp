@@ -152,9 +152,9 @@ static inline CellIndex particle_cell(const Vec3T<Real> &r, Real L, int n_cells)
 template <typename Real>
 struct CellList {
     int n_cells;
-    std::vector<int> cell_start;      // size n_cells^3 + 1 (exclusive prefix sum)
-    std::vector<Real> xs, ys, zs, qs; // particle data reordered by cell
-    std::vector<int> orig;            // orig[slot] = original particle index
+    std::vector<int> cell_start; // size n_cells^3 + 1 (exclusive prefix sum)
+    std::vector<Real> rs, qs;    // particle data reordered by cell
+    std::vector<int> orig;       // orig[slot] = original particle index
 };
 
 template <typename Real>
@@ -185,17 +185,15 @@ static CellList<Real> build_cell_list(const std::vector<Vec3T<Real>> &r_src, con
         cl.cell_start[c + 1] = cl.cell_start[c] + count[c];
 
     // pass 3: scatter into sorted arrays
-    cl.xs.resize(n);
-    cl.ys.resize(n);
-    cl.zs.resize(n);
+    cl.rs.resize(3 * n);
     cl.qs.resize(n);
     cl.orig.resize(n);
     std::vector<int> cursor(cl.cell_start.begin(), cl.cell_start.end() - 1);
     for (int j = 0; j < n; ++j) {
         int slot = cursor[cidx[j]]++;
-        cl.xs[slot] = r_src[j][0];
-        cl.ys[slot] = r_src[j][1];
-        cl.zs[slot] = r_src[j][2];
+        cl.rs[slot + 0] = r_src[j][0];
+        cl.rs[slot + 1] = r_src[j][1];
+        cl.rs[slot + 2] = r_src[j][2];
         cl.qs[slot] = charges[j];
         cl.orig[slot] = j;
     }
@@ -266,40 +264,58 @@ static std::vector<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src,
                     if (n_trg == 0)
                         continue;
 
-                    r_trg.clear();
-                    for (int a = hbeg; a < hend; ++a) {
-                        r_trg.push_back(cl.xs[a]);
-                        r_trg.push_back(cl.ys[a]);
-                        r_trg.push_back(cl.zs[a]);
-                    }
+                    r_trg.resize(3 * (hend - hbeg));
+                    Real *__restrict__ r_trg_ptr = r_trg.data();
+                    for (int a = 3 * hbeg; a < 3 * hend; ++a)
+                        r_trg_ptr[a - 3 * hbeg] = cl.rs[a];
 
-                    const int *nbc_cx = &nbc_tab[cx * 3];
-                    const int *nbc_cy = &nbc_tab[cy * 3];
-                    const int *nbc_cz = &nbc_tab[cz * 3];
-                    const Real *off_cx = &off_tab[cx * 3];
-                    const Real *off_cy = &off_tab[cy * 3];
-                    const Real *off_cz = &off_tab[cz * 3];
+                    const int *__restrict__ nbc_cx = &nbc_tab[cx * 3];
+                    const int *__restrict__ nbc_cy = &nbc_tab[cy * 3];
+                    const int *__restrict__ nbc_cz = &nbc_tab[cz * 3];
+                    const Real *__restrict__ off_cx = &off_tab[cx * 3];
+                    const Real *__restrict__ off_cy = &off_tab[cy * 3];
+                    const Real *__restrict__ off_cz = &off_tab[cz * 3];
 
-                    r_src_g.clear();
-                    charge_g.clear();
+                    int n_src = 0;
                     for (int dx = 0; dx < 3; ++dx)
                         for (int dy = 0; dy < 3; ++dy)
                             for (int dz = 0; dz < 3; ++dz) {
                                 const int nb = (nbc_cx[dx] * nc + nbc_cy[dy]) * nc + nbc_cz[dz];
                                 const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
+                                n_src += nend - nbeg;
+                            }
+
+                    r_src_g.resize(3 * n_src);
+                    charge_g.resize(n_src);
+                    Real *__restrict__ r_src_ptr = r_src_g.data();
+                    Real *__restrict__ charge_ptr = charge_g.data();
+                    int r_i = 0, c_i = 0;
+                    for (int dx = 0; dx < 3; ++dx) {
+                        const Real off_x = off_cx[dx];
+                        const int nbc_x = nbc_cx[dx];
+                        for (int dy = 0; dy < 3; ++dy) {
+                            const Real off_y = off_cy[dy];
+                            const int nbc_y = nbc_cy[dy];
+                            for (int dz = 0; dz < 3; ++dz) {
+                                const Real off_z = off_cz[dz];
+                                const int nbc_z = nbc_cz[dz];
+                                const int nb = (nbc_x * nc + nbc_y) * nc + nbc_z;
+                                const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
                                 for (int b = nbeg; b < nend; ++b) {
-                                    r_src_g.push_back(cl.xs[b] + off_cx[dx]);
-                                    r_src_g.push_back(cl.ys[b] + off_cy[dy]);
-                                    r_src_g.push_back(cl.zs[b] + off_cz[dz]);
-                                    charge_g.push_back(cl.qs[b]);
+                                    r_src_ptr[r_i++] = cl.rs[b * 3 + 0] + off_x;
+                                    r_src_ptr[r_i++] = cl.rs[b * 3 + 1] + off_y;
+                                    r_src_ptr[r_i++] = cl.rs[b * 3 + 2] + off_z;
+                                    charge_ptr[c_i++] = cl.qs[b];
                                 }
                             }
+                        }
+                    }
 
                     // d2max = r_c^2 enforces the cutoff; thresh2 = 0 drops the self pair
                     // (R2 == 0). The self-interaction term is corrected separately.
                     pot_local.assign(n_trg, Real(0));
-                    evaluator(rsc, Real(0), r_c_sq, Real(0), static_cast<int>(charge_g.size()), r_src_g.data(),
-                              charge_g.data(), nullptr, n_trg, r_trg.data(), pot_local.data());
+                    evaluator(rsc, Real(0), r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, n_trg, r_trg_ptr,
+                              pot_local.data());
 
                     for (int k = 0; k < n_trg; ++k)
                         pot_sorted[hbeg + k] = pot_local[k];
