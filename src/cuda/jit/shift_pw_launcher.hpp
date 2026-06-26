@@ -19,7 +19,8 @@ void launch_shift_pw_jit(
     JitCache& cache,
     const dmk::cuda::ShiftPwArgs<Real>& args,
     cudaStream_t stream,
-    int blocksize
+    int blocksize,
+    int neighbor_unroll
 );
 
 template <typename Real>
@@ -28,13 +29,15 @@ void launch_shift_pw_multilevel_jit(
     const std::vector<dmk::cuda::ShiftPwArgs<Real>>& args_h,
     dmk::cuda::ShiftPwArgs<Real>* d_args_scratch,
     cudaStream_t stream,
-    int blocksize
+    int blocksize,
+    int neighbor_unroll
 );
 
 extern template void launch_shift_pw_jit<float>(
     JitCache&,
     const dmk::cuda::ShiftPwArgs<float>&,
     cudaStream_t,
+    int,
     int
 );
 
@@ -42,6 +45,7 @@ extern template void launch_shift_pw_jit<double>(
     JitCache&,
     const dmk::cuda::ShiftPwArgs<double>&,
     cudaStream_t,
+    int,
     int
 );
 
@@ -50,6 +54,7 @@ extern template void launch_shift_pw_multilevel_jit<float>(
     const std::vector<dmk::cuda::ShiftPwArgs<float>>&,
     dmk::cuda::ShiftPwArgs<float>*,
     cudaStream_t,
+    int,
     int
 );
 
@@ -58,6 +63,7 @@ extern template void launch_shift_pw_multilevel_jit<double>(
     const std::vector<dmk::cuda::ShiftPwArgs<double>>&,
     dmk::cuda::ShiftPwArgs<double>*,
     cudaStream_t,
+    int,
     int
 );
 

@@ -24,32 +24,52 @@
 namespace dmk::cuda::jit {
 namespace {
 
+struct ShiftPwLaunchConfig {
+    int blocksize = 0;
+    int neighbor_unroll = 0; // 0 means CUDA's default/full unroll.
+};
+
+constexpr int kDefaultNeighborUnroll = 0;
+
 int tuning_param_or(const TuningParams& params, const char* name, int fallback) {
     const auto it = params.find(name);
     return it == params.end() ? fallback : it->second;
 }
 
-TuningParams shift_pw_tuning_params(int blocksize) {
-    return TuningParams{{"BLOCK_SIZE", blocksize}};
+TuningParams shift_pw_tuning_params(const ShiftPwLaunchConfig& config) {
+    return TuningParams{
+        {"BLOCK_SIZE", config.blocksize},
+        {"NEIGHBOR_UNROLL", config.neighbor_unroll},
+    };
 }
 
-int shift_pw_blocksize_from_params(const TuningParams& params, int fallback) {
-    return tuning_param_or(params, "BLOCK_SIZE", fallback);
+ShiftPwLaunchConfig shift_pw_config_from_params(
+    const TuningParams& params,
+    const ShiftPwLaunchConfig& fallback
+) {
+    return ShiftPwLaunchConfig{
+        tuning_param_or(params, "BLOCK_SIZE", fallback.blocksize),
+        tuning_param_or(params, "NEIGHBOR_UNROLL", fallback.neighbor_unroll),
+    };
 }
 
 std::string make_specialization_constants(const JitKey& key) {
     const int blocksize = required_int_param(key, "BLOCK_SIZE", "ShiftPw");
     const int n_pw_modes = required_int_param(key, "N_PW_MODES", "ShiftPw");
     const int n_charge_dim = required_int_param(key, "N_CHARGE_DIM", "ShiftPw");
+    const int n_neighbors = required_int_param(key, "N_NEIGHBORS", "ShiftPw");
+    const int neighbor_unroll = required_int_param(key, "NEIGHBOR_UNROLL", "ShiftPw");
     std::ostringstream ss;
 
     ss << "#include <dmk/cuda/shift_pw_kernelargs.hpp>\n";
 
     ss << "using dmk::cuda::ShiftPwArgs;\n";
+    ss << "#define SHIFT_PW_NEIGHBOR_UNROLL " << neighbor_unroll << "\n";
 
     ss << "constexpr int BLOCK_SIZE = " << blocksize << ";\n";
     ss << "constexpr int N_PW_MODES   = " << n_pw_modes << ";\n";
     ss << "constexpr int N_CHARGE_DIM = " << n_charge_dim << ";\n";
+    ss << "constexpr int N_NEIGHBORS  = " << n_neighbors << ";\n";
     ss << "using Real = " << key.real << ";\n\n";
 
     return ss.str();
@@ -60,8 +80,8 @@ std::string make_specialization_constants(const JitKey& key) {
 
 namespace {
 
-std::map<std::string, int>& shift_pw_config_cache() {
-    static std::map<std::string, int> cache;
+std::map<std::string, ShiftPwLaunchConfig>& shift_pw_config_cache() {
+    static std::map<std::string, ShiftPwLaunchConfig> cache;
     return cache;
 }
 
@@ -125,7 +145,8 @@ void launch_shift_pw_jit(
     JitCache& cache,
     const dmk::cuda::ShiftPwArgs<Real>& args,
     cudaStream_t stream,
-    int blocksize
+    int blocksize,
+    int neighbor_unroll
 ) {
     if (args.n_boxes_at_level == 0) {
         return;
@@ -140,6 +161,8 @@ void launch_shift_pw_jit(
     key.params = {
         {"BLOCK_SIZE", blocksize},
         {"N_CHARGE_DIM", args.n_charge_dim},
+        {"N_NEIGHBORS", args.n_neighbors},
+        {"NEIGHBOR_UNROLL", neighbor_unroll},
         {"N_PW_MODES", args.n_pw_modes},
     };
 
@@ -160,7 +183,8 @@ void launch_shift_pw_multilevel_jit(
     const std::vector<dmk::cuda::ShiftPwArgs<Real>>& args_h,
     dmk::cuda::ShiftPwArgs<Real>* d_args_scratch,
     cudaStream_t stream,
-    int blocksize
+    int blocksize,
+    int neighbor_unroll
 ) {
     if (args_h.empty()) {
         return;
@@ -199,6 +223,8 @@ void launch_shift_pw_multilevel_jit(
     key.params = {
         {"BLOCK_SIZE", blocksize},
         {"N_CHARGE_DIM", args_h[0].n_charge_dim},
+        {"N_NEIGHBORS", args_h[0].n_neighbors},
+        {"NEIGHBOR_UNROLL", neighbor_unroll},
         {"N_PW_MODES", args_h[0].n_pw_modes},
     };
 
@@ -220,6 +246,7 @@ template void launch_shift_pw_jit<float>(
     JitCache&,
     const dmk::cuda::ShiftPwArgs<float>&,
     cudaStream_t,
+    int,
     int
 );
 
@@ -227,6 +254,7 @@ template void launch_shift_pw_jit<double>(
     JitCache&,
     const dmk::cuda::ShiftPwArgs<double>&,
     cudaStream_t,
+    int,
     int
 );
 
@@ -235,6 +263,7 @@ template void launch_shift_pw_multilevel_jit<float>(
     const std::vector<dmk::cuda::ShiftPwArgs<float>>&,
     dmk::cuda::ShiftPwArgs<float>*,
     cudaStream_t,
+    int,
     int
 );
 
@@ -243,18 +272,19 @@ template void launch_shift_pw_multilevel_jit<double>(
     const std::vector<dmk::cuda::ShiftPwArgs<double>>&,
     dmk::cuda::ShiftPwArgs<double>*,
     cudaStream_t,
+    int,
     int
 );
 
 template <typename Real, int DIM>
-int tune_shift_pw_blocksize(
+ShiftPwLaunchConfig tune_shift_pw_config(
     JitCache& cache,
     const dmk::cuda::ShiftPwArgs<Real>& args,
     cudaStream_t stream,
-    int default_blocksize
+    ShiftPwLaunchConfig defaults
 ) {
     if (env_flag_enabled("DMK_JIT_AUTOTUNE_DISABLE")) {
-        return default_blocksize;
+        return defaults;
     }
 
     const std::string tune_key = shift_pw_tuning_key<Real, DIM>(args);
@@ -283,24 +313,28 @@ int tune_shift_pw_blocksize(
     };
 
     const std::vector<TuningParameter> space{
-        {"BLOCK_SIZE", {128, 256, 512, 768}},
+        {"BLOCK_SIZE", {64, 128, 256, 512, 768}},
+        {"NEIGHBOR_UNROLL", {1, 2, 3, 4, 6, 9, 0}},
     };
 
     const auto constraint = [&](const TuningParams& params) {
-        const int blocksize = shift_pw_blocksize_from_params(params, default_blocksize);
-        return blocksize > 0 &&
-               blocksize <= prop.maxThreadsPerBlock &&
-               blocksize % 32 == 0;
+        const ShiftPwLaunchConfig config = shift_pw_config_from_params(params, defaults);
+        return config.blocksize > 0 &&
+               config.blocksize <= prop.maxThreadsPerBlock &&
+               config.blocksize % 32 == 0 &&
+               (config.neighbor_unroll == 0 ||
+                (config.neighbor_unroll > 0 && config.neighbor_unroll <= args.n_neighbors));
     };
 
     const auto benchmark = [&](const TuningParams& params) {
-        const int blocksize = shift_pw_blocksize_from_params(params, default_blocksize);
+        const ShiftPwLaunchConfig config = shift_pw_config_from_params(params, defaults);
         return benchmark_cuda_ms(stream, options.benchmark, [&](cudaStream_t bench_stream) {
             launch_shift_pw_jit<Real>(
                 cache,
                 args,
                 bench_stream,
-                blocksize
+                config.blocksize,
+                config.neighbor_unroll
             );
         });
     };
@@ -309,15 +343,15 @@ int tune_shift_pw_blocksize(
         tune_grid(
             options,
             space,
-            shift_pw_tuning_params(default_blocksize),
+            shift_pw_tuning_params(defaults),
             constraint,
             benchmark
         );
 
-    const int tuned_blocksize =
-        shift_pw_blocksize_from_params(decision.params, default_blocksize);
-    shift_pw_config_cache()[in_process_key] = tuned_blocksize;
-    return tuned_blocksize;
+    const ShiftPwLaunchConfig tuned_config =
+        shift_pw_config_from_params(decision.params, defaults);
+    shift_pw_config_cache()[in_process_key] = tuned_config;
+    return tuned_config;
 }
 
 template <typename Real, int DIM>
@@ -327,14 +361,14 @@ void launch_shift_pw_autotuned(
     cudaStream_t stream,
     int default_blocksize
 ) {
-    int blocksize = default_blocksize;
+    ShiftPwLaunchConfig config{default_blocksize, kDefaultNeighborUnroll};
 
     try {
-        blocksize = tune_shift_pw_blocksize<Real, DIM>(
+        config = tune_shift_pw_config<Real, DIM>(
             cache,
             args,
             stream,
-            default_blocksize
+            config
         );
     } catch (const std::exception& e) {
         if (env_flag_enabled("DMK_JIT_AUTOTUNE_VERBOSE")) {
@@ -343,19 +377,25 @@ void launch_shift_pw_autotuned(
         }
     }
 
-    launch_shift_pw_jit<Real>(cache, args, stream, blocksize);
+    launch_shift_pw_jit<Real>(
+        cache,
+        args,
+        stream,
+        config.blocksize,
+        config.neighbor_unroll
+    );
 }
 
 template <typename Real, int DIM>
-int tune_shift_pw_multilevel_blocksize(
+ShiftPwLaunchConfig tune_shift_pw_multilevel_config(
     JitCache& cache,
     const std::vector<dmk::cuda::ShiftPwArgs<Real>>& args_h,
     dmk::cuda::ShiftPwArgs<Real>* d_args_scratch,
     cudaStream_t stream,
-    int default_blocksize
+    ShiftPwLaunchConfig defaults
 ) {
     if (env_flag_enabled("DMK_JIT_AUTOTUNE_DISABLE")) {
-        return default_blocksize;
+        return defaults;
     }
 
     int max_boxes = 0;
@@ -363,7 +403,7 @@ int tune_shift_pw_multilevel_blocksize(
         max_boxes = std::max(max_boxes, args.n_boxes_at_level);
     }
     if (max_boxes == 0 || args_h.empty()) {
-        return default_blocksize;
+        return defaults;
     }
 
     const std::string tune_key =
@@ -393,25 +433,29 @@ int tune_shift_pw_multilevel_blocksize(
     };
 
     const std::vector<TuningParameter> space{
-        {"BLOCK_SIZE", {128, 256, 512, 768}},
+        {"BLOCK_SIZE", {64, 128, 256, 512, 768}},
+        {"NEIGHBOR_UNROLL", {1, 2, 3, 4, 6, 9, 0}},
     };
 
     const auto constraint = [&](const TuningParams& params) {
-        const int blocksize = shift_pw_blocksize_from_params(params, default_blocksize);
-        return blocksize > 0 &&
-               blocksize <= prop.maxThreadsPerBlock &&
-               blocksize % 32 == 0;
+        const ShiftPwLaunchConfig config = shift_pw_config_from_params(params, defaults);
+        return config.blocksize > 0 &&
+               config.blocksize <= prop.maxThreadsPerBlock &&
+               config.blocksize % 32 == 0 &&
+               (config.neighbor_unroll == 0 ||
+                (config.neighbor_unroll > 0 && config.neighbor_unroll <= args_h[0].n_neighbors));
     };
 
     const auto benchmark = [&](const TuningParams& params) {
-        const int blocksize = shift_pw_blocksize_from_params(params, default_blocksize);
+        const ShiftPwLaunchConfig config = shift_pw_config_from_params(params, defaults);
         return benchmark_cuda_ms(stream, options.benchmark, [&](cudaStream_t bench_stream) {
             launch_shift_pw_multilevel_jit<Real>(
                 cache,
                 args_h,
                 d_args_scratch,
                 bench_stream,
-                blocksize
+                config.blocksize,
+                config.neighbor_unroll
             );
         });
     };
@@ -420,15 +464,15 @@ int tune_shift_pw_multilevel_blocksize(
         tune_grid(
             options,
             space,
-            shift_pw_tuning_params(default_blocksize),
+            shift_pw_tuning_params(defaults),
             constraint,
             benchmark
         );
 
-    const int tuned_blocksize =
-        shift_pw_blocksize_from_params(decision.params, default_blocksize);
-    shift_pw_config_cache()[in_process_key] = tuned_blocksize;
-    return tuned_blocksize;
+    const ShiftPwLaunchConfig tuned_config =
+        shift_pw_config_from_params(decision.params, defaults);
+    shift_pw_config_cache()[in_process_key] = tuned_config;
+    return tuned_config;
 }
 
 template <typename Real, int DIM>
@@ -439,15 +483,15 @@ void launch_shift_pw_multilevel_autotuned(
     cudaStream_t stream,
     int default_blocksize
 ) {
-    int blocksize = default_blocksize;
+    ShiftPwLaunchConfig config{default_blocksize, kDefaultNeighborUnroll};
 
     try {
-        blocksize = tune_shift_pw_multilevel_blocksize<Real, DIM>(
+        config = tune_shift_pw_multilevel_config<Real, DIM>(
             cache,
             args_h,
             d_args_scratch,
             stream,
-            default_blocksize
+            config
         );
     } catch (const std::exception& e) {
         if (env_flag_enabled("DMK_JIT_AUTOTUNE_VERBOSE")) {
@@ -461,7 +505,8 @@ void launch_shift_pw_multilevel_autotuned(
         args_h,
         d_args_scratch,
         stream,
-        blocksize
+        config.blocksize,
+        config.neighbor_unroll
     );
 }
 
