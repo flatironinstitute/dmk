@@ -50,7 +50,12 @@ JitCache::JitCache() {
     }
 
     cudaDeviceProp prop{};
-    auto err = cudaGetDeviceProperties(&prop, device_);
+    auto err = cudaGetDevice(&device_);
+    if (err != cudaSuccess) {
+        throw std::runtime_error(std::string("cudaGetDevice failed: ") + cudaGetErrorString(err));
+    }
+
+    err = cudaGetDeviceProperties(&prop, device_);
     if (err != cudaSuccess) {
         throw std::runtime_error(std::string("cudaGetDeviceProperties failed: ") + cudaGetErrorString(err));
     }
