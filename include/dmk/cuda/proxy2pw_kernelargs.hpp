@@ -1,3 +1,5 @@
+#pragma once
+
 namespace dmk::cuda {
 template <typename Real>
 struct Proxy2PwArgs {

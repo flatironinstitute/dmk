@@ -69,7 +69,7 @@ public:
 
                 throw std::runtime_error(
                     std::string("cuLaunchKernel failed: ") +
-                    (name ? name : "<unkown>") + ": " +
+                    (name ? name : "<unknown>") + ": " +
                     (msg ? msg : "<no message>")
                 );
             }
