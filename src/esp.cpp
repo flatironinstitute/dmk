@@ -57,6 +57,7 @@ struct PSWFKernel {
     double c0;
     double scale;
     std::vector<double> pswf_poly_coeffs;
+    std::vector<double> pswf_int_poly_coeffs;
 
     explicit PSWFKernel(double eps_, int lenw = 8000) : eps(eps_) {
         P = esp_ns_from_eps(eps_);
@@ -74,6 +75,10 @@ struct PSWFKernel {
         int nc = 32;
         auto pswf_lambda = [&](double x) { return pswf.eval_val(std::abs(x)) * scale; };
         pswf_poly_coeffs = finufft::kernel::poly_fit<double>(pswf_lambda, nc);
+
+        nc = 10;
+        auto pswf_int_lambda = [&](double t) { return pswf.int_eval(t) * scale; };
+        pswf_int_poly_coeffs = finufft::kernel::poly_fit<double>(pswf_int_lambda, nc);
     }
 
     double operator()(double x) const {
@@ -84,13 +89,24 @@ struct PSWFKernel {
         return result;
     }
 
-    double integral(double a, double b) const {
-        double va = (a == 0.0) ? 0.0 : pswf.int_eval(a);
-        double vb = pswf.int_eval(b);
-        return (vb - va) * scale;
+    double integral_eval(double t) const {
+        double result = pswf_int_poly_coeffs[0];
+        int nc = pswf_int_poly_coeffs.size();
+        for (int j = 1; j < nc; ++j)
+            result = result * t + pswf_int_poly_coeffs[j];
+        return result;
     }
 
-    double pswf_hat(double k) const { return lambda0 * pswf.eval_val(k / c) * scale; }
+    double integral(double a, double b) const {
+        double va = (a == 0.0) ? 0.0 : integral_eval(a);
+        double vb = integral_eval(b);
+        return vb - va;
+    }
+
+    double pswf_hat(double k) const { 
+        //return lambda0 * (*this)(k / c) * scale;  //doesn't work because k/c is not guaranteed to belong in [-1, 1]
+        return lambda0 * pswf.eval_val(k / c) * scale;
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -211,12 +227,6 @@ short_range(const std::vector<Vec3T<Real>> &r_src,
             const PSWFKernel &pswf,
             const ESPParams &params,
             const std::vector<std::vector<int>> &neighbors) {
-    // PSWF integral table is always double (kernel precision requirement)
-    const int TABLE_SIZE = 10000;
-    std::vector<double> table(TABLE_SIZE);
-    for (int i = 0; i < TABLE_SIZE; ++i)
-        table[i] = pswf.integral(0.0, (double)i / (TABLE_SIZE - 1));
-
     const Real L   = Real(params.L);
     const Real r_c = Real(params.r_c);
     std::vector<Real> pot(params.n, Real(0));
@@ -225,12 +235,7 @@ short_range(const std::vector<Vec3T<Real>> &r_src,
         for (int j : neighbors[i]) {
             Real dist = min_image_distance<Real>(r_src[i], r_src[j], L);
             double t = double(dist) / params.r_c;
-
-            double pos = t * (TABLE_SIZE - 1);
-            int idx = (int)pos;
-            double frac = pos - idx;
-            double intval = (table[idx] * (1.0 - frac) + table[idx + 1] * frac) / params.c0;
-
+            double intval = pswf.integral(0.0, t) / params.c0;
             pot[i] += charges[j] * Real((1.0 - intval) / (4.0 * M_PI * double(dist)));
         }
     }
@@ -310,11 +315,6 @@ short_range_fast(const std::vector<Vec3T<Real>> &r_src,
         return short_range<Real>(r_src, charges, pswf, params, neighbors);
     }
 
-    const int TS = 10000;
-    std::vector<double> table(TS);
-    for (int i = 0; i < TS; ++i)
-        table[i] = pswf.integral(0.0, double(i) / (TS - 1));
-
     CellList<Real> cl = build_cell_list<Real>(r_src, charges, params, nc);
 
     const Real   L      = Real(params.L);
@@ -353,12 +353,9 @@ short_range_fast(const std::vector<Vec3T<Real>> &r_src,
                     Real d2  = ddx * ddx + ddy * ddy + ddz * ddz;
                     if (d2 > r_c_sq) continue;
 
-                    double dist = std::sqrt(double(d2));
-                    double pos  = dist * inv_rc * (TS - 1);
-                    int    idx  = int(pos);
-                    if (idx > TS - 2) idx = TS - 2; // guard at dist == r_c
-                    double frac   = pos - idx;
-                    double intval = (table[idx] * (1.0 - frac) + table[idx + 1] * frac) * inv_c0;
+                    double dist   = std::sqrt(double(d2));
+                    double t      = dist * inv_rc;                 // in [0, 1]
+                    double intval = pswf.integral(0.0, t) * inv_c0;
 
                     acc += cl.qs[b] * Real((1.0 - intval) / (4.0 * M_PI * dist));
                 }
