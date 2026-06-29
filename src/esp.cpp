@@ -63,11 +63,11 @@ struct PSWFKernel {
 
         c0 = pswf.int_eval(1.0) * scale;
 
-        int nc = 16;
+        int nc = 24;
         auto pswf_lambda = [&](double x) { return pswf.eval_val(std::abs(x)) * scale; };
         pswf_poly_coeffs = finufft::kernel::poly_fit<double>(pswf_lambda, nc);
 
-        nc = 10;
+        nc = 20;
         auto pswf_int_lambda = [&](double t) { return pswf.int_eval(t) * scale; };
         pswf_int_poly_coeffs = finufft::kernel::poly_fit<double>(pswf_int_lambda, nc);
     }
