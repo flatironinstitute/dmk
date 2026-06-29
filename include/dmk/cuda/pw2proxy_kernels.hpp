@@ -7,18 +7,17 @@
 // real part into d_proxy_coeffs_downward.
 //
 // Math (per box, per charge_dim d):
-//   ff[k1, m2, m3]    = sum_{m1} pw2poly[m1, k1]      * pw_in[m1, m2, m3, d]
-//   ff2[k1, k2, m3]   = halve(m3) *
-//                       sum_{m2} pw2poly[m2, k2]      * ff[k1, m2, m3]
-//   zcoefs[k1,k2,k3]  = sum_{m3} ff2[k1, k2, m3]      * pw2poly[m3, k3]
+//   f3[m1, m2, k3]    = sum_{m3} halve(m3) *
+//                       pw_in[m1, m2, m3, d]          * pw2poly[m3, k3]
+//   f2[m1, k2, k3]    = sum_{m2} f3[m1, m2, k3]       * pw2poly[m2, k2]
+//   zcoefs[k1,k2,k3]  = sum_{m1} f2[m1, k2, k3]       * pw2poly[m1, k1]
 //   proxy[k1,k2,k3,d] += 2 * Re(zcoefs[k1, k2, k3])
 //
 //   halve(m3) = 0.5 if m3 >= n_pw/2 else 1.0
 //
-// To stay shared-memory friendly we serialize over k1: per k1 iteration the
-// block computes only ff[k1, *, *] and ff2[k1, *, *], then writes the
-// k1-slab of proxy. Per-k1 shared memory ≈ 2 * n_pw * n_pw2 (ff slab) +
-// 2 * n_order * n_pw2 (ff2 slab) reals — a few KB even for large n_pw.
+// The GPU implementation tiles k3 first so the first phase maps threads over
+// the contiguous (m1,m2) plane of pw_in. Shared memory holds one k3 tile of the
+// two complex intermediates.
 
 #include <cuda_runtime.h>
 #include <dmk/cuda/pw2proxy_kernelargs.hpp>
