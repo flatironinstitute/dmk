@@ -22,25 +22,6 @@
 
 #define DMK_ALWAYS_INLINE __attribute__((always_inline)) inline
 
-template <typename Real>
-DMK_ALWAYS_INLINE void shift_scale_polynomial(const Real *coeffs_in, Real a, Real b, Real *coeffs_out, int N) {
-    Real tmp[64];
-    for (int i = 0; i < N; i++)
-        tmp[i] = coeffs_in[i];
-
-    for (int i = 0; i < N - 1; i++) {
-        for (int j = N - 2; j >= i; j--) {
-            tmp[j] += b * tmp[j + 1];
-        }
-    }
-
-    Real ak = 1.0;
-    for (int k = 0; k < N; k++) {
-        coeffs_out[k] = tmp[k] * ak;
-        ak *= a;
-    }
-}
-
 template <class F, class... Args>
 DMK_ALWAYS_INLINE auto dispatch_digits(int n_digits, F &&f, Args &&...args) {
     // clang-format off
@@ -423,14 +404,18 @@ struct LaplacePolyEvaluator2D {
         const vector_type zero = vector_type::Zero();
         const vector_type half = Real{0.5};
 
+        // Poly is in the scaled variable x = rsc*R2 + cen (avoids forming rsc^k).
+        const vector_type x = FMA(R2, rsc_vec, cen_vec);
+
         if constexpr (!has_grad) {
             const vector_type R2sc = R2 * bsizeinv2_vec;
-            const vector_type ptmp = horner(R2, coeffs, n_coeffs);
+            const vector_type ptmp = horner(x, coeffs, n_coeffs);
             u[0][0] = select(mask, half * sctl::log(R2sc) + ptmp, zero);
         } else {
             const vector_type R2sc = R2 * bsizeinv2_vec;
             vector_type P, dP;
-            horner_val_deriv(R2, coeffs, n_coeffs, P, dP);
+            horner_val_deriv(x, coeffs, n_coeffs, P, dP);
+            dP = dP * rsc_vec; // chain rule: d/dR2 = rsc * d/dx
             u[0][0] = select(mask, half * sctl::log(R2sc) + P, zero);
 
             // df/dR2 = 0.5/R2 + P'(R2)
@@ -604,12 +589,14 @@ struct LaplaceDipolePolyEvaluator2D {
         const vector_type zero = vector_type::Zero();
         const vector_type Rinv = my_approx_rsqrt(R2, n_digits);
         const vector_type R2inv = Rinv * Rinv;
+        const vector_type x = FMA(R2, rsc_vec, cen_vec);
 
         if constexpr (!has_grad) {
             // F(R^2) = -(R^-2 + 2 dP).  U[k][0] = dX[k] * F.
             vector_type P, dP;
-            horner_val_deriv(R2, coeffs, n_coeffs, P, dP);
+            horner_val_deriv(x, coeffs, n_coeffs, P, dP);
             (void)P;
+            dP = dP * rsc_vec; // chain rule: d/dR2 = rsc * d/dx
             const vector_type F = -(R2inv + Real{2} * dP);
             for (int k = 0; k < 2; k++)
                 u[k][0] = sctl::select(mask, dX[k] * F, zero);
@@ -619,8 +606,9 @@ struct LaplaceDipolePolyEvaluator2D {
             // U[k][0]   = dX[k] * F
             // U[k][1+i] = delta_{ki} * F + 2 * dX[k] * dX[i] * F'
             vector_type P, dP, ddP;
-            horner_val_deriv2(R2, coeffs, n_coeffs, P, dP, ddP);
-            (void)P;
+            horner_val_deriv2(x, coeffs, n_coeffs, P, dP, ddP);
+            dP = dP * rsc_vec;
+            ddP = ddP * rsc_vec * rsc_vec;
             const vector_type R4inv = R2inv * R2inv;
             const vector_type F = -(R2inv + Real{2} * dP);
             const vector_type Fprime = R4inv - Real{2} * ddP;
@@ -776,7 +764,8 @@ struct SqrtLaplacePolyEvaluator3D {
         const auto mask = (R2 > thresh2_vec) & (R2 < d2max_vec);
         const vector_type Rinv = my_approx_rsqrt(R2, n_digits);
         const vector_type R2inv = Rinv * Rinv;
-        u[0][0] = sctl::select(mask, R2inv * horner(R2, coeffs, n_coeffs), vector_type::Zero());
+        const vector_type x = FMA(R2, rsc_vec, cen_vec);
+        u[0][0] = sctl::select(mask, R2inv * horner(x, coeffs, n_coeffs), vector_type::Zero());
     }
 };
 
@@ -938,11 +927,8 @@ void laplace_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Rea
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
     const int eval_level = (EVAL_LEVEL > 0) ? EVAL_LEVEL : eval_level_rt;
 
-    std::array<Real, 64> coeffs_mod;
-    shift_scale_polynomial(coeffs, rsc, cen, coeffs_mod.data(), n_coeffs);
-
-    LaplacePolyEvaluator2D<Real, MaxVecLen> evaluator{thresh2,           d2max,    rsc,      cen,       Real{0.5} * rsc,
-                                                      coeffs_mod.data(), n_coeffs, n_digits, eval_level};
+    LaplacePolyEvaluator2D<Real, MaxVecLen> evaluator{thresh2, d2max,    rsc,      cen,       Real{0.5} * rsc,
+                                                      coeffs,  n_coeffs, n_digits, eval_level};
 
     if (eval_level == 1) {
         constexpr int KERNEL_OUTPUT_DIM = 1;
@@ -1001,11 +987,7 @@ void laplace_dipole_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real r
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
     const int eval_level = (EVAL_LEVEL > 0) ? EVAL_LEVEL : eval_level_rt;
 
-    std::array<Real, 64> coeffs_mod;
-    shift_scale_polynomial(coeffs, rsc, cen, coeffs_mod.data(), n_coeffs);
-
-    LaplaceDipolePolyEvaluator2D<Real, MaxVecLen> evaluator{thresh2,           d2max,    rsc,     cen,
-                                                            coeffs_mod.data(), n_coeffs, n_digits};
+    LaplaceDipolePolyEvaluator2D<Real, MaxVecLen> evaluator{thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits};
 
     if (eval_level == DMK_POTENTIAL) {
         constexpr int KERNEL_OUTPUT_DIM = 1;
@@ -1061,11 +1043,7 @@ void sqrt_laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
 
-    std::array<Real, 64> coeffs_mod;
-    shift_scale_polynomial(coeffs, rsc, cen, coeffs_mod.data(), n_coeffs);
-
-    SqrtLaplacePolyEvaluator3D<Real, MaxVecLen> evaluator{thresh2,           d2max,    rsc,     cen,
-                                                          coeffs_mod.data(), n_coeffs, n_digits};
+    SqrtLaplacePolyEvaluator3D<Real, MaxVecLen> evaluator{thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits};
 
     constexpr int KERNEL_OUTPUT_DIM = 1;
     EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
