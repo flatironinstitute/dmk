@@ -1,7 +1,5 @@
-// measure_error.cpp
-//
 // Measures DMK accuracy across kernel/dim/digits combinations.
-// Compares against double-precision direct evaluation.
+// Compares against direct evaluation at the same working precision.
 //
 // Usage: ./measure_error [options]
 //   -N n_src          Number of source points (default: 10000)
@@ -9,7 +7,7 @@
 //   -D n_direct       Number of points for direct comparison (default: 10000)
 //   -t f|d            Precision (default: f)
 //   -u                Uniform distribution (default: sphere)
-//   -k kernel         Kernel: laplace, sqrt_laplace, yukawa, all (default: all)
+//   -k kernel         Kernel: laplace, sqrt_laplace, laplace_dipole, yukawa, all (default: all)
 //   -d dim            Dimension: 2, 3, or 0 for both (default: 0)
 //   --beta-sweep      Enable beta sweep mode
 //   --beta-min val    Min beta for sweep (default: 3.0)
@@ -56,10 +54,11 @@ struct Config {
     int sweep_digits = 6;
 };
 
-void generate_points(int n_dim, int n_src, bool uniform, std::vector<double> &r_src, std::vector<double> &charges,
-                     long seed = 0) {
+template <typename Real>
+void generate_points(int n_dim, int n_src, bool uniform, std::vector<Real> &r_src, std::vector<Real> &charges,
+                     int charge_dim = 1, long seed = 0) {
     r_src.resize(n_dim * n_src);
-    charges.resize(n_src);
+    charges.resize(charge_dim * n_src);
 
     std::default_random_engine eng(seed);
     std::uniform_real_distribution<double> rng;
@@ -81,7 +80,8 @@ void generate_points(int n_dim, int n_src, bool uniform, std::vector<double> &r_
             for (int j = 0; j < n_dim; ++j)
                 r_src[i * n_dim + j] = rng(eng);
         }
-        charges[i] = rng(eng) - 0.5;
+        for (int j = 0; j < charge_dim; ++j)
+            charges[i * charge_dim + j] = rng(eng) - 0.5;
     }
 }
 
@@ -91,15 +91,25 @@ struct ErrorMetrics {
     double time;
 };
 
+// Reference summed in double from the same (Real-rounded) points DMK uses, so
+// float summation error doesn't impose an accuracy floor.
 template <typename Real>
-ErrorMetrics run_one(int n_dim, dmk_ikernel kernel, int n_digits, const Config &cfg, const std::vector<double> &r_src_d,
-                     const std::vector<double> &charges_d, const std::vector<double> &pot_direct,
+std::vector<double> compute_reference(int n_dim, dmk_ikernel kernel, int n_test, const std::vector<Real> &r_src,
+                                      const std::vector<Real> &charges) {
+    std::vector<double> r_src_d(r_src.begin(), r_src.end());
+    std::vector<double> charges_d(charges.begin(), charges.end());
+    std::vector<double> r_trg_d(r_src_d.begin(), r_src_d.begin() + n_test * n_dim);
+    std::vector<double> pot_direct;
+    dmk::compute_direct(n_dim, r_src_d, charges_d, std::vector<double>{}, r_trg_d, pot_direct, kernel, DMK_POTENTIAL);
+    return pot_direct;
+}
+
+template <typename Real>
+ErrorMetrics run_one(int n_dim, dmk_ikernel kernel, int n_digits, const Config &cfg, const std::vector<Real> &r_src,
+                     const std::vector<Real> &charges, const std::vector<double> &pot_direct,
                      double beta_override = -1.0) {
     const int n_src = cfg.n_src;
     const int n_test = std::min(cfg.n_direct, n_src);
-
-    std::vector<Real> r_src(r_src_d.begin(), r_src_d.end());
-    std::vector<Real> charges(charges_d.begin(), charges_d.end());
 
     double eps = std::pow(10.0, -n_digits);
 
@@ -156,6 +166,8 @@ const char *kernel_name(dmk_ikernel k) {
         return "Laplace";
     case DMK_SQRT_LAPLACE:
         return "SqrtLaplace";
+    case DMK_LAPLACE_DIPOLE:
+        return "LaplaceDipole";
     case DMK_YUKAWA:
         return "Yukawa";
     default:
@@ -169,6 +181,8 @@ dmk_ikernel parse_kernel(const char *s) {
         return DMK_LAPLACE;
     if (k == "sqrt_laplace")
         return DMK_SQRT_LAPLACE;
+    if (k == "laplace_dipole")
+        return DMK_LAPLACE_DIPOLE;
     if (k == "yukawa")
         return DMK_YUKAWA;
     if (k == "all")
@@ -180,7 +194,7 @@ template <typename Real>
 void run_beta_sweep(const Config &cfg) {
     std::vector<dmk_ikernel> kernels;
     if (static_cast<int>(cfg.kernel_filter) == -1)
-        kernels = {DMK_LAPLACE, DMK_SQRT_LAPLACE, DMK_YUKAWA};
+        kernels = {DMK_LAPLACE, DMK_SQRT_LAPLACE, DMK_LAPLACE_DIPOLE, DMK_YUKAWA};
     else
         kernels = {cfg.kernel_filter};
     std::vector<int> dims;
@@ -193,14 +207,10 @@ void run_beta_sweep(const Config &cfg) {
 
     for (auto kernel : kernels) {
         for (auto n_dim : dims) {
-            std::vector<double> r_src, charges;
-            generate_points(n_dim, cfg.n_src, cfg.uniform, r_src, charges);
+            std::vector<Real> r_src, charges;
+            generate_points(n_dim, cfg.n_src, cfg.uniform, r_src, charges, dmk::get_kernel_input_dim(n_dim, kernel));
             int n_test = std::min(cfg.n_direct, cfg.n_src);
-            std::vector<double> pot_direct, r_src_trunc;
-            r_src_trunc.assign(r_src.begin(), r_src.begin() + n_test * n_dim);
-
-            dmk::compute_direct(n_dim, r_src, charges, std::vector<double>{}, r_src_trunc, pot_direct, kernel,
-                                DMK_POTENTIAL);
+            auto pot_direct = compute_reference(n_dim, kernel, n_test, r_src, charges);
             for (double beta = cfg.beta_min; beta <= cfg.beta_max + 1e-9; beta += cfg.beta_step) {
                 try {
                     auto err = run_one<Real>(n_dim, kernel, 12, cfg, r_src, charges, pot_direct, beta);
@@ -221,7 +231,7 @@ template <typename Real>
 void run_all(const Config &cfg) {
     std::vector<dmk_ikernel> kernels;
     if (static_cast<int>(cfg.kernel_filter) == -1)
-        kernels = {DMK_LAPLACE, DMK_SQRT_LAPLACE, DMK_YUKAWA};
+        kernels = {DMK_LAPLACE, DMK_SQRT_LAPLACE, DMK_LAPLACE_DIPOLE, DMK_YUKAWA};
     else
         kernels = {cfg.kernel_filter};
 
@@ -241,14 +251,11 @@ void run_all(const Config &cfg) {
 
     for (auto kernel : kernels) {
         for (auto n_dim : dims) {
-            std::vector<double> r_src, charges;
-            generate_points(n_dim, cfg.n_src, cfg.uniform, r_src, charges);
+            std::vector<Real> r_src, charges;
+            generate_points(n_dim, cfg.n_src, cfg.uniform, r_src, charges, dmk::get_kernel_input_dim(n_dim, kernel));
 
             int n_test = std::min(cfg.n_direct, cfg.n_src);
-            std::vector<double> pot_direct, r_src_trunc;
-            r_src_trunc.assign(r_src.begin(), r_src.begin() + n_test * n_dim);
-            dmk::compute_direct(n_dim, r_src, charges, std::vector<double>{}, r_src_trunc, pot_direct, kernel,
-                                DMK_POTENTIAL);
+            auto pot_direct = compute_reference(n_dim, kernel, n_test, r_src, charges);
 
             for (int digits = min_digits; digits <= max_digits; ++digits) {
                 try {
@@ -331,7 +338,7 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -n n_per_leaf     DMK leaf size\n"
                       << "  -D n_direct       Points for direct comparison\n"
                       << "  -t f|d            Precision\n"
-                      << "  -k kernel         laplace, sqrt_laplace, yukawa, all\n"
+                      << "  -k kernel         laplace, sqrt_laplace, laplace_dipole, yukawa, all\n"
                       << "  -d dim            2, 3, or 0 for both\n"
                       << "  -u                Uniform distribution\n"
                       << "  --beta-sweep      Enable beta sweep mode\n"
