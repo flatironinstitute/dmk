@@ -56,7 +56,7 @@ CudaEvalTargetsContext<Real, DIM>::CudaEvalTargetsContext(DMKPtTree<Real, DIM> &
 
     n_eval_boxes_ = tree.eval_targets_box_list.size();
     if (n_eval_boxes_)
-        d_eval_targets_box_list_.upload(tree.eval_targets_box_list.data(), tree.eval_targets_box_list.size());
+        d_eval_targets_box_list_.upload_async(tree.eval_targets_box_list.data(), tree.eval_targets_box_list.size(), stream_);
 
     n_order_ = tree.expansion_constants.n_order;
 
@@ -66,7 +66,7 @@ CudaEvalTargetsContext<Real, DIM>::CudaEvalTargetsContext(DMKPtTree<Real, DIM> &
     n_input_dim_ = tree.kernel_input_dim;
     pot_stride_ = tree.kernel_output_dim_src;
     if (!tree.self_correction_work.empty())
-        d_self_correction_work_.upload(tree.self_correction_work.data(), tree.self_correction_work.size());
+        d_self_correction_work_.upload_async(tree.self_correction_work.data(), tree.self_correction_work.size(), stream_);
 }
 
 template <typename Real, int DIM>
