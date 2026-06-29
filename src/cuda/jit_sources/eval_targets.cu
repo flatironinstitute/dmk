@@ -71,6 +71,7 @@ __device__ __forceinline__ void cheby_step(int j, Real x, Real two_x, Real &Tpre
 extern "C" __global__ void EvalTargetsByBoxKernel(EvalTargetsArgs<Real> a) {
     constexpr int OUT_DIM = (EVAL_LEVEL == 1) ? 1 : (DIM + 1);
     constexpr int POT_STRIDE = N_CHARGE_DIM * OUT_DIM;
+    static_assert(TARGETS_PER_THREAD > 0, "TARGETS_PER_THREAD must be positive");
 
     constexpr int n2 = N_ORDER * N_ORDER;
     constexpr int coeffs_stride_per_dim = (DIM == 2) ? n2 : n2 * N_ORDER;
@@ -99,110 +100,203 @@ extern "C" __global__ void EvalTargetsByBoxKernel(EvalTargetsArgs<Real> a) {
         cooperative_load_16B(s_cd, cd_g, coeffs_stride_per_dim);
         __syncthreads();
 
-        for (int t = threadIdx.x; t < n_target; t += blockDim.x) {
-            Real Tx[N_ORDER] = {Real{0}};
-            Real dTx[N_ORDER] = {Real{0}};
+        const int target_stride = blockDim.x * TARGETS_PER_THREAD;
+        for (int t_base = threadIdx.x; t_base < n_target; t_base += target_stride) {
+            bool active[TARGETS_PER_THREAD];
+            int target_idx[TARGETS_PER_THREAD];
+            Real x[TARGETS_PER_THREAD];
+            Real y[TARGETS_PER_THREAD];
+            Real Tx[TARGETS_PER_THREAD][N_ORDER];
+            Real dTx[TARGETS_PER_THREAD][N_ORDER];
 
-            const Real x = (r_target[t * DIM + 0] - cen[0]) * sc;
-            const Real y = (r_target[t * DIM + 1] - cen[1]) * sc;
+#pragma unroll
+            for (int q = 0; q < TARGETS_PER_THREAD; ++q) {
+                const int t = t_base + q * blockDim.x;
+                active[q] = t < n_target;
+                target_idx[q] = t;
 
-            if constexpr (EVAL_LEVEL == 1)
-                chebyshev_fill_dev(Tx, x);
-            else
-                chebyshev_fill_dev_with_deriv(Tx, dTx, x);
+                if (active[q]) {
+                    x[q] = (r_target[t * DIM + 0] - cen[0]) * sc;
+                    y[q] = (r_target[t * DIM + 1] - cen[1]) * sc;
+                } else {
+                    x[q] = Real{0};
+                    y[q] = Real{0};
+                }
 
-            Real acc_pot = Real{0};
-            Real acc_gx = Real{0};
-            Real acc_gy = Real{0};
-            Real acc_gz = Real{0};
+                if constexpr (EVAL_LEVEL == 1)
+                    chebyshev_fill_dev(Tx[q], x[q]);
+                else
+                    chebyshev_fill_dev_with_deriv(Tx[q], dTx[q], x[q]);
+            }
+
+            Real acc_pot[TARGETS_PER_THREAD] = {};
+            Real acc_gx[TARGETS_PER_THREAD] = {};
+            Real acc_gy[TARGETS_PER_THREAD] = {};
+            Real acc_gz[TARGETS_PER_THREAD] = {};
 
             if constexpr (DIM == 2) {
-                Real Ty_jm2 = Real{1}, Ty_jm1 = y;
-                Real dTy_jm2 = Real{0}, dTy_jm1 = Real{1};
-                const Real two_y = Real{2} * y;
+                Real Ty_jm2[TARGETS_PER_THREAD];
+                Real Ty_jm1[TARGETS_PER_THREAD];
+                Real dTy_jm2[TARGETS_PER_THREAD];
+                Real dTy_jm1[TARGETS_PER_THREAD];
+                Real two_y[TARGETS_PER_THREAD];
+
+#pragma unroll
+                for (int q = 0; q < TARGETS_PER_THREAD; ++q) {
+                    Ty_jm2[q] = Real{1};
+                    Ty_jm1[q] = y[q];
+                    dTy_jm2[q] = Real{0};
+                    dTy_jm1[q] = Real{1};
+                    two_y[q] = Real{2} * y[q];
+                }
 
                 for (int j = 0; j < N_ORDER; ++j) {
-                    Real Tyj, dTyj;
-                    cheby_step(j, y, two_y, Ty_jm2, Ty_jm1, dTy_jm2, dTy_jm1, Tyj, dTyj);
+                    Real Tyj[TARGETS_PER_THREAD];
+                    Real dTyj[TARGETS_PER_THREAD];
 
-                    Real px_pot = Real{0};
-                    Real px_gx = Real{0};
+#pragma unroll
+                    for (int q = 0; q < TARGETS_PER_THREAD; ++q)
+                        cheby_step(j, y[q], two_y[q], Ty_jm2[q], Ty_jm1[q], dTy_jm2[q], dTy_jm1[q], Tyj[q],
+                                   dTyj[q]);
+
+                    Real px_pot[TARGETS_PER_THREAD] = {};
+                    Real px_gx[TARGETS_PER_THREAD] = {};
 
 #pragma unroll
                     for (int i = 0; i < N_ORDER; ++i) {
                         const Real c = s_cd[i + j * N_ORDER];
-                        px_pot += c * Tx[i];
-                        if constexpr (EVAL_LEVEL == 2)
-                            px_gx += c * dTx[i];
+
+#pragma unroll
+                        for (int q = 0; q < TARGETS_PER_THREAD; ++q) {
+                            px_pot[q] += c * Tx[q][i];
+                            if constexpr (EVAL_LEVEL == 2)
+                                px_gx[q] += c * dTx[q][i];
+                        }
                     }
 
-                    acc_pot += px_pot * Tyj;
-                    if constexpr (EVAL_LEVEL == 2) {
-                        acc_gx += px_gx * Tyj;
-                        acc_gy += px_pot * dTyj;
+#pragma unroll
+                    for (int q = 0; q < TARGETS_PER_THREAD; ++q) {
+                        acc_pot[q] += px_pot[q] * Tyj[q];
+                        if constexpr (EVAL_LEVEL == 2) {
+                            acc_gx[q] += px_gx[q] * Tyj[q];
+                            acc_gy[q] += px_pot[q] * dTyj[q];
+                        }
                     }
                 }
             } else {
-                const Real z = (r_target[t * DIM + 2] - cen[2]) * sc;
+                Real z[TARGETS_PER_THREAD];
+                Real Tz_km2[TARGETS_PER_THREAD];
+                Real Tz_km1[TARGETS_PER_THREAD];
+                Real dTz_km2[TARGETS_PER_THREAD];
+                Real dTz_km1[TARGETS_PER_THREAD];
+                Real two_z[TARGETS_PER_THREAD];
+                Real two_y[TARGETS_PER_THREAD];
 
-                Real Tz_km2 = Real{1}, Tz_km1 = z;
-                Real dTz_km2 = Real{0}, dTz_km1 = Real{1};
-                const Real two_z = Real{2} * z;
-                const Real two_y = Real{2} * y;
+#pragma unroll
+                for (int q = 0; q < TARGETS_PER_THREAD; ++q) {
+                    if (active[q])
+                        z[q] = (r_target[target_idx[q] * DIM + 2] - cen[2]) * sc;
+                    else
+                        z[q] = Real{0};
+
+                    Tz_km2[q] = Real{1};
+                    Tz_km1[q] = z[q];
+                    dTz_km2[q] = Real{0};
+                    dTz_km1[q] = Real{1};
+                    two_z[q] = Real{2} * z[q];
+                    two_y[q] = Real{2} * y[q];
+                }
 
                 for (int k = 0; k < N_ORDER; ++k) {
-                    Real Tzk, dTzk;
-                    cheby_step(k, z, two_z, Tz_km2, Tz_km1, dTz_km2, dTz_km1, Tzk, dTzk);
+                    Real Tzk[TARGETS_PER_THREAD];
+                    Real dTzk[TARGETS_PER_THREAD];
 
-                    Real py_pot = Real{0};
-                    Real py_gx = Real{0};
-                    Real py_gy = Real{0};
+#pragma unroll
+                    for (int q = 0; q < TARGETS_PER_THREAD; ++q)
+                        cheby_step(k, z[q], two_z[q], Tz_km2[q], Tz_km1[q], dTz_km2[q], dTz_km1[q], Tzk[q],
+                                   dTzk[q]);
 
-                    Real Ty_jm2 = Real{1}, Ty_jm1 = y;
-                    Real dTy_jm2 = Real{0}, dTy_jm1 = Real{1};
+                    Real py_pot[TARGETS_PER_THREAD] = {};
+                    Real py_gx[TARGETS_PER_THREAD] = {};
+                    Real py_gy[TARGETS_PER_THREAD] = {};
+
+                    Real Ty_jm2[TARGETS_PER_THREAD];
+                    Real Ty_jm1[TARGETS_PER_THREAD];
+                    Real dTy_jm2[TARGETS_PER_THREAD];
+                    Real dTy_jm1[TARGETS_PER_THREAD];
+
+#pragma unroll
+                    for (int q = 0; q < TARGETS_PER_THREAD; ++q) {
+                        Ty_jm2[q] = Real{1};
+                        Ty_jm1[q] = y[q];
+                        dTy_jm2[q] = Real{0};
+                        dTy_jm1[q] = Real{1};
+                    }
 
 #pragma unroll
                     for (int j = 0; j < N_ORDER; ++j) {
-                        Real Tyj, dTyj;
-                        cheby_step(j, y, two_y, Ty_jm2, Ty_jm1, dTy_jm2, dTy_jm1, Tyj, dTyj);
+                        Real Tyj[TARGETS_PER_THREAD];
+                        Real dTyj[TARGETS_PER_THREAD];
 
-                        Real px_pot = Real{0};
-                        Real px_gx = Real{0};
+#pragma unroll
+                        for (int q = 0; q < TARGETS_PER_THREAD; ++q)
+                            cheby_step(j, y[q], two_y[q], Ty_jm2[q], Ty_jm1[q], dTy_jm2[q], dTy_jm1[q], Tyj[q],
+                                       dTyj[q]);
+
+                        Real px_pot[TARGETS_PER_THREAD] = {};
+                        Real px_gx[TARGETS_PER_THREAD] = {};
 
 #pragma unroll
                         for (int i = 0; i < N_ORDER; ++i) {
                             const Real c = s_cd[i + j * N_ORDER + k * n2];
-                            px_pot += c * Tx[i];
-                            if constexpr (EVAL_LEVEL == 2)
-                                px_gx += c * dTx[i];
+
+#pragma unroll
+                            for (int q = 0; q < TARGETS_PER_THREAD; ++q) {
+                                px_pot[q] += c * Tx[q][i];
+                                if constexpr (EVAL_LEVEL == 2)
+                                    px_gx[q] += c * dTx[q][i];
+                            }
                         }
 
-                        py_pot += px_pot * Tyj;
-                        if constexpr (EVAL_LEVEL == 2) {
-                            py_gx += px_gx * Tyj;
-                            py_gy += px_pot * dTyj;
+#pragma unroll
+                        for (int q = 0; q < TARGETS_PER_THREAD; ++q) {
+                            py_pot[q] += px_pot[q] * Tyj[q];
+                            if constexpr (EVAL_LEVEL == 2) {
+                                py_gx[q] += px_gx[q] * Tyj[q];
+                                py_gy[q] += px_pot[q] * dTyj[q];
+                            }
                         }
                     }
 
-                    acc_pot += py_pot * Tzk;
-                    if constexpr (EVAL_LEVEL == 2) {
-                        acc_gx += py_gx * Tzk;
-                        acc_gy += py_gy * Tzk;
-                        acc_gz += py_pot * dTzk;
+#pragma unroll
+                    for (int q = 0; q < TARGETS_PER_THREAD; ++q) {
+                        acc_pot[q] += py_pot[q] * Tzk[q];
+                        if constexpr (EVAL_LEVEL == 2) {
+                            acc_gx[q] += py_gx[q] * Tzk[q];
+                            acc_gy[q] += py_gy[q] * Tzk[q];
+                            acc_gz[q] += py_pot[q] * dTzk[q];
+                        }
                     }
                 }
             }
 
-            const int base = d * OUT_DIM + t * POT_STRIDE;
+#pragma unroll
+            for (int q = 0; q < TARGETS_PER_THREAD; ++q) {
+                if (!active[q]) {
+                    continue;
+                }
 
-            if constexpr (EVAL_LEVEL == 1) {
-                pot[base] += acc_pot;
-            } else {
-                pot[base + 0] += acc_pot;
-                pot[base + 1] += sc * acc_gx;
-                pot[base + 2] += sc * acc_gy;
-                if constexpr (DIM == 3)
-                    pot[base + 3] += sc * acc_gz;
+                const int base = d * OUT_DIM + target_idx[q] * POT_STRIDE;
+
+                if constexpr (EVAL_LEVEL == 1) {
+                    pot[base] += acc_pot[q];
+                } else {
+                    pot[base + 0] += acc_pot[q];
+                    pot[base + 1] += sc * acc_gx[q];
+                    pot[base + 2] += sc * acc_gy[q];
+                    if constexpr (DIM == 3)
+                        pot[base + 3] += sc * acc_gz[q];
+                }
             }
         }
 
