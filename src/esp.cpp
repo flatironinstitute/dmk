@@ -44,6 +44,7 @@ struct PSWFKernel {
     dmk::Prolate0Fun pswf;
     int P;      // stencil width, auto-derived from eps
     double eps; // tolerance used to select P
+    double sigma;
     double c;
     double lambda0;
     double c0;
@@ -51,9 +52,9 @@ struct PSWFKernel {
     std::vector<double> pswf_poly_coeffs;
     std::vector<double> pswf_int_poly_coeffs;
 
-    explicit PSWFKernel(double eps_, int lenw = 8000) : eps(eps_) {
-        P = esp_ns_from_eps(eps_);
-        c = esp_pswf_c_from_eps(eps_);
+    explicit PSWFKernel(double eps_, double sigma_ = 1.35, int lenw = 8000) : eps(eps_), sigma(sigma_) {
+        P = esp_ns_from_eps(eps_, sigma_);
+        c = esp_pswf_c_from_eps(eps_, sigma_);
         pswf = dmk::Prolate0Fun(c, lenw);
 
         scale = 1.0 / pswf.eval_val(0.0);
@@ -387,8 +388,9 @@ static std::vector<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const
     finufft_opts opts;
     finufft_default_opts(&opts);
     opts.spreadinterponly = 1;
-    opts.upsampfac = 2;
+    opts.upsampfac = pswf.sigma;
     double tol = pswf.eps;
+    //tol = 1e-9;
 
     // 1. Spread: NU points -> uniform grid (type 1)
     std::vector<std::complex<double>> b(ntot, 0.0);

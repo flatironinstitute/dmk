@@ -455,12 +455,12 @@ std::vector<std::vector<Real>> get_local_correction_coeffs(dmk_ikernel kernel, i
 }
 
 template <typename Real>
-std::vector<std::vector<Real>> get_esp_correction_coeffs(int n_digits) {
+std::vector<std::vector<Real>> get_esp_correction_coeffs(int n_digits, double sigma) {
     static std::mutex lock;
     std::lock_guard<std::mutex> lock_guard(lock);
 
     const double eps = std::pow(10.0, -n_digits);
-    dmk::Prolate0Fun prolate_fun(esp_pswf_c_from_eps(eps), 10000);
+    dmk::Prolate0Fun prolate_fun(esp_pswf_c_from_eps(eps, sigma), 10000);
     const double inv_int_inf = 1.0 / prolate_fun.int_eval(1.0);
 
     // Same form as the DMK Laplace-3D residual (1 - I(t)/c0), t = r/r_c in [0,1],
@@ -618,8 +618,8 @@ template std::vector<std::vector<float>> get_local_correction_coeffs<float>(dmk_
 template std::vector<std::vector<double>> get_local_correction_coeffs<double>(dmk_ikernel kernel, int n_dim,
                                                                               int n_digits, double beta);
 
-template std::vector<std::vector<float>> get_esp_correction_coeffs<float>(int n_digits);
-template std::vector<std::vector<double>> get_esp_correction_coeffs<double>(int n_digits);
+template std::vector<std::vector<float>> get_esp_correction_coeffs<float>(int n_digits, double sigma);
+template std::vector<std::vector<double>> get_esp_correction_coeffs<double>(int n_digits, double sigma);
 
 template direct_evaluator_func<float> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim,
                                                            float lambda);

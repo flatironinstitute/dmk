@@ -105,84 +105,105 @@ void run_benchmark(const Config &cfg) {
     }
 
     // ---- Eval benchmark ----------------------------------------------------
-    dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps);
+    dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps); // before: cfg.eps 
 
-    // ---- Optional verification against perilap3d ---------------------------
+    // ---- Optional: load perilap3d reference for per-run error reporting ----
+    std::vector<double> ref;
+    bool have_ref = false;
+
     if (cfg.verify && rank == 0) {
-        auto pot_d = dmk::esp_eval<double>(plan, r_src_d, charges_d);
+        ref.resize(n);
 
-        // write binary temp file: int32 N | float64[N,3] positions | float64[N] charges
-        char tmpfile[] = "/tmp/benchmark_esp_XXXXXX";
-        int fd = mkstemp(tmpfile);
-        int32_t nn = static_cast<int32_t>(n);
-        write(fd, &nn, sizeof(nn));
-        for (int i = 0; i < n; ++i) write(fd, r_src_d[i].data(), 3 * sizeof(double));
-        write(fd, charges_d.data(), n * sizeof(double));
-        close(fd);
+        // Flatten positions for cache validation and temp file
+        std::vector<double> pos_flat(n * 3);
+        for (int i = 0; i < n; ++i) {
+            pos_flat[i*3+0] = r_src_d[i][0];
+            pos_flat[i*3+1] = r_src_d[i][1];
+            pos_flat[i*3+2] = r_src_d[i][2];
+        }
 
-        // redirect Python stderr to a temp file so we can show it on failure
-        char errfile[] = "/tmp/benchmark_esp_err_XXXXXX";
-        int efd = mkstemp(errfile);
-        close(efd);
+        // Cache file: VERIFY_CACHE_DIR/perilap_N{n}.bin
+        // Format: int32 N | float64[N*3] positions | float64[N] charges | float64[N] potentials
+        std::string cache_path = std::string(VERIFY_CACHE_DIR) + "/perilap_N" + std::to_string(n) + ".bin";
 
-        std::string cmd = std::string("python3 ") + VERIFY_SCRIPT_PATH
-                        + " " + tmpfile + " " + cfg.perilap3d_dir
-                        + " 2>" + errfile;
-        FILE *pipe = popen(cmd.c_str(), "r");
-        if (!pipe) {
-            std::cerr << "# verify: failed to launch Python helper\n";
-            unlink(tmpfile);
-            unlink(errfile);
-        } else {
-            std::vector<double> ref(n);
-            bool ok = true;
-            for (int i = 0; i < n; ++i) {
-                if (fscanf(pipe, "%lf", &ref[i]) != 1) {
-                    ok = false;
-                    break;
-                }
-            }
-            int rc = pclose(pipe);
-            unlink(tmpfile);
-
-            if (!ok || rc != 0) {
-                std::cerr << "# verify: Python helper failed (exit " << rc << "). stderr:\n";
-                if (FILE *ef = fopen(errfile, "r")) {
-                    char buf[256];
-                    while (fgets(buf, sizeof(buf), ef)) std::cerr << buf;
-                    fclose(ef);
-                }
+        if (FILE *cf = fopen(cache_path.c_str(), "rb")) {
+            int32_t cached_n = 0;
+            std::vector<double> cached_pos(n * 3), cached_q(n);
+            bool ok = fread(&cached_n, sizeof(cached_n), 1, cf) == 1
+                   && cached_n == static_cast<int32_t>(n)
+                   && (int)fread(cached_pos.data(), sizeof(double), n * 3, cf) == n * 3
+                   && cached_pos == pos_flat
+                   && (int)fread(cached_q.data(), sizeof(double), n, cf) == n
+                   && cached_q == charges_d
+                   && (int)fread(ref.data(), sizeof(double), n, cf) == n;
+            fclose(cf);
+            if (ok) {
+                have_ref = true;
+                std::cout << "# verify: cache hit — skipping perilap3d (N=" << n << ")\n" << std::flush;
             } else {
-                // gauge-correct ESP result: subtract its mean (ref is already zero-mean)
-                double esp_mean = 0;
-                for (double v : pot_d) esp_mean += v;
-                esp_mean /= n;
-
-                double err2 = 0, ref2 = 0, max_rel = 0;
-                for (int i = 0; i < n; ++i) {
-                    std::cout << "Point " << i << " - Perilap reference: " << ref[i] << " ESP: " << pot_d[i] << " Difference: " << pot_d[i] - ref[i] << "\n";
-                    double diff = (pot_d[i] - esp_mean) - ref[i];
-                    double r = ref[i];
-                    err2 += diff * diff;
-                    ref2 += r * r;
-                    if (std::abs(r) > 0.0)
-                        max_rel = std::max(max_rel, std::abs(diff / r));
-                }
-                double l2_rel = std::sqrt(err2 / ref2);
-
-                std::cout << "# verify: l2_rel_err = " << l2_rel
-                          << ", max_rel_err = " << max_rel
-                          << " (eps = " << cfg.eps << ")\n" << std::flush;
+                std::cout << "# verify: cache stale or corrupt, recomputing perilap3d reference...\n" << std::flush;
             }
-            unlink(errfile);
+        } else {
+            std::cout << "# verify: no cache found, calling perilap3d (this may take a while for first run)...\n" << std::flush;
+        }
+
+        if (!have_ref) {
+            char tmpfile[] = "/tmp/benchmark_esp_XXXXXX";
+            int fd = mkstemp(tmpfile);
+            int32_t nn = static_cast<int32_t>(n);
+            write(fd, &nn, sizeof(nn));
+            write(fd, pos_flat.data(), n * 3 * sizeof(double));
+            write(fd, charges_d.data(), n * sizeof(double));
+            close(fd);
+
+            char errfile[] = "/tmp/benchmark_esp_err_XXXXXX";
+            int efd = mkstemp(errfile);
+            close(efd);
+
+            std::string cmd = std::string("python3 ") + VERIFY_SCRIPT_PATH
+                            + " " + tmpfile + " " + cfg.perilap3d_dir
+                            + " 2>" + errfile;
+            FILE *pipe = popen(cmd.c_str(), "r");
+            if (!pipe) {
+                std::cerr << "# verify: failed to launch Python helper\n";
+            } else {
+                bool ok = true;
+                for (int i = 0; i < n; ++i)
+                    if (fscanf(pipe, "%lf", &ref[i]) != 1) { ok = false; break; }
+                int rc = pclose(pipe);
+
+                if (!ok || rc != 0) {
+                    std::cerr << "# verify: Python helper failed (exit " << rc << "). stderr:\n";
+                    if (FILE *ef = fopen(errfile, "r")) {
+                        char buf[256];
+                        while (fgets(buf, sizeof(buf), ef)) std::cerr << buf;
+                        fclose(ef);
+                    }
+                } else {
+                    have_ref = true;
+                    if (FILE *cf = fopen(cache_path.c_str(), "wb")) {
+                        fwrite(&nn, sizeof(nn), 1, cf);
+                        fwrite(pos_flat.data(), sizeof(double), n * 3, cf);
+                        fwrite(charges_d.data(), sizeof(double), n, cf);
+                        fwrite(ref.data(), sizeof(double), n, cf);
+                        fclose(cf);
+                        std::cout << "# verify: wrote perilap3d cache to " << cache_path << "\n" << std::flush;
+                    }
+                }
+                unlink(errfile);
+            }
+            unlink(tmpfile);
         }
     }
 
     // ---- Full eval benchmark --------------------------------------------------
     if (rank == 0) {
-        std::cout << "# phase: eval\n"
-                  << "run,total_time,pts_per_s,sr_time,lr_time,self_time\n"
-                  << std::flush;
+        std::cout << "# phase: eval\n";
+        if (have_ref)
+            std::cout << "run,total_time,pts_per_s,sr_time,lr_time,self_time,l2_rel_err,max_rel_err\n";
+        else
+            std::cout << "run,total_time,pts_per_s,sr_time,lr_time,self_time\n";
+        std::cout << std::flush;
     }
 
     for (int run = 0; run < cfg.n_runs; ++run) {
@@ -190,12 +211,29 @@ void run_benchmark(const Config &cfg) {
         double t0 = MY_OMP_GET_WTIME();
         auto pot = dmk::esp_eval<Real>(plan, r_src, charges, &timings);
         double t1 = MY_OMP_GET_WTIME();
-        (void)pot;
 
         if (rank == 0) {
-            std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0) << "," << timings.t_short << ","
-                      << timings.t_long << "," << timings.t_self << "\n"
-                      << std::flush;
+            std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0) << ","
+                      << timings.t_short << "," << timings.t_long << "," << timings.t_self;
+
+            if (have_ref) {
+                double esp_mean = 0;
+                for (int i = 0; i < n; ++i) esp_mean += double(pot[i]);
+                esp_mean /= n;
+
+                double err2 = 0, ref2 = 0, max_rel = 0;
+                for (int i = 0; i < n; ++i) {
+                    double diff = (double(pot[i]) - esp_mean) - ref[i];
+                    double r = ref[i];
+                    err2 += diff * diff;
+                    ref2 += r * r;
+                    if (std::abs(r) > 0.0)
+                        max_rel = std::max(max_rel, std::abs(diff / r));
+                }
+                std::cout << "," << std::sqrt(err2 / ref2) << "," << max_rel;
+            }
+
+            std::cout << "\n" << std::flush;
         }
     }
 

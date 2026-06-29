@@ -20,5 +20,6 @@ if (DMK_BUILD_ESP)
   target_compile_definitions(benchmark_esp PRIVATE
     VERIFY_SCRIPT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/verify_esp.py"
     PERILAP3D_DIR="${CMAKE_SOURCE_DIR}/scripts/perilap3d"
+    VERIFY_CACHE_DIR="${CMAKE_BINARY_DIR}"
   )
 endif()
