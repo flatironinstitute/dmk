@@ -291,7 +291,8 @@ direct_eval_accumulate(const StokesletPolyEvaluator3DCuda<CoeffsDiag, CoeffsOffd
 
 #pragma unroll
     for (int i = 0; i < 3; ++i) {
-        vt[i] += fdiag * vs[i] + off * dX[i];
+        vt[i] = fma(fdiag, vs[i], vt[i]);
+        vt[i] = fma(off, dX[i], vt[i]);
     }
 }
 
@@ -324,7 +325,9 @@ direct_eval_accumulate(const StressletPolyEvaluator3DCuda<CoeffsDiag, CoeffsOffd
 
 #pragma unroll
     for (int i = 0; i < 3; ++i) {
-        vt[i] += r_scale * dX[i] + n_scale * ns[i] + v_scale * vs[i];
+        vt[i] = fma(r_scale, dX[i], vt[i]);
+        vt[i] = fma(n_scale, ns[i], vt[i]);
+        vt[i] = fma(v_scale, vs[i], vt[i]);
     }
 }
 
@@ -539,7 +542,7 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
             if (active_target[q]) {
 #pragma unroll
                 for (int k = 0; k < KERNEL_OUTPUT_DIM; ++k) {
-                    pot_targets[target_idx[q] * KERNEL_OUTPUT_DIM + k] += vt[q][k] * scale_factor;
+                    pot_targets[target_idx[q] * KERNEL_OUTPUT_DIM + k] = vt[q][k] * scale_factor;
                 }
             }
         }
