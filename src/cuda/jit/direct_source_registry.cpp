@@ -68,6 +68,7 @@ std::string make_direct_by_box_source(const JitKey &key) {
 
     const int src_tile = required_int_param(key, "SRC_TILE", "DirectByBox");
     const int blocksize = required_int_param(key, "BLOCK_SIZE", "DirectByBox");
+    const int targets_per_thread = required_int_param(key, "TARGETS_PER_THREAD", "DirectByBox");
 
     std::ostringstream prelude;
 
@@ -80,6 +81,7 @@ std::string make_direct_by_box_source(const JitKey &key) {
 
     prelude << "constexpr int SRC_TILE = " << src_tile << ";\n";
     prelude << "constexpr int BLOCK_SIZE = " << blocksize << ";\n\n";
+    prelude << "constexpr int TARGETS_PER_THREAD = " << targets_per_thread << ";\n\n";
 
     const SplitSource &split = direct_by_box_split_source();
 

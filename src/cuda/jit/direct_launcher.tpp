@@ -168,6 +168,7 @@ void ensure_direct_descriptor_registered() {
 struct DirectLaunchConfig {
     int src_tile = 32;
     int blocksize = 128;
+    int targets_per_thread = 1;
 };
 
 inline int tuning_param_or(const TuningParams& params, const char* name, int fallback) {
@@ -179,6 +180,7 @@ inline TuningParams direct_tuning_params(const DirectLaunchConfig& config) {
     return TuningParams{
         {"SRC_TILE", config.src_tile},
         {"BLOCK_SIZE", config.blocksize},
+        {"TARGETS_PER_THREAD", config.targets_per_thread},
     };
 }
 
@@ -189,6 +191,7 @@ inline DirectLaunchConfig direct_config_from_params(
     return DirectLaunchConfig{
         tuning_param_or(params, "SRC_TILE", defaults.src_tile),
         tuning_param_or(params, "BLOCK_SIZE", defaults.blocksize),
+        tuning_param_or(params, "TARGETS_PER_THREAD", defaults.targets_per_thread),
     };
 }
 
@@ -235,7 +238,9 @@ std::string direct_tuning_key(
        << "|normal_dim=" << Evaluator::NORMAL_DIM
        << "|n_work=" << args.n_work
        << "|n_levels=" << args.n_levels
-       << "|nlist1_stride=" << args.nlist1_stride;
+       << "|nlist1_stride=" << args.nlist1_stride
+       << "|targets_per_thread_space=1-4"
+       << "|source_loop_unroll=4";
     return ss.str();
 }
 
@@ -362,6 +367,7 @@ void launch_direct_by_box_jit_config(
     key.params = {
         {"SRC_TILE", config.src_tile},
         {"BLOCK_SIZE", config.blocksize},
+        {"TARGETS_PER_THREAD", config.targets_per_thread},
     };
 
     auto kernel = cache.get_kernel(key);
@@ -430,6 +436,7 @@ DirectLaunchConfig tune_direct_launch_config(
     const std::vector<TuningParameter> space{
         {"SRC_TILE", {16, 32, 64, 96, 128, 192, 256}},
         {"BLOCK_SIZE", {64, 128, 256, 512}},
+        {"TARGETS_PER_THREAD", {1, 2, 3, 4}},
     };
 
     constexpr int values_per_source =
@@ -444,7 +451,9 @@ DirectLaunchConfig tune_direct_launch_config(
         if (config.src_tile <= 0 ||
             config.blocksize <= 0 ||
             config.blocksize > prop.maxThreadsPerBlock ||
-            config.blocksize % 32 != 0) {
+            config.blocksize % 32 != 0 ||
+            config.targets_per_thread <= 0 ||
+            config.targets_per_thread > 4) {
             return false;
         }
 
@@ -508,12 +517,12 @@ DirectLaunchConfig tune_direct_launch_config(
 
 template <typename Evaluator, typename Real>
 void launch_direct_by_box_jit(JitCache &cache, const dmk::cuda::DirectByBoxArgs<Real> &args, cudaStream_t stream,
-                              int src_tile, int blocksize) {
+                              int src_tile, int blocksize, int targets_per_thread) {
     if (args.n_work == 0) {
         return;
     }
 
-    detail::DirectLaunchConfig config{src_tile, blocksize};
+    detail::DirectLaunchConfig config{src_tile, blocksize, targets_per_thread};
 
     try {
         config = detail::tune_direct_launch_config<Evaluator, Real>(

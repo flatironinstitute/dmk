@@ -330,8 +330,11 @@ direct_eval_accumulate(const StressletPolyEvaluator3DCuda<CoeffsDiag, CoeffsOffd
 
 using Evaluator = DMK_DIRECT_EVALUATOR;
 
-template <typename Eval, int TILE>
+template <typename Eval, int TILE, int TARGETS>
 __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real> a) {
+    static_assert(TARGETS > 0, "TARGETS_PER_THREAD must be positive");
+    static_assert(TARGETS <= 4, "TARGETS_PER_THREAD must be at most 4");
+
     constexpr int SPATIAL_DIM = Eval::SPATIAL_DIM;
     constexpr int KERNEL_INPUT_DIM = Eval::KERNEL_INPUT_DIM;
     constexpr int KERNEL_OUTPUT_DIM = Eval::KERNEL_OUTPUT_DIM;
@@ -374,26 +377,41 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
 
     Real *__restrict__ pot_targets = a.pot_flat + a.pot_offsets[trg_box];
 
-    const int n_target_rounds = (n_targets + blockDim.x - 1) / blockDim.x;
+    const int target_stride = blockDim.x * TARGETS;
+    const int n_target_rounds = (n_targets + target_stride - 1) / target_stride;
 
     for (int tr = 0; tr < n_target_rounds; ++tr) {
-        const int t = tr * blockDim.x + threadIdx.x;
-        const bool active_target = t < n_targets;
+        const int t_base = tr * target_stride + threadIdx.x;
 
-        Real xt[SPATIAL_DIM];
+        bool active_target[TARGETS];
+        int target_idx[TARGETS];
+        bool any_active_target = false;
+        Real xt[TARGETS][SPATIAL_DIM];
 
-        if (active_target) {
 #pragma unroll
-            for (int k = 0; k < SPATIAL_DIM; ++k) {
-                xt[k] = r_targets[t * SPATIAL_DIM + k];
+        for (int q = 0; q < TARGETS; ++q) {
+            const int t = t_base + q * blockDim.x;
+            const bool active = t < n_targets;
+            active_target[q] = active;
+            target_idx[q] = t;
+            any_active_target = any_active_target || active;
+
+            if (active) {
+#pragma unroll
+                for (int k = 0; k < SPATIAL_DIM; ++k) {
+                    xt[q][k] = r_targets[t * SPATIAL_DIM + k];
+                }
             }
         }
 
-        Real vt[KERNEL_OUTPUT_DIM];
+        Real vt[TARGETS][KERNEL_OUTPUT_DIM];
 
 #pragma unroll
-        for (int k = 0; k < KERNEL_OUTPUT_DIM; ++k) {
-            vt[k] = Real{0};
+        for (int q = 0; q < TARGETS; ++q) {
+#pragma unroll
+            for (int k = 0; k < KERNEL_OUTPUT_DIM; ++k) {
+                vt[q][k] = Real{0};
+            }
         }
 
         for (int li = 0; li < n_list1; ++li) {
@@ -458,8 +476,8 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
 
                 __syncthreads();
 
-                if (active_target) {
-#pragma unroll
+                if (any_active_target) {
+#pragma unroll 4
                     for (int ss = 0; ss < tile_count; ++ss) {
                         Real xs[SPATIAL_DIM];
 
@@ -469,11 +487,6 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
                         }
 
                         Real dX[SPATIAL_DIM];
-
-#pragma unroll
-                        for (int k = 0; k < SPATIAL_DIM; ++k) {
-                            dX[k] = xt[k] - xs[k];
-                        }
 
                         Real vs[KERNEL_INPUT_DIM];
 
@@ -490,9 +503,29 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
                                 ns[k] = s_normal[ss * NORMAL_DIM + k];
                             }
 
-                            direct_eval_accumulate(evaluator, vt, dX, vs, ns);
+#pragma unroll
+                            for (int q = 0; q < TARGETS; ++q) {
+                                if (active_target[q]) {
+#pragma unroll
+                                    for (int k = 0; k < SPATIAL_DIM; ++k) {
+                                        dX[k] = xt[q][k] - xs[k];
+                                    }
+
+                                    direct_eval_accumulate(evaluator, vt[q], dX, vs, ns);
+                                }
+                            }
                         } else {
-                            direct_eval_accumulate(evaluator, vt, dX, vs);
+#pragma unroll
+                            for (int q = 0; q < TARGETS; ++q) {
+                                if (active_target[q]) {
+#pragma unroll
+                                    for (int k = 0; k < SPATIAL_DIM; ++k) {
+                                        dX[k] = xt[q][k] - xs[k];
+                                    }
+
+                                    direct_eval_accumulate(evaluator, vt[q], dX, vs);
+                                }
+                            }
                         }
                     }
                 }
@@ -501,10 +534,13 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
             }
         }
 
-        if (active_target) {
 #pragma unroll
-            for (int k = 0; k < KERNEL_OUTPUT_DIM; ++k) {
-                pot_targets[t * KERNEL_OUTPUT_DIM + k] += vt[k] * scale_factor;
+        for (int q = 0; q < TARGETS; ++q) {
+            if (active_target[q]) {
+#pragma unroll
+                for (int k = 0; k < KERNEL_OUTPUT_DIM; ++k) {
+                    pot_targets[target_idx[q] * KERNEL_OUTPUT_DIM + k] += vt[q][k] * scale_factor;
+                }
             }
         }
     }
@@ -515,4 +551,6 @@ using DirectArgs = dmk::cuda::DirectByBoxArgs<Real>;
 
 // KERNEL_START
 
-extern "C" __global__ void DMK_DIRECT_KERNEL_NAME(DirectArgs a) { DirectByBoxBody<Evaluator, SRC_TILE>(a); }
+extern "C" __global__ void DMK_DIRECT_KERNEL_NAME(DirectArgs a) {
+    DirectByBoxBody<Evaluator, SRC_TILE, TARGETS_PER_THREAD>(a);
+}

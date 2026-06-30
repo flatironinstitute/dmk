@@ -365,7 +365,7 @@ EvalTargetsLaunchConfig tune_eval_targets_launch_config(JitCache &cache, int eva
 
     std::unique_lock<std::mutex> config_lock(eval_targets_config_cache_mutex());
     const auto it = eval_targets_config_cache().find(in_process_key);
-    if (!force && it != eval_targets_config_cache().end()) {
+    if (it != eval_targets_config_cache().end()) {
         return it->second;
     }
 
