@@ -111,7 +111,7 @@ void run_benchmark(const Config &cfg) {
     std::vector<double> ref;
     bool have_ref = false;
 
-    if (cfg.verify && rank == 0) {
+    if (rank == 0) {
         ref.resize(n);
 
         // Flatten positions for cache validation and temp file
@@ -196,13 +196,62 @@ void run_benchmark(const Config &cfg) {
         }
     }
 
+    // ---- 2D sweep: r_c x sigma — find the largest r_c and sigma within eps ----
+    if (cfg.verify && have_ref && rank == 0) {
+        const std::vector<double> rc_vals = {
+            0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.10, 0.12};
+        const double sig_lo = 1.1, sig_hi = 2.5, sig_step = 0.25;
+
+        std::cout << "# phase: rc_sigma_sweep (eps=" << cfg.eps << ", N=" << n << ")\n"
+                  << "r_c,sigma,l2_rel_err\n" << std::flush;
+
+        struct SweepPt { double rc, sigma, l2; };
+        std::vector<SweepPt> pts;
+
+        for (double rc : rc_vals) {
+            for (double sig = sig_lo; sig <= sig_hi + 1e-9; sig += sig_step) {
+                dmk::EspPlan *sp = dmk::esp_create_plan(cfg.L, rc, cfg.eps, sig);
+                auto pot_s = dmk::esp_eval<double>(sp, r_src_d, charges_d);
+                dmk::esp_destroy_plan(sp);
+
+                double esp_mean = 0;
+                for (double v : pot_s) esp_mean += v;
+                esp_mean /= n;
+
+                double err2 = 0, ref2 = 0;
+                for (int i = 0; i < n; ++i) {
+                    double diff = (pot_s[i] - esp_mean) - ref[i];
+                    err2 += diff * diff;
+                    ref2 += ref[i] * ref[i];
+                }
+                double l2 = std::sqrt(err2 / ref2);
+                std::cout << rc << "," << sig << "," << l2 << "\n" << std::flush;
+                pts.push_back({rc, sig, l2});
+            }
+        }
+
+        // For each r_c, recommend the largest sigma that achieves l2_rel_err < eps.
+        // Larger sigma => smaller stencil width P => fewer spread points => faster.
+        // r_c is a user choice; sigma is the tunable we optimize here.
+        std::cout << "# recommendations (largest sigma achieving l2_rel_err < eps=" << cfg.eps << "):\n";
+        for (double rc : rc_vals) {
+            SweepPt best{rc, -1.0, -1.0};
+            for (const auto &p : pts)
+                if (p.rc == rc && p.l2 < cfg.eps && p.sigma > best.sigma)
+                    best = p;
+            std::cout << "#   r_c=" << rc << ": ";
+            if (best.sigma > 0)
+                std::cout << "sigma=" << best.sigma << " (l2_rel_err=" << best.l2 << ")\n";
+            else
+                std::cout << "no sigma in [" << sig_lo << ", " << sig_hi << "] achieved eps\n";
+        }
+        std::cout << std::flush;
+    }
+
     // ---- Full eval benchmark --------------------------------------------------
     if (rank == 0) {
         std::cout << "# phase: eval\n";
-        if (have_ref)
-            std::cout << "run,total_time,pts_per_s,sr_time,lr_time,self_time,l2_rel_err,max_rel_err\n";
-        else
-            std::cout << "run,total_time,pts_per_s,sr_time,lr_time,self_time\n";
+        std::cout << "run,total_time,pts_per_s,sr_time,lr_time,self_time,l2_rel_err\n";
         std::cout << std::flush;
     }
 
@@ -215,24 +264,18 @@ void run_benchmark(const Config &cfg) {
         if (rank == 0) {
             std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0) << ","
                       << timings.t_short << "," << timings.t_long << "," << timings.t_self;
-
-            if (have_ref) {
                 double esp_mean = 0;
                 for (int i = 0; i < n; ++i) esp_mean += double(pot[i]);
                 esp_mean /= n;
 
-                double err2 = 0, ref2 = 0, max_rel = 0;
+                double err2 = 0, ref2 = 0;
                 for (int i = 0; i < n; ++i) {
                     double diff = (double(pot[i]) - esp_mean) - ref[i];
                     double r = ref[i];
                     err2 += diff * diff;
                     ref2 += r * r;
-                    if (std::abs(r) > 0.0)
-                        max_rel = std::max(max_rel, std::abs(diff / r));
                 }
-                std::cout << "," << std::sqrt(err2 / ref2) << "," << max_rel;
-            }
-
+            std::cout << "," << std::sqrt(err2 / ref2);
             std::cout << "\n" << std::flush;
         }
     }

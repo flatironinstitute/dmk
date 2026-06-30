@@ -106,7 +106,7 @@ std::vector<std::vector<Real>> get_local_correction_coeffs(dmk_ikernel kernel, i
 // Short-range correction coefficients for the ESP (Ewald) Laplace kernel. The
 // PSWF window comes from FINUFFT's spreader (see esp.hpp), not calc_bandlimiting.
 template <typename Real>
-std::vector<std::vector<Real>> get_esp_correction_coeffs(int n_digits);
+std::vector<std::vector<Real>> get_esp_correction_coeffs(int n_digits, double sigma = 1.35);
 template <typename Real>
 residual_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim, int n_digits,
                                                  int unroll_factor);

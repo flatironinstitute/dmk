@@ -460,7 +460,7 @@ std::vector<std::vector<Real>> get_esp_correction_coeffs(int n_digits, double si
     std::lock_guard<std::mutex> lock_guard(lock);
 
     const double eps = std::pow(10.0, -n_digits);
-    dmk::Prolate0Fun prolate_fun(esp_pswf_c_from_eps(eps, sigma), 10000);
+    dmk::Prolate0Fun prolate_fun(esp_pswf_c_from_eps(eps, sigma), 8000);
     const double inv_int_inf = 1.0 / prolate_fun.int_eval(1.0);
 
     // Same form as the DMK Laplace-3D residual (1 - I(t)/c0), t = r/r_c in [0,1],
