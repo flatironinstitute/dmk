@@ -5,9 +5,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
 #include <getopt.h>
 #include <iostream>
 #include <limits>
+#include <stdexcept>
 #include <type_traits>
 #include <vector>
 
@@ -345,24 +347,7 @@ void print_build_csv_row(const TimingResult &t, std::ostream &os) {
 }
 
 void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ostream &os) {
-    const char *kernel_str = [&] {
-        switch (cfg.kernel) {
-        case DMK_LAPLACE:
-            return "laplace";
-        case DMK_SQRT_LAPLACE:
-            return "sqrt_laplace";
-        case DMK_YUKAWA:
-            return "yukawa";
-        case DMK_STOKESLET:
-            return "stokeslet";
-        case DMK_STRESSLET:
-            return "stresslet";
-        case DMK_LAPLACE_DIPOLE:
-            return "laplace_dipole";
-        default:
-            return "unknown";
-        }
-    }();
+    const std::string_view kernel_str = dmk::util::to_string(cfg.kernel);
     os << "# mpi_ranks:            " << np << "\n"
        << "# omp_threads_per_rank: " << n_threads << "\n"
        << "# n_src:                " << cfg.n_src << "\n"
@@ -426,20 +411,9 @@ void print_csv_row(const TimingResult &t, const ErrorBlock &src, const ErrorBloc
 }
 
 dmk_ikernel parse_kernel(const char *s) {
-    std::string k(s);
-    if (k == "laplace")
-        return DMK_LAPLACE;
-    if (k == "sqrt_laplace")
-        return DMK_SQRT_LAPLACE;
-    if (k == "yukawa")
-        return DMK_YUKAWA;
-    if (k == "stokeslet")
-        return DMK_STOKESLET;
-    if (k == "stresslet")
-        return DMK_STRESSLET;
-    if (k == "laplace_dipole")
-        return DMK_LAPLACE_DIPOLE;
-    throw std::runtime_error("Unknown kernel: " + k);
+    if (auto kernel = dmk::util::ikernel_from_string(s))
+        return *kernel;
+    throw std::runtime_error("Unknown kernel: " + std::string(s));
 }
 
 template <typename Real>
@@ -478,12 +452,16 @@ void run_benchmark(const Config &cfg) {
 
     auto create_tree = [&]() -> pdmk_tree {
         const Real *r_trg_ptr = with_trg ? r_trg.data() : nullptr;
+        pdmk_tree tree;
         if constexpr (std::is_same_v<Real, float>)
-            return pdmk_tree_createf(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), normals.data(),
+            tree = pdmk_tree_createf(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), normals.data(),
                                      n_trg_per_rank, r_trg_ptr);
         else
-            return pdmk_tree_create(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), normals.data(),
+            tree = pdmk_tree_create(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), normals.data(),
                                     n_trg_per_rank, r_trg_ptr);
+        if (!tree)
+            throw std::runtime_error(pdmk_last_error_message());
+        return tree;
     };
 
     if (cfg.bench_build) {
@@ -742,12 +720,15 @@ int main(int argc, char *argv[]) {
     MPI_Init_thread(&argc, &argv, MPI_THREAD_FUNNELED, &provided);
 #endif
 
-    Config cfg = parse_args(argc, argv);
-
-    if (cfg.prec == 'd')
-        run_benchmark<double>(cfg);
-    else
-        run_benchmark<float>(cfg);
+    try {
+        Config cfg = parse_args(argc, argv);
+        if (cfg.prec == 'd')
+            run_benchmark<double>(cfg);
+        else
+            run_benchmark<float>(cfg);
+    } catch (std::exception &e) {
+        std::cout << "Error: " << e.what() << std::endl;
+    }
 
 #ifdef DMK_HAVE_MPI
     MPI_Finalize();

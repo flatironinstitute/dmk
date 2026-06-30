@@ -42,13 +42,8 @@ struct Opts {
                 break;
             case 'k': {
                 std::string kernel_str(optarg);
-                for (auto &c : kernel_str)
-                    c = std::tolower(c);
-
-                if (kernel_str == "laplace" || kernel_str == "1")
-                    kernel = DMK_LAPLACE;
-                else if (kernel_str == "sqrt_laplace" || kernel_str == "2")
-                    kernel = DMK_SQRT_LAPLACE;
+                if (auto k = dmk::util::ikernel_from_string(kernel_str))
+                    kernel = *k;
                 else {
                     std::cerr << "Unknown evaluator: " << kernel_str << std::endl;
                     throw std::runtime_error("Unknown evaluator");

@@ -21,6 +21,12 @@ typedef enum : int {
 } dmk_eval_type;
 
 typedef enum : int {
+    DMK_SUCCESS = 0,              // no error
+    DMK_ERR_INVALID_ARGUMENT = 1, // null ptr, negative count, eps<=0, bad dim/kernel/eval value
+    DMK_ERR_INTERNAL = 2,         // any C++ exception caught at the boundary (detail in last-error)
+} dmk_error;
+
+typedef enum : int {
     DMK_LOG_TRACE = 0,
     DMK_LOG_DEBUG = 1,
     DMK_LOG_INFO = 2,
@@ -72,23 +78,34 @@ typedef struct pdmk_params {
 extern "C" {
 #endif
 
+// Fill params with the library defaults. Always succeeds (no-op on a null pointer).
+void pdmk_init_default_params(pdmk_params *params);
+
+// Human-readable detail for the most recent failing call on the calling thread.
+// Returns a NUL-terminated string (empty if no error). Valid until the next
+// failing call on this thread.
+const char *pdmk_last_error_message(void);
+
+// Tree lifecycle. *_create returns an opaque handle, or NULL on failure (call
+// pdmk_last_error_message for detail). All other entry points return a dmk_error
+// (DMK_SUCCESS == 0 on success).
 pdmk_tree pdmk_tree_createf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src,
                             const float *charge, const float *normal, int n_trg, const float *r_trg);
-void pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *pot_trg);
+dmk_error pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *pot_trg);
 pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src,
                            const double *charge, const double *normal, int n_trg, const double *r_trg);
 
-int pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const double *normal);
-int pdmk_tree_update_chargesf(pdmk_tree tree, const float *charge, const float *normal);
+dmk_error pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const double *normal);
+dmk_error pdmk_tree_update_chargesf(pdmk_tree tree, const float *charge, const float *normal);
 
 void pdmk_tree_destroy(pdmk_tree tree);
-void pdmk_tree_eval(pdmk_tree tree, double *pot_src, double *pot_trg);
-void pdmk_print_profile_data(dmk_communicator comm, char type);
+dmk_error pdmk_tree_eval(pdmk_tree tree, double *pot_src, double *pot_trg);
+dmk_error pdmk_print_profile_data(dmk_communicator comm, char type);
 
-void pdmk(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
-          const double *normal, int n_trg, const double *r_trg, double *pot_src, double *pot_trg);
-void pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
-           const float *normal, int n_trg, const float *r_trg, float *pot_src, float *pot_trg);
+dmk_error pdmk(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
+               const double *normal, int n_trg, const double *r_trg, double *pot_src, double *pot_trg);
+dmk_error pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
+                const float *normal, int n_trg, const float *r_trg, float *pot_src, float *pot_trg);
 #ifdef __cplusplus
 }
 #endif

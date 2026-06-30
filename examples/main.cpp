@@ -3,6 +3,7 @@
 #include <iostream>
 #include <limits>
 #include <random>
+#include <stdexcept>
 #include <vector>
 
 #include <getopt.h>
@@ -124,6 +125,8 @@ void run_example(const pdmk_params &params, int n_src_per_rank, int n_runs, bool
     else
         tree = pdmk_tree_create(MPI_COMM_WORLD, params, n_src_per_rank, &r_src[0], &charges[0], &rnormal[0], n_trg,
                                 &r_trg[0]);
+    if (!tree)
+        throw std::runtime_error(pdmk_last_error_message());
 
     for (int i = 0; i < n_runs; ++i) {
         const auto st = omp_get_wtime();
@@ -216,10 +219,14 @@ int main(int argc, char *argv[]) {
     params.kernel = DMK_LAPLACE;
     params.log_level = log_level;
 
-    if (prec == 'f')
-        run_example<float>(params, n_src_per_rank, n_runs, uniform);
-    else
-        run_example<double>(params, n_src_per_rank, n_runs, uniform);
+    try {
+        if (prec == 'f')
+            run_example<float>(params, n_src_per_rank, n_runs, uniform);
+        else
+            run_example<double>(params, n_src_per_rank, n_runs, uniform);
+    } catch (std::exception &e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+    }
 
     MPI_Finalize();
     return 0;

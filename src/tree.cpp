@@ -4,6 +4,7 @@
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
 #include <dmk/direct.hpp>
+#include <dmk/error.hpp>
 #include <dmk/fortran.h>
 #include <dmk/fourier_data.hpp>
 #include <dmk/legeexps.hpp>
@@ -239,25 +240,42 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 }
 
 template <typename Real, int DIM>
-int DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal) {
-    if (normal) {
-        std::cerr << "normal updates not supported yet\n";
-        return 1;
-    }
+void DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal) {
     auto &logger = dmk::get_logger(comm_, params.log_level);
     logger->info("update_charges started");
 
     const int n_src = r_src_sorted_owned.Dim() / DIM;
 
-    // Wrap the incoming (unsorted) charge data in a Vector without owning it
-    sctl::Vector<Real> charge_vec(n_src * n_tables_up, const_cast<Real *>(charge), false);
+    // Delete the old data and re-register with the new values. The PtTree
+    // already knows the sort permutation from the "pdmk_src" particle set,
+    // so AddParticleData will sort the new data into tree order automatically.
+    if (params.kernel == DMK_STRESSLET) {
+        if (!normal)
+            throw api_error(DMK_ERR_INVALID_ARGUMENT, "stresslet update_charges requires non-null normal");
 
-    // Delete the old charge data and re-register with the new values.
-    // The PtTree already knows the sort permutation from the "pdmk_src"
-    // particle set, so AddParticleData will sort the new charges into
-    // tree order automatically.
-    this->DeleteParticleData("pdmk_charge");
-    this->AddParticleData("pdmk_charge", "pdmk_src", charge_vec);
+        sctl::Vector<Real> normal_vec(n_src * DIM, const_cast<Real *>(normal), false);
+        sctl::Vector<Real> density_vec(n_src * DIM, const_cast<Real *>(charge), false);
+
+        // Stresslet has (force .outer. normal) proxy charges
+        sctl::Vector<Real> charge_normal(n_src * DIM * DIM);
+        Real *__restrict__ charge_normal_ptr = &charge_normal[0];
+#pragma omp parallel for schedule(static)
+        for (int i = 0; i < n_src; ++i)
+            for (int k = 0; k < DIM; ++k)
+                for (int j = 0; j < DIM; ++j)
+                    charge_normal_ptr[i * DIM * DIM + k * DIM + j] = charge[i * DIM + k] * normal[i * DIM + j];
+
+        this->DeleteParticleData("pdmk_normal");
+        this->DeleteParticleData("pdmk_density");
+        this->DeleteParticleData("pdmk_charge");
+        this->AddParticleData("pdmk_normal", "pdmk_src", normal_vec);
+        this->AddParticleData("pdmk_density", "pdmk_src", density_vec);
+        this->AddParticleData("pdmk_charge", "pdmk_src", charge_normal);
+    } else {
+        sctl::Vector<Real> charge_vec(n_src * n_tables_up, const_cast<Real *>(charge), false);
+        this->DeleteParticleData("pdmk_charge");
+        this->AddParticleData("pdmk_charge", "pdmk_src", charge_vec);
+    }
 
     // Retrieve the sorted owned charges
     {
@@ -271,9 +289,14 @@ int DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal)
     // Broadcast to halo/ghost nodes and retrieve
     this->template Broadcast<Real>("pdmk_charge");
     this->GetData(charge_sorted_with_halo, charge_cnt_with_halo, "pdmk_charge");
+    if (params.kernel == DMK_STRESSLET) {
+        this->template Broadcast<Real>("pdmk_normal");
+        this->template Broadcast<Real>("pdmk_density");
+        this->GetData(normal_sorted_with_halo, normal_cnt_with_halo, "pdmk_normal");
+        this->GetData(density_sorted_with_halo, density_cnt_with_halo, "pdmk_density");
+    }
 
     logger->info("update_charges completed");
-    return 0;
 }
 
 template <typename Real, int DIM>
@@ -800,7 +823,11 @@ void DMKPtTree<Real, DIM>::build_direct_work_lists() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_evaluators() {
     sctl::Profile::Scoped profile("build_evaluators", &comm_);
-    try {
+    // YUKAWA has no AOT/JIT residual evaluator; it builds its own per-level
+    // evaluators in the block below. Every other kernel requires a working
+    // AOT/JIT evaluator, so a failure there is fatal (an empty evaluator array
+    // would silently corrupt results).
+    if (params.kernel != DMK_YUKAWA) {
         auto src_eval = make_evaluator_aot<Real>(params.kernel, params.eval_src, DIM, n_digits, 3);
         auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.eval_trg, DIM, n_digits, 3);
 #ifdef DMK_USE_JIT
@@ -814,10 +841,7 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
         // FIXME: assumes the same src/trg output configuration
         evaluator_by_level_src.assign(n_levels(), src_eval);
         evaluator_by_level_trg.assign(n_levels(), trg_eval);
-    } catch (std::exception &e) {
-        logger->error("Failed to create direct evaluator: {}", e.what());
-    }
-    if (params.kernel == DMK_YUKAWA) {
+    } else {
         // FIXME: This should be moved to direct.cpp, but it was annoying to add the coefficient
         // binding cleanly
         for (int level = 0; level < n_levels(); ++level) {

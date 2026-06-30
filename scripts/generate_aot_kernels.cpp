@@ -15,29 +15,32 @@
 
 struct KernelDef {
     dmk_ikernel kernel;
-    std::string kernel_enum;
     int dim;
-    std::string func_name;
-    std::string getter_name;
     std::vector<dmk_eval_type> eval_levels;
 };
 
 // clang-format off
 static const std::vector<KernelDef> all_kernels = {
-    {DMK_LAPLACE, "DMK_LAPLACE", 2, "laplace_2d_poly_all_pairs", "get_laplace_2d_kernel",
-     {DMK_POTENTIAL, DMK_POTENTIAL_GRAD}},
-    {DMK_LAPLACE, "DMK_LAPLACE", 3, "laplace_3d_poly_all_pairs", "get_laplace_3d_kernel",
-     {DMK_POTENTIAL, DMK_POTENTIAL_GRAD}},
-    {DMK_SQRT_LAPLACE, "DMK_SQRT_LAPLACE", 2, "sqrt_laplace_2d_poly_all_pairs", "get_sqrt_laplace_2d_kernel",
-     {DMK_POTENTIAL}},
-    {DMK_SQRT_LAPLACE, "DMK_SQRT_LAPLACE", 3, "sqrt_laplace_3d_poly_all_pairs", "get_sqrt_laplace_3d_kernel",
-     {DMK_POTENTIAL}},
-    {DMK_STOKESLET, "DMK_STOKESLET", 3, "stokeslet_3d_poly_all_pairs", "get_stokeslet_3d_kernel", {DMK_VELOCITY}},
-    {DMK_STRESSLET, "DMK_STRESSLET", 3, "stresslet_3d_poly_all_pairs", "get_stresslet_3d_kernel", {DMK_VELOCITY}},
-    {DMK_LAPLACE_DIPOLE, "DMK_LAPLACE_DIPOLE", 3, "laplace_dipole_3d_poly_all_pairs", "get_laplace_dipole_3d_kernel",
-     {DMK_POTENTIAL, DMK_POTENTIAL_GRAD}},
+    {DMK_LAPLACE,        2, {DMK_POTENTIAL, DMK_POTENTIAL_GRAD}},
+    {DMK_LAPLACE,        3, {DMK_POTENTIAL, DMK_POTENTIAL_GRAD}},
+    {DMK_SQRT_LAPLACE,   2, {DMK_POTENTIAL}},
+    {DMK_SQRT_LAPLACE,   3, {DMK_POTENTIAL}},
+    {DMK_STOKESLET,      3, {DMK_VELOCITY}},
+    {DMK_STRESSLET,      3, {DMK_VELOCITY}},
+    {DMK_LAPLACE_DIPOLE, 3, {DMK_POTENTIAL, DMK_POTENTIAL_GRAD}},
 };
 // clang-format on
+
+// All generated names derive from the canonical kernel name (dmk::util::to_string),
+// so the generator, the poly_all_pairs templates, and the getters consumed by
+// aot_evaluator.cpp share one nomenclature.
+std::string func_name(const KernelDef &k) {
+    return std::format("{}_{}d_poly_all_pairs", dmk::util::to_string(k.kernel), k.dim);
+}
+
+std::string getter_name(const KernelDef &k) {
+    return std::format("get_{}_{}d_kernel", dmk::util::to_string(k.kernel), k.dim);
+}
 
 constexpr int min_digits = 2;
 constexpr int max_digits = 12;
@@ -49,22 +52,6 @@ struct CoeffsInfo {
     size_t total_size;             // sum of sub_sizes
     dmk_eval_type eval_level;
 };
-
-std::string eval_level_suffix(dmk_eval_type el) {
-    switch (el) {
-    case DMK_POTENTIAL:
-        return "pot";
-    case DMK_POTENTIAL_GRAD:
-        return "potgrad";
-    case DMK_POTENTIAL_GRAD_HESSIAN:
-        return "pothess";
-    case DMK_VELOCITY:
-        return "vel";
-    case DMK_VELOCITY_PRESSURE:
-        return "velprs";
-    }
-    return "unknown";
-}
 
 std::string eval_level_enum_name(dmk_eval_type el) {
     switch (el) {
@@ -99,25 +86,8 @@ void emit_coeffs_array(const std::string &name, const std::vector<std::vector<do
     std::cout << "\n};\n\n";
 }
 
-std::string kernel_base_name(const KernelDef &k) {
-    switch (k.kernel) {
-    case DMK_LAPLACE:
-        return "laplace";
-    case DMK_SQRT_LAPLACE:
-        return "sqrt_laplace";
-    case DMK_STOKESLET:
-        return "stokeslet";
-    case DMK_STRESSLET:
-        return "stresslet";
-    case DMK_LAPLACE_DIPOLE:
-        return "laplace_dipole";
-    default:
-        return "unknown";
-    }
-}
-
 std::string coeff_name(const KernelDef &k, int digits, dmk_eval_type el) {
-    return std::format("{}_{}d_{}_{}", kernel_base_name(k), k.dim, eval_level_suffix(el), digits);
+    return std::format("{}_{}d_{}_{}", dmk::util::to_string(k.kernel), k.dim, dmk::util::to_string(el), digits);
 }
 
 void emit_getter_branch_for_level(const KernelDef &k, dmk_eval_type el, const std::vector<CoeffsInfo> &infos) {
@@ -153,7 +123,7 @@ void emit_getter_branch_for_level(const KernelDef &k, dmk_eval_type el, const st
             "                    coeffs.data(), n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);\n"
             "            }};\n"
             "        }}\n",
-            info.digits, info.digits, info.total_size, nc_decls, cn, k.func_name, nc_args, eval_level_enum_name(el),
+            info.digits, info.digits, info.total_size, nc_decls, cn, func_name(k), nc_args, eval_level_enum_name(el),
             nc_args);
     }
 }
@@ -164,7 +134,7 @@ template <class Real, int MaxVecLen>
 residual_evaluator_func<Real> {}(dmk_eval_type eval_level, int n_digits) {{
     constexpr int UF = unroll_factor;
 )",
-                             k.getter_name);
+                             getter_name(k));
 
     bool first = true;
     for (auto el : k.eval_levels) {
@@ -220,8 +190,8 @@ constexpr int unroll_factor = 3;
                     emit_coeffs_array(coeff_name(k, digits, el), coeffs, beta);
                     infos.push_back(std::move(info));
                 } catch (std::exception &e) {
-                    std::cerr << std::format("// Skipped {} digits={} eval_level={}: {}\n", k.getter_name, digits,
-                                             eval_level_suffix(el), e.what());
+                    std::cerr << std::format("// Skipped {} digits={} eval_level={}: {}\n", getter_name(k), digits,
+                                             dmk::util::to_string(el), e.what());
                 }
             }
         }
@@ -235,7 +205,7 @@ constexpr int unroll_factor = 3;
         for (auto type : {"float", "double"}) {
             std::cout << std::format("template residual_evaluator_func<{0}>\n"
                                      "{1}<{0}, sctl::DefaultVecLen<{0}>()>(dmk_eval_type, int);\n",
-                                     type, k.getter_name);
+                                     type, getter_name(k));
         }
     }
 

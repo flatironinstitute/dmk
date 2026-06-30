@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cmath>
+#include <optional>
 #include <string_view>
 #include <type_traits>
 
@@ -67,26 +68,63 @@ class StackOrHeapBuffer {
     }
 };
 
+// Canonical lowercase-snake names, used everywhere a kernel/eval-type is shown
+// or parsed (CLI args, table/CSV output, error messages). The inverse parsers
+// below are case-insensitive and ignore a leading "DMK_", so the C enum spelling
+// also round-trips.
 constexpr std::array<std::string_view, 6> ikernel_names = {
-    "DMK_YUKAWA", "DMK_LAPLACE", "DMK_SQRT_LAPLACE", "DMK_STOKESLET", "DMK_STRESSLET", "DMK_LAPLACE_DIPOLE",
+    "yukawa", "laplace", "sqrt_laplace", "stokeslet", "stresslet", "laplace_dipole",
 };
 
 constexpr std::array<std::string_view, 5> return_names = {
-    "DMK_POTENTIAL", "DMK_POTENTIAL_GRAD", "DMK_POTENTIAL_GRAD_HESSIAN", "DMK_VELOCITY", "DMK_VELOCITY_PRESSURE",
+    "potential", "potential_grad", "potential_grad_hessian", "velocity", "velocity_pressure",
 };
 
 constexpr std::string_view to_string(dmk_ikernel k) noexcept {
     auto idx = static_cast<int>(k);
     if (idx >= 0 && idx < static_cast<int>(ikernel_names.size()))
         return ikernel_names[idx];
-    return "DMK_IKERNEL_UNKNOWN";
+    return "unknown_kernel";
 }
 
 constexpr std::string_view to_string(dmk_eval_type k) noexcept {
     auto idx = static_cast<int>(k) - 1;
-    if (idx >= 0 && idx < static_cast<int>(ikernel_names.size()))
+    if (idx >= 0 && idx < static_cast<int>(return_names.size()))
         return return_names[idx];
-    return "DMK_RETURN_TYPE_UNKNOWN";
+    return "unknown_eval_type";
+}
+
+// Case-insensitive equality, ignoring an optional leading "DMK_" on either side,
+// so "stokeslet", "STOKESLET", and "DMK_STOKESLET" all match.
+constexpr bool name_matches(std::string_view a, std::string_view b) noexcept {
+    auto strip = [](std::string_view s) { return s.substr(0, 4) == "DMK_" ? s.substr(4) : s; };
+    auto lower = [](char c) -> char { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; };
+    a = strip(a);
+    b = strip(b);
+    if (a.size() != b.size())
+        return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (lower(a[i]) != lower(b[i]))
+            return false;
+    return true;
+}
+
+// Inverse of to_string. Accepts the canonical name with or without the "DMK_"
+// prefix, case-insensitively (e.g. "DMK_YUKAWA", "yukawa"). Returns nullopt if
+// no kernel matches.
+constexpr std::optional<dmk_ikernel> ikernel_from_string(std::string_view s) noexcept {
+    for (int i = 0; i < static_cast<int>(ikernel_names.size()); ++i)
+        if (name_matches(s, ikernel_names[i]))
+            return static_cast<dmk_ikernel>(i);
+    return std::nullopt;
+}
+
+// Inverse of to_string for eval types (enum starts at 1). Same matching rules.
+constexpr std::optional<dmk_eval_type> eval_type_from_string(std::string_view s) noexcept {
+    for (int i = 0; i < static_cast<int>(return_names.size()); ++i)
+        if (name_matches(s, return_names[i]))
+            return static_cast<dmk_eval_type>(i + 1);
+    return std::nullopt;
 }
 
 double calc_bandlimiting(const pdmk_params &p);

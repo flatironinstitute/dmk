@@ -27,6 +27,7 @@
 #include <iostream>
 #include <random>
 #include <sctl.hpp>
+#include <stdexcept>
 #include <vector>
 
 #ifdef DMK_HAVE_MPI
@@ -129,26 +130,34 @@ ErrorMetrics run_one(int n_dim, dmk_ikernel kernel, int n_digits, const Config &
         params.debug_params[DMK_DEBUG_BETA_SLOT] = beta_override;
     }
 
-    pdmk_tree tree;
-    if constexpr (std::is_same_v<Real, float>)
-        tree = pdmk_tree_createf(MYCOMM, params, n_src, r_src.data(), charges.data(), nullptr, 0, nullptr);
-    else
-        tree = pdmk_tree_create(MYCOMM, params, n_src, r_src.data(), charges.data(), nullptr, 0, nullptr);
+    pdmk_tree tree = [&]() {
+        if constexpr (std::is_same_v<Real, float>)
+            return pdmk_tree_createf(MYCOMM, params, n_src, r_src.data(), charges.data(), nullptr, 0, nullptr);
+        else
+            return pdmk_tree_create(MYCOMM, params, n_src, r_src.data(), charges.data(), nullptr, 0, nullptr);
+    }();
+
+    if (!tree)
+        throw std::runtime_error(pdmk_last_error_message());
 
     std::vector<Real> pot_dmk(n_src);
 
-    double st = omp_get_wtime();
-    if constexpr (std::is_same_v<Real, float>)
-        pdmk_tree_evalf(tree, pot_dmk.data(), nullptr);
-    else
-        pdmk_tree_eval(tree, pot_dmk.data(), nullptr);
-    double dt = omp_get_wtime() - st;
+    double st = MY_OMP_GET_WTIME();
+    dmk_error rc = [&]() {
+        if constexpr (std::is_same_v<Real, float>)
+            return pdmk_tree_evalf(tree, pot_dmk.data(), nullptr);
+        else
+            return pdmk_tree_eval(tree, pot_dmk.data(), nullptr);
+    }();
+    double dt = MY_OMP_GET_WTIME() - st;
 
     pdmk_tree_destroy(tree);
+    if (rc != DMK_SUCCESS)
+        throw std::runtime_error(pdmk_last_error_message());
 
     double err2 = 0.0, ref2 = 0.0, maxre = 0.0;
     for (int i = 0; i < n_test; ++i) {
-        double dmk = static_cast<double>(pot_dmk[i]);
+        double dmk = pot_dmk[i];
         double ref = pot_direct[i];
         double diff = dmk - ref;
         err2 += diff * diff;
@@ -160,33 +169,12 @@ ErrorMetrics run_one(int n_dim, dmk_ikernel kernel, int n_digits, const Config &
     return {std::sqrt(err2 / ref2), maxre, dt};
 }
 
-const char *kernel_name(dmk_ikernel k) {
-    switch (k) {
-    case DMK_LAPLACE:
-        return "Laplace";
-    case DMK_SQRT_LAPLACE:
-        return "SqrtLaplace";
-    case DMK_LAPLACE_DIPOLE:
-        return "LaplaceDipole";
-    case DMK_YUKAWA:
-        return "Yukawa";
-    default:
-        return "Unknown";
-    }
-}
-
 dmk_ikernel parse_kernel(const char *s) {
     std::string k(s);
-    if (k == "laplace")
-        return DMK_LAPLACE;
-    if (k == "sqrt_laplace")
-        return DMK_SQRT_LAPLACE;
-    if (k == "laplace_dipole")
-        return DMK_LAPLACE_DIPOLE;
-    if (k == "yukawa")
-        return DMK_YUKAWA;
     if (k == "all")
         return static_cast<dmk_ikernel>(-1);
+    if (auto kernel = dmk::util::ikernel_from_string(k))
+        return *kernel;
     throw std::runtime_error("Unknown kernel: " + k);
 }
 
@@ -214,13 +202,14 @@ void run_beta_sweep(const Config &cfg) {
             for (double beta = cfg.beta_min; beta <= cfg.beta_max + 1e-9; beta += cfg.beta_step) {
                 try {
                     auto err = run_one<Real>(n_dim, kernel, 12, cfg, r_src, charges, pot_direct, beta);
-                    std::cout << kernel_name(kernel) << "," << n_dim << "," << std::fixed << std::setprecision(1)
-                              << beta << "," << std::scientific << std::setprecision(6) << err.l2_rel << ","
-                              << err.max_rel << "," << std::fixed << std::setprecision(4) << err.time << "\n"
+                    std::cout << dmk::util::to_string(kernel) << "," << n_dim << "," << std::fixed
+                              << std::setprecision(1) << beta << "," << std::scientific << std::setprecision(6)
+                              << err.l2_rel << "," << err.max_rel << "," << std::fixed << std::setprecision(4)
+                              << err.time << "\n"
                               << std::flush;
                 } catch (std::exception &e) {
-                    std::cout << kernel_name(kernel) << "," << n_dim << "," << std::fixed << std::setprecision(1)
-                              << beta << ",FAILED,FAILED,0\n";
+                    std::cout << dmk::util::to_string(kernel) << "," << n_dim << "," << std::fixed
+                              << std::setprecision(1) << beta << ",FAILED,FAILED,0\n";
                 }
             }
         }
@@ -261,15 +250,15 @@ void run_all(const Config &cfg) {
                 try {
                     auto err = run_one<Real>(n_dim, kernel, digits, cfg, r_src, charges, pot_direct);
                     double eps = std::pow(10.0, -digits);
-                    std::cout << std::setw(14) << kernel_name(kernel) << std::setw(5) << n_dim << std::setw(8) << digits
-                              << std::setw(12) << std::scientific << std::setprecision(0) << eps << std::setw(14)
-                              << std::scientific << std::setprecision(3) << err.l2_rel << std::setw(14) << err.max_rel
-                              << std::setw(10) << std::fixed << std::setprecision(4) << err.time << std::setw(10)
-                              << std::fixed << std::setprecision(1) << err.l2_rel / eps << "\n"
+                    std::cout << std::setw(14) << dmk::util::to_string(kernel) << std::setw(5) << n_dim << std::setw(8)
+                              << digits << std::setw(12) << std::scientific << std::setprecision(0) << eps
+                              << std::setw(14) << std::scientific << std::setprecision(3) << err.l2_rel << std::setw(14)
+                              << err.max_rel << std::setw(10) << std::fixed << std::setprecision(4) << err.time
+                              << std::setw(10) << std::fixed << std::setprecision(1) << err.l2_rel / eps << "\n"
                               << std::flush;
                 } catch (std::exception &e) {
-                    std::cout << std::setw(14) << kernel_name(kernel) << std::setw(5) << n_dim << std::setw(8) << digits
-                              << "  FAILED: " << e.what() << "\n";
+                    std::cout << std::setw(14) << dmk::util::to_string(kernel) << std::setw(5) << n_dim << std::setw(8)
+                              << digits << "  FAILED: " << e.what() << "\n";
                 }
             }
         }
@@ -366,25 +355,29 @@ int main(int argc, char *argv[]) {
     }
 #endif
 
-    Config cfg = parse_args(argc, argv);
+    try {
+        Config cfg = parse_args(argc, argv);
 
-    std::cout << "# n_src=" << cfg.n_src << " n_per_leaf=" << cfg.n_per_leaf << " n_direct=" << cfg.n_direct
-              << " prec=" << cfg.prec << " uniform=" << cfg.uniform << " threads=" << MY_OMP_GET_MAX_THREADS();
-    if (cfg.beta_sweep)
-        std::cout << " beta_sweep=[" << cfg.beta_min << "," << cfg.beta_max << "," << cfg.beta_step
-                  << "] digits=" << cfg.sweep_digits;
-    std::cout << "\n\n";
+        std::cout << "# n_src=" << cfg.n_src << " n_per_leaf=" << cfg.n_per_leaf << " n_direct=" << cfg.n_direct
+                  << " prec=" << cfg.prec << " uniform=" << cfg.uniform << " threads=" << MY_OMP_GET_MAX_THREADS();
+        if (cfg.beta_sweep)
+            std::cout << " beta_sweep=[" << cfg.beta_min << "," << cfg.beta_max << "," << cfg.beta_step
+                      << "] digits=" << cfg.sweep_digits;
+        std::cout << "\n\n";
 
-    if (cfg.beta_sweep) {
-        if (cfg.prec == 'd')
-            run_beta_sweep<double>(cfg);
-        else
-            run_beta_sweep<float>(cfg);
-    } else {
-        if (cfg.prec == 'd')
-            run_all<double>(cfg);
-        else
-            run_all<float>(cfg);
+        if (cfg.beta_sweep) {
+            if (cfg.prec == 'd')
+                run_beta_sweep<double>(cfg);
+            else
+                run_beta_sweep<float>(cfg);
+        } else {
+            if (cfg.prec == 'd')
+                run_all<double>(cfg);
+            else
+                run_all<float>(cfg);
+        }
+    } catch (std::exception &e) {
+        std::cerr << "Error: " << e.what() << std::endl;
     }
 
 #ifdef DMK_HAVE_MPI

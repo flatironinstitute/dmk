@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <stdexcept>
 #include <vector>
 
 #include <dmk.h>
@@ -68,6 +69,8 @@ BenchmarkResult run_benchmark(int n_dim, int n_src, int n_trg, double eps, bool 
     // Tree build
     double t0 = MY_OMP_GET_WTIME();
     pdmk_tree tree = pdmk_tree_create(MYCOMM, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
+    if (!tree)
+        throw std::runtime_error(pdmk_last_error_message());
     result.tree_build_time = MY_OMP_GET_WTIME() - t0;
 
     // Eval
@@ -216,70 +219,74 @@ int main(int argc, char **argv) {
     }
 #endif
 
-    printf("=== FIDMK Laplace Gradient Benchmark (poly-derivative method) ===\n");
-    printf("Method: Chebyshev polynomial differentiation of proxy expansion\n");
-    printf("Precision: double\n");
+    try {
+        printf("=== FIDMK Laplace Gradient Benchmark (poly-derivative method) ===\n");
+        printf("Method: Chebyshev polynomial differentiation of proxy expansion\n");
+        printf("Precision: double\n");
 #ifdef _OPENMP
-    printf("OpenMP threads: %d\n", omp_get_max_threads());
+        printf("OpenMP threads: %d\n", omp_get_max_threads());
 #else
-    printf("OpenMP: disabled\n");
+        printf("OpenMP: disabled\n");
 #endif
-    printf("\n");
+        printf("\n");
 
-    struct TestConfig {
-        int n_dim;
-        int n_src;
-        int n_trg;
-        double eps;
-        int n_per_leaf;
-    };
+        struct TestConfig {
+            int n_dim;
+            int n_src;
+            int n_trg;
+            double eps;
+            int n_per_leaf;
+        };
 
-    std::vector<TestConfig> configs = {
-        // Small problems: accuracy focus
-        {3, 4000, 3000, 1e-3, 280},
-        {3, 4000, 3000, 1e-6, 280},
-        {3, 4000, 3000, 1e-9, 280},
-        {3, 4000, 3000, 1e-12, 280},
-        // Medium problems: speed focus
-        {3, 20000, 20000, 1e-6, 280},
-        {3, 20000, 20000, 1e-9, 280},
-        // Larger problems
-        {3, 50000, 50000, 1e-6, 280},
-        {3, 100000, 100000, 1e-6, 280},
-        {3, 200000, 200000, 1e-6, 280},
-    };
+        std::vector<TestConfig> configs = {
+            // Small problems: accuracy focus
+            {3, 4000, 3000, 1e-3, 280},
+            {3, 4000, 3000, 1e-6, 280},
+            {3, 4000, 3000, 1e-9, 280},
+            {3, 4000, 3000, 1e-12, 280},
+            // Medium problems: speed focus
+            {3, 20000, 20000, 1e-6, 280},
+            {3, 20000, 20000, 1e-9, 280},
+            // Larger problems
+            {3, 50000, 50000, 1e-6, 280},
+            {3, 100000, 100000, 1e-6, 280},
+            {3, 200000, 200000, 1e-6, 280},
+        };
 
-    // --- Accuracy sweep ---
-    printf("--- Accuracy vs Direct O(N^2) ---\n");
-    print_header();
-    for (auto &cfg : configs) {
-        if (cfg.n_src > 20000)
-            continue; // skip large for accuracy (direct is O(N^2))
-        auto r_pot = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, false, cfg.n_per_leaf);
-        auto r_grad = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, true, cfg.n_per_leaf);
-        print_result(r_pot);
-        print_result(r_grad);
-    }
+        // --- Accuracy sweep ---
+        printf("--- Accuracy vs Direct O(N^2) ---\n");
+        print_header();
+        for (auto &cfg : configs) {
+            if (cfg.n_src > 20000)
+                continue; // skip large for accuracy (direct is O(N^2))
+            auto r_pot = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, false, cfg.n_per_leaf);
+            auto r_grad = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, true, cfg.n_per_leaf);
+            print_result(r_pot);
+            print_result(r_grad);
+        }
 
-    printf("\n--- Speed: Potential-only vs Potential+Gradient ---\n");
-    print_header();
-    for (auto &cfg : configs) {
-        auto r_pot = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, false, cfg.n_per_leaf);
-        auto r_grad = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, true, cfg.n_per_leaf);
-        print_result(r_pot);
-        print_result(r_grad);
-    }
+        printf("\n--- Speed: Potential-only vs Potential+Gradient ---\n");
+        print_header();
+        for (auto &cfg : configs) {
+            auto r_pot = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, false, cfg.n_per_leaf);
+            auto r_grad = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, true, cfg.n_per_leaf);
+            print_result(r_pot);
+            print_result(r_grad);
+        }
 
-    printf("\n--- Gradient overhead (eval time ratio: grad/pot-only) ---\n");
-    printf("%-4s %7s %10s %12s %12s %10s\n", "dim", "n_src", "eps", "pot_eval(s)", "grad_eval(s)", "overhead");
-    printf("%-4s %7s %10s %12s %12s %10s\n", "----", "-------", "----------", "------------", "------------",
-           "----------");
-    for (auto &cfg : configs) {
-        auto r_pot = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, false, cfg.n_per_leaf);
-        auto r_grad = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, true, cfg.n_per_leaf);
-        double overhead = r_grad.eval_time / r_pot.eval_time;
-        printf("%-4d %7d %10.1e %12.4f %12.4f %9.2fx\n", cfg.n_dim, cfg.n_src, cfg.eps, r_pot.eval_time,
-               r_grad.eval_time, overhead);
+        printf("\n--- Gradient overhead (eval time ratio: grad/pot-only) ---\n");
+        printf("%-4s %7s %10s %12s %12s %10s\n", "dim", "n_src", "eps", "pot_eval(s)", "grad_eval(s)", "overhead");
+        printf("%-4s %7s %10s %12s %12s %10s\n", "----", "-------", "----------", "------------", "------------",
+               "----------");
+        for (auto &cfg : configs) {
+            auto r_pot = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, false, cfg.n_per_leaf);
+            auto r_grad = run_benchmark<double>(cfg.n_dim, cfg.n_src, cfg.n_trg, cfg.eps, true, cfg.n_per_leaf);
+            double overhead = r_grad.eval_time / r_pot.eval_time;
+            printf("%-4d %7d %10.1e %12.4f %12.4f %9.2fx\n", cfg.n_dim, cfg.n_src, cfg.eps, r_pot.eval_time,
+                   r_grad.eval_time, overhead);
+        }
+    } catch (std::exception &e) {
+        std::cerr << "Error: " << e.what() << std::endl;
     }
 
 #ifdef DMK_HAVE_MPI
