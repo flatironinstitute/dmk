@@ -215,7 +215,7 @@ static CellList<Real> build_cell_list(const std::vector<Vec3T<Real>> &r_src, con
 // ---------------------------------------------------------------------------
 template <typename Real>
 static std::vector<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                                          const ESPParams &params, int n_digits) {
+                                          const ESPParams &params, int n_digits, const PSWFKernel &pswf) {
     // 27-cell stencil requires nc >= 3 so periodic images aren't double-counted
     const int nc = static_cast<int>(std::floor(params.L / params.r_c));
     if (nc < 3)
@@ -331,7 +331,7 @@ static std::vector<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src,
                     //         pot_sorted[hbeg + a] += charge_ptr[b] * (Real(1) - intval) / (Real(4) * M_PI * d);
                     //     }
                     evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, n_trg, r_trg_ptr,
-                               pot_sorted.data() + hbeg);
+                             pot_sorted.data() + hbeg);
                 }
     }
 
@@ -425,23 +425,69 @@ static std::vector<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const
     fftn_3d(b, b_hat, nf);
 
 // 3. Diagonal scaling (precomputed in plan)
+    CGrid pot_hat(ntot);
 #pragma omp parallel for
     for (int idx = 0; idx < ntot; ++idx)
-        b_hat[idx] *= scaling_coeffs[idx];
+        pot_hat[idx] = b_hat[idx] * scaling_coeffs[idx];
+
+    // ik method: F = -q*grad(u), and grad(u)_hat_k = i*k*u_hat_k, so the force spectrum is
+    // obtained from the potential spectrum (b_hat * scaling_coeffs, i.e. pot_hat) by multiplying
+    // by -i*k component-wise. k = 2*pi*k_idx/L with k_idx the (possibly negative) integer
+    // wavenumber, same convention as precompute_scaling_coefficients.
+    std::vector<int> k_idx(nf);
+    for (int i = 0; i < nf; ++i)
+        k_idx[i] = (i <= nf / 2) ? i : i - nf;
+
+    std::complex<double> coeff_grad = -std::complex<double>(0, 1) * (2.0 * M_PI / params.L);
+    CGrid f_hat_x(ntot), f_hat_y(ntot), f_hat_z(ntot);
+    #pragma omp parallel for collapse(3)
+    for (int ix = 0; ix < nf; ++ix)
+        for (int iy = 0; iy < nf; ++iy)
+            for (int iz = 0; iz < nf; ++iz) {
+                const int idx = grid_idx(ix, iy, iz, nf);
+                const std::complex<double> scaled = b_hat[idx] * scaling_coeffs[idx];
+                f_hat_x[idx] = scaled * coeff_grad * double(k_idx[ix]);
+                f_hat_y[idx] = scaled * coeff_grad * double(k_idx[iy]);
+                f_hat_z[idx] = scaled * coeff_grad * double(k_idx[iz]);
+            }
 
     // 4. Inverse FFT
-    CGrid grid(ntot);
-    ifftn_3d(b_hat, grid, nf);
+    CGrid grid_pot(ntot);
+    ifftn_3d(pot_hat, grid_pot, nf);
+
+    CGrid grid_force_x(ntot), grid_force_y(ntot), grid_force_z(ntot);
+    ifftn_3d(f_hat_x, grid_force_x, nf);
+    ifftn_3d(f_hat_y, grid_force_y, nf);
+    ifftn_3d(f_hat_z, grid_force_z, nf);
 
     // 5. Interpolate: uniform grid -> NU points (type 2)
     std::vector<std::complex<double>> pot_c(n);
-    ier = finufft3d2(n, x.data(), y.data(), z.data(), pot_c.data(), +1, tol, nf, nf, nf, grid.data(), &opts);
+    ier = finufft3d2(n, x.data(), y.data(), z.data(), pot_c.data(), +1, tol, nf, nf, nf, grid_pot.data(), &opts);
+    if (ier > 1)
+        throw std::runtime_error("finufft3d2 interp failed, ier=" + std::to_string(ier));
+
+    std::vector<std::complex<double>> force_x_c(n), force_y_c(n), force_z_c(n);
+    ier = finufft3d2(n, x.data(), y.data(), z.data(), force_x_c.data(), +1, tol, nf, nf, nf, grid_force_x.data(), &opts);
+    if (ier > 1)
+        throw std::runtime_error("finufft3d2 interp failed, ier=" + std::to_string(ier));
+    ier = finufft3d2(n, x.data(), y.data(), z.data(), force_y_c.data(), +1, tol, nf, nf, nf, grid_force_y.data(), &opts);
+    if (ier > 1)
+        throw std::runtime_error("finufft3d2 interp failed, ier=" + std::to_string(ier));
+    ier = finufft3d2(n, x.data(), y.data(), z.data(), force_z_c.data(), +1, tol, nf, nf, nf, grid_force_z.data(), &opts);
     if (ier > 1)
         throw std::runtime_error("finufft3d2 interp failed, ier=" + std::to_string(ier));
 
     std::vector<Real> pot(n);
     for (int j = 0; j < n; j++)
         pot[j] = Real(pot_c[j].real());
+
+    std::vector<Real> force_x(n), force_y(n), force_z(n);
+    for (int j = 0; j < n; j++) {
+        force_x[j] = Real(force_x_c[j].real());
+        force_y[j] = Real(force_y_c[j].real());
+        force_z[j] = Real(force_z_c[j].real());
+    }
+
     return pot;
 }
 
@@ -490,7 +536,7 @@ std::vector<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src,
     params.n = n;
 
     double t0 = omp_get_wtime();
-    auto pot_sr = short_range_fast<Real>(r_src, charges, params, plan->n_digits);
+    auto pot_sr = short_range_fast<Real>(r_src, charges, params, plan->n_digits, plan->pswf);
     double t1 = omp_get_wtime();
     auto pot_lr = long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs);
     double t2 = omp_get_wtime();

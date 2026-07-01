@@ -53,6 +53,95 @@ std::vector<Real> generate_charges(int n) {
     return q;
 }
 
+// Load (or compute + cache) the perilap3d reference potentials for a given point set.
+// Cache is keyed on N alone (VERIFY_CACHE_DIR/perilap_N{n}.bin) and validated against the
+// actual positions/charges, so it's safe to call repeatedly for different N in a sweep.
+bool get_perilap3d_reference(int n, const std::vector<dmk::Vec3T<double>> &r_src_d,
+                             const std::vector<double> &charges_d, const std::string &perilap3d_dir,
+                             std::vector<double> &ref) {
+    ref.assign(n, 0.0);
+
+    std::vector<double> pos_flat(n * 3);
+    for (int i = 0; i < n; ++i) {
+        pos_flat[i * 3 + 0] = r_src_d[i][0];
+        pos_flat[i * 3 + 1] = r_src_d[i][1];
+        pos_flat[i * 3 + 2] = r_src_d[i][2];
+    }
+
+    // Format: int32 N | float64[N*3] positions | float64[N] charges | float64[N] potentials
+    std::string cache_path = std::string(VERIFY_CACHE_DIR) + "/perilap_N" + std::to_string(n) + ".bin";
+
+    if (FILE *cf = fopen(cache_path.c_str(), "rb")) {
+        int32_t cached_n = 0;
+        std::vector<double> cached_pos(n * 3), cached_q(n);
+        bool ok = fread(&cached_n, sizeof(cached_n), 1, cf) == 1 && cached_n == static_cast<int32_t>(n) &&
+                  (int)fread(cached_pos.data(), sizeof(double), n * 3, cf) == n * 3 && cached_pos == pos_flat &&
+                  (int)fread(cached_q.data(), sizeof(double), n, cf) == n && cached_q == charges_d &&
+                  (int)fread(ref.data(), sizeof(double), n, cf) == n;
+        fclose(cf);
+        if (ok) {
+            std::cout << "# verify: cache hit — skipping perilap3d (N=" << n << ")\n" << std::flush;
+            return true;
+        }
+        std::cout << "# verify: cache stale or corrupt, recomputing perilap3d reference (N=" << n << ")...\n"
+                  << std::flush;
+    } else {
+        std::cout << "# verify: no cache found, calling perilap3d (N=" << n << ", this may take a while)...\n"
+                  << std::flush;
+    }
+
+    char tmpfile[] = "/tmp/benchmark_esp_XXXXXX";
+    int fd = mkstemp(tmpfile);
+    int32_t nn = static_cast<int32_t>(n);
+    write(fd, &nn, sizeof(nn));
+    write(fd, pos_flat.data(), n * 3 * sizeof(double));
+    write(fd, charges_d.data(), n * sizeof(double));
+    close(fd);
+
+    char errfile[] = "/tmp/benchmark_esp_err_XXXXXX";
+    int efd = mkstemp(errfile);
+    close(efd);
+
+    std::string cmd =
+        std::string("python3 ") + VERIFY_SCRIPT_PATH + " " + tmpfile + " " + perilap3d_dir + " 2>" + errfile;
+    FILE *pipe = popen(cmd.c_str(), "r");
+    bool have_ref = false;
+    if (!pipe) {
+        std::cerr << "# verify: failed to launch Python helper\n";
+    } else {
+        bool ok = true;
+        for (int i = 0; i < n; ++i)
+            if (fscanf(pipe, "%lf", &ref[i]) != 1) {
+                ok = false;
+                break;
+            }
+        int rc = pclose(pipe);
+
+        if (!ok || rc != 0) {
+            std::cerr << "# verify: Python helper failed (exit " << rc << "). stderr:\n";
+            if (FILE *ef = fopen(errfile, "r")) {
+                char buf[256];
+                while (fgets(buf, sizeof(buf), ef))
+                    std::cerr << buf;
+                fclose(ef);
+            }
+        } else {
+            have_ref = true;
+            if (FILE *cf = fopen(cache_path.c_str(), "wb")) {
+                fwrite(&nn, sizeof(nn), 1, cf);
+                fwrite(pos_flat.data(), sizeof(double), n * 3, cf);
+                fwrite(charges_d.data(), sizeof(double), n, cf);
+                fwrite(ref.data(), sizeof(double), n, cf);
+                fclose(cf);
+                std::cout << "# verify: wrote perilap3d cache to " << cache_path << "\n" << std::flush;
+            }
+        }
+        unlink(errfile);
+    }
+    unlink(tmpfile);
+    return have_ref;
+}
+
 void print_config(const Config &cfg, int np, int n_threads, std::ostream &os) {
     os << "# n_src:       " << cfg.n_src << "\n"
        << "# L:           " << cfg.L << "\n"
@@ -111,140 +200,99 @@ void run_benchmark(const Config &cfg) {
     std::vector<double> ref;
     bool have_ref = false;
 
-    if (rank == 0) {
-        ref.resize(n);
+    if (rank == 0)
+        have_ref = get_perilap3d_reference(n, r_src_d, charges_d, cfg.perilap3d_dir, ref);
 
-        // Flatten positions for cache validation and temp file
-        std::vector<double> pos_flat(n * 3);
-        for (int i = 0; i < n; ++i) {
-            pos_flat[i*3+0] = r_src_d[i][0];
-            pos_flat[i*3+1] = r_src_d[i][1];
-            pos_flat[i*3+2] = r_src_d[i][2];
-        }
-
-        // Cache file: VERIFY_CACHE_DIR/perilap_N{n}.bin
-        // Format: int32 N | float64[N*3] positions | float64[N] charges | float64[N] potentials
-        std::string cache_path = std::string(VERIFY_CACHE_DIR) + "/perilap_N" + std::to_string(n) + ".bin";
-
-        if (FILE *cf = fopen(cache_path.c_str(), "rb")) {
-            int32_t cached_n = 0;
-            std::vector<double> cached_pos(n * 3), cached_q(n);
-            bool ok = fread(&cached_n, sizeof(cached_n), 1, cf) == 1
-                   && cached_n == static_cast<int32_t>(n)
-                   && (int)fread(cached_pos.data(), sizeof(double), n * 3, cf) == n * 3
-                   && cached_pos == pos_flat
-                   && (int)fread(cached_q.data(), sizeof(double), n, cf) == n
-                   && cached_q == charges_d
-                   && (int)fread(ref.data(), sizeof(double), n, cf) == n;
-            fclose(cf);
-            if (ok) {
-                have_ref = true;
-                std::cout << "# verify: cache hit — skipping perilap3d (N=" << n << ")\n" << std::flush;
-            } else {
-                std::cout << "# verify: cache stale or corrupt, recomputing perilap3d reference...\n" << std::flush;
-            }
-        } else {
-            std::cout << "# verify: no cache found, calling perilap3d (this may take a while for first run)...\n" << std::flush;
-        }
-
-        if (!have_ref) {
-            char tmpfile[] = "/tmp/benchmark_esp_XXXXXX";
-            int fd = mkstemp(tmpfile);
-            int32_t nn = static_cast<int32_t>(n);
-            write(fd, &nn, sizeof(nn));
-            write(fd, pos_flat.data(), n * 3 * sizeof(double));
-            write(fd, charges_d.data(), n * sizeof(double));
-            close(fd);
-
-            char errfile[] = "/tmp/benchmark_esp_err_XXXXXX";
-            int efd = mkstemp(errfile);
-            close(efd);
-
-            std::string cmd = std::string("python3 ") + VERIFY_SCRIPT_PATH
-                            + " " + tmpfile + " " + cfg.perilap3d_dir
-                            + " 2>" + errfile;
-            FILE *pipe = popen(cmd.c_str(), "r");
-            if (!pipe) {
-                std::cerr << "# verify: failed to launch Python helper\n";
-            } else {
-                bool ok = true;
-                for (int i = 0; i < n; ++i)
-                    if (fscanf(pipe, "%lf", &ref[i]) != 1) { ok = false; break; }
-                int rc = pclose(pipe);
-
-                if (!ok || rc != 0) {
-                    std::cerr << "# verify: Python helper failed (exit " << rc << "). stderr:\n";
-                    if (FILE *ef = fopen(errfile, "r")) {
-                        char buf[256];
-                        while (fgets(buf, sizeof(buf), ef)) std::cerr << buf;
-                        fclose(ef);
-                    }
-                } else {
-                    have_ref = true;
-                    if (FILE *cf = fopen(cache_path.c_str(), "wb")) {
-                        fwrite(&nn, sizeof(nn), 1, cf);
-                        fwrite(pos_flat.data(), sizeof(double), n * 3, cf);
-                        fwrite(charges_d.data(), sizeof(double), n, cf);
-                        fwrite(ref.data(), sizeof(double), n, cf);
-                        fclose(cf);
-                        std::cout << "# verify: wrote perilap3d cache to " << cache_path << "\n" << std::flush;
-                    }
-                }
-                unlink(errfile);
-            }
-            unlink(tmpfile);
-        }
-    }
-
-    // ---- 2D sweep: r_c x sigma — find the largest r_c and sigma within eps ----
-    if (cfg.verify && have_ref && rank == 0) {
+    // ---- 3D sweep: N x r_c x sigma — find a single sigma robust across N and r_c for this eps ----
+    // The old 2D (r_c x sigma) sweep only ever tuned against whatever single N the benchmark
+    // happened to be run with. esp_sigma_from_eps(eps) has to work for any N/r_c the caller
+    // picks, so the recommendation here is the largest sigma that stays under eps for every
+    // (N, r_c) combination tested — i.e. "as fast as possible (smallest stencil) without
+    // sacrificing the requested accuracy for any of the tested configurations".
+    if (cfg.verify && rank == 0) {
+        const std::vector<int> n_vals = {200, 2000, 20000, 100000};
         const std::vector<double> rc_vals = {
             0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.10, 0.12};
-        const double sig_lo = 1.1, sig_hi = 2.5, sig_step = 0.25;
+        const double sig_lo = 1.1, sig_hi = 3, sig_step = 0.25;
+        std::vector<double> sig_vals;
+        for (double sig = sig_lo; sig <= sig_hi + 1e-9; sig += sig_step)
+            sig_vals.push_back(sig);
 
-        std::cout << "# phase: rc_sigma_sweep (eps=" << cfg.eps << ", N=" << n << ")\n"
-                  << "r_c,sigma,l2_rel_err\n" << std::flush;
+        std::cout << "# phase: n_rc_sigma_sweep (eps=" << cfg.eps << ")\n"
+                  << "N,r_c,sigma,l2_rel_err\n" << std::flush;
 
-        struct SweepPt { double rc, sigma, l2; };
+        struct SweepPt { int n; double rc, sigma, l2; };
         std::vector<SweepPt> pts;
 
-        for (double rc : rc_vals) {
-            for (double sig = sig_lo; sig <= sig_hi + 1e-9; sig += sig_step) {
-                dmk::EspPlan *sp = dmk::esp_create_plan(cfg.L, rc, cfg.eps, sig);
-                auto pot_s = dmk::esp_eval<double>(sp, r_src_d, charges_d);
-                dmk::esp_destroy_plan(sp);
+        for (int nn : n_vals) {
+            auto r_src_n = generate_positions<double>(nn, cfg.L);
+            auto charges_n = generate_charges<double>(nn);
 
-                double esp_mean = 0;
-                for (double v : pot_s) esp_mean += v;
-                esp_mean /= n;
+            std::vector<double> ref_n;
+            if (!get_perilap3d_reference(nn, r_src_n, charges_n, cfg.perilap3d_dir, ref_n)) {
+                std::cerr << "# verify: skipping N=" << nn << " (no perilap3d reference)\n";
+                continue;
+            }
 
-                double err2 = 0, ref2 = 0;
-                for (int i = 0; i < n; ++i) {
-                    double diff = (pot_s[i] - esp_mean) - ref[i];
-                    err2 += diff * diff;
-                    ref2 += ref[i] * ref[i];
+            for (double rc : rc_vals) {
+                for (double sig : sig_vals) {
+                    dmk::EspPlan *sp = dmk::esp_create_plan(cfg.L, rc, cfg.eps, sig);
+                    auto pot_s = dmk::esp_eval<double>(sp, r_src_n, charges_n);
+                    dmk::esp_destroy_plan(sp);
+
+                    double esp_mean = 0;
+                    for (double v : pot_s) esp_mean += v;
+                    esp_mean /= nn;
+
+                    double err2 = 0, ref2 = 0;
+                    for (int i = 0; i < nn; ++i) {
+                        double diff = (pot_s[i] - esp_mean) - ref_n[i];
+                        err2 += diff * diff;
+                        ref2 += ref_n[i] * ref_n[i];
+                    }
+                    double l2 = std::sqrt(err2 / ref2);
+                    std::cout << nn << "," << rc << "," << sig << "," << l2 << "\n" << std::flush;
+                    pts.push_back({nn, rc, sig, l2});
                 }
-                double l2 = std::sqrt(err2 / ref2);
-                std::cout << rc << "," << sig << "," << l2 << "\n" << std::flush;
-                pts.push_back({rc, sig, l2});
             }
         }
 
-        // For each r_c, recommend the largest sigma that achieves l2_rel_err < eps.
-        // Larger sigma => smaller stencil width P => fewer spread points => faster.
-        // r_c is a user choice; sigma is the tunable we optimize here.
-        std::cout << "# recommendations (largest sigma achieving l2_rel_err < eps=" << cfg.eps << "):\n";
-        for (double rc : rc_vals) {
-            SweepPt best{rc, -1.0, -1.0};
-            for (const auto &p : pts)
-                if (p.rc == rc && p.l2 < cfg.eps && p.sigma > best.sigma)
-                    best = p;
-            std::cout << "#   r_c=" << rc << ": ";
-            if (best.sigma > 0)
-                std::cout << "sigma=" << best.sigma << " (l2_rel_err=" << best.l2 << ")\n";
-            else
-                std::cout << "no sigma in [" << sig_lo << ", " << sig_hi << "] achieved eps\n";
+        // Diagnostic: per (N, r_c), the largest sigma that achieves l2_rel_err < eps on its own.
+        // Useful for spotting which N/r_c combination is the binding constraint below.
+        std::cout << "# per-config recommendations (largest sigma achieving l2_rel_err < eps=" << cfg.eps << "):\n";
+        for (int nn : n_vals) {
+            for (double rc : rc_vals) {
+                SweepPt best{nn, rc, -1.0, -1.0};
+                for (const auto &p : pts)
+                    if (p.n == nn && p.rc == rc && p.l2 < cfg.eps && p.sigma > best.sigma)
+                        best = p;
+                std::cout << "#   N=" << nn << " r_c=" << rc << ": ";
+                if (best.sigma > 0)
+                    std::cout << "sigma=" << best.sigma << " (l2_rel_err=" << best.l2 << ")\n";
+                else
+                    std::cout << "no sigma in [" << sig_lo << ", " << sig_hi << "] achieved eps\n";
+            }
         }
+
+        // Overall recommendation: the largest sigma whose worst-case l2_rel_err across every
+        // (N, r_c) tested is still under eps. This is the value esp_sigma_from_eps(eps) should
+        // return for this digit bucket.
+        double robust_sigma = -1.0, robust_worst_l2 = -1.0;
+        for (double sig : sig_vals) {
+            double worst_l2 = 0.0;
+            for (const auto &p : pts)
+                if (p.sigma == sig)
+                    worst_l2 = std::max(worst_l2, p.l2);
+            if (worst_l2 > 0.0 && worst_l2 < cfg.eps && sig > robust_sigma) {
+                robust_sigma = sig;
+                robust_worst_l2 = worst_l2;
+            }
+        }
+        std::cout << "# robust recommendation for eps=" << cfg.eps << " (safe across all N,r_c tested): ";
+        if (robust_sigma > 0)
+            std::cout << "sigma=" << robust_sigma << " (worst-case l2_rel_err=" << robust_worst_l2 << ")\n";
+        else
+            std::cout << "no sigma in [" << sig_lo << ", " << sig_hi << "] was safe for every N,r_c tested\n";
         std::cout << std::flush;
     }
 

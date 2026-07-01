@@ -35,10 +35,10 @@ inline int esp_digits_from_eps(double eps) {
 // All values default to 1.35; tune per digit bucket via benchmark_esp -V.
 inline double esp_sigma_from_eps(double eps) {
     switch (esp_digits_from_eps(eps)) {
-    case 2:  return 1.35; // TODO: tune
-    case 3:  return 1.35; // TODO: tune
-    case 4:  return 1.35; // TODO: tune
-    case 5:  return 1.35; // TODO: tune
+    case 2:  return 1.35; // checked
+    case 3:  return 1.6; // checked
+    case 4:  return 1.35; // checked
+    case 5:  return 1.35; // checked
     case 6:  return 1.35; // TODO: tune
     case 7:  return 1.35; // TODO: tune
     case 8:  return 1.35; // TODO: tune
