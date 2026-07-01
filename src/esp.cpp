@@ -208,34 +208,6 @@ static CellList<Real> build_cell_list(const std::vector<Vec3T<Real>> &r_src, con
 }
 
 // ---------------------------------------------------------------------------
-// Scalar (non-SIMD) ESP short-range evaluator built from runtime coefficients.
-// Used when a non-default sigma is supplied so the precompiled tables can't be
-// used. Computes charge_j * P(t) / d for every pair within the cutoff, where
-// t = d/r_c and P is the polynomial approximation of (1-I(t)/c0)/(4*pi).
-// ---------------------------------------------------------------------------
-template <typename Real>
-static residual_evaluator_func<Real> make_esp_scalar_evaluator(std::vector<Real> coeffs) {
-    return [coeffs = std::move(coeffs)](Real rsc, Real /*cen*/, Real d2max, Real /*thresh2*/,
-                                        int n_src, const Real *r_src, const Real *charge,
-                                        const Real */*normals*/, int n_trg, const Real *r_trg, Real *pot) {
-        const int nc = static_cast<int>(coeffs.size());
-        for (int i = 0; i < n_trg; ++i) {
-            const Real xi = r_trg[3*i], yi = r_trg[3*i+1], zi = r_trg[3*i+2];
-            for (int j = 0; j < n_src; ++j) {
-                const Real dx = r_src[3*j] - xi, dy = r_src[3*j+1] - yi, dz = r_src[3*j+2] - zi;
-                const Real d2 = dx*dx + dy*dy + dz*dz;
-                if (d2 == Real(0) || d2 > d2max) continue;
-                const Real d = std::sqrt(d2);
-                const Real t = d * rsc;
-                Real pt = coeffs[nc - 1];
-                for (int k = nc - 2; k >= 0; --k) pt = pt * t + coeffs[k];
-                pot[i] += charge[j] * pt / d;
-            }
-        }
-    };
-}
-
-// ---------------------------------------------------------------------------
 // Short-range sum (fast path: cell-list / box-reordering, no neighbor list).
 // Parallelizes over home cells — each cell's output slots are disjoint across
 // threads, so pot_sorted[a] is written by exactly one thread (no atomics).
@@ -243,8 +215,7 @@ static residual_evaluator_func<Real> make_esp_scalar_evaluator(std::vector<Real>
 // ---------------------------------------------------------------------------
 template <typename Real>
 static std::vector<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                                          const ESPParams &params,
-                                          const residual_evaluator_func<Real> &evaluator) {
+                                          const ESPParams &params, int n_digits) {
     // 27-cell stencil requires nc >= 3 so periodic images aren't double-counted
     const int nc = static_cast<int>(std::floor(params.L / params.r_c));
     if (nc < 3)
@@ -255,7 +226,17 @@ static std::vector<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src,
     const Real L = Real(params.L);
     const Real r_c_sq = Real(params.r_c) * Real(params.r_c);
     const int n = params.n;
-    const Real rsc = Real(1.0 / params.r_c);
+
+    // Precompiled SIMD evaluator: u = P(t)/(R), t = R/r_c, with the (1 - I(t)/c0)/(4*pi)
+    // correction baked into P. The baked coefficients are fit on t in [0,1] via the polyfit
+    // library, which internally works in xi = 2*t-1 (see poly_eval::FuncEval::map_from_domain);
+    // cen/rsc must reproduce that remap, matching the generic Laplace-3D convention in
+    // tree.cpp (rsc = 2/bsize, cen = -bsize/2) with bsize = r_c.
+    // Coefficients are baked in at sigma=1.35 (see generate_aot_kernels.cpp).
+    constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
+    auto evaluator = get_esp_3d_kernel<Real, MaxVecLen>(DMK_POTENTIAL, n_digits);
+    const Real rsc = Real(2.0 / params.r_c);
+    const Real cen = Real(-params.r_c / 2.0);
 
     std::vector<Real> pot_sorted(n, Real(0));
 
@@ -337,9 +318,20 @@ static std::vector<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src,
                             }
                         }
                     }
-
-                    evaluator(rsc, Real(0), r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, n_trg, r_trg_ptr,
-                              pot_sorted.data() + hbeg);
+                    // for (int a = 0; a < n_trg; ++a)
+                    //     for(int b = 0; b < n_src; ++b) {
+                    //         const Real dx = r_src_ptr[3*b+0] - r_trg_ptr[3*a+0];
+                    //         const Real dy = r_src_ptr[3*b+1] - r_trg_ptr[3*a+1];
+                    //         const Real dz = r_src_ptr[3*b+2] - r_trg_ptr[3*a+2];
+                    //         const Real d2 = dx*dx + dy*dy + dz*dz;
+                    //         if (d2 > r_c_sq || d2 == Real(0)) continue;
+                    //         const Real d = std::sqrt(d2);
+                    //         const Real t = d / Real(params.r_c);
+                    //         const Real intval = pswf.integral(Real(0), t) * (Real(1) / params.c0);
+                    //         pot_sorted[hbeg + a] += charge_ptr[b] * (Real(1) - intval) / (Real(4) * M_PI * d);
+                    //     }
+                    evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, n_trg, r_trg_ptr,
+                               pot_sorted.data() + hbeg);
                 }
     }
 
@@ -349,97 +341,6 @@ static std::vector<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src,
         pot[cl.orig[a]] = pot_sorted[a];
     return pot;
 }
-
-// ---------------------------------------------------------------------------
-// Short-range sum (fast path: cell-list / box-reordering, no neighbor list).
-// Parallelizes over home cells — each cell's output slots are disjoint across
-// threads, so pot_sorted[a] is written by exactly one thread (no atomics).
-// Falls back to the neighbor-list path when r_c > L/3 (nc < 3).
-// ---------------------------------------------------------------------------
-template <typename Real>
-static std::vector<Real> short_range_slow(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                                          const PSWFKernel &pswf, const ESPParams &params) {
-    // 27-cell stencil requires nc >= 3 so periodic images aren't double-counted
-    const int nc = static_cast<int>(std::floor(params.L / params.r_c));
-    if (nc < 3)
-        throw std::runtime_error("short_range_fast requires r_c <= L/3 (nc >= 3)");
-
-    CellList<Real> cl = build_cell_list<Real>(r_src, charges, params, nc);
-
-    const Real L = Real(params.L);
-    const Real r_c_sq = Real(params.r_c) * Real(params.r_c);
-    const double inv_rc = 1.0 / params.r_c;
-    const double inv_c0 = 1.0 / params.c0;
-    const int n = params.n;
-
-    std::vector<Real> pot_sorted(n, Real(0));
-
-    // For each cell coordinate c in [0, nc) and each delta d in {-1,0,+1} (stored as d=0,1,2):
-    // nbc_tab[c*3+d] = neighbor cell index, off_tab[c*3+d] = image shift to subtract.
-    // Precomputed once; all three dimensions share the same table since they share nc.
-    std::vector<int>  nbc_tab(nc * 3);
-    std::vector<Real> off_tab(nc * 3);
-    for (int c = 0; c < nc; ++c) {
-        for (int d = 0; d < 3; ++d) {
-            int ci = c + d - 1;
-            if      (ci < 0)   { nbc_tab[c*3+d] = ci + nc; off_tab[c*3+d] = -L; }
-            else if (ci >= nc) { nbc_tab[c*3+d] = ci - nc; off_tab[c*3+d] =  L; }
-            else               { nbc_tab[c*3+d] = ci;      off_tab[c*3+d] =  Real(0); }
-        }
-    }
-
-#pragma omp parallel for schedule(dynamic) collapse(3)
-    for (int cx = 0; cx < nc; ++cx)
-        for (int cy = 0; cy < nc; ++cy)
-            for (int cz = 0; cz < nc; ++cz) {
-                const int home = (cx * nc + cy) * nc + cz;
-                const int hbeg = cl.cell_start[home], hend = cl.cell_start[home + 1];
-
-                const int  *nbc_cx = &nbc_tab[cx * 3];
-                const int  *nbc_cy = &nbc_tab[cy * 3];
-                const int  *nbc_cz = &nbc_tab[cz * 3];
-                const Real *off_cx = &off_tab[cx * 3];
-                const Real *off_cy = &off_tab[cy * 3];
-                const Real *off_cz = &off_tab[cz * 3];
-
-                for (int a = hbeg; a < hend; ++a) {
-                    const Real xi = cl.rs[3*a+0], yi = cl.rs[3*a+1], zi = cl.rs[3*a+2];
-                    Real acc = Real(0);
-
-                    for (int dx = 0; dx < 3; ++dx)
-                        for (int dy = 0; dy < 3; ++dy)
-                            for (int dz = 0; dz < 3; ++dz) {
-                                const int nb = (nbc_cx[dx] * nc + nbc_cy[dy]) * nc + nbc_cz[dz];
-                                const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
-
-                                for (int b = nbeg; b < nend; ++b) {
-                                    if (nb == home && a == b)
-                                        continue;
-                                    const Real ddx = xi - cl.rs[3*b+0] - off_cx[dx];
-                                    const Real ddy = yi - cl.rs[3*b+1] - off_cy[dy];
-                                    const Real ddz = zi - cl.rs[3*b+2] - off_cz[dz];
-                                    const Real d2 = ddx * ddx + ddy * ddy + ddz * ddz;
-                                    if (d2 > r_c_sq)
-                                        continue;
-
-                                    double dist = std::sqrt(double(d2));
-                                    double t = dist * inv_rc;
-                                    double intval = pswf.integral(0.0, t) * inv_c0;
-
-                                    acc += cl.qs[b] * Real((1.0 - intval) / (4.0 * M_PI * dist));
-                                }
-                            }
-                    pot_sorted[a] = acc;
-                }
-            }
-
-    // restore original particle ordering
-    std::vector<Real> pot(n, Real(0));
-    for (int a = 0; a < n; ++a)
-        pot[cl.orig[a]] = pot_sorted[a];
-    return pot;
-}
-
 
 // ---------------------------------------------------------------------------
 // S_hat(k_vec)
@@ -565,22 +466,15 @@ struct EspPlan {
     PSWFKernel pswf;
     ESPParams params_base; // n=0 placeholder; n_f/h/kernel params pre-filled
     DGrid scaling_coeffs;
-    // Always built from the actual pswf.sigma so the short-range polynomial
-    // matches the long-range FINUFFT window exactly.
-    residual_evaluator_func<float>  custom_eval_f;
-    residual_evaluator_func<double> custom_eval_d;
 
     // eps is snapped to 10^-n_digits so the short-range PSWF window (baked into the
     // precompiled evaluator at that bucket) matches the long-range window exactly.
-    // sigma < 0 → use esp_sigma_from_eps; sigma > 0 → override (builds on-the-fly evaluator).
+    // sigma < 0 → use esp_sigma_from_eps; sigma > 0 → override (long-range FINUFFT window only —
+    // the short-range evaluator is precompiled AOT for sigma=1.35).
     EspPlan(double L, double r_c, double eps, double sigma = -1.0)
         : n_digits(esp_digits_from_eps(eps)), pswf(std::pow(10.0, -double(n_digits)), sigma),
           params_base(L, r_c, pswf.P, pswf, 0) {
         scaling_coeffs = precompute_scaling_coefficients(pswf, params_base);
-        auto cd = get_esp_correction_coeffs<double>(n_digits, pswf.sigma)[0];
-        auto cf = get_esp_correction_coeffs<float> (n_digits, pswf.sigma)[0];
-        custom_eval_d = make_esp_scalar_evaluator<double>(std::move(cd));
-        custom_eval_f = make_esp_scalar_evaluator<float> (std::move(cf));
     }
 };
 
@@ -595,15 +489,8 @@ std::vector<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src,
     ESPParams params = plan->params_base;
     params.n = n;
 
-    residual_evaluator_func<Real> sr_eval;
-    if constexpr (std::is_same_v<Real, double>)
-        sr_eval = plan->custom_eval_d;
-    else
-        sr_eval = plan->custom_eval_f;
-
     double t0 = omp_get_wtime();
-    auto pot_sr = short_range_slow<Real>(r_src, charges, plan->pswf, params); //before: params, sr_eval
-    //auto pot_sr = short_range_fast<Real>(r_src, charges, params, sr_eval);
+    auto pot_sr = short_range_fast<Real>(r_src, charges, params, plan->n_digits);
     double t1 = omp_get_wtime();
     auto pot_lr = long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs);
     double t2 = omp_get_wtime();

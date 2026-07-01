@@ -95,7 +95,7 @@ void run_benchmark(const Config &cfg) {
         }
         for (int run = 0; run < cfg.n_runs; ++run) {
             double t0 = MY_OMP_GET_WTIME();
-            dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps);
+            dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, 1.35); // before: cfg.eps
             double t1 = MY_OMP_GET_WTIME();
             dmk::esp_destroy_plan(plan);
 
