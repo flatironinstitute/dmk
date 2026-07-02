@@ -430,6 +430,43 @@ struct LaplacePolyEvaluator2D {
     }
 };
 
+// Yukawa The residual K0(lambda*r) + C(r) is a log-singular even function of r, so it is fit per
+// level as residual = 0.5*log(r^2/bsize^2) * PA(x) + PB(x), where PA(x) ~ -I0(lambda*r)
+// carries the log coefficient and PB is the smooth remainder (the windowed
+// far-field C(r) and constant shifts fold into PB); both are polynomials in the
+// scaled variable x = rsc*r^2 + cen.
+template <class Real, int MaxVecLen>
+struct YukawaPolyEvaluator2D {
+    using scalar_type = Real;
+    using vector_type = sctl::Vec<Real, MaxVecLen>;
+    static constexpr int SPATIAL_DIM = 2;
+    static constexpr int KERNEL_INPUT_DIM = 1;
+    static constexpr int NORMAL_DIM = 0;
+    static constexpr Real scale_factor = 1.0;
+
+    vector_type thresh2_vec, d2max_vec, rsc_vec, cen_vec, bsizeinv2_vec;
+    const Real *coeffs_log;
+    int n_coeffs_log;
+    const Real *coeffs_reg;
+    int n_coeffs_reg;
+    int n_digits;
+
+    template <int KERNEL_OUTPUT_DIM>
+    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[1][KERNEL_OUTPUT_DIM],
+                                      const vector_type (&dX)[SPATIAL_DIM]) const {
+        static_assert(KERNEL_OUTPUT_DIM == 1, "Yukawa 2D residual only supports DMK_POTENTIAL");
+        const vector_type R2 = FMA(dX[0], dX[0], dX[1] * dX[1]);
+        const auto in_range = (R2 > thresh2_vec) & (R2 < d2max_vec);
+        const vector_type half = Real{0.5};
+
+        const vector_type x = FMA(R2, rsc_vec, cen_vec);
+        const vector_type L = half * sctl::log(R2 * bsizeinv2_vec);
+        const vector_type PA = horner(x, coeffs_log, n_coeffs_log);
+        const vector_type PB = horner(x, coeffs_reg, n_coeffs_reg);
+        u[0][0] = sctl::select<Real, MaxVecLen>(in_range, FMA(L, PA, PB), vector_type::Zero());
+    }
+};
+
 template <class Real, int MaxVecLen>
 struct LaplacePolyEvaluator3D {
     using scalar_type = Real;
@@ -1026,6 +1063,30 @@ void yukawa_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real
         throw std::runtime_error("Yukawa 3D residual currently supports only DMK_POTENTIAL");
 
     YukawaPolyEvaluator3D<Real, MaxVecLen> evaluator{thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits};
+
+    constexpr int KERNEL_OUTPUT_DIM = 1;
+    EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
+}
+
+// 2D Yukawa residual, log-split path. coeffs holds the two concatenated monomial
+// polynomials [PA (n_coeffs_log) | PB (n_coeffs_reg)]. rsc/cen use the 2D-Laplace
+// mapping (poly in r^2, rsc = 2/bsize^2, cen = -1), so bsizeinv2 = 0.5*rsc = 1/bsize^2.
+template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS_LOG = -1, int N_COEFFS_REG = -1,
+          int EVAL_LEVEL = -1>
+void yukawa_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
+                              int n_coeffs_log_rt, int n_coeffs_reg_rt, const Real *coeffs, int n_src,
+                              const Real *r_src, const Real *charge, const Real *normals, int n_trg, const Real *r_trg,
+                              Real *pot, int unroll_factor) {
+    const int n_digits = (N_DIGITS > 0) ? N_DIGITS : n_digits_rt;
+    const int n_log = (N_COEFFS_LOG > 0) ? N_COEFFS_LOG : n_coeffs_log_rt;
+    const int n_reg = (N_COEFFS_REG > 0) ? N_COEFFS_REG : n_coeffs_reg_rt;
+    const int eval_level = (EVAL_LEVEL > 0) ? EVAL_LEVEL : eval_level_rt;
+
+    if (eval_level != DMK_POTENTIAL)
+        throw std::runtime_error("Yukawa 2D residual currently supports only DMK_POTENTIAL");
+
+    YukawaPolyEvaluator2D<Real, MaxVecLen> evaluator{thresh2, d2max,          rsc,   cen,     Real{0.5} * rsc, coeffs,
+                                                     n_log,   coeffs + n_log, n_reg, n_digits};
 
     constexpr int KERNEL_OUTPUT_DIM = 1;
     EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);

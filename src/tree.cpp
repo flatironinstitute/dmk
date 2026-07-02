@@ -843,50 +843,21 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
         evaluator_by_level_trg.assign(n_levels(), trg_eval);
     } else {
         for (int level = 0; level < n_levels(); ++level) {
-            const auto coeffs = fourier_data.cheb_coeffs(level);
+            auto coeffs = fourier_data.local_correction_coeffs(level, n_digits);
+
             if constexpr (DIM == 3) {
-                // 3D Yukawa rides the unified SIMD residual path; coefficients are
-                // the per-level monomial fit built in FourierData.
-                std::vector<Real> coeffs_vec(coeffs.data(), coeffs.data() + coeffs.size());
-                // FIXME: assumes the same src/trg output configuration
+                // 3D Yukawa: single monomial fit Q, evaluated as horner(x)*Rinv.
+                std::vector<Real> reg(coeffs.reg_poly.begin(), coeffs.reg_poly.end());
                 evaluator_by_level_src.push_back(
-                    make_evaluator_yukawa<Real>(params.eval_src, DIM, n_digits, std::move(coeffs_vec)));
+                    make_evaluator_yukawa<Real>(params.eval_src, DIM, n_digits, std::move(reg)));
             } else {
-                // 2D Yukawa: scalar Chebyshev far-field + bare cyl_bessel_k, not yet unified.
-                // FIXME: This should be moved to direct.cpp, but it was annoying to add the coefficient
-                // binding cleanly
-                const Real lambda = params.fparam;
-                const int n_charge_dim = n_tables_up;
-                const int kernel_output_dim = kernel_output_dim_trg;
+                // 2D Yukawa: log-split fit [PA | PB], evaluated as log(r/bsize)*PA + PB.
+                const int n_log = coeffs.log_poly.size();
+                std::vector<Real> c;
+                c.insert(c.end(), coeffs.log_poly.begin(), coeffs.log_poly.end());
+                c.insert(c.end(), coeffs.reg_poly.begin(), coeffs.reg_poly.end());
                 evaluator_by_level_src.push_back(
-                    [coeffs, lambda, n_charge_dim, kernel_output_dim](
-                        Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src_ptr,
-                        const Real *charge_ptr, const Real *normal_ptr, int n_trg, const Real *r_trg_ptr, Real *pot) {
-                        constexpr Real threshq = 1e-30;
-                        ndview<Real, 2> u({1, n_trg}, pot);
-                        ndview<const Real, 2> charges({n_charge_dim, n_src}, charge_ptr);
-                        ndview<const Real, 2> r_src({DIM, n_src}, r_src_ptr);
-                        ndview<const Real, 2> r_trg({DIM, n_trg}, r_trg_ptr);
-                        for (int i_trg = 0; i_trg < n_trg; i_trg++) {
-                            for (int i_src = 0; i_src < n_src; i_src++) {
-                                const Real dx = r_trg(0, i_trg) - r_src(0, i_src);
-                                const Real dy = r_trg(1, i_trg) - r_src(1, i_src);
-                                const Real dd = dx * dx + dy * dy;
-
-                                if (dd < threshq || dd > d2max)
-                                    continue;
-
-                                const Real r = sqrt(dd);
-                                const Real xval = r * rsc + cen;
-                                const Real fval = chebyshev::evaluate(xval, coeffs.size() + 1, coeffs.data());
-                                const Real dkval = util::cyl_bessel_k(0, lambda * r);
-
-                                const Real factor = dkval + fval;
-                                for (int i = 0; i < kernel_output_dim; ++i)
-                                    u(i, i_trg) += charges(i, i_src) * factor;
-                            }
-                        }
-                    });
+                    make_evaluator_yukawa<Real>(params.eval_src, DIM, n_digits, std::move(c), n_log));
             }
         }
         // FIXME: assumes the same src/trg output configuration
@@ -1364,14 +1335,14 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
 
                 Real rsc = 2 * bsizeinv;
                 Real cen = -bsize / Real{2};
-                const auto &cheb_coeffs = fourier_data.cheb_coeffs(src_level);
 
                 if ((params.kernel == DMK_SQRT_LAPLACE && DIM == 3) || (params.kernel == DMK_LAPLACE && DIM == 2) ||
-                    (params.kernel == DMK_LAPLACE_DIPOLE && DIM == 2)) {
+                    (params.kernel == DMK_LAPLACE_DIPOLE && DIM == 2) || (params.kernel == DMK_YUKAWA && DIM == 2)) {
+                    // Poly in r^2 (2D log-split Yukawa uses the 2D-Laplace mapping).
                     rsc = 2 * bsizeinv * bsizeinv;
                     cen = Real{-1.0};
                 } else if (params.kernel == DMK_YUKAWA)
-                    cen = Real{-1.0};
+                    cen = Real{-1.0}; // 3D Yukawa: poly in r (linear), rsc = 2/bsize
 
                 // Determine if we should filter, and on which side
                 const bool src_larger = node_mid[src_box].Depth() < node_mid[trg_box].Depth();

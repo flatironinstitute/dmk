@@ -808,8 +808,6 @@ FourierData<T>::FourierData(dmk_ikernel kernel, int n_dim, T eps, int n_pw_win, 
     for (int i_level = 0; i_level < n_levels_; ++i_level)
         std::tie(difference_kernels_[i_level].hpw, difference_kernels_[i_level].ws) =
             get_PSWF_difference_kernel_pwterms(n_dim, n_pw_diff, beta_, box_sizes_[i_level]);
-
-    update_local_coeffs(eps);
 }
 
 template <typename Real>
@@ -873,21 +871,44 @@ T FourierData<T>::yukawa_windowed_kernel_value_at_zero(int i_level) {
     return dmk::yukawa_windowed_kernel_value_at_zero(n_dim_, fparam_, beta_, bsize, rl, prolate0_fun);
 }
 
-template <typename T>
-void FourierData<T>::update_local_coeffs_laplace(T eps) {
-    // FIXME: Should do something _only_ if doing dipoles. Implement when
-    // we add dipoles :)
+namespace {
+// Modified Bessel I0(z) via its ascending series (double, generation-time only).
+double besseli0_series(double z) {
+    const double z2 = 0.25 * z * z;
+    double term = 1.0, sum = 1.0;
+    for (int k = 1; k < 64; ++k) {
+        term *= z2 / (double(k) * double(k));
+        sum += term;
+        if (term <= 1e-18 * sum)
+            break;
+    }
+    return sum;
 }
 
+// Regular (non-log) part of K0: KR(z) = K0(z) + log(z)*I0(z). Finite and even in
+// z, so the residual's log singularity can be isolated without inf-inf at r=0.
+// KR(z) = (log2 - gamma)*I0(z) + sum_{k>=1} (z^2/4)^k/(k!)^2 * H_k.
+double besselk0_regular_series(double z) {
+    constexpr double log2 = 0.6931471805599453;
+    constexpr double euler_gamma = 0.5772156649015329;
+    const double z2 = 0.25 * z * z;
+    double term = 1.0, Hk = 0.0, sum = 0.0;
+    for (int k = 1; k < 64; ++k) {
+        term *= z2 / (double(k) * double(k));
+        Hk += 1.0 / double(k);
+        const double add = term * Hk;
+        sum += add;
+        if (add <= 1e-18 * (sum + 1.0))
+            break;
+    }
+    return (log2 - euler_gamma) * besseli0_series(z) + sum;
+}
+} // namespace
+
 template <typename Real>
-void FourierData<Real>::update_local_coeffs_yukawa(Real eps) {
-    // FIXME: This whole routine is a mess and only works with doubles anyway
-    const int nr1 = n_coeffs_max;
-
-    coeffs1_.ReInit(nr1 * n_levels_);
-    ncoeffs1_.ReInit(n_levels_);
-
-    const int n_digits = std::lround(-std::log10(double(eps)));
+typename FourierData<Real>::LocalCorrectionCoeffs FourierData<Real>::local_correction_coeffs(int i_level,
+                                                                                             int n_digits) {
+    LocalCorrectionCoeffs out;
 
     constexpr Real two_over_pi = 2.0 / M_PI;
     const Real &rlambda = fparam_;
@@ -898,125 +919,106 @@ void FourierData<Real>::update_local_coeffs_yukawa(Real eps) {
     // FIXME: Ideally these would use the Real type, but we get slightly lower errors downstream with double
     std::vector<double> xs(n_quad), whts(n_quad), xs_base(n_quad), whts_base(n_quad), fhat(n_quad);
     legerts(1, n_quad, xs_base.data(), whts_base.data());
-    auto [v1, vlu1] = dmk::chebyshev::get_vandermonde_and_LU<Real>(nr1);
-    nda::vector<Real> fvals(nr1);
 
-    for (int i_level = 0; i_level < n_levels_; ++i_level) {
-        auto bsize = box_sizes_[i_level];
-        if (i_level == 0)
-            bsize *= 0.5;
+    auto bsize = box_sizes_[i_level];
+    if (i_level == 0)
+        bsize *= 0.5;
 
-        Real scale_factor = beta_ / (2.0 * bsize);
-        for (int i = 0; i < n_quad; ++i) {
-            xs[i] = scale_factor * (xs_base[i] + 1.0);
-            whts[i] = scale_factor * whts_base[i];
-        }
+    Real scale_factor = beta_ / (2.0 * bsize);
+    for (int i = 0; i < n_quad; ++i) {
+        xs[i] = scale_factor * (xs_base[i] + 1.0);
+        whts[i] = scale_factor * whts_base[i];
+    }
 
-        const bool near_correction = rlambda * bsize / beta_ < 1E-2;
-        Real dk0, dk1, delam;
-        const Real rl = difference_kernels_[std::max(i_level, 0)].rl;
-        if (near_correction) {
-            Real arg = rl * rlambda;
-            if (n_dim_ == 2) {
-                dk0 = util::cyl_bessel_k(0, arg);
-                dk1 = util::cyl_bessel_k(1, arg);
-            } else
-                delam = std::exp(-arg);
-        }
+    const bool near_correction = rlambda * bsize / beta_ < 1E-2;
+    Real dk0, dk1, delam;
+    const Real rl = difference_kernels_[std::max(i_level, 0)].rl;
+    if (near_correction) {
+        Real arg = rl * rlambda;
+        if (n_dim_ == 2) {
+            dk0 = util::cyl_bessel_k(0, arg);
+            dk1 = util::cyl_bessel_k(1, arg);
+        } else
+            delam = std::exp(-arg);
+    }
 
-        for (int i = 0; i < n_quad; ++i) {
-            const Real xi2 = xs[i] * xs[i] + rlambda2;
-            const Real xval = sqrt(xi2) * bsize / beta_;
-            if (xval <= 1.0) {
-                fhat[i] = prolate0_fun.eval_val(xval) / (psi0 * xi2);
-            } else {
-                fhat[i] = 0.0;
-                continue;
-            }
-            fhat[i] *= (n_dim_ == 2) ? whts[i] * xs[i] : whts[i] * xs[i] * xs[i] * two_over_pi;
-
-            if (near_correction) {
-                Real xsc = rl * xs[i];
-                if (n_dim_ == 2)
-                    fhat[i] *=
-                        -rl * rlambda * util::cyl_bessel_j(0, xsc) * dk1 + 1 + xsc * util::cyl_bessel_j(1, xsc) * dk0;
-                else
-                    fhat[i] *= 1 - delam * (std::cos(xsc) + rlambda / xs[i] * std::sin(xsc));
-            }
-        }
-
-        if (n_dim_ == 3) {
-            // Unified residual path (mirrors the other kernels): fit the smooth,
-            // bounded function Q(r) = r * residual(r) = exp(-lambda*r) - r*W(r),
-            // where W(r) = Σ_j sinc(r*xs_j) fhat_j is the windowed far-field. At
-            // runtime the residual is horner(r*rsc+cen)*Rinv, with Rinv supplying
-            // the 1/r singularity and the exp folded into the polynomial (see
-            // YukawaPolyEvaluator3D). x in [-1,1] maps to r in [0,bsize], matching
-            // the rsc=2/bsize, cen=-1 used at the call site in tree.cpp.
-            auto f = [&](double x) {
-                const double r = (x + 1.0) * 0.5 * bsize;
-                double W = 0.0;
-                for (int j = 0; j < n_quad; ++j) {
-                    const double dd = r * xs[j];
-                    W += (dd == 0.0 ? 1.0 : std::sin(dd) / dd) * fhat[j];
-                }
-                return std::exp(-rlambda * r) - r * W;
-            };
-            const auto coeffs = make_polyfit_abs_error<double>(n_digits, f, -1.0, 1.0);
-            if (coeffs.empty())
-                throw std::runtime_error(
-                    std::format("Yukawa local correction fit failed at level {} (lambda={}, bsize={}, "
-                                "lambda*bsize={}): exp(-lambda*r) too stiff for a degree<32 polynomial",
-                                i_level, double(rlambda), double(bsize), double(rlambda * bsize)));
-            ncoeffs1_[i_level] = coeffs.size();
-            for (int i = 0; i < (int)coeffs.size(); ++i)
-                coeffs1_[i_level * n_coeffs_max + i] = coeffs[i];
+    for (int i = 0; i < n_quad; ++i) {
+        const Real xi2 = xs[i] * xs[i] + rlambda2;
+        const Real xval = sqrt(xi2) * bsize / beta_;
+        if (xval <= 1.0) {
+            fhat[i] = prolate0_fun.eval_val(xval) / (psi0 * xi2);
+        } else {
+            fhat[i] = 0.0;
             continue;
         }
+        fhat[i] *= (n_dim_ == 2) ? whts[i] * xs[i] : whts[i] * xs[i] * xs[i] * two_over_pi;
 
-        // 2D: windowed far-field as a Chebyshev expansion, evaluated scalarly
-        // alongside the bare cyl_bessel_k term in tree.cpp (not yet unified).
-        auto r1 = dmk::chebyshev::get_cheb_nodes(nr1, Real{0.}, bsize);
-        for (int i = 0; i < nr1; ++i) {
-            fvals(i) = 0.0;
-            for (int j = 0; j < n_quad; ++j)
-                fvals(i) -= util::cyl_bessel_j(0, r1[i] * xs[j]) * fhat[j];
+        if (near_correction) {
+            Real xsc = rl * xs[i];
+            if (n_dim_ == 2)
+                fhat[i] *=
+                    -rl * rlambda * util::cyl_bessel_j(0, xsc) * dk1 + 1 + xsc * util::cyl_bessel_j(1, xsc) * dk0;
+            else
+                fhat[i] *= 1 - delam * (std::cos(xsc) + rlambda / xs[i] * std::sin(xsc));
         }
+    }
 
-        nda::vector_view<Real> coeffs1_lvl({nr1}, &coeffs1_[0] + nr1 * i_level);
-        coeffs1_lvl = vlu1.solve(fvals);
-        Real coefsmax = nda::max_element(nda::abs(coeffs1_lvl));
-        Real releps = eps * coefsmax;
-
-        ncoeffs1_[i_level] = 1;
-        for (int i = 0; i < nr1 - 2; ++i) {
-            if (std::fabs(coeffs1_lvl(i)) < releps && std::fabs(coeffs1_lvl(i + 1)) < releps &&
-                std::fabs(coeffs1_lvl(i + 2)) < releps) {
-                ncoeffs1_[i_level] = i + 1;
-                break;
+    if (n_dim_ == 3) {
+        // Unified residual path (mirrors the other kernels): fit the smooth,
+        // bounded function Q(r) = r * residual(r) = exp(-lambda*r) - r*W(r),
+        // where W(r) = Σ_j sinc(r*xs_j) fhat_j is the windowed far-field. At
+        // runtime the residual is horner(r*rsc+cen)*Rinv, with Rinv supplying
+        // the 1/r singularity and the exp folded into the polynomial (see
+        // YukawaPolyEvaluator3D). x in [-1,1] maps to r in [0,bsize], matching
+        // the rsc=2/bsize, cen=-1 used at the call site in tree.cpp.
+        auto f = [&](double x) {
+            const double r = (x + 1.0) * 0.5 * bsize;
+            double W = 0.0;
+            for (int j = 0; j < n_quad; ++j) {
+                const double dd = r * xs[j];
+                W += (dd == 0.0 ? 1.0 : std::sin(dd) / dd) * fhat[j];
             }
-        }
+            return std::exp(-double(rlambda) * r) - r * W;
+        };
+        out.reg_poly = make_polyfit_abs_error<double>(n_digits, f, -1.0, 1.0);
+        if (out.reg_poly.empty())
+            throw std::runtime_error(
+                std::format("Yukawa local correction fit failed at level {} (lambda={}, bsize={}, "
+                            "lambda*bsize={}): exp(-lambda*r) too stiff for a degree<32 polynomial",
+                            i_level, double(rlambda), double(bsize), double(rlambda * bsize)));
+        return out;
     }
-}
 
-template <typename T>
-void FourierData<T>::update_local_coeffs(T eps) {
-    switch (kernel_) {
-    case dmk_ikernel::DMK_YUKAWA:
-        return update_local_coeffs_yukawa(eps);
-    case dmk_ikernel::DMK_LAPLACE:
-        return update_local_coeffs_laplace(eps);
-    case dmk_ikernel::DMK_SQRT_LAPLACE:
-        return; // No coefficients for sqrt Laplace kernel
-    case dmk_ikernel::DMK_STOKESLET:
-        return;
-    case dmk_ikernel::DMK_STRESSLET:
-        return;
-    case dmk_ikernel::DMK_LAPLACE_DIPOLE:
-        return;
-    default:
-        throw std::runtime_error("Kernel not supported yet: " + std::to_string(kernel_));
-    }
+    // 2D log-split fit. The scaled variable x in [-1,1] maps to r^2 in [0,bsize^2]
+    // via r = bsize*sqrt((x+1)/2), matching rsc=2/bsize^2, cen=-1 at the call site.
+    // residual(r) = K0(lambda*r) + C(r) = log(r/bsize)*PA(x) + PB(x), with
+    //   PA(x) = -I0(lambda*r)                              (the log coefficient)
+    //   PB(x) = KR(lambda*r) - (log(lambda)+log(bsize))*I0(lambda*r) + C(r)
+    //   C(r)  = -Σ_j J0(r*xs_j) fhat_j                     (windowed far-field)
+    // KR(z) = K0(z)+log(z)*I0(z) is the regular part of K0, so PB is finite at r=0.
+    const double lam = double(rlambda);
+    const double bs = double(bsize);
+    auto rmap = [bs](double x) { return bs * std::sqrt(0.5 * (x + 1.0)); };
+    auto Cfun = [&](double r) {
+        double C = 0.0;
+        for (int j = 0; j < n_quad; ++j)
+            C -= util::cyl_bessel_j(0, r * xs[j]) * fhat[j];
+        return C;
+    };
+    auto fa = [&](double x) { return -besseli0_series(lam * rmap(x)); };
+    auto fb = [&](double x) {
+        const double r = rmap(x);
+        const double z = lam * r;
+        return besselk0_regular_series(z) - (std::log(lam) + std::log(bs)) * besseli0_series(z) + Cfun(r);
+    };
+    out.log_poly = make_polyfit_abs_error<double>(n_digits, fa, -1.0, 1.0);
+    out.reg_poly = make_polyfit_abs_error<double>(n_digits, fb, -1.0, 1.0);
+    if (out.log_poly.empty() || out.reg_poly.empty())
+        throw std::runtime_error(
+            std::format("Yukawa 2D local correction fit failed at level {} (lambda={}, bsize={}, lambda*bsize={}): "
+                        "residual too stiff for a degree<32 polynomial",
+                        i_level, lam, bs, lam * bs));
+    return out;
 }
 
 template <typename T>

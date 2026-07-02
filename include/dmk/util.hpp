@@ -11,33 +11,18 @@
 #include <string_view>
 #include <type_traits>
 
-#ifndef __cpp_lib_math_special_functions
-#include <vendor/bessel.hpp>
-#endif
-
-#ifndef __cpp_lib_math_special_functions
-#include <vendor/bessel.hpp>
-#endif
+#include <dmk/bessel.hpp>
 
 namespace dmk::util {
 template <class...>
 constexpr std::false_type always_false{};
 
-static inline auto cyl_bessel_k(auto nu, auto x) {
-#ifdef __cpp_lib_math_special_functions
-    return std::cyl_bessel_k(nu, x);
-#else
-    return bessel::cyl_k(nu, x);
-#endif
-}
+// Orders 0 and 1 only (all DMK needs). Evaluated in double regardless of the
+// argument type, matching the promotion behavior of std::cyl_bessel_* that this
+// replaced, so float builds still get double-accurate generation coefficients.
+static inline double cyl_bessel_k(int nu, double x) { return nu == 0 ? dmk::bessel::k0(x) : dmk::bessel::k1(x); }
 
-static inline auto cyl_bessel_j(auto nu, auto x) {
-#ifdef __cpp_lib_math_special_functions
-    return std::cyl_bessel_j(nu, x);
-#else
-    return bessel::cyl_j(nu, x);
-#endif
-}
+static inline double cyl_bessel_j(int nu, double x) { return nu == 0 ? dmk::bessel::j0(x) : dmk::bessel::j1(x); }
 
 template <typename T, size_t StackSize>
 class StackOrHeapBuffer {
@@ -199,10 +184,10 @@ inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform
     size_to(charges, nd * n_src);
     size_to(rnormal, n_dim * n_src);
 
-    double rin = 0.45;
-    double wrig = 0.12;
-    double rwig = 0;
-    int nwig = 6;
+    const double rin = 0.45;
+    const double wrig = 0.12;
+    const double rwig = 0;
+    const int nwig = 6;
     std::default_random_engine eng(seed);
     std::uniform_real_distribution<double> rng;
 
@@ -210,8 +195,8 @@ inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform
         if (!uniform) {
             if (n_dim == 2) {
                 const double phi = rng(eng) * 2 * M_PI;
-                r_src[i * 2 + 0] = 0.5 * (cos(phi) + 1.0);
-                r_src[i * 2 + 1] = 0.5 * (sin(phi) + 1.0);
+                r_src[i * 2 + 0] = rin * cos(phi) + 0.5;
+                r_src[i * 2 + 1] = rin * sin(phi) + 0.5;
             }
             if (n_dim == 3) {
                 double theta = rng(eng) * M_PI;
@@ -254,8 +239,8 @@ inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform
         if (!uniform) {
             if (n_dim == 2) {
                 double phi = rng(eng) * 2 * M_PI;
-                r_trg[i_trg * 2 + 0] = 0.5 * (cos(phi) + 1.0);
-                r_trg[i_trg * 2 + 1] = 0.5 * (sin(phi) + 1.0);
+                r_trg[i_trg * 2 + 0] = rin * cos(phi) + 0.5;
+                r_trg[i_trg * 2 + 1] = rin * sin(phi) + 0.5;
             }
             if (n_dim == 3) {
                 double theta = rng(eng) * M_PI;

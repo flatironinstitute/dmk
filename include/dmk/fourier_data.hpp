@@ -7,6 +7,7 @@
 #include <dmk/prolate0_fun.hpp>
 #include <dmk/types.hpp>
 #include <sctl.hpp>
+#include <vector>
 
 namespace dmk {
 
@@ -17,16 +18,18 @@ struct FourierData {
                 const sctl::Vector<T> &boxsize_);
 
     T yukawa_windowed_kernel_value_at_zero(int i_level);
-    void update_local_coeffs(T eps);
     void calc_planewave_coeff_matrices(int i_level, int n_order, int n_pw, sctl::Vector<std::complex<T>> &prox2pw,
                                        sctl::Vector<std::complex<T>> &pw2poly) const;
 
-    ndview<T, 1> cheb_coeffs(int i_level) {
-        if (coeffs1_.Dim())
-            return ndview<T, 1>({ncoeffs1_[i_level]}, &coeffs1_[i_level * n_coeffs_max]);
-        else
-            return ndview<T, 1>({0}, nullptr);
+    // Per-level Yukawa short-range residual coefficients, generated on demand
+    // (captured into the residual evaluator at construction; not stored here).
+    // reg_poly is the monomial remainder polynomial (3D: the full fit Q; 2D: PB).
+    // log_poly is the 2D log-coefficient polynomial PA and is empty in 3D.
+    struct LocalCorrectionCoeffs {
+        std::vector<double> log_poly;
+        std::vector<double> reg_poly;
     };
+    LocalCorrectionCoeffs local_correction_coeffs(int i_level, int n_digits);
 
     T beta() const { return beta_; }
 
@@ -51,16 +54,6 @@ struct FourierData {
     struct kernel_params windowed_kernel_;
     sctl::Vector<struct kernel_params> difference_kernels_;
     sctl::Vector<T> box_sizes_;
-
-    // Per-level local-correction coefficients for the Yukawa potential. In 3D
-    // these are monomial polynomial coefficients (dmk::horner order); in 2D they
-    // are Chebyshev coefficients (evaluated scalarly in tree.cpp).
-    sctl::Vector<T> coeffs1_;
-    sctl::Vector<int> ncoeffs1_;
-    static constexpr int n_coeffs_max = 100;
-
-    void update_local_coeffs_yukawa(T eps);
-    void update_local_coeffs_laplace(T eps);
 };
 
 template <int DIM, typename T>

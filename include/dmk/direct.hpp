@@ -119,11 +119,12 @@ residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_ty
 
 // Yukawa's local correction coefficients are level- and lambda-dependent, so its
 // evaluator is built per level from the coefficients generated in FourierData
-// (rather than the single scale-invariant set the other kernels use). 3D only;
-// 2D Yukawa still uses the scalar Bessel path in tree.cpp.
+// (rather than the single scale-invariant set the other kernels use). In 3D
+// coeffs is a single monomial polynomial Q; in 2D it is the two concatenated
+// log-split polynomials [PA | PB] with n_coeffs_log = PA's length.
 template <typename Real>
 residual_evaluator_func<Real> make_evaluator_yukawa(dmk_eval_type eval_level, int n_dim, int n_digits,
-                                                    std::vector<Real> coeffs);
+                                                    std::vector<Real> coeffs, int n_coeffs_log = 0);
 } // namespace dmk
 
 #endif

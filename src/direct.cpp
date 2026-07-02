@@ -499,23 +499,35 @@ template residual_evaluator_func<double> make_evaluator_jit<double>(dmk_ikernel 
 
 template <typename Real>
 residual_evaluator_func<Real> make_evaluator_yukawa(dmk_eval_type eval_level, int n_dim, int n_digits,
-                                                    std::vector<Real> coeffs) {
+                                                    std::vector<Real> coeffs, int n_coeffs_log) {
     constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
     constexpr int unroll_factor = 3;
-    if (n_dim != 3)
-        throw std::runtime_error("make_evaluator_yukawa: only 3D is supported");
 
-    return [coeffs = std::move(coeffs), eval_level,
-            n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                      const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-        yukawa_3d_poly_all_pairs<Real, MaxVecLen>(eval_level, n_digits, rsc, cen, d2max, thresh2, int(coeffs.size()),
-                                                  coeffs.data(), n_src, r_src, charge, normals, n_trg, r_trg, pot,
-                                                  unroll_factor);
-    };
+    if (n_dim == 3)
+        return [coeffs = std::move(coeffs), eval_level,
+                n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                          const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            yukawa_3d_poly_all_pairs<Real, MaxVecLen>(eval_level, n_digits, rsc, cen, d2max, thresh2,
+                                                      int(coeffs.size()), coeffs.data(), n_src, r_src, charge, normals,
+                                                      n_trg, r_trg, pot, unroll_factor);
+        };
+
+    if (n_dim == 2)
+        return [coeffs = std::move(coeffs), eval_level, n_digits,
+                n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            const int n_reg = int(coeffs.size()) - n_coeffs_log;
+            yukawa_2d_poly_all_pairs<Real, MaxVecLen>(eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log,
+                                                      n_reg, coeffs.data(), n_src, r_src, charge, normals, n_trg, r_trg,
+                                                      pot, unroll_factor);
+        };
+
+    throw std::runtime_error("make_evaluator_yukawa: only 2D and 3D are supported");
 }
 
-template residual_evaluator_func<float> make_evaluator_yukawa<float>(dmk_eval_type, int, int, std::vector<float>);
-template residual_evaluator_func<double> make_evaluator_yukawa<double>(dmk_eval_type, int, int, std::vector<double>);
+template residual_evaluator_func<float> make_evaluator_yukawa<float>(dmk_eval_type, int, int, std::vector<float>, int);
+template residual_evaluator_func<double> make_evaluator_yukawa<double>(dmk_eval_type, int, int, std::vector<double>,
+                                                                       int);
 
 template <typename Real>
 direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim, Real lambda) {
