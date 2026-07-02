@@ -5,11 +5,13 @@
 #include <dmk/fourier_data.hpp>
 #include <dmk/legeexps.hpp>
 #include <dmk/planewave.hpp>
+#include <dmk/polyfit.hpp>
 #include <dmk/prolate0_fun.hpp>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
 
 #include <complex.h>
+#include <format>
 #include <sctl.hpp>
 #include <stdexcept>
 #include <string>
@@ -57,46 +59,50 @@ inline std::tuple<double, double, double> get_PSWF_windowed_kernel_pwterms(int d
 }
 
 template <typename Real, int DIM>
-void yukawa_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
+void yukawa_windowed_kernel_ft(const double *params, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
                                sctl::Vector<Real> &windowed_ft) {
-    auto [hpw, ws, rl] = get_PSWF_windowed_kernel_pwterms<DIM>(boxsize);
+    auto [hpw, ws, L] = get_PSWF_windowed_kernel_pwterms<DIM>(boxsize);
     const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
     windowed_ft.ReInit(n_fourier);
 
-    const Real rlambda = rpars[0];
-    const Real rlambda2 = rlambda * rlambda;
+    const Real lambda = params[0];
+    const Real lambda2 = lambda * lambda;
 
     // determine whether one needs to smooth out the 1/(k^2+lambda^2) factor at the origin.
     // needed in the calculation of kernel-smoothing when there is low-frequency breakdown
-    const bool near_correction = (rlambda * boxsize / beta < 1E-2);
-    Real dk0, dk1, delam;
+    // FIXME: this gives 12 digits for my tested lambdas, so doesn't use beta dependence.
+    // Original was beta dependent but thresholded poorly
+    const bool near_correction = DIM == 2 ? lambda < 5 : false;
+    Real bessk0_Llambda, bessk1_Llambda, exp_Llambda;
     if (near_correction) {
-        Real arg = rl * rlambda;
+        Real arg = L * lambda;
         if constexpr (DIM == 2) {
-            dk0 = util::cyl_bessel_j(0, arg);
-            dk1 = util::cyl_bessel_j(1, arg);
+            bessk0_Llambda = util::cyl_bessel_k(0, arg);
+            bessk1_Llambda = util::cyl_bessel_k(1, arg);
         } else if constexpr (DIM == 3)
-            delam = std::exp(-arg);
+            exp_Llambda = std::exp(-arg);
     }
 
     const Real psi0 = pf.eval_val(0);
+    const Real factor = ws / psi0;
     for (int i = 0; i < n_fourier; ++i) {
-        const Real rk = sqrt((Real)i) * hpw;
-        const Real xi2 = rk * rk + rlambda2;
+        const Real k = sqrt((Real)i) * hpw;
+        const Real xi2 = k * k + lambda2;
         const Real xi = sqrt(xi2);
         const Real xval = xi * boxsize / beta;
         const Real fval = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
 
-        windowed_ft[i] = ws * fval / (psi0 * xi2);
+        windowed_ft[i] = factor * fval / xi2;
 
         if (near_correction) {
-            const Real xsc = rl * rk;
+            const Real xsc = L * k;
             if constexpr (DIM == 2) {
                 using util::cyl_bessel_j;
-                windowed_ft[i] *=
-                    -rl * rlambda * cyl_bessel_j(0, xsc) * dk1 + Real{1.0} + xsc * cyl_bessel_j(1, xsc) * dk0;
+                windowed_ft[i] *= -L * lambda * cyl_bessel_j(0, xsc) * bessk1_Llambda + Real{1.0} +
+                                  xsc * cyl_bessel_j(1, xsc) * bessk0_Llambda;
             } else if constexpr (DIM == 3) {
-                windowed_ft[i] *= 1 - delam * (cos(xsc) + rlambda / rk * sin(xsc));
+                const Real sin_over_k = (k > Real{0}) ? sin(xsc) / k : L;
+                windowed_ft[i] *= Real{1} - exp_Llambda * (cos(xsc) + lambda * sin_over_k);
             }
         }
     }
@@ -876,12 +882,12 @@ void FourierData<T>::update_local_coeffs_laplace(T eps) {
 template <typename Real>
 void FourierData<Real>::update_local_coeffs_yukawa(Real eps) {
     // FIXME: This whole routine is a mess and only works with doubles anyway
-    const int nr1 = n_coeffs_max, nr2 = n_coeffs_max;
+    const int nr1 = n_coeffs_max;
 
     coeffs1_.ReInit(nr1 * n_levels_);
-    coeffs2_.ReInit(nr2 * n_levels_);
     ncoeffs1_.ReInit(n_levels_);
-    ncoeffs2_.ReInit(n_levels_);
+
+    const int n_digits = std::lround(-std::log10(double(eps)));
 
     constexpr Real two_over_pi = 2.0 / M_PI;
     const Real &rlambda = fparam_;
@@ -890,11 +896,9 @@ void FourierData<Real>::update_local_coeffs_yukawa(Real eps) {
 
     constexpr int n_quad = 100;
     // FIXME: Ideally these would use the Real type, but we get slightly lower errors downstream with double
-    std::vector<double> xs(n_quad), whts(n_quad), xs_base(n_quad), whts_base(n_quad), r1(n_quad), r2(n_quad),
-        w1(n_quad), w2(n_quad), fhat(n_quad);
+    std::vector<double> xs(n_quad), whts(n_quad), xs_base(n_quad), whts_base(n_quad), fhat(n_quad);
     legerts(1, n_quad, xs_base.data(), whts_base.data());
     auto [v1, vlu1] = dmk::chebyshev::get_vandermonde_and_LU<Real>(nr1);
-    auto [v2, vlu2] = dmk::chebyshev::get_vandermonde_and_LU<Real>(nr2);
     nda::vector<Real> fvals(nr1);
 
     for (int i_level = 0; i_level < n_levels_; ++i_level) {
@@ -941,21 +945,42 @@ void FourierData<Real>::update_local_coeffs_yukawa(Real eps) {
             }
         }
 
-        auto r1 = dmk::chebyshev::get_cheb_nodes(nr1, Real{0.}, bsize);
-        if (n_dim_ == 2) {
-            for (int i = 0; i < nr1; ++i) {
-                fvals(i) = 0.0;
-                for (int j = 0; j < n_quad; ++j)
-                    fvals(i) -= util::cyl_bessel_j(0, r1[i] * xs[j]) * fhat[j];
-            }
-        } else if (n_dim_ == 3) {
-            for (int i = 0; i < nr1; ++i) {
-                fvals(i) = 0.0;
+        if (n_dim_ == 3) {
+            // Unified residual path (mirrors the other kernels): fit the smooth,
+            // bounded function Q(r) = r * residual(r) = exp(-lambda*r) - r*W(r),
+            // where W(r) = Σ_j sinc(r*xs_j) fhat_j is the windowed far-field. At
+            // runtime the residual is horner(r*rsc+cen)*Rinv, with Rinv supplying
+            // the 1/r singularity and the exp folded into the polynomial (see
+            // YukawaPolyEvaluator3D). x in [-1,1] maps to r in [0,bsize], matching
+            // the rsc=2/bsize, cen=-1 used at the call site in tree.cpp.
+            auto f = [&](double x) {
+                const double r = (x + 1.0) * 0.5 * bsize;
+                double W = 0.0;
                 for (int j = 0; j < n_quad; ++j) {
-                    Real dd = r1[i] * xs[j];
-                    fvals(i) -= sin(dd) / dd * fhat[j];
+                    const double dd = r * xs[j];
+                    W += (dd == 0.0 ? 1.0 : std::sin(dd) / dd) * fhat[j];
                 }
-            }
+                return std::exp(-rlambda * r) - r * W;
+            };
+            const auto coeffs = make_polyfit_abs_error<double>(n_digits, f, -1.0, 1.0);
+            if (coeffs.empty())
+                throw std::runtime_error(
+                    std::format("Yukawa local correction fit failed at level {} (lambda={}, bsize={}, "
+                                "lambda*bsize={}): exp(-lambda*r) too stiff for a degree<32 polynomial",
+                                i_level, double(rlambda), double(bsize), double(rlambda * bsize)));
+            ncoeffs1_[i_level] = coeffs.size();
+            for (int i = 0; i < (int)coeffs.size(); ++i)
+                coeffs1_[i_level * n_coeffs_max + i] = coeffs[i];
+            continue;
+        }
+
+        // 2D: windowed far-field as a Chebyshev expansion, evaluated scalarly
+        // alongside the bare cyl_bessel_k term in tree.cpp (not yet unified).
+        auto r1 = dmk::chebyshev::get_cheb_nodes(nr1, Real{0.}, bsize);
+        for (int i = 0; i < nr1; ++i) {
+            fvals(i) = 0.0;
+            for (int j = 0; j < n_quad; ++j)
+                fvals(i) -= util::cyl_bessel_j(0, r1[i] * xs[j]) * fhat[j];
         }
 
         nda::vector_view<Real> coeffs1_lvl({nr1}, &coeffs1_[0] + nr1 * i_level);
@@ -968,43 +993,6 @@ void FourierData<Real>::update_local_coeffs_yukawa(Real eps) {
             if (std::fabs(coeffs1_lvl(i)) < releps && std::fabs(coeffs1_lvl(i + 1)) < releps &&
                 std::fabs(coeffs1_lvl(i + 2)) < releps) {
                 ncoeffs1_[i_level] = i + 1;
-                break;
-            }
-        }
-
-        // coeffs2
-        nda::vector<Real> r2 = dmk::chebyshev::get_cheb_nodes(nr2, Real{0.25} * bsize * bsize, bsize * bsize);
-        if (n_dim_ == 2) {
-            for (int i = 0; i < nr2; ++i) {
-                fvals(i) = 0.0;
-                const Real r = sqrt(r2(i));
-                for (int j = 0; j < n_quad; ++j)
-                    fvals(i) -= util::cyl_bessel_j(0, r * xs[j]) * fhat[j];
-
-                fvals(i) += util::cyl_bessel_j(0, rlambda * r);
-            }
-        } else if (n_dim_ == 3) {
-            for (int i = 0; i < nr2; ++i) {
-                fvals(i) = 0.0;
-                const Real r = sqrt(r2(i));
-                for (int j = 0; j < n_quad; ++j) {
-                    Real dd = r * xs[j];
-                    fvals(i) -= std::sin(dd) / dd * fhat[j];
-                }
-                fvals(i) += std::exp(-rlambda * r) / r;
-            }
-        }
-
-        nda::vector_view<Real> coeffs2_lvl({nr2}, &coeffs2_[0] + nr2 * i_level);
-        coeffs2_lvl = vlu2.solve(fvals);
-
-        coefsmax = nda::max_element(nda::abs(coeffs2_lvl));
-        releps = eps * coefsmax;
-        ncoeffs2_[i_level] = 1;
-        for (int i = 0; i < nr2 - 2; ++i) {
-            if (std::fabs(coeffs2_lvl(i)) < releps && std::fabs(coeffs2_lvl(i + 1)) < releps &&
-                std::fabs(coeffs2_lvl(i + 2)) < releps) {
-                ncoeffs2_[i_level] = i + 1;
                 break;
             }
         }

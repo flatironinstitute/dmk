@@ -155,7 +155,9 @@ template <typename T, int... Is>
 inline auto get_opt_dot_impl(int n_order, std::integer_sequence<int, Is...>) {
     using fn_t = decltype(&dmk::util::dot_product<T, 0>);
     fn_t result = nullptr;
-    (void)((Is + 5 == n_order ? (result = &dmk::util::dot_product<T, Is + 5>, true) : false) || ...);
+    (void)((Is + min_proxy_order == n_order ? (result = &dmk::util::dot_product<T, Is + min_proxy_order>, true)
+                                            : false) ||
+           ...);
     if (!result)
         throw std::runtime_error("Invalid order " + std::to_string(n_order));
     return result;
@@ -163,7 +165,7 @@ inline auto get_opt_dot_impl(int n_order, std::integer_sequence<int, Is...>) {
 
 template <typename T>
 inline auto get_opt_dot(int n_order) {
-    return get_opt_dot_impl<T>(n_order, std::make_integer_sequence<int, 41>{});
+    return get_opt_dot_impl<T>(n_order, std::make_integer_sequence<int, n_proxy_orders>{});
 }
 
 template <typename T>

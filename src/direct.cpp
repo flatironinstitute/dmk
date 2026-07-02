@@ -2,6 +2,7 @@
 #include <dmk/direct.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/legeexps.hpp>
+#include <dmk/polyfit.hpp>
 #include <dmk/prolate0_fun.hpp>
 #include <dmk/util.hpp>
 #include <dmk/vector_kernels.hpp>
@@ -23,45 +24,6 @@
 
 namespace dmk {
 namespace {
-template <class Vec>
-auto to_vector(const auto &arr) {
-    Vec vec(arr.size());
-    std::copy_n(arr.data(), arr.size(), &vec[0]);
-    return vec;
-}
-
-template <class Real, class Func>
-std::vector<Real> make_polyfit_abs_error(int digits, Func &&f, Real a, Real b) {
-    const Real tol = std::pow(10.0, -digits);
-
-    for (int n_coeffs = 5; n_coeffs < 32; ++n_coeffs) {
-        try {
-            auto prolate_int_fun = poly_eval::make_func_eval(f, n_coeffs, a, b);
-
-            bool passed = true;
-            for (double x = a; x <= b; x += 0.01 * (b - a)) {
-                const Real fit = prolate_int_fun(x);
-                const Real act = f(x);
-                const Real abs_err = std::abs(act - fit);
-
-                if (abs_err > tol) {
-                    passed = false;
-                    break;
-                }
-            }
-            if (passed) {
-                auto coeffs = to_vector<std::vector<Real>>(prolate_int_fun.coeffs());
-                std::reverse(coeffs.begin(), coeffs.end());
-                return coeffs;
-            }
-        } catch (std::exception &e) {
-            std::cout << "Failed to fit with n_coeffs = " << n_coeffs << "\n";
-            std::cout << e.what() << std::endl;
-        }
-    }
-    return {};
-}
-
 struct CoeffsCache {
   public:
     template <typename T, class FitFunction>
@@ -534,6 +496,26 @@ template residual_evaluator_func<double> make_evaluator_jit<double>(dmk_ikernel 
                                                                     int unroll_factor);
 #endif
 // (DMK_USE_JIT)
+
+template <typename Real>
+residual_evaluator_func<Real> make_evaluator_yukawa(dmk_eval_type eval_level, int n_dim, int n_digits,
+                                                    std::vector<Real> coeffs) {
+    constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
+    constexpr int unroll_factor = 3;
+    if (n_dim != 3)
+        throw std::runtime_error("make_evaluator_yukawa: only 3D is supported");
+
+    return [coeffs = std::move(coeffs), eval_level,
+            n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                      const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+        yukawa_3d_poly_all_pairs<Real, MaxVecLen>(eval_level, n_digits, rsc, cen, d2max, thresh2, int(coeffs.size()),
+                                                  coeffs.data(), n_src, r_src, charge, normals, n_trg, r_trg, pot,
+                                                  unroll_factor);
+    };
+}
+
+template residual_evaluator_func<float> make_evaluator_yukawa<float>(dmk_eval_type, int, int, std::vector<float>);
+template residual_evaluator_func<double> make_evaluator_yukawa<double>(dmk_eval_type, int, int, std::vector<double>);
 
 template <typename Real>
 direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim, Real lambda) {

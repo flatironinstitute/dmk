@@ -57,12 +57,14 @@ void validate_create_args(const pdmk_params &params, int n_src, const Real *r_sr
         fail("n_src is zero: nothing to do");
     if (params.kernel < DMK_YUKAWA || params.kernel > DMK_LAPLACE_DIPOLE)
         fail("Invalid kernel: " + std::to_string(int(params.kernel)));
+    if (params.kernel == DMK_YUKAWA && params.fparam <= 0.0)
+        fail("Invalid yukawa lambda. lambda must be positive, got " + std::to_string(params.fparam));
     if (params.eval_src < DMK_POTENTIAL || params.eval_src > DMK_VELOCITY_PRESSURE)
         fail("Invalid eval_src: " + std::to_string(int(params.eval_src)));
     if (params.eval_trg < DMK_POTENTIAL || params.eval_trg > DMK_VELOCITY_PRESSURE)
         fail("Invalid eval_trg: " + std::to_string(int(params.eval_trg)));
-    // Stokeslet/Stresslet/Laplace-dipole only have 3D evaluators; a 2D request
-    // otherwise aborts on an SCTL assertion deep in the tree build (uncatchable).
+
+    // Stokeslet/Stresslet/Laplace-dipole only have 3D evaluators currently
     const bool needs_3d =
         params.kernel == DMK_STOKESLET || params.kernel == DMK_STRESSLET || params.kernel == DMK_LAPLACE_DIPOLE;
     if (needs_3d && params.n_dim != 3)

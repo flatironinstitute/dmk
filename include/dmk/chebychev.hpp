@@ -2,6 +2,7 @@
 #define CHEBYCHEV_HPP
 #include <doctest/doctest.h>
 
+#include <dmk/types.hpp>
 #include <sctl.hpp>
 #include <tuple>
 
@@ -90,7 +91,7 @@ template <typename T, int... Is>
 inline auto get_polynomial_calculator_impl(int order, std::integer_sequence<int, Is...>) {
     using fn_t = decltype(&calc_polynomial<T, 0>);
     fn_t result = nullptr;
-    (void)((Is + 5 == order ? (result = &calc_polynomial<T, Is + 5>, true) : false) || ...);
+    (void)((Is + min_proxy_order == order ? (result = &calc_polynomial<T, Is + min_proxy_order>, true) : false) || ...);
     if (!result)
         throw std::runtime_error("Unsupported order: " + std::to_string(order));
     return result;
@@ -98,7 +99,7 @@ inline auto get_polynomial_calculator_impl(int order, std::integer_sequence<int,
 
 template <typename T>
 inline auto get_polynomial_calculator(int order) {
-    return get_polynomial_calculator_impl<T>(order, std::make_integer_sequence<int, 51>{});
+    return get_polynomial_calculator_impl<T>(order, std::make_integer_sequence<int, n_proxy_orders>{});
 }
 
 template <typename T>

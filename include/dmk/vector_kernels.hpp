@@ -492,6 +492,43 @@ struct LaplacePolyEvaluator3D {
     }
 };
 
+// Yukawa 3D short-range residual, unified onto the same polynomial path as the
+// other kernels. The residual exp(-lambda*r)/r - W(r) is fit per level as
+// Q(r) = r*residual (a smooth, bounded polynomial in the scaled variable
+// x = r*rsc + cen); the 1/r singularity is supplied by Rinv at eval time, and
+// the exp is folded into the fit (no runtime exp call). Mirrors the Laplace 3D
+// non-transform branch (P*Rinv). Gradient is not implemented yet, but the struct
+// is templated on KERNEL_OUTPUT_DIM like the others so it can be added later.
+template <class Real, int MaxVecLen>
+struct YukawaPolyEvaluator3D {
+    using scalar_type = Real;
+    using vector_type = sctl::Vec<Real, MaxVecLen>;
+    static constexpr int SPATIAL_DIM = 3;
+    static constexpr int KERNEL_INPUT_DIM = 1;
+    static constexpr int NORMAL_DIM = 0;
+    static constexpr Real scale_factor = 1.0;
+
+    vector_type thresh2_vec, d2max_vec, rsc_vec, cen_vec;
+    const Real *coeffs;
+    int n_coeffs;
+    int n_digits;
+
+    template <int KERNEL_OUTPUT_DIM>
+    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[1][KERNEL_OUTPUT_DIM],
+                                      const vector_type (&dX)[SPATIAL_DIM]) const {
+        static_assert(KERNEL_OUTPUT_DIM == 1, "Yukawa 3D residual only supports DMK_POTENTIAL");
+
+        const vector_type R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
+        const auto in_range = (R2 > thresh2_vec) & (R2 < d2max_vec);
+        const vector_type Rinv = my_approx_rsqrt(R2, n_digits);
+        const vector_type R = R2 * Rinv; // = r
+
+        const vector_type x = FMA(R, rsc_vec, cen_vec); // r*rsc + cen, matching the fit
+        const vector_type Q = horner(x, coeffs, n_coeffs);
+        u[0][0] = sctl::select<Real, MaxVecLen>(in_range, Q * Rinv, vector_type::Zero());
+    }
+};
+
 template <typename Real, int MaxVecLen, dmk_eval_type EVAL_LEVEL = DMK_POTENTIAL>
 struct LaplaceDipoleEvaluator2D {
     using scalar_type = Real;
@@ -975,6 +1012,23 @@ void laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Rea
         constexpr int KERNEL_OUTPUT_DIM = 4;
         EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
     }
+}
+
+template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
+void yukawa_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
+                              int n_coeffs_rt_0, const Real *coeffs, int n_src, const Real *r_src, const Real *charge,
+                              const Real *normals, int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
+    const int n_digits = (N_DIGITS > 0) ? N_DIGITS : n_digits_rt;
+    const int n_coeffs = (N_COEFFS > 0) ? N_COEFFS : n_coeffs_rt_0;
+    const int eval_level = (EVAL_LEVEL > 0) ? EVAL_LEVEL : eval_level_rt;
+
+    if (eval_level != DMK_POTENTIAL)
+        throw std::runtime_error("Yukawa 3D residual currently supports only DMK_POTENTIAL");
+
+    YukawaPolyEvaluator3D<Real, MaxVecLen> evaluator{thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits};
+
+    constexpr int KERNEL_OUTPUT_DIM = 1;
+    EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
 }
 
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>

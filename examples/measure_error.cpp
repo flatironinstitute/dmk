@@ -9,6 +9,8 @@
 //   -u                Uniform distribution (default: sphere)
 //   -k kernel         Kernel: laplace, sqrt_laplace, laplace_dipole, yukawa, all (default: all)
 //   -d dim            Dimension: 2, 3, or 0 for both (default: 0)
+//   -l lambda         Yukawa fparam (default: 6.0)
+//   -g                Also measure gradient error (potential + gradient)
 //   --beta-sweep      Enable beta sweep mode
 //   --beta-min val    Min beta for sweep (default: 3.0)
 //   --beta-max val    Max beta for sweep (default: 40.0)
@@ -42,6 +44,8 @@ struct Config {
     int n_direct = 10'000;
     char prec = 'f';
     bool uniform = false;
+    bool grad = false;
+    double fparam = 6.0; // Yukawa lambda
 
     // Kernel/dim filtering (-1 = all)
     dmk_ikernel kernel_filter = static_cast<dmk_ikernel>(-1);
@@ -89,6 +93,8 @@ void generate_points(int n_dim, int n_src, bool uniform, std::vector<Real> &r_sr
 struct ErrorMetrics {
     double l2_rel;
     double max_rel;
+    double grad_l2_rel;  // 0 if gradient not measured
+    double grad_max_rel; // 0 if gradient not measured
     double time;
 };
 
@@ -96,21 +102,23 @@ struct ErrorMetrics {
 // float summation error doesn't impose an accuracy floor.
 template <typename Real>
 std::vector<double> compute_reference(int n_dim, dmk_ikernel kernel, int n_test, const std::vector<Real> &r_src,
-                                      const std::vector<Real> &charges) {
+                                      const std::vector<Real> &charges, dmk_eval_type eval_level, double lambda) {
     std::vector<double> r_src_d(r_src.begin(), r_src.end());
     std::vector<double> charges_d(charges.begin(), charges.end());
     std::vector<double> r_trg_d(r_src_d.begin(), r_src_d.begin() + n_test * n_dim);
     std::vector<double> pot_direct;
-    dmk::compute_direct(n_dim, r_src_d, charges_d, std::vector<double>{}, r_trg_d, pot_direct, kernel, DMK_POTENTIAL);
+    dmk::compute_direct(n_dim, r_src_d, charges_d, std::vector<double>{}, r_trg_d, pot_direct, kernel, eval_level,
+                        lambda);
     return pot_direct;
 }
 
 template <typename Real>
 ErrorMetrics run_one(int n_dim, dmk_ikernel kernel, int n_digits, const Config &cfg, const std::vector<Real> &r_src,
-                     const std::vector<Real> &charges, const std::vector<double> &pot_direct,
+                     const std::vector<Real> &charges, const std::vector<double> &pot_direct, dmk_eval_type eval_level,
                      double beta_override = -1.0) {
     const int n_src = cfg.n_src;
     const int n_test = std::min(cfg.n_direct, n_src);
+    const int out_dim = dmk::get_kernel_output_dim(n_dim, kernel, eval_level);
 
     double eps = std::pow(10.0, -n_digits);
 
@@ -119,11 +127,11 @@ ErrorMetrics run_one(int n_dim, dmk_ikernel kernel, int n_digits, const Config &
     params.n_dim = n_dim;
     params.n_per_leaf = cfg.n_per_leaf;
     params.log_level = DMK_LOG_OFF;
-    params.eval_src = DMK_POTENTIAL;
-    params.eval_trg = DMK_POTENTIAL;
+    params.eval_src = eval_level;
+    params.eval_trg = eval_level;
     params.kernel = kernel;
     if (kernel == DMK_YUKAWA)
-        params.fparam = 6.0;
+        params.fparam = cfg.fparam;
 
     if (beta_override > 0) {
         params.debug_flags |= DMK_DEBUG_OVERRIDE_BETA;
@@ -140,7 +148,7 @@ ErrorMetrics run_one(int n_dim, dmk_ikernel kernel, int n_digits, const Config &
     if (!tree)
         throw std::runtime_error(pdmk_last_error_message());
 
-    std::vector<Real> pot_dmk(n_src);
+    std::vector<Real> pot_dmk(n_src * out_dim);
 
     double st = MY_OMP_GET_WTIME();
     dmk_error rc = [&]() {
@@ -155,18 +163,35 @@ ErrorMetrics run_one(int n_dim, dmk_ikernel kernel, int n_digits, const Config &
     if (rc != DMK_SUCCESS)
         throw std::runtime_error(pdmk_last_error_message());
 
+    const bool has_grad = (eval_level == DMK_POTENTIAL_GRAD);
+
     double err2 = 0.0, ref2 = 0.0, maxre = 0.0;
+    double gerr2 = 0.0, gref2 = 0.0, gmaxre = 0.0;
     for (int i = 0; i < n_test; ++i) {
-        double dmk = pot_dmk[i];
-        double ref = pot_direct[i];
+        double dmk = pot_dmk[i * out_dim];
+        double ref = pot_direct[i * out_dim];
         double diff = dmk - ref;
         err2 += diff * diff;
         ref2 += ref * ref;
         if (std::abs(ref) > 0.0)
             maxre = std::max(maxre, std::abs(diff / ref));
+
+        if (has_grad) {
+            double gd2 = 0.0, gr2 = 0.0;
+            for (int c = 1; c <= n_dim; ++c) {
+                double d = pot_dmk[i * out_dim + c] - pot_direct[i * out_dim + c];
+                double r = pot_direct[i * out_dim + c];
+                gd2 += d * d;
+                gr2 += r * r;
+            }
+            gerr2 += gd2;
+            gref2 += gr2;
+            if (gr2 > 0.0)
+                gmaxre = std::max(gmaxre, std::sqrt(gd2 / gr2));
+        }
     }
 
-    return {std::sqrt(err2 / ref2), maxre, dt};
+    return {std::sqrt(err2 / ref2), maxre, has_grad ? std::sqrt(gerr2 / gref2) : 0.0, has_grad ? gmaxre : 0.0, dt};
 }
 
 dmk_ikernel parse_kernel(const char *s) {
@@ -191,25 +216,40 @@ void run_beta_sweep(const Config &cfg) {
     else
         dims = {cfg.dim_filter};
 
-    std::cout << "kernel,dim,beta,L2_rel,max_rel,time\n";
+    const dmk_eval_type eval_level = cfg.grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
+
+    std::cout << "kernel,dim,beta,L2_rel,max_rel";
+    if (cfg.grad)
+        std::cout << ",grad_L2_rel,grad_max_rel";
+    std::cout << ",time\n";
 
     for (auto kernel : kernels) {
         for (auto n_dim : dims) {
             std::vector<Real> r_src, charges;
-            generate_points(n_dim, cfg.n_src, cfg.uniform, r_src, charges, dmk::get_kernel_input_dim(n_dim, kernel));
-            int n_test = std::min(cfg.n_direct, cfg.n_src);
-            auto pot_direct = compute_reference(n_dim, kernel, n_test, r_src, charges);
+            std::vector<double> pot_direct;
+            try {
+                generate_points(n_dim, cfg.n_src, cfg.uniform, r_src, charges,
+                                dmk::get_kernel_input_dim(n_dim, kernel));
+                int n_test = std::min(cfg.n_direct, cfg.n_src);
+                pot_direct = compute_reference(n_dim, kernel, n_test, r_src, charges, eval_level, cfg.fparam);
+            } catch (std::exception &e) {
+                std::cout << "# " << dmk::util::to_string(kernel) << " dim=" << n_dim << " FAILED: " << e.what()
+                          << "\n";
+                continue;
+            }
             for (double beta = cfg.beta_min; beta <= cfg.beta_max + 1e-9; beta += cfg.beta_step) {
                 try {
-                    auto err = run_one<Real>(n_dim, kernel, 12, cfg, r_src, charges, pot_direct, beta);
+                    auto err = run_one<Real>(n_dim, kernel, 12, cfg, r_src, charges, pot_direct, eval_level, beta);
                     std::cout << dmk::util::to_string(kernel) << "," << n_dim << "," << std::fixed
                               << std::setprecision(1) << beta << "," << std::scientific << std::setprecision(6)
-                              << err.l2_rel << "," << err.max_rel << "," << std::fixed << std::setprecision(4)
-                              << err.time << "\n"
-                              << std::flush;
+                              << err.l2_rel << "," << err.max_rel;
+                    if (cfg.grad)
+                        std::cout << "," << err.grad_l2_rel << "," << err.grad_max_rel;
+                    std::cout << "," << std::fixed << std::setprecision(4) << err.time << "\n" << std::flush;
                 } catch (std::exception &e) {
                     std::cout << dmk::util::to_string(kernel) << "," << n_dim << "," << std::fixed
-                              << std::setprecision(1) << beta << ",FAILED,FAILED,0\n";
+                              << std::setprecision(1) << beta
+                              << (cfg.grad ? ",FAILED,FAILED,FAILED,FAILED,0\n" : ",FAILED,FAILED,0\n");
                 }
             }
         }
@@ -233,28 +273,42 @@ void run_all(const Config &cfg) {
     constexpr int min_digits = 3;
     constexpr int max_digits = std::is_same_v<Real, float> ? 6 : 12;
 
+    const dmk_eval_type eval_level = cfg.grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
+
     std::cout << std::setw(14) << "kernel" << std::setw(5) << "dim" << std::setw(8) << "digits" << std::setw(12)
-              << "eps" << std::setw(14) << "L2_rel" << std::setw(14) << "max_rel" << std::setw(10) << "time(s)"
-              << std::setw(10) << "L2/eps" << "\n";
-    std::cout << std::string(87, '-') << "\n";
+              << "eps" << std::setw(14) << "L2_rel" << std::setw(14) << "max_rel";
+    if (cfg.grad)
+        std::cout << std::setw(14) << "grad_L2" << std::setw(14) << "grad_max";
+    std::cout << std::setw(10) << "time(s)" << std::setw(10) << "L2/eps" << "\n";
+    std::cout << std::string(cfg.grad ? 115 : 87, '-') << "\n";
 
     for (auto kernel : kernels) {
         for (auto n_dim : dims) {
             std::vector<Real> r_src, charges;
-            generate_points(n_dim, cfg.n_src, cfg.uniform, r_src, charges, dmk::get_kernel_input_dim(n_dim, kernel));
-
-            int n_test = std::min(cfg.n_direct, cfg.n_src);
-            auto pot_direct = compute_reference(n_dim, kernel, n_test, r_src, charges);
+            std::vector<double> pot_direct;
+            try {
+                generate_points(n_dim, cfg.n_src, cfg.uniform, r_src, charges,
+                                dmk::get_kernel_input_dim(n_dim, kernel));
+                int n_test = std::min(cfg.n_direct, cfg.n_src);
+                pot_direct = compute_reference(n_dim, kernel, n_test, r_src, charges, eval_level, cfg.fparam);
+            } catch (std::exception &e) {
+                std::cout << std::setw(14) << dmk::util::to_string(kernel) << std::setw(5) << n_dim
+                          << "  FAILED: " << e.what() << "\n";
+                continue;
+            }
 
             for (int digits = min_digits; digits <= max_digits; ++digits) {
                 try {
-                    auto err = run_one<Real>(n_dim, kernel, digits, cfg, r_src, charges, pot_direct);
+                    auto err = run_one<Real>(n_dim, kernel, digits, cfg, r_src, charges, pot_direct, eval_level);
                     double eps = std::pow(10.0, -digits);
                     std::cout << std::setw(14) << dmk::util::to_string(kernel) << std::setw(5) << n_dim << std::setw(8)
                               << digits << std::setw(12) << std::scientific << std::setprecision(0) << eps
                               << std::setw(14) << std::scientific << std::setprecision(3) << err.l2_rel << std::setw(14)
-                              << err.max_rel << std::setw(10) << std::fixed << std::setprecision(4) << err.time
-                              << std::setw(10) << std::fixed << std::setprecision(1) << err.l2_rel / eps << "\n"
+                              << err.max_rel;
+                    if (cfg.grad)
+                        std::cout << std::setw(14) << err.grad_l2_rel << std::setw(14) << err.grad_max_rel;
+                    std::cout << std::setw(10) << std::fixed << std::setprecision(4) << err.time << std::setw(10)
+                              << std::fixed << std::setprecision(1) << err.l2_rel / eps << "\n"
                               << std::flush;
                 } catch (std::exception &e) {
                     std::cout << std::setw(14) << dmk::util::to_string(kernel) << std::setw(5) << n_dim << std::setw(8)
@@ -275,7 +329,7 @@ Config parse_args(int argc, char *argv[]) {
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "N:n:D:t:k:d:uh", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "N:n:D:t:k:d:l:ugh", long_opts, nullptr)) != -1) {
         switch (opt) {
         case 'N':
             cfg.n_src = static_cast<int>(std::atof(optarg));
@@ -302,8 +356,14 @@ Config parse_args(int argc, char *argv[]) {
                 exit(1);
             }
             break;
+        case 'l':
+            cfg.fparam = std::atof(optarg);
+            break;
         case 'u':
             cfg.uniform = true;
+            break;
+        case 'g':
+            cfg.grad = true;
             break;
         case 1001:
             cfg.beta_sweep = true;
@@ -329,7 +389,9 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -t f|d            Precision\n"
                       << "  -k kernel         laplace, sqrt_laplace, laplace_dipole, yukawa, all\n"
                       << "  -d dim            2, 3, or 0 for both\n"
+                      << "  -l lambda         Yukawa fparam (default: 6.0)\n"
                       << "  -u                Uniform distribution\n"
+                      << "  -g                Also measure gradient error\n"
                       << "  --beta-sweep      Enable beta sweep mode\n"
                       << "  --beta-min val    Min beta (default: 3.0)\n"
                       << "  --beta-max val    Max beta (default: 40.0)\n"
@@ -359,7 +421,8 @@ int main(int argc, char *argv[]) {
         Config cfg = parse_args(argc, argv);
 
         std::cout << "# n_src=" << cfg.n_src << " n_per_leaf=" << cfg.n_per_leaf << " n_direct=" << cfg.n_direct
-                  << " prec=" << cfg.prec << " uniform=" << cfg.uniform << " threads=" << MY_OMP_GET_MAX_THREADS();
+                  << " prec=" << cfg.prec << " uniform=" << cfg.uniform << " grad=" << cfg.grad
+                  << " fparam=" << cfg.fparam << " threads=" << MY_OMP_GET_MAX_THREADS();
         if (cfg.beta_sweep)
             std::cout << " beta_sweep=[" << cfg.beta_min << "," << cfg.beta_max << "," << cfg.beta_step
                       << "] digits=" << cfg.sweep_digits;

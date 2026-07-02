@@ -52,11 +52,11 @@ struct FourierData {
     sctl::Vector<struct kernel_params> difference_kernels_;
     sctl::Vector<T> box_sizes_;
 
-    // Local chebyshev polynomial coefficients for yukawa potential
+    // Per-level local-correction coefficients for the Yukawa potential. In 3D
+    // these are monomial polynomial coefficients (dmk::horner order); in 2D they
+    // are Chebyshev coefficients (evaluated scalarly in tree.cpp).
     sctl::Vector<T> coeffs1_;
-    sctl::Vector<T> coeffs2_;
     sctl::Vector<int> ncoeffs1_;
-    sctl::Vector<int> ncoeffs2_;
     static constexpr int n_coeffs_max = 100;
 
     void update_local_coeffs_yukawa(T eps);
