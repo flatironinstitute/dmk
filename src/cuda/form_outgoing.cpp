@@ -3,7 +3,7 @@
 #include <dmk/cuda/helpers.hpp>
 #include <dmk/cuda/multiply_kernelft_kernels.hpp>
 #include <dmk/cuda/proxy2pw_kernels.hpp>
-#include <dmk/cuda/pw_to_proxy_kernels.hpp>
+#include <dmk/cuda/pw2proxy_kernels.hpp>
 #include <dmk/cuda/shared_state.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/nvtx_wrapper.h>

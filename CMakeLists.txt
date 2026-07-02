@@ -75,9 +75,33 @@ if (DMK_GPU_OFFLOAD)
   set(CMAKE_CUDA_EXTENSIONS OFF)
   find_package(CUDAToolkit REQUIRED)
   set(DMK_GPU_TARGET CUDA::cudart)
+  set(DMK_CUDA_JIT_TARGETS CUDA::cuda_driver CUDA::nvrtc)
+  set(DMK_CUDA_JIT_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  configure_file(
+    ${PROJECT_SOURCE_DIR}/src/cuda/jit/dmk_jit_config.hpp.in
+    ${DMK_CUDA_JIT_GENERATED_INCLUDE_DIR}/dmk_jit_config.hpp
+    @ONLY
+  )
   list(APPEND DMK_CXX_FLAGS "-DDMK_GPU_OFFLOAD")
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo -Xptxas=-warn-spills")
 endif()
+
+set(DMK_CUDA_JIT_SRC
+  src/cuda/jit/autotune.cpp
+  src/cuda/jit/jit_cache.cpp
+  src/cuda/jit/jit_compiler.cpp
+  src/cuda/jit/jit_kernel.cpp
+  src/cuda/jit/jit_source_utils.cpp
+  src/cuda/jit/charge2proxy_launcher.cpp
+  src/cuda/jit/tensorprod_launcher.cpp
+  src/cuda/jit/proxy2pw_launcher.cpp
+  src/cuda/jit/pw2proxy_launcher.cpp
+  src/cuda/jit/shift_pw_launcher.cpp
+  src/cuda/jit/eval_targets_launcher.cpp
+  src/cuda/jit/multiply_kernelft_launcher.cpp
+  src/cuda/jit/shared_state_launcher.cpp
+  src/cuda/jit/direct_source_registry.cpp
+)
 
 find_package(BLAS REQUIRED)
 
@@ -186,21 +210,30 @@ target_link_libraries(dmk_bootstrap PUBLIC DMKOBJS_BOOTSTRAP)
 
 if (DMK_GPU_OFFLOAD)
   add_library(DMKOBJS_CUDA OBJECT src/cuda/aot_kernels.cu src/cuda/direct.cpp src/cuda/shared_state.cpp
-              src/cuda/shared_state_kernels.cu
-              src/cuda/eval_targets.cpp src/cuda/eval_targets_kernels.cu
-              src/cuda/tensorprod_kernels.cu
-              src/cuda/shift_pw_kernels.cu
-              src/cuda/pw_to_proxy_kernels.cu
-              src/cuda/proxy2pw_kernels.cu
-              src/cuda/multiply_kernelft_kernels.cu
-              src/cuda/charge2proxy_kernels.cu
+              src/cuda/eval_targets.cpp
               src/cuda/downward.cpp
               src/cuda/form_outgoing.cpp
-              src/cuda/upward.cpp)
+              src/cuda/upward.cpp
+              ${DMK_CUDA_JIT_SRC}
+              )
   set_target_properties(DMKOBJS_CUDA PROPERTIES POSITION_INDEPENDENT_CODE ON)
-  target_include_directories(DMKOBJS_CUDA PUBLIC ${DMK_INCLUDES})
-  target_link_libraries(DMKOBJS_CUDA PUBLIC ${DMK_GPU_TARGET} ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET}
-    nda::nda_c spdlog::spdlog_header_only)
+  target_include_directories(DMKOBJS_CUDA PUBLIC
+    ${DMK_INCLUDES}
+  )
+
+  target_include_directories(DMKOBJS_CUDA PRIVATE
+    ${PROJECT_SOURCE_DIR}/src
+    ${DMK_CUDA_JIT_GENERATED_INCLUDE_DIR}
+  )
+
+  target_link_libraries(DMKOBJS_CUDA PUBLIC
+    ${DMK_GPU_TARGET}
+    ${DMK_CUDA_JIT_TARGETS}
+    ${DMK_OPENMP_TARGET}
+    ${DMK_MPI_TARGET}
+    nda::nda_c
+    spdlog::spdlog_header_only
+  )
   target_compile_options(DMKOBJS_CUDA PUBLIC "${DMK_CXX_FLAGS}")
 endif()
 

@@ -478,13 +478,13 @@ template <typename Real, int DIM>
 void CudaSharedDeviceState<Real, DIM>::upload_and_sort_charges(dmk_ikernel kernel, const Real *charges,
                                                                const Real *normals, long N) {
     const int charge_dof = get_kernel_input_dim(DIM, kernel);
-    d_charge_input.upload(charges, N * charge_dof);
+    d_charge_input.upload_async(charges, N * charge_dof, direct_stream.get());
     d_charge.resize(N * charge_dof);
     cuda::launch_scatter_forward(d_charge_input.data(), d_charge.data(), d_scatter_index_src.data(), N, charge_dof,
                                  direct_stream.get());
 
     if (kernel == DMK_STRESSLET) {
-        d_normal_input.upload(normals, N * DIM);
+        d_normal_input.upload_async(normals, N * DIM, direct_stream.get());
         d_normal.resize(N * DIM);
         cuda::launch_scatter_forward(d_normal_input.data(), d_normal.data(), d_scatter_index_src.data(), N, DIM,
                                      direct_stream.get());

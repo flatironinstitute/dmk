@@ -1,0 +1,5 @@
+#pragma once
+
+#define DMK_JIT_SOURCE_DIR "@PROJECT_SOURCE_DIR@/src/cuda/jit_sources"
+#define DMK_JIT_INCLUDE_DIR "@PROJECT_SOURCE_DIR@/include"
+#define DMK_JIT_GENERATED_INCLUDE_DIR "@CMAKE_CURRENT_BINARY_DIR@/generated"
