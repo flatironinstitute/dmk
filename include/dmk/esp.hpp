@@ -63,15 +63,22 @@ struct EspTimings {
     double t_self = 0;  // self-interaction correction
 };
 
-// Returns the total potential at each particle (length = charges.size()).
+// Potential + force at each particle (length = charges.size()). force_i = -charges[i] * grad_i,
+// i.e. already includes the particle's own charge — ready to use directly as a physical force.
+template <typename Real>
+struct PotForce {
+    std::vector<Real> pot, force_x, force_y, force_z;
+};
+
+// Returns the total potential and force at each particle.
 // Real may be float or double; float inputs are promoted to double internally.
 template <typename Real>
-std::vector<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                           EspTimings *timings = nullptr);
+PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
+                        EspTimings *timings = nullptr);
 
 // Convenience one-shot wrapper (create + eval + destroy).
 template <typename Real>
-std::vector<Real> esp_potential(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges, double L,
-                                double r_c, double eps);
+PotForce<Real> esp_potential(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges, double L,
+                             double r_c, double eps);
 
 } // namespace dmk

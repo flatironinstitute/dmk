@@ -214,8 +214,8 @@ static CellList<Real> build_cell_list(const std::vector<Vec3T<Real>> &r_src, con
 // Falls back to the neighbor-list path when r_c > L/3 (nc < 3).
 // ---------------------------------------------------------------------------
 template <typename Real>
-static std::vector<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                                          const ESPParams &params, int n_digits, const PSWFKernel &pswf) {
+static PotForce<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
+                                       const ESPParams &params, int n_digits, const PSWFKernel &pswf) {
     // 27-cell stencil requires nc >= 3 so periodic images aren't double-counted
     const int nc = static_cast<int>(std::floor(params.L / params.r_c));
     if (nc < 3)
@@ -233,12 +233,18 @@ static std::vector<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src,
     // cen/rsc must reproduce that remap, matching the generic Laplace-3D convention in
     // tree.cpp (rsc = 2/bsize, cen = -bsize/2) with bsize = r_c.
     // Coefficients are baked in at sigma=1.35 (see generate_aot_kernels.cpp).
+    // DMK_POTENTIAL_GRAD makes the evaluator write 4 interleaved reals per target:
+    // [pot, d(pot)/dx, d(pot)/dy, d(pot)/dz] (see LaplacePolyEvaluator3D's has_grad branch and
+    // EvalPairs' v_trg[t*KERNEL_OUTPUT_DIM+k] layout). The gradient already has the source
+    // charges folded in (same accumulation as the potential), so per-particle force is just
+    // F_i = -q_i * grad_i, using particle i's own charge.
     constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
-    auto evaluator = get_esp_3d_kernel<Real, MaxVecLen>(DMK_POTENTIAL, n_digits);
+    auto evaluator = get_esp_3d_kernel<Real, MaxVecLen>(DMK_POTENTIAL_GRAD, n_digits);
     const Real rsc = Real(2.0 / params.r_c);
     const Real cen = Real(-params.r_c / 2.0);
 
-    std::vector<Real> pot_sorted(n, Real(0));
+    // Interleaved [pot, d/dx, d/dy, d/dz] per particle, in cell-sorted order.
+    std::vector<Real> pg_sorted(4 * n, Real(0));
 
     // For each cell coordinate c in [0, nc) and each delta d in {-1,0,+1} (stored as d=0,1,2):
     // nbc_tab[c*3+d] = neighbor cell index, off_tab[c*3+d] = image shift to subtract.
@@ -331,16 +337,27 @@ static std::vector<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src,
                     //         pot_sorted[hbeg + a] += charge_ptr[b] * (Real(1) - intval) / (Real(4) * M_PI * d);
                     //     }
                     evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, n_trg, r_trg_ptr,
-                             pot_sorted.data() + hbeg);
+                             pg_sorted.data() + 4 * hbeg);
                 }
     }
 
-    // restore original particle ordering
-    std::vector<Real> pot(n, Real(0));
-    for (int a = 0; a < n; ++a)
-        pot[cl.orig[a]] = pot_sorted[a];
-    return pot;
+    // restore original particle ordering, and convert gradient -> force (F_i = -q_i * grad_i)
+    PotForce<Real> out;
+    out.pot.assign(n, Real(0));
+    out.force_x.assign(n, Real(0));
+    out.force_y.assign(n, Real(0));
+    out.force_z.assign(n, Real(0));
+    for (int a = 0; a < n; ++a) {
+        const int orig = cl.orig[a];
+        const Real q = cl.qs[a];
+        out.pot[orig] = pg_sorted[4 * a + 0];
+        out.force_x[orig] = -q * pg_sorted[4 * a + 1];
+        out.force_y[orig] = -q * pg_sorted[4 * a + 2];
+        out.force_z[orig] = -q * pg_sorted[4 * a + 3];
+    }
+    return out;
 }
+
 
 // ---------------------------------------------------------------------------
 // S_hat(k_vec)
@@ -388,8 +405,8 @@ static DGrid precompute_scaling_coefficients(const PSWFKernel &pswf, const ESPPa
 // Long-range contribution via FINUFFT spreading/interpolation
 // ---------------------------------------------------------------------------
 template <typename Real>
-static std::vector<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                                    const PSWFKernel &pswf, const ESPParams &params, const DGrid &scaling_coeffs) {
+static PotForce<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
+                                 const PSWFKernel &pswf, const ESPParams &params, const DGrid &scaling_coeffs) {
     int n = params.n;
     int nf = params.n_f;
     int ntot = nf * nf * nf;
@@ -438,7 +455,7 @@ static std::vector<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const
     for (int i = 0; i < nf; ++i)
         k_idx[i] = (i <= nf / 2) ? i : i - nf;
 
-    std::complex<double> coeff_grad = -std::complex<double>(0, 1) * (2.0 * M_PI / params.L);
+    std::complex<double> coeff_grad = std::complex<double>(0, 1) * (2.0 * M_PI / params.L);
     CGrid f_hat_x(ntot), f_hat_y(ntot), f_hat_z(ntot);
     #pragma omp parallel for collapse(3)
     for (int ix = 0; ix < nf; ++ix)
@@ -477,18 +494,21 @@ static std::vector<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const
     if (ier > 1)
         throw std::runtime_error("finufft3d2 interp failed, ier=" + std::to_string(ier));
 
-    std::vector<Real> pot(n);
-    for (int j = 0; j < n; j++)
-        pot[j] = Real(pot_c[j].real());
-
-    std::vector<Real> force_x(n), force_y(n), force_z(n);
+    // force_{x,y,z}_c hold -d(pot)/d{x,y,z} (the "-i*k" factor above already applied the minus
+    // sign for grad -> force); still need the per-particle charge to get F_i = -q_i*grad_i.
+    PotForce<Real> out;
+    out.pot.resize(n);
+    out.force_x.resize(n);
+    out.force_y.resize(n);
+    out.force_z.resize(n);
     for (int j = 0; j < n; j++) {
-        force_x[j] = Real(force_x_c[j].real());
-        force_y[j] = Real(force_y_c[j].real());
-        force_z[j] = Real(force_z_c[j].real());
+        out.pot[j] = Real(pot_c[j].real());
+        out.force_x[j] = - charges[j] * Real(force_x_c[j].real());
+        out.force_y[j] = - charges[j] * Real(force_y_c[j].real());
+        out.force_z[j] = - charges[j] * Real(force_z_c[j].real());
     }
 
-    return pot;
+    return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -529,16 +549,16 @@ EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma) { retur
 void esp_destroy_plan(EspPlan *plan) { delete plan; }
 
 template <typename Real>
-std::vector<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                           EspTimings *timings) {
+PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
+                        EspTimings *timings) {
     int n = static_cast<int>(charges.size());
     ESPParams params = plan->params_base;
     params.n = n;
 
     double t0 = omp_get_wtime();
-    auto pot_sr = short_range_fast<Real>(r_src, charges, params, plan->n_digits, plan->pswf);
+    auto sr = short_range_fast<Real>(r_src, charges, params, plan->n_digits, plan->pswf);
     double t1 = omp_get_wtime();
-    auto pot_lr = long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs);
+    auto lr = long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs);
     double t2 = omp_get_wtime();
     auto pot_self = self_interaction<Real>(charges, plan->pswf, params);
     double t3 = omp_get_wtime();
@@ -549,9 +569,19 @@ std::vector<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src,
         timings->t_self = t3 - t2;
     }
 
-    std::vector<Real> total(n);
-    for (int i = 0; i < n; ++i)
-        total[i] = pot_sr[i] + pot_lr[i] - pot_self[i];
+    // self_interaction is a position-independent per-particle constant, so it only corrects
+    // the potential and contributes zero to the force.
+    PotForce<Real> total;
+    total.pot.resize(n);
+    total.force_x.resize(n);
+    total.force_y.resize(n);
+    total.force_z.resize(n);
+    for (int i = 0; i < n; ++i) {
+        total.pot[i] = sr.pot[i] + lr.pot[i] - pot_self[i];
+        total.force_x[i] = sr.force_x[i] + lr.force_x[i];
+        total.force_y[i] = sr.force_y[i] + lr.force_y[i];
+        total.force_z[i] = sr.force_z[i] + lr.force_z[i];
+    }
     return total;
 }
 
@@ -559,21 +589,21 @@ std::vector<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src,
 // Convenience one-shot entry point (create + eval + destroy).
 // ---------------------------------------------------------------------------
 template <typename Real>
-std::vector<Real> esp_potential(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges, double L,
-                                double r_c, double eps) {
+PotForce<Real> esp_potential(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges, double L,
+                             double r_c, double eps) {
     auto *plan = esp_create_plan(L, r_c, eps);
     auto result = esp_eval<Real>(plan, r_src, charges);
     esp_destroy_plan(plan);
     return result;
 }
 
-template std::vector<float> esp_eval<float>(EspPlan *, const std::vector<Vec3T<float>> &, const std::vector<float> &,
-                                            EspTimings *);
-template std::vector<double> esp_eval<double>(EspPlan *, const std::vector<Vec3T<double>> &,
-                                              const std::vector<double> &, EspTimings *);
-template std::vector<float> esp_potential<float>(const std::vector<Vec3T<float>> &, const std::vector<float> &, double,
-                                                 double, double);
-template std::vector<double> esp_potential<double>(const std::vector<Vec3T<double>> &, const std::vector<double> &,
-                                                   double, double, double);
+template PotForce<float> esp_eval<float>(EspPlan *, const std::vector<Vec3T<float>> &, const std::vector<float> &,
+                                         EspTimings *);
+template PotForce<double> esp_eval<double>(EspPlan *, const std::vector<Vec3T<double>> &,
+                                           const std::vector<double> &, EspTimings *);
+template PotForce<float> esp_potential<float>(const std::vector<Vec3T<float>> &, const std::vector<float> &, double,
+                                              double, double);
+template PotForce<double> esp_potential<double>(const std::vector<Vec3T<double>> &, const std::vector<double> &,
+                                                double, double, double);
 
 } // namespace dmk

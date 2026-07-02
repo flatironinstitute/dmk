@@ -237,7 +237,7 @@ void run_benchmark(const Config &cfg) {
             for (double rc : rc_vals) {
                 for (double sig : sig_vals) {
                     dmk::EspPlan *sp = dmk::esp_create_plan(cfg.L, rc, cfg.eps, sig);
-                    auto pot_s = dmk::esp_eval<double>(sp, r_src_n, charges_n);
+                    auto pot_s = dmk::esp_eval<double>(sp, r_src_n, charges_n).pot;
                     dmk::esp_destroy_plan(sp);
 
                     double esp_mean = 0;
@@ -306,7 +306,7 @@ void run_benchmark(const Config &cfg) {
     for (int run = 0; run < cfg.n_runs; ++run) {
         dmk::EspTimings timings{};
         double t0 = MY_OMP_GET_WTIME();
-        auto pot = dmk::esp_eval<Real>(plan, r_src, charges, &timings);
+        auto pot = dmk::esp_eval<Real>(plan, r_src, charges, &timings).pot;
         double t1 = MY_OMP_GET_WTIME();
 
         if (rank == 0) {

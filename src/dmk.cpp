@@ -624,8 +624,8 @@ void pdmk_esp_eval(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const d
     for (int i = 0; i < n; ++i)
         r[i] = {r_src[3 * i], r_src[3 * i + 1], r_src[3 * i + 2]};
     std::vector<double> q(charges, charges + n);
-    auto pot = dmk::esp_eval<double>(static_cast<dmk::EspPlan *>(plan), r, q);
-    std::copy(pot.begin(), pot.end(), pot_src);
+    auto result = dmk::esp_eval<double>(static_cast<dmk::EspPlan *>(plan), r, q);
+    std::copy(result.pot.begin(), result.pot.end(), pot_src);
 }
 
 void pdmk_esp_evalf(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const float *r_src,
@@ -634,8 +634,8 @@ void pdmk_esp_evalf(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const 
     for (int i = 0; i < n; ++i)
         r[i] = {r_src[3 * i], r_src[3 * i + 1], r_src[3 * i + 2]};
     std::vector<float> q(charges, charges + n);
-    auto pot = dmk::esp_eval<float>(static_cast<dmk::EspPlan *>(plan), r, q);
-    std::copy(pot.begin(), pot.end(), pot_src);
+    auto result = dmk::esp_eval<float>(static_cast<dmk::EspPlan *>(plan), r, q);
+    std::copy(result.pot.begin(), result.pot.end(), pot_src);
 }
 
 void pdmk_esp_plan_destroy(pdmk_esp_plan plan) { dmk::esp_destroy_plan(static_cast<dmk::EspPlan *>(plan)); }
