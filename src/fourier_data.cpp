@@ -707,6 +707,108 @@ void sqrt_laplace_difference_kernel_ft(const double *rpars, Real beta, int npw, 
         return sqrt_laplace_3d_difference_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, diff_kernel_ft);
 }
 
+template <typename Real>
+void laplace_periodic_windowed_kernel_ft(Real dk, int n_fourier, Real sigma1, Prolate0Fun &pf,
+                                         sctl::Vector<Real> &kernel_ft) {
+    // Laplace (1/r): 4*pi/kappa^2 * psi0(kappa*sigma1)/psi0(0). k=0 dropped (neutrality).
+    const Real four_pi_over_psi0 = 4.0 * M_PI / pf.eval_val(0.0);
+    kernel_ft.ReInit(n_fourier);
+    kernel_ft[0] = 0;
+    for (int i = 1; i < n_fourier; ++i) {
+        const Real kappa = std::sqrt(Real(i)) * dk;
+        const Real arg = kappa * sigma1;
+        const Real psi_val = (std::abs(arg) <= 1.0) ? pf.eval_val(arg) : Real(0);
+        kernel_ft[i] = four_pi_over_psi0 * psi_val / (kappa * kappa);
+    }
+}
+
+template <typename Real>
+void yukawa_periodic_windowed_kernel_ft(const double *rpars, Real dk, int n_fourier, Real sigma1, Prolate0Fun &pf,
+                                        sctl::Vector<Real> &kernel_ft) {
+    // Yukawa (exp(-lambda*r)/r): 4*pi/xi^2 * psi0(xi*sigma1)/psi0(0), xi = sqrt(kappa^2 + lambda^2).
+    // k=0 is finite, so no neutrality needed.
+    const Real four_pi_over_psi0 = 4.0 * M_PI / pf.eval_val(0.0);
+    const Real lambda = *rpars;
+    const Real lambda2 = lambda * lambda;
+    kernel_ft.ReInit(n_fourier);
+    for (int i = 0; i < n_fourier; ++i) {
+        const Real xi2 = Real(i) * dk * dk + lambda2;
+        const Real arg = std::sqrt(xi2) * sigma1;
+        const Real psi_val = (std::abs(arg) <= 1.0) ? pf.eval_val(arg) : Real(0);
+        kernel_ft[i] = four_pi_over_psi0 * psi_val / xi2;
+    }
+}
+
+template <typename Real>
+void sqrt_laplace_periodic_windowed_kernel_ft(Real dk, int n_fourier, Real b, Prolate0Fun &pf,
+                                              sctl::Vector<Real> &kernel_ft) {
+    // Sqrt-Laplace (1/r^2): no closed form (the smooth kernel is a sine transform of psi0), so the
+    // single-scale smooth kernel at box scale b is built by quadrature, reusing the F/c0 pieces of
+    // sqrt_laplace_3d_difference_kernel_ft. With F(u) = \int_0^u t psi0(t) dt and c0 = F(1):
+    //   S(kappa) = 2*pi^2/kappa + (4*pi/(c0*kappa)) * \int_0^b (F(r/b) - c0) sin(kappa r)/r dr.
+    // k=0 dropped (neutrality).
+    kernel_ft.ReInit(n_fourier);
+
+    // Legendre coefficients of F(u) = \int_0^u t psi0(t) dt.
+    const int iw = pf.workarray[0];
+    const int n_terms = pf.workarray[4];
+    std::array<Real, 1000> coeffs0{}, coeffs{};
+    for (int i = n_terms - 1; i > 1; --i) {
+        coeffs0[i + 1] += pf.workarray[iw + i - 1] * (i + 1) / (2 * (i + 1) - 1.0);
+        coeffs0[i - 1] += pf.workarray[iw + i - 1] * i / (2 * (i + 1) - 1.0);
+    }
+    coeffs0[1] += pf.workarray[iw - 1];
+    legeinte(coeffs0.data(), n_terms, coeffs.data());
+    Real fval;
+    legeexev(Real(0.0), fval, coeffs.data(), n_terms + 1);
+    coeffs[0] -= fval; // enforce F(0) = 0
+    legeexev(Real(1.0), fval, coeffs.data(), n_terms + 1);
+    const Real c0 = fval;
+
+    // Gauss-Legendre nodes on [0, b].
+    constexpr int n_quad = 200;
+    std::array<Real, n_quad> r, Fm, whts;
+    {
+        std::array<Real, n_quad> xs;
+        legerts(1, n_quad, xs.data(), whts.data());
+        for (int j = 0; j < n_quad; ++j) {
+            const Real u = (xs[j] + 1) * Real{0.5}; // r/b in (0,1)
+            r[j] = u * b;
+            Real f;
+            legeexev(u, f, coeffs.data(), n_terms + 1);
+            Fm[j] = f - c0;
+            whts[j] *= Real{0.5} * b; // dr
+        }
+    }
+
+    const Real two_pi2 = 2.0 * M_PI * M_PI;
+    const Real four_pi = 4.0 * M_PI;
+    kernel_ft[0] = 0; // k=0 excluded (charge neutrality)
+    for (int i = 1; i < n_fourier; ++i) {
+        const Real kappa = std::sqrt(Real(i)) * dk;
+        Real acc = 0;
+        for (int j = 0; j < n_quad; ++j)
+            acc += Fm[j] * std::sin(kappa * r[j]) / r[j] * whts[j];
+        kernel_ft[i] = two_pi2 / kappa + (four_pi / (c0 * kappa)) * acc;
+    }
+}
+
+template <typename Real, int DIM>
+void get_periodic_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int n_pw_periodic,
+                                     Real boxsize, Real sigma1, Prolate0Fun &pf, sctl::Vector<Real> &kernel_ft) {
+    const Real dk = 2.0 * M_PI / boxsize;
+    const int n_fourier = DIM * sctl::pow<2>(n_pw_periodic / 2) + 1;
+    switch (kernel) {
+    case DMK_YUKAWA:
+        return yukawa_periodic_windowed_kernel_ft<Real>(rpars, dk, n_fourier, sigma1, pf, kernel_ft);
+    case DMK_SQRT_LAPLACE:
+        // b = sigma1 * beta is the level-1 box size.
+        return sqrt_laplace_periodic_windowed_kernel_ft<Real>(dk, n_fourier, sigma1 * beta, pf, kernel_ft);
+    default:
+        return laplace_periodic_windowed_kernel_ft<Real>(dk, n_fourier, sigma1, pf, kernel_ft);
+    }
+}
+
 template <typename Real, int DIM>
 inline void stokes_difference_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
                                         sctl::Vector<Real> &diff_kernel_ft) {
@@ -1053,5 +1155,17 @@ template void get_difference_kernel_ft<double, 2>(bool init, dmk_ikernel kernel,
 template void get_difference_kernel_ft<double, 3>(bool init, dmk_ikernel kernel, const double *rpars, double beta,
                                                   int npw, double boxsize, Prolate0Fun &pf,
                                                   sctl::Vector<double> &diff_kernel_ft);
+template void get_periodic_windowed_kernel_ft<float, 2>(dmk_ikernel kernel, const double *rpars, float beta,
+                                                        int n_pw_periodic, float boxsize, float sigma1, Prolate0Fun &pf,
+                                                        sctl::Vector<float> &kernel_ft);
+template void get_periodic_windowed_kernel_ft<float, 3>(dmk_ikernel kernel, const double *rpars, float beta,
+                                                        int n_pw_periodic, float boxsize, float sigma1, Prolate0Fun &pf,
+                                                        sctl::Vector<float> &kernel_ft);
+template void get_periodic_windowed_kernel_ft<double, 2>(dmk_ikernel kernel, const double *rpars, double beta,
+                                                         int n_pw_periodic, double boxsize, double sigma1,
+                                                         Prolate0Fun &pf, sctl::Vector<double> &kernel_ft);
+template void get_periodic_windowed_kernel_ft<double, 3>(dmk_ikernel kernel, const double *rpars, double beta,
+                                                         int n_pw_periodic, double boxsize, double sigma1,
+                                                         Prolate0Fun &pf, sctl::Vector<double> &kernel_ft);
 
 } // namespace dmk

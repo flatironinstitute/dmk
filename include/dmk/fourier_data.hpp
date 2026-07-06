@@ -67,6 +67,12 @@ template <typename Real, int DIM>
 void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars, Real beta, int npw, Real boxsize,
                               Prolate0Fun &pf, sctl::Vector<Real> &windowed_kernel);
 
+// Periodic windowed kernel FT for the root box, sampled on the reciprocal grid kappa = sqrt(i)*dk.
+// Scalar kernels (Laplace, Yukawa, Sqrt-Laplace), 3D.
+template <typename Real, int DIM>
+void get_periodic_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int n_pw_periodic,
+                                     Real boxsize, Real sigma1, Prolate0Fun &pf, sctl::Vector<Real> &kernel_ft);
+
 } // namespace dmk
 
 #endif

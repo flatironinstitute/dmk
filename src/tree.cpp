@@ -724,19 +724,11 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
         // For a single-level tree there is no level-1 box, so fall back to the root scale.
         const int sigma_level = std::min(1, n_levels() - 1);
         const Real sigma1 = boxsize[sigma_level] / fourier_data.beta();
-        const Real psi0_at_zero = fourier_data.prolate0_fun.eval_val(0.0);
         const long n_pw_modes_periodic = sctl::pow<DIM - 1>(n_pw_periodic) * ((n_pw_periodic + 1) / 2);
         const int n_fourier = DIM * sctl::pow<2>(n_pw_periodic / 2) + 1;
 
-        // Build periodic radialft: PSWF kernel (4pi/psi0(0)) * psi0(kappa*sigma1) / kappa^2
-        kernel_ft.ReInit(n_fourier);
-        kernel_ft[0] = 0; // k=0 excluded (charge neutrality)
-        for (int i = 1; i < n_fourier; ++i) {
-            const Real kappa = std::sqrt(Real(i)) * dk;
-            const Real arg = kappa * sigma1;
-            const Real psi_val = (std::abs(arg) <= 1.0) ? fourier_data.prolate0_fun.eval_val(arg) : Real(0);
-            kernel_ft[i] = (4.0 * M_PI / psi0_at_zero) * psi_val / (Real(i) * dk * dk);
-        }
+        get_periodic_windowed_kernel_ft<Real, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_pw_periodic,
+                                                   boxsize[0], sigma1, fourier_data.prolate0_fun, kernel_ft);
 
         window_fourier_data.radialft.ReInit(n_pw_modes_periodic);
         util::mk_tensor_product_fourier_transform(
