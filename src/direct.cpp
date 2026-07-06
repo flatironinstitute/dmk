@@ -536,16 +536,16 @@ direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_ty
     switch (kernel) {
     case dmk_ikernel::DMK_YUKAWA:
         if (n_dim == 2)
-            return [lambda](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
-                            const Real *r_trg, Real *pot) {
+            return [lambda, eval_level](int n_src, const Real *r_src, const Real *charge, const Real *normals,
+                                        int n_trg, const Real *r_trg, Real *pot) {
                 yukawa_2d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor,
-                                                            lambda);
+                                                            lambda, eval_level);
             };
         if (n_dim == 3)
-            return [lambda](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
-                            const Real *r_trg, Real *pot) {
+            return [lambda, eval_level](int n_src, const Real *r_src, const Real *charge, const Real *normals,
+                                        int n_trg, const Real *r_trg, Real *pot) {
                 yukawa_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor,
-                                                            lambda);
+                                                            lambda, eval_level);
             };
 
     case dmk_ikernel::DMK_LAPLACE:

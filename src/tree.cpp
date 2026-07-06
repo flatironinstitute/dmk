@@ -1163,9 +1163,11 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
     const auto &node_attr = this->GetNodeAttr();
     const Real sc = 2.0 / boxsize;
     const bool need_grad_src =
-        (params.kernel == DMK_LAPLACE || params.kernel == DMK_LAPLACE_DIPOLE) && params.eval_src >= DMK_POTENTIAL_GRAD;
+        (params.kernel == DMK_LAPLACE || params.kernel == DMK_LAPLACE_DIPOLE || params.kernel == DMK_YUKAWA) &&
+        params.eval_src >= DMK_POTENTIAL_GRAD;
     const bool need_grad_trg =
-        (params.kernel == DMK_LAPLACE || params.kernel == DMK_LAPLACE_DIPOLE) && params.eval_trg >= DMK_POTENTIAL_GRAD;
+        (params.kernel == DMK_LAPLACE || params.kernel == DMK_LAPLACE_DIPOLE || params.kernel == DMK_YUKAWA) &&
+        params.eval_trg >= DMK_POTENTIAL_GRAD;
 
     unsigned long n_shifts{0};
 #pragma omp parallel

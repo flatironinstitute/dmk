@@ -38,6 +38,60 @@ void naive_yukawa_3d(const TestData &td, double lambda, std::vector<double> &pot
     }
 }
 
+void naive_yukawa_3d_grad(const TestData &td, double lambda, std::vector<double> &out) {
+    // Output layout per target: [pot, gx, gy, gz]; grad_i = -dX_i * E * (lambda*r + 1)/r^3.
+    out.assign(N_TRG * 4, 0.0);
+    for (int t = 0; t < N_TRG; ++t) {
+        const double *xt = &td.r_trg[t * 3];
+        for (int s = 0; s < N_SRC; ++s) {
+            const double *xs = &td.r_src[s * 3];
+            double dX[3] = {xt[0] - xs[0], xt[1] - xs[1], xt[2] - xs[2]};
+            double r = std::sqrt(dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2]);
+            if (r == 0.0)
+                continue;
+            double rinv = 1.0 / r, E = std::exp(-lambda * r);
+            double g = -E * rinv * rinv * (lambda + rinv);
+            out[t * 4 + 0] += td.charges[s] * E * rinv;
+            for (int i = 0; i < 3; ++i)
+                out[t * 4 + 1 + i] += td.charges[s] * dX[i] * g;
+        }
+    }
+}
+
+void naive_yukawa_2d(const TestData &td, double lambda, std::vector<double> &pot) {
+    pot.assign(N_TRG, 0.0);
+    for (int t = 0; t < N_TRG; ++t) {
+        const double *xt = &td.r_trg[t * 2];
+        for (int s = 0; s < N_SRC; ++s) {
+            const double *xs = &td.r_src[s * 2];
+            double dx = xt[0] - xs[0], dy = xt[1] - xs[1];
+            double r = std::sqrt(dx * dx + dy * dy);
+            if (r == 0.0)
+                continue;
+            pot[t] += td.charges[s] * dmk::bessel::k0(lambda * r);
+        }
+    }
+}
+
+void naive_yukawa_2d_grad(const TestData &td, double lambda, std::vector<double> &out) {
+    // Output layout per target: [pot, gx, gy]; grad_i = -dX_i * lambda * K1(lambda*r)/r.
+    out.assign(N_TRG * 3, 0.0);
+    for (int t = 0; t < N_TRG; ++t) {
+        const double *xt = &td.r_trg[t * 2];
+        for (int s = 0; s < N_SRC; ++s) {
+            const double *xs = &td.r_src[s * 2];
+            double dX[2] = {xt[0] - xs[0], xt[1] - xs[1]};
+            double r = std::sqrt(dX[0] * dX[0] + dX[1] * dX[1]);
+            if (r == 0.0)
+                continue;
+            double g = -lambda * dmk::bessel::k1(lambda * r) / r;
+            out[t * 3 + 0] += td.charges[s] * dmk::bessel::k0(lambda * r);
+            for (int i = 0; i < 2; ++i)
+                out[t * 3 + 1 + i] += td.charges[s] * dX[i] * g;
+        }
+    }
+}
+
 void naive_laplace_3d(const TestData &td, std::vector<double> &pot) {
     pot.assign(N_TRG, 0.0);
     for (int t = 0; t < N_TRG; ++t) {
@@ -247,6 +301,48 @@ TEST_CASE("[DMK] direct eval: Yukawa 3D") {
 
     auto func = dmk::get_direct_evaluator<double>(DMK_YUKAWA, DMK_POTENTIAL, 3, lambda);
     test.assign(N_TRG, 0.0);
+    func(N_SRC, td.r_src.data(), td.charges.data(), nullptr, N_TRG, td.r_trg.data(), test.data());
+
+    CHECK(rel_l2_error(test, ref) < 1e-12);
+}
+
+TEST_CASE("[DMK] direct eval: Yukawa 3D + grad") {
+    TestData td(3, 1, SEED);
+    const double lambda = 6.0;
+
+    std::vector<double> ref, test;
+    naive_yukawa_3d_grad(td, lambda, ref);
+
+    auto func = dmk::get_direct_evaluator<double>(DMK_YUKAWA, DMK_POTENTIAL_GRAD, 3, lambda);
+    test.assign(N_TRG * 4, 0.0);
+    func(N_SRC, td.r_src.data(), td.charges.data(), nullptr, N_TRG, td.r_trg.data(), test.data());
+
+    CHECK(rel_l2_error(test, ref) < 1e-12);
+}
+
+TEST_CASE("[DMK] direct eval: Yukawa 2D") {
+    TestData td(2, 1, SEED);
+    const double lambda = 6.0;
+
+    std::vector<double> ref, test;
+    naive_yukawa_2d(td, lambda, ref);
+
+    auto func = dmk::get_direct_evaluator<double>(DMK_YUKAWA, DMK_POTENTIAL, 2, lambda);
+    test.assign(N_TRG, 0.0);
+    func(N_SRC, td.r_src.data(), td.charges.data(), nullptr, N_TRG, td.r_trg.data(), test.data());
+
+    CHECK(rel_l2_error(test, ref) < 1e-12);
+}
+
+TEST_CASE("[DMK] direct eval: Yukawa 2D + grad") {
+    TestData td(2, 1, SEED);
+    const double lambda = 6.0;
+
+    std::vector<double> ref, test;
+    naive_yukawa_2d_grad(td, lambda, ref);
+
+    auto func = dmk::get_direct_evaluator<double>(DMK_YUKAWA, DMK_POTENTIAL_GRAD, 2, lambda);
+    test.assign(N_TRG * 3, 0.0);
     func(N_SRC, td.r_src.data(), td.charges.data(), nullptr, N_TRG, td.r_trg.data(), test.data());
 
     CHECK(rel_l2_error(test, ref) < 1e-12);
