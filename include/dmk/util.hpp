@@ -8,8 +8,10 @@
 #include <array>
 #include <cmath>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <type_traits>
+#include <unordered_set>
 
 #include <dmk/bessel.hpp>
 
@@ -191,30 +193,46 @@ inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform
     std::default_random_engine eng(seed);
     std::uniform_real_distribution<double> rng;
 
-    for (int i = 0; i < n_src; ++i) {
+    // Draw one position (ring/sphere for non-uniform, box-fill for uniform); identical
+    // logic for sources and targets.
+    auto draw_pos = [&](Real *p) {
         if (!uniform) {
             if (n_dim == 2) {
                 const double phi = rng(eng) * 2 * M_PI;
-                r_src[i * 2 + 0] = rin * cos(phi) + 0.5;
-                r_src[i * 2 + 1] = rin * sin(phi) + 0.5;
-            }
-            if (n_dim == 3) {
+                p[0] = rin * cos(phi) + 0.5;
+                p[1] = rin * sin(phi) + 0.5;
+            } else { // n_dim == 3
                 double theta = rng(eng) * M_PI;
                 double rr = rin + rwig * cos(nwig * theta);
-                double ct = cos(theta);
-                double st = sin(theta);
+                double ct = cos(theta), st = sin(theta);
                 double phi = rng(eng) * 2 * M_PI;
-                double cp = cos(phi);
-                double sp = sin(phi);
-
-                r_src[i * 3 + 0] = rr * st * cp + 0.5;
-                r_src[i * 3 + 1] = rr * st * sp + 0.5;
-                r_src[i * 3 + 2] = rr * ct + 0.5;
+                p[0] = rr * st * cos(phi) + 0.5;
+                p[1] = rr * st * sin(phi) + 0.5;
+                p[2] = rr * ct + 0.5;
             }
         } else {
             for (int j = 0; j < n_dim; ++j)
-                r_src[i * n_dim + j] = rng(eng);
+                p[j] = rng(eng);
         }
+    };
+    // Redraw until the point is interior at the working precision (a double draw < 1 can
+    // round UP to 1.0 in float, landing on the box boundary) and distinct from every point
+    // emitted so far. Coincident points (near-duplicates collapsing below an ulp) and
+    // boundary points otherwise corrupt the tree / far-field.
+    std::unordered_set<std::string> seen;
+    auto emit = [&](Real *p) {
+        for (;;) {
+            draw_pos(p);
+            bool interior = true;
+            for (int j = 0; j < n_dim; ++j)
+                interior &= (p[j] > Real(0) && p[j] < Real(1));
+            if (interior && seen.insert(std::string(reinterpret_cast<const char *>(p), n_dim * sizeof(Real))).second)
+                return;
+        }
+    };
+
+    for (int i = 0; i < n_src; ++i) {
+        emit(&r_src[i * n_dim]);
 
         // Unit normals (sphere-distributed) — required for stresslet, harmless otherwise.
         if (n_dim == 2) {
@@ -235,31 +253,8 @@ inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform
         }
     }
 
-    for (int i_trg = 0; i_trg < n_trg; ++i_trg) {
-        if (!uniform) {
-            if (n_dim == 2) {
-                double phi = rng(eng) * 2 * M_PI;
-                r_trg[i_trg * 2 + 0] = rin * cos(phi) + 0.5;
-                r_trg[i_trg * 2 + 1] = rin * sin(phi) + 0.5;
-            }
-            if (n_dim == 3) {
-                double theta = rng(eng) * M_PI;
-                double rr = rin + rwig * cos(nwig * theta);
-                double ct = cos(theta);
-                double st = sin(theta);
-                double phi = rng(eng) * 2 * M_PI;
-                double cp = cos(phi);
-                double sp = sin(phi);
-
-                r_trg[i_trg * 3 + 0] = rr * st * cp + 0.5;
-                r_trg[i_trg * 3 + 1] = rr * st * sp + 0.5;
-                r_trg[i_trg * 3 + 2] = rr * ct + 0.5;
-            }
-        } else {
-            for (int j = 0; j < n_dim; ++j)
-                r_trg[i_trg * n_dim + j] = rng(eng);
-        }
-    }
+    for (int i_trg = 0; i_trg < n_trg; ++i_trg)
+        emit(&r_trg[i_trg * n_dim]);
 
     if (set_fixed_charges && n_src > 0)
         for (int i = 0; i < n_dim; ++i)

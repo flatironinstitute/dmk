@@ -27,7 +27,6 @@
 #include <getopt.h>
 #include <iomanip>
 #include <iostream>
-#include <random>
 #include <sctl.hpp>
 #include <stdexcept>
 #include <vector>
@@ -58,37 +57,6 @@ struct Config {
     double beta_step = 0.5;
     int sweep_digits = 6;
 };
-
-template <typename Real>
-void generate_points(int n_dim, int n_src, bool uniform, std::vector<Real> &r_src, std::vector<Real> &charges,
-                     int charge_dim = 1, long seed = 0) {
-    r_src.resize(n_dim * n_src);
-    charges.resize(charge_dim * n_src);
-
-    std::default_random_engine eng(seed);
-    std::uniform_real_distribution<double> rng;
-    const double rin = 0.45;
-
-    for (int i = 0; i < n_src; ++i) {
-        if (!uniform && n_dim == 3) {
-            double theta = rng(eng) * M_PI;
-            double ct = std::cos(theta), st = std::sin(theta);
-            double phi = rng(eng) * 2.0 * M_PI;
-            r_src[i * 3 + 0] = rin * st * std::cos(phi) + 0.5;
-            r_src[i * 3 + 1] = rin * st * std::sin(phi) + 0.5;
-            r_src[i * 3 + 2] = rin * ct + 0.5;
-        } else if (!uniform && n_dim == 2) {
-            double phi = rng(eng) * 2.0 * M_PI;
-            r_src[i * 2 + 0] = rin * std::cos(phi) + 0.5;
-            r_src[i * 2 + 1] = rin * std::sin(phi) + 0.5;
-        } else {
-            for (int j = 0; j < n_dim; ++j)
-                r_src[i * n_dim + j] = rng(eng);
-        }
-        for (int j = 0; j < charge_dim; ++j)
-            charges[i * charge_dim + j] = rng(eng) - 0.5;
-    }
-}
 
 struct ErrorMetrics {
     double l2_rel;
@@ -225,11 +193,11 @@ void run_beta_sweep(const Config &cfg) {
 
     for (auto kernel : kernels) {
         for (auto n_dim : dims) {
-            std::vector<Real> r_src, charges;
+            std::vector<Real> r_src, charges, r_trg, rnormal;
             std::vector<double> pot_direct;
             try {
-                generate_points(n_dim, cfg.n_src, cfg.uniform, r_src, charges,
-                                dmk::get_kernel_input_dim(n_dim, kernel));
+                dmk::util::init_test_data(n_dim, dmk::get_kernel_input_dim(n_dim, kernel), cfg.n_src, 0, /*n_trg*/
+                                          cfg.uniform, false, r_src, r_trg, rnormal, charges, 0);
                 int n_test = std::min(cfg.n_direct, cfg.n_src);
                 pot_direct = compute_reference(n_dim, kernel, n_test, r_src, charges, eval_level, cfg.fparam);
             } catch (std::exception &e) {
@@ -284,11 +252,12 @@ void run_all(const Config &cfg) {
 
     for (auto kernel : kernels) {
         for (auto n_dim : dims) {
-            std::vector<Real> r_src, charges;
+            std::vector<Real> r_src, charges, r_trg, rnormal;
             std::vector<double> pot_direct;
             try {
-                generate_points(n_dim, cfg.n_src, cfg.uniform, r_src, charges,
-                                dmk::get_kernel_input_dim(n_dim, kernel));
+                // targets are a subset of the sources here (see compute_reference), so n_trg=0
+                dmk::util::init_test_data(n_dim, dmk::get_kernel_input_dim(n_dim, kernel), cfg.n_src, 0, cfg.uniform,
+                                          false, r_src, r_trg, rnormal, charges, 0);
                 int n_test = std::min(cfg.n_direct, cfg.n_src);
                 pot_direct = compute_reference(n_dim, kernel, n_test, r_src, charges, eval_level, cfg.fparam);
             } catch (std::exception &e) {
