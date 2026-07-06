@@ -115,7 +115,6 @@ void run_example(const pdmk_params &params, int n_src_per_rank, int n_runs, bool
     init_test_data(n_dim, 1, n_src_per_rank, n_trg, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, rank);
 
     std::vector<Real> pot_src(n_src_per_rank * nd), pot_trg(n_src_per_rank * nd);
-    // FIXME: No way to update charges so completely worthless API right now :)
     std::vector<Real> pot_src_split(n_src_per_rank * nd), pot_trg_split(n_src_per_rank * nd);
 
     pdmk_tree tree;
