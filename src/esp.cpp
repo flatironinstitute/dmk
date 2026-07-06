@@ -11,6 +11,7 @@
 #include <cmath>
 #include <complex>
 #include <ducc0/fft/fft.h>
+#include <iostream>
 #include <omp.h>
 #include <sctl.hpp>
 #include <stdexcept>
@@ -463,9 +464,13 @@ static PotForce<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const st
             for (int iz = 0; iz < nf; ++iz) {
                 const int idx = grid_idx(ix, iy, iz, nf);
                 const std::complex<double> scaled = b_hat[idx] * scaling_coeffs[idx];
-                f_hat_x[idx] = scaled * coeff_grad * double(k_idx[ix]);
+                // DMK's grid_idx (row-major, z fastest) and FINUFFT's internal grid storage
+                // (column-major, x fastest) disagree on
+                // which loop variable is which physical axis; ix here lines up with FINUFFT's z
+                // slot and iz lines up with its x slot (iy is unaffected, hence untouched below).
+                f_hat_x[idx] = scaled * coeff_grad * double(k_idx[iz]);
                 f_hat_y[idx] = scaled * coeff_grad * double(k_idx[iy]);
-                f_hat_z[idx] = scaled * coeff_grad * double(k_idx[iz]);
+                f_hat_z[idx] = scaled * coeff_grad * double(k_idx[ix]);
             }
 
     // 4. Inverse FFT
@@ -507,7 +512,6 @@ static PotForce<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const st
         out.force_y[j] = - charges[j] * Real(force_y_c[j].real());
         out.force_z[j] = - charges[j] * Real(force_z_c[j].real());
     }
-
     return out;
 }
 

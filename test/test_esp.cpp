@@ -86,7 +86,8 @@ static std::vector<dmk::Vec3T<double>> to_vec3(int n, const double *r_flat) {
 // on pdmk_esp_eval. `plan` must already be created with the desired L/r_c/eps and is not
 // destroyed here — caller owns its lifetime. force_ref must have room for 3*n doubles.
 static void fd_force_reference(dmk_communicator comm, pdmk_esp_plan plan, int n, const double *r_src,
-                               const double *charges, double step_size, double *force_ref) {
+                               const double *charges, double step_size, double *force_ref, const std::vector<double> &force_x,
+                               const std::vector<double> &force_y, const std::vector<double> &force_z) {
     std::vector<double> r_pert(3 * n);
     std::vector<double> pot_plus(n), pot_minus(n);
 
@@ -106,6 +107,8 @@ static void fd_force_reference(dmk_communicator comm, pdmk_esp_plan plan, int n,
             // centered difference: F_{i,a} = -q_i * (u(+) - u(-)) / (2 step)
             force_ref[3 * i + a] = -charges[i] * (pot_plus[i] - pot_minus[i]) / (2.0 * step_size);
         }
+        std::cout << "particle" << i << " fd force: " << force_ref[3*i+0] << ", " << force_ref[3*i+1] << ", " << force_ref[3*i+2] 
+                  << " vs esp: " << force_x[i] << ", " << force_y[i] << ", " << force_z[i] << "\n";
     }
 }
 
@@ -162,19 +165,19 @@ MPI_TEST_CASE("[ESP] 10-particle double vs perilap3d", 1) {
 // short-range direct sum contributes exactly zero.  The full ESP output must
 // therefore equal the long-range FINUFFT path alone.  This test isolates that
 // path from the short-range polynomial accumulation that degrades for large N.
-//
+
 // perilap3d reference is cached in VERIFY_CACHE_DIR (shared with benchmark_esp).
 // ---------------------------------------------------------------------------
 MPI_TEST_CASE("[ESP] long-range only: regular grid, no short-range pairs", 1) {
-    constexpr int n_grid = 4;
-    constexpr int N     = n_grid * n_grid * n_grid;  
+    constexpr int n_grid = 16;
+    constexpr int N     = n_grid * n_grid * n_grid; //4096 points
     constexpr double L   = 1.0;
     constexpr double h   = L / n_grid;               // nearest-neighbour distance
     constexpr double r_c = 0.05;                     // < h: guaranteed no short-range pairs
     constexpr double eps = 1e-6;
     static_assert(r_c < h, "r_c must be < grid spacing for the short-range sum to be zero");
 
-    // Regular grid positions in [-L/2, L/2)^3; alternating ±1 charges (charge-neutral).
+    // Regular grid positions in [-L/2, L/2)^3; 3D checkerboard ±1 charges (charge-neutral).
     double r_src[N * 3];
     double charges[N];
     for (int ix = 0; ix < n_grid; ++ix)
@@ -184,7 +187,7 @@ MPI_TEST_CASE("[ESP] long-range only: regular grid, no short-range pairs", 1) {
                 r_src[3*i+0] = (ix + 0.5) * h - 0.5 * L;
                 r_src[3*i+1] = (iy + 0.5) * h - 0.5 * L;
                 r_src[3*i+2] = (iz + 0.5) * h - 0.5 * L;
-                charges[i]   = (i % 2 == 0) ? 1.0 : -1.0;
+                charges[i]   = ((ix + iy + iz) % 2 == 0) ? 1.0 : -1.0;
             }
 
     // --- Load or compute perilap3d reference (cached in VERIFY_CACHE_DIR) ---
@@ -239,19 +242,17 @@ MPI_TEST_CASE("[ESP] long-range only: regular grid, no short-range pairs", 1) {
     auto r_src_vec = to_vec3(N, r_src);
     std::vector<double> charges_vec(charges, charges + N);
     auto esp = dmk::esp_eval<double>(static_cast<dmk::EspPlan *>(plan), r_src_vec, charges_vec);
-
-    std::vector<double> force_ref(3 * N);
-    fd_force_reference(test_comm, plan, N, r_src, charges, 1e-6, force_ref.data());
-
     pdmk_esp_plan_destroy(plan);
-
+    
     // Gauge-correct ESP output and compare to the (already zero-mean) perilap3d reference.
     double esp_mean = 0;
     for (int i = 0; i < N; ++i) esp_mean += pot[i];
     esp_mean /= N;
 
     double err2 = 0, ref2 = 0;
+    std::cout << "# long-range-only potentials (reference vs ESP analytic):\n";
     for (int i = 0; i < N; ++i) {
+        std::cout << "particle" << i << " esp pot: " << pot[i] << " vs ref: " << ref[i] << "\n";
         const double diff = (pot[i] - esp_mean) - ref[i];
         err2 += diff * diff;
         ref2 += ref[i] * ref[i];
@@ -259,19 +260,19 @@ MPI_TEST_CASE("[ESP] long-range only: regular grid, no short-range pairs", 1) {
     const double l2_rel_err = std::sqrt(err2 / ref2);
 
     CHECK_MESSAGE(l2_rel_err < 5 * eps,
-        "long-range-only l2_rel_err=" << l2_rel_err << " >= eps=" << eps);
+        "long-range-only l2_rel_err=" << l2_rel_err << " >= 5 * eps=" << 5 * eps);
 
-    //print forces; reference vs ESP
-    std::cout << "# long-range-only forces (reference vs ESP analytic):\n";
+    // Long-range forces on a symmetric lattice should be ~0. Relative error is
+    // undefined (ref ≈ 0), so we check absolute magnitude instead.
+    double max_abs = 0;
     for (int i = 0; i < N; ++i) {
-        std::cout << "i=" << i << " q=" << charges[i]
-                  << " ref=(" << force_ref[3*i+0] << "," << force_ref[3*i+1] << "," << force_ref[3*i+2] << ")"
-                  << " esp=(" << esp.force_x[i] << "," << esp.force_y[i] << "," << esp.force_z[i] << ")\n";
+        max_abs = std::max({max_abs,
+            std::abs(esp.force_x[i]), std::abs(esp.force_y[i]), std::abs(esp.force_z[i])});
     }
-
-    const double force_l2_err = force_l2_rel_err(N, esp.force_x, esp.force_y, esp.force_z, force_ref.data());
-    CHECK_MESSAGE(force_l2_err < 1e-3,
-        "long-range-only forces l2_rel_err=" << force_l2_err << " >= 1e-3 (isolates the ik-method force)");
+    double force_tol = 10 * std::pow(params.eps, 2.0 / 3.0);
+    std::cout << "long-range-only forces max_abs=" << max_abs << " vs tol=" << force_tol << "\n";
+    CHECK_MESSAGE(max_abs < force_tol,
+        "long-range forces should vanish on symmetric lattice, max=" << max_abs);
 }
 
 // ---------------------------------------------------------------------------
@@ -358,7 +359,7 @@ MPI_TEST_CASE("[ESP] short-range stress: all pairs within r_c", 1) {
     constexpr int    N        = 100;
     constexpr double L        = 1.0;
     constexpr double r_c      = 0.05;
-    constexpr double eps      = 1e-3;
+    constexpr double eps      = 1e-4;
     constexpr double sphere_r = r_c / 4.0;  // max pairwise dist = 2*sphere_r = r_c/2 < r_c
 
     // Deterministic positions inside the sphere via rejection sampling.
@@ -432,7 +433,8 @@ MPI_TEST_CASE("[ESP] short-range stress: all pairs within r_c", 1) {
     auto esp = dmk::esp_eval<double>(static_cast<dmk::EspPlan *>(plan), r_src_vec, charges_vec);
 
     std::vector<double> force_ref(3 * N);
-    fd_force_reference(test_comm, plan, N, r_src, charges, 1e-5, force_ref.data());
+    std::cout << "# short-range-only forces (reference vs ESP analytic):\n";
+    fd_force_reference(test_comm, plan, N, r_src, charges, 1e-6, force_ref.data(), esp.force_x, esp.force_y, esp.force_z);
 
     pdmk_esp_plan_destroy(plan);
 
@@ -451,17 +453,11 @@ MPI_TEST_CASE("[ESP] short-range stress: all pairs within r_c", 1) {
     CHECK_MESSAGE(l2_rel_err < 5 * eps,
         "short-range-stress l2_rel_err=" << l2_rel_err << " >= eps=" << eps);
 
-    //print forces; reference vs ESP
-    std::cout << "# short-range-only forces (reference vs ESP analytic):\n";
-    for (int i = 0; i < N; ++i) {
-        std::cout << "i=" << i << " q=" << charges[i]
-                  << " ref=(" << force_ref[3*i+0] << "," << force_ref[3*i+1] << "," << force_ref[3*i+2] << ")"
-                  << " esp=(" << esp.force_x[i] << "," << esp.force_y[i] << "," << esp.force_z[i] << ")\n";
-    }
-
     const double force_l2_err = force_l2_rel_err(N, esp.force_x, esp.force_y, esp.force_z, force_ref.data());
-    CHECK_MESSAGE(force_l2_err < 1e-2,
-        "short-range-stress forces l2_rel_err=" << force_l2_err << " >= 1e-2");
+    double force_tol = 5 * std::pow(eps, 2.0 / 3.0);
+    std:: cout << "force_l2_err=" << force_l2_err << "; force_tol=" << force_tol << "; eps=" << eps << "\n\n";
+    CHECK_MESSAGE(force_l2_err <  force_tol,
+        "short-range-stress forces l2_rel_err=" << force_l2_err << " >= force_tol=" << force_tol);
 }
 
 
@@ -477,13 +473,16 @@ MPI_TEST_CASE("[ESP] forces - 10 particles", 1){
     auto esp = dmk::esp_eval<double>(static_cast<dmk::EspPlan *>(plan), r_src_vec, charges_vec);
 
     std::vector<double> force_ref(3 * N);
-    fd_force_reference(test_comm, plan, N, R_SRC, CHARGES, 1e-5, force_ref.data());
+    std::cout << "# 10 particles - forces (reference vs ESP analytic):\n";
+    fd_force_reference(test_comm, plan, N, R_SRC, CHARGES, std::pow(params.eps, 1.0 / 3.0), force_ref.data(), esp.force_x, esp.force_y, esp.force_z);
 
     pdmk_esp_plan_destroy(plan);
 
     // Compare ESP's analytic forces against the finite-difference reference.
     const double l2_rel_err = force_l2_rel_err(N, esp.force_x, esp.force_y, esp.force_z, force_ref.data());
-    CHECK_MESSAGE(l2_rel_err < 1e-3,
-        "10-particle forces l2_rel_err=" << l2_rel_err << " >= 1e-3");
+    double force_tol = 10 * std::pow(params.eps, 2.0 / 3.0);
+    std:: cout << "10-particle forces l2_rel_err=" << l2_rel_err << "; force_tol=" << force_tol << "; eps=" << params.eps << "\n\n";
+    CHECK_MESSAGE(l2_rel_err <  force_tol,
+        "10-particle forces l2_rel_err=" << l2_rel_err << " >= force_tol=" << force_tol);
 }
 #endif // DMK_BUILD_ESP
