@@ -538,15 +538,8 @@ direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_ty
         if (n_dim == 2)
             return [lambda](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
                             const Real *r_trg, Real *pot) {
-                for (int i = 0; i < n_trg; ++i) {
-                    for (int j = 0; j < n_src; ++j) {
-                        const double dr2 = sctl::pow<2>(r_src[j * 2] - r_trg[i * 2]) +
-                                           sctl::pow<2>(r_src[j * 2 + 1] - r_trg[i * 2 + 1]);
-                        if (!dr2)
-                            continue;
-                        pot[i] += charge[j] * util::cyl_bessel_k(0, lambda * std::sqrt(dr2));
-                    }
-                }
+                yukawa_2d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor,
+                                                            lambda);
             };
         if (n_dim == 3)
             return [lambda](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,

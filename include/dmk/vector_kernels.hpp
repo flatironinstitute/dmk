@@ -62,6 +62,52 @@ DMK_ALWAYS_INLINE VecType horner(const VecType &x, const typename VecType::Scala
     return poly;
 }
 
+// SIMD port of the scalar dmk::bessel::k0: the same two-branch rational
+// approximation and coefficient tables, with both branches evaluated for all
+// lanes and blended with select on the x<=1 mask. evalpoly maps to horner (both
+// ascending-coefficient). Assumes x > 0; callers must mask out r==0 lanes.
+template <typename VecType>
+DMK_ALWAYS_INLINE VecType vec_bessel_k0(const VecType &x) {
+    using Real = typename VecType::ScalarType;
+
+    const Real *P1, *Q1, *P2, *P3, *Q3;
+    int nP1, nQ1, nP2, nP3, nQ3;
+    Real Y;
+    if constexpr (std::is_same_v<Real, double>) {
+        using namespace dmk::bessel::detail;
+        P1 = P1_k0_d, nP1 = int(sizeof(P1_k0_d) / sizeof(double));
+        Q1 = Q1_k0_d, nQ1 = int(sizeof(Q1_k0_d) / sizeof(double));
+        P2 = P2_k0_d, nP2 = int(sizeof(P2_k0_d) / sizeof(double));
+        P3 = P3_k0_d, nP3 = int(sizeof(P3_k0_d) / sizeof(double));
+        Q3 = Q3_k0_d, nQ3 = int(sizeof(Q3_k0_d) / sizeof(double));
+        Y = Y_k0_d;
+    } else {
+        using namespace dmk::bessel::detail;
+        P1 = P1_k0_f, nP1 = int(sizeof(P1_k0_f) / sizeof(float));
+        Q1 = Q1_k0_f, nQ1 = int(sizeof(Q1_k0_f) / sizeof(float));
+        P2 = P2_k0_f, nP2 = int(sizeof(P2_k0_f) / sizeof(float));
+        P3 = P3_k0_f, nP3 = int(sizeof(P3_k0_f) / sizeof(float));
+        Q3 = Q3_k0_f, nQ3 = int(sizeof(Q3_k0_f) / sizeof(float));
+        Y = Y_k0_f;
+    }
+
+    const VecType x2 = x * x;
+
+    // small-argument branch (x <= 1): -a*log(x) + P2(x^2)
+    const VecType a_s = x2 * Real{0.25};
+    const VecType s0 = horner(a_s, P1, nP1) / horner(a_s, Q1, nQ1) + VecType(Y);
+    const VecType a1 = FMA(s0, a_s, VecType(Real{1}));
+    const VecType small = FMA(-a1, sctl::log(x), horner(x2, P2, nP2));
+
+    // large-argument branch (x > 1): (P3(1/x)/Q3(1/x) + 1) * s^2 / sqrt(x), s = exp(-x/2)
+    const VecType xinv = VecType(Real{1}) / x;
+    const VecType s = sctl::exp(x * Real{-0.5});
+    const VecType rsx = sctl::approx_rsqrt<-1>(x);
+    const VecType large = (horner(xinv, P3, nP3) / horner(xinv, Q3, nQ3) + VecType(Real{1})) * s * rsx * s;
+
+    return sctl::select(x <= VecType(Real{1}), small, large);
+}
+
 // Trick to do evals directly on x2, but have to call on even/odd separately
 template <int shift, typename VecType>
 DMK_ALWAYS_INLINE VecType horner_split(const VecType &x2, const typename VecType::ScalarType *coeffs, int n_coeffs) {
@@ -323,6 +369,31 @@ struct YukawaEvaluator3D {
         const vector_type R = Rinv * R2;
 
         u[0][0] = Rinv * sctl::exp(-lambda * R);
+    }
+};
+
+// 2D Yukawa (modified Helmholtz) direct evaluator: phi = K0(lambda*r), the 2D
+// analog of YukawaEvaluator3D's bare exp(-lambda*r)/r (no 1/2pi prefactor). K0 is
+// evaluated in SIMD via vec_bessel_k0; the r==0 self-interaction is masked out.
+template <class Real, int MaxVecLen>
+struct YukawaEvaluator2D {
+    using scalar_type = Real;
+    using vector_type = sctl::Vec<Real, MaxVecLen>;
+    static constexpr int SPATIAL_DIM = 2;
+    static constexpr int KERNEL_INPUT_DIM = 1;
+    static constexpr int NORMAL_DIM = 0;
+    static constexpr Real scale_factor = 1.0;
+    static constexpr int KERNEL_OUTPUT_DIM = 1;
+
+    vector_type lambda;
+
+    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[1][KERNEL_OUTPUT_DIM],
+                                      const vector_type (&dX)[SPATIAL_DIM]) const {
+        const vector_type R2 = FMA(dX[0], dX[0], dX[1] * dX[1]);
+        const auto mask = R2 > vector_type::Zero();
+        const vector_type Rinv = sctl::approx_rsqrt<-1>(R2, mask);
+        const vector_type R = R2 * Rinv;
+        u[0][0] = sctl::select(mask, vec_bessel_k0(lambda * R), vector_type::Zero());
     }
 };
 
@@ -1212,6 +1283,14 @@ template <class Real, int MaxVecLen>
 inline void yukawa_3d_all_pairs_direct(int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg,
                                        Real *pot, int unroll_factor, Real lambda) {
     using Evaluator = YukawaEvaluator3D<Real, MaxVecLen>;
+    EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{lambda},
+                                            unroll_factor);
+}
+
+template <class Real, int MaxVecLen>
+inline void yukawa_2d_all_pairs_direct(int n_src, const Real *r_src, const Real *charge, int n_trg, const Real *r_trg,
+                                       Real *pot, int unroll_factor, Real lambda) {
+    using Evaluator = YukawaEvaluator2D<Real, MaxVecLen>;
     EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{lambda},
                                             unroll_factor);
 }
