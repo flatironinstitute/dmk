@@ -922,7 +922,7 @@ struct LaplaceDipolePolyEvaluator3D {
     }
 };
 
-template <typename Real, int MaxVecLen>
+template <typename Real, int MaxVecLen, int EVAL_LEVEL = DMK_POTENTIAL>
 struct SqrtLaplaceEvaluator2D {
     using scalar_type = Real;
     using vector_type = sctl::Vec<Real, MaxVecLen>;
@@ -930,16 +930,25 @@ struct SqrtLaplaceEvaluator2D {
     static constexpr int KERNEL_INPUT_DIM = 1;
     static constexpr int NORMAL_DIM = 0;
     static constexpr Real scale_factor = 1.0;
-    static constexpr int KERNEL_OUTPUT_DIM = 1;
+    static constexpr int KERNEL_OUTPUT_DIM = EVAL_LEVEL == DMK_POTENTIAL ? 1 : 3;
 
-    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[1][1], const vector_type (&dX)[SPATIAL_DIM]) const {
+    template <int KDIM>
+    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[1][KDIM], const vector_type (&dX)[SPATIAL_DIM]) const {
+        constexpr bool has_grad = (KDIM == 3);
         const vector_type R2 = FMA(dX[0], dX[0], dX[1] * dX[1]);
         const auto mask = R2 > vector_type::Zero();
-        u[0][0] = sctl::approx_rsqrt<-1>(R2, mask);
+        const vector_type Rinv = sctl::approx_rsqrt<-1>(R2, mask); // 0 on masked lanes
+        u[0][0] = Rinv;
+        if constexpr (has_grad) {
+            // grad_i = -dX_i / r^3 = -dX_i * Rinv^3 (0 on masked lanes since Rinv=0)
+            const vector_type Rinv3 = Rinv * Rinv * Rinv;
+            for (int i = 0; i < 2; i++)
+                u[0][1 + i] = -dX[i] * Rinv3;
+        }
     }
 };
 
-template <typename Real, int MaxVecLen>
+template <typename Real, int MaxVecLen, int EVAL_LEVEL = DMK_POTENTIAL>
 struct SqrtLaplaceEvaluator3D {
     using scalar_type = Real;
     using vector_type = sctl::Vec<Real, MaxVecLen>;
@@ -947,14 +956,22 @@ struct SqrtLaplaceEvaluator3D {
     static constexpr int SPATIAL_DIM = 3;
     static constexpr int NORMAL_DIM = 0;
     static constexpr Real scale_factor = 1.0;
-    static constexpr int KERNEL_OUTPUT_DIM = 1;
+    static constexpr int KERNEL_OUTPUT_DIM = EVAL_LEVEL == DMK_POTENTIAL ? 1 : 4;
 
-    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[1][1], const vector_type (&dX)[SPATIAL_DIM]) const {
+    template <int KDIM>
+    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[1][KDIM], const vector_type (&dX)[SPATIAL_DIM]) const {
+        constexpr bool has_grad = (KDIM == 4);
         const vector_type R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
         const auto mask = R2 > vector_type::Zero();
-        const vector_type Rinv = sctl::approx_rsqrt<-1>(R2, mask);
+        const vector_type Rinv = sctl::approx_rsqrt<-1>(R2, mask); // 0 on masked lanes
         const vector_type Rinv2 = Rinv * Rinv;
         u[0][0] = Rinv2;
+        if constexpr (has_grad) {
+            // grad_i = -2 dX_i / r^4 = -2 dX_i Rinv^4 (0 on masked lanes since Rinv=0)
+            const vector_type g = Real{-2.0} * Rinv2 * Rinv2;
+            for (int i = 0; i < 3; i++)
+                u[0][1 + i] = dX[i] * g;
+        }
     }
 };
 
@@ -972,12 +989,27 @@ struct SqrtLaplacePolyEvaluator2D {
     int n_coeffs;
     int n_digits;
 
-    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[1][1], const vector_type (&dX)[SPATIAL_DIM]) const {
+    template <int KERNEL_OUTPUT_DIM>
+    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[1][KERNEL_OUTPUT_DIM],
+                                      const vector_type (&dX)[SPATIAL_DIM]) const {
+        constexpr bool has_grad = (KERNEL_OUTPUT_DIM == 3);
+        static_assert(KERNEL_OUTPUT_DIM == 1 || KERNEL_OUTPUT_DIM == 3, "Invalid KDIM");
+
         const vector_type R2 = FMA(dX[0], dX[0], dX[1] * dX[1]);
         const auto mask = (R2 > thresh2_vec) & (R2 < d2max_vec);
         const vector_type Rinv = my_approx_rsqrt(R2, n_digits);
-        const vector_type x = sctl::FMA(R2, Rinv, cen_vec) * rsc_vec;
-        u[0][0] = sctl::select(mask, horner(x, coeffs, n_coeffs) * Rinv, vector_type::Zero());
+        const vector_type x = sctl::FMA(R2, Rinv, cen_vec) * rsc_vec; // (r + cen)*rsc
+        if constexpr (!has_grad) {
+            u[0][0] = sctl::select(mask, horner(x, coeffs, n_coeffs) * Rinv, vector_type::Zero());
+        } else {
+            vector_type P, dP;
+            horner_val_deriv(x, coeffs, n_coeffs, P, dP); // dP = dP/dx
+            u[0][0] = sctl::select(mask, P * Rinv, vector_type::Zero());
+            // f = P*Rinv, x = (r + cen)*rsc; grad_i = dX_i * Rinv^2 * (dP*rsc - P*Rinv)
+            const vector_type df = Rinv * Rinv * (dP * rsc_vec - P * Rinv);
+            for (int i = 0; i < 2; i++)
+                u[0][1 + i] = sctl::select(mask, dX[i] * df, vector_type::Zero());
+        }
     }
 };
 
@@ -995,13 +1027,28 @@ struct SqrtLaplacePolyEvaluator3D {
     int n_coeffs;
     int n_digits;
 
-    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[1][1], const vector_type (&dX)[SPATIAL_DIM]) const {
+    template <int KERNEL_OUTPUT_DIM>
+    DMK_ALWAYS_INLINE void operator()(vector_type (&u)[1][KERNEL_OUTPUT_DIM],
+                                      const vector_type (&dX)[SPATIAL_DIM]) const {
+        constexpr bool has_grad = (KERNEL_OUTPUT_DIM == 4);
+        static_assert(KERNEL_OUTPUT_DIM == 1 || KERNEL_OUTPUT_DIM == 4, "Invalid KDIM");
+
         const vector_type R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
         const auto mask = (R2 > thresh2_vec) & (R2 < d2max_vec);
         const vector_type Rinv = my_approx_rsqrt(R2, n_digits);
         const vector_type R2inv = Rinv * Rinv;
-        const vector_type x = FMA(R2, rsc_vec, cen_vec);
-        u[0][0] = sctl::select(mask, R2inv * horner(x, coeffs, n_coeffs), vector_type::Zero());
+        const vector_type x = FMA(R2, rsc_vec, cen_vec); // R2*rsc + cen (poly in R^2)
+        if constexpr (!has_grad) {
+            u[0][0] = sctl::select(mask, R2inv * horner(x, coeffs, n_coeffs), vector_type::Zero());
+        } else {
+            vector_type P, dP;
+            horner_val_deriv(x, coeffs, n_coeffs, P, dP); // dP = dP/dx
+            u[0][0] = sctl::select(mask, R2inv * P, vector_type::Zero());
+            // f = P*R2inv, x = R2*rsc + cen; grad_i = 2 dX_i * R2inv * (dP*rsc - P*R2inv)
+            const vector_type df = Real{2.0} * R2inv * (dP * rsc_vec - P * R2inv);
+            for (int i = 0; i < 3; i++)
+                u[0][1 + i] = sctl::select(mask, dX[i] * df, vector_type::Zero());
+        }
     }
 };
 
@@ -1308,11 +1355,17 @@ void sqrt_laplace_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
+    const int eval_level = (EVAL_LEVEL > 0) ? EVAL_LEVEL : eval_level_rt;
 
     SqrtLaplacePolyEvaluator2D<Real, MaxVecLen> evaluator{thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits};
 
-    constexpr int KERNEL_OUTPUT_DIM = 1;
-    EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
+    if (eval_level == 1) {
+        constexpr int KERNEL_OUTPUT_DIM = 1;
+        EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
+    } else {
+        constexpr int KERNEL_OUTPUT_DIM = 3;
+        EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
+    }
 }
 
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
@@ -1323,11 +1376,17 @@ void sqrt_laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
+    const int eval_level = (EVAL_LEVEL > 0) ? EVAL_LEVEL : eval_level_rt;
 
     SqrtLaplacePolyEvaluator3D<Real, MaxVecLen> evaluator{thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits};
 
-    constexpr int KERNEL_OUTPUT_DIM = 1;
-    EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
+    if (eval_level == 1) {
+        constexpr int KERNEL_OUTPUT_DIM = 1;
+        EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
+    } else {
+        constexpr int KERNEL_OUTPUT_DIM = 4;
+        EvalPairs<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
+    }
 }
 
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
@@ -1472,18 +1531,34 @@ inline void laplace_dipole_3d_all_pairs_direct(int n_src, const Real *r_src, con
 
 template <class Real, int MaxVecLen>
 inline void sqrt_laplace_2d_all_pairs_direct(int n_src, const Real *r_src, const Real *charge, int n_trg,
-                                             const Real *r_trg, Real *pot, int unroll_factor) {
-    using Evaluator = SqrtLaplaceEvaluator2D<Real, MaxVecLen>;
-    EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
-                                            unroll_factor);
+                                             const Real *r_trg, Real *pot, int unroll_factor, int eval_level) {
+    if (eval_level == DMK_POTENTIAL) {
+        using Evaluator = SqrtLaplaceEvaluator2D<Real, MaxVecLen, DMK_POTENTIAL>;
+        return EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
+                                                       unroll_factor);
+    }
+    if (eval_level == DMK_POTENTIAL_GRAD) {
+        using Evaluator = SqrtLaplaceEvaluator2D<Real, MaxVecLen, DMK_POTENTIAL_GRAD>;
+        return EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
+                                                       unroll_factor);
+    }
+    throw std::runtime_error("Direct SqrtLaplace evaluator only supports DMK_POTENTIAL/DMK_POTENTIAL_GRAD");
 }
 
 template <class Real, int MaxVecLen>
 inline void sqrt_laplace_3d_all_pairs_direct(int n_src, const Real *r_src, const Real *charge, int n_trg,
-                                             const Real *r_trg, Real *pot, int unroll_factor) {
-    using Evaluator = SqrtLaplaceEvaluator3D<Real, MaxVecLen>;
-    EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
-                                            unroll_factor);
+                                             const Real *r_trg, Real *pot, int unroll_factor, int eval_level) {
+    if (eval_level == DMK_POTENTIAL) {
+        using Evaluator = SqrtLaplaceEvaluator3D<Real, MaxVecLen, DMK_POTENTIAL>;
+        return EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
+                                                       unroll_factor);
+    }
+    if (eval_level == DMK_POTENTIAL_GRAD) {
+        using Evaluator = SqrtLaplaceEvaluator3D<Real, MaxVecLen, DMK_POTENTIAL_GRAD>;
+        return EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, Evaluator{},
+                                                       unroll_factor);
+    }
+    throw std::runtime_error("Direct SqrtLaplace evaluator only supports DMK_POTENTIAL/DMK_POTENTIAL_GRAD");
 }
 
 template <class Real, int MaxVecLen>

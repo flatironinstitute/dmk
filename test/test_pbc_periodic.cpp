@@ -898,9 +898,12 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
             }
     }
 
-    auto ewald_pot = [&](const double *r_eval) {
-        double pot_out = 0.0;
-
+    // self_idx >= 0 subtracts that source's self term (eta^2); the self term is a constant so it
+    // does not affect the gradient (3 comps, optional).
+    auto ewald_pot_grad = [&](const double *r_eval, int self_idx, double &pot_out, double *grad_out) {
+        pot_out = 0.0;
+        if (grad_out)
+            grad_out[0] = grad_out[1] = grad_out[2] = 0.0;
         for (int is = 0; is < n_src; ++is)
             for (int mx = -n_real; mx <= n_real; ++mx)
                 for (int my = -n_real; my <= n_real; ++my)
@@ -911,7 +914,15 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
                         const double r2 = dx * dx + dy * dy + dz * dz;
                         if (r2 < 1e-28)
                             continue;
-                        pot_out += charges[is] * std::exp(-eta * eta * r2) / r2;
+                        const double g = std::exp(-eta * eta * r2);
+                        pot_out += charges[is] * g / r2;
+                        if (grad_out) {
+                            // grad of exp(-eta^2 r^2)/r^2 = -2 exp(-eta^2 r^2)(eta^2 r^2 + 1)/r^4 * r_vec
+                            const double scale = -2.0 * charges[is] * g * (eta * eta * r2 + 1.0) / (r2 * r2);
+                            grad_out[0] += scale * dx;
+                            grad_out[1] += scale * dy;
+                            grad_out[2] += scale * dz;
+                        }
                     }
 
         const std::complex<double> etx0 = std::exp(std::complex<double>(0.0, dk * r_eval[0]));
@@ -924,81 +935,106 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
             etz[a + n_ewald] = std::pow(etz0, a);
         }
 
-        double pot_long = 0.0;
+        double pot_long = 0.0, grad_long[3] = {0, 0, 0};
         for (int nx = -n_ewald; nx <= n_ewald; ++nx)
             for (int ny = -n_ewald; ny <= n_ewald; ++ny)
                 for (int nz = -n_ewald; nz <= n_ewald; ++nz) {
                     if (nx == 0 && ny == 0 && nz == 0)
                         continue;
-                    const double kmag = dk * std::sqrt(double(nx * nx + ny * ny + nz * nz));
+                    const double kx = dk * nx, ky = dk * ny, kz = dk * nz;
+                    const double kmag = std::sqrt(kx * kx + ky * ky + kz * kz);
                     const double G = std::erfc(kmag / (2.0 * eta)) / kmag;
                     const auto &rho_k = rho[(nx + n_ewald) * d * d + (ny + n_ewald) * d + (nz + n_ewald)];
                     const auto eikr = etx[nx + n_ewald] * ety[ny + n_ewald] * etz[nz + n_ewald];
-                    pot_long += G * std::real(rho_k * eikr);
+                    const auto rho_eikr = rho_k * eikr;
+                    pot_long += G * std::real(rho_eikr);
+                    if (grad_out) {
+                        const double im = -std::imag(rho_eikr);
+                        grad_long[0] += G * kx * im;
+                        grad_long[1] += G * ky * im;
+                        grad_long[2] += G * kz * im;
+                    }
                 }
-        return pot_out + (2.0 * M_PI * M_PI / V_box) * pot_long;
+        pot_out += (2.0 * M_PI * M_PI / V_box) * pot_long;
+        if (grad_out) {
+            grad_out[0] += (2.0 * M_PI * M_PI / V_box) * grad_long[0];
+            grad_out[1] += (2.0 * M_PI * M_PI / V_box) * grad_long[1];
+            grad_out[2] += (2.0 * M_PI * M_PI / V_box) * grad_long[2];
+        }
+        if (self_idx >= 0)
+            pot_out -= charges[self_idx] * eta * eta; // L(0)
     };
 
-    const double ewald_self_factor = eta * eta; // L(0)
-
-    // Sqrt-Laplace's near-field residual evaluator is potential-only, so PBC is tested for
-    // the potential (DMK_POTENTIAL) alone.
     struct PrecisionCase {
         int n_digits;
         double eps;
         double tol_pot;
+        double tol_grad;
     };
     const PrecisionCase cases[] = {
-        {3, 1e-3, 1e-2},
-        {6, 1e-6, 1e-4},
-        {9, 1e-9, 1e-7},
-        {12, 1e-12, 1e-10},
-    };
+        {3, 1e-3, 1e-2, 1e-1}, {6, 1e-6, 1e-4, 1e-3}, {9, 1e-9, 1e-7, 1e-6}, {12, 1e-12, 1e-10, 1e-9}};
 
     for (const auto &pc : cases) {
-        const std::string label = "n_digits=" + std::to_string(pc.n_digits);
+        for (int with_grad = 0; with_grad <= 1; ++with_grad) {
+            const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
+            const int odim = with_grad ? 1 + n_dim : 1;
+            const std::string label = "n_digits=" + std::to_string(pc.n_digits) + (with_grad ? " pot+grad" : " pot");
 
-        SUBCASE(label.c_str()) {
-            pdmk_params params;
-            params.eps = pc.eps;
-            params.n_dim = n_dim;
-            params.n_per_leaf = 50;
-            params.eval_src = DMK_POTENTIAL;
-            params.eval_trg = DMK_POTENTIAL;
-            params.kernel = DMK_SQRT_LAPLACE;
-            params.use_periodic = true;
-            params.log_level = 6;
+            SUBCASE(label.c_str()) {
+                pdmk_params params;
+                params.eps = pc.eps;
+                params.n_dim = n_dim;
+                params.n_per_leaf = 50;
+                params.eval_src = eval;
+                params.eval_trg = eval;
+                params.kernel = DMK_SQRT_LAPLACE;
+                params.use_periodic = true;
+                params.log_level = 6;
 
-            sctl::Vector<double> pot_src(n_src), pot_trg(n_trg);
+                sctl::Vector<double> pot_src(n_src * odim), pot_trg(n_trg * odim);
+                pdmk_tree tree =
+                    pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
+                pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
+                pdmk_tree_destroy(tree);
 
-            pdmk_tree tree =
-                pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
-            pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
-            pdmk_tree_destroy(tree);
+                const int n_test = std::min(n_src, 100);
+                double e2p = 0, r2p = 0, e2g = 0, r2g = 0;
+                for (int i = 0; i < n_test; ++i) {
+                    double ref_pot, ref_grad[3];
+                    ewald_pot_grad(&r_src[i * n_dim], i, ref_pot, with_grad ? ref_grad : nullptr);
+                    e2p += sctl::pow<2>(pot_src[i * odim] - ref_pot);
+                    r2p += sctl::pow<2>(ref_pot);
+                    if (with_grad)
+                        for (int dd = 0; dd < n_dim; ++dd) {
+                            e2g += sctl::pow<2>(pot_src[i * odim + 1 + dd] - ref_grad[dd]);
+                            r2g += sctl::pow<2>(ref_grad[dd]);
+                        }
+                }
 
-            const int n_test = std::min(n_src, 100);
-            double err2_pot_src = 0, ref2_pot_src = 0;
-            for (int i = 0; i < n_test; ++i) {
-                const double ref = ewald_pot(&r_src[i * n_dim]) - charges[i] * ewald_self_factor;
-                err2_pot_src += sctl::pow<2>(pot_src[i] - ref);
-                ref2_pot_src += sctl::pow<2>(ref);
+                const int n_test_trg = std::min(n_trg, 100);
+                double e2pt = 0, r2pt = 0, e2gt = 0, r2gt = 0;
+                for (int i = 0; i < n_test_trg; ++i) {
+                    double ref_pot, ref_grad[3];
+                    ewald_pot_grad(&r_trg[i * n_dim], -1, ref_pot, with_grad ? ref_grad : nullptr);
+                    e2pt += sctl::pow<2>(pot_trg[i * odim] - ref_pot);
+                    r2pt += sctl::pow<2>(ref_pot);
+                    if (with_grad)
+                        for (int dd = 0; dd < n_dim; ++dd) {
+                            e2gt += sctl::pow<2>(pot_trg[i * odim + 1 + dd] - ref_grad[dd]);
+                            r2gt += sctl::pow<2>(ref_grad[dd]);
+                        }
+                }
+
+                auto safe_l2 = [](double e2, double r2) { return r2 > 0 ? std::sqrt(e2 / r2) : std::sqrt(e2); };
+                VERBOSE_MESSAGE("Sqrt-Laplace PBC pipeline: ", label, " pot_src=", safe_l2(e2p, r2p),
+                                " pot_trg=", safe_l2(e2pt, r2pt));
+                CHECK(safe_l2(e2p, r2p) < pc.tol_pot);
+                CHECK(safe_l2(e2pt, r2pt) < pc.tol_pot);
+                if (with_grad) {
+                    CHECK(safe_l2(e2g, r2g) < pc.tol_grad);
+                    CHECK(safe_l2(e2gt, r2gt) < pc.tol_grad);
+                }
             }
-
-            const int n_test_trg = std::min(n_trg, 100);
-            double err2_pot_trg = 0, ref2_pot_trg = 0;
-            for (int i = 0; i < n_test_trg; ++i) {
-                const double ref = ewald_pot(&r_trg[i * n_dim]);
-                err2_pot_trg += sctl::pow<2>(pot_trg[i] - ref);
-                ref2_pot_trg += sctl::pow<2>(ref);
-            }
-
-            auto safe_l2 = [](double e2, double r2) { return r2 > 0 ? std::sqrt(e2 / r2) : std::sqrt(e2); };
-            const double l2_pot_src = safe_l2(err2_pot_src, ref2_pot_src);
-            const double l2_pot_trg = safe_l2(err2_pot_trg, ref2_pot_trg);
-
-            VERBOSE_MESSAGE("Sqrt-Laplace PBC pipeline: ", label, " pot_src=", l2_pot_src, " pot_trg=", l2_pot_trg);
-            CHECK(l2_pot_src < pc.tol_pot);
-            CHECK(l2_pot_trg < pc.tol_pot);
         }
     }
 }
@@ -1035,9 +1071,11 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Yukawa PBC full pipeline vs lattice sum", 1) {
     const double lambda = 4.0;
     const int n_img = 8; // K0(lambda*r) ~ exp(-lambda*r); shell 7 is ~exp(-28)
 
-    auto make_ref = [&](int n_eval, const double *r_eval, std::vector<double> &ref) {
-        ref.assign(n_eval, 0.0);
-        auto eval_fn = dmk::get_direct_evaluator<double>(DMK_YUKAWA, DMK_POTENTIAL, n_dim, lambda);
+    // Reference = free-space direct evaluator (potential or potential+grad) summed over images.
+    auto make_ref = [&](dmk_eval_type eval, int n_eval, const double *r_eval, std::vector<double> &ref) {
+        const int odim = (eval == DMK_POTENTIAL_GRAD) ? 1 + n_dim : 1;
+        ref.assign(size_t(n_eval) * odim, 0.0);
+        auto eval_fn = dmk::get_direct_evaluator<double>(DMK_YUKAWA, eval, n_dim, lambda);
         std::vector<double> src_shift(n_dim * n_src);
         for (int mx = -n_img; mx <= n_img; ++mx)
             for (int my = -n_img; my <= n_img; ++my) {
@@ -1053,51 +1091,73 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Yukawa PBC full pipeline vs lattice sum", 1) {
         int n_digits;
         double eps;
         double tol_pot;
+        double tol_grad;
     };
-    const PrecisionCase cases[] = {{3, 1e-3, 1e-2}, {6, 1e-6, 1e-4}, {9, 1e-9, 1e-7}, {12, 1e-12, 1e-10}};
+    const PrecisionCase cases[] = {
+        {3, 1e-3, 1e-2, 1e-1}, {6, 1e-6, 1e-4, 1e-3}, {9, 1e-9, 1e-7, 1e-6}, {12, 1e-12, 1e-10, 1e-9}};
 
     for (const auto &pc : cases) {
-        SUBCASE(("n_digits=" + std::to_string(pc.n_digits)).c_str()) {
-            pdmk_params params;
-            params.eps = pc.eps;
-            params.n_dim = n_dim;
-            params.n_per_leaf = 50;
-            params.eval_src = DMK_POTENTIAL;
-            params.eval_trg = DMK_POTENTIAL;
-            params.kernel = DMK_YUKAWA;
-            params.fparam = lambda;
-            params.use_periodic = true;
-            params.log_level = 6;
+        for (int with_grad = 0; with_grad <= 1; ++with_grad) {
+            const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
+            const int odim = with_grad ? 1 + n_dim : 1;
+            const std::string label = "n_digits=" + std::to_string(pc.n_digits) + (with_grad ? " pot+grad" : " pot");
 
-            sctl::Vector<double> pot_src(n_src), pot_trg(n_trg);
-            pdmk_tree tree =
-                pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
-            pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
-            pdmk_tree_destroy(tree);
+            SUBCASE(label.c_str()) {
+                pdmk_params params;
+                params.eps = pc.eps;
+                params.n_dim = n_dim;
+                params.n_per_leaf = 50;
+                params.eval_src = eval;
+                params.eval_trg = eval;
+                params.kernel = DMK_YUKAWA;
+                params.fparam = lambda;
+                params.use_periodic = true;
+                params.log_level = 6;
 
-            const int n_test = std::min(n_src, 50);
-            std::vector<double> ref_src;
-            make_ref(n_test, &r_src[0], ref_src);
-            double e2s = 0, r2s = 0;
-            for (int i = 0; i < n_test; ++i) {
-                e2s += sctl::pow<2>(pot_src[i] - ref_src[i]);
-                r2s += sctl::pow<2>(ref_src[i]);
+                sctl::Vector<double> pot_src(n_src * odim), pot_trg(n_trg * odim);
+                pdmk_tree tree =
+                    pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
+                pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
+                pdmk_tree_destroy(tree);
+
+                const int n_test = std::min(n_src, 50);
+                std::vector<double> ref_src;
+                make_ref(eval, n_test, &r_src[0], ref_src);
+                double e2p = 0, r2p = 0, e2g = 0, r2g = 0;
+                for (int i = 0; i < n_test; ++i) {
+                    e2p += sctl::pow<2>(pot_src[i * odim] - ref_src[i * odim]);
+                    r2p += sctl::pow<2>(ref_src[i * odim]);
+                    if (with_grad)
+                        for (int d = 0; d < n_dim; ++d) {
+                            e2g += sctl::pow<2>(pot_src[i * odim + 1 + d] - ref_src[i * odim + 1 + d]);
+                            r2g += sctl::pow<2>(ref_src[i * odim + 1 + d]);
+                        }
+                }
+
+                const int n_test_trg = std::min(n_trg, 50);
+                std::vector<double> ref_trg;
+                make_ref(eval, n_test_trg, &r_trg[0], ref_trg);
+                double e2pt = 0, r2pt = 0, e2gt = 0, r2gt = 0;
+                for (int i = 0; i < n_test_trg; ++i) {
+                    e2pt += sctl::pow<2>(pot_trg[i * odim] - ref_trg[i * odim]);
+                    r2pt += sctl::pow<2>(ref_trg[i * odim]);
+                    if (with_grad)
+                        for (int d = 0; d < n_dim; ++d) {
+                            e2gt += sctl::pow<2>(pot_trg[i * odim + 1 + d] - ref_trg[i * odim + 1 + d]);
+                            r2gt += sctl::pow<2>(ref_trg[i * odim + 1 + d]);
+                        }
+                }
+
+                auto safe_l2 = [](double e2, double r2) { return r2 > 0 ? std::sqrt(e2 / r2) : std::sqrt(e2); };
+                VERBOSE_MESSAGE("2D Yukawa PBC: ", label, " pot_src=", safe_l2(e2p, r2p),
+                                " pot_trg=", safe_l2(e2pt, r2pt));
+                CHECK(safe_l2(e2p, r2p) < pc.tol_pot);
+                CHECK(safe_l2(e2pt, r2pt) < pc.tol_pot);
+                if (with_grad) {
+                    CHECK(safe_l2(e2g, r2g) < pc.tol_grad);
+                    CHECK(safe_l2(e2gt, r2gt) < pc.tol_grad);
+                }
             }
-
-            const int n_test_trg = std::min(n_trg, 50);
-            std::vector<double> ref_trg;
-            make_ref(n_test_trg, &r_trg[0], ref_trg);
-            double e2t = 0, r2t = 0;
-            for (int i = 0; i < n_test_trg; ++i) {
-                e2t += sctl::pow<2>(pot_trg[i] - ref_trg[i]);
-                r2t += sctl::pow<2>(ref_trg[i]);
-            }
-
-            auto safe_l2 = [](double e2, double r2) { return r2 > 0 ? std::sqrt(e2 / r2) : std::sqrt(e2); };
-            const double l2s = safe_l2(e2s, r2s), l2t = safe_l2(e2t, r2t);
-            VERBOSE_MESSAGE("2D Yukawa PBC: n_digits=", pc.n_digits, " pot_src=", l2s, " pot_trg=", l2t);
-            CHECK(l2s < pc.tol_pot);
-            CHECK(l2t < pc.tol_pot);
         }
     }
 }
@@ -1161,8 +1221,12 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
     }
 
     // self_idx >= 0 subtracts that source's self term (2 eta/sqrt(pi)); pass -1 for targets.
-    auto ewald_pot = [&](const double *r_eval, int self_idx) {
-        double pot = 0.0;
+    // grad_out (2 comps) optional; the self term is a constant so it does not affect the gradient.
+    auto ewald_pot_grad = [&](const double *r_eval, int self_idx, double &pot_out, double *grad_out) {
+        pot_out = 0.0;
+        if (grad_out)
+            grad_out[0] = grad_out[1] = 0.0;
+        const double two_eta_sqrtpi = 2.0 * eta / std::sqrt(M_PI);
         for (int is = 0; is < n_src; ++is)
             for (int mx = -n_real; mx <= n_real; ++mx)
                 for (int my = -n_real; my <= n_real; ++my) {
@@ -1172,7 +1236,14 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
                     if (r2 < 1e-28)
                         continue;
                     const double r = std::sqrt(r2);
-                    pot += charges[is] * std::erfc(eta * r) / r;
+                    pot_out += charges[is] * std::erfc(eta * r) / r;
+                    if (grad_out) {
+                        // grad of erfc(eta r)/r = -[erfc(eta r)/r^3 + 2 eta/(sqrt(pi) r^2) exp(-eta^2 r^2)] r_vec
+                        const double scale = -charges[is] * (std::erfc(eta * r) / (r * r2) +
+                                                             two_eta_sqrtpi * std::exp(-eta * eta * r2) / r2);
+                        grad_out[0] += scale * dx;
+                        grad_out[1] += scale * dy;
+                    }
                 }
 
         const std::complex<double> etx0 = std::exp(std::complex<double>(0.0, dk * r_eval[0]));
@@ -1182,66 +1253,100 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
             etx[a + n_ewald] = std::pow(etx0, a);
             ety[a + n_ewald] = std::pow(ety0, a);
         }
-        double pot_long = 0.0;
+        double pot_long = 0.0, grad_long[2] = {0, 0};
         for (int nx = -n_ewald; nx <= n_ewald; ++nx)
             for (int ny = -n_ewald; ny <= n_ewald; ++ny) {
                 if (nx == 0 && ny == 0)
                     continue;
-                const double kmag = dk * std::sqrt(double(nx * nx + ny * ny));
+                const double kx = dk * nx, ky = dk * ny;
+                const double kmag = std::sqrt(kx * kx + ky * ky);
                 const double G = std::erfc(kmag / (2.0 * eta)) / kmag;
                 const auto eikr = etx[nx + n_ewald] * ety[ny + n_ewald];
-                pot_long += G * std::real(rho[(nx + n_ewald) * d + (ny + n_ewald)] * eikr);
+                const auto rho_eikr = rho[(nx + n_ewald) * d + (ny + n_ewald)] * eikr;
+                pot_long += G * std::real(rho_eikr);
+                if (grad_out) {
+                    const double im = -std::imag(rho_eikr);
+                    grad_long[0] += G * kx * im;
+                    grad_long[1] += G * ky * im;
+                }
             }
-        pot += (2.0 * M_PI / V_box) * pot_long;
+        pot_out += (2.0 * M_PI / V_box) * pot_long;
+        if (grad_out) {
+            grad_out[0] += (2.0 * M_PI / V_box) * grad_long[0];
+            grad_out[1] += (2.0 * M_PI / V_box) * grad_long[1];
+        }
         if (self_idx >= 0)
-            pot -= charges[self_idx] * 2.0 * eta / std::sqrt(M_PI);
-        return pot;
+            pot_out -= charges[self_idx] * two_eta_sqrtpi;
     };
 
     struct PrecisionCase {
         int n_digits;
         double eps;
         double tol_pot;
+        double tol_grad;
     };
-    const PrecisionCase cases[] = {{3, 1e-3, 1e-2}, {6, 1e-6, 1e-4}, {9, 1e-9, 1e-7}, {12, 1e-12, 1e-10}};
+    const PrecisionCase cases[] = {
+        {3, 1e-3, 1e-2, 1e-1}, {6, 1e-6, 1e-4, 1e-3}, {9, 1e-9, 1e-7, 1e-6}, {12, 1e-12, 1e-10, 1e-9}};
 
     for (const auto &pc : cases) {
-        SUBCASE(("n_digits=" + std::to_string(pc.n_digits)).c_str()) {
-            pdmk_params params;
-            params.eps = pc.eps;
-            params.n_dim = n_dim;
-            params.n_per_leaf = 50;
-            params.eval_src = DMK_POTENTIAL;
-            params.eval_trg = DMK_POTENTIAL;
-            params.kernel = DMK_SQRT_LAPLACE;
-            params.use_periodic = true;
-            params.log_level = 6;
+        for (int with_grad = 0; with_grad <= 1; ++with_grad) {
+            const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
+            const int odim = with_grad ? 1 + n_dim : 1;
+            const std::string label = "n_digits=" + std::to_string(pc.n_digits) + (with_grad ? " pot+grad" : " pot");
 
-            sctl::Vector<double> pot_src(n_src), pot_trg(n_trg);
-            pdmk_tree tree =
-                pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
-            pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
-            pdmk_tree_destroy(tree);
+            SUBCASE(label.c_str()) {
+                pdmk_params params;
+                params.eps = pc.eps;
+                params.n_dim = n_dim;
+                params.n_per_leaf = 50;
+                params.eval_src = eval;
+                params.eval_trg = eval;
+                params.kernel = DMK_SQRT_LAPLACE;
+                params.use_periodic = true;
+                params.log_level = 6;
 
-            const int n_test = std::min(n_src, 50);
-            double e2s = 0, r2s = 0;
-            for (int i = 0; i < n_test; ++i) {
-                const double ref = ewald_pot(&r_src[i * n_dim], i);
-                e2s += sctl::pow<2>(pot_src[i] - ref);
-                r2s += sctl::pow<2>(ref);
+                sctl::Vector<double> pot_src(n_src * odim), pot_trg(n_trg * odim);
+                pdmk_tree tree =
+                    pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
+                pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
+                pdmk_tree_destroy(tree);
+
+                const int n_test = std::min(n_src, 50);
+                double e2p = 0, r2p = 0, e2g = 0, r2g = 0;
+                for (int i = 0; i < n_test; ++i) {
+                    double ref_pot, ref_grad[2];
+                    ewald_pot_grad(&r_src[i * n_dim], i, ref_pot, with_grad ? ref_grad : nullptr);
+                    e2p += sctl::pow<2>(pot_src[i * odim] - ref_pot);
+                    r2p += sctl::pow<2>(ref_pot);
+                    if (with_grad)
+                        for (int dd = 0; dd < n_dim; ++dd) {
+                            e2g += sctl::pow<2>(pot_src[i * odim + 1 + dd] - ref_grad[dd]);
+                            r2g += sctl::pow<2>(ref_grad[dd]);
+                        }
+                }
+                const int n_test_trg = std::min(n_trg, 50);
+                double e2pt = 0, r2pt = 0, e2gt = 0, r2gt = 0;
+                for (int i = 0; i < n_test_trg; ++i) {
+                    double ref_pot, ref_grad[2];
+                    ewald_pot_grad(&r_trg[i * n_dim], -1, ref_pot, with_grad ? ref_grad : nullptr);
+                    e2pt += sctl::pow<2>(pot_trg[i * odim] - ref_pot);
+                    r2pt += sctl::pow<2>(ref_pot);
+                    if (with_grad)
+                        for (int dd = 0; dd < n_dim; ++dd) {
+                            e2gt += sctl::pow<2>(pot_trg[i * odim + 1 + dd] - ref_grad[dd]);
+                            r2gt += sctl::pow<2>(ref_grad[dd]);
+                        }
+                }
+                auto safe_l2 = [](double e2, double r2) { return r2 > 0 ? std::sqrt(e2 / r2) : std::sqrt(e2); };
+                VERBOSE_MESSAGE("2D Sqrt-Laplace PBC: ", label, " pot_src=", safe_l2(e2p, r2p),
+                                " pot_trg=", safe_l2(e2pt, r2pt));
+                CHECK(safe_l2(e2p, r2p) < pc.tol_pot);
+                CHECK(safe_l2(e2pt, r2pt) < pc.tol_pot);
+                if (with_grad) {
+                    CHECK(safe_l2(e2g, r2g) < pc.tol_grad);
+                    CHECK(safe_l2(e2gt, r2gt) < pc.tol_grad);
+                }
             }
-            const int n_test_trg = std::min(n_trg, 50);
-            double e2t = 0, r2t = 0;
-            for (int i = 0; i < n_test_trg; ++i) {
-                const double ref = ewald_pot(&r_trg[i * n_dim], -1);
-                e2t += sctl::pow<2>(pot_trg[i] - ref);
-                r2t += sctl::pow<2>(ref);
-            }
-            auto safe_l2 = [](double e2, double r2) { return r2 > 0 ? std::sqrt(e2 / r2) : std::sqrt(e2); };
-            const double l2s = safe_l2(e2s, r2s), l2t = safe_l2(e2t, r2t);
-            VERBOSE_MESSAGE("2D Sqrt-Laplace PBC: n_digits=", pc.n_digits, " pot_src=", l2s, " pot_trg=", l2t);
-            CHECK(l2s < pc.tol_pot);
-            CHECK(l2t < pc.tol_pot);
         }
     }
 }
@@ -1334,8 +1439,10 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Laplace PBC full pipeline vs Ewald", 1) {
                 rho[ix * d + iy] += charges[is] * ex[ix] * ey[iy];
     }
 
-    auto ewald_pot = [&](const double *r_eval) {
-        double pot = 0.0;
+    auto ewald_pot_grad = [&](const double *r_eval, double &pot_out, double *grad_out) {
+        pot_out = 0.0;
+        if (grad_out)
+            grad_out[0] = grad_out[1] = 0.0;
         for (int is = 0; is < n_src; ++is)
             for (int mx = -n_real; mx <= n_real; ++mx)
                 for (int my = -n_real; my <= n_real; ++my) {
@@ -1344,7 +1451,13 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Laplace PBC full pipeline vs Ewald", 1) {
                     const double r2 = dx * dx + dy * dy;
                     if (r2 < 1e-28)
                         continue;
-                    pot += charges[is] * (-0.5) * E1(eta * eta * r2);
+                    pot_out += charges[is] * (-0.5) * E1(eta * eta * r2);
+                    if (grad_out) {
+                        // grad of -1/2 E1(eta^2 r^2) = exp(-eta^2 r^2)/r^2 * r_vec
+                        const double g = charges[is] * std::exp(-eta * eta * r2) / r2;
+                        grad_out[0] += g * dx;
+                        grad_out[1] += g * dy;
+                    }
                 }
 
         const std::complex<double> etx0 = std::exp(std::complex<double>(0.0, dk * r_eval[0]));
@@ -1354,55 +1467,81 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Laplace PBC full pipeline vs Ewald", 1) {
             etx[a + n_ewald] = std::pow(etx0, a);
             ety[a + n_ewald] = std::pow(ety0, a);
         }
-        double pot_long = 0.0;
+        double pot_long = 0.0, grad_long[2] = {0, 0};
         for (int nx = -n_ewald; nx <= n_ewald; ++nx)
             for (int ny = -n_ewald; ny <= n_ewald; ++ny) {
                 if (nx == 0 && ny == 0)
                     continue;
-                const double k2 = dk * dk * double(nx * nx + ny * ny);
+                const double kx = dk * nx, ky = dk * ny;
+                const double k2 = kx * kx + ky * ky;
                 const double G = -std::exp(-k2 / (4.0 * eta * eta)) / k2;
                 const auto eikr = etx[nx + n_ewald] * ety[ny + n_ewald];
-                pot_long += G * std::real(rho[(nx + n_ewald) * d + (ny + n_ewald)] * eikr);
+                const auto rho_eikr = rho[(nx + n_ewald) * d + (ny + n_ewald)] * eikr;
+                pot_long += G * std::real(rho_eikr);
+                if (grad_out) {
+                    const double im = -std::imag(rho_eikr);
+                    grad_long[0] += G * kx * im;
+                    grad_long[1] += G * ky * im;
+                }
             }
-        return pot + (2.0 * M_PI / V_box) * pot_long;
+        pot_out += (2.0 * M_PI / V_box) * pot_long;
+        if (grad_out) {
+            grad_out[0] += (2.0 * M_PI / V_box) * grad_long[0];
+            grad_out[1] += (2.0 * M_PI / V_box) * grad_long[1];
+        }
     };
 
     struct PrecisionCase {
         int n_digits;
         double eps;
         double tol_pot;
+        double tol_grad;
     };
-    const PrecisionCase cases[] = {{3, 1e-3, 1e-2}, {6, 1e-6, 1e-4}, {9, 1e-9, 1e-7}};
+    const PrecisionCase cases[] = {{3, 1e-3, 1e-2, 1e-1}, {6, 1e-6, 1e-4, 1e-3}, {9, 1e-9, 1e-7, 1e-6}};
 
     for (const auto &pc : cases) {
-        SUBCASE(("n_digits=" + std::to_string(pc.n_digits)).c_str()) {
-            pdmk_params params;
-            params.eps = pc.eps;
-            params.n_dim = n_dim;
-            params.n_per_leaf = 50;
-            params.eval_src = DMK_POTENTIAL;
-            params.eval_trg = DMK_POTENTIAL;
-            params.kernel = DMK_LAPLACE;
-            params.use_periodic = true;
-            params.log_level = 6;
+        for (int with_grad = 0; with_grad <= 1; ++with_grad) {
+            const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
+            const int odim = with_grad ? 1 + n_dim : 1;
+            const std::string label = "n_digits=" + std::to_string(pc.n_digits) + (with_grad ? " pot+grad" : " pot");
 
-            sctl::Vector<double> pot_src(n_src), pot_trg(n_trg);
-            pdmk_tree tree =
-                pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
-            pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
-            pdmk_tree_destroy(tree);
+            SUBCASE(label.c_str()) {
+                pdmk_params params;
+                params.eps = pc.eps;
+                params.n_dim = n_dim;
+                params.n_per_leaf = 50;
+                params.eval_src = eval;
+                params.eval_trg = eval;
+                params.kernel = DMK_LAPLACE;
+                params.use_periodic = true;
+                params.log_level = 6;
 
-            const int n_test_trg = std::min(n_trg, 50);
-            double e2t = 0, r2t = 0;
-            for (int i = 0; i < n_test_trg; ++i) {
-                const double ref = ewald_pot(&r_trg[i * n_dim]);
-                e2t += sctl::pow<2>(pot_trg[i] - ref);
-                r2t += sctl::pow<2>(ref);
+                sctl::Vector<double> pot_src(n_src * odim), pot_trg(n_trg * odim);
+                pdmk_tree tree =
+                    pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
+                pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
+                pdmk_tree_destroy(tree);
+
+                // Targets only (avoids the log self-term).
+                const int n_test_trg = std::min(n_trg, 50);
+                double e2t = 0, r2t = 0, e2gt = 0, r2gt = 0;
+                for (int i = 0; i < n_test_trg; ++i) {
+                    double ref_pot, ref_grad[2];
+                    ewald_pot_grad(&r_trg[i * n_dim], ref_pot, with_grad ? ref_grad : nullptr);
+                    e2t += sctl::pow<2>(pot_trg[i * odim] - ref_pot);
+                    r2t += sctl::pow<2>(ref_pot);
+                    if (with_grad)
+                        for (int dd = 0; dd < n_dim; ++dd) {
+                            e2gt += sctl::pow<2>(pot_trg[i * odim + 1 + dd] - ref_grad[dd]);
+                            r2gt += sctl::pow<2>(ref_grad[dd]);
+                        }
+                }
+                auto safe_l2 = [](double e2, double r2) { return r2 > 0 ? std::sqrt(e2 / r2) : std::sqrt(e2); };
+                VERBOSE_MESSAGE("2D Laplace PBC: ", label, " pot_trg=", safe_l2(e2t, r2t));
+                CHECK(safe_l2(e2t, r2t) < pc.tol_pot);
+                if (with_grad)
+                    CHECK(safe_l2(e2gt, r2gt) < pc.tol_grad);
             }
-            auto safe_l2 = [](double e2, double r2) { return r2 > 0 ? std::sqrt(e2 / r2) : std::sqrt(e2); };
-            const double l2t = safe_l2(e2t, r2t);
-            VERBOSE_MESSAGE("2D Laplace PBC: n_digits=", pc.n_digits, " pot_trg=", l2t);
-            CHECK(l2t < pc.tol_pot);
         }
     }
 }

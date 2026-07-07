@@ -563,16 +563,16 @@ direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_ty
             };
     case dmk_ikernel::DMK_SQRT_LAPLACE:
         if (n_dim == 2)
-            return [](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
-                      const Real *r_trg, Real *pot) {
+            return [eval_level](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                                const Real *r_trg, Real *pot) {
                 sqrt_laplace_2d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                  unroll_factor);
+                                                                  unroll_factor, eval_level);
             };
         if (n_dim == 3)
-            return [](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
-                      const Real *r_trg, Real *pot) {
+            return [eval_level](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                                const Real *r_trg, Real *pot) {
                 sqrt_laplace_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                  unroll_factor);
+                                                                  unroll_factor, eval_level);
             };
     case dmk_ikernel::DMK_STOKESLET:
         if (n_dim == 3)
