@@ -540,6 +540,41 @@ template residual_evaluator_func<float> make_evaluator_jit<float>(dmk_ikernel ke
 template residual_evaluator_func<double> make_evaluator_jit<double>(dmk_ikernel kernel, dmk_eval_type eval_level,
                                                                     int n_dim, int n_digits, double beta,
                                                                     int unroll_factor);
+
+template <typename Real>
+residual_evaluator_func<Real> make_esp_evaluator_jit(dmk_eval_type eval_level, int n_digits, double sigma,
+                                                     int unroll_factor) {
+    static std::mutex lock;
+    std::lock_guard<std::mutex> lock_guard(lock);
+    constexpr int VECWIDTH = sctl::DefaultVecLen<Real>();
+    constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
+
+    // ESP reuses the laplace_3d evaluator (already embedded in the jit_kernels IR).
+    const std::string func_name = std::format("void laplace_3d_poly_all_pairs<{}, {}, -1, -1, -1>", T_str, VECWIDTH);
+
+    const auto coeffs = get_esp_correction_coeffs<Real>(n_digits, sigma);
+    std::map<std::string, int> args_to_consume = {{"eval_level_rt", int(eval_level)},
+                                                  {"n_digits_rt", n_digits},
+                                                  {"unroll_factor", unroll_factor},
+                                                  {"n_coeffs_rt_0", int(coeffs[0].size())}};
+
+    auto jit_func = RS->compile<void (*)(Real, Real, Real, Real, const Real *, int, const Real *, const Real *,
+                                         const Real *, int, const Real *, Real *)>(func_name, args_to_consume);
+    if (!jit_func)
+        throw std::runtime_error("Error compiling ESP kernel");
+
+    std::vector<Real> coeffs_cat(coeffs[0].begin(), coeffs[0].end());
+
+    return [jit_func, coeffs_cat](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+        jit_func(rsc, cen, d2max, thresh2, coeffs_cat.data(), n_src, r_src, charge, normals, n_trg, r_trg, pot);
+    };
+}
+
+template residual_evaluator_func<float> make_esp_evaluator_jit<float>(dmk_eval_type eval_level, int n_digits,
+                                                                      double sigma, int unroll_factor);
+template residual_evaluator_func<double> make_esp_evaluator_jit<double>(dmk_eval_type eval_level, int n_digits,
+                                                                        double sigma, int unroll_factor);
 #endif
 // (DMK_USE_JIT)
 

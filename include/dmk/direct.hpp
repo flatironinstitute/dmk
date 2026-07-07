@@ -113,6 +113,11 @@ residual_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_eval_ty
 template <typename Real>
 residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim, int n_digits,
                                                  double beta, int unroll_factor);
+// JIT variant of get_esp_3d_kernel: reuses the laplace_3d_poly_all_pairs IR with ESP PSWF
+// coefficients generated at runtime for the given sigma (matching the long-range window).
+template <typename Real>
+residual_evaluator_func<Real> make_esp_evaluator_jit(dmk_eval_type eval_level, int n_digits, double sigma,
+                                                     int unroll_factor);
 } // namespace dmk
 
 #endif
