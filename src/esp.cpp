@@ -81,21 +81,9 @@ struct PSWFKernel {
         pswf_int_poly_coeffs = finufft::kernel::poly_fit<double>(pswf_int_lambda, nc);
     }
 
-    double operator()(double x) const {
-        double result = pswf_poly_coeffs[0];
-        int nc = pswf_poly_coeffs.size();
-        for (int j = 1; j < nc; ++j)
-            result = result * x + pswf_poly_coeffs[j];
-        return result;
-    }
+    double operator()(double x) const { return pswf.eval_val(x) * scale; }
 
-    double integral_eval(double t) const {
-        double result = pswf_int_poly_coeffs[0];
-        int nc = pswf_int_poly_coeffs.size();
-        for (int j = 1; j < nc; ++j)
-            result = result * t + pswf_int_poly_coeffs[j];
-        return result;
-    }
+    double integral_eval(double t) const { return pswf.int_eval(t) * scale; }
 
     double integral(double a, double b) const {
         double va = (a == 0.0) ? 0.0 : integral_eval(a);
@@ -604,7 +592,8 @@ PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, co
 template <typename Real>
 PotForce<Real> esp_potential(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges, double L,
                              double r_c, double eps) {
-    auto *plan = esp_create_plan(L, r_c, eps);
+    // FIXME: Magic number for sigma
+    auto *plan = esp_create_plan(L, r_c, eps, 1.35);
     auto result = esp_eval<Real>(plan, r_src, charges);
     esp_destroy_plan(plan);
     return result;

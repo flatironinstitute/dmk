@@ -8,6 +8,7 @@ sys.path.insert(0, perilap3d_dir)
 from perilap3d import lap3d3p
 
 datafile = sys.argv[1]
+ref_tol = float(sys.argv[3]) if len(sys.argv) > 3 else 1e-12
 with open(datafile, "rb") as f:
     n = np.frombuffer(f.read(4), dtype=np.int32)[0]
     r_src   = np.frombuffer(f.read(n * 3 * 8), dtype=np.float64).reshape(n, 3)
@@ -18,8 +19,10 @@ print(f"charges sum={charges.sum():.6g}", file=sys.stderr)
 
 box = np.eye(3)
 p = lap3d3p(box)
-p.precomp(tol=1e-6)
-print("precomp done", file=sys.stderr)
+# gamma=2.5 keeps the near-image sum converged at tight tol (perilap3d docstring: 2.5 good
+# for tol=1e-9); harmless at looser tol.
+p.precomp(tol=ref_tol, gamma=2.5)
+print(f"precomp done (ref_tol={ref_tol:g})", file=sys.stderr)
 
 pot, _ = p.eval(r_src, None, None, charges)
 print(f"pot.shape={pot.shape}, pot.dtype={pot.dtype}", file=sys.stderr)

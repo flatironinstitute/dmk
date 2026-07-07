@@ -38,6 +38,9 @@ fort*
 *.data
 l3dptsa.txt
 
+# python cache
+*.pyc
+
 # emacs files
 *~
 TAGS

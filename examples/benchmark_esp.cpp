@@ -20,6 +20,8 @@
 #define MYCOMM nullptr
 #endif
 
+static const char *PERILAP_TOLERANCE = "1e-12";
+
 struct Config {
     int n_src = 100'000;
     double L = 1.0;
@@ -69,7 +71,8 @@ bool get_perilap3d_reference(int n, const std::vector<dmk::Vec3T<double>> &r_src
     }
 
     // Format: int32 N | float64[N*3] positions | float64[N] charges | float64[N] potentials
-    std::string cache_path = std::string(VERIFY_CACHE_DIR) + "/perilap_N" + std::to_string(n) + ".bin";
+    std::string cache_path =
+        std::string(VERIFY_CACHE_DIR) + "/perilap_N" + std::to_string(n) + "_tol" + PERILAP_TOLERANCE + ".bin";
 
     if (FILE *cf = fopen(cache_path.c_str(), "rb")) {
         int32_t cached_n = 0;
@@ -102,8 +105,8 @@ bool get_perilap3d_reference(int n, const std::vector<dmk::Vec3T<double>> &r_src
     int efd = mkstemp(errfile);
     close(efd);
 
-    std::string cmd =
-        std::string("python3 ") + VERIFY_SCRIPT_PATH + " " + tmpfile + " " + perilap3d_dir + " 2>" + errfile;
+    std::string cmd = std::string("python3 ") + VERIFY_SCRIPT_PATH + " " + tmpfile + " " + perilap3d_dir + " " +
+                      PERILAP_TOLERANCE + " 2>" + errfile;
     FILE *pipe = popen(cmd.c_str(), "r");
     bool have_ref = false;
     if (!pipe) {
@@ -194,7 +197,7 @@ void run_benchmark(const Config &cfg) {
     }
 
     // ---- Eval benchmark ----------------------------------------------------
-    dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps); // before: cfg.eps 
+    dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, 1.35); // before: cfg.eps
 
     // ---- Optional: load perilap3d reference for per-run error reporting ----
     std::vector<double> ref;
@@ -211,17 +214,20 @@ void run_benchmark(const Config &cfg) {
     // sacrificing the requested accuracy for any of the tested configurations".
     if (cfg.verify && rank == 0) {
         const std::vector<int> n_vals = {200, 2000, 20000, 100000};
-        const std::vector<double> rc_vals = {
-            0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.10, 0.12};
+        const std::vector<double> rc_vals = {0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.10, 0.12};
         const double sig_lo = 1.1, sig_hi = 3, sig_step = 0.25;
         std::vector<double> sig_vals;
         for (double sig = sig_lo; sig <= sig_hi + 1e-9; sig += sig_step)
             sig_vals.push_back(sig);
 
         std::cout << "# phase: n_rc_sigma_sweep (eps=" << cfg.eps << ")\n"
-                  << "N,r_c,sigma,l2_rel_err\n" << std::flush;
+                  << "N,r_c,sigma,l2_rel_err\n"
+                  << std::flush;
 
-        struct SweepPt { int n; double rc, sigma, l2; };
+        struct SweepPt {
+            int n;
+            double rc, sigma, l2;
+        };
         std::vector<SweepPt> pts;
 
         for (int nn : n_vals) {
@@ -241,7 +247,8 @@ void run_benchmark(const Config &cfg) {
                     dmk::esp_destroy_plan(sp);
 
                     double esp_mean = 0;
-                    for (double v : pot_s) esp_mean += v;
+                    for (double v : pot_s)
+                        esp_mean += v;
                     esp_mean /= nn;
 
                     double err2 = 0, ref2 = 0;
@@ -310,19 +317,20 @@ void run_benchmark(const Config &cfg) {
         double t1 = MY_OMP_GET_WTIME();
 
         if (rank == 0) {
-            std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0) << ","
-                      << timings.t_short << "," << timings.t_long << "," << timings.t_self;
-                double esp_mean = 0;
-                for (int i = 0; i < n; ++i) esp_mean += double(pot[i]);
-                esp_mean /= n;
+            std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0) << "," << timings.t_short << ","
+                      << timings.t_long << "," << timings.t_self;
+            double esp_mean = 0;
+            for (int i = 0; i < n; ++i)
+                esp_mean += double(pot[i]);
+            esp_mean /= n;
 
-                double err2 = 0, ref2 = 0;
-                for (int i = 0; i < n; ++i) {
-                    double diff = (double(pot[i]) - esp_mean) - ref[i];
-                    double r = ref[i];
-                    err2 += diff * diff;
-                    ref2 += r * r;
-                }
+            double err2 = 0, ref2 = 0;
+            for (int i = 0; i < n; ++i) {
+                double diff = (double(pot[i]) - esp_mean) - ref[i];
+                double r = ref[i];
+                err2 += diff * diff;
+                ref2 += r * r;
+            }
             std::cout << "," << std::sqrt(err2 / ref2);
             std::cout << "\n" << std::flush;
         }

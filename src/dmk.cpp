@@ -611,15 +611,16 @@ void pdmk(dmk_communicator comm, pdmk_params params, int n_src, const double *r_
 
 #ifdef DMK_BUILD_ESP
 pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator /*comm*/, pdmk_esp_params params) {
-    return static_cast<void *>(dmk::esp_create_plan(params.L, params.r_c, params.eps));
+    // FIXME: add sigma to params
+    return static_cast<void *>(dmk::esp_create_plan(params.L, params.r_c, params.eps, 1.35));
 }
 
 pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator comm, pdmk_esp_params params) {
     return pdmk_esp_plan_create(comm, params);
 }
 
-void pdmk_esp_eval(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const double *r_src,
-                   const double *charges, double *pot_src) {
+void pdmk_esp_eval(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
+                   double *pot_src) {
     std::vector<dmk::Vec3T<double>> r(n);
     for (int i = 0; i < n; ++i)
         r[i] = {r_src[3 * i], r_src[3 * i + 1], r_src[3 * i + 2]};
@@ -628,8 +629,8 @@ void pdmk_esp_eval(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const d
     std::copy(result.pot.begin(), result.pot.end(), pot_src);
 }
 
-void pdmk_esp_evalf(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const float *r_src,
-                    const float *charges, float *pot_src) {
+void pdmk_esp_evalf(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,
+                    float *pot_src) {
     std::vector<dmk::Vec3T<float>> r(n);
     for (int i = 0; i < n; ++i)
         r[i] = {r_src[3 * i], r_src[3 * i + 1], r_src[3 * i + 2]};
@@ -642,11 +643,11 @@ void pdmk_esp_plan_destroy(pdmk_esp_plan plan) { dmk::esp_destroy_plan(static_ca
 
 void pdmk_esp_plan_destroyf(pdmk_esp_plan plan) { pdmk_esp_plan_destroy(plan); }
 
-void pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double *r_src,
-              const double *charges, double *pot_src) {
+void pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double *r_src, const double *charges,
+              double *pot_src) {
     auto plan = pdmk_esp_plan_create(comm, params);
     pdmk_esp_eval(comm, plan, n, r_src, charges, pot_src);
     pdmk_esp_plan_destroy(plan);
 }
-#endif //DMK_BUILD_ESP
+#endif // DMK_BUILD_ESP
 }
