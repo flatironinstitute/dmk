@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <getopt.h>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <string>
 #include <unistd.h>
@@ -25,12 +26,13 @@ static const char *PERILAP_TOLERANCE = "1e-12";
 struct Config {
     int n_src = 100'000;
     double L = 1.0;
-    double r_c = 0.05;
+    double r_c = -1.0; // sentinel for "not explicitly given via -c"
     double eps = 1e-6;
     int n_runs = 10;
     char prec = 'd';
     double sigma = 1.35;
     bool bench_plan = false;
+    bool skip_verify = false; // -V: skip perilap3d comparison entirely (slow for large N)
     std::string perilap3d_dir = PERILAP3D_DIR;
     int log_level = 6; // DMK_LOG_OFF
 };
@@ -159,8 +161,42 @@ void print_config(const Config &cfg, int np, int n_threads, std::ostream &os) {
        << "# omp_threads: " << n_threads << "\n";
 }
 
+// Auto-select r_c if it wasn't explicitly given (i.e. still sits at the kUnsetRc sentinel),
+// as a function of N, sigma, and eps
+// r_c is picked to balance short- and long-range wall time
+void init_sensible_defaults(Config &cfg, const std::vector<dmk::Vec3T<double>> &r_src_d,
+                            const std::vector<double> &charges_d) {
+    if (cfg.r_c != -1.0)
+        return; // explicitly given via -c, leave it alone
+
+    const std::vector<double> rc_candidates = {0.03 * cfg.L, 0.05 * cfg.L, 0.07 * cfg.L, 0.10 * cfg.L, 0.12 * cfg.L};
+
+    double best_rc = cfg.r_c;
+    double best_t_short = 0, best_t_long = 0;
+    double best_balance = std::numeric_limits<double>::max();
+    for (double rc : rc_candidates) {
+        dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, rc, cfg.eps, cfg.sigma);
+        dmk::EspTimings timings{};
+        dmk::esp_eval<double>(plan, r_src_d, charges_d, &timings);
+        dmk::esp_destroy_plan(plan);
+
+        double balance = std::fabs(timings.t_short - timings.t_long);
+        if (balance < best_balance) {
+            best_balance = balance;
+            best_rc = rc;
+            best_t_short = timings.t_short;
+            best_t_long = timings.t_long;
+        }
+    }
+
+    cfg.r_c = best_rc;
+    std::cout << "# init_sensible_defaults: selected r_c=" << cfg.r_c << " (t_short=" << best_t_short
+              << ", t_long=" << best_t_long << ")\n"
+              << std::flush;
+}
+
 template <typename Real>
-void run_benchmark(const Config &cfg) {
+void run_benchmark(Config cfg) {
     int rank = 0, np = 1;
 #ifdef DMK_HAVE_MPI
     MPI_Comm_rank(MYCOMM, &rank);
@@ -169,12 +205,22 @@ void run_benchmark(const Config &cfg) {
     const int n_threads = MY_OMP_GET_MAX_THREADS();
     const int n = cfg.n_src;
 
-    if (rank == 0)
-        print_config(cfg, np, n_threads, std::cout);
-
-    // Always generate double-precision data (used for verification and cast to Real for timing).
     auto r_src_d = generate_positions<double>(n, cfg.L);
     auto charges_d = generate_charges<double>(n);
+
+    std::vector<double> ref;
+    bool have_ref = false;
+    if (rank == 0 && !cfg.skip_verify)
+        have_ref = get_perilap3d_reference(n, r_src_d, charges_d, cfg.perilap3d_dir, ref);
+
+    if (rank == 0)
+        init_sensible_defaults(cfg, r_src_d, charges_d);
+#ifdef DMK_HAVE_MPI
+    MPI_Bcast(&cfg.r_c, 1, MPI_DOUBLE, 0, MYCOMM);
+#endif
+
+    if (rank == 0)
+        print_config(cfg, np, n_threads, std::cout);
 
     std::vector<dmk::Vec3T<Real>> r_src(n);
     std::vector<Real> charges(n);
@@ -203,12 +249,6 @@ void run_benchmark(const Config &cfg) {
 
     dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma);
 
-    std::vector<double> ref;
-    bool have_ref = false;
-
-    if (rank == 0)
-        have_ref = get_perilap3d_reference(n, r_src_d, charges_d, cfg.perilap3d_dir, ref);
-
     // ---- Full eval benchmark --------------------------------------------------
     if (rank == 0) {
         std::cout << "# phase: eval\n";
@@ -224,20 +264,24 @@ void run_benchmark(const Config &cfg) {
 
         if (rank == 0) {
             std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0) << "," << timings.t_short << ","
-                      << timings.t_long << "," << timings.t_self;
-            double esp_mean = 0;
-            for (int i = 0; i < n; ++i)
-                esp_mean += double(pot[i]);
-            esp_mean /= n;
+                      << timings.t_long << "," << timings.t_self << ",";
+            if (have_ref) {
+                double esp_mean = 0;
+                for (int i = 0; i < n; ++i)
+                    esp_mean += double(pot[i]);
+                esp_mean /= n;
 
-            double err2 = 0, ref2 = 0;
-            for (int i = 0; i < n; ++i) {
-                double diff = (double(pot[i]) - esp_mean) - ref[i];
-                double r = ref[i];
-                err2 += diff * diff;
-                ref2 += r * r;
+                double err2 = 0, ref2 = 0;
+                for (int i = 0; i < n; ++i) {
+                    double diff = (double(pot[i]) - esp_mean) - ref[i];
+                    double r = ref[i];
+                    err2 += diff * diff;
+                    ref2 += r * r;
+                }
+                std::cout << std::sqrt(err2 / ref2);
+            } else {
+                std::cout << "nan";
             }
-            std::cout << "," << std::sqrt(err2 / ref2);
             std::cout << "\n" << std::flush;
         }
     }
@@ -248,7 +292,7 @@ void run_benchmark(const Config &cfg) {
 Config parse_args(int argc, char *argv[]) {
     Config cfg;
     int opt;
-    while ((opt = getopt(argc, argv, "N:L:c:e:r:t:l:P:s:ph?")) != -1) {
+    while ((opt = getopt(argc, argv, "N:L:c:e:r:t:l:P:s:pVh?")) != -1) {
         switch (opt) {
         case 'N':
             cfg.n_src = int(std::atof(optarg));
@@ -270,6 +314,9 @@ Config parse_args(int argc, char *argv[]) {
             break;
         case 'p':
             cfg.bench_plan = true;
+            break;
+        case 'V':
+            cfg.skip_verify = true;
             break;
         case 's':
             cfg.sigma = std::atof(optarg);
@@ -293,13 +340,14 @@ Config parse_args(int argc, char *argv[]) {
             std::cout << "Usage: " << argv[0] << " [options]\n"
                       << "  -N n       Number of particles (default 100000)\n"
                       << "  -L L       Box side length (default 1.0)\n"
-                      << "  -c r_c     Real-space cutoff (default 0.05)\n"
+                      << "  -c r_c     Real-space cutoff (default: auto-picked to balance short-/long-range time)\n"
                       << "  -e eps     Tolerance (default 1e-6)\n"
                       << "  -r n_runs  Benchmark iterations (default 10)\n"
                       << "  -t f|d     Precision: float or double (default d)\n"
                       << "  -l level   Log verbosity 0-6 (default 6=off)\n"
                       << "  -p         Also benchmark plan creation\n"
                       << "  -s sigma   FINUFFT upsampling factor for the long-range PSWF kernel (default 1.35)\n"
+                      << "  -V         Skip perilap3d comparison entirely (slow for large N)\n"
                       << "  -P dir     Override perilap3d directory (default: compile-time path)\n"
                       << "  -h         Help\n"
                       << "\n"
