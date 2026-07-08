@@ -20,44 +20,20 @@ inline int esp_ns_from_eps(double eps, double sigma) {
 }
 
 // PSWF shape parameter c, derived from the stencil width (upsampfac=2).
-inline double esp_pswf_c_from_eps(double eps, double sigma) {
-    // const int sigma = 2;
-    const int P = esp_ns_from_eps(eps, sigma);
+inline double esp_pswf_c_from_P(double sigma, double P) {
     return M_PI * P * (1.0 - 1.0 / (2 * sigma)) - 0.05;
+}
+
+// Shape parameter c for a PSWF kernel targeting (eps, sigma), matching FINUFFT's PSWF
+// spreader: derive the stencil width P from (eps, sigma), then c from (sigma, P).
+inline double esp_pswf_c_from_eps(double eps, double sigma) {
+    const int P = esp_ns_from_eps(eps, sigma);
+    return esp_pswf_c_from_P(sigma, P);
 }
 
 // Tolerance digit bucket used to select the precompiled short-range evaluator.
 inline int esp_digits_from_eps(double eps) {
     return std::clamp(static_cast<int>(std::lround(-std::log10(eps))), 2, 12);
-}
-
-// Optimal FINUFFT upsampling factor (sigma) per tolerance level.
-// All values default to 1.35; tune per digit bucket via benchmark_esp -V.
-inline double esp_sigma_from_eps(double eps) {
-    switch (esp_digits_from_eps(eps)) {
-    case 2:
-        return 1.35; // checked
-    case 3:
-        return 1.6; // checked
-    case 4:
-        return 1.35; // checked
-    case 5:
-        return 1.35; // checked
-    case 6:
-        return 1.35; // TODO: tune
-    case 7:
-        return 1.35; // TODO: tune
-    case 8:
-        return 1.35; // TODO: tune
-    case 9:
-        return 1.35; // TODO: tune
-    case 10:
-        return 1.35; // TODO: tune
-    case 11:
-        return 1.35; // TODO: tune
-    default:
-        return 1.35; // covers 12
-    }
 }
 
 // Opaque plan: holds PSWFKernel, grid params, and precomputed scaling coefficients.

@@ -5,7 +5,6 @@
 #include <dmk/prolate0_fun.hpp>
 #include <finufft.h>
 #include <finufft_common/kernel.h>
-
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -16,8 +15,6 @@
 #include <sctl.hpp>
 #include <stdexcept>
 #include <vector>
-
-// After sctl.hpp to avoid type-trait conflicts with <format>
 #include <dmk/direct.hpp>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
@@ -41,16 +38,9 @@ static void ifftn_3d(const CGrid &in, CGrid &out, int n) {
 }
 
 namespace dmk {
-
-// ---------------------------------------------------------------------------
-// PSWFKernel – thin wrapper around dmk::Prolate0Fun.
-// P and c are derived from eps (see esp.hpp), matching FINUFFT's PSWF spreader.
-// ---------------------------------------------------------------------------
 struct PSWFKernel {
     dmk::Prolate0Fun pswf;
-    int P;      // stencil width, auto-derived from eps
-    double eps; // tolerance used to select P
-    double sigma;
+    double eps;
     double c;
     double lambda0;
     double c0;
@@ -58,11 +48,7 @@ struct PSWFKernel {
     std::vector<double> pswf_poly_coeffs;
     std::vector<double> pswf_int_poly_coeffs;
 
-    // sigma_ < 0 means "use esp_sigma_from_eps(eps_)" — pass a positive value to override for experiments.
-    explicit PSWFKernel(double eps_, double sigma_ = -1.0, int lenw = 8000) : eps(eps_) {
-        sigma = (sigma_ > 0) ? sigma_ : esp_sigma_from_eps(eps_);
-        P = esp_ns_from_eps(eps_, sigma);
-        c = esp_pswf_c_from_eps(eps_, sigma);
+    explicit PSWFKernel(double eps_, double c_, int lenw = 8000) : eps(eps_), c(c_) {
         pswf = dmk::Prolate0Fun(c, lenw);
 
         scale = 1.0 / pswf.eval_val(0.0);
@@ -97,12 +83,10 @@ struct PSWFKernel {
     }
 };
 
-// ---------------------------------------------------------------------------
-// ESPParams
-// ---------------------------------------------------------------------------
 struct ESPParams {
     double L;
     double r_c;
+    double sigma;
     int P;
     int n_f;
     double h;
@@ -111,7 +95,9 @@ struct ESPParams {
     double c0;
     int n;
 
-    ESPParams(double L_, double r_c_, int P_, const PSWFKernel &pswf, int n_) : L(L_), r_c(r_c_), P(P_), n(n_) {
+    ESPParams(double L_, double r_c_, double sigma_, const PSWFKernel &pswf, int n_)
+        : L(L_), r_c(r_c_), sigma(sigma_), n(n_) {
+        P = esp_ns_from_eps(pswf.eps, sigma);
         n_f = static_cast<int>(std::ceil(pswf.c * L / (M_PI * r_c)));
         h = L / n_f;
         lambda0 = pswf.lambda0;
@@ -120,9 +106,6 @@ struct ESPParams {
     }
 };
 
-// ---------------------------------------------------------------------------
-// Cell list
-// ---------------------------------------------------------------------------
 struct CellIndex {
     int x, y, z;
 };
@@ -143,9 +126,7 @@ static inline CellIndex particle_cell(const Vec3T<Real> &r, Real L, int n_cells)
     return ci;
 }
 
-// ---------------------------------------------------------------------------
 // Cell list: particles sorted into cubic cells for cache-friendly traversal.
-// ---------------------------------------------------------------------------
 template <typename Real>
 struct CellList {
     int n_cells;
@@ -197,12 +178,7 @@ static CellList<Real> build_cell_list(const std::vector<Vec3T<Real>> &r_src, con
     return cl;
 }
 
-// ---------------------------------------------------------------------------
-// Short-range sum (fast path: cell-list / box-reordering, no neighbor list).
-// Parallelizes over home cells — each cell's output slots are disjoint across
-// threads, so pot_sorted[a] is written by exactly one thread (no atomics).
-// Falls back to the neighbor-list path when r_c > L/3 (nc < 3).
-// ---------------------------------------------------------------------------
+// Short-range sum 
 template <typename Real>
 static PotForce<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
                                        const ESPParams &params, int n_digits, const PSWFKernel &pswf) {
@@ -217,24 +193,11 @@ static PotForce<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src, co
     const Real r_c_sq = Real(params.r_c) * Real(params.r_c);
     const int n = params.n;
 
-    // Precompiled SIMD evaluator: u = P(t)/(R), t = R/r_c, with the (1 - I(t)/c0)/(4*pi)
-    // correction baked into P. The baked coefficients are fit on t in [0,1] via the polyfit
-    // library, which internally works in xi = 2*t-1 (see poly_eval::FuncEval::map_from_domain);
-    // cen/rsc must reproduce that remap, matching the generic Laplace-3D convention in
-    // tree.cpp (rsc = 2/bsize, cen = -bsize/2) with bsize = r_c.
-    // Coefficients are baked in at sigma=1.35 (see generate_aot_kernels.cpp).
-    // DMK_POTENTIAL_GRAD makes the evaluator write 4 interleaved reals per target:
-    // [pot, d(pot)/dx, d(pot)/dy, d(pot)/dz] (see LaplacePolyEvaluator3D's has_grad branch and
-    // EvalPairs' v_trg[t*KERNEL_OUTPUT_DIM+k] layout). The gradient already has the source
-    // charges folded in (same accumulation as the potential), so per-particle force is just
-    // F_i = -q_i * grad_i, using particle i's own charge.
     constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
     auto evaluator = get_esp_3d_kernel<Real, MaxVecLen>(DMK_POTENTIAL_GRAD, n_digits);
 #ifdef DMK_USE_JIT
-    // JIT generates the short-range coefficients at the runtime sigma, so they match the
-    // long-range window exactly (the AOT path is baked at sigma=1.35).
     if (!util::env_is_set("DMK_DEBUG_FORCE_AOT"))
-        evaluator = make_esp_evaluator_jit<Real>(DMK_POTENTIAL_GRAD, n_digits, pswf.sigma, 3);
+        evaluator = make_esp_evaluator_jit<Real>(DMK_POTENTIAL_GRAD, n_digits, params.sigma, 3);
 #endif
     const Real rsc = Real(2.0 / params.r_c);
     const Real cen = Real(-params.r_c / 2.0);
@@ -265,7 +228,6 @@ static PotForce<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src, co
 
 #pragma omp parallel
     {
-        // Per-thread scratch: the gathered, image-shifted neighbor sources
         std::vector<Real> r_src_g, charge_g;
 #pragma omp for schedule(dynamic) collapse(3)
         for (int cx = 0; cx < nc; ++cx)
@@ -320,24 +282,10 @@ static PotForce<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src, co
                             }
                         }
                     }
-                    // for (int a = 0; a < n_trg; ++a)
-                    //     for(int b = 0; b < n_src; ++b) {
-                    //         const Real dx = r_src_ptr[3*b+0] - r_trg_ptr[3*a+0];
-                    //         const Real dy = r_src_ptr[3*b+1] - r_trg_ptr[3*a+1];
-                    //         const Real dz = r_src_ptr[3*b+2] - r_trg_ptr[3*a+2];
-                    //         const Real d2 = dx*dx + dy*dy + dz*dz;
-                    //         if (d2 > r_c_sq || d2 == Real(0)) continue;
-                    //         const Real d = std::sqrt(d2);
-                    //         const Real t = d / Real(params.r_c);
-                    //         const Real intval = pswf.integral(Real(0), t) * (Real(1) / params.c0);
-                    //         pot_sorted[hbeg + a] += charge_ptr[b] * (Real(1) - intval) / (Real(4) * M_PI * d);
-                    //     }
                     evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, n_trg, r_trg_ptr,
                               pg_sorted.data() + 4 * hbeg);
                 }
     }
-
-    // restore original particle ordering, and convert gradient -> force (F_i = -q_i * grad_i)
     PotForce<Real> out;
     out.pot.assign(n, Real(0));
     out.force_x.assign(n, Real(0));
@@ -354,17 +302,11 @@ static PotForce<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src, co
     return out;
 }
 
-// ---------------------------------------------------------------------------
-// S_hat(k_vec)
-// ---------------------------------------------------------------------------
 static inline double S_hat(const PSWFKernel &pswf, const ESPParams &params, const Vec3 &k_vec) {
     double k_mag = std::sqrt(k_vec[0] * k_vec[0] + k_vec[1] * k_vec[1] + k_vec[2] * k_vec[2]);
     return pswf.pswf_hat(k_mag * params.r_c) / (2.0 * k_mag * k_mag) / params.c0;
 }
 
-// ---------------------------------------------------------------------------
-// Precompute scaling coefficients
-// ---------------------------------------------------------------------------
 static DGrid precompute_scaling_coefficients(const PSWFKernel &pswf, const ESPParams &params) {
     int nf = params.n_f;
     std::vector<int> k_idx(nf);
@@ -396,9 +338,7 @@ static DGrid precompute_scaling_coefficients(const PSWFKernel &pswf, const ESPPa
     return p;
 }
 
-// ---------------------------------------------------------------------------
 // Long-range contribution via FINUFFT spreading/interpolation
-// ---------------------------------------------------------------------------
 template <typename Real>
 static PotForce<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
                                  const PSWFKernel &pswf, const ESPParams &params, const DGrid &scaling_coeffs) {
@@ -406,7 +346,6 @@ static PotForce<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const st
     int nf = params.n_f;
     int ntot = nf * nf * nf;
 
-    // FINUFFT and FFT require double; convert Real inputs here
     double scale = 2.0 * M_PI / params.L;
     std::vector<double> x(n), y(n), z(n);
     for (int j = 0; j < n; j++) {
@@ -422,9 +361,8 @@ static PotForce<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const st
     finufft_opts opts;
     finufft_default_opts(&opts);
     opts.spreadinterponly = 1;
-    opts.upsampfac = pswf.sigma;
+    opts.upsampfac = params.sigma;
     double tol = pswf.eps;
-    // tol = 1e-9;
 
     // 1. Spread: NU points -> uniform grid (type 1)
     std::vector<std::complex<double>> b(ntot, 0.0);
@@ -442,14 +380,13 @@ static PotForce<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const st
     for (int idx = 0; idx < ntot; ++idx)
         pot_hat[idx] = b_hat[idx] * scaling_coeffs[idx];
 
-    // ik method: F = -q*grad(u), and grad(u)_hat_k = i*k*u_hat_k, so the force spectrum is
-    // obtained from the potential spectrum (b_hat * scaling_coeffs, i.e. pot_hat) by multiplying
-    // by -i*k component-wise. k = 2*pi*k_idx/L with k_idx the (possibly negative) integer
-    // wavenumber, same convention as precompute_scaling_coefficients.
     std::vector<int> k_idx(nf);
     for (int i = 0; i < nf; ++i)
         k_idx[i] = (i <= nf / 2) ? i : i - nf;
 
+    // ik method: F = -q*grad(u), and grad(u)_hat_k = i*k*u_hat_k, so the force spectrum is
+    // obtained from the potential spectrum (b_hat * scaling_coeffs, i.e. pot_hat) by multiplying
+    // by -i*k component-wise. 
     std::complex<double> coeff_grad = std::complex<double>(0, 1) * (2.0 * M_PI / params.L);
     CGrid f_hat_x(ntot), f_hat_y(ntot), f_hat_z(ntot);
 #pragma omp parallel for collapse(3)
@@ -459,9 +396,8 @@ static PotForce<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const st
                 const int idx = grid_idx(ix, iy, iz, nf);
                 const std::complex<double> scaled = b_hat[idx] * scaling_coeffs[idx];
                 // DMK's grid_idx (row-major, z fastest) and FINUFFT's internal grid storage
-                // (column-major, x fastest) disagree on
-                // which loop variable is which physical axis; ix here lines up with FINUFFT's z
-                // slot and iz lines up with its x slot (iy is unaffected, hence untouched below).
+                // (column-major, x fastest) disagree on which loop variable is which physical axis; 
+                // ix here lines up with FINUFFT's z slot and iz lines up with its x slot 
                 f_hat_x[idx] = scaled * coeff_grad * double(k_idx[iz]);
                 f_hat_y[idx] = scaled * coeff_grad * double(k_idx[iy]);
                 f_hat_z[idx] = scaled * coeff_grad * double(k_idx[ix]);
@@ -496,8 +432,6 @@ static PotForce<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const st
     if (ier > 1)
         throw std::runtime_error("finufft3d2 interp failed, ier=" + std::to_string(ier));
 
-    // force_{x,y,z}_c hold -d(pot)/d{x,y,z} (the "-i*k" factor above already applied the minus
-    // sign for grad -> force); still need the per-particle charge to get F_i = -q_i*grad_i.
     PotForce<Real> out;
     out.pot.resize(n);
     out.force_x.resize(n);
@@ -512,9 +446,7 @@ static PotForce<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const st
     return out;
 }
 
-// ---------------------------------------------------------------------------
 // Self-interaction correction
-// ---------------------------------------------------------------------------
 template <typename Real>
 static std::vector<Real> self_interaction(const std::vector<Real> &charges, const PSWFKernel &pswf,
                                           const ESPParams &params) {
@@ -525,22 +457,16 @@ static std::vector<Real> self_interaction(const std::vector<Real> &charges, cons
     return self;
 }
 
-// ---------------------------------------------------------------------------
-// EspPlan — caches everything independent of particle positions/charges.
-// ---------------------------------------------------------------------------
 struct EspPlan {
     int n_digits; // tolerance bucket selecting the precompiled short-range evaluator
     PSWFKernel pswf;
-    ESPParams params_base; // n=0 placeholder; n_f/h/kernel params pre-filled
+    ESPParams params_base; 
     DGrid scaling_coeffs;
 
-    // eps is snapped to 10^-n_digits so the short-range PSWF window (baked into the
-    // precompiled evaluator at that bucket) matches the long-range window exactly.
-    // sigma < 0 → use esp_sigma_from_eps; sigma > 0 → override (long-range FINUFFT window only —
-    // the short-range evaluator is precompiled AOT for sigma=1.35).
-    EspPlan(double L, double r_c, double eps, double sigma = -1.0)
-        : n_digits(esp_digits_from_eps(eps)), pswf(std::pow(10.0, -double(n_digits)), sigma),
-          params_base(L, r_c, pswf.P, pswf, 0) {
+    EspPlan(double L, double r_c, double eps, double sigma)
+        : n_digits(esp_digits_from_eps(eps)),
+          pswf(std::pow(10.0, -double(n_digits)), esp_pswf_c_from_eps(std::pow(10.0, -double(n_digits)), sigma)),
+          params_base(L, r_c, sigma, pswf, 0) {
         scaling_coeffs = precompute_scaling_coefficients(pswf, params_base);
     }
 };
@@ -556,39 +482,51 @@ PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, co
     ESPParams params = plan->params_base;
     params.n = n;
 
-    double t0 = omp_get_wtime();
-    auto sr = short_range_fast<Real>(r_src, charges, params, plan->n_digits, plan->pswf);
-    double t1 = omp_get_wtime();
-    auto lr = long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs);
-    double t2 = omp_get_wtime();
-    auto pot_self = self_interaction<Real>(charges, plan->pswf, params);
-    double t3 = omp_get_wtime();
-
-    if (timings) {
-        timings->t_short = t1 - t0;
-        timings->t_long = t2 - t1;
-        timings->t_self = t3 - t2;
-    }
-
-    // self_interaction is a position-independent per-particle constant, so it only corrects
-    // the potential and contributes zero to the force.
     PotForce<Real> total;
     total.pot.resize(n);
     total.force_x.resize(n);
     total.force_y.resize(n);
     total.force_z.resize(n);
+
+    double t0_start = omp_get_wtime();
+    auto aux = short_range_fast<Real>(r_src, charges, params, plan->n_digits, plan->pswf);
+    double t0_end = omp_get_wtime();
+
     for (int i = 0; i < n; ++i) {
-        total.pot[i] = sr.pot[i] + lr.pot[i] - pot_self[i];
-        total.force_x[i] = sr.force_x[i] + lr.force_x[i];
-        total.force_y[i] = sr.force_y[i] + lr.force_y[i];
-        total.force_z[i] = sr.force_z[i] + lr.force_z[i];
+        total.pot[i] = aux.pot[i];
+        total.force_x[i] = aux.force_x[i];
+        total.force_y[i] = aux.force_y[i];
+        total.force_z[i] = aux.force_z[i];
     }
+
+    double t1_start = omp_get_wtime();
+    aux = long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs);
+    double t1_end = omp_get_wtime();
+
+    for(int i = 0; i < n; ++i) {
+        total.pot[i] += aux.pot[i];
+        total.force_x[i] += aux.force_x[i];
+        total.force_y[i] += aux.force_y[i];
+        total.force_z[i] += aux.force_z[i];
+    }
+
+    double t2_start = omp_get_wtime();
+    auto pot_self = self_interaction<Real>(charges, plan->pswf, params);
+    double t2_end = omp_get_wtime();
+
+    for(int i = 0; i < n; ++i) {
+        total.pot[i] -= pot_self[i];
+    }
+
+    if (timings) {
+        timings->t_short = t0_end - t0_start;
+        timings->t_long = t1_end - t1_start;
+        timings->t_self = t2_end - t2_start;
+    }
+    
     return total;
 }
 
-// ---------------------------------------------------------------------------
-// Convenience one-shot entry point (create + eval + destroy).
-// ---------------------------------------------------------------------------
 template <typename Real>
 PotForce<Real> esp_potential(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges, double L,
                              double r_c, double eps) {
