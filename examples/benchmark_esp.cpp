@@ -29,8 +29,8 @@ struct Config {
     double eps = 1e-6;
     int n_runs = 10;
     char prec = 'd';
+    double sigma = 1.35;
     bool bench_plan = false;
-    bool verify = false;
     std::string perilap3d_dir = PERILAP3D_DIR;
     int log_level = 6; // DMK_LOG_OFF
 };
@@ -70,7 +70,6 @@ bool get_perilap3d_reference(int n, const std::vector<dmk::Vec3T<double>> &r_src
         pos_flat[i * 3 + 2] = r_src_d[i][2];
     }
 
-    // Format: int32 N | float64[N*3] positions | float64[N] charges | float64[N] potentials
     std::string cache_path =
         std::string(VERIFY_CACHE_DIR) + "/perilap_N" + std::to_string(n) + "_tol" + PERILAP_TOLERANCE + ".bin";
 
@@ -150,8 +149,12 @@ void print_config(const Config &cfg, int np, int n_threads, std::ostream &os) {
        << "# L:           " << cfg.L << "\n"
        << "# r_c:         " << cfg.r_c << "\n"
        << "# eps:         " << cfg.eps << "\n"
+       << "# sigma:       " << cfg.sigma << "\n"
        << "# n_runs:      " << cfg.n_runs << "\n"
        << "# prec:        " << (cfg.prec == 'd' ? "double" : "float") << "\n"
+       << "# bench_plan:  " << (cfg.bench_plan ? "true" : "false") << "\n"
+       << "# perilap3d:   " << cfg.perilap3d_dir << "\n"
+       << "# log_level:   " << cfg.log_level << "\n"
        << "# mpi_ranks:   " << np << "\n"
        << "# omp_threads: " << n_threads << "\n";
 }
@@ -165,6 +168,9 @@ void run_benchmark(const Config &cfg) {
 #endif
     const int n_threads = MY_OMP_GET_MAX_THREADS();
     const int n = cfg.n_src;
+
+    if (rank == 0)
+        print_config(cfg, np, n_threads, std::cout);
 
     // Always generate double-precision data (used for verification and cast to Real for timing).
     auto r_src_d = generate_positions<double>(n, cfg.L);
@@ -180,14 +186,13 @@ void run_benchmark(const Config &cfg) {
     // ---- Optionally benchmark plan creation --------------------------------
     if (cfg.bench_plan) {
         if (rank == 0) {
-            print_config(cfg, np, n_threads, std::cout);
             std::cout << "# phase: plan_create\n"
                       << "run,plan_time,pts_per_s\n"
                       << std::flush;
         }
         for (int run = 0; run < cfg.n_runs; ++run) {
             double t0 = MY_OMP_GET_WTIME();
-            dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, 1.35); // before: cfg.eps
+            dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma);
             double t1 = MY_OMP_GET_WTIME();
             dmk::esp_destroy_plan(plan);
 
@@ -196,112 +201,13 @@ void run_benchmark(const Config &cfg) {
         }
     }
 
-    // ---- Eval benchmark ----------------------------------------------------
-    dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, 1.35); // before: cfg.eps
+    dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma);
 
-    // ---- Optional: load perilap3d reference for per-run error reporting ----
     std::vector<double> ref;
     bool have_ref = false;
 
     if (rank == 0)
         have_ref = get_perilap3d_reference(n, r_src_d, charges_d, cfg.perilap3d_dir, ref);
-
-    // ---- 3D sweep: N x r_c x sigma — find a single sigma robust across N and r_c for this eps ----
-    // The old 2D (r_c x sigma) sweep only ever tuned against whatever single N the benchmark
-    // happened to be run with. esp_sigma_from_eps(eps) has to work for any N/r_c the caller
-    // picks, so the recommendation here is the largest sigma that stays under eps for every
-    // (N, r_c) combination tested — i.e. "as fast as possible (smallest stencil) without
-    // sacrificing the requested accuracy for any of the tested configurations".
-    if (cfg.verify && rank == 0) {
-        const std::vector<int> n_vals = {200, 2000, 20000, 100000};
-        const std::vector<double> rc_vals = {0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.10, 0.12};
-        const double sig_lo = 1.1, sig_hi = 3, sig_step = 0.25;
-        std::vector<double> sig_vals;
-        for (double sig = sig_lo; sig <= sig_hi + 1e-9; sig += sig_step)
-            sig_vals.push_back(sig);
-
-        std::cout << "# phase: n_rc_sigma_sweep (eps=" << cfg.eps << ")\n"
-                  << "N,r_c,sigma,l2_rel_err\n"
-                  << std::flush;
-
-        struct SweepPt {
-            int n;
-            double rc, sigma, l2;
-        };
-        std::vector<SweepPt> pts;
-
-        for (int nn : n_vals) {
-            auto r_src_n = generate_positions<double>(nn, cfg.L);
-            auto charges_n = generate_charges<double>(nn);
-
-            std::vector<double> ref_n;
-            if (!get_perilap3d_reference(nn, r_src_n, charges_n, cfg.perilap3d_dir, ref_n)) {
-                std::cerr << "# verify: skipping N=" << nn << " (no perilap3d reference)\n";
-                continue;
-            }
-
-            for (double rc : rc_vals) {
-                for (double sig : sig_vals) {
-                    dmk::EspPlan *sp = dmk::esp_create_plan(cfg.L, rc, cfg.eps, sig);
-                    auto pot_s = dmk::esp_eval<double>(sp, r_src_n, charges_n).pot;
-                    dmk::esp_destroy_plan(sp);
-
-                    double esp_mean = 0;
-                    for (double v : pot_s)
-                        esp_mean += v;
-                    esp_mean /= nn;
-
-                    double err2 = 0, ref2 = 0;
-                    for (int i = 0; i < nn; ++i) {
-                        double diff = (pot_s[i] - esp_mean) - ref_n[i];
-                        err2 += diff * diff;
-                        ref2 += ref_n[i] * ref_n[i];
-                    }
-                    double l2 = std::sqrt(err2 / ref2);
-                    std::cout << nn << "," << rc << "," << sig << "," << l2 << "\n" << std::flush;
-                    pts.push_back({nn, rc, sig, l2});
-                }
-            }
-        }
-
-        // Diagnostic: per (N, r_c), the largest sigma that achieves l2_rel_err < eps on its own.
-        // Useful for spotting which N/r_c combination is the binding constraint below.
-        std::cout << "# per-config recommendations (largest sigma achieving l2_rel_err < eps=" << cfg.eps << "):\n";
-        for (int nn : n_vals) {
-            for (double rc : rc_vals) {
-                SweepPt best{nn, rc, -1.0, -1.0};
-                for (const auto &p : pts)
-                    if (p.n == nn && p.rc == rc && p.l2 < cfg.eps && p.sigma > best.sigma)
-                        best = p;
-                std::cout << "#   N=" << nn << " r_c=" << rc << ": ";
-                if (best.sigma > 0)
-                    std::cout << "sigma=" << best.sigma << " (l2_rel_err=" << best.l2 << ")\n";
-                else
-                    std::cout << "no sigma in [" << sig_lo << ", " << sig_hi << "] achieved eps\n";
-            }
-        }
-
-        // Overall recommendation: the largest sigma whose worst-case l2_rel_err across every
-        // (N, r_c) tested is still under eps. This is the value esp_sigma_from_eps(eps) should
-        // return for this digit bucket.
-        double robust_sigma = -1.0, robust_worst_l2 = -1.0;
-        for (double sig : sig_vals) {
-            double worst_l2 = 0.0;
-            for (const auto &p : pts)
-                if (p.sigma == sig)
-                    worst_l2 = std::max(worst_l2, p.l2);
-            if (worst_l2 > 0.0 && worst_l2 < cfg.eps && sig > robust_sigma) {
-                robust_sigma = sig;
-                robust_worst_l2 = worst_l2;
-            }
-        }
-        std::cout << "# robust recommendation for eps=" << cfg.eps << " (safe across all N,r_c tested): ";
-        if (robust_sigma > 0)
-            std::cout << "sigma=" << robust_sigma << " (worst-case l2_rel_err=" << robust_worst_l2 << ")\n";
-        else
-            std::cout << "no sigma in [" << sig_lo << ", " << sig_hi << "] was safe for every N,r_c tested\n";
-        std::cout << std::flush;
-    }
 
     // ---- Full eval benchmark --------------------------------------------------
     if (rank == 0) {
@@ -342,7 +248,7 @@ void run_benchmark(const Config &cfg) {
 Config parse_args(int argc, char *argv[]) {
     Config cfg;
     int opt;
-    while ((opt = getopt(argc, argv, "N:L:c:e:r:t:l:P:Vph?")) != -1) {
+    while ((opt = getopt(argc, argv, "N:L:c:e:r:t:l:P:s:ph?")) != -1) {
         switch (opt) {
         case 'N':
             cfg.n_src = int(std::atof(optarg));
@@ -365,8 +271,8 @@ Config parse_args(int argc, char *argv[]) {
         case 'p':
             cfg.bench_plan = true;
             break;
-        case 'V':
-            cfg.verify = true;
+        case 's':
+            cfg.sigma = std::atof(optarg);
             break;
         case 'P':
             cfg.perilap3d_dir = optarg;
@@ -393,7 +299,7 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -t f|d     Precision: float or double (default d)\n"
                       << "  -l level   Log verbosity 0-6 (default 6=off)\n"
                       << "  -p         Also benchmark plan creation\n"
-                      << "  -V         Verify against perilap3d reference (requires Python + numpy + numba)\n"
+                      << "  -s sigma   FINUFFT upsampling factor for the long-range PSWF kernel (default 1.35)\n"
                       << "  -P dir     Override perilap3d directory (default: compile-time path)\n"
                       << "  -h         Help\n"
                       << "\n"
