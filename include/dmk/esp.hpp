@@ -1,5 +1,7 @@
 #pragma once
 
+#include <dmk.h> // dmk_eval_type
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -37,10 +39,9 @@ inline int esp_digits_from_eps(double eps) {
 }
 
 // Opaque plan: holds PSWFKernel, grid params, and precomputed scaling coefficients.
-// Heap-allocated; callers only hold a pointer. Always double precision internally.
 struct EspPlan;
 
-EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma);
+EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type = DMK_POTENTIAL_GRAD);
 void esp_destroy_plan(EspPlan *plan);
 
 // Per-phase wall times filled in by esp_eval when timings != nullptr.
@@ -52,6 +53,7 @@ struct EspTimings {
 
 // Potential + force at each particle (length = charges.size()). force_i = -charges[i] * grad_i,
 // i.e. already includes the particle's own charge — ready to use directly as a physical force.
+// force_x/y/z are left empty if the plan was created with eval_type == DMK_POTENTIAL.
 template <typename Real>
 struct PotForce {
     std::vector<Real> pot, force_x, force_y, force_z;
@@ -66,6 +68,6 @@ PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, co
 // Convenience one-shot wrapper (create + eval + destroy).
 template <typename Real>
 PotForce<Real> esp_potential(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges, double L,
-                             double r_c, double eps);
+                             double r_c, double eps, dmk_eval_type eval_type = DMK_POTENTIAL_GRAD);
 
 } // namespace dmk

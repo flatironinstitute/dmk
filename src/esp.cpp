@@ -178,10 +178,11 @@ static CellList<Real> build_cell_list(const std::vector<Vec3T<Real>> &r_src, con
     return cl;
 }
 
-// Short-range sum 
+// Short-range sum
 template <typename Real>
 static PotForce<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                                       const ESPParams &params, int n_digits, const PSWFKernel &pswf) {
+                                       const ESPParams &params, int n_digits, const PSWFKernel &pswf,
+                                       dmk_eval_type eval_type) {
     // 27-cell stencil requires nc >= 3 so periodic images aren't double-counted
     const int nc = static_cast<int>(std::floor(params.L / params.r_c));
     if (nc < 3)
@@ -192,18 +193,20 @@ static PotForce<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src, co
     const Real L = Real(params.L);
     const Real r_c_sq = Real(params.r_c) * Real(params.r_c);
     const int n = params.n;
+    const bool want_force = (eval_type >= DMK_POTENTIAL_GRAD);
+    const int out_dim = want_force ? 4 : 1;
 
     constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
-    auto evaluator = get_esp_3d_kernel<Real, MaxVecLen>(DMK_POTENTIAL_GRAD, n_digits);
+    auto evaluator = get_esp_3d_kernel<Real, MaxVecLen>(eval_type, n_digits);
 #ifdef DMK_USE_JIT
     if (!util::env_is_set("DMK_DEBUG_FORCE_AOT"))
-        evaluator = make_esp_evaluator_jit<Real>(DMK_POTENTIAL_GRAD, n_digits, params.sigma, 3);
+        evaluator = make_esp_evaluator_jit<Real>(eval_type, n_digits, params.sigma, 3);
 #endif
     const Real rsc = Real(2.0 / params.r_c);
     const Real cen = Real(-params.r_c / 2.0);
 
-    // Interleaved [pot, d/dx, d/dy, d/dz] per particle, in cell-sorted order.
-    std::vector<Real> pg_sorted(4 * n, Real(0));
+    // Interleaved [pot] or [pot, d/dx, d/dy, d/dz] per particle, in cell-sorted order.
+    std::vector<Real> pg_sorted(out_dim * n, Real(0));
 
     // For each cell coordinate c in [0, nc) and each delta d in {-1,0,+1} (stored as d=0,1,2):
     // nbc_tab[c*3+d] = neighbor cell index, off_tab[c*3+d] = image shift to subtract.
@@ -283,21 +286,25 @@ static PotForce<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src, co
                         }
                     }
                     evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, n_trg, r_trg_ptr,
-                              pg_sorted.data() + 4 * hbeg);
+                              pg_sorted.data() + out_dim * hbeg);
                 }
     }
     PotForce<Real> out;
     out.pot.assign(n, Real(0));
-    out.force_x.assign(n, Real(0));
-    out.force_y.assign(n, Real(0));
-    out.force_z.assign(n, Real(0));
+    if (want_force) {
+        out.force_x.assign(n, Real(0));
+        out.force_y.assign(n, Real(0));
+        out.force_z.assign(n, Real(0));
+    }
     for (int a = 0; a < n; ++a) {
         const int orig = cl.orig[a];
-        const Real q = cl.qs[a];
-        out.pot[orig] = pg_sorted[4 * a + 0];
-        out.force_x[orig] = -q * pg_sorted[4 * a + 1];
-        out.force_y[orig] = -q * pg_sorted[4 * a + 2];
-        out.force_z[orig] = -q * pg_sorted[4 * a + 3];
+        out.pot[orig] = pg_sorted[out_dim * a + 0];
+        if (want_force) {
+            const Real q = cl.qs[a];
+            out.force_x[orig] = -q * pg_sorted[out_dim * a + 1];
+            out.force_y[orig] = -q * pg_sorted[out_dim * a + 2];
+            out.force_z[orig] = -q * pg_sorted[out_dim * a + 3];
+        }
     }
     return out;
 }
@@ -341,7 +348,9 @@ static DGrid precompute_scaling_coefficients(const PSWFKernel &pswf, const ESPPa
 // Long-range contribution via FINUFFT spreading/interpolation
 template <typename Real>
 static PotForce<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                                 const PSWFKernel &pswf, const ESPParams &params, const DGrid &scaling_coeffs) {
+                                 const PSWFKernel &pswf, const ESPParams &params, const DGrid &scaling_coeffs,
+                                 dmk_eval_type eval_type) {
+    const bool want_force = (eval_type >= DMK_POTENTIAL_GRAD);
     int n = params.n;
     int nf = params.n_f;
     int ntot = nf * nf * nf;
@@ -380,13 +389,31 @@ static PotForce<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const st
     for (int idx = 0; idx < ntot; ++idx)
         pot_hat[idx] = b_hat[idx] * scaling_coeffs[idx];
 
+    // 4. Inverse FFT
+    CGrid grid_pot(ntot);
+    ifftn_3d(pot_hat, grid_pot, nf);
+
+    // 5. Interpolate: uniform grid -> NU points (type 2)
+    std::vector<std::complex<double>> pot_c(n);
+    ier = finufft3d2(n, x.data(), y.data(), z.data(), pot_c.data(), +1, tol, nf, nf, nf, grid_pot.data(), &opts);
+    if (ier > 1)
+        throw std::runtime_error("finufft3d2 interp failed, ier=" + std::to_string(ier));
+
+    PotForce<Real> out;
+    out.pot.resize(n);
+    for (int j = 0; j < n; j++)
+        out.pot[j] = Real(pot_c[j].real());
+
+    if (!want_force)
+        return out;
+
     std::vector<int> k_idx(nf);
     for (int i = 0; i < nf; ++i)
         k_idx[i] = (i <= nf / 2) ? i : i - nf;
 
     // ik method: F = -q*grad(u), and grad(u)_hat_k = i*k*u_hat_k, so the force spectrum is
     // obtained from the potential spectrum (b_hat * scaling_coeffs, i.e. pot_hat) by multiplying
-    // by -i*k component-wise. 
+    // by -i*k component-wise.
     std::complex<double> coeff_grad = std::complex<double>(0, 1) * (2.0 * M_PI / params.L);
     CGrid f_hat_x(ntot), f_hat_y(ntot), f_hat_z(ntot);
 #pragma omp parallel for collapse(3)
@@ -396,27 +423,17 @@ static PotForce<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const st
                 const int idx = grid_idx(ix, iy, iz, nf);
                 const std::complex<double> scaled = b_hat[idx] * scaling_coeffs[idx];
                 // DMK's grid_idx (row-major, z fastest) and FINUFFT's internal grid storage
-                // (column-major, x fastest) disagree on which loop variable is which physical axis; 
-                // ix here lines up with FINUFFT's z slot and iz lines up with its x slot 
+                // (column-major, x fastest) disagree on which loop variable is which physical axis;
+                // ix here lines up with FINUFFT's z slot and iz lines up with its x slot
                 f_hat_x[idx] = scaled * coeff_grad * double(k_idx[iz]);
                 f_hat_y[idx] = scaled * coeff_grad * double(k_idx[iy]);
                 f_hat_z[idx] = scaled * coeff_grad * double(k_idx[ix]);
             }
 
-    // 4. Inverse FFT
-    CGrid grid_pot(ntot);
-    ifftn_3d(pot_hat, grid_pot, nf);
-
     CGrid grid_force_x(ntot), grid_force_y(ntot), grid_force_z(ntot);
     ifftn_3d(f_hat_x, grid_force_x, nf);
     ifftn_3d(f_hat_y, grid_force_y, nf);
     ifftn_3d(f_hat_z, grid_force_z, nf);
-
-    // 5. Interpolate: uniform grid -> NU points (type 2)
-    std::vector<std::complex<double>> pot_c(n);
-    ier = finufft3d2(n, x.data(), y.data(), z.data(), pot_c.data(), +1, tol, nf, nf, nf, grid_pot.data(), &opts);
-    if (ier > 1)
-        throw std::runtime_error("finufft3d2 interp failed, ier=" + std::to_string(ier));
 
     std::vector<std::complex<double>> force_x_c(n), force_y_c(n), force_z_c(n);
     ier =
@@ -432,13 +449,10 @@ static PotForce<Real> long_range(const std::vector<Vec3T<Real>> &r_src, const st
     if (ier > 1)
         throw std::runtime_error("finufft3d2 interp failed, ier=" + std::to_string(ier));
 
-    PotForce<Real> out;
-    out.pot.resize(n);
     out.force_x.resize(n);
     out.force_y.resize(n);
     out.force_z.resize(n);
     for (int j = 0; j < n; j++) {
-        out.pot[j] = Real(pot_c[j].real());
         out.force_x[j] = -charges[j] * Real(force_x_c[j].real());
         out.force_y[j] = -charges[j] * Real(force_y_c[j].real());
         out.force_z[j] = -charges[j] * Real(force_z_c[j].real());
@@ -460,18 +474,21 @@ static std::vector<Real> self_interaction(const std::vector<Real> &charges, cons
 struct EspPlan {
     int n_digits; // tolerance bucket selecting the precompiled short-range evaluator
     PSWFKernel pswf;
-    ESPParams params_base; 
+    ESPParams params_base;
     DGrid scaling_coeffs;
+    dmk_eval_type eval_type; // baked in at creation; DMK_POTENTIAL skips all force computation
 
-    EspPlan(double L, double r_c, double eps, double sigma)
+    EspPlan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type_)
         : n_digits(esp_digits_from_eps(eps)),
           pswf(std::pow(10.0, -double(n_digits)), esp_pswf_c_from_eps(std::pow(10.0, -double(n_digits)), sigma)),
-          params_base(L, r_c, sigma, pswf, 0) {
+          params_base(L, r_c, sigma, pswf, 0), eval_type(eval_type_) {
         scaling_coeffs = precompute_scaling_coefficients(pswf, params_base);
     }
 };
 
-EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma) { return new EspPlan(L, r_c, eps, sigma); }
+EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type) {
+    return new EspPlan(L, r_c, eps, sigma, eval_type);
+}
 
 void esp_destroy_plan(EspPlan *plan) { delete plan; }
 
@@ -481,34 +498,41 @@ PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, co
     int n = static_cast<int>(charges.size());
     ESPParams params = plan->params_base;
     params.n = n;
+    const bool want_force = (plan->eval_type >= DMK_POTENTIAL_GRAD);
 
     PotForce<Real> total;
     total.pot.resize(n);
-    total.force_x.resize(n);
-    total.force_y.resize(n);
-    total.force_z.resize(n);
+    if (want_force) {
+        total.force_x.resize(n);
+        total.force_y.resize(n);
+        total.force_z.resize(n);
+    }
 
     double t0_start = omp_get_wtime();
-    auto aux = short_range_fast<Real>(r_src, charges, params, plan->n_digits, plan->pswf);
+    auto aux = short_range_fast<Real>(r_src, charges, params, plan->n_digits, plan->pswf, plan->eval_type);
     double t0_end = omp_get_wtime();
 
-    for (int i = 0; i < n; ++i) {
+    for (int i = 0; i < n; ++i)
         total.pot[i] = aux.pot[i];
-        total.force_x[i] = aux.force_x[i];
-        total.force_y[i] = aux.force_y[i];
-        total.force_z[i] = aux.force_z[i];
-    }
+    if (want_force)
+        for (int i = 0; i < n; ++i) {
+            total.force_x[i] = aux.force_x[i];
+            total.force_y[i] = aux.force_y[i];
+            total.force_z[i] = aux.force_z[i];
+        }
 
     double t1_start = omp_get_wtime();
-    aux = long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs);
+    aux = long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs, plan->eval_type);
     double t1_end = omp_get_wtime();
 
-    for(int i = 0; i < n; ++i) {
+    for (int i = 0; i < n; ++i)
         total.pot[i] += aux.pot[i];
-        total.force_x[i] += aux.force_x[i];
-        total.force_y[i] += aux.force_y[i];
-        total.force_z[i] += aux.force_z[i];
-    }
+    if (want_force)
+        for (int i = 0; i < n; ++i) {
+            total.force_x[i] += aux.force_x[i];
+            total.force_y[i] += aux.force_y[i];
+            total.force_z[i] += aux.force_z[i];
+        }
 
     double t2_start = omp_get_wtime();
     auto pot_self = self_interaction<Real>(charges, plan->pswf, params);
@@ -523,15 +547,15 @@ PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, co
         timings->t_long = t1_end - t1_start;
         timings->t_self = t2_end - t2_start;
     }
-    
+
     return total;
 }
 
 template <typename Real>
 PotForce<Real> esp_potential(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges, double L,
-                             double r_c, double eps) {
+                             double r_c, double eps, dmk_eval_type eval_type) {
     // FIXME: Magic number for sigma
-    auto *plan = esp_create_plan(L, r_c, eps, 1.35);
+    auto *plan = esp_create_plan(L, r_c, eps, 1.35, eval_type);
     auto result = esp_eval<Real>(plan, r_src, charges);
     esp_destroy_plan(plan);
     return result;
@@ -542,8 +566,8 @@ template PotForce<float> esp_eval<float>(EspPlan *, const std::vector<Vec3T<floa
 template PotForce<double> esp_eval<double>(EspPlan *, const std::vector<Vec3T<double>> &, const std::vector<double> &,
                                            EspTimings *);
 template PotForce<float> esp_potential<float>(const std::vector<Vec3T<float>> &, const std::vector<float> &, double,
-                                              double, double);
+                                              double, double, dmk_eval_type);
 template PotForce<double> esp_potential<double>(const std::vector<Vec3T<double>> &, const std::vector<double> &, double,
-                                                double, double);
+                                                double, double, dmk_eval_type);
 
 } // namespace dmk

@@ -612,7 +612,11 @@ void pdmk(dmk_communicator comm, pdmk_params params, int n_src, const double *r_
 #ifdef DMK_BUILD_ESP
 pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator /*comm*/, pdmk_esp_params params) {
     // FIXME: add sigma to params
-    return static_cast<void *>(dmk::esp_create_plan(params.L, params.r_c, params.eps, 1.35));
+    // pdmk_esp_eval only ever copies out pot_src (no force output pointers exist in this C API
+    // yet), so request DMK_POTENTIAL here to skip computing forces that would just be discarded.
+    // If force output is ever exposed at the C level, this needs an eval_type field on
+    // pdmk_esp_params plus force output pointers on pdmk_esp_eval/pdmk_esp_evalf.
+    return static_cast<void *>(dmk::esp_create_plan(params.L, params.r_c, params.eps, 1.35, DMK_POTENTIAL));
 }
 
 pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator comm, pdmk_esp_params params) {
