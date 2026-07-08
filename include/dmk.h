@@ -88,6 +88,7 @@ typedef struct pdmk_esp_params {
     double r_c;    // real-space cutoff radius
     double eps;    // target precision (P is auto-derived via FINUFFT's formula)
     int log_level; // 0: trace … 6: off (matches dmk_log_level)
+    dmk_eval_type eval_type = DMK_POTENTIAL;
 } pdmk_esp_params;
 
 // Opaque plan handle (heap-allocated internally).
