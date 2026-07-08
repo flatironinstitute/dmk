@@ -32,7 +32,9 @@ struct Config {
     char prec = 'd';
     double sigma = 1.35;
     bool bench_plan = false;
-    bool skip_verify = false; // -V: skip perilap3d comparison entirely (slow for large N)
+    bool bench_forces = false; // -g: also benchmark forces (potential+force timed together)
+    bool skip_verify = false;  // -V: skip perilap3d comparison entirely (slow for large N)
+    bool check_forces = false; // -F: validate forces against a finite-difference reference (very slow: O(N) extra evals); implies -g
     std::string perilap3d_dir = PERILAP3D_DIR;
     int log_level = 6; // DMK_LOG_OFF
 };
@@ -155,6 +157,8 @@ void print_config(const Config &cfg, int np, int n_threads, std::ostream &os) {
        << "# n_runs:      " << cfg.n_runs << "\n"
        << "# prec:        " << (cfg.prec == 'd' ? "double" : "float") << "\n"
        << "# bench_plan:  " << (cfg.bench_plan ? "true" : "false") << "\n"
+       << "# bench_forces:" << (cfg.bench_forces ? "true" : "false") << "\n"
+       << "# check_forces:" << (cfg.check_forces ? "true" : "false") << "\n"
        << "# perilap3d:   " << cfg.perilap3d_dir << "\n"
        << "# log_level:   " << cfg.log_level << "\n"
        << "# mpi_ranks:   " << np << "\n"
@@ -193,6 +197,131 @@ void init_sensible_defaults(Config &cfg, const std::vector<dmk::Vec3T<double>> &
     std::cout << "# init_sensible_defaults: selected r_c=" << cfg.r_c << " (t_short=" << best_t_short
               << ", t_long=" << best_t_long << ")\n"
               << std::flush;
+}
+
+// Validate ESP's analytic forces (esp.force_x/y/z) against a central-difference reference,
+// following the same recipe as test/test_esp.cpp's fd_force_reference. Very slow: 6*N extra
+// esp_eval calls (2 per particle per component), each O(N) — off by default, enable with -F,
+// and prefer a small -N when using it. The perturbed evals only need the potential, so they use
+// a DMK_POTENTIAL-only plan (skips force computation) to keep the O(N) multiplier as cheap as
+// possible.
+double check_forces_fd(const dmk::PotForce<double> &esp, const std::vector<dmk::Vec3T<double>> &r_src_d,
+                       const std::vector<double> &charges_d, double L, double r_c, double eps, double sigma) {
+    const int n = static_cast<int>(charges_d.size());
+    const double step = std::pow(eps, 1.0 / 3.0);
+
+    dmk::EspPlan *plan = dmk::esp_create_plan(L, r_c, eps, sigma, DMK_POTENTIAL);
+
+    std::vector<dmk::Vec3T<double>> r_pert = r_src_d;
+    double err2 = 0, ref2 = 0;
+    for (int i = 0; i < n; ++i) {
+        double f_ref[3];
+        for (int a = 0; a < 3; ++a) {
+            r_pert[i][a] = r_src_d[i][a] + step;
+            double pot_plus = dmk::esp_eval<double>(plan, r_pert, charges_d).pot[i];
+
+            r_pert[i][a] = r_src_d[i][a] - step;
+            double pot_minus = dmk::esp_eval<double>(plan, r_pert, charges_d).pot[i];
+
+            r_pert[i][a] = r_src_d[i][a]; // restore before perturbing the next component
+
+            f_ref[a] = -charges_d[i] * (pot_plus - pot_minus) / (2.0 * step);
+        }
+        const double diff_x = esp.force_x[i] - f_ref[0];
+        const double diff_y = esp.force_y[i] - f_ref[1];
+        const double diff_z = esp.force_z[i] - f_ref[2];
+        err2 += diff_x * diff_x + diff_y * diff_y + diff_z * diff_z;
+        ref2 += f_ref[0] * f_ref[0] + f_ref[1] * f_ref[1] + f_ref[2] * f_ref[2];
+    }
+
+    dmk::esp_destroy_plan(plan);
+    return std::sqrt(err2 / ref2);
+}
+
+// Potential-only benchmark: uses a DMK_POTENTIAL plan (no force computation at all), and reports
+// l2_rel_err against the perilap3d reference when available.
+template <typename Real>
+void run_potential_benchmark(const Config &cfg, int rank, int n, const std::vector<dmk::Vec3T<Real>> &r_src,
+                             const std::vector<Real> &charges, const std::vector<double> &ref, bool have_ref) {
+    dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL);
+
+    if (rank == 0) {
+        std::cout << "# phase: eval_potential\n";
+        std::cout << "run,total_time,pts_per_s,sr_time,lr_time,self_time,l2_rel_err\n";
+        std::cout << std::flush;
+    }
+
+    for (int run = 0; run < cfg.n_runs; ++run) {
+        dmk::EspTimings timings{};
+        double t0 = MY_OMP_GET_WTIME();
+        auto pot = dmk::esp_eval<Real>(plan, r_src, charges, &timings).pot;
+        double t1 = MY_OMP_GET_WTIME();
+
+        if (rank == 0) {
+            std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0) << "," << timings.t_short << ","
+                      << timings.t_long << "," << timings.t_self << ",";
+            if (have_ref) {
+                double esp_mean = 0;
+                for (int i = 0; i < n; ++i)
+                    esp_mean += double(pot[i]);
+                esp_mean /= n;
+
+                double err2 = 0, ref2 = 0;
+                for (int i = 0; i < n; ++i) {
+                    double diff = (double(pot[i]) - esp_mean) - ref[i];
+                    double r = ref[i];
+                    err2 += diff * diff;
+                    ref2 += r * r;
+                }
+                std::cout << std::sqrt(err2 / ref2);
+            } else {
+                std::cout << "nan";
+            }
+            std::cout << "\n" << std::flush;
+        }
+    }
+
+    dmk::esp_destroy_plan(plan);
+}
+
+// Forces benchmark: uses a DMK_POTENTIAL_GRAD plan, so total_time/sr_time/lr_time reflect
+// potential and force computed together. Optionally (-F) also validates the analytic forces
+// against a finite-difference reference — very slow (6*N extra evaluations), so it's kept as a
+// separate step after the timing loop rather than run every iteration.
+template <typename Real>
+void run_forces_benchmark(const Config &cfg, int rank, int n, const std::vector<dmk::Vec3T<Real>> &r_src,
+                          const std::vector<Real> &charges, const std::vector<dmk::Vec3T<double>> &r_src_d,
+                          const std::vector<double> &charges_d) {
+    dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL_GRAD);
+
+    if (rank == 0) {
+        std::cout << "# phase: eval_forces\n";
+        std::cout << "run,total_time,pts_per_s,sr_time,lr_time,self_time\n";
+        std::cout << std::flush;
+    }
+
+    for (int run = 0; run < cfg.n_runs; ++run) {
+        dmk::EspTimings timings{};
+        double t0 = MY_OMP_GET_WTIME();
+        dmk::esp_eval<Real>(plan, r_src, charges, &timings);
+        double t1 = MY_OMP_GET_WTIME();
+
+        if (rank == 0)
+            std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0) << "," << timings.t_short << ","
+                      << timings.t_long << "," << timings.t_self << "\n"
+                      << std::flush;
+    }
+
+    if (cfg.check_forces) {
+        if (rank == 0)
+            std::cout << "# phase: force_check (6*N extra evaluations, this may take a while)\n" << std::flush;
+        auto esp = dmk::esp_eval<double>(plan, r_src_d, charges_d);
+        double force_l2_err = check_forces_fd(esp, r_src_d, charges_d, cfg.L, cfg.r_c, cfg.eps, cfg.sigma);
+        if (rank == 0)
+            std::cout << "# force_check: l2_rel_err=" << force_l2_err << "\n" << std::flush;
+    }
+
+    dmk::esp_destroy_plan(plan);
 }
 
 template <typename Real>
@@ -247,52 +376,15 @@ void run_benchmark(Config cfg) {
         }
     }
 
-    dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma);
-
-    // ---- Full eval benchmark --------------------------------------------------
-    if (rank == 0) {
-        std::cout << "# phase: eval\n";
-        std::cout << "run,total_time,pts_per_s,sr_time,lr_time,self_time,l2_rel_err\n";
-        std::cout << std::flush;
-    }
-
-    for (int run = 0; run < cfg.n_runs; ++run) {
-        dmk::EspTimings timings{};
-        double t0 = MY_OMP_GET_WTIME();
-        auto pot = dmk::esp_eval<Real>(plan, r_src, charges, &timings).pot;
-        double t1 = MY_OMP_GET_WTIME();
-
-        if (rank == 0) {
-            std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0) << "," << timings.t_short << ","
-                      << timings.t_long << "," << timings.t_self << ",";
-            if (have_ref) {
-                double esp_mean = 0;
-                for (int i = 0; i < n; ++i)
-                    esp_mean += double(pot[i]);
-                esp_mean /= n;
-
-                double err2 = 0, ref2 = 0;
-                for (int i = 0; i < n; ++i) {
-                    double diff = (double(pot[i]) - esp_mean) - ref[i];
-                    double r = ref[i];
-                    err2 += diff * diff;
-                    ref2 += r * r;
-                }
-                std::cout << std::sqrt(err2 / ref2);
-            } else {
-                std::cout << "nan";
-            }
-            std::cout << "\n" << std::flush;
-        }
-    }
-
-    dmk::esp_destroy_plan(plan);
+    run_potential_benchmark<Real>(cfg, rank, n, r_src, charges, ref, have_ref);
+    if (cfg.bench_forces || cfg.check_forces) // -F implies running the forces benchmark it validates against
+        run_forces_benchmark<Real>(cfg, rank, n, r_src, charges, r_src_d, charges_d);
 }
 
 Config parse_args(int argc, char *argv[]) {
     Config cfg;
     int opt;
-    while ((opt = getopt(argc, argv, "N:L:c:e:r:t:l:P:s:pVh?")) != -1) {
+    while ((opt = getopt(argc, argv, "N:L:c:e:r:t:l:P:s:pVFgh?")) != -1) {
         switch (opt) {
         case 'N':
             cfg.n_src = int(std::atof(optarg));
@@ -315,8 +407,14 @@ Config parse_args(int argc, char *argv[]) {
         case 'p':
             cfg.bench_plan = true;
             break;
+        case 'g':
+            cfg.bench_forces = true;
+            break;
         case 'V':
             cfg.skip_verify = true;
+            break;
+        case 'F':
+            cfg.check_forces = true;
             break;
         case 's':
             cfg.sigma = std::atof(optarg);
@@ -348,6 +446,10 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -p         Also benchmark plan creation\n"
                       << "  -s sigma   FINUFFT upsampling factor for the long-range PSWF kernel (default 1.35)\n"
                       << "  -V         Skip perilap3d comparison entirely (slow for large N)\n"
+                      << "  -g         Also benchmark forces (potential+force timed together, phase eval_forces).\n"
+                      << "             Potential-only timing (phase eval_potential) always runs regardless.\n"
+                      << "  -F         Validate forces against a finite-difference reference (very slow: 6*N\n"
+                      << "             extra evaluations — prefer a small -N when using this). Implies -g.\n"
                       << "  -P dir     Override perilap3d directory (default: compile-time path)\n"
                       << "  -h         Help\n"
                       << "\n"
