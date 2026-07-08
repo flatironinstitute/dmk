@@ -65,6 +65,44 @@ cmake .. -DCMAKE_CXX_COMPILER="$LLVM_ROOT/bin/clang++" -DCMAKE_POLICY_VERSION_MI
 make -j 12
 ```
 
+# ESP (Ewald Summation with Prolates)
+
+DMK includes an experimental periodic electrostatics solver based on prolate spheroidal wave
+functions (PSWFs), as detailed [here](https://www.nature.com/articles/s41467-026-73232-8). It's off by default; enable it at configure time:
+
+```bash
+cmake .. -DDMK_BUILD_ESP=ON
+make -j 10
+```
+
+Optionally, `-DDMK_USE_JIT=ON` enables runtime JIT-generated short-range kernels (matching the
+long-range window exactly at any sigma, instead of the precompiled AOT tables baked at
+sigma=1.35). This requires LLVM — RuFuS (`extern/RuFuS`) targets **LLVM 19** specifically. On FI systems: `module load llvm/19.1.7`.
+
+## Verifying against perilap3d
+
+ESP's tests (`test/test_esp.cpp`) and benchmark (`examples/benchmark_esp.cpp -V`) validate
+potentials against [`perilap3d`](scripts/perilap3d), a quasi-periodizing boundary-integral
+reference solver, invoked via a small Python helper (`examples/verify_esp.py`) as a subprocess.
+That subprocess needs:
+
+- numpy
+- scipy
+- numba
+- numexpr
+- matplotlib (imported unconditionally by `perilap3d.py`, even though plotting isn't used here)
+
+Set up a virtual environment once, e.g.:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install numpy scipy numba numexpr matplotlib
+```
+
+`PERILAP3D_DIR` defaults to the in-repo `scripts/perilap3d` at compile time; override at runtime
+with `benchmark_esp -P <dir>` if needed.
+
 # Fortran code installation guide
 
 We use make utility to install static and/or dynamic libraries, and to run the tests. 
