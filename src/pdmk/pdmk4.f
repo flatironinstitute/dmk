@@ -700,51 +700,7 @@ c
       
 c     calculate and allocate maximum memory for planewave expansions
 c     needed for one level
-      if (ikernel.eq.2.and.dim.eq.3) then
-         if (ndigits.le.3) then
-            npw=13
-            norder=9
-         elseif (ndigits.le.6) then
-            npw=27
-            norder=18
-         elseif (ndigits.le.9) then
-            npw=39
-            norder=28
-         elseif (ndigits.le.12) then
-            npw=55
-            norder=38
-         endif
-      else
-         if (ndigits.le.3) then
-            npw=13
-            norder=9
-         elseif (ndigits.le.6) then
-            npw=25
-            norder=18
-         elseif (ndigits.le.9) then
-            npw=39
-            norder=28
-         elseif (ndigits.le.12) then
-            npw=53
-            norder=38
-         endif
-      endif
-
-      if (ifdipole.eq.1) then
-         if (ndigits.le.3) then
-            npw=21
-            norder=12
-         elseif (ndigits.le.6) then
-            npw=35
-            norder=22
-         elseif (ndigits.le.9) then
-            npw=47
-            norder=32
-         elseif (ndigits.le.12) then
-            npw=61
-            norder=42
-         endif
-      endif
+      call pdmk_smooth_orders(eps,ikernel,dim,ifdipole,npw,norder)
       
       itype = 0
       call chebexps(itype,norder,xq,umat,vmat,wts)
@@ -962,6 +918,19 @@ cccc            if (ilev .eq. 0) bsize=bsize*0.5d0
 cccc            if (ilev .eq. 0) bsize=bsize*0.5d0
             call log_residual_kernel_coefs(eps,dim,beta,
      1          bsize,rl(ilev),wprolate,ncoefs1(ilev),coefs1(1,ilev))
+         enddo
+      elseif (ikernel.eq.1.and.dim.eq.3.and.ifdipole.eq.1) then
+         call l3d_local_kernel_init_power_dlp(eps,beta,
+     1       ncoefs1(0),coefs1(1,0),ncoefs2(0),coefs2(1,0))
+         do ilev=1,nlevels+1
+            ncoefs1(ilev)=ncoefs1(0)
+            ncoefs2(ilev)=ncoefs2(0)
+            do i=1,ncoefs1(0)
+               coefs1(i,ilev)=coefs1(i,0)
+            enddo
+            do i=1,ncoefs2(0)
+               coefs2(i,ilev)=coefs2(i,0)
+            enddo
          enddo
       endif
 
@@ -1414,9 +1383,10 @@ c     used in the kernel approximatin for boxes in list1
          
 c                 eval at sources
                   if (nptssrc.gt.0.and.ifpgh.gt.0) then
-                     call pdmk_direct_c(nd,dim,ikernel,rpars,
+                  call pdmk_direct_c(nd,dim,ikernel,rpars,
      1                   ndigits,rsc,cen,ifself,
      2                   ncoefs1(jlev),coefs1(1,jlev),
+     2                   ncoefs2(jlev),coefs2(1,jlev),
      3                   d2max,jstart,jend,sourcesort,
      4                   ifcharge,chargesort,
      5                   ifdipole,dipvecsort,
@@ -1426,9 +1396,10 @@ c                 eval at sources
 
 c                 eval at targets
                   if (nptstarg.gt.0.and.ifpghtarg.gt.0) then
-                     call pdmk_direct_c(nd,dim,ikernel,rpars,
+                  call pdmk_direct_c(nd,dim,ikernel,rpars,
      1                   ndigits,rsc,cen,ifself,
      2                   ncoefs1(jlev),coefs1(1,jlev),
+     2                   ncoefs2(jlev),coefs2(1,jlev),
      3                   d2max,jstart,jend,sourcesort,
      4                   ifcharge,chargesort,
      5                   ifdipole,dipvecsort,
@@ -1456,7 +1427,7 @@ C$    time2=omp_get_wtime()
       
       
  3000 continue
-      if (ifcharge.eq.0) goto 4000
+      if (ifcharge.eq.0.or.ifpgh.eq.0) goto 4000
 c     finally, needs to subtract the self-interaction from the planewave sweeping
       zero=0.0d0
       call prol0eva(zero,wprolate,psi0,derpsi0)
@@ -1542,7 +1513,7 @@ c
 c
 c------------------------------------------------------------------     
       subroutine pdmk_direct_c(nd,dim,ikernel,rpars,ndigits,
-     1    rsc,cen,ifself,ncoefs,coefs,d2max,
+     1    rsc,cen,ifself,ncoefs,coefs,ncoefsd,coefsd,d2max,
      $    istart,iend,source,ifcharge,charge,
      2    ifdipole,dipvec,
      $    jstart,jend,ntarget,ctarg,ifpgh,pot,grad,hess)
@@ -1622,13 +1593,13 @@ c-------------------------------------------------------
       implicit none
 c
       integer nd,nsource,ntarget,ndigits
-      integer dim,iperiod,ikernel,ncoefs
+      integer dim,iperiod,ikernel,ncoefs,ncoefsd
       integer istart,iend,jstart,jend,ns,ntarg
       integer ifcharge,ifdipole
       integer ifpgh,ifself
       integer i,j,k
 c
-      real *8 eps,rpars(*),coefs(*)
+      real *8 eps,rpars(*),coefs(*),coefsd(*)
       real *8 source(dim,*)
       real *8 bsizeinv,d2max,rsc,cen,rlambda
       real *8 charge(nd,*),dipvec(nd,dim,*)
@@ -1641,7 +1612,7 @@ c
       ns = iend - istart + 1
       ntarg = jend-jstart+1
 
-      if ((ifcharge.eq.1).and.(ifdipole.eq.0)) then
+      if (ifcharge.eq.1) then
          if((ifpgh.eq.1) .and. (ifself.eq.1)) then
             if (ikernel.eq.0.and.dim.eq.2) then
                rlambda=rpars(1)
@@ -1656,10 +1627,18 @@ c
      2             ctarg(jstart,1),ctarg(jstart,2),ctarg(jstart,3),
      3             ntarg,ncoefs,coefs,pot(1,jstart))
             elseif (ikernel.eq.1.and.dim.eq.3) then
-               call l3d_local_kernel_directcp(nd,dim,ndigits,rsc,
+               if (ifdipole.eq.1) then
+                  call l3d_local_kernel_directcp_coef(nd,dim,
+     1                ndigits,rsc,cen,d2max,source(1,istart),
+     2                ns,charge(1,istart),ctarg(jstart,1),
+     3                ctarg(jstart,2),ctarg(jstart,3),ntarg,
+     4                ncoefs,coefs,pot(1,jstart))
+               else
+                  call l3d_local_kernel_directcp(nd,dim,ndigits,rsc,
      1             cen,d2max,source(1,istart),ns,charge(1,istart),
      2             ctarg(jstart,1),ctarg(jstart,2),ctarg(jstart,3),
      3             ntarg,pot(1,jstart))
+               endif
             elseif (ikernel.eq.1.and.dim.eq.2) then
                call log_local_kernel_directcp(nd,dim,ndigits,rsc,
      1             cen,d2max,source(1,istart),ns,charge(1,istart),
@@ -1679,9 +1658,15 @@ c
          endif
       endif
 
-      if ((ifcharge.eq.0).and.(ifdipole.eq.1)) then
+      if (ifdipole.eq.1) then
          if((ifpgh.eq.1) .and. (ifself.eq.1)) then
-            if (ikernel.eq.1.and.dim.eq.2) then
+            if (ikernel.eq.1.and.dim.eq.3) then
+               call l3d_local_kernel_directdp_coef(nd,dim,
+     1             ndigits,rsc,cen,d2max,source(1,istart),ns,
+     2             dipvec(1,1,istart),ctarg(jstart,1),
+     3             ctarg(jstart,2),ctarg(jstart,3),ntarg,
+     4             ncoefs,coefs,ncoefsd,coefsd,pot(1,jstart))
+            elseif (ikernel.eq.1.and.dim.eq.2) then
                call log_local_kernel_directdp_fast(nd,dim,ndigits,rsc,
      1             cen,d2max,source(1,istart),ns,dipvec(1,1,istart),
      2             ctarg(jstart,1),ctarg(jstart,2),
@@ -1778,13 +1763,14 @@ c
       integer istart,iend,jstart,jend,ns,ntarg
       integer ifcharge,ifdipole
       integer ifpgh
-      integer i,j,k
+      integer i,j,k,id
 c
       real *8 rpars(*)
       real *8 source(dim,*)
       real *8 rnormal(dim,*)
       real *8 charge(nd,*),dipstr(nd,*)
       real *8 targ(dim,*),thresh,rlambda
+      real *8 dx,dy,dz,rr2,rinv3,dprod,thresh2
       real *8 pot(nd,*)
       real *8 grad(nd,dim,*)
       real *8 hess(nd,dim*(dim+1)/2,*)
@@ -1793,7 +1779,7 @@ c
       ns = iend - istart + 1
       ntarg = jend-jstart+1
 
-      if((ifcharge.eq.1).and.(ifdipole.eq.0)) then
+      if(ifcharge.eq.1) then
          if(ifpgh.eq.1) then
             if (ikernel.eq.0.and.dim.eq.2) then
                rlambda=rpars(1)
@@ -1823,9 +1809,28 @@ c
 
       endif
 
-      if((ifcharge.eq.0).and.(ifdipole.eq.1)) then
+      if(ifdipole.eq.1) then
          if(ifpgh.eq.1) then      
-            if (ikernel.eq.1.and.dim.eq.2) then
+            if (ikernel.eq.1.and.dim.eq.3) then
+               thresh2=thresh*thresh
+               do j=jstart,jend
+                  do i=istart,iend
+                     dx=targ(1,j)-source(1,i)
+                     dy=targ(2,j)-source(2,i)
+                     dz=targ(3,j)-source(3,i)
+                     rr2=dx*dx+dy*dy+dz*dz
+                     if(rr2.gt.thresh2) then
+                        rinv3=1.0d0/(sqrt(rr2)*rr2)
+                        dprod=dx*rnormal(1,i)+dy*rnormal(2,i)+
+     1                     dz*rnormal(3,i)
+                        do id=1,nd
+                           pot(id,j)=pot(id,j)+
+     1                        dprod*dipstr(id,i)*rinv3
+                        enddo
+                     endif
+                  enddo
+               enddo
+            elseif (ikernel.eq.1.and.dim.eq.2) then
                call logdirectdp(dim,nd,source(1,istart),ns,
      1             dipstr(1,istart),rnormal(1,istart),
      2             targ(1,jstart),ntarg,
@@ -1834,6 +1839,152 @@ c
          endif
       endif
       
+      return
+      end
+c
+c
+c
+c
+c------------------------------------------------------------------
+      subroutine pdmk_smooth_orders(eps,ikernel,dim,
+     1    ifdipole,npw,norder)
+c------------------------------------------------------------------
+c     Choose the plane-wave and tensor-product proxy orders.  The
+c     3D Laplace table uses smooth-kernel direct-reference tests and
+c     interpolates in d=log10(1/eps).  The tight-tolerance dipole
+c     endpoint keeps the full pdmk4 plane-wave order.  Other kernels
+c     retain the older pdmk4 order blocks.
+c------------------------------------------------------------------
+      implicit none
+      real *8 eps
+      integer ikernel,dim,ifdipole,npw,norder
+      integer ipw(11),iord(11),iseg,i0,ndigits
+      real *8 d,x0,x1,pwval,ordval,theta
+
+      if (ikernel.eq.1.and.dim.eq.3) then
+         if (ifdipole.eq.1) then
+            ipw(1) = 11
+            ipw(2) = 15
+            ipw(3) = 21
+            ipw(4) = 25
+            ipw(5) = 31
+            ipw(6) = 35
+            ipw(7) = 41
+            ipw(8) = 45
+            ipw(9) = 47
+            ipw(10) = 51
+            ipw(11) = 61
+            iord(1) = 7
+            iord(2) = 10
+            iord(3) = 14
+            iord(4) = 18
+            iord(5) = 20
+            iord(6) = 23
+            iord(7) = 26
+            iord(8) = 29
+            iord(9) = 32
+            iord(10) = 37
+            iord(11) = 42
+         else
+            ipw(1) = 9
+            ipw(2) = 13
+            ipw(3) = 19
+            ipw(4) = 23
+            ipw(5) = 27
+            ipw(6) = 33
+            ipw(7) = 39
+            ipw(8) = 41
+            ipw(9) = 45
+            ipw(10) = 51
+            ipw(11) = 53
+            iord(1) = 5
+            iord(2) = 8
+            iord(3) = 11
+            iord(4) = 14
+            iord(5) = 18
+            iord(6) = 21
+            iord(7) = 24
+            iord(8) = 26
+            iord(9) = 29
+            iord(10) = 35
+            iord(11) = 38
+         endif
+
+         d = dlog10(1.0d0/eps)
+         if (d.le.2.0d0) then
+            npw = ipw(1)
+            norder = iord(1)
+         else if (d.ge.12.0d0) then
+            npw = ipw(11)
+            norder = iord(11)
+         else
+            i0 = int(d)
+            if (i0.lt.2) i0 = 2
+            if (i0.gt.11) i0 = 11
+            iseg = i0 - 1
+            x0 = dble(i0)
+            x1 = dble(i0+1)
+            theta = (d-x0)/(x1-x0)
+            pwval = dble(ipw(iseg))
+     1          + theta*dble(ipw(iseg+1)-ipw(iseg))
+            npw = int(pwval)
+            if (dble(npw).lt.pwval) npw = npw + 1
+            if (mod(npw,2).eq.0) npw = npw + 1
+            ordval = dble(iord(iseg))
+     1          + theta*dble(iord(iseg+1)-iord(iseg))
+            norder = int(ordval)
+            if (dble(norder).lt.ordval) norder = norder + 1
+         endif
+         return
+      endif
+
+      ndigits = nint(dlog10(1.0d0/eps)-0.1d0)
+      if (ikernel.eq.2.and.dim.eq.3) then
+         if (ndigits.le.3) then
+            npw = 13
+            norder = 9
+         elseif (ndigits.le.6) then
+            npw = 27
+            norder = 18
+         elseif (ndigits.le.9) then
+            npw = 39
+            norder = 28
+         else
+            npw = 55
+            norder = 38
+         endif
+      else
+         if (ndigits.le.3) then
+            npw = 13
+            norder = 9
+         elseif (ndigits.le.6) then
+            npw = 25
+            norder = 18
+         elseif (ndigits.le.9) then
+            npw = 39
+            norder = 28
+         else
+            npw = 53
+            norder = 38
+         endif
+      endif
+
+      if (ifdipole.eq.1) then
+         if (ndigits.le.3) then
+            npw = 21
+            norder = 12
+         elseif (ndigits.le.6) then
+            npw = 35
+            norder = 22
+         elseif (ndigits.le.9) then
+            npw = 47
+            norder = 32
+         else
+            npw = 61
+            norder = 42
+         endif
+      endif
+
       return
       end
 c

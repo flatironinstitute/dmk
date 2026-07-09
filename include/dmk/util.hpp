@@ -7,36 +7,24 @@
 
 #include <array>
 #include <cmath>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <type_traits>
+#include <unordered_set>
 
-#ifndef __cpp_lib_math_special_functions
-#include <vendor/bessel.hpp>
-#endif
-
-#ifndef __cpp_lib_math_special_functions
-#include <vendor/bessel.hpp>
-#endif
+#include <dmk/bessel.hpp>
 
 namespace dmk::util {
 template <class...>
 constexpr std::false_type always_false{};
 
-static inline auto cyl_bessel_k(auto nu, auto x) {
-#ifdef __cpp_lib_math_special_functions
-    return std::cyl_bessel_k(nu, x);
-#else
-    return bessel::cyl_k(nu, x);
-#endif
-}
+// Orders 0 and 1 only (all DMK needs). Evaluated in double regardless of the
+// argument type, matching the promotion behavior of std::cyl_bessel_* that this
+// replaced, so float builds still get double-accurate generation coefficients.
+static inline double cyl_bessel_k(int nu, double x) { return nu == 0 ? dmk::bessel::k0(x) : dmk::bessel::k1(x); }
 
-static inline auto cyl_bessel_j(auto nu, auto x) {
-#ifdef __cpp_lib_math_special_functions
-    return std::cyl_bessel_j(nu, x);
-#else
-    return bessel::cyl_j(nu, x);
-#endif
-}
+static inline double cyl_bessel_j(int nu, double x) { return nu == 0 ? dmk::bessel::j0(x) : dmk::bessel::j1(x); }
 
 template <typename T, size_t StackSize>
 class StackOrHeapBuffer {
@@ -67,26 +55,63 @@ class StackOrHeapBuffer {
     }
 };
 
-constexpr std::array<std::string_view, 5> ikernel_names = {
-    "DMK_YUKAWA", "DMK_LAPLACE", "DMK_SQRT_LAPLACE", "DMK_STOKESLET", "DMK_STRESSLET",
+// Canonical lowercase-snake names, used everywhere a kernel/eval-type is shown
+// or parsed (CLI args, table/CSV output, error messages). The inverse parsers
+// below are case-insensitive and ignore a leading "DMK_", so the C enum spelling
+// also round-trips.
+constexpr std::array<std::string_view, 6> ikernel_names = {
+    "yukawa", "laplace", "sqrt_laplace", "stokeslet", "stresslet", "laplace_dipole",
 };
 
 constexpr std::array<std::string_view, 5> return_names = {
-    "DMK_POTENTIAL", "DMK_POTENTIAL_GRAD", "DMK_POTENTIAL_GRAD_HESSIAN", "DMK_VELOCITY", "DMK_VELOCITY_PRESSURE",
+    "potential", "potential_grad", "potential_grad_hessian", "velocity", "velocity_pressure",
 };
 
 constexpr std::string_view to_string(dmk_ikernel k) noexcept {
     auto idx = static_cast<int>(k);
     if (idx >= 0 && idx < static_cast<int>(ikernel_names.size()))
         return ikernel_names[idx];
-    return "DMK_IKERNEL_UNKNOWN";
+    return "unknown_kernel";
 }
 
 constexpr std::string_view to_string(dmk_eval_type k) noexcept {
     auto idx = static_cast<int>(k) - 1;
-    if (idx >= 0 && idx < static_cast<int>(ikernel_names.size()))
+    if (idx >= 0 && idx < static_cast<int>(return_names.size()))
         return return_names[idx];
-    return "DMK_RETURN_TYPE_UNKNOWN";
+    return "unknown_eval_type";
+}
+
+// Case-insensitive equality, ignoring an optional leading "DMK_" on either side,
+// so "stokeslet", "STOKESLET", and "DMK_STOKESLET" all match.
+constexpr bool name_matches(std::string_view a, std::string_view b) noexcept {
+    auto strip = [](std::string_view s) { return s.substr(0, 4) == "DMK_" ? s.substr(4) : s; };
+    auto lower = [](char c) -> char { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; };
+    a = strip(a);
+    b = strip(b);
+    if (a.size() != b.size())
+        return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (lower(a[i]) != lower(b[i]))
+            return false;
+    return true;
+}
+
+// Inverse of to_string. Accepts the canonical name with or without the "DMK_"
+// prefix, case-insensitively (e.g. "DMK_YUKAWA", "yukawa"). Returns nullopt if
+// no kernel matches.
+constexpr std::optional<dmk_ikernel> ikernel_from_string(std::string_view s) noexcept {
+    for (int i = 0; i < static_cast<int>(ikernel_names.size()); ++i)
+        if (name_matches(s, ikernel_names[i]))
+            return static_cast<dmk_ikernel>(i);
+    return std::nullopt;
+}
+
+// Inverse of to_string for eval types (enum starts at 1). Same matching rules.
+constexpr std::optional<dmk_eval_type> eval_type_from_string(std::string_view s) noexcept {
+    for (int i = 0; i < static_cast<int>(return_names.size()); ++i)
+        if (name_matches(s, return_names[i]))
+            return static_cast<dmk_eval_type>(i + 1);
+    return std::nullopt;
 }
 
 double calc_bandlimiting(const pdmk_params &p);
@@ -117,7 +142,9 @@ template <typename T, int... Is>
 inline auto get_opt_dot_impl(int n_order, std::integer_sequence<int, Is...>) {
     using fn_t = decltype(&dmk::util::dot_product<T, 0>);
     fn_t result = nullptr;
-    (void)((Is + 5 == n_order ? (result = &dmk::util::dot_product<T, Is + 5>, true) : false) || ...);
+    (void)((Is + min_proxy_order == n_order ? (result = &dmk::util::dot_product<T, Is + min_proxy_order>, true)
+                                            : false) ||
+           ...);
     if (!result)
         throw std::runtime_error("Invalid order " + std::to_string(n_order));
     return result;
@@ -125,7 +152,7 @@ inline auto get_opt_dot_impl(int n_order, std::integer_sequence<int, Is...>) {
 
 template <typename T>
 inline auto get_opt_dot(int n_order) {
-    return get_opt_dot_impl<T>(n_order, std::make_integer_sequence<int, 41>{});
+    return get_opt_dot_impl<T>(n_order, std::make_integer_sequence<int, n_proxy_orders>{});
 }
 
 template <typename T>
@@ -159,71 +186,75 @@ inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform
     size_to(charges, nd * n_src);
     size_to(rnormal, n_dim * n_src);
 
-    double rin = 0.45;
-    double wrig = 0.12;
-    double rwig = 0;
-    int nwig = 6;
+    const double rin = 0.45;
+    const double wrig = 0.12;
+    const double rwig = 0;
+    const int nwig = 6;
     std::default_random_engine eng(seed);
     std::uniform_real_distribution<double> rng;
 
-    for (int i = 0; i < n_src; ++i) {
+    // Draw one position (ring/sphere for non-uniform, box-fill for uniform); identical
+    // logic for sources and targets.
+    auto draw_pos = [&](Real *p) {
         if (!uniform) {
             if (n_dim == 2) {
                 const double phi = rng(eng) * 2 * M_PI;
-                r_src[i * 2 + 0] = 0.5 * (cos(phi) + 1.0);
-                r_src[i * 2 + 1] = 0.5 * (sin(phi) + 1.0);
-            }
-            if (n_dim == 3) {
+                p[0] = rin * cos(phi) + 0.5;
+                p[1] = rin * sin(phi) + 0.5;
+            } else { // n_dim == 3
                 double theta = rng(eng) * M_PI;
                 double rr = rin + rwig * cos(nwig * theta);
-                double ct = cos(theta);
-                double st = sin(theta);
+                double ct = cos(theta), st = sin(theta);
                 double phi = rng(eng) * 2 * M_PI;
-                double cp = cos(phi);
-                double sp = sin(phi);
-
-                r_src[i * 3 + 0] = rr * st * cp + 0.5;
-                r_src[i * 3 + 1] = rr * st * sp + 0.5;
-                r_src[i * 3 + 2] = rr * ct + 0.5;
+                p[0] = rr * st * cos(phi) + 0.5;
+                p[1] = rr * st * sin(phi) + 0.5;
+                p[2] = rr * ct + 0.5;
             }
         } else {
             for (int j = 0; j < n_dim; ++j)
-                r_src[i * n_dim + j] = rng(eng);
+                p[j] = rng(eng);
         }
+    };
+    // Redraw until the point is interior at the working precision (a double draw < 1 can
+    // round UP to 1.0 in float, landing on the box boundary) and distinct from every point
+    // emitted so far. Coincident points (near-duplicates collapsing below an ulp) and
+    // boundary points otherwise corrupt the tree / far-field.
+    std::unordered_set<std::string> seen;
+    auto emit = [&](Real *p) {
+        for (;;) {
+            draw_pos(p);
+            bool interior = true;
+            for (int j = 0; j < n_dim; ++j)
+                interior &= (p[j] > Real(0) && p[j] < Real(1));
+            if (interior && seen.insert(std::string(reinterpret_cast<const char *>(p), n_dim * sizeof(Real))).second)
+                return;
+        }
+    };
 
-        for (int j = 0; j < n_dim; ++j)
-            rnormal[i * n_dim + j] = rng(eng);
+    for (int i = 0; i < n_src; ++i) {
+        emit(&r_src[i * n_dim]);
+
+        // Unit normals (sphere-distributed) — required for stresslet, harmless otherwise.
+        if (n_dim == 2) {
+            const double phi_n = rng(eng) * 2 * M_PI;
+            rnormal[i * 2 + 0] = std::cos(phi_n);
+            rnormal[i * 2 + 1] = std::sin(phi_n);
+        } else if (n_dim == 3) {
+            const double theta_n = rng(eng) * M_PI;
+            const double ct_n = std::cos(theta_n), st_n = std::sin(theta_n);
+            const double phi_n = rng(eng) * 2 * M_PI;
+            rnormal[i * 3 + 0] = st_n * std::cos(phi_n);
+            rnormal[i * 3 + 1] = st_n * std::sin(phi_n);
+            rnormal[i * 3 + 2] = ct_n;
+        }
 
         for (int j = 0; j < nd; ++j) {
             charges[i * nd + j] = rng(eng) - 0.5;
         }
     }
 
-    for (int i_trg = 0; i_trg < n_trg; ++i_trg) {
-        if (!uniform) {
-            if (n_dim == 2) {
-                double phi = rng(eng) * 2 * M_PI;
-                r_trg[i_trg * 2 + 0] = 0.5 * (cos(phi) + 1.0);
-                r_trg[i_trg * 2 + 1] = 0.5 * (sin(phi) + 1.0);
-            }
-            if (n_dim == 3) {
-                double theta = rng(eng) * M_PI;
-                double rr = rin + rwig * cos(nwig * theta);
-                double ct = cos(theta);
-                double st = sin(theta);
-                double phi = rng(eng) * 2 * M_PI;
-                double cp = cos(phi);
-                double sp = sin(phi);
-
-                r_trg[i_trg * 3 + 0] = rr * st * cp + 0.5;
-                r_trg[i_trg * 3 + 1] = rr * st * sp + 0.5;
-                r_trg[i_trg * 3 + 2] = rr * ct + 0.5;
-            }
-        } else {
-            for (int j = 0; j < n_dim; ++j)
-                r_trg[i_trg * n_dim + j] = rng(eng);
-        }
-    }
+    for (int i_trg = 0; i_trg < n_trg; ++i_trg)
+        emit(&r_trg[i_trg * n_dim]);
 
     if (set_fixed_charges && n_src > 0)
         for (int i = 0; i < n_dim; ++i)

@@ -9,6 +9,7 @@ typedef enum : int {
     DMK_SQRT_LAPLACE = 2,
     DMK_STOKESLET = 3,
     DMK_STRESSLET = 4,
+    DMK_LAPLACE_DIPOLE = 5,
 } dmk_ikernel;
 
 typedef enum : int {
@@ -18,6 +19,12 @@ typedef enum : int {
     DMK_VELOCITY = 4,
     DMK_VELOCITY_PRESSURE = 5,
 } dmk_eval_type;
+
+typedef enum : int {
+    DMK_SUCCESS = 0,              // no error
+    DMK_ERR_INVALID_ARGUMENT = 1, // null ptr, negative count, eps<=0, bad dim/kernel/eval value
+    DMK_ERR_INTERNAL = 2,         // any C++ exception caught at the boundary (detail in last-error)
+} dmk_error;
 
 typedef enum : int {
     DMK_LOG_TRACE = 0,
@@ -71,9 +78,20 @@ typedef struct pdmk_params {
 extern "C" {
 #endif
 
+// Fill params with the library defaults. Always succeeds (no-op on a null pointer).
+void pdmk_init_default_params(pdmk_params *params);
+
+// Human-readable detail for the most recent failing call on the calling thread.
+// Returns a NUL-terminated string (empty if no error). Valid until the next
+// failing call on this thread.
+const char *pdmk_last_error_message(void);
+
+// Tree lifecycle. *_create returns an opaque handle, or NULL on failure (call
+// pdmk_last_error_message for detail). All other entry points return a dmk_error
+// (DMK_SUCCESS == 0 on success).
 pdmk_tree pdmk_tree_createf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src,
                             const float *charge, const float *normal, int n_trg, const float *r_trg);
-void pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *pot_trg);
+dmk_error pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *pot_trg);
 pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src,
                            const double *charge, const double *normal, int n_trg, const double *r_trg);
 
@@ -96,38 +114,38 @@ typedef void *pdmk_esp_plan;
 
 // Create a plan: derives P, builds PSWFKernel, precomputes scaling grid.
 // No particle data needed at this stage. Plan is always double precision internally.
-pdmk_esp_plan  pdmk_esp_plan_create(dmk_communicator comm, pdmk_esp_params params);
-pdmk_esp_plan  pdmk_esp_plan_createf(dmk_communicator comm, pdmk_esp_params params);
+pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator comm, pdmk_esp_params params);
+pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator comm, pdmk_esp_params params);
 
 // Evaluate potentials for n particles using a pre-built plan.
 // Can be called repeatedly with different r_src / charges for the same geometry.
-void pdmk_esp_eval(dmk_communicator comm, pdmk_esp_plan plan, int n, const double *r_src,
-                   const double *charges, double *pot_src);
-void pdmk_esp_evalf(dmk_communicator comm, pdmk_esp_plan plan, int n, const float *r_src,
-                    const float *charges, float *pot_src);
+void pdmk_esp_eval(dmk_communicator comm, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
+                   double *pot_src);
+void pdmk_esp_evalf(dmk_communicator comm, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,
+                    float *pot_src);
 
 // Free the plan.
 void pdmk_esp_plan_destroy(pdmk_esp_plan plan);
 void pdmk_esp_plan_destroyf(pdmk_esp_plan plan);
 
 // Convenience one-shot (create + eval + destroy).
-void pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double *r_src,
-              const double *charges, double *pot_src);
-void pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const float *r_src,
-               const float *charges, float *pot_src);
+void pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double *r_src, const double *charges,
+              double *pot_src);
+void pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const float *r_src, const float *charges,
+               float *pot_src);
 #endif // DMK_BUILD_ESP
 
-int pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const double *normal);
-int pdmk_tree_update_chargesf(pdmk_tree tree, const float *charge, const float *normal);
+dmk_error pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const double *normal);
+dmk_error pdmk_tree_update_chargesf(pdmk_tree tree, const float *charge, const float *normal);
 
 void pdmk_tree_destroy(pdmk_tree tree);
-void pdmk_tree_eval(pdmk_tree tree, double *pot_src, double *pot_trg);
-void pdmk_print_profile_data(dmk_communicator comm, char type);
+dmk_error pdmk_tree_eval(pdmk_tree tree, double *pot_src, double *pot_trg);
+dmk_error pdmk_print_profile_data(dmk_communicator comm, char type);
 
-void pdmk(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
-          const double *normal, int n_trg, const double *r_trg, double *pot_src, double *pot_trg);
-void pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
-           const float *normal, int n_trg, const float *r_trg, float *pot_src, float *pot_trg);
+dmk_error pdmk(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
+               const double *normal, int n_trg, const double *r_trg, double *pot_src, double *pot_trg);
+dmk_error pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
+                const float *normal, int n_trg, const float *r_trg, float *pot_src, float *pot_trg);
 #ifdef __cplusplus
 }
 #endif

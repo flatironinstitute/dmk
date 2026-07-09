@@ -10,6 +10,7 @@
 #include <limits>
 #include <memory>
 #include <random>
+#include <stdexcept>
 #include <type_traits>
 #include <vector>
 
@@ -310,6 +311,8 @@ void run_comparison(const Config &cfg) {
     else
         dmk_tree =
             pdmk_tree_create(MPI_COMM_WORLD, params, n_src_per_rank, r_src.data(), charges.data(), nullptr, 0, nullptr);
+    if (!dmk_tree)
+        throw std::runtime_error(pdmk_last_error_message());
 
     const auto kernel_fn = pvfmm::LaplaceKernel<Real>::potential();
     pvfmm::PtFMM_Tree<Real> *pvfmm_tree = nullptr;
@@ -467,12 +470,15 @@ int main(int argc, char *argv[]) {
     int provided;
     MPI_Init_thread(&argc, &argv, MPI_THREAD_FUNNELED, &provided);
 
-    Config cfg = parse_args(argc, argv);
-
-    if (cfg.prec == 'd')
-        run_comparison<double>(cfg);
-    else
-        run_comparison<float>(cfg);
+    try {
+        Config cfg = parse_args(argc, argv);
+        if (cfg.prec == 'd')
+            run_comparison<double>(cfg);
+        else
+            run_comparison<float>(cfg);
+    } catch (std::exception &e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+    }
 
     MPI_Finalize();
     return 0;

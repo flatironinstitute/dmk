@@ -4,6 +4,7 @@
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
 #include <dmk/direct.hpp>
+#include <dmk/error.hpp>
 #include <dmk/fortran.h>
 #include <dmk/fourier_data.hpp>
 #include <dmk/legeexps.hpp>
@@ -107,6 +108,8 @@ inline int get_table_count_up(dmk_ikernel kernel) {
         return DIM;
     if (kernel == DMK_STRESSLET)
         return DIM * DIM;
+    if (kernel == DMK_LAPLACE_DIPOLE)
+        return DIM;
     else
         return 1;
 }
@@ -237,25 +240,42 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
 }
 
 template <typename Real, int DIM>
-int DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal) {
-    if (normal) {
-        std::cerr << "normal updates not supported yet\n";
-        return 1;
-    }
+void DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal) {
     auto &logger = dmk::get_logger(comm_, params.log_level);
     logger->info("update_charges started");
 
     const int n_src = r_src_sorted_owned.Dim() / DIM;
 
-    // Wrap the incoming (unsorted) charge data in a Vector without owning it
-    sctl::Vector<Real> charge_vec(n_src * n_tables_up, const_cast<Real *>(charge), false);
+    // Delete the old data and re-register with the new values. The PtTree
+    // already knows the sort permutation from the "pdmk_src" particle set,
+    // so AddParticleData will sort the new data into tree order automatically.
+    if (params.kernel == DMK_STRESSLET) {
+        if (!normal)
+            throw api_error(DMK_ERR_INVALID_ARGUMENT, "stresslet update_charges requires non-null normal");
 
-    // Delete the old charge data and re-register with the new values.
-    // The PtTree already knows the sort permutation from the "pdmk_src"
-    // particle set, so AddParticleData will sort the new charges into
-    // tree order automatically.
-    this->DeleteParticleData("pdmk_charge");
-    this->AddParticleData("pdmk_charge", "pdmk_src", charge_vec);
+        sctl::Vector<Real> normal_vec(n_src * DIM, const_cast<Real *>(normal), false);
+        sctl::Vector<Real> density_vec(n_src * DIM, const_cast<Real *>(charge), false);
+
+        // Stresslet has (force .outer. normal) proxy charges
+        sctl::Vector<Real> charge_normal(n_src * DIM * DIM);
+        Real *__restrict__ charge_normal_ptr = &charge_normal[0];
+#pragma omp parallel for schedule(static)
+        for (int i = 0; i < n_src; ++i)
+            for (int k = 0; k < DIM; ++k)
+                for (int j = 0; j < DIM; ++j)
+                    charge_normal_ptr[i * DIM * DIM + k * DIM + j] = charge[i * DIM + k] * normal[i * DIM + j];
+
+        this->DeleteParticleData("pdmk_normal");
+        this->DeleteParticleData("pdmk_density");
+        this->DeleteParticleData("pdmk_charge");
+        this->AddParticleData("pdmk_normal", "pdmk_src", normal_vec);
+        this->AddParticleData("pdmk_density", "pdmk_src", density_vec);
+        this->AddParticleData("pdmk_charge", "pdmk_src", charge_normal);
+    } else {
+        sctl::Vector<Real> charge_vec(n_src * n_tables_up, const_cast<Real *>(charge), false);
+        this->DeleteParticleData("pdmk_charge");
+        this->AddParticleData("pdmk_charge", "pdmk_src", charge_vec);
+    }
 
     // Retrieve the sorted owned charges
     {
@@ -266,22 +286,17 @@ int DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal)
         charge_cnt_owned = count;
     }
 
-    // Recompute charge offsets (owned)
-    charge_offsets_owned[0] = 0;
-    for (std::size_t i = 1; i < n_boxes(); ++i)
-        charge_offsets_owned[i] = charge_offsets_owned[i - 1] + charge_cnt_owned[i - 1];
-
     // Broadcast to halo/ghost nodes and retrieve
     this->template Broadcast<Real>("pdmk_charge");
     this->GetData(charge_sorted_with_halo, charge_cnt_with_halo, "pdmk_charge");
-
-    // Recompute charge offsets (with halo)
-    charge_offsets_with_halo[0] = 0;
-    for (std::size_t i = 1; i < n_boxes(); ++i)
-        charge_offsets_with_halo[i] = charge_offsets_with_halo[i - 1] + charge_cnt_with_halo[i - 1];
+    if (params.kernel == DMK_STRESSLET) {
+        this->template Broadcast<Real>("pdmk_normal");
+        this->template Broadcast<Real>("pdmk_density");
+        this->GetData(normal_sorted_with_halo, normal_cnt_with_halo, "pdmk_normal");
+        this->GetData(density_sorted_with_halo, density_cnt_with_halo, "pdmk_density");
+    }
 
     logger->info("update_charges completed");
-    return 0;
 }
 
 template <typename Real, int DIM>
@@ -709,19 +724,11 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
         // For a single-level tree there is no level-1 box, so fall back to the root scale.
         const int sigma_level = std::min(1, n_levels() - 1);
         const Real sigma1 = boxsize[sigma_level] / fourier_data.beta();
-        const Real psi0_at_zero = fourier_data.prolate0_fun.eval_val(0.0);
         const long n_pw_modes_periodic = sctl::pow<DIM - 1>(n_pw_periodic) * ((n_pw_periodic + 1) / 2);
         const int n_fourier = DIM * sctl::pow<2>(n_pw_periodic / 2) + 1;
 
-        // Build periodic radialft: PSWF kernel (4pi/psi0(0)) * psi0(kappa*sigma1) / kappa^2
-        kernel_ft.ReInit(n_fourier);
-        kernel_ft[0] = 0; // k=0 excluded (charge neutrality)
-        for (int i = 1; i < n_fourier; ++i) {
-            const Real kappa = std::sqrt(Real(i)) * dk;
-            const Real arg = kappa * sigma1;
-            const Real psi_val = (std::abs(arg) <= 1.0) ? fourier_data.prolate0_fun.eval_val(arg) : Real(0);
-            kernel_ft[i] = (4.0 * M_PI / psi0_at_zero) * psi_val / (Real(i) * dk * dk);
-        }
+        get_periodic_windowed_kernel_ft<Real, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_pw_periodic,
+                                                   boxsize[0], sigma1, fourier_data.prolate0_fun, kernel_ft);
 
         window_fourier_data.radialft.ReInit(n_pw_modes_periodic);
         util::mk_tensor_product_fourier_transform(
@@ -808,7 +815,11 @@ void DMKPtTree<Real, DIM>::build_direct_work_lists() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_evaluators() {
     sctl::Profile::Scoped profile("build_evaluators", &comm_);
-    try {
+    // YUKAWA has no AOT/JIT residual evaluator; it builds its own per-level
+    // evaluators in the block below. Every other kernel requires a working
+    // AOT/JIT evaluator, so a failure there is fatal (an empty evaluator array
+    // would silently corrupt results).
+    if (params.kernel != DMK_YUKAWA) {
         auto src_eval = make_evaluator_aot<Real>(params.kernel, params.eval_src, DIM, n_digits, 3);
         auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.eval_trg, DIM, n_digits, 3);
 #ifdef DMK_USE_JIT
@@ -822,55 +833,24 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
         // FIXME: assumes the same src/trg output configuration
         evaluator_by_level_src.assign(n_levels(), src_eval);
         evaluator_by_level_trg.assign(n_levels(), trg_eval);
-    } catch (std::exception &e) {
-        logger->error("Failed to create direct evaluator: {}", e.what());
-    }
-    if (params.kernel == DMK_YUKAWA) {
-        // FIXME: This should be moved to direct.cpp, but it was annoying to add the coefficient
-        // binding cleanly
+    } else {
         for (int level = 0; level < n_levels(); ++level) {
-            const auto coeffs = fourier_data.cheb_coeffs(level);
-            const Real lambda = params.fparam;
-            const int n_charge_dim = n_tables_up;
-            const int kernel_output_dim = kernel_output_dim_trg;
-            // FIXME: assumes the same src/trg output configuration
-            evaluator_by_level_src.push_back([coeffs, lambda, n_charge_dim, kernel_output_dim](
-                                                 Real rsc, Real cen, Real d2max, Real thresh2, int n_src,
-                                                 const Real *r_src_ptr, const Real *charge_ptr, const Real *normal_ptr,
-                                                 int n_trg, const Real *r_trg_ptr, Real *pot) {
-                constexpr Real threshq = 1e-30;
-                ndview<Real, 2> u({1, n_trg}, pot);
-                ndview<const Real, 2> charges({n_charge_dim, n_src}, charge_ptr);
-                ndview<const Real, 2> r_src({DIM, n_src}, r_src_ptr);
-                ndview<const Real, 2> r_trg({DIM, n_trg}, r_trg_ptr);
-                for (int i_trg = 0; i_trg < n_trg; i_trg++) {
-                    for (int i_src = 0; i_src < n_src; i_src++) {
-                        const Real dx = r_trg(0, i_trg) - r_src(0, i_src);
-                        const Real dy = r_trg(1, i_trg) - r_src(1, i_src);
-                        Real dd = dx * dx + dy * dy;
-                        if constexpr (DIM == 3) {
-                            Real dz = r_trg(2, i_trg) - r_src(2, i_src);
-                            dd += dz * dz;
-                        }
+            auto coeffs = fourier_data.local_correction_coeffs(level, n_digits);
 
-                        if (dd < threshq || dd > d2max)
-                            continue;
-
-                        const Real r = sqrt(dd);
-                        const Real xval = r * rsc + cen;
-                        const Real fval = chebyshev::evaluate(xval, coeffs.size() + 1, coeffs.data());
-                        Real dkval;
-                        if constexpr (DIM == 2)
-                            dkval = util::cyl_bessel_k(0, lambda * r);
-                        if constexpr (DIM == 3)
-                            dkval = std::exp(-lambda * r) / r;
-
-                        const Real factor = dkval + fval;
-                        for (int i = 0; i < kernel_output_dim; ++i)
-                            u(i, i_trg) += charges(i, i_src) * factor;
-                    }
-                }
-            });
+            if constexpr (DIM == 3) {
+                // 3D Yukawa: single monomial fit Q, evaluated as horner(x)*Rinv.
+                std::vector<Real> reg(coeffs.reg_poly.begin(), coeffs.reg_poly.end());
+                evaluator_by_level_src.push_back(
+                    make_evaluator_yukawa<Real>(params.eval_src, DIM, n_digits, std::move(reg)));
+            } else {
+                // 2D Yukawa: log-split fit [PA | PB], evaluated as log(r/bsize)*PA + PB.
+                const int n_log = coeffs.log_poly.size();
+                std::vector<Real> c;
+                c.insert(c.end(), coeffs.log_poly.begin(), coeffs.log_poly.end());
+                c.insert(c.end(), coeffs.reg_poly.begin(), coeffs.reg_poly.end());
+                evaluator_by_level_src.push_back(
+                    make_evaluator_yukawa<Real>(params.eval_src, DIM, n_digits, std::move(c), n_log));
+            }
         }
         // FIXME: assumes the same src/trg output configuration
         evaluator_by_level_trg = evaluator_by_level_src;
@@ -1090,6 +1070,12 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions() {
                 dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(0), p2pw, pw_in_win_view, workspaces_[0]);
                 stresslet_multiply_kernelFT<Real, DIM>(window_fourier_data.radialft, pw_in_win_view,
                                                        pw_out_win_view_eval, expansion_constants.hpw_win);
+            } else if (params.kernel == DMK_LAPLACE_DIPOLE) {
+                std::vector<std::complex<Real>> pw_in_win(n_pw_modes_win * n_tables_up);
+                auto pw_in_win_view = pw_view(n_pw_win, n_tables_up, pw_in_win);
+                dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(0), p2pw, pw_in_win_view, workspaces_[0]);
+                laplace_dipole_multiply_kernelFT<Real, DIM>(window_fourier_data.radialft, pw_in_win_view,
+                                                            pw_out_win_view_eval, expansion_constants.hpw_win);
             } else {
                 auto pw_out_win_view_form = pw_view(n_pw_win, n_tables_up, pw_out_win);
                 dmk::proxy::proxycharge2pw<Real, DIM>(proxy_view_upward(0), p2pw, pw_out_win_view_form, workspaces_[0]);
@@ -1129,6 +1115,10 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions() {
                     stresslet_multiply_kernelFT<Real, DIM>(difference_fourier_data[level].radialft, pw_form_view,
                                                            pw_out_view(i_box),
                                                            expansion_constants.hpw_diff / boxsize[level]);
+                } else if (params.kernel == DMK_LAPLACE_DIPOLE) {
+                    laplace_dipole_multiply_kernelFT<Real, DIM>(difference_fourier_data[level].radialft, pw_form_view,
+                                                                pw_out_view(i_box),
+                                                                expansion_constants.hpw_diff / boxsize[level]);
                 } else {
                     if (params.kernel == DMK_STOKESLET)
                         stokeslet_multiply_kernelFT<Real, DIM, false>(difference_fourier_data[level].radialft,
@@ -1164,8 +1154,10 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
     const auto &node_lists = this->GetNodeLists();
     const auto &node_attr = this->GetNodeAttr();
     const Real sc = 2.0 / boxsize;
-    const bool need_grad_src = params.kernel == DMK_LAPLACE && params.eval_src >= DMK_POTENTIAL_GRAD;
-    const bool need_grad_trg = params.kernel == DMK_LAPLACE && params.eval_trg >= DMK_POTENTIAL_GRAD;
+    const bool grad_kernel = params.kernel == DMK_LAPLACE || params.kernel == DMK_LAPLACE_DIPOLE ||
+                             params.kernel == DMK_YUKAWA || params.kernel == DMK_SQRT_LAPLACE;
+    const bool need_grad_src = grad_kernel && params.eval_src >= DMK_POTENTIAL_GRAD;
+    const bool need_grad_trg = grad_kernel && params.eval_trg >= DMK_POTENTIAL_GRAD;
 
     unsigned long n_shifts{0};
 #pragma omp parallel
@@ -1268,9 +1260,13 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
     const auto &node_lists = this->GetNodeLists();
 
     Real w0[SCTL_MAX_DEPTH];
+    Real w0_grad[SCTL_MAX_DEPTH] = {};
     // Fill for n_levels+1, note boxsize is already n_levels+1 in size
-    for (int i_level = 0; i_level < std::min(SCTL_MAX_DEPTH, n_levels() + 1); ++i_level)
+    for (int i_level = 0; i_level < std::min(SCTL_MAX_DEPTH, n_levels() + 1); ++i_level) {
         w0[i_level] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
+        w0_grad[i_level] =
+            get_dipole_grad_self_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
+    }
 
     // For PBC: precompute the periodic shift for each (trg_box, nbr_index) pair.
     // The nbr array index k encodes a direction (dx,dy,dz) ∈ {-1,0,+1}^DIM.
@@ -1331,13 +1327,14 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
 
                 Real rsc = 2 * bsizeinv;
                 Real cen = -bsize / Real{2};
-                const auto &cheb_coeffs = fourier_data.cheb_coeffs(src_level);
 
-                if ((params.kernel == DMK_SQRT_LAPLACE && DIM == 3) || (params.kernel == DMK_LAPLACE && DIM == 2)) {
+                if ((params.kernel == DMK_SQRT_LAPLACE && DIM == 3) || (params.kernel == DMK_LAPLACE && DIM == 2) ||
+                    (params.kernel == DMK_LAPLACE_DIPOLE && DIM == 2) || (params.kernel == DMK_YUKAWA && DIM == 2)) {
+                    // Poly in r^2 (2D log-split Yukawa uses the 2D-Laplace mapping).
                     rsc = 2 * bsizeinv * bsizeinv;
                     cen = Real{-1.0};
                 } else if (params.kernel == DMK_YUKAWA)
-                    cen = Real{-1.0};
+                    cen = Real{-1.0}; // 3D Yukawa: poly in r (linear), rsc = 2/bsize
 
                 // Determine if we should filter, and on which side
                 const bool src_larger = node_mid[src_box].Depth() < node_mid[trg_box].Depth();
@@ -1447,6 +1444,20 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
 
             if (params.kernel == DMK_STRESSLET)
                 continue;
+
+            // FIXME: The self correction logic should be merged to one loop
+            if (params.kernel == DMK_LAPLACE_DIPOLE) {
+                if (params.eval_src >= DMK_POTENTIAL_GRAD) {
+                    const auto depth = node_mid[trg_box].Depth() + ifpwexp[trg_box];
+                    const Real c_grad = w0_grad[depth];
+                    auto pot = pot_src_view(trg_box);
+                    auto dip = charge_with_halo_view(trg_box);
+                    for (int i_src = 0; i_src < r_src_cnt_with_halo[trg_box]; ++i_src)
+                        for (int i = 0; i < DIM; ++i)
+                            pot(1 + i, i_src) -= c_grad * dip(i, i_src);
+                }
+                continue;
+            }
 
             // Correct for self-evaluations
             auto pot = pot_src_view(trg_box);

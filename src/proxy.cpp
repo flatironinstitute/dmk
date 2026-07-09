@@ -166,7 +166,7 @@ void charge2proxycharge_3d(const ndview<const T, 2> &r_src, const ndview<const T
     matrixview<T> poly_y({n_src, order}, &workspace[2 * n_src * order + n_src * order * order]);
     matrixview<T> poly_z({n_src, order}, &workspace[3 * n_src * order + n_src * order * order]);
     ndview<T, 1> charges({n_src}, &workspace[4 * n_src * order + n_src * order * order]);
-    constexpr int MAX_ORDER = 80;
+    constexpr int MAX_ORDER = max_proxy_order;
     auto calc_polynomial = dmk::chebyshev::get_polynomial_calculator<T>(order);
 
     for (int i_src = 0; i_src < n_src; ++i_src) {
@@ -364,14 +364,15 @@ inline void chebyshev_polynomials_deriv_nd_vec(const Real *__restrict r_in, cons
 
 template <class F, int... Is>
 inline void dispatch_order_impl(int order, F &&f, std::integer_sequence<int, Is...>) {
-    const bool dispatched = ((Is + 5 == order ? (f.template operator()<Is + 5>(), true) : false) || ...);
+    const bool dispatched =
+        ((Is + min_proxy_order == order ? (f.template operator()<Is + min_proxy_order>(), true) : false) || ...);
     if (!dispatched)
         throw std::runtime_error("Unsupported order: " + std::to_string(order));
 }
 
 template <class F>
 inline void dispatch_order(int order, F &&f) {
-    dispatch_order_impl(order, std::forward<F>(f), std::make_integer_sequence<int, 41>{});
+    dispatch_order_impl(order, std::forward<F>(f), std::make_integer_sequence<int, n_proxy_orders>{});
 }
 
 template <typename T, int EVAL_LEVEL = 1>
@@ -743,151 +744,5 @@ TEST_CASE("[DMK] proxy eval_target_gradients finite difference") {
     check_eval_target_gradients_fd<2>();
     check_eval_target_gradients_fd<3>();
 }
-
-#ifdef DMK_HAVE_REFERENCE
-TEST_CASE("[DMK] proxycharge2pw") {
-    const int n_charge_dim = 1;
-    const int n_pw = 10;
-    const int n_pw2 = (n_pw + 1) / 2;
-    const int n_pw_coeffs = n_pw * n_pw2;
-
-    for (int n_dim : {2, 3}) {
-        CAPTURE(n_dim);
-        for (int n_order : {10, 16, 24}) {
-            const int n_pw_modes = dmk::util::int_pow(n_pw, n_dim - 1) * n_pw2;
-            const int n_pw_coeffs = n_pw_modes * n_charge_dim;
-            const int n_proxy_coeffs = dmk::util::int_pow(n_order, n_dim) * n_charge_dim;
-
-            CAPTURE(n_order);
-            sctl::Vector<double> proxy_coeffs(n_proxy_coeffs);
-            sctl::Vector<std::complex<double>> poly2pw(n_order * n_pw), pw2poly(n_order * n_pw);
-            nda::vector<std::complex<double>> pw_coeffs(n_pw_coeffs), pw_coeffs_fort(n_pw_coeffs);
-
-            dmk::calc_planewave_coeff_matrices(1.0, 1.0, n_pw, n_order, poly2pw, pw2poly);
-
-            for (auto &c : proxy_coeffs)
-                c = drand48();
-
-            pw_coeffs = 0.0;
-            proxycharge2pw(n_dim, n_charge_dim, n_order, n_pw, &proxy_coeffs[0], &poly2pw[0], &pw_coeffs[0]);
-
-            pw_coeffs_fort = 0.0;
-            dmk_proxycharge2pw_(&n_dim, &n_charge_dim, &n_order, &proxy_coeffs[0], &n_pw, (double *)&poly2pw[0],
-                                (double *)&pw_coeffs_fort[0]);
-
-            const double l2 = nda::linalg::norm(pw_coeffs - pw_coeffs_fort) / pw_coeffs.size();
-            CHECK(l2 < std::numeric_limits<double>::epsilon());
-
-            sctl::Vector<double> workspace;
-            if (n_dim == 2) {
-                const ndview<double, 3> proxy_coeffs_view({n_order, n_order, n_charge_dim}, &proxy_coeffs[0]);
-                const ndview<std::complex<double>, 2> poly2pw_view({n_pw, n_order}, &poly2pw[0]);
-                ndview<std::complex<double>, 3> pw_expansion_view({n_pw, n_pw2, n_charge_dim}, &pw_coeffs[0]);
-
-                proxycharge2pw<double, 2>(proxy_coeffs_view, poly2pw_view, pw_expansion_view, workspace);
-            }
-            if (n_dim == 3) {
-                const ndview<double, 4> proxy_coeffs_view({n_order, n_order, n_order, n_charge_dim}, &proxy_coeffs[0]);
-                const ndview<std::complex<double>, 2> poly2pw_view({n_pw, n_order}, &poly2pw[0]);
-                ndview<std::complex<double>, 4> pw_expansion_view({n_pw, n_pw, n_pw2, n_charge_dim}, &pw_coeffs[0]);
-                proxycharge2pw<double, 3>(proxy_coeffs_view, poly2pw_view, pw_expansion_view, workspace);
-            }
-
-            const double rel_err = nda::linalg::norm(pw_coeffs - pw_coeffs_fort) / pw_coeffs.size();
-            CHECK(rel_err < std::numeric_limits<double>::epsilon());
-        }
-    }
-}
-
-TEST_CASE("[DMK] charge2proxycharge") {
-    const int n_src = 500;
-    const int n_charge_dim = 2;
-
-    for (int n_dim : {2, 3}) {
-        CAPTURE(n_dim);
-        for (int n_order : {9, 18, 28, 38}) {
-            CAPTURE(n_order);
-            using dmk::util::int_pow;
-            nda::vector<double> r_src(n_src * n_dim);
-            nda::vector<double> charge(n_src * n_charge_dim);
-            nda::vector<double> coeffs(int_pow(n_order, n_dim) * n_charge_dim);
-            nda::vector<double> coeffs_fort(int_pow(n_order, n_dim) * n_charge_dim);
-            const double center[] = {0.5, 0.5, 0.5};
-            const double scale_factor = 1.2;
-
-            for (int i = 0; i < n_src * n_dim; ++i)
-                r_src[i] = drand48();
-
-            for (int i = 0; i < n_src * n_charge_dim; ++i)
-                charge[i] = drand48() - 0.5;
-
-            coeffs = 0.0;
-            sctl::Vector<double> workspace;
-
-            if (n_dim == 2) {
-                ndview<double, 3> coeffs_view({n_order, n_order, n_charge_dim}, coeffs.data());
-                ndview<const double, 2> src_view({2, n_src}, r_src.data());
-                ndview<const double, 1> center_view({n_dim}, center);
-                ndview<const double, 2> charge_view({n_charge_dim, n_src}, charge.data());
-                dmk::proxy::charge2proxycharge<double, 2>(src_view, charge_view, center_view, scale_factor, coeffs_view,
-                                                          workspace);
-            }
-            if (n_dim == 3) {
-                ndview<double, 4> coeffs_view({n_order, n_order, n_order, n_charge_dim}, coeffs.data());
-                ndview<const double, 2> src_view({3, n_src}, r_src.data());
-                ndview<const double, 1> center_view({n_dim}, center);
-                ndview<const double, 2> charge_view({n_charge_dim, n_src}, charge.data());
-                dmk::proxy::charge2proxycharge<double, 3>(src_view, charge_view, center_view, scale_factor, coeffs_view,
-                                                          workspace);
-            }
-            coeffs_fort = 0.0;
-            pdmk_charge2proxycharge_(&n_dim, &n_charge_dim, &n_order, &n_src, r_src.data(), charge.data(), center,
-                                     &scale_factor, coeffs_fort.data());
-
-            const double l2 = nda::linalg::norm(coeffs - coeffs_fort) / coeffs.size();
-            CHECK(l2 < std::numeric_limits<double>::epsilon());
-        }
-    }
-}
-
-TEST_CASE("[DMK] eval_targets_3d") {
-    const int n_trg = 53;
-    const int n_charge_dim = 1;
-    const int n_dim = 3;
-
-    for (int n_order : {9, 18, 28, 38}) {
-        CAPTURE(n_order);
-        using dmk::util::int_pow;
-        nda::vector<double> r_trg(n_trg * n_dim);
-        nda::vector<double> coeffs(int_pow(n_order, n_dim) * n_charge_dim);
-        nda::vector<double> pot(n_charge_dim * n_trg);
-        nda::vector<double> pot_fort(n_charge_dim * n_trg);
-        const double center[] = {0.5, 0.5, 0.5};
-        const double scale_factor = 1.2;
-
-        for (int i = 0; i < n_trg * n_dim; ++i)
-            r_trg[i] = drand48();
-
-        for (auto &coeff : coeffs)
-            coeff = (drand48() - 0.5);
-
-        pot = 0.0;
-        pot_fort = 0.0;
-
-        ndview<double, 4> coeffs_view({n_order, n_order, n_order, n_charge_dim}, coeffs.data());
-        ndview<double, 2> trg_view({3, n_trg}, r_trg.data());
-        ndview<double, 1> center_view({n_dim}, const_cast<double *>(center));
-        ndview<double, 2> pot_view({n_charge_dim, n_trg}, pot.data());
-        sctl::Vector<double> workspace;
-        eval_targets<double, 3>(coeffs_view, trg_view, center_view, scale_factor, pot_view, workspace);
-
-        pdmk_ortho_evalt_nd_(&n_dim, &n_charge_dim, &n_order, coeffs.data(), &n_trg, r_trg.data(), center,
-                             &scale_factor, pot_fort.data());
-
-        const double l2 = nda::linalg::norm(pot - pot_fort) / coeffs.size();
-        CHECK(l2 < std::numeric_limits<double>::epsilon());
-    }
-}
-#endif
 
 } // namespace dmk::proxy

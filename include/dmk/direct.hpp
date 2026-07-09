@@ -26,6 +26,8 @@ inline int get_kernel_input_dim(int dim, dmk_ikernel kernel) {
         return dim;
     case DMK_STRESSLET:
         return dim;
+    case DMK_LAPLACE_DIPOLE:
+        return dim;
     }
     throw std::runtime_error("Invalid kernel");
 }
@@ -64,6 +66,12 @@ inline int get_kernel_output_dim(int dim, dmk_ikernel kernel, dmk_eval_type flag
         if (flags == DMK_VELOCITY)
             return dim;
         break;
+    case DMK_LAPLACE_DIPOLE:
+        if (flags == DMK_POTENTIAL)
+            return 1;
+        if (flags == DMK_POTENTIAL_GRAD)
+            return 1 + dim;
+        break;
     }
     using dmk::util::to_string;
     throw std::runtime_error(
@@ -89,12 +97,11 @@ inline void parallel_direct_eval(const dmk::direct_evaluator_func<Real> &func, i
 }
 
 inline void compute_direct(int n_dim, const auto &r_src, const auto &charges, const auto &normals, const auto &r_trg,
-                           auto &pot_direct, dmk_ikernel kernel, dmk_eval_type eval_level) {
+                           auto &pot_direct, dmk_ikernel kernel, dmk_eval_type eval_level, double lambda = 6.0) {
     using Real = std::decay_t<decltype(r_src)>::value_type;
     const long n_src = r_src.size() / n_dim;
     const long n_trg = r_trg.size() / n_dim;
     const long out_dim = get_kernel_output_dim(n_dim, kernel, eval_level);
-    const double lambda = 6.0;
     pot_direct.assign(n_trg * out_dim, 0);
     auto potfunc = dmk::get_direct_evaluator<Real>(kernel, eval_level, n_dim, lambda);
     parallel_direct_eval(potfunc, n_src, r_src.data(), charges.data(), normals.data(), n_trg, r_trg.data(),
@@ -113,11 +120,18 @@ residual_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_eval_ty
 template <typename Real>
 residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim, int n_digits,
                                                  double beta, int unroll_factor);
-// JIT variant of get_esp_3d_kernel: reuses the laplace_3d_poly_all_pairs IR with ESP PSWF
-// coefficients generated at runtime for the given sigma (matching the long-range window).
 template <typename Real>
 residual_evaluator_func<Real> make_esp_evaluator_jit(dmk_eval_type eval_level, int n_digits, double sigma,
                                                      int unroll_factor);
+
+// Yukawa's local correction coefficients are level- and lambda-dependent, so its
+// evaluator is built per level from the coefficients generated in FourierData
+// (rather than the single scale-invariant set the other kernels use). In 3D
+// coeffs is a single monomial polynomial Q; in 2D it is the two concatenated
+// log-split polynomials [PA | PB] with n_coeffs_log = PA's length.
+template <typename Real>
+residual_evaluator_func<Real> make_evaluator_yukawa(dmk_eval_type eval_level, int n_dim, int n_digits,
+                                                    std::vector<Real> coeffs, int n_coeffs_log = 0);
 } // namespace dmk
 
 #endif

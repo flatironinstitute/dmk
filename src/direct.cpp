@@ -3,6 +3,7 @@
 #include <dmk/esp.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/legeexps.hpp>
+#include <dmk/polyfit.hpp>
 #include <dmk/prolate0_fun.hpp>
 #include <dmk/util.hpp>
 #include <dmk/vector_kernels.hpp>
@@ -24,45 +25,6 @@
 
 namespace dmk {
 namespace {
-template <class Vec>
-auto to_vector(const auto &arr) {
-    Vec vec(arr.size());
-    std::copy_n(arr.data(), arr.size(), &vec[0]);
-    return vec;
-}
-
-template <class Real, class Func>
-std::vector<Real> make_polyfit_abs_error(int digits, Func &&f, Real a, Real b) {
-    const Real tol = std::pow(10.0, -digits);
-
-    for (int n_coeffs = 5; n_coeffs < 32; ++n_coeffs) {
-        try {
-            auto prolate_int_fun = poly_eval::make_func_eval(f, n_coeffs, a, b);
-
-            bool passed = true;
-            for (double x = a; x <= b; x += 0.01 * (b - a)) {
-                const Real fit = prolate_int_fun(x);
-                const Real act = f(x);
-                const Real abs_err = std::abs(act - fit);
-
-                if (abs_err > tol) {
-                    passed = false;
-                    break;
-                }
-            }
-            if (passed) {
-                auto coeffs = to_vector<std::vector<Real>>(prolate_int_fun.coeffs());
-                std::reverse(coeffs.begin(), coeffs.end());
-                return coeffs;
-            }
-        } catch (std::exception &e) {
-            std::cout << "Failed to fit with n_coeffs = " << n_coeffs << "\n";
-            std::cout << e.what() << std::endl;
-        }
-    }
-    return {};
-}
-
 struct CoeffsCache {
   public:
     template <typename T, class FitFunction>
@@ -434,6 +396,16 @@ std::vector<std::vector<Real>> get_local_correction_coeffs(dmk_ikernel kernel, i
             return {fit([&](double x) { return 1.0 - prolate_inf_inv * prolate_fun.int_eval(x); }, 0.0, 1.0)};
         }
         break;
+    case DMK_LAPLACE_DIPOLE:
+        if (n_dim == 2) {
+            return {fit([&](double x) { return -log_windowed_kernel<double>(std::sqrt(x), beta, 2, prolate_fun); }, 0.0,
+                        1.0)};
+        }
+        if (n_dim == 3) {
+            const double prolate_inf_inv = 1.0 / prolate_fun.int_eval(1.0);
+            return {fit([&](double x) { return 1.0 - prolate_inf_inv * prolate_fun.int_eval(x); }, 0.0, 1.0)};
+        }
+        break;
     case DMK_SQRT_LAPLACE:
         if (n_dim == 2) {
             const double prolate_inf_inv = 1.0 / prolate_fun.int_eval(1.0);
@@ -506,6 +478,8 @@ residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_ty
             return build_func_name(std::format("stokeslet_{}d_poly_all_pairs", n_dim), 2);
         case dmk_ikernel::DMK_STRESSLET:
             return build_func_name(std::format("stresslet_{}d_poly_all_pairs", n_dim), 2);
+        case dmk_ikernel::DMK_LAPLACE_DIPOLE:
+            return build_func_name(std::format("laplace_dipole_{}d_poly_all_pairs", n_dim), 1);
         default:
             throw std::runtime_error("Unsupported kernel for direct evaluator");
         }
@@ -579,29 +553,54 @@ template residual_evaluator_func<double> make_esp_evaluator_jit<double>(dmk_eval
 // (DMK_USE_JIT)
 
 template <typename Real>
+residual_evaluator_func<Real> make_evaluator_yukawa(dmk_eval_type eval_level, int n_dim, int n_digits,
+                                                    std::vector<Real> coeffs, int n_coeffs_log) {
+    constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
+    constexpr int unroll_factor = 3;
+
+    if (n_dim == 3)
+        return [coeffs = std::move(coeffs), eval_level,
+                n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                          const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            yukawa_3d_poly_all_pairs<Real, MaxVecLen>(eval_level, n_digits, rsc, cen, d2max, thresh2,
+                                                      int(coeffs.size()), coeffs.data(), n_src, r_src, charge, normals,
+                                                      n_trg, r_trg, pot, unroll_factor);
+        };
+
+    if (n_dim == 2)
+        return [coeffs = std::move(coeffs), eval_level, n_digits,
+                n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+            const int n_reg = int(coeffs.size()) - n_coeffs_log;
+            yukawa_2d_poly_all_pairs<Real, MaxVecLen>(eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log,
+                                                      n_reg, coeffs.data(), n_src, r_src, charge, normals, n_trg, r_trg,
+                                                      pot, unroll_factor);
+        };
+
+    throw std::runtime_error("make_evaluator_yukawa: only 2D and 3D are supported");
+}
+
+template residual_evaluator_func<float> make_evaluator_yukawa<float>(dmk_eval_type, int, int, std::vector<float>, int);
+template residual_evaluator_func<double> make_evaluator_yukawa<double>(dmk_eval_type, int, int, std::vector<double>,
+                                                                       int);
+
+template <typename Real>
 direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim, Real lambda) {
     constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
     constexpr int unroll_factor = 3;
     switch (kernel) {
     case dmk_ikernel::DMK_YUKAWA:
         if (n_dim == 2)
-            return [lambda](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
-                            const Real *r_trg, Real *pot) {
-                for (int i = 0; i < n_trg; ++i) {
-                    for (int j = 0; j < n_src; ++j) {
-                        const double dr2 = sctl::pow<2>(r_src[j * 2] - r_trg[i * 2]) +
-                                           sctl::pow<2>(r_src[j * 2 + 1] - r_trg[i * 2 + 1]);
-                        if (!dr2)
-                            continue;
-                        pot[i] += charge[j] * util::cyl_bessel_k(0, lambda * std::sqrt(dr2));
-                    }
-                }
+            return [lambda, eval_level](int n_src, const Real *r_src, const Real *charge, const Real *normals,
+                                        int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor,
+                                                            lambda, eval_level);
             };
         if (n_dim == 3)
-            return [lambda](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
-                            const Real *r_trg, Real *pot) {
+            return [lambda, eval_level](int n_src, const Real *r_src, const Real *charge, const Real *normals,
+                                        int n_trg, const Real *r_trg, Real *pot) {
                 yukawa_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor,
-                                                            lambda);
+                                                            lambda, eval_level);
             };
 
     case dmk_ikernel::DMK_LAPLACE:
@@ -619,16 +618,16 @@ direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_ty
             };
     case dmk_ikernel::DMK_SQRT_LAPLACE:
         if (n_dim == 2)
-            return [](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
-                      const Real *r_trg, Real *pot) {
+            return [eval_level](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                                const Real *r_trg, Real *pot) {
                 sqrt_laplace_2d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                  unroll_factor);
+                                                                  unroll_factor, eval_level);
             };
         if (n_dim == 3)
-            return [](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
-                      const Real *r_trg, Real *pot) {
+            return [eval_level](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                                const Real *r_trg, Real *pot) {
                 sqrt_laplace_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot,
-                                                                  unroll_factor);
+                                                                  unroll_factor, eval_level);
             };
     case dmk_ikernel::DMK_STOKESLET:
         if (n_dim == 3)
@@ -642,6 +641,19 @@ direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_ty
                       const Real *r_trg, Real *pot) {
                 stresslet_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, normals, n_trg, r_trg, pot,
                                                                unroll_factor);
+            };
+    case dmk_ikernel::DMK_LAPLACE_DIPOLE:
+        if (n_dim == 2)
+            return [eval_level](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                                const Real *r_trg, Real *pot) {
+                laplace_dipole_2d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot,
+                                                                    unroll_factor, eval_level);
+            };
+        if (n_dim == 3)
+            return [eval_level](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                                const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot,
+                                                                    unroll_factor, eval_level);
             };
     default:
         throw std::runtime_error("Unsupported kernel for direct evaluator");
