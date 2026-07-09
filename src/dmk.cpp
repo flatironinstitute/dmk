@@ -649,5 +649,12 @@ void pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double
     pdmk_esp_eval(comm, plan, n, r_src, charges, pot_src);
     pdmk_esp_plan_destroy(plan);
 }
+
+void pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const float *r_src, const float *charges,
+               float *pot_src) {
+    auto plan = pdmk_esp_plan_createf(comm, params);
+    pdmk_esp_evalf(comm, plan, n, r_src, charges, pot_src);
+    pdmk_esp_plan_destroyf(plan);
+}
 #endif // DMK_BUILD_ESP
 }

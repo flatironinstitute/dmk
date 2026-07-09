@@ -180,7 +180,7 @@ static CellList<Real> build_cell_list(const std::vector<Vec3T<Real>> &r_src, con
 
 // Short-range sum
 template <typename Real>
-static PotForce<Real> short_range_fast(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
+static PotForce<Real> short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
                                        const ESPParams &params, int n_digits, const PSWFKernel &pswf,
                                        dmk_eval_type eval_type) {
     // 27-cell stencil requires nc >= 3 so periodic images aren't double-counted
@@ -509,7 +509,7 @@ PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, co
     }
 
     double t0_start = omp_get_wtime();
-    auto aux = short_range_fast<Real>(r_src, charges, params, plan->n_digits, plan->pswf, plan->eval_type);
+    auto aux = short_range<Real>(r_src, charges, params, plan->n_digits, plan->pswf, plan->eval_type);
     double t0_end = omp_get_wtime();
 
     for (int i = 0; i < n; ++i)
