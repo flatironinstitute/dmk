@@ -30,6 +30,7 @@ struct Config {
     int n_runs = 10;
     char prec = 'd';
     double sigma = 1.35;
+    bool sigma_set = false;
     bool bench_plan = false;
     bool bench_forces = false; // -g: also benchmark forces (potential+force timed together)
     bool skip_verify = false;  // -V: skip perilap3d comparison entirely (slow for large N)
@@ -401,6 +402,7 @@ Config parse_args(int argc, char *argv[]) {
             break;
         case 's':
             cfg.sigma = std::atof(optarg);
+            cfg.sigma_set = true;
             break;
         case 'P':
             cfg.perilap3d_dir = optarg;
@@ -427,7 +429,8 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -t f|d     Precision: float or double (default d)\n"
                       << "  -l level   Log verbosity 0-6 (default 6=off)\n"
                       << "  -p         Also benchmark plan creation\n"
-                      << "  -s sigma   FINUFFT upsampling factor for the long-range PSWF kernel (default 1.35)\n"
+                      << "  -s sigma   FINUFFT upsampling factor for the long-range PSWF kernel (default 1.35).\n"
+                      << "             Requires JIT support (-DDMK_USE_JIT=ON at configure time).\n"
                       << "  -V         Skip perilap3d comparison entirely (slow for large N)\n"
                       << "  -g         Also benchmark forces (potential+force timed together, phase eval_forces).\n"
                       << "             Potential-only timing (phase eval_potential) always runs regardless.\n"
@@ -446,6 +449,14 @@ Config parse_args(int argc, char *argv[]) {
 
 int main(int argc, char *argv[]) {
     Config cfg = parse_args(argc, argv);
+
+#ifndef DMK_USE_JIT
+    if (cfg.sigma_set) {
+        std::cerr << "error: -s sigma requires JIT support (recompile with -DDMK_USE_JIT=ON)\n";
+        return 1;
+    }
+#endif
+
     if (cfg.prec == 'd')
         run_benchmark<double>(cfg);
     else
