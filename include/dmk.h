@@ -98,13 +98,10 @@ pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src,
 #ifdef DMK_BUILD_ESP
 // ESP (Ewald Sum with PSWF kernels) — periodic Coulomb solver.
 // Particles lie in the cubic box [-L/2, L/2)^3.
-// r_src is a flat array of 3*n doubles: [x0,y0,z0, x1,y1,z1, ...].
-// pot_src receives the total potential at each particle (length n).
 typedef struct pdmk_esp_params {
-    int n_mfm;     // charge dimensions per source point (currently unused, reserved for future)
     double L;      // periodic box side length
     double r_c;    // real-space cutoff radius
-    double eps;    // target precision (P is auto-derived via FINUFFT's formula)
+    double eps;    // target precision
     int log_level; // 0: trace … 6: off (matches dmk_log_level)
     dmk_eval_type eval_type = DMK_POTENTIAL;
 } pdmk_esp_params;
