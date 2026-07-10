@@ -36,13 +36,6 @@ struct EspPlan;
 EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type = DMK_POTENTIAL_GRAD);
 void esp_destroy_plan(EspPlan *plan);
 
-// Per-phase wall times filled in by esp_eval when timings != nullptr.
-struct EspTimings {
-    double t_short = 0; // short-range: cell-list build + direct sum
-    double t_long = 0;  // long-range: FINUFFT spread + FFT + scale + interpolate
-    double t_self = 0;  // self-interaction correction
-};
-
 // Potential + force at each particle (length = charges.size()). force_i = -charges[i] * grad_i,
 // i.e. already includes the particle's own charge — ready to use directly as a physical force.
 // force_x/y/z are left empty if the plan was created with eval_type == DMK_POTENTIAL.
@@ -54,8 +47,7 @@ struct PotForce {
 // Returns the total potential and force at each particle.
 // Real may be float or double; float inputs are promoted to double internally.
 template <typename Real>
-PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                        EspTimings *timings = nullptr);
+PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges);
 
 // Convenience one-shot wrapper (create + eval + destroy).
 template <typename Real>

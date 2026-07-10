@@ -2,6 +2,7 @@
 
 #include <dmk/esp.hpp>
 #include <dmk/omp_wrapper.hpp>
+#include <sctl.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -272,24 +273,24 @@ void run_potential_benchmark(const Config &cfg, int n, const std::vector<dmk::Ve
     dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL);
 
     std::cout << "# phase: eval_potential\n";
-    std::cout << "run,total_time,pts_per_s,sr_time,lr_time,self_time,l2_rel_err\n" << std::flush;
+    std::cout << "run,total_time,pts_per_s,l2_rel_err\n" << std::flush;
 
+    sctl::Profile::reset();
     for (int run = 0; run < cfg.n_runs; ++run) {
-        dmk::EspTimings timings{};
         double t0 = MY_OMP_GET_WTIME();
-        auto pot = dmk::esp_eval<Real>(plan, r_src, charges, &timings).pot;
+        auto pot = dmk::esp_eval<Real>(plan, r_src, charges).pot;
         double t1 = MY_OMP_GET_WTIME();
 
-        std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0) << "," << timings.t_short << ","
-                  << timings.t_long << "," << timings.t_self << ",";
+        std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0) << ",";
         std::cout << (have_ref ? l2_rel_err(pot, ref) : std::numeric_limits<double>::quiet_NaN());
         std::cout << "\n" << std::flush;
     }
+    sctl::Profile::print(nullptr, {"t"});
 
     dmk::esp_destroy_plan(plan);
 }
 
-// Forces benchmark: uses a DMK_POTENTIAL_GRAD plan, so total_time/sr_time/lr_time reflect
+// Forces benchmark: uses a DMK_POTENTIAL_GRAD plan, so total_time reflects
 // potential and force computed together. Optionally (-F) also validates the analytic forces
 // against a finite-difference reference on a small random sample of particles (not all N),
 // kept as a separate step after the timing loop rather than run every iteration.
@@ -300,17 +301,17 @@ void run_forces_benchmark(const Config &cfg, int n, const std::vector<dmk::Vec3T
     dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL_GRAD);
 
     std::cout << "# phase: eval_forces\n";
-    std::cout << "run,total_time,pts_per_s,sr_time,lr_time,self_time\n" << std::flush;
+    std::cout << "run,total_time,pts_per_s\n" << std::flush;
 
+    sctl::Profile::reset();
     for (int run = 0; run < cfg.n_runs; ++run) {
-        dmk::EspTimings timings{};
         double t0 = MY_OMP_GET_WTIME();
-        dmk::esp_eval<Real>(plan, r_src, charges, &timings);
+        dmk::esp_eval<Real>(plan, r_src, charges);
         double t1 = MY_OMP_GET_WTIME();
 
-        std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0) << "," << timings.t_short << ","
-                  << timings.t_long << "," << timings.t_self << "\n" << std::flush;
+        std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0) << "\n" << std::flush;
     }
+    sctl::Profile::print(nullptr, {"t"});
 
     if (cfg.check_forces) {
         constexpr int n_fd_sample = 20;
@@ -326,6 +327,7 @@ void run_forces_benchmark(const Config &cfg, int n, const std::vector<dmk::Vec3T
 
 template <typename Real>
 void run_benchmark(Config cfg) {
+    sctl::Profile::Enable(true);
     const int n_threads = MY_OMP_GET_MAX_THREADS();
     const int n = cfg.n_src;
 
@@ -440,7 +442,9 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -h         Help\n"
                       << "\n"
                       << "Output CSV columns (eval phase):\n"
-                      << "  run, total_time, pts_per_s, sr_time, lr_time, self_time\n";
+                      << "  run, total_time, pts_per_s[, l2_rel_err]\n"
+                      << "  Per-phase breakdown (short_range/long_range/self_interaction) printed after\n"
+                      << "  each phase when built with -DDMK_INSTRUMENT=ON.\n";
             exit(0);
         }
     }

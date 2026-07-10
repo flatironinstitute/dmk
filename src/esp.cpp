@@ -497,8 +497,7 @@ EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma, dmk_eva
 void esp_destroy_plan(EspPlan *plan) { delete plan; }
 
 template <typename Real>
-PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                        EspTimings *timings) {
+PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges) {
     int n = static_cast<int>(charges.size());
     ESPParams params = plan->params_base;
     params.n = n;
@@ -512,9 +511,9 @@ PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, co
         total.force_z.resize(n);
     }
 
-    double t0_start = omp_get_wtime();
+    sctl::Profile::Tic("short_range", nullptr);
     auto aux = short_range<Real>(r_src, charges, params, plan->n_digits, plan->pswf, plan->eval_type);
-    double t0_end = omp_get_wtime();
+    sctl::Profile::Toc();
 
     for (int i = 0; i < n; ++i)
         total.pot[i] = aux.pot[i];
@@ -525,9 +524,9 @@ PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, co
             total.force_z[i] = aux.force_z[i];
         }
 
-    double t1_start = omp_get_wtime();
+    sctl::Profile::Tic("long_range", nullptr);
     aux = long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs, plan->eval_type);
-    double t1_end = omp_get_wtime();
+    sctl::Profile::Toc();
 
     for (int i = 0; i < n; ++i)
         total.pot[i] += aux.pot[i];
@@ -538,18 +537,12 @@ PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, co
             total.force_z[i] += aux.force_z[i];
         }
 
-    double t2_start = omp_get_wtime();
+    sctl::Profile::Tic("self_interaction", nullptr);
     auto pot_self = self_interaction<Real>(charges, plan->pswf, params);
-    double t2_end = omp_get_wtime();
+    sctl::Profile::Toc();
 
     for(int i = 0; i < n; ++i) {
         total.pot[i] -= pot_self[i];
-    }
-
-    if (timings) {
-        timings->t_short = t0_end - t0_start;
-        timings->t_long = t1_end - t1_start;
-        timings->t_self = t2_end - t2_start;
     }
 
     return total;
@@ -565,10 +558,8 @@ PotForce<Real> esp_potential(const std::vector<Vec3T<Real>> &r_src, const std::v
     return result;
 }
 
-template PotForce<float> esp_eval<float>(EspPlan *, const std::vector<Vec3T<float>> &, const std::vector<float> &,
-                                         EspTimings *);
-template PotForce<double> esp_eval<double>(EspPlan *, const std::vector<Vec3T<double>> &, const std::vector<double> &,
-                                           EspTimings *);
+template PotForce<float> esp_eval<float>(EspPlan *, const std::vector<Vec3T<float>> &, const std::vector<float> &);
+template PotForce<double> esp_eval<double>(EspPlan *, const std::vector<Vec3T<double>> &, const std::vector<double> &);
 template PotForce<float> esp_potential<float>(const std::vector<Vec3T<float>> &, const std::vector<float> &, double,
                                               double, double, dmk_eval_type);
 template PotForce<double> esp_potential<double>(const std::vector<Vec3T<double>> &, const std::vector<double> &, double,
