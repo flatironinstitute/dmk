@@ -13,32 +13,24 @@ template <typename Real>
 using Vec3T = std::array<Real, 3>;
 using Vec3 = Vec3T<double>;
 
-// PSWF stencil width from tolerance, matching FINUFFT v2.5.0's formula for
-// kerformula=8 (PSWF), upsampfac=2, dim=3.
-inline int esp_ns_from_eps(double eps, double sigma) {
-    const double tolfac = 0.18 * 1.96; // 0.18 * 1.4^(dim-1) for dim=3
-    int ns = static_cast<int>(std::ceil(std::log(tolfac / eps) / (M_PI * std::sqrt(1.0 - 1.0 / sigma)) + 1.0));
-    return std::max(2, ns);
+// Formula matches FINUFFT v2.5 kerformula=8 (PSWF):
+// https://github.com/flatironinstitute/finufft/blob/704cbfee0375a4f726e8ff5a2c4ef70d5da6257a/devel/find_sigma_bound.cpp#L103
+inline int esp_P_from_eps(double eps, double sigma, int dim = 3) {
+    const double tolfac = 0.18 * std::pow(1.4, dim - 1);
+    //P: spread width = number of grid points used per dimension in the spreading stencil
+    const int P = static_cast<int>(std::ceil(std::log(tolfac / eps) / (M_PI * std::sqrt(1.0 - 1.0 / sigma)) + 1.0)); 
+    return std::max(2, P);
 }
 
-// PSWF shape parameter c, derived from the stencil width (upsampfac=2).
-inline double esp_pswf_c_from_P(double sigma, double P) {
+// PSWF bandwidth parameter c from the spread width P and upsampling factor sigma.
+inline double esp_pswf_c_from_P(double sigma, int P) {
     return M_PI * P * (1.0 - 1.0 / (2 * sigma)) - 0.05;
 }
 
-// Shape parameter c for a PSWF kernel targeting (eps, sigma), matching FINUFFT's PSWF
-// spreader: derive the stencil width P from (eps, sigma), then c from (sigma, P).
-inline double esp_pswf_c_from_eps(double eps, double sigma) {
-    const int P = esp_ns_from_eps(eps, sigma);
-    return esp_pswf_c_from_P(sigma, P);
-}
-
-// Tolerance digit bucket used to select the precompiled short-range evaluator.
 inline int esp_digits_from_eps(double eps) {
     return std::clamp(static_cast<int>(std::lround(-std::log10(eps))), 2, 12);
 }
 
-// Opaque plan: holds PSWFKernel, grid params, and precomputed scaling coefficients.
 struct EspPlan;
 
 EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type = DMK_POTENTIAL_GRAD);

@@ -48,6 +48,7 @@ struct PSWFKernel {
     std::vector<double> pswf_poly_coeffs;
     std::vector<double> pswf_int_poly_coeffs;
 
+    PSWFKernel() = default;
     explicit PSWFKernel(double eps_, double c_, int lenw = 8000) : eps(eps_), c(c_) {
         pswf = dmk::Prolate0Fun(c, lenw);
 
@@ -95,9 +96,9 @@ struct ESPParams {
     double c0;
     int n;
 
-    ESPParams(double L_, double r_c_, double sigma_, const PSWFKernel &pswf, int n_)
-        : L(L_), r_c(r_c_), sigma(sigma_), n(n_) {
-        P = esp_ns_from_eps(pswf.eps, sigma);
+    ESPParams() = default;
+    ESPParams(double L_, double r_c_, double sigma_, int P_, const PSWFKernel &pswf, int n_)
+        : L(L_), r_c(r_c_), sigma(sigma_), P(P_), n(n_) {
         n_f = static_cast<int>(std::ceil(pswf.c * L / (M_PI * r_c)));
         h = L / n_f;
         lambda0 = pswf.lambda0;
@@ -472,16 +473,19 @@ static std::vector<Real> self_interaction(const std::vector<Real> &charges, cons
 }
 
 struct EspPlan {
-    int n_digits; // tolerance bucket selecting the precompiled short-range evaluator
+    int n_digits; 
     PSWFKernel pswf;
     ESPParams params_base;
     DGrid scaling_coeffs;
     dmk_eval_type eval_type; // baked in at creation; DMK_POTENTIAL skips all force computation
 
     EspPlan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type_)
-        : n_digits(esp_digits_from_eps(eps)),
-          pswf(std::pow(10.0, -double(n_digits)), esp_pswf_c_from_eps(std::pow(10.0, -double(n_digits)), sigma)),
-          params_base(L, r_c, sigma, pswf, 0), eval_type(eval_type_) {
+        : n_digits(esp_digits_from_eps(eps)), eval_type(eval_type_) {
+        const double eps_d = std::pow(10.0, -double(n_digits));
+        const int    P     = esp_P_from_eps(eps_d, sigma);
+        const double c     = esp_pswf_c_from_P(sigma, P);
+        pswf        = PSWFKernel(eps_d, c);
+        params_base = ESPParams(L, r_c, sigma, P, pswf, 0);
         scaling_coeffs = precompute_scaling_coefficients(pswf, params_base);
     }
 };
