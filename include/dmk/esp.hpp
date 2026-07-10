@@ -37,16 +37,12 @@ struct EspPlan;
 EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type = DMK_POTENTIAL_GRAD);
 void esp_destroy_plan(EspPlan *plan);
 
-// Non-owning view into esp_eval's output, which lives in the plan's workspace buffer.
-// Valid until the next call to esp_eval on the same plan, or until esp_destroy_plan.
 // force_x/y/z are empty spans if the plan was created with eval_type == DMK_POTENTIAL.
 template <typename Real>
 struct PotForce {
     std::span<Real> pot, force_x, force_y, force_z;
 };
 
-// Returns a view into the plan's output workspace — no copy.
-// Real may be float or double; float inputs are promoted to double internally.
 template <typename Real>
 PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges);
 
