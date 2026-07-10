@@ -166,7 +166,7 @@ void print_config(const Config &cfg, int n_threads, std::ostream &os) {
 }
 
 template <typename Real>
-double l2_rel_err(const std::vector<Real> &pot, const std::vector<double> &ref) {
+double l2_rel_err(std::span<Real> pot, const std::vector<double> &ref) {
     const int n = static_cast<int>(pot.size());
     double mean = 0;
     for (int i = 0; i < n; ++i) mean += double(pot[i]);
@@ -199,10 +199,8 @@ void init_sensible_defaults(Config &cfg, const std::vector<dmk::Vec3T<double>> &
     double best_l2 = std::numeric_limits<double>::max();
     for (double rc : rc_candidates) {
         dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, rc, cfg.eps, cfg.sigma, DMK_POTENTIAL);
-        auto pot = dmk::esp_eval<double>(plan, r_src_d, charges_d).pot;
+        const double l2 = l2_rel_err(dmk::esp_eval<double>(plan, r_src_d, charges_d).pot, ref);
         dmk::esp_destroy_plan(plan);
-
-        const double l2 = l2_rel_err(pot, ref);
 
         if (l2 < best_l2) {
             best_l2 = l2;

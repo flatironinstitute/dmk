@@ -437,11 +437,9 @@ std::vector<std::vector<Real>> get_esp_correction_coeffs(int n_digits, double si
 
     // Same form as the DMK Laplace-3D residual (1 - I(t)/c0), t = r/r_c in [0,1],
     // scaled by 1/(4*pi) so the baked polynomial yields the full pair potential.
-    auto coeffs = make_polyfit_abs_error<Real>(
-        n_digits, [&](double t) { return 1.0 - inv_int_inf * prolate_fun.int_eval(t); }, 0.0, 1.0);
     const Real inv_4pi = Real(0.25 / M_PI);
-    for (auto &v : coeffs)
-        v *= inv_4pi;
+    auto coeffs = make_polyfit_abs_error<Real>(
+        n_digits, [&](double t) { return inv_4pi * (1.0 - inv_int_inf * prolate_fun.int_eval(t)); }, 0.0, 1.0);
     return {coeffs};
 }
 

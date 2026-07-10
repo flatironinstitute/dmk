@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <span>
 #include <vector>
 
 namespace dmk {
@@ -18,7 +19,7 @@ using Vec3 = Vec3T<double>;
 inline int esp_P_from_eps(double eps, double sigma, int dim = 3) {
     const double tolfac = 0.18 * std::pow(1.4, dim - 1);
     //P: spread width = number of grid points used per dimension in the spreading stencil
-    const int P = static_cast<int>(std::ceil(std::log(tolfac / eps) / (M_PI * std::sqrt(1.0 - 1.0 / sigma)) + 1.0)); 
+    const int P = static_cast<int>(std::ceil(std::log(tolfac / eps) / (M_PI * std::sqrt(1.0 - 1.0 / sigma)) + 1.0));
     return std::max(2, P);
 }
 
@@ -36,22 +37,17 @@ struct EspPlan;
 EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type = DMK_POTENTIAL_GRAD);
 void esp_destroy_plan(EspPlan *plan);
 
-// Potential + force at each particle (length = charges.size()). force_i = -charges[i] * grad_i,
-// i.e. already includes the particle's own charge — ready to use directly as a physical force.
-// force_x/y/z are left empty if the plan was created with eval_type == DMK_POTENTIAL.
+// Non-owning view into esp_eval's output, which lives in the plan's workspace buffer.
+// Valid until the next call to esp_eval on the same plan, or until esp_destroy_plan.
+// force_x/y/z are empty spans if the plan was created with eval_type == DMK_POTENTIAL.
 template <typename Real>
 struct PotForce {
-    std::vector<Real> pot, force_x, force_y, force_z;
+    std::span<Real> pot, force_x, force_y, force_z;
 };
 
-// Returns the total potential and force at each particle.
+// Returns a view into the plan's output workspace — no copy.
 // Real may be float or double; float inputs are promoted to double internally.
 template <typename Real>
 PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges);
-
-// Convenience one-shot wrapper (create + eval + destroy).
-template <typename Real>
-PotForce<Real> esp_potential(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges, double L,
-                             double r_c, double eps, dmk_eval_type eval_type = DMK_POTENTIAL_GRAD);
 
 } // namespace dmk

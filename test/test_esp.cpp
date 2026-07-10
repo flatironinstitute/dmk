@@ -105,8 +105,8 @@ static void fd_force_reference(dmk::EspPlan *plan, int n, const double *r_src,
 }
 
 // L2-relative error between ESP's analytic forces and a flat [3*n] (x,y,z per particle) reference.
-static double force_l2_rel_err(int n, const std::vector<double> &force_x, const std::vector<double> &force_y,
-                               const std::vector<double> &force_z, const double *force_ref) {
+static double force_l2_rel_err(int n, std::span<double> force_x, std::span<double> force_y,
+                               std::span<double> force_z, const double *force_ref) {
     double err2 = 0, ref2 = 0;
     for (int i = 0; i < n; ++i) {
         const double f_esp[3] = {force_x[i], force_y[i], force_z[i]};
@@ -126,7 +126,6 @@ TEST_CASE("[ESP] 10-particle double vs perilap3d") {
 
     dmk::EspPlan *plan = dmk::esp_create_plan(L, R_C, eps, 1.35, DMK_POTENTIAL);
     auto esp = dmk::esp_eval<double>(plan, r_vec, q_vec);
-    dmk::esp_destroy_plan(plan);
 
     double ref[N];
     bool ok = run_perilap3d(N, R_SRC, CHARGES, ref);
@@ -145,6 +144,7 @@ TEST_CASE("[ESP] 10-particle double vs perilap3d") {
     const double l2_rel_err = std::sqrt(err2 / ref2);
     CHECK_MESSAGE(l2_rel_err < eps,
         "10-particle l2_rel_err=" << l2_rel_err << " >= " << eps);
+    dmk::esp_destroy_plan(plan);
 }
 
 
@@ -216,7 +216,6 @@ TEST_CASE("[ESP] long-range only: regular grid, no short-range pairs") {
     auto r_src_vec = to_vec3(N, r_src);
     std::vector<double> charges_vec(charges, charges + N);
     auto esp = dmk::esp_eval<double>(plan, r_src_vec, charges_vec);
-    dmk::esp_destroy_plan(plan);
 
     // Gauge-correct ESP output and compare to the (already zero-mean) perilap3d reference.
     double esp_mean = 0;
@@ -244,6 +243,7 @@ TEST_CASE("[ESP] long-range only: regular grid, no short-range pairs") {
     double force_tol = 10 * std::pow(eps, 2.0 / 3.0);
     CHECK_MESSAGE(max_abs < force_tol,
         "long-range forces should vanish on symmetric lattice, max=" << max_abs);
+    dmk::esp_destroy_plan(plan);
 }
 
 // Madelung constant test.
@@ -273,7 +273,6 @@ TEST_CASE("[ESP] Madelung constant: NaCl lattice, 1/(4pi*r) kernel") {
     auto r_vec = to_vec3(N, r_src);
     std::vector<double> q_vec(charges, charges + N);
     auto esp = dmk::esp_eval<double>(plan, r_vec, q_vec);
-    dmk::esp_destroy_plan(plan);
 
     // NaCl is charge-neutral so the mean potential is zero; gauge-correct anyway.
     double esp_mean = 0;
@@ -293,6 +292,7 @@ TEST_CASE("[ESP] Madelung constant: NaCl lattice, 1/(4pi*r) kernel") {
     CHECK_MESSAGE(l2_rel_err < eps,
         "Madelung l2_rel_err=" << l2_rel_err << " >= eps=" << eps
         << " (M_NaCl=" << M_NaCl << ", h=" << h << ")");
+    dmk::esp_destroy_plan(plan);
 }
 
 // Short-range stress test.
@@ -366,12 +366,12 @@ TEST_CASE("[ESP] short-range stress: all pairs within r_c") {
     dmk::EspPlan *plan = dmk::esp_create_plan(L, r_c, eps, 1.35, DMK_POTENTIAL_GRAD);
     auto r_src_vec = to_vec3(N, r_src);
     std::vector<double> charges_vec(charges, charges + N);
-    auto esp = dmk::esp_eval<double>(plan, r_src_vec, charges_vec);
 
+    // Compute FD reference before the final eval so the plan's buffer is fresh when we hold spans.
     std::vector<double> force_ref(3 * N);
     fd_force_reference(plan, N, r_src, charges, 1e-6, force_ref.data());
 
-    dmk::esp_destroy_plan(plan);
+    auto esp = dmk::esp_eval<double>(plan, r_src_vec, charges_vec);
 
     double esp_mean = 0;
     for (int i = 0; i < N; ++i) esp_mean += esp.pot[i];
@@ -392,6 +392,7 @@ TEST_CASE("[ESP] short-range stress: all pairs within r_c") {
     double force_tol = 5 * std::pow(eps, 2.0 / 3.0);
     CHECK_MESSAGE(force_l2_err <  force_tol,
         "short-range-stress forces l2_rel_err=" << force_l2_err << " >= force_tol=" << force_tol);
+    dmk::esp_destroy_plan(plan);
 }
 
 
@@ -401,17 +402,18 @@ TEST_CASE("[ESP] forces - 10 particles") {
     std::vector<double> charges_vec(CHARGES, CHARGES + N);
 
     dmk::EspPlan *plan = dmk::esp_create_plan(L, R_C, eps, 1.35, DMK_POTENTIAL_GRAD);
-    auto esp = dmk::esp_eval<double>(plan, r_src_vec, charges_vec);
 
+    // Compute FD reference before the final eval so the plan's buffer is fresh when we hold spans.
     std::vector<double> force_ref(3 * N);
     fd_force_reference(plan, N, R_SRC, CHARGES, std::pow(eps, 1.0 / 3.0), force_ref.data());
 
-    dmk::esp_destroy_plan(plan);
+    auto esp = dmk::esp_eval<double>(plan, r_src_vec, charges_vec);
 
     // Compare ESP's analytic forces against the finite-difference reference.
     const double l2_rel_err = force_l2_rel_err(N, esp.force_x, esp.force_y, esp.force_z, force_ref.data());
     double force_tol = 10 * std::pow(eps, 2.0 / 3.0);
     CHECK_MESSAGE(l2_rel_err <  force_tol,
         "10-particle forces l2_rel_err=" << l2_rel_err << " >= force_tol=" << force_tol);
+    dmk::esp_destroy_plan(plan);
 }
 #endif // DMK_BUILD_ESP
