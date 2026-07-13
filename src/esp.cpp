@@ -1,6 +1,7 @@
 #include <dmk.h>
 #include <dmk/aot_kernels.hpp>
 #include <dmk/esp.hpp>
+#include <dmk/cuda/esp_gpu.hpp>
 #include <dmk/prolate.hpp>
 #include <dmk/prolate0_fun.hpp>
 #include <finufft.h>
@@ -484,6 +485,21 @@ EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma, dmk_eva
 
 void esp_destroy_plan(EspPlan *plan) { delete plan; }
 
+#ifdef DMK_GPU_OFFLOAD
+GpuState *esp_create_gpu_plan(EspPlan *plan) {
+    const double tol = std::pow(10.0, -double(plan->n_digits));
+    const double sf  = plan->pswf(0.0) / (plan->params_base.r_c * 4.0 * M_PI * plan->params_base.c0);
+    return gpu_create_state(
+        plan->params_base.n_f, plan->n_digits,
+        plan->params_base.L,   plan->params_base.r_c,
+        plan->params_base.sigma, tol,
+        sf, float(sf), plan->eval_type,
+        plan->scaling_coeffs.data());
+}
+
+void esp_destroy_gpu_plan(GpuState *gpu) { gpu_destroy_state(gpu); }
+#endif
+
 template <typename Real>
 PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges) {
     const int n = static_cast<int>(charges.size());
@@ -525,5 +541,49 @@ PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, co
 
 template PotForce<float> esp_eval<float>(EspPlan *, const std::vector<Vec3T<float>> &, const std::vector<float> &);
 template PotForce<double> esp_eval<double>(EspPlan *, const std::vector<Vec3T<double>> &, const std::vector<double> &);
+
+// Helpers that mirror esp_eval but run only one sub-step — used by test_esp_gpu.
+// No self-interaction correction is applied by either; each returns only its own contribution.
+template <typename Real>
+static auto make_buf_spans(EspPlan *plan, int n) {
+    const bool want_force = (plan->eval_type >= DMK_POTENTIAL_GRAD);
+    const int  slots      = want_force ? 4 : 1;
+    auto &buf = [&]() -> std::vector<Real> & {
+        if constexpr (std::is_same_v<Real, double>) return plan->dbl_buf;
+        else return plan->flt_buf;
+    }();
+    buf.assign(slots * n, Real(0));
+    return std::tuple{
+        std::span<Real>(buf.data(),        n),
+        std::span<Real>(buf.data() + n,     want_force ? n : 0),
+        std::span<Real>(buf.data() + 2 * n, want_force ? n : 0),
+        std::span<Real>(buf.data() + 3 * n, want_force ? n : 0)
+    };
+}
+
+template <typename Real>
+PotForce<Real> esp_eval_short_range(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges) {
+    const int n = static_cast<int>(charges.size());
+    ESPParams params = plan->params_base;
+    params.n = n;
+    auto [pot, fx, fy, fz] = make_buf_spans<Real>(plan, n);
+    short_range<Real>(r_src, charges, params, plan->n_digits, plan->pswf, plan->eval_type, pot, fx, fy, fz);
+    return {pot, fx, fy, fz};
+}
+
+template <typename Real>
+PotForce<Real> esp_eval_long_range(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges) {
+    const int n = static_cast<int>(charges.size());
+    ESPParams params = plan->params_base;
+    params.n = n;
+    auto [pot, fx, fy, fz] = make_buf_spans<Real>(plan, n);
+    long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs, plan->eval_type, pot, fx, fy, fz);
+    return {pot, fx, fy, fz};
+}
+
+template PotForce<float>  esp_eval_short_range<float>(EspPlan *, const std::vector<Vec3T<float>> &, const std::vector<float> &);
+template PotForce<double> esp_eval_short_range<double>(EspPlan *, const std::vector<Vec3T<double>> &, const std::vector<double> &);
+template PotForce<float>  esp_eval_long_range<float>(EspPlan *, const std::vector<Vec3T<float>> &, const std::vector<float> &);
+template PotForce<double> esp_eval_long_range<double>(EspPlan *, const std::vector<Vec3T<double>> &, const std::vector<double> &);
 
 } // namespace dmk
