@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(dmk LANGUAGES CXX)
+project(dmk LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -17,6 +17,7 @@ endif()
 option(DMK_HAVE_OPENMP "Use OpenMP for parallelism" ON)
 option(DMK_BUILD_REFERENCE "Build reference Fortran implementation" OFF)
 option(DMK_USE_JIT "Use JIT compilation where supported (requires LLVM)" OFF)
+option(DMK_GPU_OFFLOAD "Enable GPU offloading via CUDA" OFF)
 
 if (DMK_BUILD_REFERENCE)
   enable_language(Fortran)
@@ -68,6 +69,22 @@ else()
 endif()
 find_package(BLAS REQUIRED)
 
+if (DMK_GPU_OFFLOAD AND DMK_HAVE_MPI)
+  message(FATAL_ERROR "DMK_GPU_OFFLOAD and DMK_HAVE_MPI are mutually exclusive (the upward-pass MPI broadcast still needs a D2H/H2D path).")
+endif()
+
+set(DMK_GPU_TARGET "")
+if (DMK_GPU_OFFLOAD)
+  enable_language(CUDA)
+  set(CMAKE_CUDA_STANDARD 20)
+  set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+  set(CMAKE_CUDA_EXTENSIONS OFF)
+  find_package(CUDAToolkit REQUIRED)
+  set(DMK_GPU_TARGET CUDA::cudart)
+  list(APPEND DMK_CXX_FLAGS "-DDMK_GPU_OFFLOAD")
+  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo -Xptxas=-warn-spills")
+endif()
+
 if (DMK_BUILD_PVFMM)
   include(FetchContent)
   FetchContent_Declare(
@@ -86,6 +103,9 @@ set(DMK_INCLUDES
 include(FetchContent)
 if (DMK_BUILD_ESP)
   set(FINUFFT_USE_DUCC0 ON CACHE BOOL "" FORCE)
+  if (DMK_GPU_OFFLOAD)
+    set(FINUFFT_USE_CUDA ON CACHE BOOL "" FORCE)
+  endif()
   FetchContent_Declare(
 	finufft
 	GIT_REPOSITORY https://github.com/flatironinstitute/finufft.git
@@ -93,6 +113,9 @@ if (DMK_BUILD_ESP)
   )
   FetchContent_MakeAvailable(finufft)
   set(DMK_ESP_TARGET finufft::finufft ducc0)
+  if (DMK_GPU_OFFLOAD)
+    list(APPEND DMK_ESP_TARGET finufft::cufinufft CUDA::cufft)
+  endif()
   set(DMK_ESP_SRC src/esp.cpp)
   list(APPEND DMK_CXX_FLAGS "-DDMK_BUILD_ESP")
 else()
@@ -172,7 +195,7 @@ set(DMK_AOT_SRC src/aot_evaluator.cpp src/aot_kernels.cpp)
 add_library(DMKOBJS_BOOTSTRAP OBJECT ${DMK_BOOTSTRAP_SRC})
 set_target_properties(DMKOBJS_BOOTSTRAP PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(DMKOBJS_BOOTSTRAP PUBLIC ${DMK_INCLUDES})
-target_link_libraries(DMKOBJS_BOOTSTRAP PUBLIC ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET} ${DMK_ESP_TARGET}
+target_link_libraries(DMKOBJS_BOOTSTRAP PUBLIC ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET} ${DMK_ESP_TARGET} ${DMK_GPU_TARGET}
   nda::nda_c spdlog::spdlog_header_only doctest::doctest BLAS::BLAS polyfit::polyfit
 )
 if (DMK_USE_JIT)
@@ -190,12 +213,22 @@ target_link_libraries(DMKOBJS_AOT PUBLIC DMKOBJS_BOOTSTRAP)
 add_library(dmk_bootstrap STATIC)
 target_link_libraries(dmk_bootstrap PUBLIC DMKOBJS_BOOTSTRAP)
 
+set(DMK_GPU_OBJS "")
+if (DMK_GPU_OFFLOAD AND DMK_BUILD_ESP)
+  add_library(DMKOBJS_CUDA OBJECT src/cuda/esp_cuda.cu)
+  set_target_properties(DMKOBJS_CUDA PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_include_directories(DMKOBJS_CUDA PUBLIC ${DMK_INCLUDES})
+  target_link_libraries(DMKOBJS_CUDA PUBLIC ${DMK_GPU_TARGET} CUDA::cufft finufft::cufinufft nda::nda_c spdlog::spdlog_header_only)
+  target_compile_options(DMKOBJS_CUDA PUBLIC "${DMK_CXX_FLAGS}")
+  list(APPEND DMK_GPU_OBJS DMKOBJS_CUDA)
+endif()
+
 add_library(dmk STATIC)
-target_link_libraries(dmk PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT)
+target_link_libraries(dmk PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT ${DMK_GPU_OBJS})
 
 add_library(dmk_shared SHARED)
 set_target_properties(dmk_shared PROPERTIES OUTPUT_NAME dmk)
-target_link_libraries(dmk_shared PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT)
+target_link_libraries(dmk_shared PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT ${DMK_GPU_OBJS})
 
 if (DMK_BUILD_TESTS)
   add_subdirectory(test)
