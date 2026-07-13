@@ -1,24 +1,26 @@
-#include <dmk.h>
-#include <dmk/aot_kernels.hpp>
-#include <dmk/esp.hpp>
-#include <dmk/prolate.hpp>
-#include <dmk/prolate0_fun.hpp>
-#include <finufft.h>
-#include <finufft_common/kernel.h>
 #include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <complex>
+#include <cstdint>
+#include <cstdlib>
+#include <dmk.h>
+#include <dmk/aot_kernels.hpp>
+#include <dmk/direct.hpp>
+#include <dmk/esp.hpp>
+#include <dmk/prolate.hpp>
+#include <dmk/prolate0_fun.hpp>
+#include <dmk/types.hpp>
+#include <dmk/util.hpp>
 #include <ducc0/fft/fft.h>
+#include <finufft.h>
+#include <finufft_common/kernel.h>
 #include <iostream>
 #include <omp.h>
 #include <sctl.hpp>
 #include <span>
 #include <stdexcept>
 #include <vector>
-#include <dmk/direct.hpp>
-#include <dmk/types.hpp>
-#include <dmk/util.hpp>
 
 using Vec3 = std::array<double, 3>;
 using CGrid = std::vector<std::complex<double>>;
@@ -128,6 +130,21 @@ static inline CellIndex particle_cell(const Vec3T<Real> &r, Real L, int n_cells)
     return ci;
 }
 
+// Morton (Z-order) key from a 3D integer coordinate, used to spatially sort particles
+// within a cell so that consecutive VecLen-runs form geometrically compact tiles.
+static inline uint64_t part1by2_64(uint64_t x) {
+    x &= 0x1fffff;
+    x = (x | x << 32) & 0x1f00000000ffffULL;
+    x = (x | x << 16) & 0x1f0000ff0000ffULL;
+    x = (x | x << 8) & 0x100f00f00f00f00fULL;
+    x = (x | x << 4) & 0x10c30c30c30c30c3ULL;
+    x = (x | x << 2) & 0x1249249249249249ULL;
+    return x;
+}
+static inline uint64_t morton3(uint64_t x, uint64_t y, uint64_t z) {
+    return (part1by2_64(x) << 2) | (part1by2_64(y) << 1) | part1by2_64(z);
+}
+
 // Cell list: particles sorted into cubic cells for cache-friendly traversal.
 template <typename Real>
 struct CellList {
@@ -139,7 +156,8 @@ struct CellList {
 
 template <typename Real>
 static CellList<Real> build_cell_list(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                                      const ESPParams &params, int nc) {
+                                      const ESPParams &params, int nc, bool spatial_sort, int min_sort_len = 2) {
+    sctl::Profile::Scoped profile("build_cell_list");
     CellList<Real> cl;
     cl.n_cells = nc;
     const int ncells = nc * nc * nc;
@@ -177,28 +195,108 @@ static CellList<Real> build_cell_list(const std::vector<Vec3T<Real>> &r_src, con
         cl.qs[slot] = charges[j];
         cl.orig[slot] = j;
     }
+
+    // pass 4: Octant-bin particles within each cell so consecutive VecLen-runs form
+    // compact tiles, enabling geometric source pruning in short_range.
+    // Uses a single-pass counting sort into 8 buckets (no comparisons).
+    if (spatial_sort) {
+        sctl::Profile::Scoped sort("spatial_sort");
+        std::vector<Real> tr;
+        std::vector<Real> tq;
+        std::vector<int> to;
+        std::vector<int> oct_idx;
+
+        const Real h = L_r / Real(nc);
+        const Real half_L = L_r / Real(2);
+
+        for (int c = 0; c < ncells; ++c) {
+            const int b = cl.cell_start[c], e = cl.cell_start[c + 1], len = e - b;
+            if (len <= min_sort_len)
+                continue;
+
+            const int cz = c % nc;
+            const int cy = (c / nc) % nc;
+            const int cx = c / (nc * nc);
+            const Real mid_x = (Real(cx) + Real(0.5)) * h - half_L;
+            const Real mid_y = (Real(cy) + Real(0.5)) * h - half_L;
+            const Real mid_z = (Real(cz) + Real(0.5)) * h - half_L;
+
+            int count[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+            oct_idx.resize(len);
+            for (int i = 0; i < len; ++i) {
+                const int s = b + i;
+                int oct = 0;
+                if (cl.rs[3 * s + 0] >= mid_x)
+                    oct |= 1;
+                if (cl.rs[3 * s + 1] >= mid_y)
+                    oct |= 2;
+                if (cl.rs[3 * s + 2] >= mid_z)
+                    oct |= 4;
+                oct_idx[i] = oct;
+                ++count[oct];
+            }
+
+            int offset[8];
+            offset[0] = 0;
+            for (int k = 1; k < 8; ++k)
+                offset[k] = offset[k - 1] + count[k - 1];
+
+            tr.resize(3 * len);
+            tq.resize(len);
+            to.resize(len);
+            for (int i = 0; i < len; ++i) {
+                const int s = b + i;
+                const int oct = oct_idx[i];
+                const int dst = offset[oct]++;
+                tr[3 * dst + 0] = cl.rs[3 * s + 0];
+                tr[3 * dst + 1] = cl.rs[3 * s + 1];
+                tr[3 * dst + 2] = cl.rs[3 * s + 2];
+                tq[dst] = cl.qs[s];
+                to[dst] = cl.orig[s];
+            }
+
+            for (int i = 0; i < len; ++i) {
+                cl.rs[3 * (b + i) + 0] = tr[3 * i + 0];
+                cl.rs[3 * (b + i) + 1] = tr[3 * i + 1];
+                cl.rs[3 * (b + i) + 2] = tr[3 * i + 2];
+                cl.qs[b + i] = tq[i];
+                cl.orig[b + i] = to[i];
+            }
+        }
+    }
     return cl;
 }
 
 template <typename Real>
 static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                        const ESPParams &params, int n_digits, const PSWFKernel &pswf,
-                        dmk_eval_type eval_type,
+                        const ESPParams &params, int n_digits, const PSWFKernel &pswf, dmk_eval_type eval_type,
                         std::span<Real> pot, std::span<Real> fx, std::span<Real> fy, std::span<Real> fz) {
+    sctl::Profile::Scoped short_range("short_range");
     // 27-cell stencil requires nc >= 3 so periodic images aren't double-counted
     const int nc = static_cast<int>(std::floor(params.L / params.r_c));
     if (nc < 3)
         throw std::runtime_error("short_range_fast requires r_c <= L/3 (nc >= 3)");
 
-    CellList<Real> cl = build_cell_list<Real>(r_src, charges, params, nc);
+    // DMK_ESP_PRUNE gates the (experimental) sub-cell geometric pruning path, which also
+    // needs the within-cell Morton sort. When unset, the original dense path is used verbatim.
+    const bool prune = util::env_is_set("DMK_ESP_PRUNE");
+    // Source-test tile width, decoupled from SIMD width (the kernel broadcasts sources one at
+    // a time). Smaller -> tighter source AABBs -> more culling, at the cost of more AABB tests.
+    constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
+
+    const int stile = [] {
+        const char *e = std::getenv("DMK_ESP_STILE");
+        const int v = e ? std::atoi(e) : MaxVecLen;
+        return v > 0 ? v : MaxVecLen;
+    }();
+
+    CellList<Real> cl = build_cell_list<Real>(r_src, charges, params, nc, prune, MaxVecLen);
 
     const Real L = Real(params.L);
     const Real r_c_sq = Real(params.r_c) * Real(params.r_c);
     const int n = params.n;
     const bool want_force = (eval_type >= DMK_POTENTIAL_GRAD);
     const int out_dim = want_force ? 4 : 1;
-
-    constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
     auto evaluator = get_esp_3d_kernel<Real, MaxVecLen>(eval_type, n_digits);
 #ifdef DMK_USE_JIT
     if (!util::env_is_set("DMK_DEBUG_FORCE_AOT"))
@@ -233,7 +331,8 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
 
 #pragma omp parallel
     {
-        std::vector<Real> r_src_g, charge_g;
+        std::vector<Real> r_src_g, charge_g, r_src_pruned, charge_pruned, src_lo, src_hi;
+        std::vector<int> tile_s0, tile_sn; // cell-aligned source tiles (start, length)
 #pragma omp for schedule(dynamic) collapse(3)
         for (int cx = 0; cx < nc; ++cx)
             for (int cy = 0; cy < nc; ++cy)
@@ -266,6 +365,8 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
                     charge_g.resize(n_src);
                     Real *__restrict__ r_src_ptr = r_src_g.data();
                     Real *__restrict__ charge_ptr = charge_g.data();
+                    tile_s0.clear();
+                    tile_sn.clear();
                     int r_i = 0, c_i = 0;
                     for (int dx = 0; dx < 3; ++dx) {
                         const Real off_x = off_cx[dx];
@@ -278,19 +379,96 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
                                 const int nbc_z = nbc_cz[dz];
                                 const int nb = (nbc_x * nc + nbc_y) * nc + nbc_z;
                                 const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
+                                const int seg0 = c_i;
                                 for (int b = nbeg; b < nend; ++b) {
                                     r_src_ptr[r_i++] = cl.rs[b * 3 + 0] + off_x;
                                     r_src_ptr[r_i++] = cl.rs[b * 3 + 1] + off_y;
                                     r_src_ptr[r_i++] = cl.rs[b * 3 + 2] + off_z;
                                     charge_ptr[c_i++] = cl.qs[b];
                                 }
+                                // Split this cell's contribution into VecLen source tiles that
+                                // never cross a cell boundary, so each tile's AABB stays compact.
+                                if (prune)
+                                    for (int s = seg0; s < c_i; s += stile) {
+                                        tile_s0.push_back(s);
+                                        tile_sn.push_back(std::min(stile, c_i - s));
+                                    }
                             }
                         }
                     }
-                    evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, n_trg, r_trg_ptr,
-                              pg_sorted.data() + out_dim * hbeg);
+                    if (!prune) {
+                        evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, n_trg, r_trg_ptr,
+                                  pg_sorted.data() + out_dim * hbeg);
+                        continue;
+                    }
+
+                    // Sub-cell geometric pruning (tile-vs-tile). Sources and targets are each
+                    // grouped into VecLen-wide tiles; one AABB test per (target-tile, source-tile)
+                    // pair skips up to VecLen*VecLen interactions. Surviving source tiles are copied
+                    // in bulk into a compact buffer, then handed to the dense kernel (whose internal
+                    // d2max mask still enforces the exact cutoff on the survivors).
+                    const int n_stiles = static_cast<int>(tile_s0.size());
+                    src_lo.resize(3 * n_stiles);
+                    src_hi.resize(3 * n_stiles);
+                    for (int st = 0; st < n_stiles; ++st) {
+                        const int s0 = tile_s0[st];
+                        const int sn = tile_sn[st];
+                        Real slo[3], shi[3];
+                        for (int k = 0; k < 3; ++k)
+                            slo[k] = shi[k] = r_src_ptr[3 * s0 + k];
+                        for (int i = 1; i < sn; ++i)
+                            for (int k = 0; k < 3; ++k) {
+                                const Real v = r_src_ptr[3 * (s0 + i) + k];
+                                slo[k] = std::min(slo[k], v);
+                                shi[k] = std::max(shi[k], v);
+                            }
+                        for (int k = 0; k < 3; ++k) {
+                            src_lo[3 * st + k] = slo[k];
+                            src_hi[3 * st + k] = shi[k];
+                        }
+                    }
+
+                    r_src_pruned.resize(3 * n_src);
+                    charge_pruned.resize(n_src);
+                    Real *__restrict__ rsp = r_src_pruned.data();
+                    Real *__restrict__ qsp = charge_pruned.data();
+                    for (int t0 = 0; t0 < n_trg; t0 += MaxVecLen) {
+                        const int tn = std::min(MaxVecLen, n_trg - t0);
+                        const Real *__restrict__ tptr = r_trg_ptr + 3 * t0;
+
+                        Real lo[3], hi[3];
+                        for (int k = 0; k < 3; ++k)
+                            lo[k] = hi[k] = tptr[k];
+                        for (int i = 1; i < tn; ++i)
+                            for (int k = 0; k < 3; ++k) {
+                                const Real v = tptr[3 * i + k];
+                                lo[k] = std::min(lo[k], v);
+                                hi[k] = std::max(hi[k], v);
+                            }
+
+                        int m = 0;
+                        for (int st = 0; st < n_stiles; ++st) {
+                            const int s0 = tile_s0[st];
+                            const int sn = tile_sn[st];
+                            Real d2 = 0;
+                            for (int k = 0; k < 3; ++k) {
+                                const Real d =
+                                    std::max(Real(0), std::max(src_lo[3 * st + k] - hi[k], lo[k] - src_hi[3 * st + k]));
+                                d2 += d * d;
+                            }
+                            if (d2 > r_c_sq)
+                                continue;
+                            std::copy_n(r_src_ptr + 3 * s0, 3 * sn, rsp + 3 * m);
+                            std::copy_n(charge_ptr + s0, sn, qsp + m);
+                            m += sn;
+                        }
+
+                        evaluator(rsc, cen, r_c_sq, Real(0), m, rsp, qsp, nullptr, tn, tptr,
+                                  pg_sorted.data() + out_dim * (hbeg + t0));
+                    }
                 }
     }
+
     for (int a = 0; a < n; ++a) {
         const int orig = cl.orig[a];
         pot[orig] += pg_sorted[out_dim * a + 0];
@@ -339,12 +517,12 @@ static DGrid precompute_scaling_coefficients(const PSWFKernel &pswf, const ESPPa
     return p;
 }
 
-// Long-range contribution via FINUFFT spreading/interpolation 
+// Long-range contribution via FINUFFT spreading/interpolation
 template <typename Real>
-static void long_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                       const PSWFKernel &pswf, const ESPParams &params, const DGrid &scaling_coeffs,
-                       dmk_eval_type eval_type,
+static void long_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges, const PSWFKernel &pswf,
+                       const ESPParams &params, const DGrid &scaling_coeffs, dmk_eval_type eval_type,
                        std::span<Real> pot, std::span<Real> fx, std::span<Real> fy, std::span<Real> fz) {
+    sctl::Profile::Scoped long_range("long_range");
     const bool want_force = (eval_type >= DMK_POTENTIAL_GRAD);
     int n = params.n;
     int nf = params.n_f;
@@ -451,8 +629,8 @@ static void long_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<
 
 // Self-interaction correction — subtracts directly from the provided potential span.
 template <typename Real>
-static void self_interaction(const std::vector<Real> &charges, const PSWFKernel &pswf,
-                             const ESPParams &params, std::span<Real> pot) {
+static void self_interaction(const std::vector<Real> &charges, const PSWFKernel &pswf, const ESPParams &params,
+                             std::span<Real> pot) {
     Real factor = Real(pswf(0.0) / (params.r_c * 4.0 * M_PI * params.c0));
     for (int i = 0; i < params.n; ++i)
         pot[i] -= charges[i] * factor;
@@ -463,16 +641,16 @@ struct EspPlan {
     PSWFKernel pswf;
     ESPParams params_base;
     DGrid scaling_coeffs;
-    dmk_eval_type eval_type; // baked in at creation; DMK_POTENTIAL skips all force computation
+    dmk_eval_type eval_type;     // baked in at creation; DMK_POTENTIAL skips all force computation
     std::vector<double> dbl_buf; // reused output workspace for esp_eval<double>
-    std::vector<float>  flt_buf; // reused output workspace for esp_eval<float>
+    std::vector<float> flt_buf;  // reused output workspace for esp_eval<float>
 
     EspPlan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type_)
         : n_digits(esp_digits_from_eps(eps)), eval_type(eval_type_) {
         const double eps_d = std::pow(10.0, -double(n_digits));
-        const int    P     = esp_P_from_eps(eps_d, sigma);
-        const double c     = esp_pswf_c_from_P(sigma, P);
-        pswf        = PSWFKernel(eps_d, c);
+        const int P = esp_P_from_eps(eps_d, sigma);
+        const double c = esp_pswf_c_from_P(sigma, P);
+        pswf = PSWFKernel(eps_d, c);
         params_base = ESPParams(L, r_c, sigma, P, pswf, 0);
         scaling_coeffs = precompute_scaling_coefficients(pswf, params_base);
     }
@@ -486,6 +664,7 @@ void esp_destroy_plan(EspPlan *plan) { delete plan; }
 
 template <typename Real>
 PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges) {
+    sctl::Profile::Scoped esp_eval("esp_eval");
     const int n = static_cast<int>(charges.size());
     ESPParams params = plan->params_base;
     params.n = n;
@@ -494,31 +673,24 @@ PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, co
 
     // Reuse the plan's typed workspace; zero-initialize the active region.
     auto &buf = [&]() -> std::vector<Real> & {
-        if constexpr (std::is_same_v<Real, double>) return plan->dbl_buf;
-        else return plan->flt_buf;
+        if constexpr (std::is_same_v<Real, double>)
+            return plan->dbl_buf;
+        else
+            return plan->flt_buf;
     }();
     if (static_cast<int>(buf.size()) < slots * n)
         buf.resize(slots * n);
     std::fill(buf.begin(), buf.begin() + slots * n, Real(0));
 
-    std::span<Real> pot_sp(buf.data(),         n);
-    std::span<Real> fx_sp(buf.data() + n,      want_force ? n : 0);
-    std::span<Real> fy_sp(buf.data() + 2 * n,  want_force ? n : 0);
-    std::span<Real> fz_sp(buf.data() + 3 * n,  want_force ? n : 0);
+    std::span<Real> pot_sp(buf.data(), n);
+    std::span<Real> fx_sp(buf.data() + n, want_force ? n : 0);
+    std::span<Real> fy_sp(buf.data() + 2 * n, want_force ? n : 0);
+    std::span<Real> fz_sp(buf.data() + 3 * n, want_force ? n : 0);
 
-    sctl::Profile::Tic("short_range", nullptr);
-    short_range<Real>(r_src, charges, params, plan->n_digits, plan->pswf, plan->eval_type,
-                      pot_sp, fx_sp, fy_sp, fz_sp);
-    sctl::Profile::Toc();
-
-    sctl::Profile::Tic("long_range", nullptr);
-    long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs, plan->eval_type,
-                     pot_sp, fx_sp, fy_sp, fz_sp);
-    sctl::Profile::Toc();
-
-    sctl::Profile::Tic("self_interaction", nullptr);
+    short_range<Real>(r_src, charges, params, plan->n_digits, plan->pswf, plan->eval_type, pot_sp, fx_sp, fy_sp, fz_sp);
+    long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs, plan->eval_type, pot_sp, fx_sp, fy_sp,
+                     fz_sp);
     self_interaction<Real>(charges, plan->pswf, params, pot_sp);
-    sctl::Profile::Toc();
 
     return {pot_sp, fx_sp, fy_sp, fz_sp};
 }

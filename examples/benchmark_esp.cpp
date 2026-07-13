@@ -1,5 +1,6 @@
 #ifdef DMK_BUILD_ESP
 
+#include <dmk.h> // pdmk_print_profile_data
 #include <dmk/esp.hpp>
 #include <dmk/omp_wrapper.hpp>
 #include <sctl.hpp>
@@ -26,7 +27,7 @@ static const char *PERILAP_TOLERANCE = "1e-12";
 struct Config {
     int n_src = 100'000;
     double L = 1.0;
-    double r_c = -1.0; 
+    double r_c = -1.0;
     double eps = 1e-6;
     int n_runs = 10;
     char prec = 'd';
@@ -35,9 +36,10 @@ struct Config {
     bool bench_plan = false;
     bool bench_forces = false; // -g: also benchmark forces (potential+force timed together)
     bool skip_verify = false;  // -V: skip perilap3d comparison entirely (slow for large N)
-    bool check_forces = false; // -F: validate forces against FD reference (samples 20 random particles × 6 evals each); implies -g
-    std::string perilap3d_dir = PERILAP3D_DIR; //defined at compile-time in the CMake file
-    int log_level = 6; // DMK_LOG_OFF
+    bool check_forces =
+        false; // -F: validate forces against FD reference (samples 20 random particles × 6 evals each); implies -g
+    std::string perilap3d_dir = PERILAP3D_DIR; // defined at compile-time in the CMake file
+    int log_level = 6;                         // DMK_LOG_OFF
 };
 
 // Generate N random positions in [-L/2, L/2)^3.
@@ -169,7 +171,8 @@ template <typename Real>
 double l2_rel_err(std::span<Real> pot, const std::vector<double> &ref) {
     const int n = static_cast<int>(pot.size());
     double mean = 0;
-    for (int i = 0; i < n; ++i) mean += double(pot[i]);
+    for (int i = 0; i < n; ++i)
+        mean += double(pot[i]);
     mean /= n;
     double err2 = 0, ref2 = 0;
     for (int i = 0; i < n; ++i) {
@@ -181,10 +184,9 @@ double l2_rel_err(std::span<Real> pot, const std::vector<double> &ref) {
 }
 
 // Auto-select r_c if it wasn't explicitly given (for accuracy).
-// Sweeps all candidates and picks the one with the smallest l2_rel_err against the perilap3d reference. 
+// Sweeps all candidates and picks the one with the smallest l2_rel_err against the perilap3d reference.
 void init_sensible_defaults(Config &cfg, const std::vector<dmk::Vec3T<double>> &r_src_d,
-                            const std::vector<double> &charges_d,
-                            const std::vector<double> &ref, bool have_ref) {
+                            const std::vector<double> &charges_d, const std::vector<double> &ref, bool have_ref) {
     if (cfg.r_c != -1.0)
         return;
 
@@ -208,8 +210,8 @@ void init_sensible_defaults(Config &cfg, const std::vector<dmk::Vec3T<double>> &
         }
     }
 
-    std::cout << "# init_sensible_defaults: selected r_c=" << cfg.r_c
-              << " (l2_rel_err=" << best_l2 << ")\n" << std::flush;
+    std::cout << "# init_sensible_defaults: selected r_c=" << cfg.r_c << " (l2_rel_err=" << best_l2 << ")\n"
+              << std::flush;
 }
 
 // Validates analytic forces against central-difference FD for a random sample of n_sample particles.
@@ -271,27 +273,29 @@ void run_potential_benchmark(const Config &cfg, int n, const std::vector<dmk::Ve
     dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL);
 
     std::cout << "# phase: eval_potential\n";
-    std::cout << "run,total_time,pts_per_s,l2_rel_err\n" << std::flush;
+    std::cout << "run,total_time,pts_per_s,l2_rel_err,";
+    pdmk_print_profile_data(nullptr, 'h');
+    std::cout << "\n" << std::flush;
 
-    sctl::Profile::reset();
     for (int run = 0; run < cfg.n_runs; ++run) {
+        sctl::Profile::reset();
         double t0 = MY_OMP_GET_WTIME();
         auto pot = dmk::esp_eval<Real>(plan, r_src, charges).pot;
         double t1 = MY_OMP_GET_WTIME();
 
         std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0) << ",";
         std::cout << (have_ref ? l2_rel_err(pot, ref) : std::numeric_limits<double>::quiet_NaN());
+        std::cout << ",";
+        pdmk_print_profile_data(nullptr, 'c');
         std::cout << "\n" << std::flush;
     }
-    sctl::Profile::print(nullptr, {"t"});
 
     dmk::esp_destroy_plan(plan);
 }
 
 // Forces benchmark: uses a DMK_POTENTIAL_GRAD plan, so total_time reflects
-// potential and force computed together. Optionally (-F) also validates the analytic forces
-// against a finite-difference reference on a small random sample of particles (not all N),
-// kept as a separate step after the timing loop rather than run every iteration.
+// potential and force computed together. When cfg.check_forces is true (user ran -g -F),
+// validates analytic forces against FD after the timing loop.
 template <typename Real>
 void run_forces_benchmark(const Config &cfg, int n, const std::vector<dmk::Vec3T<Real>> &r_src,
                           const std::vector<Real> &charges, const std::vector<dmk::Vec3T<double>> &r_src_d,
@@ -299,22 +303,26 @@ void run_forces_benchmark(const Config &cfg, int n, const std::vector<dmk::Vec3T
     dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL_GRAD);
 
     std::cout << "# phase: eval_forces\n";
-    std::cout << "run,total_time,pts_per_s\n" << std::flush;
+    std::cout << "run,total_time,pts_per_s,";
+    pdmk_print_profile_data(nullptr, 'h');
+    std::cout << "\n" << std::flush;
 
-    sctl::Profile::reset();
     for (int run = 0; run < cfg.n_runs; ++run) {
+        sctl::Profile::reset();
         double t0 = MY_OMP_GET_WTIME();
         dmk::esp_eval<Real>(plan, r_src, charges);
         double t1 = MY_OMP_GET_WTIME();
 
-        std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0) << "\n" << std::flush;
+        std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0);
+        std::cout << ",";
+        pdmk_print_profile_data(nullptr, 'c');
+        std::cout << "\n" << std::flush;
     }
-    sctl::Profile::print(nullptr, {"t"});
 
     if (cfg.check_forces) {
         constexpr int n_fd_sample = 20;
-        std::cout << "# phase: force_check (FD on " << n_fd_sample
-                  << " random particles × 6 evals each; not all N)\n" << std::flush;
+        std::cout << "# phase: force_check (FD on " << n_fd_sample << " random particles × 6 evals each; not all N)\n"
+                  << std::flush;
         auto esp = dmk::esp_eval<double>(plan, r_src_d, charges_d);
         double force_l2_err = check_forces_fd(esp, r_src_d, charges_d, cfg.L, cfg.r_c, cfg.eps, cfg.sigma, n_fd_sample);
         std::cout << "# force_check: l2_rel_err=" << force_l2_err << "\n" << std::flush;
@@ -360,9 +368,21 @@ void run_benchmark(Config cfg) {
     }
 
     warmup<Real>(cfg);
-    run_potential_benchmark<Real>(cfg, n, r_src, charges, ref, have_ref);
-    if (cfg.bench_forces || cfg.check_forces) // -F implies running the forces benchmark it validates against
+    if (cfg.check_forces && !cfg.bench_forces) {
+        // Force correctness check only (no timing benchmark).
+        auto plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL_GRAD);
+        constexpr int n_fd_sample = 20;
+        std::cout << "# phase: force_check (FD on " << n_fd_sample << " random particles × 6 evals each; not all N)\n"
+                  << std::flush;
+        auto esp = dmk::esp_eval<double>(plan, r_src_d, charges_d);
+        double err = check_forces_fd(esp, r_src_d, charges_d, cfg.L, cfg.r_c, cfg.eps, cfg.sigma, n_fd_sample);
+        std::cout << "# force_check: l2_rel_err=" << err << "\n" << std::flush;
+        dmk::esp_destroy_plan(plan);
+    } else if (cfg.bench_forces) {
         run_forces_benchmark<Real>(cfg, n, r_src, charges, r_src_d, charges_d);
+    } else {
+        run_potential_benchmark<Real>(cfg, n, r_src, charges, ref, have_ref);
+    }
 }
 
 Config parse_args(int argc, char *argv[]) {
@@ -432,10 +452,9 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -s sigma   FINUFFT upsampling factor for the long-range PSWF kernel (default 1.35).\n"
                       << "             Requires JIT support (-DDMK_USE_JIT=ON at configure time).\n"
                       << "  -V         Skip perilap3d comparison entirely (slow for large N)\n"
-                      << "  -g         Also benchmark forces (potential+force timed together, phase eval_forces).\n"
-                      << "             Potential-only timing (phase eval_potential) always runs regardless.\n"
-                      << "  -F         Validate forces against a finite-difference reference. Samples 20\n"
-                      << "             random particles, not all N. Implies -g.\n"
+                      << "  -g         Benchmark forces instead of potential (potential+force timed together).\n"
+                      << "  -F         Validate forces against a finite-difference reference (no benchmark).\n"
+                      << "             Samples 20 random particles, not all N.\n"
                       << "  -P dir     Override perilap3d directory (default: compile-time path)\n"
                       << "  -h         Help\n"
                       << "\n"
