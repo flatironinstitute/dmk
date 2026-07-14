@@ -511,8 +511,8 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
                         _t = now;
                     }
 
-                    surv_s0.reserve(n_stiles);
-                    surv_sn.reserve(n_stiles);
+                    surv_s0.resize(n_stiles);
+                    surv_sn.resize(n_stiles);
                     for (int t0 = 0; t0 < n_trg; t0 += MaxVecLen) {
                         const int tn = std::min(MaxVecLen, n_trg - t0);
                         const Real *__restrict__ tptr = r_trg_ptr + 3 * t0;
@@ -538,14 +538,17 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
                             d2buf[st] = dx * dx + dy * dy + dz * dz;
                         }
 
-                        // Compaction: gather the surviving source tiles into disjoint ranges.
-                        surv_s0.clear();
-                        surv_sn.clear();
-                        for (int st = 0; st < n_stiles; ++st)
-                            if (d2buf[st] <= r_c_sq) {
-                                surv_s0.push_back(tile_s0[st]);
-                                surv_sn.push_back(tile_sn[st]);
-                            }
+                        // Branchless compaction of surviving source tiles into disjoint ranges:
+                        // write unconditionally, advance the cursor only on a survivor. Avoids the
+                        // ~80%-taken unpredictable branch and push_back overhead of the naive filter.
+                        int *__restrict__ s0_ptr = surv_s0.data();
+                        int *__restrict__ sn_ptr = surv_sn.data();
+                        int m = 0;
+                        for (int st = 0; st < n_stiles; ++st) {
+                            s0_ptr[m] = tile_s0[st];
+                            sn_ptr[m] = tile_sn[st];
+                            m += (d2buf[st] <= r_c_sq);
+                        }
 
                         if (phase_timing) {
                             const double now = omp_get_wtime();
@@ -553,9 +556,8 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
                             _t = now;
                         }
 
-                        range_evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr,
-                                        static_cast<int>(surv_s0.size()), surv_s0.data(), surv_sn.data(), tn, tptr,
-                                        pg_sorted.data() + out_dim * (hbeg + t0));
+                        range_evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, m, s0_ptr,
+                                        sn_ptr, tn, tptr, pg_sorted.data() + out_dim * (hbeg + t0));
 
                         if (phase_timing) {
                             const double now = omp_get_wtime();
