@@ -383,7 +383,9 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
 
 #pragma omp parallel
     {
-        std::vector<Real> r_src_g, charge_g, src_lo, src_hi;
+        std::vector<Real> r_src_g, charge_g;
+        // Source-tile AABBs, SoA so the tile-vs-tile test vectorizes; d2buf holds its output.
+        std::vector<Real> slo_x, slo_y, slo_z, shi_x, shi_y, shi_z, d2buf;
         std::vector<int> tile_s0, tile_sn; // cell-aligned source tiles (start, length)
         std::vector<int> surv_s0, surv_sn; // surviving source tiles per target-tile
 #pragma omp for schedule(dynamic) collapse(3)
@@ -462,26 +464,32 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
                     // in-place from the gathered array (the dense kernel's internal d2max mask still
                     // enforces the exact cutoff on the survivors).
                     const int n_stiles = static_cast<int>(tile_s0.size());
-                    src_lo.resize(3 * n_stiles);
-                    src_hi.resize(3 * n_stiles);
+                    slo_x.resize(n_stiles);
+                    slo_y.resize(n_stiles);
+                    slo_z.resize(n_stiles);
+                    shi_x.resize(n_stiles);
+                    shi_y.resize(n_stiles);
+                    shi_z.resize(n_stiles);
+                    d2buf.resize(n_stiles);
                     for (int st = 0; st < n_stiles; ++st) {
                         const int s0 = tile_s0[st];
                         const int sn = tile_sn[st];
-                        Real slo[3], shi[3];
-                        for (int k = 0; k < 3; ++k)
-                            slo[k] = shi[k] = r_src_ptr[3 * s0 + k];
-                        for (int i = 1; i < sn; ++i)
-                            for (int k = 0; k < 3; ++k) {
-                                const Real v = r_src_ptr[3 * (s0 + i) + k];
-                                slo[k] = std::min(slo[k], v);
-                                shi[k] = std::max(shi[k], v);
-                            }
-                        for (int k = 0; k < 3; ++k) {
-                            src_lo[3 * st + k] = slo[k];
-                            src_hi[3 * st + k] = shi[k];
+                        Real lo0 = r_src_ptr[3 * s0 + 0], lo1 = r_src_ptr[3 * s0 + 1], lo2 = r_src_ptr[3 * s0 + 2];
+                        Real hi0 = lo0, hi1 = lo1, hi2 = lo2;
+                        for (int i = 1; i < sn; ++i) {
+                            const Real x = r_src_ptr[3 * (s0 + i) + 0];
+                            const Real y = r_src_ptr[3 * (s0 + i) + 1];
+                            const Real z = r_src_ptr[3 * (s0 + i) + 2];
+                            lo0 = std::min(lo0, x), hi0 = std::max(hi0, x);
+                            lo1 = std::min(lo1, y), hi1 = std::max(hi1, y);
+                            lo2 = std::min(lo2, z), hi2 = std::max(hi2, z);
                         }
+                        slo_x[st] = lo0, slo_y[st] = lo1, slo_z[st] = lo2;
+                        shi_x[st] = hi0, shi_y[st] = hi1, shi_z[st] = hi2;
                     }
 
+                    surv_s0.reserve(n_stiles);
+                    surv_sn.reserve(n_stiles);
                     for (int t0 = 0; t0 < n_trg; t0 += MaxVecLen) {
                         const int tn = std::min(MaxVecLen, n_trg - t0);
                         const Real *__restrict__ tptr = r_trg_ptr + 3 * t0;
@@ -496,22 +504,25 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
                                 hi[k] = std::max(hi[k], v);
                             }
 
+                        // Branchless squared box-distance of every source tile to this target tile;
+                        // SoA loads with no gather or branch, so it vectorizes cleanly.
+                        const Real hi0 = hi[0], hi1 = hi[1], hi2 = hi[2], lo0 = lo[0], lo1 = lo[1], lo2 = lo[2];
+#pragma omp simd
+                        for (int st = 0; st < n_stiles; ++st) {
+                            const Real dx = std::max(Real(0), std::max(slo_x[st] - hi0, lo0 - shi_x[st]));
+                            const Real dy = std::max(Real(0), std::max(slo_y[st] - hi1, lo1 - shi_y[st]));
+                            const Real dz = std::max(Real(0), std::max(slo_z[st] - hi2, lo2 - shi_z[st]));
+                            d2buf[st] = dx * dx + dy * dy + dz * dz;
+                        }
+
+                        // Compaction: gather the surviving source tiles into disjoint ranges.
                         surv_s0.clear();
                         surv_sn.clear();
-                        for (int st = 0; st < n_stiles; ++st) {
-                            const int s0 = tile_s0[st];
-                            const int sn = tile_sn[st];
-                            Real d2 = 0;
-                            for (int k = 0; k < 3; ++k) {
-                                const Real d =
-                                    std::max(Real(0), std::max(src_lo[3 * st + k] - hi[k], lo[k] - src_hi[3 * st + k]));
-                                d2 += d * d;
+                        for (int st = 0; st < n_stiles; ++st)
+                            if (d2buf[st] <= r_c_sq) {
+                                surv_s0.push_back(tile_s0[st]);
+                                surv_sn.push_back(tile_sn[st]);
                             }
-                            if (d2 > r_c_sq)
-                                continue;
-                            surv_s0.push_back(s0);
-                            surv_sn.push_back(sn);
-                        }
 
                         range_evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr,
                                         static_cast<int>(surv_s0.size()), surv_s0.data(), surv_sn.data(), tn, tptr,
