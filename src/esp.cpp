@@ -196,18 +196,43 @@ static CellList<Real> build_cell_list(const std::vector<Vec3T<Real>> &r_src, con
         cl.orig[slot] = j;
     }
 
-    // pass 4: Octant-bin particles within each cell so consecutive VecLen-runs form
-    // compact tiles, enabling geometric source pruning in short_range.
-    // Uses a single-pass counting sort into 8 buckets (no comparisons).
+    // pass 4: Spatially reorder particles within each cell so consecutive VecLen-runs form
+    // compact tiles, enabling geometric source pruning in short_range. Two env-selected
+    // strategies; both keep the tile/range count fixed and only tighten each tile's extent:
+    //   DMK_ESP_BINS=b (default 2): counting sort into b^3 spatial sub-boxes, no comparisons.
+    //                               b=2 is the octant sort; larger b tightens tiles, still cheap.
+    //   DMK_ESP_MORTON: full z-order (Morton) sort within the cell -- tightest tiles, but a
+    //                   comparison sort per cell (notably slower to build).
     if (spatial_sort) {
         sctl::Profile::Scoped sort("spatial_sort");
-        std::vector<Real> tr;
-        std::vector<Real> tq;
-        std::vector<int> to;
-        std::vector<int> oct_idx;
+
+        const bool morton = util::env_is_set("DMK_ESP_MORTON");
+        const int bins = [] {
+            const char *e = std::getenv("DMK_ESP_BINS");
+            const int v = e ? std::atoi(e) : 2;
+            return v > 0 ? v : 2;
+        }();
+        const int nbuckets = bins * bins * bins;
 
         const Real h = L_r / Real(nc);
         const Real half_L = L_r / Real(2);
+
+        std::vector<Real> tr, tq; // scratch for the in-place reorder
+        std::vector<int> to;
+        std::vector<int> key;        // per-particle bucket (bins) or sort permutation (morton)
+        std::vector<int> off;        // bucket offsets (bins)
+        std::vector<uint64_t> mcode; // morton codes (morton)
+
+        // Interleave the low 21 bits of three integers into a 63-bit Morton code.
+        auto spread = [](uint64_t v) {
+            v &= 0x1fffffULL;
+            v = (v | (v << 32)) & 0x1f00000000ffffULL;
+            v = (v | (v << 16)) & 0x1f0000ff0000ffULL;
+            v = (v | (v << 8)) & 0x100f00f00f00f00fULL;
+            v = (v | (v << 4)) & 0x10c30c30c30c30c3ULL;
+            v = (v | (v << 2)) & 0x1249249249249249ULL;
+            return v;
+        };
 
         for (int c = 0; c < ncells; ++c) {
             const int b = cl.cell_start[c], e = cl.cell_start[c + 1], len = e - b;
@@ -217,42 +242,68 @@ static CellList<Real> build_cell_list(const std::vector<Vec3T<Real>> &r_src, con
             const int cz = c % nc;
             const int cy = (c / nc) % nc;
             const int cx = c / (nc * nc);
-            const Real mid_x = (Real(cx) + Real(0.5)) * h - half_L;
-            const Real mid_y = (Real(cy) + Real(0.5)) * h - half_L;
-            const Real mid_z = (Real(cz) + Real(0.5)) * h - half_L;
-
-            int count[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-            oct_idx.resize(len);
-            for (int i = 0; i < len; ++i) {
-                const int s = b + i;
-                int oct = 0;
-                if (cl.rs[3 * s + 0] >= mid_x)
-                    oct |= 1;
-                if (cl.rs[3 * s + 1] >= mid_y)
-                    oct |= 2;
-                if (cl.rs[3 * s + 2] >= mid_z)
-                    oct |= 4;
-                oct_idx[i] = oct;
-                ++count[oct];
-            }
-
-            int offset[8];
-            offset[0] = 0;
-            for (int k = 1; k < 8; ++k)
-                offset[k] = offset[k - 1] + count[k - 1];
+            const Real lo_x = Real(cx) * h - half_L; // cell lower corner
+            const Real lo_y = Real(cy) * h - half_L;
+            const Real lo_z = Real(cz) * h - half_L;
 
             tr.resize(3 * len);
             tq.resize(len);
             to.resize(len);
-            for (int i = 0; i < len; ++i) {
-                const int s = b + i;
-                const int oct = oct_idx[i];
-                const int dst = offset[oct]++;
-                tr[3 * dst + 0] = cl.rs[3 * s + 0];
-                tr[3 * dst + 1] = cl.rs[3 * s + 1];
-                tr[3 * dst + 2] = cl.rs[3 * s + 2];
-                tq[dst] = cl.qs[s];
-                to[dst] = cl.orig[s];
+
+            if (morton) {
+                // Quantize local coordinates to 21 bits/axis, then stable-sort indices by code.
+                const Real q = Real(uint32_t(1) << 21) / h;
+                mcode.resize(len);
+                key.resize(len);
+                for (int i = 0; i < len; ++i) {
+                    const int s = b + i;
+                    const auto qx =
+                        uint32_t(std::min(Real((1u << 21) - 1), std::max(Real(0), (cl.rs[3 * s + 0] - lo_x) * q)));
+                    const auto qy =
+                        uint32_t(std::min(Real((1u << 21) - 1), std::max(Real(0), (cl.rs[3 * s + 1] - lo_y) * q)));
+                    const auto qz =
+                        uint32_t(std::min(Real((1u << 21) - 1), std::max(Real(0), (cl.rs[3 * s + 2] - lo_z) * q)));
+                    mcode[i] = spread(qx) | (spread(qy) << 1) | (spread(qz) << 2);
+                    key[i] = i;
+                }
+                std::sort(key.begin(), key.end(), [&](int a, int bb) { return mcode[a] < mcode[bb]; });
+                for (int i = 0; i < len; ++i) {
+                    const int s = b + key[i];
+                    tr[3 * i + 0] = cl.rs[3 * s + 0];
+                    tr[3 * i + 1] = cl.rs[3 * s + 1];
+                    tr[3 * i + 2] = cl.rs[3 * s + 2];
+                    tq[i] = cl.qs[s];
+                    to[i] = cl.orig[s];
+                }
+            } else {
+                // Counting sort into bins^3 spatial sub-boxes (b=2 -> octants).
+                const Real scale = Real(bins) / h;
+                key.resize(len);
+                off.assign(nbuckets, 0);
+                for (int i = 0; i < len; ++i) {
+                    const int s = b + i;
+                    const int bx = std::min(bins - 1, std::max(0, int((cl.rs[3 * s + 0] - lo_x) * scale)));
+                    const int by = std::min(bins - 1, std::max(0, int((cl.rs[3 * s + 1] - lo_y) * scale)));
+                    const int bz = std::min(bins - 1, std::max(0, int((cl.rs[3 * s + 2] - lo_z) * scale)));
+                    const int bucket = bx + bins * (by + bins * bz);
+                    key[i] = bucket;
+                    ++off[bucket];
+                }
+                int acc = 0;
+                for (int k = 0; k < nbuckets; ++k) {
+                    const int cnt = off[k];
+                    off[k] = acc;
+                    acc += cnt;
+                }
+                for (int i = 0; i < len; ++i) {
+                    const int s = b + i;
+                    const int dst = off[key[i]]++;
+                    tr[3 * dst + 0] = cl.rs[3 * s + 0];
+                    tr[3 * dst + 1] = cl.rs[3 * s + 1];
+                    tr[3 * dst + 2] = cl.rs[3 * s + 2];
+                    tq[dst] = cl.qs[s];
+                    to[dst] = cl.orig[s];
+                }
             }
 
             for (int i = 0; i < len; ++i) {
@@ -277,8 +328,8 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
     if (nc < 3)
         throw std::runtime_error("short_range_fast requires r_c <= L/3 (nc >= 3)");
 
-    // DMK_ESP_PRUNE gates the (experimental) sub-cell geometric pruning path, which also
-    // needs the within-cell Morton sort. When unset, the original dense path is used verbatim.
+    // DMK_ESP_PRUNE gates the (experimental) sub-cell tile-vs-tile geometric pruning path, which
+    // also needs the within-cell sort. When unset, the original dense path is used verbatim.
     const bool prune = util::env_is_set("DMK_ESP_PRUNE");
     // Source-test tile width, decoupled from SIMD width (the kernel broadcasts sources one at
     // a time). Smaller -> tighter source AABBs -> more culling, at the cost of more AABB tests.
