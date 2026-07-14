@@ -298,6 +298,7 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
     const bool want_force = (eval_type >= DMK_POTENTIAL_GRAD);
     const int out_dim = want_force ? 4 : 1;
     auto evaluator = get_esp_3d_kernel<Real, MaxVecLen>(eval_type, n_digits);
+    auto range_evaluator = get_esp_3d_kernel_ranges<Real, MaxVecLen>(eval_type, n_digits);
 #ifdef DMK_USE_JIT
     if (!util::env_is_set("DMK_DEBUG_FORCE_AOT"))
         evaluator = make_esp_evaluator_jit<Real>(eval_type, n_digits, params.sigma, 3);
@@ -331,8 +332,9 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
 
 #pragma omp parallel
     {
-        std::vector<Real> r_src_g, charge_g, r_src_pruned, charge_pruned, src_lo, src_hi;
+        std::vector<Real> r_src_g, charge_g, src_lo, src_hi;
         std::vector<int> tile_s0, tile_sn; // cell-aligned source tiles (start, length)
+        std::vector<int> surv_s0, surv_sn; // surviving source tiles per target-tile
 #pragma omp for schedule(dynamic) collapse(3)
         for (int cx = 0; cx < nc; ++cx)
             for (int cy = 0; cy < nc; ++cy)
@@ -404,9 +406,10 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
 
                     // Sub-cell geometric pruning (tile-vs-tile). Sources and targets are each
                     // grouped into VecLen-wide tiles; one AABB test per (target-tile, source-tile)
-                    // pair skips up to VecLen*VecLen interactions. Surviving source tiles are copied
-                    // in bulk into a compact buffer, then handed to the dense kernel (whose internal
-                    // d2max mask still enforces the exact cutoff on the survivors).
+                    // pair skips up to VecLen*VecLen interactions. Surviving source tiles are passed
+                    // as a list of disjoint ranges to the range-list evaluator, which reads them
+                    // in-place from the gathered array (the dense kernel's internal d2max mask still
+                    // enforces the exact cutoff on the survivors).
                     const int n_stiles = static_cast<int>(tile_s0.size());
                     src_lo.resize(3 * n_stiles);
                     src_hi.resize(3 * n_stiles);
@@ -428,10 +431,6 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
                         }
                     }
 
-                    r_src_pruned.resize(3 * n_src);
-                    charge_pruned.resize(n_src);
-                    Real *__restrict__ rsp = r_src_pruned.data();
-                    Real *__restrict__ qsp = charge_pruned.data();
                     for (int t0 = 0; t0 < n_trg; t0 += MaxVecLen) {
                         const int tn = std::min(MaxVecLen, n_trg - t0);
                         const Real *__restrict__ tptr = r_trg_ptr + 3 * t0;
@@ -446,7 +445,8 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
                                 hi[k] = std::max(hi[k], v);
                             }
 
-                        int m = 0;
+                        surv_s0.clear();
+                        surv_sn.clear();
                         for (int st = 0; st < n_stiles; ++st) {
                             const int s0 = tile_s0[st];
                             const int sn = tile_sn[st];
@@ -458,13 +458,13 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
                             }
                             if (d2 > r_c_sq)
                                 continue;
-                            std::copy_n(r_src_ptr + 3 * s0, 3 * sn, rsp + 3 * m);
-                            std::copy_n(charge_ptr + s0, sn, qsp + m);
-                            m += sn;
+                            surv_s0.push_back(s0);
+                            surv_sn.push_back(sn);
                         }
 
-                        evaluator(rsc, cen, r_c_sq, Real(0), m, rsp, qsp, nullptr, tn, tptr,
-                                  pg_sorted.data() + out_dim * (hbeg + t0));
+                        range_evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr,
+                                        static_cast<int>(surv_s0.size()), surv_s0.data(), surv_sn.data(), tn, tptr,
+                                        pg_sorted.data() + out_dim * (hbeg + t0));
                     }
                 }
     }

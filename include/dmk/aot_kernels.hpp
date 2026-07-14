@@ -19,6 +19,8 @@ residual_evaluator_func<Real> get_stresslet_3d_kernel(dmk_eval_type eval_level_r
 template <class Real, int MaxVecLen>
 residual_evaluator_func<Real> get_esp_3d_kernel(dmk_eval_type eval_level_rt, int n_digits);
 template <class Real, int MaxVecLen>
+residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_level_rt, int n_digits);
+template <class Real, int MaxVecLen>
 residual_evaluator_func<Real> get_laplace_dipole_2d_kernel(dmk_eval_type eval_level_rt, int n_digits);
 template <class Real, int MaxVecLen>
 residual_evaluator_func<Real> get_laplace_dipole_3d_kernel(dmk_eval_type eval_level_rt, int n_digits);
