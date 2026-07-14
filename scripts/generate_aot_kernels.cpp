@@ -183,11 +183,12 @@ void emit_getter_branch_for_level_ranges(const KernelDef &k, dmk_eval_type el, c
                                  "                       int n_src, const Real *r_src, const Real *charge,\n"
                                  "                       const Real *normals, int n_ranges,\n"
                                  "                       const int *range_starts, const int *range_lens,\n"
-                                 "                       int n_trg, const Real *r_trg, Real *pot) {{\n"
+                                 "                       int n_trg, const Real *r_trg, Real *pot,\n"
+                                 "                       const Real *q_trg, Real *pot_src) {{\n"
                                  "                {}_ranges<Real, MaxVecLen, ND, {}, {}>(\n"
                                  "                    eval_level, ND, rsc, cen, d2max, thresh2, {},\n"
                                  "                    coeffs.data(), n_ranges, range_starts, range_lens, n_src,\n"
-                                 "                    r_src, charge, normals, n_trg, r_trg, pot, UF);\n"
+                                 "                    r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);\n"
                                  "            }};\n"
                                  "        }}\n",
                                  info.digits, info.digits, info.total_size, nc_decls, cn, func_name(k), nc_args,

@@ -17,6 +17,7 @@
 #include <dmk.h>
 #include <dmk/util.hpp>
 
+#include <cassert>
 #include <sctl.hpp>
 #include <stdexcept>
 
@@ -408,6 +409,8 @@ DMK_ALWAYS_INLINE void EvalPairsRanges(int, const typename uKernelEvaluator::sca
                                        const int *__restrict__ range_lens, int Nt,
                                        const typename uKernelEvaluator::scalar_type *__restrict__ r_trg,
                                        typename uKernelEvaluator::scalar_type *__restrict__ v_trg,
+                                       const typename uKernelEvaluator::scalar_type *__restrict__ q_trg,
+                                       typename uKernelEvaluator::scalar_type *__restrict__ pot_src,
                                        uKernelEvaluator uKernel, int unroll_factor) {
     using namespace sctl;
     using Real = typename uKernelEvaluator::scalar_type;
@@ -419,6 +422,9 @@ DMK_ALWAYS_INLINE void EvalPairsRanges(int, const typename uKernelEvaluator::sca
     constexpr Real scale_factor = uKernelEvaluator::scale_factor;
 
     const Long NNt = ((Nt + VecLen - 1) / VecLen) * VecLen;
+    // Newton's-third-law reciprocal is wired only through the single-tile path, which is
+    // how ESP drives this evaluator (targets are pre-tiled to <= VecLen per call).
+    assert(!pot_src || NNt == VecLen);
     if (NNt == VecLen) {
         RealVec xt[SPATIAL_DIM], vt[KERNEL_OUTPUT_DIM], xs[SPATIAL_DIM], ns[NORMAL_DIM], vs[KERNEL_INPUT_DIM];
         for (Integer k = 0; k < KERNEL_OUTPUT_DIM; k++)
@@ -430,28 +436,77 @@ DMK_ALWAYS_INLINE void EvalPairsRanges(int, const typename uKernelEvaluator::sca
                 Xt[i] = r_trg[i * SPATIAL_DIM + k];
             xt[k] = RealVec::LoadAligned(&Xt[0]);
         }
-        for (int r = 0; r < n_ranges; r++) {
-            const int s0 = range_starts[r];
-            const int sn = range_lens[r];
-            for (int s = 0; s < sn; s++) {
-                for (Integer k = 0; k < SPATIAL_DIM; k++)
-                    xs[k] = RealVec::Load1(&r_src[(s0 + s) * SPATIAL_DIM + k]);
-                for (Integer k = 0; k < NORMAL_DIM; k++)
-                    ns[k] = RealVec::Load1(&src_normals[(s0 + s) * NORMAL_DIM + k]);
-                for (Integer k = 0; k < KERNEL_INPUT_DIM; k++)
-                    vs[k] = RealVec::Load1(&v_src[(s0 + s) * KERNEL_INPUT_DIM + k]);
+        if (pot_src) {
+            // N3L: reuse the kernel value U for both directions. Targets are the SIMD axis, so
+            // the source's reciprocal is a horizontal reduction over the target lanes; padded
+            // lanes carry zero charge and drop out. Potential is symmetric (+), gradient is
+            // antisymmetric (-, since dX flips when source/target swap).
+            RealVec qt[KERNEL_INPUT_DIM];
+            for (Integer k = 0; k < KERNEL_INPUT_DIM; k++) {
+                alignas(sizeof(RealVec)) std::array<Real, VecLen> Qt;
+                RealVec::Zero().StoreAligned(&Qt[0]);
+                for (Integer i = 0; i < Nt; i++)
+                    Qt[i] = q_trg[i * KERNEL_INPUT_DIM + k];
+                qt[k] = RealVec::LoadAligned(&Qt[0]);
+            }
+            for (int r = 0; r < n_ranges; r++) {
+                const int s0 = range_starts[r];
+                const int sn = range_lens[r];
+                for (int s = 0; s < sn; s++) {
+                    const int si = s0 + s;
+                    for (Integer k = 0; k < SPATIAL_DIM; k++)
+                        xs[k] = RealVec::Load1(&r_src[si * SPATIAL_DIM + k]);
+                    for (Integer k = 0; k < NORMAL_DIM; k++)
+                        ns[k] = RealVec::Load1(&src_normals[si * NORMAL_DIM + k]);
+                    for (Integer k = 0; k < KERNEL_INPUT_DIM; k++)
+                        vs[k] = RealVec::Load1(&v_src[si * KERNEL_INPUT_DIM + k]);
 
-                RealVec dX[SPATIAL_DIM], U[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM];
-                for (Integer i = 0; i < SPATIAL_DIM; i++)
-                    dX[i] = xt[i] - xs[i];
-                if constexpr (NORMAL_DIM > 0)
-                    uKernel(U, dX, ns);
-                else
-                    uKernel(U, dX);
+                    RealVec dX[SPATIAL_DIM], U[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM];
+                    for (Integer i = 0; i < SPATIAL_DIM; i++)
+                        dX[i] = xt[i] - xs[i];
+                    if constexpr (NORMAL_DIM > 0)
+                        uKernel(U, dX, ns);
+                    else
+                        uKernel(U, dX);
 
-                for (Integer k0 = 0; k0 < KERNEL_INPUT_DIM; k0++) {
+                    RealVec racc[KERNEL_OUTPUT_DIM];
+                    for (Integer k1 = 0; k1 < KERNEL_OUTPUT_DIM; k1++)
+                        racc[k1] = RealVec::Zero();
+                    for (Integer k0 = 0; k0 < KERNEL_INPUT_DIM; k0++)
+                        for (Integer k1 = 0; k1 < KERNEL_OUTPUT_DIM; k1++) {
+                            vt[k1] = FMA(U[k0][k1], vs[k0], vt[k1]);
+                            racc[k1] = FMA(U[k0][k1], qt[k0], racc[k1]);
+                        }
                     for (Integer k1 = 0; k1 < KERNEL_OUTPUT_DIM; k1++) {
-                        vt[k1] = FMA(U[k0][k1], vs[k0], vt[k1]);
+                        const Real sgn = (k1 == 0) ? scale_factor : -scale_factor;
+                        pot_src[si * KERNEL_OUTPUT_DIM + k1] += sgn * reduce_add(racc[k1]);
+                    }
+                }
+            }
+        } else {
+            for (int r = 0; r < n_ranges; r++) {
+                const int s0 = range_starts[r];
+                const int sn = range_lens[r];
+                for (int s = 0; s < sn; s++) {
+                    for (Integer k = 0; k < SPATIAL_DIM; k++)
+                        xs[k] = RealVec::Load1(&r_src[(s0 + s) * SPATIAL_DIM + k]);
+                    for (Integer k = 0; k < NORMAL_DIM; k++)
+                        ns[k] = RealVec::Load1(&src_normals[(s0 + s) * NORMAL_DIM + k]);
+                    for (Integer k = 0; k < KERNEL_INPUT_DIM; k++)
+                        vs[k] = RealVec::Load1(&v_src[(s0 + s) * KERNEL_INPUT_DIM + k]);
+
+                    RealVec dX[SPATIAL_DIM], U[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM];
+                    for (Integer i = 0; i < SPATIAL_DIM; i++)
+                        dX[i] = xt[i] - xs[i];
+                    if constexpr (NORMAL_DIM > 0)
+                        uKernel(U, dX, ns);
+                    else
+                        uKernel(U, dX);
+
+                    for (Integer k0 = 0; k0 < KERNEL_INPUT_DIM; k0++) {
+                        for (Integer k1 = 0; k1 < KERNEL_OUTPUT_DIM; k1++) {
+                            vt[k1] = FMA(U[k0][k1], vs[k0], vt[k1]);
+                        }
                     }
                 }
             }
@@ -1455,7 +1510,8 @@ template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int E
 void laplace_3d_poly_all_pairs_ranges(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
                                       int n_coeffs_rt_0, const Real *coeffs, int n_ranges, const int *range_starts,
                                       const int *range_lens, int n_src, const Real *r_src, const Real *charge,
-                                      const Real *normals, int n_trg, const Real *r_trg, Real *pot, int unroll_factor) {
+                                      const Real *normals, int n_trg, const Real *r_trg, Real *pot, const Real *q_trg,
+                                      Real *pot_src, int unroll_factor) {
     constexpr bool is_static = (N_DIGITS > 0);
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
@@ -1484,11 +1540,11 @@ void laplace_3d_poly_all_pairs_ranges(int eval_level_rt, int n_digits_rt, Real r
     if (eval_level == 1) {
         constexpr int KERNEL_OUTPUT_DIM = 1;
         EvalPairsRanges<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_ranges, range_starts, range_lens, n_trg,
-                                           r_trg, pot, evaluator, unroll_factor);
+                                           r_trg, pot, q_trg, pot_src, evaluator, unroll_factor);
     } else {
         constexpr int KERNEL_OUTPUT_DIM = 4;
         EvalPairsRanges<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_ranges, range_starts, range_lens, n_trg,
-                                           r_trg, pot, evaluator, unroll_factor);
+                                           r_trg, pot, q_trg, pot_src, evaluator, unroll_factor);
     }
 }
 

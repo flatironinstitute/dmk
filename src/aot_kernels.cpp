@@ -3128,10 +3128,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_2, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 3) {
@@ -3141,10 +3141,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_3, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 4) {
@@ -3154,10 +3154,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_4, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 5) {
@@ -3167,10 +3167,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_5, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 6) {
@@ -3180,10 +3180,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_6, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 7) {
@@ -3193,10 +3193,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_7, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 8) {
@@ -3206,10 +3206,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_8, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 9) {
@@ -3219,10 +3219,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_9, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 10) {
@@ -3232,10 +3232,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_10, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 11) {
@@ -3245,10 +3245,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_11, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 12) {
@@ -3258,10 +3258,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_12, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
     } else if (eval_level == DMK_POTENTIAL_GRAD) {
@@ -3272,10 +3272,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_grad_2, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 3) {
@@ -3285,10 +3285,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_grad_3, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 4) {
@@ -3298,10 +3298,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_grad_4, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 5) {
@@ -3311,10 +3311,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_grad_5, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 6) {
@@ -3324,10 +3324,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_grad_6, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 7) {
@@ -3337,10 +3337,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_grad_7, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 8) {
@@ -3350,10 +3350,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_grad_8, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 9) {
@@ -3363,10 +3363,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_grad_9, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 10) {
@@ -3376,10 +3376,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_grad_10, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 11) {
@@ -3389,10 +3389,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_grad_11, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
         if (n_digits <= 12) {
@@ -3402,10 +3402,10 @@ residual_evaluator_range_func<Real> get_esp_3d_kernel_ranges(dmk_eval_type eval_
             std::copy_n(esp_3d_potential_grad_12, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
                        const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
-                       const Real *r_trg, Real *pot) {
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
                 laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
                     eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
-                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
             };
         }
     }
