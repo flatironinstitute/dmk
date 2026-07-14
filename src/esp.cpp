@@ -329,9 +329,17 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
     if (nc < 3)
         throw std::runtime_error("short_range_fast requires r_c <= L/3 (nc >= 3)");
 
-    // DMK_ESP_PRUNE gates the (experimental) sub-cell tile-vs-tile geometric pruning path, which
-    // also needs the within-cell sort. When unset, the original dense path is used verbatim.
-    const bool prune = util::env_is_set("DMK_ESP_PRUNE");
+    // DMK_ESP_PRUNE selects the (experimental) geometric pruning path; nonzero modes also need
+    // the within-cell sort. 0 (unset): original dense path, verbatim. 1: sub-cell tile-vs-tile
+    // AABB pruning. 2: per-source point-vs-target-box pruning (finest granularity, survivors fed
+    // to the range evaluator as unit-length ranges). Set-but-nonnumeric maps to mode 1.
+    const int prune = [] {
+        const char *e = std::getenv("DMK_ESP_PRUNE");
+        if (!e || !*e)
+            return 0;
+        const int v = std::atoi(e);
+        return v > 0 ? v : 1;
+    }();
     // One-off phase breakdown of the pruned short-range loop (gather / AABB / test / eval).
     // sctl::Profile can't scope inside this loop cleanly; omp_get_wtime accumulators do the job.
     const bool phase_timing = util::env_is_set("DMK_ESP_PHASE_TIMING");
@@ -345,7 +353,7 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
         return v > 0 ? v : MaxVecLen;
     }();
 
-    CellList<Real> cl = build_cell_list<Real>(r_src, charges, params, nc, prune, MaxVecLen);
+    CellList<Real> cl = build_cell_list<Real>(r_src, charges, params, nc, prune != 0, MaxVecLen);
 
     const Real L = Real(params.L);
     const Real r_c_sq = Real(params.r_c) * Real(params.r_c);
@@ -392,8 +400,10 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
         std::vector<Real> r_src_g, charge_g;
         // Source-tile AABBs, SoA so the tile-vs-tile test vectorizes; d2buf holds its output.
         std::vector<Real> slo_x, slo_y, slo_z, shi_x, shi_y, shi_z, d2buf;
-        std::vector<int> tile_s0, tile_sn;     // cell-aligned source tiles (start, length)
-        std::vector<int> surv_s0, surv_sn;     // surviving source tiles per target-tile
+        std::vector<int> tile_s0, tile_sn; // cell-aligned source tiles (start, length)
+        std::vector<int> surv_s0, surv_sn; // surviving source tiles / source indices per target-tile
+        // Mode 2 (per-source): SoA source coords.
+        std::vector<Real> src_x, src_y, src_z;
         double tg = 0, ta = 0, tt = 0, te = 0; // per-thread phase times (phase_timing)
 #pragma omp for schedule(dynamic) collapse(3)
         for (int cx = 0; cx < nc; ++cx)
@@ -452,7 +462,7 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
                                 }
                                 // Split this cell's contribution into VecLen source tiles that
                                 // never cross a cell boundary, so each tile's AABB stays compact.
-                                if (prune)
+                                if (prune == 1)
                                     for (int s = seg0; s < c_i; s += stile) {
                                         tile_s0.push_back(s);
                                         tile_sn.push_back(std::min(stile, c_i - s));
@@ -466,11 +476,101 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
                         _t = now;
                     }
 
-                    if (!prune) {
+                    if (prune == 0) {
                         evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, n_trg, r_trg_ptr,
                                   pg_sorted.data() + out_dim * hbeg);
                         if (phase_timing)
                             te += omp_get_wtime() - _t;
+                        continue;
+                    }
+
+                    if (prune == 2) {
+                        // Per-source pruning (point-vs-target-box). Repack sources to SoA so the
+                        // per-source box-distance test vectorizes, then for each target tile keep the
+                        // individual sources within r_c of its AABB and feed them to the range
+                        // evaluator as unit-length ranges (surv_sn all 1) -- no gather/copy, and the
+                        // survivor fraction tracks the true in-range fraction far better than tiles.
+                        src_x.resize(n_src);
+                        src_y.resize(n_src);
+                        src_z.resize(n_src);
+                        for (int s = 0; s < n_src; ++s) {
+                            src_x[s] = r_src_ptr[3 * s + 0];
+                            src_y[s] = r_src_ptr[3 * s + 1];
+                            src_z[s] = r_src_ptr[3 * s + 2];
+                        }
+                        surv_s0.resize(n_src);
+                        if (static_cast<int>(surv_sn.size()) < n_src)
+                            surv_sn.resize(n_src, 1); // unit lengths; all entries stay 1 across cells
+                        int *__restrict__ idx_ptr = surv_s0.data();
+
+                        if (phase_timing) {
+                            const double now = omp_get_wtime();
+                            ta += now - _t;
+                            _t = now;
+                        }
+
+                        for (int t0 = 0; t0 < n_trg; t0 += MaxVecLen) {
+                            const int tn = std::min(MaxVecLen, n_trg - t0);
+                            const Real *__restrict__ tptr = r_trg_ptr + 3 * t0;
+
+                            Real lo[3], hi[3];
+                            for (int k = 0; k < 3; ++k)
+                                lo[k] = hi[k] = tptr[k];
+                            for (int i = 1; i < tn; ++i)
+                                for (int k = 0; k < 3; ++k) {
+                                    const Real v = tptr[3 * i + k];
+                                    lo[k] = std::min(lo[k], v);
+                                    hi[k] = std::max(hi[k], v);
+                                }
+
+                            // Fused per-source test + compaction, fully SIMD: box-distance via SCTL
+                            // Vec, compare to r_c^2, and compress the surviving source indices with a
+                            // masked vcompress -- no d2 scratch, no scalar filter. Two half-width d2
+                            // masks drive one full-width int32 vcompress, so a double (8-lane) chunk
+                            // pair costs a single compress/iota/popcount. Scalar tail only.
+                            using RealVec = sctl::Vec<Real, MaxVecLen>;
+                            const RealVec hi0v(hi[0]), hi1v(hi[1]), hi2v(hi[2]);
+                            const RealVec lo0v(lo[0]), lo1v(lo[1]), lo2v(lo[2]);
+                            const RealVec zero = RealVec::Zero(), rc2v(r_c_sq);
+                            auto box_d2 = [&](int i) {
+                                const RealVec x = RealVec::Load(&src_x[i]);
+                                const RealVec y = RealVec::Load(&src_y[i]);
+                                const RealVec z = RealVec::Load(&src_z[i]);
+                                const RealVec dx = sctl::max(zero, sctl::max(lo0v - x, x - hi0v));
+                                const RealVec dy = sctl::max(zero, sctl::max(lo1v - y, y - hi1v));
+                                const RealVec dz = sctl::max(zero, sctl::max(lo2v - z, z - hi2v));
+                                return sctl::FMA(dx, dx, sctl::FMA(dy, dy, dz * dz));
+                            };
+                            int m = 0, s = 0;
+                            for (; s + 2 * MaxVecLen <= n_src; s += 2 * MaxVecLen)
+                                m += sctl::mask_compress_iota_store2(box_d2(s) <= rc2v, box_d2(s + MaxVecLen) <= rc2v,
+                                                                     s, idx_ptr + m);
+                            for (; s + MaxVecLen <= n_src; s += MaxVecLen)
+                                m += sctl::mask_compress_iota_store(box_d2(s) <= rc2v, s, idx_ptr + m);
+                            for (; s < n_src; ++s) {
+                                const Real dx = std::max(Real(0), std::max(lo[0] - src_x[s], src_x[s] - hi[0]));
+                                const Real dy = std::max(Real(0), std::max(lo[1] - src_y[s], src_y[s] - hi[1]));
+                                const Real dz = std::max(Real(0), std::max(lo[2] - src_z[s], src_z[s] - hi[2]));
+                                idx_ptr[m] = s;
+                                m += (dx * dx + dy * dy + dz * dz <= r_c_sq);
+                            }
+
+                            if (phase_timing) {
+                                const double now = omp_get_wtime();
+                                tt += now - _t;
+                                _t = now;
+                            }
+
+                            range_evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, m,
+                                            idx_ptr, surv_sn.data(), tn, tptr,
+                                            pg_sorted.data() + out_dim * (hbeg + t0));
+
+                            if (phase_timing) {
+                                const double now = omp_get_wtime();
+                                te += now - _t;
+                                _t = now;
+                            }
+                        }
                         continue;
                     }
 
