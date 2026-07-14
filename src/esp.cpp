@@ -3,6 +3,7 @@
 #include <cmath>
 #include <complex>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <dmk.h>
 #include <dmk/aot_kernels.hpp>
@@ -331,6 +332,9 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
     // DMK_ESP_PRUNE gates the (experimental) sub-cell tile-vs-tile geometric pruning path, which
     // also needs the within-cell sort. When unset, the original dense path is used verbatim.
     const bool prune = util::env_is_set("DMK_ESP_PRUNE");
+    // One-off phase breakdown of the pruned short-range loop (gather / AABB / test / eval).
+    // sctl::Profile can't scope inside this loop cleanly; omp_get_wtime accumulators do the job.
+    const bool phase_timing = util::env_is_set("DMK_ESP_PHASE_TIMING");
     // Source-test tile width, decoupled from SIMD width (the kernel broadcasts sources one at
     // a time). Smaller -> tighter source AABBs -> more culling, at the cost of more AABB tests.
     constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
@@ -381,13 +385,16 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
         }
     }
 
+    double sum_gather = 0, sum_aabb = 0, sum_test = 0, sum_eval = 0; // phase_timing totals
+
 #pragma omp parallel
     {
         std::vector<Real> r_src_g, charge_g;
         // Source-tile AABBs, SoA so the tile-vs-tile test vectorizes; d2buf holds its output.
         std::vector<Real> slo_x, slo_y, slo_z, shi_x, shi_y, shi_z, d2buf;
-        std::vector<int> tile_s0, tile_sn; // cell-aligned source tiles (start, length)
-        std::vector<int> surv_s0, surv_sn; // surviving source tiles per target-tile
+        std::vector<int> tile_s0, tile_sn;     // cell-aligned source tiles (start, length)
+        std::vector<int> surv_s0, surv_sn;     // surviving source tiles per target-tile
+        double tg = 0, ta = 0, tt = 0, te = 0; // per-thread phase times (phase_timing)
 #pragma omp for schedule(dynamic) collapse(3)
         for (int cx = 0; cx < nc; ++cx)
             for (int cy = 0; cy < nc; ++cy)
@@ -397,6 +404,8 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
                     const int n_trg = hend - hbeg;
                     if (n_trg == 0)
                         continue;
+
+                    double _t = phase_timing ? omp_get_wtime() : 0.0;
 
                     const Real *__restrict__ r_trg_ptr = cl.rs.data() + 3 * hbeg;
 
@@ -451,9 +460,17 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
                             }
                         }
                     }
+                    if (phase_timing) {
+                        const double now = omp_get_wtime();
+                        tg += now - _t;
+                        _t = now;
+                    }
+
                     if (!prune) {
                         evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, n_trg, r_trg_ptr,
                                   pg_sorted.data() + out_dim * hbeg);
+                        if (phase_timing)
+                            te += omp_get_wtime() - _t;
                         continue;
                     }
 
@@ -486,6 +503,12 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
                         }
                         slo_x[st] = lo0, slo_y[st] = lo1, slo_z[st] = lo2;
                         shi_x[st] = hi0, shi_y[st] = hi1, shi_z[st] = hi2;
+                    }
+
+                    if (phase_timing) {
+                        const double now = omp_get_wtime();
+                        ta += now - _t;
+                        _t = now;
                     }
 
                     surv_s0.reserve(n_stiles);
@@ -524,12 +547,38 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
                                 surv_sn.push_back(tile_sn[st]);
                             }
 
+                        if (phase_timing) {
+                            const double now = omp_get_wtime();
+                            tt += now - _t;
+                            _t = now;
+                        }
+
                         range_evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr,
                                         static_cast<int>(surv_s0.size()), surv_s0.data(), surv_sn.data(), tn, tptr,
                                         pg_sorted.data() + out_dim * (hbeg + t0));
+
+                        if (phase_timing) {
+                            const double now = omp_get_wtime();
+                            te += now - _t;
+                            _t = now;
+                        }
                     }
                 }
+
+        if (phase_timing) {
+#pragma omp critical
+            {
+                sum_gather += tg;
+                sum_aabb += ta;
+                sum_test += tt;
+                sum_eval += te;
+            }
+        }
     }
+
+    if (phase_timing)
+        std::printf("# esp phase_timing (thread-summed s): gather=%.4f aabb=%.4f test=%.4f eval=%.4f\n", sum_gather,
+                    sum_aabb, sum_test, sum_eval);
 
     for (int a = 0; a < n; ++a) {
         const int orig = cl.orig[a];
