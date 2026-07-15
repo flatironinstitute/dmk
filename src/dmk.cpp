@@ -26,6 +26,10 @@ using pdmk_tree_impl =
     std::variant<std::unique_ptr<dmk::DMKPtTree<float, 2>>, std::unique_ptr<dmk::DMKPtTree<float, 3>>,
                  std::unique_ptr<dmk::DMKPtTree<double, 2>>, std::unique_ptr<dmk::DMKPtTree<double, 3>>>;
 
+#ifdef DMK_BUILD_ESP
+using pdmk_esp_plan_impl = std::variant<std::unique_ptr<dmk::EspPlan<float>>, std::unique_ptr<dmk::EspPlan<double>>>;
+#endif
+
 namespace dmk {
 
 namespace {
@@ -946,11 +950,8 @@ inline void pdmk_tree_update_charges(pdmk_tree tree, const Real *charge, const R
 #ifdef DMK_BUILD_ESP
 // Writes pot_src interleaved [pot, fx, fy, fz] per particle (matching pdmk_tree_eval's
 // [pot, dx, dy, dz] convention) when the plan's eval_type requests forces; else just pot.
-// (A template can't have C language linkage, so this lives here rather than in the
-// extern "C" block below, which only holds the non-template pdmk_esp_eval/evalf wrappers.)
 template <typename Real>
-inline void esp_eval_and_copy(void *plan, int n, const Real *r_src, const Real *charges, Real *pot_src) {
-    auto result = dmk::esp_eval<Real>(static_cast<dmk::EspPlan *>(plan), n, r_src, charges);
+inline void esp_copy_result(const dmk::PotForce<Real> &result, int n, Real *pot_src) {
     if (result.force_x.empty()) {
         std::copy(result.pot.begin(), result.pot.end(), pot_src);
         return;
@@ -964,6 +965,23 @@ inline void esp_eval_and_copy(void *plan, int n, const Real *r_src, const Real *
         if (dim == 3)
             pot_src[i * out_dim + 3] = result.force_z[i];
     }
+}
+
+// Dispatches to the plan's own precision -- evalf genuinely runs EspPlan<float>::eval (float
+// FFTs/SIMD throughout), it never up-converts through a double plan.
+// (A template can't have C language linkage, so this lives here rather than in the extern "C"
+// block below, which only holds the non-template pdmk_esp_eval/evalf wrappers.)
+template <typename Real>
+inline void pdmk_esp_eval_impl(pdmk_esp_plan plan, int n, const Real *r_src, const Real *charges, Real *pot_src) {
+    std::visit(
+        [&](auto &p) {
+            using PlanType = std::decay_t<decltype(p)>;
+            if constexpr (std::is_same_v<PlanType, std::unique_ptr<dmk::EspPlan<Real>>>)
+                esp_copy_result<Real>(p->eval(n, r_src, charges), n, pot_src);
+            else
+                throw api_error(DMK_ERR_INVALID_ARGUMENT, "ESP plan precision does not match eval precision");
+        },
+        *static_cast<pdmk_esp_plan_impl *>(plan));
 }
 #endif // DMK_BUILD_ESP
 
@@ -1106,25 +1124,27 @@ dmk_error pdmk(dmk_communicator comm, pdmk_params params, int n_src, const doubl
 #ifdef DMK_BUILD_ESP
 pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator /*comm*/, pdmk_esp_params params) {
     dmk::ShortRangeConfig sr{params.esp_flags, params.esp_bins, params.esp_stile};
-    return static_cast<void *>(
-        dmk::esp_create_plan(params.L, params.r_c, params.eps, params.sigma, params.eval_type, sr));
+    return new pdmk_esp_plan_impl(std::unique_ptr<dmk::EspPlan<double>>(
+        new dmk::EspPlan<double>(params.L, params.r_c, params.eps, params.sigma, params.eval_type, sr)));
 }
 
-pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator comm, pdmk_esp_params params) {
-    return pdmk_esp_plan_create(comm, params);
+pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator /*comm*/, pdmk_esp_params params) {
+    dmk::ShortRangeConfig sr{params.esp_flags, params.esp_bins, params.esp_stile};
+    return new pdmk_esp_plan_impl(std::unique_ptr<dmk::EspPlan<float>>(new dmk::EspPlan<float>(
+        float(params.L), float(params.r_c), float(params.eps), float(params.sigma), params.eval_type, sr)));
 }
 
 void pdmk_esp_eval(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
                    double *pot_src) {
-    dmk::esp_eval_and_copy<double>(plan, n, r_src, charges, pot_src);
+    dmk::pdmk_esp_eval_impl<double>(plan, n, r_src, charges, pot_src);
 }
 
 void pdmk_esp_evalf(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,
                     float *pot_src) {
-    dmk::esp_eval_and_copy<float>(plan, n, r_src, charges, pot_src);
+    dmk::pdmk_esp_eval_impl<float>(plan, n, r_src, charges, pot_src);
 }
 
-void pdmk_esp_plan_destroy(pdmk_esp_plan plan) { dmk::esp_destroy_plan(static_cast<dmk::EspPlan *>(plan)); }
+void pdmk_esp_plan_destroy(pdmk_esp_plan plan) { delete static_cast<pdmk_esp_plan_impl *>(plan); }
 
 void pdmk_esp_plan_destroyf(pdmk_esp_plan plan) { pdmk_esp_plan_destroy(plan); }
 

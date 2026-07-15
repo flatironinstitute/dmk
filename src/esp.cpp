@@ -60,74 +60,25 @@ static void ifftn(const std::vector<std::complex<Real>> &in, std::vector<std::co
 }
 
 namespace dmk {
-struct PSWFKernel {
-    dmk::Prolate0Fun pswf;
-    double eps;
-    double c;
-    double lambda0;
-    double c0;
-    double scale;
-    std::vector<double> pswf_poly_coeffs;
-    std::vector<double> pswf_int_poly_coeffs;
 
-    PSWFKernel() = default;
-    explicit PSWFKernel(double eps_, double c_, int lenw = 8000) : eps(eps_), c(c_) {
-        pswf = dmk::Prolate0Fun(c, lenw);
+PSWFKernel::PSWFKernel(double eps_, double c_, int lenw) : eps(eps_), c(c_) {
+    pswf = dmk::Prolate0Fun(c, lenw);
 
-        scale = 1.0 / pswf.eval_val(0.0);
+    scale = 1.0 / pswf.eval_val(0.0);
 
-        double mu = pswf.rlam20 / M_PI;
-        lambda0 = std::sqrt(2.0 * M_PI * mu / c);
+    double mu = pswf.rlam20 / M_PI;
+    lambda0 = std::sqrt(2.0 * M_PI * mu / c);
 
-        c0 = pswf.int_eval(1.0) * scale;
+    c0 = pswf.int_eval(1.0) * scale;
 
-        int nc = 24;
-        auto pswf_lambda = [&](double x) { return pswf.eval_val(std::abs(x)) * scale; };
-        pswf_poly_coeffs = finufft::kernel::poly_fit<double>(pswf_lambda, nc);
+    int nc = 24;
+    auto pswf_lambda = [&](double x) { return pswf.eval_val(std::abs(x)) * scale; };
+    pswf_poly_coeffs = finufft::kernel::poly_fit<double>(pswf_lambda, nc);
 
-        nc = 20;
-        auto pswf_int_lambda = [&](double t) { return pswf.int_eval(t) * scale; };
-        pswf_int_poly_coeffs = finufft::kernel::poly_fit<double>(pswf_int_lambda, nc);
-    }
-
-    double operator()(double x) const { return pswf.eval_val(x) * scale; }
-
-    double integral_eval(double t) const { return pswf.int_eval(t) * scale; }
-
-    double integral(double a, double b) const {
-        double va = (a == 0.0) ? 0.0 : integral_eval(a);
-        double vb = integral_eval(b);
-        return vb - va;
-    }
-
-    double pswf_hat(double k) const {
-        const double x = k / c;
-        return std::fabs(x) > 1 ? 0.0 : lambda0 * (*this)(x);
-    }
-};
-
-struct ESPParams {
-    double L;
-    double r_c;
-    double sigma;
-    int P;
-    int n_f;
-    double h;
-    double lambda0;
-    double c;
-    double c0;
-    int n;
-
-    ESPParams() = default;
-    ESPParams(double L_, double r_c_, double sigma_, int P_, const PSWFKernel &pswf, int n_)
-        : L(L_), r_c(r_c_), sigma(sigma_), P(P_), n(n_) {
-        n_f = static_cast<int>(std::ceil(pswf.c * L / (M_PI * r_c)));
-        h = L / n_f;
-        lambda0 = pswf.lambda0;
-        c = pswf.c;
-        c0 = pswf.c0;
-    }
-};
+    nc = 20;
+    auto pswf_int_lambda = [&](double t) { return pswf.int_eval(t) * scale; };
+    pswf_int_poly_coeffs = finufft::kernel::poly_fit<double>(pswf_int_lambda, nc);
+}
 
 template <typename Real, int DIM>
 static inline std::array<int, DIM> particle_cell(const Vec3T<Real, DIM> &r, Real L, int n_cells) {
@@ -1251,52 +1202,27 @@ static void self_interaction(const Real *charges, const PSWFKernel &pswf, const 
         pot[i] -= charges[i] * factor;
 }
 
-struct EspPlan {
-    int n_digits;
-    int n_dim;
-    PSWFKernel pswf;
-    ESPParams params_base;
-    DGrid scaling_coeffs;
-    dmk_eval_type eval_type;     // baked in at creation; DMK_POTENTIAL skips all force computation
-    ShortRangeConfig sr_cfg;     // short-range method selection, from the caller
-    std::vector<double> dbl_buf; // reused output workspace for esp_eval<double>
-    std::vector<float> flt_buf;  // reused output workspace for esp_eval<float>
-
-    EspPlan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type_, ShortRangeConfig cfg, int n_dim_)
-        : n_digits(esp_digits_from_eps(eps)), n_dim(n_dim_), eval_type(eval_type_), sr_cfg(cfg) {
-        const double eps_d = std::pow(10.0, -double(n_digits));
-        const int P = esp_P_from_eps(eps_d, sigma, n_dim);
-        const double c = esp_pswf_c_from_P(sigma, P);
-        pswf = PSWFKernel(eps_d, c);
-        params_base = ESPParams(L, r_c, sigma, P, pswf, 0);
-        scaling_coeffs = n_dim == 2 ? precompute_scaling_coefficients<2>(pswf, params_base)
-                                    : precompute_scaling_coefficients<3>(pswf, params_base);
-    }
-};
-
-EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type, ShortRangeConfig cfg,
-                         int n_dim) {
-    return new EspPlan(L, r_c, eps, sigma, eval_type, cfg, n_dim);
+template <typename Real>
+EspPlan<Real>::EspPlan(Real L, Real r_c, Real eps, Real sigma, dmk_eval_type eval_type_, ShortRangeConfig cfg,
+                       int n_dim_)
+    : n_digits(esp_digits_from_eps(eps)), n_dim(n_dim_), eval_type(eval_type_), sr_cfg(cfg) {
+    const Real eps_d = std::pow(10.0, -Real(n_digits));
+    const int P = esp_P_from_eps(eps_d, sigma, n_dim);
+    const Real c = esp_pswf_c_from_P(sigma, P);
+    pswf = PSWFKernel(eps_d, c);
+    params_base = ESPParams(L, r_c, sigma, P, pswf, 0);
+    scaling_coeffs = n_dim == 2 ? precompute_scaling_coefficients<2>(pswf, params_base)
+                                : precompute_scaling_coefficients<3>(pswf, params_base);
 }
 
-void esp_destroy_plan(EspPlan *plan) { delete plan; }
-
 template <typename Real>
-PotForce<Real> esp_eval(EspPlan *plan, int n, const Real *r_src, const Real *charges) {
+PotForce<Real> EspPlan<Real>::eval(int n, const Real *r_src, const Real *charges) {
     sctl::Profile::Scoped esp_eval("esp_eval");
-    ESPParams params = plan->params_base;
-    params.n = n;
-    const bool want_force = (plan->eval_type >= DMK_POTENTIAL_GRAD);
-    const int dim = plan->n_dim;
-    const int slots = want_force ? 1 + dim : 1;
+    params_base.n = n;
+    const bool want_force = (eval_type >= DMK_POTENTIAL_GRAD);
+    const int slots = want_force ? 1 + n_dim : 1;
 
     // Reuse the plan's typed workspace; zero-initialize the active region.
-    auto &buf = [&]() -> std::vector<Real> & {
-        if constexpr (std::is_same_v<Real, double>)
-            return plan->dbl_buf;
-        else
-            return plan->flt_buf;
-    }();
     if (static_cast<int>(buf.size()) < slots * n)
         buf.resize(slots * n);
     std::fill(buf.begin(), buf.begin() + slots * n, Real(0));
@@ -1304,32 +1230,29 @@ PotForce<Real> esp_eval(EspPlan *plan, int n, const Real *r_src, const Real *cha
     std::span<Real> pot_sp(buf.data(), n);
     std::span<Real> fx_sp(buf.data() + n, want_force ? n : 0);
     std::span<Real> fy_sp(buf.data() + 2 * n, want_force ? n : 0);
-    std::span<Real> fz_sp(buf.data() + 3 * n, (want_force && dim == 3) ? n : 0);
+    std::span<Real> fz_sp(buf.data() + 3 * n, (want_force && n_dim == 3) ? n : 0);
 
     // Runtime n_dim -> compile-time DIM dispatch (mirrors src/aot_evaluator.cpp's pattern). DIM=3 is
     // the only dimension with a working short-range kernel; short_range throws for DIM=2 before
     // touching long_range/self_interaction (self_interaction's 3D-only formula is therefore never
     // exercised for DIM=2).
-    if (dim == 3) {
+    if (n_dim == 3) {
         std::array<std::span<Real>, 3> force{fx_sp, fy_sp, fz_sp};
-        short_range<Real, 3>(r_src, charges, params, plan->n_digits, plan->pswf, plan->eval_type, plan->sr_cfg, pot_sp,
-                             force);
-        long_range<Real, 3>(r_src, charges, plan->pswf, params, plan->scaling_coeffs, plan->eval_type, pot_sp, force);
-        self_interaction<Real>(charges, plan->pswf, params, pot_sp);
-    } else if (dim == 2) {
+        short_range<Real, 3>(r_src, charges, params_base, n_digits, pswf, eval_type, sr_cfg, pot_sp, force);
+        long_range<Real, 3>(r_src, charges, pswf, params_base, scaling_coeffs, eval_type, pot_sp, force);
+        self_interaction<Real>(charges, pswf, params_base, pot_sp);
+    } else if (n_dim == 2) {
         std::array<std::span<Real>, 2> force{fx_sp, fy_sp};
-        short_range<Real, 2>(r_src, charges, params, plan->n_digits, plan->pswf, plan->eval_type, plan->sr_cfg, pot_sp,
-                             force);
-        long_range<Real, 2>(r_src, charges, plan->pswf, params, plan->scaling_coeffs, plan->eval_type, pot_sp, force);
-        self_interaction<Real>(charges, plan->pswf, params, pot_sp);
+        short_range<Real, 2>(r_src, charges, params_base, n_digits, pswf, eval_type, sr_cfg, pot_sp, force);
+        long_range<Real, 2>(r_src, charges, pswf, params_base, scaling_coeffs, eval_type, pot_sp, force);
+        self_interaction<Real>(charges, pswf, params_base, pot_sp);
     } else {
-        throw std::runtime_error("ESP: unsupported n_dim=" + std::to_string(dim));
+        throw std::runtime_error("ESP: unsupported n_dim=" + std::to_string(n_dim));
     }
 
     return {pot_sp, fx_sp, fy_sp, fz_sp};
 }
 
-template PotForce<float> esp_eval<float>(EspPlan *, int, const float *, const float *);
-template PotForce<double> esp_eval<double>(EspPlan *, int, const double *, const double *);
-
+template struct EspPlan<float>;
+template struct EspPlan<double>;
 } // namespace dmk

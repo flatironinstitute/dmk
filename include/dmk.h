@@ -125,26 +125,17 @@ typedef struct pdmk_esp_params {
 // Opaque plan handle (heap-allocated internally).
 typedef void *pdmk_esp_plan;
 
-// Create a plan: derives P, builds PSWFKernel, precomputes scaling grid.
-// No particle data needed at this stage. Plan is always double precision internally.
 pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator comm, pdmk_esp_params params);
 pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator comm, pdmk_esp_params params);
 
-// Evaluate potentials for n particles using a pre-built plan.
-// Can be called repeatedly with different r_src / charges for the same geometry.
-// If the plan's eval_type is DMK_POTENTIAL, pot_src must hold n values (potential only).
-// If the plan's eval_type is DMK_POTENTIAL_GRAD, pot_src must hold n*4 values, interleaved
-// per particle as [pot, fx, fy, fz] (same convention as pdmk_tree_eval's [pot, dx, dy, dz]).
 void pdmk_esp_eval(dmk_communicator comm, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
                    double *pot_src);
 void pdmk_esp_evalf(dmk_communicator comm, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,
                     float *pot_src);
 
-// Free the plan.
 void pdmk_esp_plan_destroy(pdmk_esp_plan plan);
 void pdmk_esp_plan_destroyf(pdmk_esp_plan plan);
 
-// Convenience one-shot (create + eval + destroy).
 void pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double *r_src, const double *charges,
               double *pot_src);
 void pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const float *r_src, const float *charges,

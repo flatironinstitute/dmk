@@ -1,6 +1,7 @@
 #pragma once
 
-#include <dmk.h> // dmk_eval_type
+#include <dmk.h>
+#include <dmk/prolate0_fun.hpp>
 
 #include <algorithm>
 #include <array>
@@ -44,15 +45,6 @@ struct ShortRangeConfig {
     bool spatial_sort() const { return flags & (DMK_ESP_PRUNE_TILE | DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L); }
 };
 
-struct EspPlan;
-
-// n_dim selects the templated implementation used internally (DIM=2 or 3). Only DIM=3 has a
-// working short-range PSWF correction kernel today (see get_esp_3d_kernel); DIM=2 compiles but
-// esp_eval throws at the short-range kernel-dispatch site until that kernel is derived.
-EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type = DMK_POTENTIAL_GRAD,
-                         ShortRangeConfig cfg = {}, int n_dim = 3);
-void esp_destroy_plan(EspPlan *plan);
-
 // force_x/y/z are empty spans if the plan was created with eval_type == DMK_POTENTIAL. For a
 // DIM=2 plan, force_z stays empty even when forces are requested (only force_x/force_y are
 // populated) -- callers can distinguish DIM by checking force_z.empty().
@@ -61,9 +53,66 @@ struct PotForce {
     std::span<Real> pot, force_x, force_y, force_z;
 };
 
-// r_src is a flat array of n*n_dim coordinates (n_dim taken from the plan), interleaved
-// [x0,y0,(z0),x1,y1,(z1),...] -- the same layout the public C API receives from callers.
+// PSWF (prolate spheroidal wave function) far-field kernel: precomputes lambda0/scale and
+// polynomial fits of the kernel and its integral for a given (eps, c).
+struct PSWFKernel {
+    dmk::Prolate0Fun pswf;
+    double eps, c, lambda0, c0, scale;
+    std::vector<double> pswf_poly_coeffs, pswf_int_poly_coeffs;
+
+    PSWFKernel() = default;
+    // Heavy (runs prol0ini + two poly_fit calls); declared here, defined in esp.cpp so this header
+    // doesn't need finufft_common/kernel.h.
+    explicit PSWFKernel(double eps_, double c_, int lenw = 8000);
+
+    double operator()(double x) const { return pswf.eval_val(x) * scale; }
+    double integral_eval(double t) const { return pswf.int_eval(t) * scale; }
+    double integral(double a, double b) const {
+        double va = (a == 0.0) ? 0.0 : integral_eval(a);
+        double vb = integral_eval(b);
+        return vb - va;
+    }
+    double pswf_hat(double k) const {
+        const double x = k / c;
+        return std::fabs(x) > 1 ? 0.0 : lambda0 * (*this)(x);
+    }
+};
+
+// Per-plan geometry derived from (L, r_c, sigma, P): oversampled grid size/spacing plus the PSWF
+// constants copied out of `pswf` for convenient access. Always double-precision, same rationale as
+// PSWFKernel.
+struct ESPParams {
+    double L, r_c, sigma;
+    int P, n_f;
+    double h, lambda0, c, c0;
+    int n;
+
+    ESPParams() = default;
+    ESPParams(double L_, double r_c_, double sigma_, int P_, const PSWFKernel &pswf, int n_)
+        : L(L_), r_c(r_c_), sigma(sigma_), P(P_), n(n_) {
+        n_f = static_cast<int>(std::ceil(pswf.c * L / (M_PI * r_c)));
+        h = L / n_f;
+        lambda0 = pswf.lambda0;
+        c = pswf.c;
+        c0 = pswf.c0;
+    }
+};
+
 template <typename Real>
-PotForce<Real> esp_eval(EspPlan *plan, int n, const Real *r_src, const Real *charges);
+struct EspPlan {
+    int n_digits;
+    int n_dim;
+    PSWFKernel pswf;
+    ESPParams params_base;
+    std::vector<double> scaling_coeffs;
+    dmk_eval_type eval_type; // baked in at creation; DMK_POTENTIAL skips all force computation
+    ShortRangeConfig sr_cfg; // short-range method selection, from the caller
+    std::vector<Real> buf;   // reused output workspace for eval()
+
+    explicit EspPlan(Real L, Real r_c, Real eps, Real sigma, dmk_eval_type eval_type = DMK_POTENTIAL_GRAD,
+                     ShortRangeConfig cfg = {}, int n_dim = 3);
+
+    PotForce<Real> eval(int n, const Real *r_src, const Real *charges);
+};
 
 } // namespace dmk
