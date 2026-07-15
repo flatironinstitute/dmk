@@ -1123,15 +1123,11 @@ dmk_error pdmk(dmk_communicator comm, pdmk_params params, int n_src, const doubl
 
 #ifdef DMK_BUILD_ESP
 pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator /*comm*/, pdmk_esp_params params) {
-    dmk::ShortRangeConfig sr{params.esp_flags, params.esp_bins, params.esp_stile};
-    return new pdmk_esp_plan_impl(std::unique_ptr<dmk::EspPlan<double>>(
-        new dmk::EspPlan<double>(params.L, params.r_c, params.eps, params.sigma, params.eval_type, sr)));
+    return new pdmk_esp_plan_impl(std::unique_ptr<dmk::EspPlan<double>>(new dmk::EspPlan<double>(params)));
 }
 
 pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator /*comm*/, pdmk_esp_params params) {
-    dmk::ShortRangeConfig sr{params.esp_flags, params.esp_bins, params.esp_stile};
-    return new pdmk_esp_plan_impl(std::unique_ptr<dmk::EspPlan<float>>(new dmk::EspPlan<float>(
-        float(params.L), float(params.r_c), float(params.eps), float(params.sigma), params.eval_type, sr)));
+    return new pdmk_esp_plan_impl(std::unique_ptr<dmk::EspPlan<float>>(new dmk::EspPlan<float>(params)));
 }
 
 void pdmk_esp_eval(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,

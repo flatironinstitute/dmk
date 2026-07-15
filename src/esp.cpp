@@ -235,7 +235,7 @@ static void sort_cell_bins(CellList<Real, DIM> &cl, int b, int len, const std::a
 
 template <typename Real, int DIM>
 static CellList<Real, DIM> build_cell_list(const Real *r_src, const Real *charges, const ESPParams &params, int nc,
-                                           const ShortRangeConfig &cfg, int min_sort_len = 2) {
+                                           const pdmk_esp_params &cfg, int min_sort_len = 2) {
     sctl::Profile::Scoped profile("build_cell_list");
     CellList<Real, DIM> cl;
     cl.n_cells = nc;
@@ -279,14 +279,14 @@ static CellList<Real, DIM> build_cell_list(const Real *r_src, const Real *charge
     }
 
     // pass 4: spatially reorder particles within each cell so consecutive VecLen-runs form compact
-    // tiles, enabling the geometric source pruning in short_range. cfg.morton() picks the z-order
+    // tiles, enabling the geometric source pruning in short_range. esp_morton() picks the z-order
     // sort; otherwise the cheaper bins^DIM counting sort. Both keep the tile count fixed and only
     // tighten each tile's extent.
-    if (cfg.spatial_sort()) {
+    if (esp_spatial_sort(cfg)) {
         sctl::Profile::Scoped sort("spatial_sort");
         const Real h = L_r / Real(nc);
         const Real half_L = L_r / Real(2);
-        const bool morton_sort = cfg.morton();
+        const bool morton_sort = esp_morton(cfg);
         SortScratch<Real, DIM> s;
         for (int c = 0; c < ncells; ++c) {
             const int b = cl.cell_start[c], e = cl.cell_start[c + 1], len = e - b;
@@ -304,7 +304,7 @@ static CellList<Real, DIM> build_cell_list(const Real *r_src, const Real *charge
             if (morton_sort)
                 sort_cell_morton<Real, DIM>(cl, b, len, lo, h, s);
             else
-                sort_cell_bins<Real, DIM>(cl, b, len, lo, h, cfg.bins, s);
+                sort_cell_bins<Real, DIM>(cl, b, len, lo, h, cfg.esp_bins, s);
         }
     }
     return cl;
@@ -890,7 +890,7 @@ static void short_range_n3l(const SRCtx<Real, DIM> &ctx) {
 // and its four strategies stay DIM-generic; esp_eval builds this array from PotForce's spans.
 template <typename Real, int DIM>
 static void short_range(const Real *r_src, const Real *charges, const ESPParams &params, int n_digits,
-                        const PSWFKernel &pswf, dmk_eval_type eval_type, const ShortRangeConfig &cfg,
+                        const PSWFKernel &pswf, dmk_eval_type eval_type, const pdmk_esp_params &cfg,
                         std::span<Real> pot, std::array<std::span<Real>, DIM> force) {
     sctl::Profile::Scoped short_range("short_range");
     // pow(3,DIM)-cell stencil requires nc >= 3 so periodic images aren't double-counted
@@ -899,7 +899,7 @@ static void short_range(const Real *r_src, const Real *charges, const ESPParams 
         throw std::runtime_error("short_range_fast requires r_c <= L/3 (nc >= 3)");
     // Stride-3 periodic colouring is conflict-free only if each axis length is divisible by the
     // stride; round nc down to a multiple of 3 (cells grow slightly, still >= r_c, still >= 3).
-    if (cfg.n3l())
+    if (esp_n3l(cfg))
         nc -= nc % 3;
 
     constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
@@ -967,15 +967,15 @@ static void short_range(const Real *r_src, const Real *charges, const ESPParams 
                                cen,
                                nc,
                                out_dim,
-                               cfg.stile > 0 ? cfg.stile : MaxVecLen,
+                               cfg.esp_stile > 0 ? cfg.esp_stile : MaxVecLen,
                                pg_sorted.data()};
 
     // Each method enumerates source/target pairs its own way; they all accumulate into pg_sorted.
-    if (cfg.n3l())
+    if (esp_n3l(cfg))
         short_range_n3l<Real, DIM, MaxVecLen>(ctx);
-    else if (cfg.prune_source())
+    else if (esp_prune_source(cfg))
         short_range_prune_source<Real, DIM, MaxVecLen>(ctx);
-    else if (cfg.prune_tile())
+    else if (esp_prune_tile(cfg))
         short_range_prune_tile<Real, DIM, MaxVecLen>(ctx);
     else
         short_range_dense<Real, DIM, MaxVecLen>(ctx);
@@ -1203,14 +1203,14 @@ static void self_interaction(const Real *charges, const PSWFKernel &pswf, const 
 }
 
 template <typename Real>
-EspPlan<Real>::EspPlan(Real L, Real r_c, Real eps, Real sigma, dmk_eval_type eval_type_, ShortRangeConfig cfg,
-                       int n_dim_)
-    : n_digits(esp_digits_from_eps(eps)), n_dim(n_dim_), eval_type(eval_type_), sr_cfg(cfg) {
+EspPlan<Real>::EspPlan(const pdmk_esp_params &params_, int n_dim_)
+    : n_digits(esp_digits_from_eps(params_.eps)), n_dim(n_dim_), params(params_) {
     const Real eps_d = std::pow(10.0, -Real(n_digits));
+    const Real sigma = Real(params_.sigma);
     const int P = esp_P_from_eps(eps_d, sigma, n_dim);
     const Real c = esp_pswf_c_from_P(sigma, P);
     pswf = PSWFKernel(eps_d, c);
-    params_base = ESPParams(L, r_c, sigma, P, pswf, 0);
+    params_base = ESPParams(Real(params_.L), Real(params_.r_c), sigma, P, pswf, 0);
     scaling_coeffs = n_dim == 2 ? precompute_scaling_coefficients<2>(pswf, params_base)
                                 : precompute_scaling_coefficients<3>(pswf, params_base);
 }
@@ -1219,7 +1219,7 @@ template <typename Real>
 PotForce<Real> EspPlan<Real>::eval(int n, const Real *r_src, const Real *charges) {
     sctl::Profile::Scoped esp_eval("esp_eval");
     params_base.n = n;
-    const bool want_force = (eval_type >= DMK_POTENTIAL_GRAD);
+    const bool want_force = (params.eval_type >= DMK_POTENTIAL_GRAD);
     const int slots = want_force ? 1 + n_dim : 1;
 
     // Reuse the plan's typed workspace; zero-initialize the active region.
@@ -1238,13 +1238,13 @@ PotForce<Real> EspPlan<Real>::eval(int n, const Real *r_src, const Real *charges
     // exercised for DIM=2).
     if (n_dim == 3) {
         std::array<std::span<Real>, 3> force{fx_sp, fy_sp, fz_sp};
-        short_range<Real, 3>(r_src, charges, params_base, n_digits, pswf, eval_type, sr_cfg, pot_sp, force);
-        long_range<Real, 3>(r_src, charges, pswf, params_base, scaling_coeffs, eval_type, pot_sp, force);
+        short_range<Real, 3>(r_src, charges, params_base, n_digits, pswf, params.eval_type, params, pot_sp, force);
+        long_range<Real, 3>(r_src, charges, pswf, params_base, scaling_coeffs, params.eval_type, pot_sp, force);
         self_interaction<Real>(charges, pswf, params_base, pot_sp);
     } else if (n_dim == 2) {
         std::array<std::span<Real>, 2> force{fx_sp, fy_sp};
-        short_range<Real, 2>(r_src, charges, params_base, n_digits, pswf, eval_type, sr_cfg, pot_sp, force);
-        long_range<Real, 2>(r_src, charges, pswf, params_base, scaling_coeffs, eval_type, pot_sp, force);
+        short_range<Real, 2>(r_src, charges, params_base, n_digits, pswf, params.eval_type, params, pot_sp, force);
+        long_range<Real, 2>(r_src, charges, pswf, params_base, scaling_coeffs, params.eval_type, pot_sp, force);
         self_interaction<Real>(charges, pswf, params_base, pot_sp);
     } else {
         throw std::runtime_error("ESP: unsupported n_dim=" + std::to_string(n_dim));

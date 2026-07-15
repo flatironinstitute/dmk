@@ -29,6 +29,16 @@ const double CHARGES[10] = {0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5, 0.1, -0.
 
 } // namespace
 
+// sigma defaults to pdmk_esp_params's own default (1.35), matching every test below.
+static pdmk_esp_params make_esp_params(double L, double r_c, double eps, dmk_eval_type eval_type) {
+    pdmk_esp_params params{};
+    params.L = L;
+    params.r_c = r_c;
+    params.eps = eps;
+    params.eval_type = eval_type;
+    return params;
+}
+
 // Helper: call verify_esp.py with given positions (flat N*3) and charges (N),
 // fill ref_out[N] with zero-mean perilap3d potentials. Returns true on success.
 static bool run_perilap3d(int n, const double *r_src_flat, const double *charges, double *ref_out) {
@@ -113,7 +123,7 @@ static double force_l2_rel_err(int n, std::span<double> force_x, std::span<doubl
 TEST_CASE("[ESP] 10-particle double vs perilap3d") {
     constexpr double eps = 1e-5;
 
-    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(L, R_C, eps, 1.35, DMK_POTENTIAL);
+    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, R_C, eps, DMK_POTENTIAL));
     auto esp = plan->eval(N, R_SRC, CHARGES);
 
     double ref[N];
@@ -197,7 +207,7 @@ TEST_CASE("[ESP] long-range only: regular grid, no short-range pairs") {
     REQUIRE_MESSAGE(have_ref, "perilap3d reference unavailable — check Python env and PERILAP3D_DIR");
 
     // --- Run ESP ---
-    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(L, r_c, eps, 1.35, DMK_POTENTIAL_GRAD);
+    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, r_c, eps, DMK_POTENTIAL_GRAD));
     auto esp = plan->eval(N, r_src, charges);
 
     // Gauge-correct ESP output and compare to the (already zero-mean) perilap3d reference.
@@ -250,7 +260,7 @@ TEST_CASE("[ESP] Madelung constant: NaCl lattice, 1/(4pi*r) kernel") {
                 charges[i] = ((ix + iy + iz) % 2 == 0) ? 1.0 : -1.0;
             }
 
-    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(L, r_c, eps, 1.35, DMK_POTENTIAL);
+    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, r_c, eps, DMK_POTENTIAL));
     auto esp = plan->eval(N, r_src, charges);
 
     // NaCl is charge-neutral so the mean potential is zero; gauge-correct anyway.
@@ -339,7 +349,7 @@ TEST_CASE("[ESP] short-range stress: all pairs within r_c") {
     REQUIRE_MESSAGE(have_ref, "perilap3d reference unavailable — check Python env and PERILAP3D_DIR");
 
     // --- Run ESP ---
-    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(L, r_c, eps, 1.35, DMK_POTENTIAL_GRAD);
+    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, r_c, eps, DMK_POTENTIAL_GRAD));
 
     // Compute FD reference before the final eval so the plan's buffer is fresh when we hold spans.
     std::vector<double> force_ref(3 * N);
@@ -372,7 +382,7 @@ TEST_CASE("[ESP] short-range stress: all pairs within r_c") {
 TEST_CASE("[ESP] forces - 10 particles") {
     constexpr double eps = 1e-6;
 
-    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(L, R_C, eps, 1.35, DMK_POTENTIAL_GRAD);
+    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, R_C, eps, DMK_POTENTIAL_GRAD));
 
     // Compute FD reference before the final eval so the plan's buffer is fresh when we hold spans.
     std::vector<double> force_ref(3 * N);
@@ -390,8 +400,7 @@ TEST_CASE("[ESP] forces - 10 particles") {
 
 TEST_CASE("[ESP] DIM=2 plan throws: no 2D short-range kernel yet") {
     constexpr double eps = 1e-5;
-    dmk::EspPlan<double> *plan =
-        new dmk::EspPlan<double>(L, R_C, eps, 1.35, DMK_POTENTIAL, dmk::ShortRangeConfig{}, /*n_dim=*/2);
+    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, R_C, eps, DMK_POTENTIAL), /*n_dim=*/2);
     CHECK_THROWS_AS(plan->eval(N, R_SRC, CHARGES), std::runtime_error);
     delete plan;
 }
@@ -401,7 +410,7 @@ TEST_CASE("[ESP] DIM=2 plan throws: no 2D short-range kernel yet") {
 TEST_CASE("[ESP] float precision matches double") {
     constexpr double eps = 1e-5;
 
-    dmk::EspPlan<double> *plan_d = new dmk::EspPlan<double>(L, R_C, eps, 1.35, DMK_POTENTIAL_GRAD);
+    dmk::EspPlan<double> *plan_d = new dmk::EspPlan<double>(make_esp_params(L, R_C, eps, DMK_POTENTIAL_GRAD));
     auto esp_d = plan_d->eval(N, R_SRC, CHARGES);
 
     float r_src_f[3 * N], charges_f[N];
@@ -410,7 +419,7 @@ TEST_CASE("[ESP] float precision matches double") {
     for (int i = 0; i < N; ++i)
         charges_f[i] = float(CHARGES[i]);
 
-    dmk::EspPlan<float> *plan_f = new dmk::EspPlan<float>(L, R_C, eps, 1.35, DMK_POTENTIAL_GRAD);
+    dmk::EspPlan<float> *plan_f = new dmk::EspPlan<float>(make_esp_params(L, R_C, eps, DMK_POTENTIAL_GRAD));
     auto esp_f = plan_f->eval(N, r_src_f, charges_f);
 
     double pot_err2 = 0, pot_ref2 = 0;
@@ -456,7 +465,7 @@ TEST_CASE("[ESP] C API pdmk_esp_eval interleaves forces") {
     std::vector<double> pot_src(N * 4);
     pdmk_esp_eval(nullptr, plan, N, R_SRC, CHARGES, pot_src.data());
 
-    dmk::EspPlan<double> *plan_cxx = new dmk::EspPlan<double>(L, R_C, eps, 1.35, DMK_POTENTIAL_GRAD);
+    dmk::EspPlan<double> *plan_cxx = new dmk::EspPlan<double>(params);
     auto esp = plan_cxx->eval(N, R_SRC, CHARGES);
 
     for (int i = 0; i < N; ++i) {

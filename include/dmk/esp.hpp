@@ -31,19 +31,17 @@ inline int esp_digits_from_eps(double eps) {
     return std::clamp(static_cast<int>(std::lround(-std::log10(eps))), 2, 12);
 }
 
-// Internal short-range method selection, carrying the DMK_ESP_* bitmask from pdmk_esp_params
-// (see dmk.h) plus the two numeric tunables. Constructed by the C wrapper; not a public type.
-struct ShortRangeConfig {
-    unsigned flags = DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L | DMK_ESP_MORTON;
-    int bins = 2;  // octant-bin count per axis when DMK_ESP_MORTON is clear
-    int stile = 0; // source-tile width for DMK_ESP_PRUNE_TILE (0 -> SIMD width)
-
-    bool prune_tile() const { return flags & DMK_ESP_PRUNE_TILE; }
-    bool prune_source() const { return flags & DMK_ESP_PRUNE_SOURCE; }
-    bool n3l() const { return flags & DMK_ESP_N3L; }
-    bool morton() const { return flags & DMK_ESP_MORTON; }
-    bool spatial_sort() const { return flags & (DMK_ESP_PRUNE_TILE | DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L); }
-};
+// Short-range method predicates over pdmk_esp_params.esp_flags (DMK_ESP_* bits, see dmk.h). The
+// three strategies (source-pruning granularity, within-cell spatial sort, Newton's-third-law
+// reciprocal) are independent; esp_spatial_sort is true if any of them wants particles sorted
+// within their cell.
+inline bool esp_prune_tile(const pdmk_esp_params &params) { return params.esp_flags & DMK_ESP_PRUNE_TILE; }
+inline bool esp_prune_source(const pdmk_esp_params &params) { return params.esp_flags & DMK_ESP_PRUNE_SOURCE; }
+inline bool esp_n3l(const pdmk_esp_params &params) { return params.esp_flags & DMK_ESP_N3L; }
+inline bool esp_morton(const pdmk_esp_params &params) { return params.esp_flags & DMK_ESP_MORTON; }
+inline bool esp_spatial_sort(const pdmk_esp_params &params) {
+    return params.esp_flags & (DMK_ESP_PRUNE_TILE | DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L);
+}
 
 // force_x/y/z are empty spans if the plan was created with eval_type == DMK_POTENTIAL. For a
 // DIM=2 plan, force_z stays empty even when forces are requested (only force_x/force_y are
@@ -105,12 +103,10 @@ struct EspPlan {
     PSWFKernel pswf;
     ESPParams params_base;
     std::vector<double> scaling_coeffs;
-    dmk_eval_type eval_type; // baked in at creation; DMK_POTENTIAL skips all force computation
-    ShortRangeConfig sr_cfg; // short-range method selection, from the caller
-    std::vector<Real> buf;   // reused output workspace for eval()
+    pdmk_esp_params params; // eval_type + short-range tuning (esp_flags/esp_bins/esp_stile), from the caller
+    std::vector<Real> buf;  // reused output workspace for eval()
 
-    explicit EspPlan(Real L, Real r_c, Real eps, Real sigma, dmk_eval_type eval_type = DMK_POTENTIAL_GRAD,
-                     ShortRangeConfig cfg = {}, int n_dim = 3);
+    explicit EspPlan(const pdmk_esp_params &params, int n_dim = 3);
 
     PotForce<Real> eval(int n, const Real *r_src, const Real *charges);
 };
