@@ -1070,41 +1070,47 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
     // NU points <-> uniform grid, dispatched on both precision (finufft*/finufftf*) and dimension
     // (finufft3d*/finufft2d*, which differ in arity, not just template parameter).
     auto nufft1 = [&](std::complex<Real> *cj, std::complex<Real> *out) {
-        if constexpr (DIM == 3) {
-            if constexpr (std::is_same_v<Real, float>)
-                return finufftf3d1(n, coord[0].data(), coord[1].data(), coord[2].data(), cj, +1, tol, nf, nf, nf, out,
-                                   &opts);
-            else
-                return finufft3d1(n, coord[0].data(), coord[1].data(), coord[2].data(), cj, +1, tol, nf, nf, nf, out,
-                                  &opts);
-        } else {
-            if constexpr (std::is_same_v<Real, float>)
-                return finufftf2d1(n, coord[0].data(), coord[1].data(), cj, +1, tol, nf, nf, out, &opts);
-            else
-                return finufft2d1(n, coord[0].data(), coord[1].data(), cj, +1, tol, nf, nf, out, &opts);
-        }
+        int ier = [&]() {
+            if constexpr (DIM == 3) {
+                if constexpr (std::is_same_v<Real, float>)
+                    return finufftf3d1(n, coord[0].data(), coord[1].data(), coord[2].data(), cj, +1, tol, nf, nf, nf,
+                                       out, &opts);
+                else
+                    return finufft3d1(n, coord[0].data(), coord[1].data(), coord[2].data(), cj, +1, tol, nf, nf, nf,
+                                      out, &opts);
+            } else {
+                if constexpr (std::is_same_v<Real, float>)
+                    return finufftf2d1(n, coord[0].data(), coord[1].data(), cj, +1, tol, nf, nf, out, &opts);
+                else
+                    return finufft2d1(n, coord[0].data(), coord[1].data(), cj, +1, tol, nf, nf, out, &opts);
+            }
+        }();
+        if (ier > 1)
+            throw std::runtime_error("finufft NUFFT spread failed, ier=" + std::to_string(ier));
     };
     auto nufft2 = [&](std::complex<Real> *cj, const std::complex<Real> *grid) {
-        if constexpr (DIM == 3) {
-            if constexpr (std::is_same_v<Real, float>)
-                return finufftf3d2(n, coord[0].data(), coord[1].data(), coord[2].data(), cj, +1, tol, nf, nf, nf, grid,
-                                   &opts);
-            else
-                return finufft3d2(n, coord[0].data(), coord[1].data(), coord[2].data(), cj, +1, tol, nf, nf, nf, grid,
-                                  &opts);
-        } else {
-            if constexpr (std::is_same_v<Real, float>)
-                return finufftf2d2(n, coord[0].data(), coord[1].data(), cj, +1, tol, nf, nf, grid, &opts);
-            else
-                return finufft2d2(n, coord[0].data(), coord[1].data(), cj, +1, tol, nf, nf, grid, &opts);
-        }
+        int ier = [&]() {
+            if constexpr (DIM == 3) {
+                if constexpr (std::is_same_v<Real, float>)
+                    return finufftf3d2(n, coord[0].data(), coord[1].data(), coord[2].data(), cj, +1, tol, nf, nf, nf,
+                                       grid, &opts);
+                else
+                    return finufft3d2(n, coord[0].data(), coord[1].data(), coord[2].data(), cj, +1, tol, nf, nf, nf,
+                                      grid, &opts);
+            } else {
+                if constexpr (std::is_same_v<Real, float>)
+                    return finufftf2d2(n, coord[0].data(), coord[1].data(), cj, +1, tol, nf, nf, grid, &opts);
+                else
+                    return finufft2d2(n, coord[0].data(), coord[1].data(), cj, +1, tol, nf, nf, grid, &opts);
+            }
+        }();
+        if (ier > 1)
+            throw std::runtime_error("finufft NUFFT interp failed, ier=" + std::to_string(ier));
     };
 
     // 1. Spread: NU points -> uniform grid (type 1)
     std::vector<std::complex<Real>> b(ntot, Real(0));
-    int ier = nufft1(c.data(), b.data());
-    if (ier > 1)
-        throw std::runtime_error("finufft NUFFT spread failed, ier=" + std::to_string(ier));
+    nufft1(c.data(), b.data());
 
     // 2. Forward FFT (in place; b now holds the spectrum)
     fftn<Real, DIM>(b, b, nf);
@@ -1153,9 +1159,7 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
     std::vector<std::complex<Real>> out(n);
     auto ifft_interp = [&](std::vector<std::complex<Real>> &g) { // g -> real/imag fields in `out`
         ifftn<Real, DIM>(g, g, nf);                              // in place
-        ier = nufft2(out.data(), g.data());
-        if (ier > 1)
-            throw std::runtime_error("finufft NUFFT interp failed, ier=" + std::to_string(ier));
+        nufft2(out.data(), g.data());
     };
 
     if (!want_force) {
