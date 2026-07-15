@@ -22,8 +22,6 @@
 #include <stdexcept>
 #include <vector>
 
-using DGrid = std::vector<double>;
-
 // Row-major flattening of a DIM-dimensional grid multi-index (matches the historical
 // ix*n_f*n_f + iy*n_f + iz for DIM=3).
 template <int DIM>
@@ -234,7 +232,7 @@ static void sort_cell_bins(CellList<Real, DIM> &cl, int b, int len, const std::a
 }
 
 template <typename Real, int DIM>
-static CellList<Real, DIM> build_cell_list(const Real *r_src, const Real *charges, int n, int nc,
+inline CellList<Real, DIM> build_cell_list(const Real *r_src, const Real *charges, int n, int nc,
                                            const pdmk_esp_params &params, int min_sort_len = 2) {
     sctl::Profile::Scoped profile("build_cell_list");
     CellList<Real, DIM> cl;
@@ -306,7 +304,7 @@ static CellList<Real, DIM> build_cell_list(const Real *r_src, const Real *charge
                 sort_cell_bins<Real, DIM>(cl, b, len, lo, h, params.esp_bins, s);
         }
     }
-    return cl;
+    return std::move(cl);
 }
 
 // Shared read-only state handed to each short-range method. The four methods differ only in how
@@ -1010,7 +1008,7 @@ std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() const {
         L_pow_dim *= params.L;
     }
 
-    DGrid p(ntot, 0.0);
+    std::vector<double> p(ntot, 0.0);
     for (int lin = 0; lin < ntot; ++lin) {
         std::array<int, DIM> gidx;
         int rem = lin;
@@ -1051,15 +1049,14 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
 
     const Real scale = Real(2.0 * M_PI / params.L);
     std::array<std::vector<Real>, DIM> coord;
-    for (int d = 0; d < DIM; ++d) {
+    for (int d = 0; d < DIM; ++d)
         coord[d].resize(n);
-        for (int j = 0; j < n; ++j)
-            coord[d][j] = r_src[DIM * j + d] * scale;
-    }
-
     std::vector<std::complex<Real>> c(n);
-    for (int j = 0; j < n; j++)
+    for (int j = 0; j < n; ++j) {
+        for (int d = 0; d < DIM; ++d)
+            coord[d][j] = r_src[DIM * j + d] * scale;
         c[j] = {charges[j], Real(0)};
+    }
 
     finufft_opts opts;
     if constexpr (std::is_same_v<Real, float>)
@@ -1109,23 +1106,46 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
     if (ier > 1)
         throw std::runtime_error("finufft NUFFT spread failed, ier=" + std::to_string(ier));
 
-    // 2. Forward FFT
-    std::vector<std::complex<Real>> b_hat(ntot);
-    fftn<Real, DIM>(b, b_hat, nf);
+    // 2. Forward FFT (in place; b now holds the spectrum)
+    fftn<Real, DIM>(b, b, nf);
 
-    // 3. Diagonal scaling (precomputed in plan, narrowed from double to Real at point of use)
+    std::vector<int> k_idx(nf);
+    for (int i = 0; i < nf; ++i)
+        k_idx[i] = (i <= nf / 2) ? i : i - nf;
+
+    // 3. Diagonal scaling (scaling_coeffs precomputed in plan, narrowed from double to Real here),
+    // fused with the force-spectrum construction. ik method: F = -q*grad(u), and grad(u)_hat_k =
+    // i*k*u_hat_k, so the force spectrum is pot_hat multiplied by i*k component-wise.
+    const std::complex<Real> coeff_grad = std::complex<Real>(0, 1) * scale;
     std::vector<std::complex<Real>> pot_hat(ntot);
+    std::array<std::vector<std::complex<Real>>, DIM> f_hat;
+    if (want_force)
+        for (int d = 0; d < DIM; ++d)
+            f_hat[d].resize(ntot);
 #pragma omp parallel for
-    for (int idx = 0; idx < ntot; ++idx)
-        pot_hat[idx] = b_hat[idx] * Real(scaling_coeffs[idx]);
+    for (int idx = 0; idx < ntot; ++idx) {
+        pot_hat[idx] = b[idx] * Real(scaling_coeffs[idx]);
+        if (!want_force)
+            continue;
+        std::array<int, DIM> gidx;
+        int rem = idx;
+        for (int d = DIM - 1; d >= 0; --d) {
+            gidx[d] = rem % nf;
+            rem /= nf;
+        }
+        // DMK's grid_idx (row-major, axis DIM-1 fastest) and FINUFFT's internal grid storage
+        // (column-major, axis 0 fastest) disagree on which loop variable is which physical axis;
+        // force axis a corresponds to DMK grid axis (DIM-1-a).
+        for (int a = 0; a < DIM; ++a)
+            f_hat[a][idx] = pot_hat[idx] * coeff_grad * Real(k_idx[gidx[DIM - 1 - a]]);
+    }
 
-    // 4. Inverse FFT
-    std::vector<std::complex<Real>> grid_pot(ntot);
-    ifftn<Real, DIM>(pot_hat, grid_pot, nf);
+    // 4. Inverse FFT (in place; pot_hat now holds the grid potential)
+    ifftn<Real, DIM>(pot_hat, pot_hat, nf);
 
     // 5. Interpolate: uniform grid -> NU points (type 2)
     std::vector<std::complex<Real>> pot_c(n);
-    ier = nufft2(pot_c.data(), grid_pot.data());
+    ier = nufft2(pot_c.data(), pot_hat.data());
     if (ier > 1)
         throw std::runtime_error("finufft NUFFT interp failed, ier=" + std::to_string(ier));
 
@@ -1135,37 +1155,11 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
     if (!want_force)
         return;
 
-    std::vector<int> k_idx(nf);
-    for (int i = 0; i < nf; ++i)
-        k_idx[i] = (i <= nf / 2) ? i : i - nf;
-
-    // ik method: F = -q*grad(u), and grad(u)_hat_k = i*k*u_hat_k, so the force spectrum is
-    // obtained from the potential spectrum (pot_hat) by multiplying by -i*k component-wise.
-    const std::complex<Real> coeff_grad = std::complex<Real>(0, 1) * Real(2.0 * M_PI / params.L);
-    std::array<std::vector<std::complex<Real>>, DIM> f_hat;
-    for (int d = 0; d < DIM; ++d)
-        f_hat[d].resize(ntot);
-#pragma omp parallel for
-    for (int lin = 0; lin < ntot; ++lin) {
-        std::array<int, DIM> gidx;
-        int rem = lin;
-        for (int d = DIM - 1; d >= 0; --d) {
-            gidx[d] = rem % nf;
-            rem /= nf;
-        }
-        // DMK's grid_idx (row-major, axis DIM-1 fastest) and FINUFFT's internal grid storage
-        // (column-major, axis 0 fastest) disagree on which loop variable is which physical axis;
-        // force axis a corresponds to DMK grid axis (DIM-1-a).
-        for (int a = 0; a < DIM; ++a)
-            f_hat[a][lin] = pot_hat[lin] * coeff_grad * Real(k_idx[gidx[DIM - 1 - a]]);
-    }
-
-    std::array<std::vector<std::complex<Real>>, DIM> grid_force, force_c;
+    std::array<std::vector<std::complex<Real>>, DIM> force_c;
     for (int d = 0; d < DIM; ++d) {
-        grid_force[d].resize(ntot);
-        ifftn<Real, DIM>(f_hat[d], grid_force[d], nf);
+        ifftn<Real, DIM>(f_hat[d], f_hat[d], nf); // in place; f_hat[d] now holds the grid force
         force_c[d].resize(n);
-        ier = nufft2(force_c[d].data(), grid_force[d].data());
+        ier = nufft2(force_c[d].data(), f_hat[d].data());
         if (ier > 1)
             throw std::runtime_error("finufft NUFFT interp failed, ier=" + std::to_string(ier));
     }
