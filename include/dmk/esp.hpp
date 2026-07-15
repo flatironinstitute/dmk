@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <span>
 #include <vector>
 
@@ -89,6 +90,13 @@ struct EspPlan {
     residual_evaluator_func<Real> evaluator;
     residual_evaluator_range_func<Real> range_evaluator;
     std::vector<Real> buf;
+
+    // long_range scratch, reused across eval calls: the n-sized buffers grow to the largest n seen,
+    // the ntot-sized ones are fixed by nf/n_dim. Sized max dim (3) since EspPlan isn't DIM-templated.
+    std::array<std::vector<Real>, 3> lr_coord;               // n-sized NU coordinates per axis
+    std::vector<std::complex<Real>> lr_c, lr_out;            // n-sized charges / interp output
+    std::vector<std::complex<Real>> lr_b, lr_pot_hat;        // ntot-sized grids
+    std::array<std::vector<std::complex<Real>>, 3> lr_f_hat; // ntot-sized force spectra
 
     explicit EspPlan(const pdmk_esp_params &params, int n_dim = 3);
 

@@ -1048,10 +1048,12 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
         ntot *= nf;
 
     const Real scale = Real(2.0 * M_PI / params.L);
-    std::array<std::vector<Real>, DIM> coord;
+    auto &coord = lr_coord;
+    auto &c = lr_c;
     for (int d = 0; d < DIM; ++d)
         coord[d].resize(n);
-    std::vector<std::complex<Real>> c(n);
+    c.resize(n);
+#pragma omp parallel for
     for (int j = 0; j < n; ++j) {
         for (int d = 0; d < DIM; ++d)
             coord[d][j] = r_src[DIM * j + d] * scale;
@@ -1108,8 +1110,10 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
             throw std::runtime_error("finufft NUFFT interp failed, ier=" + std::to_string(ier));
     };
 
-    // 1. Spread: NU points -> uniform grid (type 1)
-    std::vector<std::complex<Real>> b(ntot, Real(0));
+    // 1. Spread: NU points -> uniform grid (type 1). b is zeroed since spreading only writes grid
+    // points near NU sources while the forward FFT below reads all ntot entries.
+    auto &b = lr_b;
+    b.assign(ntot, std::complex<Real>(0));
     nufft1(c.data(), b.data());
 
     // 2. Forward FFT (in place; b now holds the spectrum)
@@ -1123,8 +1127,9 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
     // fused with the force-spectrum construction. ik method: F = -q*grad(u), and grad(u)_hat_k =
     // i*k*u_hat_k, so f_hat = i*k*pot_hat -- a complex-by-imaginary product, done as a real swap+scale
     // rather than a full std::complex multiply.
-    std::vector<std::complex<Real>> pot_hat(ntot);
-    std::array<std::vector<std::complex<Real>>, DIM> f_hat;
+    auto &pot_hat = lr_pot_hat;
+    auto &f_hat = lr_f_hat;
+    pot_hat.resize(ntot);
     if (want_force)
         for (int d = 0; d < DIM; ++d)
             f_hat[d].resize(ntot);
@@ -1156,7 +1161,8 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
     // because spreadinterponly interpolation is a real-kernel gather it stays separated: the
     // interpolated coefficient's real part is fieldA at the target and its imaginary part is fieldB. So
     // one complex iFFT + one complex interp delivers two real fields, halving both on the force path.
-    std::vector<std::complex<Real>> out(n);
+    auto &out = lr_out;
+    out.resize(n);
     auto ifft_interp = [&](std::vector<std::complex<Real>> &g) { // g -> real/imag fields in `out`
         ifftn<Real, DIM>(g, g, nf);                              // in place
         nufft2(out.data(), g.data());
@@ -1164,15 +1170,18 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
 
     if (!want_force) {
         ifft_interp(pot_hat);
+#pragma omp parallel for
         for (int j = 0; j < n; ++j)
             pot[j] += out[j].real();
         return;
     }
 
     // Potential (real channel) packed with the first force component (imaginary channel).
+#pragma omp parallel for
     for (int idx = 0; idx < ntot; ++idx) // A + i*B = {A.re - B.im, A.im + B.re}
         pot_hat[idx] = {pot_hat[idx].real() - f_hat[0][idx].imag(), pot_hat[idx].imag() + f_hat[0][idx].real()};
     ifft_interp(pot_hat);
+#pragma omp parallel for
     for (int j = 0; j < n; ++j) {
         pot[j] += out[j].real();
         force[0][j] += -charges[j] * out[j].imag();
@@ -1183,10 +1192,12 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
     for (int d = 1; d < DIM; d += 2) {
         const bool paired = (d + 1 < DIM);
         if (paired)
+#pragma omp parallel for
             for (int idx = 0; idx < ntot; ++idx)
                 f_hat[d][idx] = {f_hat[d][idx].real() - f_hat[d + 1][idx].imag(),
                                  f_hat[d][idx].imag() + f_hat[d + 1][idx].real()};
         ifft_interp(f_hat[d]);
+#pragma omp parallel for
         for (int j = 0; j < n; ++j) {
             force[d][j] += -charges[j] * out[j].real();
             if (paired)
