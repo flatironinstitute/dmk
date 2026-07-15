@@ -2,6 +2,7 @@
 
 #include <dmk.h>
 #include <dmk/prolate0_fun.hpp>
+#include <dmk/types.hpp>
 
 #include <algorithm>
 #include <array>
@@ -76,39 +77,32 @@ struct PSWFKernel {
     }
 };
 
-// Per-plan geometry derived from (L, r_c, sigma, P): oversampled grid size/spacing plus the PSWF
-// constants copied out of `pswf` for convenient access. Always double-precision, same rationale as
-// PSWFKernel.
-struct ESPParams {
-    double L, r_c, sigma;
-    int P, n_f;
-    double h, lambda0, c, c0;
-    int n;
-
-    ESPParams() = default;
-    ESPParams(double L_, double r_c_, double sigma_, int P_, const PSWFKernel &pswf, int n_)
-        : L(L_), r_c(r_c_), sigma(sigma_), P(P_), n(n_) {
-        n_f = static_cast<int>(std::ceil(pswf.c * L / (M_PI * r_c)));
-        h = L / n_f;
-        lambda0 = pswf.lambda0;
-        c = pswf.c;
-        c0 = pswf.c0;
-    }
-};
-
 template <typename Real>
 struct EspPlan {
     int n_digits;
     int n_dim;
+    int P, n_f; // spread width and oversampled grid size per axis
+    double h;   // oversampled grid spacing L/n_f
     PSWFKernel pswf;
-    ESPParams params_base;
     std::vector<double> scaling_coeffs;
-    pdmk_esp_params params; // eval_type + short-range tuning (esp_flags/esp_bins/esp_stile), from the caller
-    std::vector<Real> buf;  // reused output workspace for eval()
+    pdmk_esp_params params;
+    residual_evaluator_func<Real> evaluator;
+    residual_evaluator_range_func<Real> range_evaluator;
+    std::vector<Real> buf;
 
     explicit EspPlan(const pdmk_esp_params &params, int n_dim = 3);
 
     PotForce<Real> eval(int n, const Real *r_src, const Real *charges);
+
+    template <int DIM>
+    std::vector<double> precompute_scaling_coefficients() const;
+    template <int DIM>
+    void short_range(int n, const Real *r_src, const Real *charges, std::span<Real> pot,
+                     std::array<std::span<Real>, DIM> force);
+    template <int DIM>
+    void long_range(int n, const Real *r_src, const Real *charges, std::span<Real> pot,
+                    std::array<std::span<Real>, DIM> force);
+    void self_interaction(int n, const Real *charges, std::span<Real> pot);
 };
 
 } // namespace dmk

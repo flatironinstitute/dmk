@@ -234,15 +234,14 @@ static void sort_cell_bins(CellList<Real, DIM> &cl, int b, int len, const std::a
 }
 
 template <typename Real, int DIM>
-static CellList<Real, DIM> build_cell_list(const Real *r_src, const Real *charges, const ESPParams &params, int nc,
-                                           const pdmk_esp_params &cfg, int min_sort_len = 2) {
+static CellList<Real, DIM> build_cell_list(const Real *r_src, const Real *charges, int n, int nc,
+                                           const pdmk_esp_params &params, int min_sort_len = 2) {
     sctl::Profile::Scoped profile("build_cell_list");
     CellList<Real, DIM> cl;
     cl.n_cells = nc;
     int ncells = 1;
     for (int d = 0; d < DIM; ++d)
         ncells *= nc;
-    const int n = params.n;
     const Real L_r = Real(params.L);
 
     auto cell_of = [&](const Real *r) {
@@ -282,11 +281,11 @@ static CellList<Real, DIM> build_cell_list(const Real *r_src, const Real *charge
     // tiles, enabling the geometric source pruning in short_range. esp_morton() picks the z-order
     // sort; otherwise the cheaper bins^DIM counting sort. Both keep the tile count fixed and only
     // tighten each tile's extent.
-    if (esp_spatial_sort(cfg)) {
+    if (esp_spatial_sort(params)) {
         sctl::Profile::Scoped sort("spatial_sort");
         const Real h = L_r / Real(nc);
         const Real half_L = L_r / Real(2);
-        const bool morton_sort = esp_morton(cfg);
+        const bool morton_sort = esp_morton(params);
         SortScratch<Real, DIM> s;
         for (int c = 0; c < ncells; ++c) {
             const int b = cl.cell_start[c], e = cl.cell_start[c + 1], len = e - b;
@@ -304,7 +303,7 @@ static CellList<Real, DIM> build_cell_list(const Real *r_src, const Real *charge
             if (morton_sort)
                 sort_cell_morton<Real, DIM>(cl, b, len, lo, h, s);
             else
-                sort_cell_bins<Real, DIM>(cl, b, len, lo, h, cfg.esp_bins, s);
+                sort_cell_bins<Real, DIM>(cl, b, len, lo, h, params.esp_bins, s);
         }
     }
     return cl;
@@ -888,10 +887,13 @@ static void short_range_n3l(const SRCtx<Real, DIM> &ctx) {
 // force[d] is the d-th force-component output span (fx, fy, ... for d in [0,DIM)); unused (may be
 // empty) when eval_type == DMK_POTENTIAL. Chosen over separate fx/fy/fz parameters so this driver
 // and its four strategies stay DIM-generic; esp_eval builds this array from PotForce's spans.
-template <typename Real, int DIM>
-static void short_range(const Real *r_src, const Real *charges, const ESPParams &params, int n_digits,
-                        const PSWFKernel &pswf, dmk_eval_type eval_type, const pdmk_esp_params &cfg,
-                        std::span<Real> pot, std::array<std::span<Real>, DIM> force) {
+template <typename Real>
+template <int DIM>
+void EspPlan<Real>::short_range(int n, const Real *r_src, const Real *charges, std::span<Real> pot,
+                                std::array<std::span<Real>, DIM> force) {
+    if constexpr (DIM != 3)
+        throw std::runtime_error("ESP short-range for DIM=2 is not implemented");
+
     sctl::Profile::Scoped short_range("short_range");
     // pow(3,DIM)-cell stencil requires nc >= 3 so periodic images aren't double-counted
     int nc = static_cast<int>(std::floor(params.L / params.r_c));
@@ -899,35 +901,17 @@ static void short_range(const Real *r_src, const Real *charges, const ESPParams 
         throw std::runtime_error("short_range_fast requires r_c <= L/3 (nc >= 3)");
     // Stride-3 periodic colouring is conflict-free only if each axis length is divisible by the
     // stride; round nc down to a multiple of 3 (cells grow slightly, still >= r_c, still >= 3).
-    if (esp_n3l(cfg))
+    if (esp_n3l(params))
         nc -= nc % 3;
 
     constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
 
-    CellList<Real, DIM> cl = build_cell_list<Real, DIM>(r_src, charges, params, nc, cfg, MaxVecLen);
+    CellList<Real, DIM> cl = build_cell_list<Real, DIM>(r_src, charges, n, nc, params, MaxVecLen);
 
     const Real L = Real(params.L);
     const Real r_c_sq = Real(params.r_c) * Real(params.r_c);
-    const int n = params.n;
-    const bool want_force = (eval_type >= DMK_POTENTIAL_GRAD);
+    const bool want_force = (params.eval_type >= DMK_POTENTIAL_GRAD);
     const int out_dim = want_force ? 1 + DIM : 1;
-
-    // Only DIM=3 has a short-range PSWF local-correction kernel today.
-    residual_evaluator_func<Real> evaluator;
-    residual_evaluator_range_func<Real> range_evaluator;
-    if constexpr (DIM == 3) {
-        evaluator = get_esp_3d_kernel<Real, MaxVecLen>(eval_type, n_digits);
-        range_evaluator = get_esp_3d_kernel_ranges<Real, MaxVecLen>(eval_type, n_digits);
-#ifdef DMK_USE_JIT
-        if (!util::env_is_set("DMK_DEBUG_FORCE_AOT"))
-            evaluator = make_esp_evaluator_jit<Real>(eval_type, n_digits, params.sigma, 3);
-#endif
-    } else {
-        throw std::runtime_error(
-            "ESP short-range for DIM=2 is not implemented: no 2D PSWF local-correction kernel exists yet "
-            "(get_esp_3d_kernel/get_esp_correction_coeffs are 3D-only; see generate_aot_kernels.cpp). Needs "
-            "new near-field-correction derivation + codegen.");
-    }
 
     const Real rsc = Real(2.0 / params.r_c);
     const Real cen = Real(-params.r_c / 2.0);
@@ -967,15 +951,15 @@ static void short_range(const Real *r_src, const Real *charges, const ESPParams 
                                cen,
                                nc,
                                out_dim,
-                               cfg.esp_stile > 0 ? cfg.esp_stile : MaxVecLen,
+                               params.esp_stile > 0 ? params.esp_stile : MaxVecLen,
                                pg_sorted.data()};
 
     // Each method enumerates source/target pairs its own way; they all accumulate into pg_sorted.
-    if (esp_n3l(cfg))
+    if (esp_n3l(params))
         short_range_n3l<Real, DIM, MaxVecLen>(ctx);
-    else if (esp_prune_source(cfg))
+    else if (esp_prune_source(params))
         short_range_prune_source<Real, DIM, MaxVecLen>(ctx);
-    else if (esp_prune_tile(cfg))
+    else if (esp_prune_tile(params))
         short_range_prune_tile<Real, DIM, MaxVecLen>(ctx);
     else
         short_range_dense<Real, DIM, MaxVecLen>(ctx);
@@ -992,20 +976,21 @@ static void short_range(const Real *r_src, const Real *charges, const ESPParams 
 }
 
 template <int DIM>
-static inline double S_hat(const PSWFKernel &pswf, const ESPParams &params, const std::array<double, DIM> &k_vec) {
+static inline double S_hat(const PSWFKernel &pswf, double r_c, const std::array<double, DIM> &k_vec) {
     double k_mag_sq = 0.0;
     for (int d = 0; d < DIM; ++d)
         k_mag_sq += k_vec[d] * k_vec[d];
     const double k_mag = std::sqrt(k_mag_sq);
-    return pswf.pswf_hat(k_mag * params.r_c) / (2.0 * k_mag * k_mag) / params.c0;
+    return pswf.pswf_hat(k_mag * r_c) / (2.0 * k_mag * k_mag) / pswf.c0;
 }
 
 // The far-field split's 1/k^2 structure (Fourier transform of the Laplacian Green's function) is
 // dimension-independent by construction, so this generalizes mechanically to DIM=2 -- no new
 // physics needed here (unlike short_range's near-field correction).
+template <typename Real>
 template <int DIM>
-static DGrid precompute_scaling_coefficients(const PSWFKernel &pswf, const ESPParams &params) {
-    const int nf = params.n_f;
+std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() const {
+    const int nf = n_f;
     std::vector<int> k_idx(nf);
     for (int i = 0; i < nf; ++i)
         k_idx[i] = (i <= nf / 2) ? i : i - nf;
@@ -1014,8 +999,8 @@ static DGrid precompute_scaling_coefficients(const PSWFKernel &pswf, const ESPPa
     std::vector<double> phi_hat_1d(nf);
     for (int i = 0; i < nf; ++i) {
         double k_vec = 2.0 * M_PI * k_idx[i] / params.L;
-        double arg = k_vec * (params.P * params.h) / 2.0;
-        phi_hat_1d[i] = (params.P * params.h / 2.0) * pswf.pswf_hat(arg);
+        double arg = k_vec * (P * h) / 2.0;
+        phi_hat_1d[i] = (P * h / 2.0) * pswf.pswf_hat(arg);
     }
 
     int ntot = 1;
@@ -1044,7 +1029,7 @@ static DGrid precompute_scaling_coefficients(const PSWFKernel &pswf, const ESPPa
         if (all_zero)
             continue;
 
-        const double s = S_hat<DIM>(pswf, params, k_vec);
+        const double s = S_hat<DIM>(pswf, params.r_c, k_vec);
         p[grid_idx<DIM>(gidx, nf)] = s / (L_pow_dim * ph * ph * static_cast<double>(ntot));
     }
     return p;
@@ -1053,14 +1038,13 @@ static DGrid precompute_scaling_coefficients(const PSWFKernel &pswf, const ESPPa
 // Long-range contribution via FINUFFT spreading/interpolation. DIM=3 is exercised by every existing
 // test/caller; DIM=2 is unverified scaffolding -- short_range throws for DIM=2 before esp_eval ever
 // reaches this function, so the DIM=2 branch below has never actually run.
-template <typename Real, int DIM>
-static void long_range(const Real *r_src, const Real *charges, const PSWFKernel &pswf, const ESPParams &params,
-                       const DGrid &scaling_coeffs, dmk_eval_type eval_type, std::span<Real> pot,
-                       std::array<std::span<Real>, DIM> force) {
+template <typename Real>
+template <int DIM>
+void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, std::span<Real> pot,
+                               std::array<std::span<Real>, DIM> force) {
     sctl::Profile::Scoped long_range("long_range");
-    const bool want_force = (eval_type >= DMK_POTENTIAL_GRAD);
-    const int n = params.n;
-    const int nf = params.n_f;
+    const bool want_force = (params.eval_type >= DMK_POTENTIAL_GRAD);
+    const int nf = n_f;
     int ntot = 1;
     for (int d = 0; d < DIM; ++d)
         ntot *= nf;
@@ -1195,10 +1179,9 @@ static void long_range(const Real *r_src, const Real *charges, const PSWFKernel 
 // formula (bakes in the 4*pi solid-angle constant); not templated on DIM. Never reached for DIM=2
 // today since short_range throws first (see short_range's kernel-dispatch site).
 template <typename Real>
-static void self_interaction(const Real *charges, const PSWFKernel &pswf, const ESPParams &params,
-                             std::span<Real> pot) {
-    Real factor = Real(pswf(0.0) / (params.r_c * 4.0 * M_PI * params.c0));
-    for (int i = 0; i < params.n; ++i)
+void EspPlan<Real>::self_interaction(int n, const Real *charges, std::span<Real> pot) {
+    Real factor = Real(pswf(0.0) / (params.r_c * 4.0 * M_PI * pswf.c0));
+    for (int i = 0; i < n; ++i)
         pot[i] -= charges[i] * factor;
 }
 
@@ -1206,19 +1189,28 @@ template <typename Real>
 EspPlan<Real>::EspPlan(const pdmk_esp_params &params_, int n_dim_)
     : n_digits(esp_digits_from_eps(params_.eps)), n_dim(n_dim_), params(params_) {
     const Real eps_d = std::pow(10.0, -Real(n_digits));
-    const Real sigma = Real(params_.sigma);
-    const int P = esp_P_from_eps(eps_d, sigma, n_dim);
-    const Real c = esp_pswf_c_from_P(sigma, P);
+    const double sigma = params.sigma;
+    P = esp_P_from_eps(eps_d, sigma, n_dim);
+    const double c = esp_pswf_c_from_P(sigma, P);
     pswf = PSWFKernel(eps_d, c);
-    params_base = ESPParams(Real(params_.L), Real(params_.r_c), sigma, P, pswf, 0);
-    scaling_coeffs = n_dim == 2 ? precompute_scaling_coefficients<2>(pswf, params_base)
-                                : precompute_scaling_coefficients<3>(pswf, params_base);
+    n_f = static_cast<int>(std::ceil(pswf.c * params.L / (M_PI * params.r_c)));
+    h = params.L / n_f;
+    scaling_coeffs = n_dim == 2 ? precompute_scaling_coefficients<2>() : precompute_scaling_coefficients<3>();
+
+    if (n_dim == 3) {
+        constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
+        evaluator = get_esp_3d_kernel<Real, MaxVecLen>(params.eval_type, n_digits);
+        range_evaluator = get_esp_3d_kernel_ranges<Real, MaxVecLen>(params.eval_type, n_digits);
+#ifdef DMK_USE_JIT
+        if (!util::env_is_set("DMK_DEBUG_FORCE_AOT"))
+            evaluator = make_esp_evaluator_jit<Real>(params.eval_type, n_digits, sigma, 3);
+#endif
+    }
 }
 
 template <typename Real>
 PotForce<Real> EspPlan<Real>::eval(int n, const Real *r_src, const Real *charges) {
     sctl::Profile::Scoped esp_eval("esp_eval");
-    params_base.n = n;
     const bool want_force = (params.eval_type >= DMK_POTENTIAL_GRAD);
     const int slots = want_force ? 1 + n_dim : 1;
 
@@ -1238,14 +1230,14 @@ PotForce<Real> EspPlan<Real>::eval(int n, const Real *r_src, const Real *charges
     // exercised for DIM=2).
     if (n_dim == 3) {
         std::array<std::span<Real>, 3> force{fx_sp, fy_sp, fz_sp};
-        short_range<Real, 3>(r_src, charges, params_base, n_digits, pswf, params.eval_type, params, pot_sp, force);
-        long_range<Real, 3>(r_src, charges, pswf, params_base, scaling_coeffs, params.eval_type, pot_sp, force);
-        self_interaction<Real>(charges, pswf, params_base, pot_sp);
+        short_range<3>(n, r_src, charges, pot_sp, force);
+        long_range<3>(n, r_src, charges, pot_sp, force);
+        self_interaction(n, charges, pot_sp);
     } else if (n_dim == 2) {
         std::array<std::span<Real>, 2> force{fx_sp, fy_sp};
-        short_range<Real, 2>(r_src, charges, params_base, n_digits, pswf, params.eval_type, params, pot_sp, force);
-        long_range<Real, 2>(r_src, charges, pswf, params_base, scaling_coeffs, params.eval_type, pot_sp, force);
-        self_interaction<Real>(charges, pswf, params_base, pot_sp);
+        short_range<2>(n, r_src, charges, pot_sp, force);
+        long_range<2>(n, r_src, charges, pot_sp, force);
+        self_interaction(n, charges, pot_sp);
     } else {
         throw std::runtime_error("ESP: unsupported n_dim=" + std::to_string(n_dim));
     }
