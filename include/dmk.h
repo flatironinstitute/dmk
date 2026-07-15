@@ -115,6 +115,7 @@ typedef struct pdmk_esp_params {
     double eps;    // target precision
     int log_level; // 0: trace … 6: off (matches dmk_log_level)
     dmk_eval_type eval_type = DMK_POTENTIAL;
+    double sigma = 1.35; // FINUFFT upsampling factor for the long-range PSWF kernel
     // Short-range tuning; defaults are the fastest known combination.
     uint32_t esp_flags = DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L | DMK_ESP_MORTON; // DMK_ESP_* method bitmask
     int esp_bins = 2;  // octant-bin count per axis when DMK_ESP_MORTON is clear
@@ -131,6 +132,9 @@ pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator comm, pdmk_esp_params param
 
 // Evaluate potentials for n particles using a pre-built plan.
 // Can be called repeatedly with different r_src / charges for the same geometry.
+// If the plan's eval_type is DMK_POTENTIAL, pot_src must hold n values (potential only).
+// If the plan's eval_type is DMK_POTENTIAL_GRAD, pot_src must hold n*4 values, interleaved
+// per particle as [pot, fx, fy, fz] (same convention as pdmk_tree_eval's [pot, dx, dy, dz]).
 void pdmk_esp_eval(dmk_communicator comm, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
                    double *pot_src);
 void pdmk_esp_evalf(dmk_communicator comm, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,

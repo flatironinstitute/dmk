@@ -10,8 +10,8 @@
 
 namespace dmk {
 
-template <typename Real>
-using Vec3T = std::array<Real, 3>;
+template <typename Real, int DIM = 3>
+using Vec3T = std::array<Real, DIM>;
 using Vec3 = Vec3T<double>;
 
 // Formula matches FINUFFT v2.5 kerformula=8 (PSWF):
@@ -46,17 +46,24 @@ struct ShortRangeConfig {
 
 struct EspPlan;
 
+// n_dim selects the templated implementation used internally (DIM=2 or 3). Only DIM=3 has a
+// working short-range PSWF correction kernel today (see get_esp_3d_kernel); DIM=2 compiles but
+// esp_eval throws at the short-range kernel-dispatch site until that kernel is derived.
 EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type = DMK_POTENTIAL_GRAD,
-                         ShortRangeConfig cfg = {});
+                         ShortRangeConfig cfg = {}, int n_dim = 3);
 void esp_destroy_plan(EspPlan *plan);
 
-// force_x/y/z are empty spans if the plan was created with eval_type == DMK_POTENTIAL.
+// force_x/y/z are empty spans if the plan was created with eval_type == DMK_POTENTIAL. For a
+// DIM=2 plan, force_z stays empty even when forces are requested (only force_x/force_y are
+// populated) -- callers can distinguish DIM by checking force_z.empty().
 template <typename Real>
 struct PotForce {
     std::span<Real> pot, force_x, force_y, force_z;
 };
 
+// r_src is a flat array of n*n_dim coordinates (n_dim taken from the plan), interleaved
+// [x0,y0,(z0),x1,y1,(z1),...] -- the same layout the public C API receives from callers.
 template <typename Real>
-PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges);
+PotForce<Real> esp_eval(EspPlan *plan, int n, const Real *r_src, const Real *charges);
 
 } // namespace dmk

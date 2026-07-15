@@ -943,6 +943,30 @@ inline void pdmk_tree_update_charges(pdmk_tree tree, const Real *charge, const R
         *static_cast<pdmk_tree_impl *>(tree));
 }
 
+#ifdef DMK_BUILD_ESP
+// Writes pot_src interleaved [pot, fx, fy, fz] per particle (matching pdmk_tree_eval's
+// [pot, dx, dy, dz] convention) when the plan's eval_type requests forces; else just pot.
+// (A template can't have C language linkage, so this lives here rather than in the
+// extern "C" block below, which only holds the non-template pdmk_esp_eval/evalf wrappers.)
+template <typename Real>
+inline void esp_eval_and_copy(void *plan, int n, const Real *r_src, const Real *charges, Real *pot_src) {
+    auto result = dmk::esp_eval<Real>(static_cast<dmk::EspPlan *>(plan), n, r_src, charges);
+    if (result.force_x.empty()) {
+        std::copy(result.pot.begin(), result.pot.end(), pot_src);
+        return;
+    }
+    const int dim = result.force_z.empty() ? 2 : 3; // scaffolding for a future DIM=2 plan
+    const int out_dim = 1 + dim;
+    for (int i = 0; i < n; ++i) {
+        pot_src[i * out_dim + 0] = result.pot[i];
+        pot_src[i * out_dim + 1] = result.force_x[i];
+        pot_src[i * out_dim + 2] = result.force_y[i];
+        if (dim == 3)
+            pot_src[i * out_dim + 3] = result.force_z[i];
+    }
+}
+#endif // DMK_BUILD_ESP
+
 } // namespace dmk
 
 extern "C" {
@@ -1081,9 +1105,9 @@ dmk_error pdmk(dmk_communicator comm, pdmk_params params, int n_src, const doubl
 
 #ifdef DMK_BUILD_ESP
 pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator /*comm*/, pdmk_esp_params params) {
-    // FIXME: add sigma to params
     dmk::ShortRangeConfig sr{params.esp_flags, params.esp_bins, params.esp_stile};
-    return static_cast<void *>(dmk::esp_create_plan(params.L, params.r_c, params.eps, 1.35, params.eval_type, sr));
+    return static_cast<void *>(
+        dmk::esp_create_plan(params.L, params.r_c, params.eps, params.sigma, params.eval_type, sr));
 }
 
 pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator comm, pdmk_esp_params params) {
@@ -1092,22 +1116,12 @@ pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator comm, pdmk_esp_params param
 
 void pdmk_esp_eval(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
                    double *pot_src) {
-    std::vector<dmk::Vec3T<double>> r(n);
-    for (int i = 0; i < n; ++i)
-        r[i] = {r_src[3 * i], r_src[3 * i + 1], r_src[3 * i + 2]};
-    std::vector<double> q(charges, charges + n);
-    auto result = dmk::esp_eval<double>(static_cast<dmk::EspPlan *>(plan), r, q);
-    std::copy(result.pot.begin(), result.pot.end(), pot_src);
+    dmk::esp_eval_and_copy<double>(plan, n, r_src, charges, pot_src);
 }
 
 void pdmk_esp_evalf(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,
                     float *pot_src) {
-    std::vector<dmk::Vec3T<float>> r(n);
-    for (int i = 0; i < n; ++i)
-        r[i] = {r_src[3 * i], r_src[3 * i + 1], r_src[3 * i + 2]};
-    std::vector<float> q(charges, charges + n);
-    auto result = dmk::esp_eval<float>(static_cast<dmk::EspPlan *>(plan), r, q);
-    std::copy(result.pot.begin(), result.pot.end(), pot_src);
+    dmk::esp_eval_and_copy<float>(plan, n, r_src, charges, pot_src);
 }
 
 void pdmk_esp_plan_destroy(pdmk_esp_plan plan) { dmk::esp_destroy_plan(static_cast<dmk::EspPlan *>(plan)); }
