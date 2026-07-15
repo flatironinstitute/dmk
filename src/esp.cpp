@@ -1115,8 +1115,8 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
 
     // 3. Diagonal scaling (scaling_coeffs precomputed in plan, narrowed from double to Real here),
     // fused with the force-spectrum construction. ik method: F = -q*grad(u), and grad(u)_hat_k =
-    // i*k*u_hat_k, so the force spectrum is pot_hat multiplied by i*k component-wise.
-    const std::complex<Real> coeff_grad = std::complex<Real>(0, 1) * scale;
+    // i*k*u_hat_k, so f_hat = i*k*pot_hat -- a complex-by-imaginary product, done as a real swap+scale
+    // rather than a full std::complex multiply.
     std::vector<std::complex<Real>> pot_hat(ntot);
     std::array<std::vector<std::complex<Real>>, DIM> f_hat;
     if (want_force)
@@ -1124,7 +1124,8 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
             f_hat[d].resize(ntot);
 #pragma omp parallel for
     for (int idx = 0; idx < ntot; ++idx) {
-        pot_hat[idx] = b[idx] * Real(scaling_coeffs[idx]);
+        const std::complex<Real> ph = b[idx] * Real(scaling_coeffs[idx]);
+        pot_hat[idx] = ph;
         if (!want_force)
             continue;
         std::array<int, DIM> gidx;
@@ -1136,37 +1137,58 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
         // DMK's grid_idx (row-major, axis DIM-1 fastest) and FINUFFT's internal grid storage
         // (column-major, axis 0 fastest) disagree on which loop variable is which physical axis;
         // force axis a corresponds to DMK grid axis (DIM-1-a).
-        for (int a = 0; a < DIM; ++a)
-            f_hat[a][idx] = pot_hat[idx] * coeff_grad * Real(k_idx[gidx[DIM - 1 - a]]);
+        for (int a = 0; a < DIM; ++a) {
+            const Real km = scale * Real(k_idx[gidx[DIM - 1 - a]]);
+            f_hat[a][idx] = std::complex<Real>(-ph.imag() * km, ph.real() * km); // i*km*ph
+        }
     }
 
-    // 4. Inverse FFT (in place; pot_hat now holds the grid potential)
-    ifftn<Real, DIM>(pot_hat, pot_hat, nf);
-
-    // 5. Interpolate: uniform grid -> NU points (type 2)
-    std::vector<std::complex<Real>> pot_c(n);
-    ier = nufft2(pot_c.data(), pot_hat.data());
-    if (ier > 1)
-        throw std::runtime_error("finufft NUFFT interp failed, ier=" + std::to_string(ier));
-
-    for (int j = 0; j < n; j++)
-        pot[j] += pot_c[j].real();
-
-    if (!want_force)
-        return;
-
-    std::array<std::vector<std::complex<Real>>, DIM> force_c;
-    for (int d = 0; d < DIM; ++d) {
-        ifftn<Real, DIM>(f_hat[d], f_hat[d], nf); // in place; f_hat[d] now holds the grid force
-        force_c[d].resize(n);
-        ier = nufft2(force_c[d].data(), f_hat[d].data());
+    // 4-5. Inverse FFT + interpolate. Every output field (the potential and each force component) is a
+    // Hermitian spectrum whose inverse transform is a real grid, so we can carry two real fields in one
+    // complex transform: pack field A into the real channel and field B into the imaginary channel as
+    // A + i*B. For Hermitian A, B this gives ifft(A + i*B) = gridA + i*gridB with gridA, gridB real, and
+    // because spreadinterponly interpolation is a real-kernel gather it stays separated: the
+    // interpolated coefficient's real part is fieldA at the target and its imaginary part is fieldB. So
+    // one complex iFFT + one complex interp delivers two real fields, halving both on the force path.
+    std::vector<std::complex<Real>> out(n);
+    auto ifft_interp = [&](std::vector<std::complex<Real>> &g) { // g -> real/imag fields in `out`
+        ifftn<Real, DIM>(g, g, nf);                              // in place
+        ier = nufft2(out.data(), g.data());
         if (ier > 1)
             throw std::runtime_error("finufft NUFFT interp failed, ier=" + std::to_string(ier));
+    };
+
+    if (!want_force) {
+        ifft_interp(pot_hat);
+        for (int j = 0; j < n; ++j)
+            pot[j] += out[j].real();
+        return;
     }
 
-    for (int d = 0; d < DIM; ++d)
-        for (int j = 0; j < n; j++)
-            force[d][j] += -charges[j] * force_c[d][j].real();
+    // Potential (real channel) packed with the first force component (imaginary channel).
+    for (int idx = 0; idx < ntot; ++idx) // A + i*B = {A.re - B.im, A.im + B.re}
+        pot_hat[idx] = {pot_hat[idx].real() - f_hat[0][idx].imag(), pot_hat[idx].imag() + f_hat[0][idx].real()};
+    ifft_interp(pot_hat);
+    for (int j = 0; j < n; ++j) {
+        pot[j] += out[j].real();
+        force[0][j] += -charges[j] * out[j].imag();
+    }
+
+    // Remaining force components, two at a time (a lone final component -- e.g. DIM=2 -- transforms by
+    // itself with its imaginary channel unused).
+    for (int d = 1; d < DIM; d += 2) {
+        const bool paired = (d + 1 < DIM);
+        if (paired)
+            for (int idx = 0; idx < ntot; ++idx)
+                f_hat[d][idx] = {f_hat[d][idx].real() - f_hat[d + 1][idx].imag(),
+                                 f_hat[d][idx].imag() + f_hat[d + 1][idx].real()};
+        ifft_interp(f_hat[d]);
+        for (int j = 0; j < n; ++j) {
+            force[d][j] += -charges[j] * out[j].real();
+            if (paired)
+                force[d + 1][j] += -charges[j] * out[j].imag();
+        }
+    }
 }
 
 // Self-interaction correction — subtracts directly from the provided potential span. 3D-only
