@@ -40,7 +40,20 @@ struct Config {
         false; // -F: validate forces against FD reference (samples 20 random particles × 6 evals each); implies -g
     std::string perilap3d_dir = PERILAP3D_DIR; // defined at compile-time in the CMake file
     int log_level = 6;                         // DMK_LOG_OFF
+    dmk::ShortRangeConfig sr;                  // short-range method selection (defaults to the fastest combo)
 };
+
+// One-line render of the short-range config for the benchmark header.
+std::string sr_summary(const dmk::ShortRangeConfig &sr) {
+    std::string method = sr.n3l()            ? "n3l"
+                         : sr.prune_source() ? "prune_source"
+                         : sr.prune_tile()   ? "prune_tile"
+                                             : "dense";
+    std::string s = method + (sr.morton() ? " morton" : " bins=" + std::to_string(sr.bins));
+    if (sr.stile > 0)
+        s += " stile=" + std::to_string(sr.stile);
+    return s;
+}
 
 // Generate N random positions in [-L/2, L/2)^3.
 template <typename Real>
@@ -164,6 +177,7 @@ void print_config(const Config &cfg, int n_threads, std::ostream &os) {
        << "# check_forces:" << (cfg.check_forces ? "true" : "false") << "\n"
        << "# perilap3d:   " << cfg.perilap3d_dir << "\n"
        << "# log_level:   " << cfg.log_level << "\n"
+       << "# short_range: " << sr_summary(cfg.sr) << "\n"
        << "# omp_threads: " << n_threads << "\n";
 }
 
@@ -200,7 +214,7 @@ void init_sensible_defaults(Config &cfg, const std::vector<dmk::Vec3T<double>> &
 
     double best_l2 = std::numeric_limits<double>::max();
     for (double rc : rc_candidates) {
-        dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, rc, cfg.eps, cfg.sigma, DMK_POTENTIAL);
+        dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, rc, cfg.eps, cfg.sigma, DMK_POTENTIAL, cfg.sr);
         const double l2 = l2_rel_err(dmk::esp_eval<double>(plan, r_src_d, charges_d).pot, ref);
         dmk::esp_destroy_plan(plan);
 
@@ -217,7 +231,7 @@ void init_sensible_defaults(Config &cfg, const std::vector<dmk::Vec3T<double>> &
 // Validates analytic forces against central-difference FD for a random sample of n_sample particles.
 double check_forces_fd(const dmk::PotForce<double> &esp, const std::vector<dmk::Vec3T<double>> &r_src_d,
                        const std::vector<double> &charges_d, double L, double r_c, double eps, double sigma,
-                       int n_sample = 20) {
+                       const dmk::ShortRangeConfig &sr, int n_sample = 20) {
     const int n = static_cast<int>(charges_d.size());
     n_sample = std::min(n_sample, n);
     const double step = 1e-12;
@@ -227,7 +241,7 @@ double check_forces_fd(const dmk::PotForce<double> &esp, const std::vector<dmk::
     std::shuffle(idx.begin(), idx.end(), std::default_random_engine(123));
     idx.resize(n_sample);
 
-    dmk::EspPlan *plan = dmk::esp_create_plan(L, r_c, eps, sigma, DMK_POTENTIAL);
+    dmk::EspPlan *plan = dmk::esp_create_plan(L, r_c, eps, sigma, DMK_POTENTIAL, sr);
 
     std::vector<dmk::Vec3T<double>> r_pert = r_src_d;
     double err2 = 0, ref2 = 0;
@@ -260,7 +274,7 @@ void warmup(const Config &cfg) {
     constexpr int nw = 100'000;
     auto r_w = generate_positions<Real>(nw, cfg.L);
     auto q_w = generate_charges<Real>(nw);
-    dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL);
+    dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL, cfg.sr);
     dmk::esp_eval<Real>(plan, r_w, q_w);
     dmk::esp_destroy_plan(plan);
 }
@@ -270,7 +284,7 @@ void warmup(const Config &cfg) {
 template <typename Real>
 void run_potential_benchmark(const Config &cfg, int n, const std::vector<dmk::Vec3T<Real>> &r_src,
                              const std::vector<Real> &charges, const std::vector<double> &ref, bool have_ref) {
-    dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL);
+    dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL, cfg.sr);
 
     std::cout << "# phase: eval_potential\n";
     std::cout << "run,total_time,pts_per_s,l2_rel_err,";
@@ -300,7 +314,7 @@ template <typename Real>
 void run_forces_benchmark(const Config &cfg, int n, const std::vector<dmk::Vec3T<Real>> &r_src,
                           const std::vector<Real> &charges, const std::vector<dmk::Vec3T<double>> &r_src_d,
                           const std::vector<double> &charges_d) {
-    dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL_GRAD);
+    dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL_GRAD, cfg.sr);
 
     std::cout << "# phase: eval_forces\n";
     std::cout << "run,total_time,pts_per_s,";
@@ -324,7 +338,8 @@ void run_forces_benchmark(const Config &cfg, int n, const std::vector<dmk::Vec3T
         std::cout << "# phase: force_check (FD on " << n_fd_sample << " random particles × 6 evals each; not all N)\n"
                   << std::flush;
         auto esp = dmk::esp_eval<double>(plan, r_src_d, charges_d);
-        double force_l2_err = check_forces_fd(esp, r_src_d, charges_d, cfg.L, cfg.r_c, cfg.eps, cfg.sigma, n_fd_sample);
+        double force_l2_err =
+            check_forces_fd(esp, r_src_d, charges_d, cfg.L, cfg.r_c, cfg.eps, cfg.sigma, cfg.sr, n_fd_sample);
         std::cout << "# force_check: l2_rel_err=" << force_l2_err << "\n" << std::flush;
     }
 
@@ -360,7 +375,7 @@ void run_benchmark(Config cfg) {
         std::cout << "# phase: plan_create\n" << "run,plan_time,pts_per_s\n" << std::flush;
         for (int run = 0; run < cfg.n_runs; ++run) {
             double t0 = MY_OMP_GET_WTIME();
-            dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma);
+            dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL_GRAD, cfg.sr);
             double t1 = MY_OMP_GET_WTIME();
             dmk::esp_destroy_plan(plan);
             std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0) << "\n" << std::flush;
@@ -370,12 +385,12 @@ void run_benchmark(Config cfg) {
     warmup<Real>(cfg);
     if (cfg.check_forces && !cfg.bench_forces) {
         // Force correctness check only (no timing benchmark).
-        auto plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL_GRAD);
+        auto plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL_GRAD, cfg.sr);
         constexpr int n_fd_sample = 20;
         std::cout << "# phase: force_check (FD on " << n_fd_sample << " random particles × 6 evals each; not all N)\n"
                   << std::flush;
         auto esp = dmk::esp_eval<double>(plan, r_src_d, charges_d);
-        double err = check_forces_fd(esp, r_src_d, charges_d, cfg.L, cfg.r_c, cfg.eps, cfg.sigma, n_fd_sample);
+        double err = check_forces_fd(esp, r_src_d, charges_d, cfg.L, cfg.r_c, cfg.eps, cfg.sigma, cfg.sr, n_fd_sample);
         std::cout << "# force_check: l2_rel_err=" << err << "\n" << std::flush;
         dmk::esp_destroy_plan(plan);
     } else if (cfg.bench_forces) {
@@ -385,11 +400,48 @@ void run_benchmark(Config cfg) {
     }
 }
 
+// Long-only options for the short-range method selection (formerly the DMK_ESP_* env vars).
+enum {
+    OPT_PRUNE = 256,
+    OPT_N3L,
+    OPT_MORTON,
+    OPT_BINS,
+    OPT_STILE,
+};
+
 Config parse_args(int argc, char *argv[]) {
     Config cfg;
+    static const struct option long_opts[] = {
+        {"prune", required_argument, nullptr, OPT_PRUNE},   {"n3l", required_argument, nullptr, OPT_N3L},
+        {"morton", required_argument, nullptr, OPT_MORTON}, {"bins", required_argument, nullptr, OPT_BINS},
+        {"stile", required_argument, nullptr, OPT_STILE},   {nullptr, 0, nullptr, 0}};
+    auto set_flag = [&](unsigned bit, bool on) {
+        if (on)
+            cfg.sr.flags |= bit;
+        else
+            cfg.sr.flags &= ~bit;
+    };
     int opt;
-    while ((opt = getopt(argc, argv, "N:L:c:e:r:t:l:P:s:pVFgh?")) != -1) {
+    while ((opt = getopt_long(argc, argv, "N:L:c:e:r:t:l:P:s:pVFgh?", long_opts, nullptr)) != -1) {
         switch (opt) {
+        case OPT_PRUNE: {
+            const int v = std::atoi(optarg);
+            set_flag(DMK_ESP_PRUNE_TILE, v == 1);
+            set_flag(DMK_ESP_PRUNE_SOURCE, v >= 2);
+            break;
+        }
+        case OPT_N3L:
+            set_flag(DMK_ESP_N3L, std::atoi(optarg) != 0);
+            break;
+        case OPT_MORTON:
+            set_flag(DMK_ESP_MORTON, std::atoi(optarg) != 0);
+            break;
+        case OPT_BINS:
+            cfg.sr.bins = std::atoi(optarg);
+            break;
+        case OPT_STILE:
+            cfg.sr.stile = std::atoi(optarg);
+            break;
         case 'N':
             cfg.n_src = int(std::atof(optarg));
             break;
@@ -457,6 +509,15 @@ Config parse_args(int argc, char *argv[]) {
                       << "             Samples 20 random particles, not all N.\n"
                       << "  -P dir     Override perilap3d directory (default: compile-time path)\n"
                       << "  -h         Help\n"
+                      << "\n"
+                      << "Short-range method (default: the fastest combo --n3l 1 --morton 1):\n"
+                      << "  --n3l N         1=Newton's-third-law reciprocal half-stencil (takes precedence\n"
+                      << "                  over --prune), 0=off\n"
+                      << "  --prune N       source pruning used when --n3l 0: 0=dense, 1=tile-vs-tile,\n"
+                      << "                  2=per-source (default 2)\n"
+                      << "  --morton N      1=Morton within-cell sort, 0=octant-bin counting sort\n"
+                      << "  --bins N        sub-boxes per axis for the bin sort when --morton 0 (default 2)\n"
+                      << "  --stile N       source-tile width for --prune 1 (default: SIMD width)\n"
                       << "\n"
                       << "Output CSV columns (eval phase):\n"
                       << "  run, total_time, pts_per_s[, l2_rel_err]\n"

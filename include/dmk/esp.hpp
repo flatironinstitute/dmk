@@ -18,23 +18,36 @@ using Vec3 = Vec3T<double>;
 // https://github.com/flatironinstitute/finufft/blob/704cbfee0375a4f726e8ff5a2c4ef70d5da6257a/devel/find_sigma_bound.cpp#L103
 inline int esp_P_from_eps(double eps, double sigma, int dim = 3) {
     const double tolfac = 0.18 * std::pow(1.4, dim - 1);
-    //P: spread width = number of grid points used per dimension in the spreading stencil
+    // P: spread width = number of grid points used per dimension in the spreading stencil
     const int P = static_cast<int>(std::ceil(std::log(tolfac / eps) / (M_PI * std::sqrt(1.0 - 1.0 / sigma)) + 1.0));
     return std::max(2, P);
 }
 
 // PSWF bandwidth parameter c from the spread width P and upsampling factor sigma.
-inline double esp_pswf_c_from_P(double sigma, int P) {
-    return M_PI * P * (1.0 - 1.0 / (2 * sigma)) - 0.05;
-}
+inline double esp_pswf_c_from_P(double sigma, int P) { return M_PI * P * (1.0 - 1.0 / (2 * sigma)) - 0.05; }
 
 inline int esp_digits_from_eps(double eps) {
     return std::clamp(static_cast<int>(std::lround(-std::log10(eps))), 2, 12);
 }
 
+// Internal short-range method selection, carrying the DMK_ESP_* bitmask from pdmk_esp_params
+// (see dmk.h) plus the two numeric tunables. Constructed by the C wrapper; not a public type.
+struct ShortRangeConfig {
+    unsigned flags = DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L | DMK_ESP_MORTON;
+    int bins = 2;  // octant-bin count per axis when DMK_ESP_MORTON is clear
+    int stile = 0; // source-tile width for DMK_ESP_PRUNE_TILE (0 -> SIMD width)
+
+    bool prune_tile() const { return flags & DMK_ESP_PRUNE_TILE; }
+    bool prune_source() const { return flags & DMK_ESP_PRUNE_SOURCE; }
+    bool n3l() const { return flags & DMK_ESP_N3L; }
+    bool morton() const { return flags & DMK_ESP_MORTON; }
+    bool spatial_sort() const { return flags & (DMK_ESP_PRUNE_TILE | DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L); }
+};
+
 struct EspPlan;
 
-EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type = DMK_POTENTIAL_GRAD);
+EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type = DMK_POTENTIAL_GRAD,
+                         ShortRangeConfig cfg = {});
 void esp_destroy_plan(EspPlan *plan);
 
 // force_x/y/z are empty spans if the plan was created with eval_type == DMK_POTENTIAL.

@@ -98,12 +98,27 @@ pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src,
 #ifdef DMK_BUILD_ESP
 // ESP (Ewald Sum with PSWF kernels) — periodic Coulomb solver.
 // Particles lie in the cubic box [-L/2, L/2)^3.
+
+// Short-range method selection bits for pdmk_esp_params.esp_flags. The three strategies
+// (source-pruning granularity, within-cell spatial sort, Newton's-third-law reciprocal) are
+// independent. The default combination below is the empirically fastest.
+enum {
+    DMK_ESP_PRUNE_TILE = 1u << 0,   // sub-cell tile-vs-tile AABB pruning
+    DMK_ESP_PRUNE_SOURCE = 1u << 1, // per-source point-vs-target-box pruning (finest granularity)
+    DMK_ESP_N3L = 1u << 2,          // Newton's-third-law reciprocal (13-forward half stencil, 27-coloured)
+    DMK_ESP_MORTON = 1u << 3,       // Morton within-cell sort (else octant-bin counting sort)
+};
+
 typedef struct pdmk_esp_params {
     double L;      // periodic box side length
     double r_c;    // real-space cutoff radius
     double eps;    // target precision
     int log_level; // 0: trace … 6: off (matches dmk_log_level)
     dmk_eval_type eval_type = DMK_POTENTIAL;
+    // Short-range tuning; defaults are the fastest known combination.
+    uint32_t esp_flags = DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L | DMK_ESP_MORTON; // DMK_ESP_* method bitmask
+    int esp_bins = 2;  // octant-bin count per axis when DMK_ESP_MORTON is clear
+    int esp_stile = 0; // source-tile width for DMK_ESP_PRUNE_TILE (0 -> SIMD width)
 } pdmk_esp_params;
 
 // Opaque plan handle (heap-allocated internally).

@@ -1082,7 +1082,8 @@ dmk_error pdmk(dmk_communicator comm, pdmk_params params, int n_src, const doubl
 #ifdef DMK_BUILD_ESP
 pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator /*comm*/, pdmk_esp_params params) {
     // FIXME: add sigma to params
-    return static_cast<void *>(dmk::esp_create_plan(params.L, params.r_c, params.eps, 1.35, params.eval_type));
+    dmk::ShortRangeConfig sr{params.esp_flags, params.esp_bins, params.esp_stile};
+    return static_cast<void *>(dmk::esp_create_plan(params.L, params.r_c, params.eps, 1.35, params.eval_type, sr));
 }
 
 pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator comm, pdmk_esp_params params) {

@@ -16,7 +16,6 @@
 #include <ducc0/fft/fft.h>
 #include <finufft.h>
 #include <finufft_common/kernel.h>
-#include <iostream>
 #include <omp.h>
 #include <sctl.hpp>
 #include <span>
@@ -155,9 +154,103 @@ struct CellList {
     std::vector<int> orig;       // orig[slot] = original particle index
 };
 
+// Scratch buffers reused across cells by the within-cell spatial sorts.
+template <typename Real>
+struct SortScratch {
+    std::vector<Real> tr, tq;    // reordered coords / charges
+    std::vector<int> to;         // reordered origin indices
+    std::vector<int> key, off;   // sort permutation / bucket offsets
+    std::vector<uint64_t> mcode; // morton codes
+};
+
+// Reorder particles [b, b+len) by z-order within the cell (lower corner lo_*, width h), tightening
+// every VecLen-run's AABB. Tightest tiles, but a comparison sort per cell.
+template <typename Real>
+static void sort_cell_morton(CellList<Real> &cl, int b, int len, Real lo_x, Real lo_y, Real lo_z, Real h,
+                             SortScratch<Real> &s) {
+    const Real q = Real(uint32_t(1) << 21) / h;
+    s.mcode.resize(len);
+    s.key.resize(len);
+    s.tr.resize(3 * len);
+    s.tq.resize(len);
+    s.to.resize(len);
+    for (int i = 0; i < len; ++i) {
+        const int slot = b + i;
+        const uint64_t qx =
+            uint32_t(std::min(Real((1u << 21) - 1), std::max(Real(0), (cl.rs[3 * slot + 0] - lo_x) * q)));
+        const uint64_t qy =
+            uint32_t(std::min(Real((1u << 21) - 1), std::max(Real(0), (cl.rs[3 * slot + 1] - lo_y) * q)));
+        const uint64_t qz =
+            uint32_t(std::min(Real((1u << 21) - 1), std::max(Real(0), (cl.rs[3 * slot + 2] - lo_z) * q)));
+        s.mcode[i] = morton3(qx, qy, qz);
+        s.key[i] = i;
+    }
+    std::sort(s.key.begin(), s.key.end(), [&](int a, int c) { return s.mcode[a] < s.mcode[c]; });
+    for (int i = 0; i < len; ++i) {
+        const int slot = b + s.key[i];
+        s.tr[3 * i + 0] = cl.rs[3 * slot + 0];
+        s.tr[3 * i + 1] = cl.rs[3 * slot + 1];
+        s.tr[3 * i + 2] = cl.rs[3 * slot + 2];
+        s.tq[i] = cl.qs[slot];
+        s.to[i] = cl.orig[slot];
+    }
+    for (int i = 0; i < len; ++i) {
+        cl.rs[3 * (b + i) + 0] = s.tr[3 * i + 0];
+        cl.rs[3 * (b + i) + 1] = s.tr[3 * i + 1];
+        cl.rs[3 * (b + i) + 2] = s.tr[3 * i + 2];
+        cl.qs[b + i] = s.tq[i];
+        cl.orig[b + i] = s.to[i];
+    }
+}
+
+// Counting sort of the same particles into bins^3 spatial sub-boxes (bins=2 -> octants). No
+// comparisons; looser tiles than morton but cheaper to build.
+template <typename Real>
+static void sort_cell_bins(CellList<Real> &cl, int b, int len, Real lo_x, Real lo_y, Real lo_z, Real h, int bins,
+                           SortScratch<Real> &s) {
+    const int nbuckets = bins * bins * bins;
+    const Real scale = Real(bins) / h;
+    s.key.resize(len);
+    s.off.assign(nbuckets, 0);
+    s.tr.resize(3 * len);
+    s.tq.resize(len);
+    s.to.resize(len);
+    for (int i = 0; i < len; ++i) {
+        const int slot = b + i;
+        const int bx = std::min(bins - 1, std::max(0, int((cl.rs[3 * slot + 0] - lo_x) * scale)));
+        const int by = std::min(bins - 1, std::max(0, int((cl.rs[3 * slot + 1] - lo_y) * scale)));
+        const int bz = std::min(bins - 1, std::max(0, int((cl.rs[3 * slot + 2] - lo_z) * scale)));
+        s.key[i] = bx + bins * (by + bins * bz);
+        ++s.off[s.key[i]];
+    }
+    int acc = 0;
+    for (int k = 0; k < nbuckets; ++k) {
+        const int cnt = s.off[k];
+        s.off[k] = acc;
+        acc += cnt;
+    }
+    for (int i = 0; i < len; ++i) {
+        const int slot = b + i;
+        const int dst = s.off[s.key[i]]++;
+        s.tr[3 * dst + 0] = cl.rs[3 * slot + 0];
+        s.tr[3 * dst + 1] = cl.rs[3 * slot + 1];
+        s.tr[3 * dst + 2] = cl.rs[3 * slot + 2];
+        s.tq[dst] = cl.qs[slot];
+        s.to[dst] = cl.orig[slot];
+    }
+    for (int i = 0; i < len; ++i) {
+        cl.rs[3 * (b + i) + 0] = s.tr[3 * i + 0];
+        cl.rs[3 * (b + i) + 1] = s.tr[3 * i + 1];
+        cl.rs[3 * (b + i) + 2] = s.tr[3 * i + 2];
+        cl.qs[b + i] = s.tq[i];
+        cl.orig[b + i] = s.to[i];
+    }
+}
+
 template <typename Real>
 static CellList<Real> build_cell_list(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                                      const ESPParams &params, int nc, bool spatial_sort, int min_sort_len = 2) {
+                                      const ESPParams &params, int nc, const ShortRangeConfig &cfg,
+                                      int min_sort_len = 2) {
     sctl::Profile::Scoped profile("build_cell_list");
     CellList<Real> cl;
     cl.n_cells = nc;
@@ -197,172 +290,605 @@ static CellList<Real> build_cell_list(const std::vector<Vec3T<Real>> &r_src, con
         cl.orig[slot] = j;
     }
 
-    // pass 4: Spatially reorder particles within each cell so consecutive VecLen-runs form
-    // compact tiles, enabling geometric source pruning in short_range. Two env-selected
-    // strategies; both keep the tile/range count fixed and only tighten each tile's extent:
-    //   DMK_ESP_BINS=b (default 2): counting sort into b^3 spatial sub-boxes, no comparisons.
-    //                               b=2 is the octant sort; larger b tightens tiles, still cheap.
-    //   DMK_ESP_MORTON: full z-order (Morton) sort within the cell -- tightest tiles, but a
-    //                   comparison sort per cell (notably slower to build).
-    if (spatial_sort) {
+    // pass 4: spatially reorder particles within each cell so consecutive VecLen-runs form compact
+    // tiles, enabling the geometric source pruning in short_range. cfg.morton() picks the z-order
+    // sort; otherwise the cheaper bins^3 counting sort. Both keep the tile count fixed and only
+    // tighten each tile's extent.
+    if (cfg.spatial_sort()) {
         sctl::Profile::Scoped sort("spatial_sort");
-
-        const bool morton = util::env_is_set("DMK_ESP_MORTON");
-        const int bins = [] {
-            const char *e = std::getenv("DMK_ESP_BINS");
-            const int v = e ? std::atoi(e) : 2;
-            return v > 0 ? v : 2;
-        }();
-        const int nbuckets = bins * bins * bins;
-
         const Real h = L_r / Real(nc);
         const Real half_L = L_r / Real(2);
-
-        std::vector<Real> tr, tq; // scratch for the in-place reorder
-        std::vector<int> to;
-        std::vector<int> key;        // per-particle bucket (bins) or sort permutation (morton)
-        std::vector<int> off;        // bucket offsets (bins)
-        std::vector<uint64_t> mcode; // morton codes (morton)
-
-        // Interleave the low 21 bits of three integers into a 63-bit Morton code.
-        auto spread = [](uint64_t v) {
-            v &= 0x1fffffULL;
-            v = (v | (v << 32)) & 0x1f00000000ffffULL;
-            v = (v | (v << 16)) & 0x1f0000ff0000ffULL;
-            v = (v | (v << 8)) & 0x100f00f00f00f00fULL;
-            v = (v | (v << 4)) & 0x10c30c30c30c30c3ULL;
-            v = (v | (v << 2)) & 0x1249249249249249ULL;
-            return v;
-        };
-
+        const bool morton = cfg.morton();
+        SortScratch<Real> s;
         for (int c = 0; c < ncells; ++c) {
             const int b = cl.cell_start[c], e = cl.cell_start[c + 1], len = e - b;
             if (len <= min_sort_len)
                 continue;
-
             const int cz = c % nc;
             const int cy = (c / nc) % nc;
             const int cx = c / (nc * nc);
             const Real lo_x = Real(cx) * h - half_L; // cell lower corner
             const Real lo_y = Real(cy) * h - half_L;
             const Real lo_z = Real(cz) * h - half_L;
-
-            tr.resize(3 * len);
-            tq.resize(len);
-            to.resize(len);
-
-            if (morton) {
-                // Quantize local coordinates to 21 bits/axis, then stable-sort indices by code.
-                const Real q = Real(uint32_t(1) << 21) / h;
-                mcode.resize(len);
-                key.resize(len);
-                for (int i = 0; i < len; ++i) {
-                    const int s = b + i;
-                    const auto qx =
-                        uint32_t(std::min(Real((1u << 21) - 1), std::max(Real(0), (cl.rs[3 * s + 0] - lo_x) * q)));
-                    const auto qy =
-                        uint32_t(std::min(Real((1u << 21) - 1), std::max(Real(0), (cl.rs[3 * s + 1] - lo_y) * q)));
-                    const auto qz =
-                        uint32_t(std::min(Real((1u << 21) - 1), std::max(Real(0), (cl.rs[3 * s + 2] - lo_z) * q)));
-                    mcode[i] = spread(qx) | (spread(qy) << 1) | (spread(qz) << 2);
-                    key[i] = i;
-                }
-                std::sort(key.begin(), key.end(), [&](int a, int bb) { return mcode[a] < mcode[bb]; });
-                for (int i = 0; i < len; ++i) {
-                    const int s = b + key[i];
-                    tr[3 * i + 0] = cl.rs[3 * s + 0];
-                    tr[3 * i + 1] = cl.rs[3 * s + 1];
-                    tr[3 * i + 2] = cl.rs[3 * s + 2];
-                    tq[i] = cl.qs[s];
-                    to[i] = cl.orig[s];
-                }
-            } else {
-                // Counting sort into bins^3 spatial sub-boxes (b=2 -> octants).
-                const Real scale = Real(bins) / h;
-                key.resize(len);
-                off.assign(nbuckets, 0);
-                for (int i = 0; i < len; ++i) {
-                    const int s = b + i;
-                    const int bx = std::min(bins - 1, std::max(0, int((cl.rs[3 * s + 0] - lo_x) * scale)));
-                    const int by = std::min(bins - 1, std::max(0, int((cl.rs[3 * s + 1] - lo_y) * scale)));
-                    const int bz = std::min(bins - 1, std::max(0, int((cl.rs[3 * s + 2] - lo_z) * scale)));
-                    const int bucket = bx + bins * (by + bins * bz);
-                    key[i] = bucket;
-                    ++off[bucket];
-                }
-                int acc = 0;
-                for (int k = 0; k < nbuckets; ++k) {
-                    const int cnt = off[k];
-                    off[k] = acc;
-                    acc += cnt;
-                }
-                for (int i = 0; i < len; ++i) {
-                    const int s = b + i;
-                    const int dst = off[key[i]]++;
-                    tr[3 * dst + 0] = cl.rs[3 * s + 0];
-                    tr[3 * dst + 1] = cl.rs[3 * s + 1];
-                    tr[3 * dst + 2] = cl.rs[3 * s + 2];
-                    tq[dst] = cl.qs[s];
-                    to[dst] = cl.orig[s];
-                }
-            }
-
-            for (int i = 0; i < len; ++i) {
-                cl.rs[3 * (b + i) + 0] = tr[3 * i + 0];
-                cl.rs[3 * (b + i) + 1] = tr[3 * i + 1];
-                cl.rs[3 * (b + i) + 2] = tr[3 * i + 2];
-                cl.qs[b + i] = tq[i];
-                cl.orig[b + i] = to[i];
-            }
+            if (morton)
+                sort_cell_morton<Real>(cl, b, len, lo_x, lo_y, lo_z, h, s);
+            else
+                sort_cell_bins<Real>(cl, b, len, lo_x, lo_y, lo_z, h, cfg.bins, s);
         }
     }
     return cl;
 }
 
+// Shared read-only state handed to each short-range method. The four methods differ only in how
+// they enumerate and cull source/target pairs; everything below is common.
+template <typename Real>
+struct SRCtx {
+    const CellList<Real> &cl;
+    const int *nbc_tab;  // nbc_tab[c*3+d] = neighbour cell coord for delta d in {-1,0,+1}
+    const Real *off_tab; // off_tab[c*3+d] = periodic image shift for that neighbour
+    const residual_evaluator_func<Real> &evaluator;
+    const residual_evaluator_range_func<Real> &range_evaluator;
+    Real r_c_sq, rsc, cen;
+    int nc, out_dim, stile;
+    Real *pg_sorted; // interleaved [pot] or [pot, d/dx, d/dy, d/dz] accumulator, cell-sorted order
+};
+
+// Dense path: gather all 27 neighbour cells and evaluate the full block (no pruning).
+template <typename Real, int VecLen>
+static void short_range_dense(const SRCtx<Real> &ctx) {
+    const auto &cl = ctx.cl;
+    const int nc = ctx.nc, out_dim = ctx.out_dim;
+    const Real rsc = ctx.rsc, cen = ctx.cen, r_c_sq = ctx.r_c_sq;
+    double sum_gather = 0, sum_eval = 0;
+#pragma omp parallel
+    {
+        std::vector<Real> r_src_g, charge_g;
+        double tg = 0, te = 0;
+#pragma omp for schedule(dynamic) collapse(3)
+        for (int cx = 0; cx < nc; ++cx) {
+            for (int cy = 0; cy < nc; ++cy) {
+                for (int cz = 0; cz < nc; ++cz) {
+                    const int home = (cx * nc + cy) * nc + cz;
+                    const int hbeg = cl.cell_start[home], hend = cl.cell_start[home + 1];
+                    const int n_trg = hend - hbeg;
+                    if (n_trg == 0)
+                        continue;
+
+                    const Real *__restrict__ r_trg_ptr = cl.rs.data() + 3 * hbeg;
+                    const int *__restrict__ nbc_cx = ctx.nbc_tab + cx * 3;
+                    const int *__restrict__ nbc_cy = ctx.nbc_tab + cy * 3;
+                    const int *__restrict__ nbc_cz = ctx.nbc_tab + cz * 3;
+                    const Real *__restrict__ off_cx = ctx.off_tab + cx * 3;
+                    const Real *__restrict__ off_cy = ctx.off_tab + cy * 3;
+                    const Real *__restrict__ off_cz = ctx.off_tab + cz * 3;
+
+                    int n_src = 0;
+                    for (int dx = 0; dx < 3; ++dx)
+                        for (int dy = 0; dy < 3; ++dy)
+                            for (int dz = 0; dz < 3; ++dz) {
+                                const int nb = (nbc_cx[dx] * nc + nbc_cy[dy]) * nc + nbc_cz[dz];
+                                n_src += cl.cell_start[nb + 1] - cl.cell_start[nb];
+                            }
+
+                    r_src_g.resize(3 * n_src);
+                    charge_g.resize(n_src);
+                    Real *__restrict__ r_src_ptr = r_src_g.data();
+                    Real *__restrict__ charge_ptr = charge_g.data();
+                    int r_i = 0, c_i = 0;
+                    for (int dx = 0; dx < 3; ++dx) {
+                        const Real off_x = off_cx[dx];
+                        for (int dy = 0; dy < 3; ++dy) {
+                            const Real off_y = off_cy[dy];
+                            for (int dz = 0; dz < 3; ++dz) {
+                                const Real off_z = off_cz[dz];
+                                const int nb = (nbc_cx[dx] * nc + nbc_cy[dy]) * nc + nbc_cz[dz];
+                                const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
+                                for (int b = nbeg; b < nend; ++b) {
+                                    r_src_ptr[r_i++] = cl.rs[b * 3 + 0] + off_x;
+                                    r_src_ptr[r_i++] = cl.rs[b * 3 + 1] + off_y;
+                                    r_src_ptr[r_i++] = cl.rs[b * 3 + 2] + off_z;
+                                    charge_ptr[c_i++] = cl.qs[b];
+                                }
+                            }
+                        }
+                    }
+
+                    ctx.evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, n_trg, r_trg_ptr,
+                                  ctx.pg_sorted + out_dim * hbeg);
+                }
+            }
+        }
+    }
+}
+
+// Sub-cell geometric pruning (tile-vs-tile). Sources and targets are each grouped into VecLen-wide
+// tiles; one AABB test per (target-tile, source-tile) pair skips up to VecLen*VecLen interactions.
+// Surviving source tiles are passed as disjoint ranges to the range-list evaluator, which reads
+// them in-place (the dense kernel's internal d2max mask still enforces the exact cutoff).
+template <typename Real, int VecLen>
+static void short_range_prune_tile(const SRCtx<Real> &ctx) {
+    const auto &cl = ctx.cl;
+    const int nc = ctx.nc, out_dim = ctx.out_dim, stile = ctx.stile;
+    const Real rsc = ctx.rsc, cen = ctx.cen, r_c_sq = ctx.r_c_sq;
+    double sum_gather = 0, sum_aabb = 0, sum_test = 0, sum_eval = 0;
+#pragma omp parallel
+    {
+        std::vector<Real> r_src_g, charge_g;
+        // Source-tile AABBs, SoA so the tile-vs-tile test vectorizes; d2buf holds its output.
+        std::vector<Real> slo_x, slo_y, slo_z, shi_x, shi_y, shi_z, d2buf;
+        std::vector<int> tile_s0, tile_sn; // cell-aligned source tiles (start, length)
+        std::vector<int> surv_s0, surv_sn; // surviving source tiles per target-tile
+        double tg = 0, ta = 0, tt = 0, te = 0;
+#pragma omp for schedule(dynamic) collapse(3)
+        for (int cx = 0; cx < nc; ++cx) {
+            for (int cy = 0; cy < nc; ++cy) {
+                for (int cz = 0; cz < nc; ++cz) {
+                    const int home = (cx * nc + cy) * nc + cz;
+                    const int hbeg = cl.cell_start[home], hend = cl.cell_start[home + 1];
+                    const int n_trg = hend - hbeg;
+                    if (n_trg == 0)
+                        continue;
+
+                    const Real *__restrict__ r_trg_ptr = cl.rs.data() + 3 * hbeg;
+                    const int *__restrict__ nbc_cx = ctx.nbc_tab + cx * 3;
+                    const int *__restrict__ nbc_cy = ctx.nbc_tab + cy * 3;
+                    const int *__restrict__ nbc_cz = ctx.nbc_tab + cz * 3;
+                    const Real *__restrict__ off_cx = ctx.off_tab + cx * 3;
+                    const Real *__restrict__ off_cy = ctx.off_tab + cy * 3;
+                    const Real *__restrict__ off_cz = ctx.off_tab + cz * 3;
+
+                    int n_src = 0;
+                    for (int dx = 0; dx < 3; ++dx)
+                        for (int dy = 0; dy < 3; ++dy)
+                            for (int dz = 0; dz < 3; ++dz) {
+                                const int nb = (nbc_cx[dx] * nc + nbc_cy[dy]) * nc + nbc_cz[dz];
+                                n_src += cl.cell_start[nb + 1] - cl.cell_start[nb];
+                            }
+
+                    r_src_g.resize(3 * n_src);
+                    charge_g.resize(n_src);
+                    Real *__restrict__ r_src_ptr = r_src_g.data();
+                    Real *__restrict__ charge_ptr = charge_g.data();
+                    tile_s0.clear();
+                    tile_sn.clear();
+                    int r_i = 0, c_i = 0;
+                    for (int dx = 0; dx < 3; ++dx) {
+                        const Real off_x = off_cx[dx];
+                        for (int dy = 0; dy < 3; ++dy) {
+                            const Real off_y = off_cy[dy];
+                            for (int dz = 0; dz < 3; ++dz) {
+                                const Real off_z = off_cz[dz];
+                                const int nb = (nbc_cx[dx] * nc + nbc_cy[dy]) * nc + nbc_cz[dz];
+                                const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
+                                const int seg0 = c_i;
+                                for (int b = nbeg; b < nend; ++b) {
+                                    r_src_ptr[r_i++] = cl.rs[b * 3 + 0] + off_x;
+                                    r_src_ptr[r_i++] = cl.rs[b * 3 + 1] + off_y;
+                                    r_src_ptr[r_i++] = cl.rs[b * 3 + 2] + off_z;
+                                    charge_ptr[c_i++] = cl.qs[b];
+                                }
+                                // Split this cell's contribution into VecLen source tiles that never
+                                // cross a cell boundary, so each tile's AABB stays compact.
+                                for (int st = seg0; st < c_i; st += stile) {
+                                    tile_s0.push_back(st);
+                                    tile_sn.push_back(std::min(stile, c_i - st));
+                                }
+                            }
+                        }
+                    }
+
+                    const int n_stiles = static_cast<int>(tile_s0.size());
+                    slo_x.resize(n_stiles);
+                    slo_y.resize(n_stiles);
+                    slo_z.resize(n_stiles);
+                    shi_x.resize(n_stiles);
+                    shi_y.resize(n_stiles);
+                    shi_z.resize(n_stiles);
+                    d2buf.resize(n_stiles);
+                    for (int st = 0; st < n_stiles; ++st) {
+                        const int s0 = tile_s0[st];
+                        const int sn = tile_sn[st];
+                        Real lo0 = r_src_ptr[3 * s0 + 0], lo1 = r_src_ptr[3 * s0 + 1], lo2 = r_src_ptr[3 * s0 + 2];
+                        Real hi0 = lo0, hi1 = lo1, hi2 = lo2;
+                        for (int i = 1; i < sn; ++i) {
+                            const Real x = r_src_ptr[3 * (s0 + i) + 0];
+                            const Real y = r_src_ptr[3 * (s0 + i) + 1];
+                            const Real z = r_src_ptr[3 * (s0 + i) + 2];
+                            lo0 = std::min(lo0, x), hi0 = std::max(hi0, x);
+                            lo1 = std::min(lo1, y), hi1 = std::max(hi1, y);
+                            lo2 = std::min(lo2, z), hi2 = std::max(hi2, z);
+                        }
+                        slo_x[st] = lo0, slo_y[st] = lo1, slo_z[st] = lo2;
+                        shi_x[st] = hi0, shi_y[st] = hi1, shi_z[st] = hi2;
+                    }
+
+                    surv_s0.resize(n_stiles);
+                    surv_sn.resize(n_stiles);
+                    for (int t0 = 0; t0 < n_trg; t0 += VecLen) {
+                        const int tn = std::min(VecLen, n_trg - t0);
+                        const Real *__restrict__ tptr = r_trg_ptr + 3 * t0;
+
+                        Real lo[3], hi[3];
+                        for (int k = 0; k < 3; ++k)
+                            lo[k] = hi[k] = tptr[k];
+                        for (int i = 1; i < tn; ++i)
+                            for (int k = 0; k < 3; ++k) {
+                                const Real v = tptr[3 * i + k];
+                                lo[k] = std::min(lo[k], v);
+                                hi[k] = std::max(hi[k], v);
+                            }
+
+                        // Branchless squared box-distance of every source tile to this target tile;
+                        // SoA loads with no gather or branch, so it vectorizes cleanly.
+                        const Real hi0 = hi[0], hi1 = hi[1], hi2 = hi[2], lo0 = lo[0], lo1 = lo[1], lo2 = lo[2];
+#pragma omp simd
+                        for (int st = 0; st < n_stiles; ++st) {
+                            const Real dx = std::max(Real(0), std::max(slo_x[st] - hi0, lo0 - shi_x[st]));
+                            const Real dy = std::max(Real(0), std::max(slo_y[st] - hi1, lo1 - shi_y[st]));
+                            const Real dz = std::max(Real(0), std::max(slo_z[st] - hi2, lo2 - shi_z[st]));
+                            d2buf[st] = dx * dx + dy * dy + dz * dz;
+                        }
+
+                        // Branchless compaction of surviving source tiles into disjoint ranges:
+                        // write unconditionally, advance the cursor only on a survivor.
+                        int *__restrict__ s0_ptr = surv_s0.data();
+                        int *__restrict__ sn_ptr = surv_sn.data();
+                        int m = 0;
+                        for (int st = 0; st < n_stiles; ++st) {
+                            s0_ptr[m] = tile_s0[st];
+                            sn_ptr[m] = tile_sn[st];
+                            m += (d2buf[st] <= r_c_sq);
+                        }
+
+                        ctx.range_evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, m, s0_ptr,
+                                            sn_ptr, tn, tptr, ctx.pg_sorted + out_dim * (hbeg + t0), nullptr, nullptr);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Per-source pruning (point-vs-target-box). Repack sources to SoA so the per-source box-distance
+// test vectorizes, then for each target tile keep the individual sources within r_c of its AABB and
+// feed them to the range evaluator as unit-length ranges -- no gather/copy, and the survivor
+// fraction tracks the true in-range fraction far better than tile granularity.
+template <typename Real, int VecLen>
+static void short_range_prune_source(const SRCtx<Real> &ctx) {
+    using RealVec = sctl::Vec<Real, VecLen>;
+    const auto &cl = ctx.cl;
+    const int nc = ctx.nc, out_dim = ctx.out_dim;
+    const Real rsc = ctx.rsc, cen = ctx.cen, r_c_sq = ctx.r_c_sq;
+    double sum_gather = 0, sum_aabb = 0, sum_test = 0, sum_eval = 0;
+#pragma omp parallel
+    {
+        std::vector<Real> r_src_g, charge_g, src_x, src_y, src_z;
+        std::vector<int> surv_s0, surv_sn;
+        double tg = 0, ta = 0, tt = 0, te = 0;
+#pragma omp for schedule(dynamic) collapse(3)
+        for (int cx = 0; cx < nc; ++cx) {
+            for (int cy = 0; cy < nc; ++cy) {
+                for (int cz = 0; cz < nc; ++cz) {
+                    const int home = (cx * nc + cy) * nc + cz;
+                    const int hbeg = cl.cell_start[home], hend = cl.cell_start[home + 1];
+                    const int n_trg = hend - hbeg;
+                    if (n_trg == 0)
+                        continue;
+
+                    const Real *__restrict__ r_trg_ptr = cl.rs.data() + 3 * hbeg;
+                    const int *__restrict__ nbc_cx = ctx.nbc_tab + cx * 3;
+                    const int *__restrict__ nbc_cy = ctx.nbc_tab + cy * 3;
+                    const int *__restrict__ nbc_cz = ctx.nbc_tab + cz * 3;
+                    const Real *__restrict__ off_cx = ctx.off_tab + cx * 3;
+                    const Real *__restrict__ off_cy = ctx.off_tab + cy * 3;
+                    const Real *__restrict__ off_cz = ctx.off_tab + cz * 3;
+
+                    int n_src = 0;
+                    for (int dx = 0; dx < 3; ++dx)
+                        for (int dy = 0; dy < 3; ++dy)
+                            for (int dz = 0; dz < 3; ++dz) {
+                                const int nb = (nbc_cx[dx] * nc + nbc_cy[dy]) * nc + nbc_cz[dz];
+                                n_src += cl.cell_start[nb + 1] - cl.cell_start[nb];
+                            }
+
+                    r_src_g.resize(3 * n_src);
+                    charge_g.resize(n_src);
+                    Real *__restrict__ r_src_ptr = r_src_g.data();
+                    Real *__restrict__ charge_ptr = charge_g.data();
+                    int r_i = 0, c_i = 0;
+                    for (int dx = 0; dx < 3; ++dx) {
+                        const Real off_x = off_cx[dx];
+                        for (int dy = 0; dy < 3; ++dy) {
+                            const Real off_y = off_cy[dy];
+                            for (int dz = 0; dz < 3; ++dz) {
+                                const Real off_z = off_cz[dz];
+                                const int nb = (nbc_cx[dx] * nc + nbc_cy[dy]) * nc + nbc_cz[dz];
+                                const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
+                                for (int b = nbeg; b < nend; ++b) {
+                                    r_src_ptr[r_i++] = cl.rs[b * 3 + 0] + off_x;
+                                    r_src_ptr[r_i++] = cl.rs[b * 3 + 1] + off_y;
+                                    r_src_ptr[r_i++] = cl.rs[b * 3 + 2] + off_z;
+                                    charge_ptr[c_i++] = cl.qs[b];
+                                }
+                            }
+                        }
+                    }
+
+                    src_x.resize(n_src);
+                    src_y.resize(n_src);
+                    src_z.resize(n_src);
+                    for (int s = 0; s < n_src; ++s) {
+                        src_x[s] = r_src_ptr[3 * s + 0];
+                        src_y[s] = r_src_ptr[3 * s + 1];
+                        src_z[s] = r_src_ptr[3 * s + 2];
+                    }
+                    surv_s0.resize(n_src);
+                    if (static_cast<int>(surv_sn.size()) < n_src)
+                        surv_sn.resize(n_src, 1); // unit lengths; all entries stay 1 across cells
+                    int *__restrict__ idx_ptr = surv_s0.data();
+
+                    for (int t0 = 0; t0 < n_trg; t0 += VecLen) {
+                        const int tn = std::min(VecLen, n_trg - t0);
+                        const Real *__restrict__ tptr = r_trg_ptr + 3 * t0;
+
+                        Real lo[3], hi[3];
+                        for (int k = 0; k < 3; ++k)
+                            lo[k] = hi[k] = tptr[k];
+                        for (int i = 1; i < tn; ++i)
+                            for (int k = 0; k < 3; ++k) {
+                                const Real v = tptr[3 * i + k];
+                                lo[k] = std::min(lo[k], v);
+                                hi[k] = std::max(hi[k], v);
+                            }
+
+                        // Fused per-source test + compaction, fully SIMD: box-distance via SCTL Vec,
+                        // compare to r_c^2, and compress the surviving source indices with a masked
+                        // vcompress -- no d2 scratch, no scalar filter. Two half-width d2 masks drive
+                        // one full-width int32 vcompress. Scalar tail only.
+                        const RealVec hi0v(hi[0]), hi1v(hi[1]), hi2v(hi[2]);
+                        const RealVec lo0v(lo[0]), lo1v(lo[1]), lo2v(lo[2]);
+                        const RealVec zero = RealVec::Zero(), rc2v(r_c_sq);
+                        auto box_d2 = [&](int i) {
+                            const RealVec x = RealVec::Load(&src_x[i]);
+                            const RealVec y = RealVec::Load(&src_y[i]);
+                            const RealVec z = RealVec::Load(&src_z[i]);
+                            const RealVec dx = sctl::max(zero, sctl::max(lo0v - x, x - hi0v));
+                            const RealVec dy = sctl::max(zero, sctl::max(lo1v - y, y - hi1v));
+                            const RealVec dz = sctl::max(zero, sctl::max(lo2v - z, z - hi2v));
+                            return sctl::FMA(dx, dx, sctl::FMA(dy, dy, dz * dz));
+                        };
+                        int m = 0, s = 0;
+                        for (; s + 2 * VecLen <= n_src; s += 2 * VecLen)
+                            m += sctl::mask_compress_iota_store2(box_d2(s) <= rc2v, box_d2(s + VecLen) <= rc2v, s,
+                                                                 idx_ptr + m);
+                        for (; s + VecLen <= n_src; s += VecLen)
+                            m += sctl::mask_compress_iota_store(box_d2(s) <= rc2v, s, idx_ptr + m);
+                        for (; s < n_src; ++s) {
+                            const Real dx = std::max(Real(0), std::max(lo[0] - src_x[s], src_x[s] - hi[0]));
+                            const Real dy = std::max(Real(0), std::max(lo[1] - src_y[s], src_y[s] - hi[1]));
+                            const Real dz = std::max(Real(0), std::max(lo[2] - src_z[s], src_z[s] - hi[2]));
+                            idx_ptr[m] = s;
+                            m += (dx * dx + dy * dy + dz * dz <= r_c_sq);
+                        }
+
+                        ctx.range_evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, m,
+                                            idx_ptr, surv_sn.data(), tn, tptr, ctx.pg_sorted + out_dim * (hbeg + t0),
+                                            nullptr, nullptr);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Newton's-third-law reciprocal path. Each cross-cell pair is evaluated once (13-forward-neighbour
+// half stencil) and scattered to both endpoints; the home cell stays full (both endpoints are
+// targets there, so no reciprocal). Home cells are 27-coloured so reciprocal writes into neighbour
+// cells never race. Uses the per-source cull. Requires nc divisible by 3 (enforced by short_range).
+template <typename Real, int VecLen>
+static void short_range_n3l(const SRCtx<Real> &ctx) {
+    using RealVec = sctl::Vec<Real, VecLen>;
+    const auto &cl = ctx.cl;
+    const int nc = ctx.nc, out_dim = ctx.out_dim;
+    const Real rsc = ctx.rsc, cen = ctx.cen, r_c_sq = ctx.r_c_sq;
+#pragma omp parallel
+    {
+        // Gathered forward-neighbour sources (AoS + SoA), charges, cell-sorted origin indices, the
+        // per-source reciprocal accumulator, and the self-block SoA source coords.
+        std::vector<Real> src_x, src_y, src_z, r_fwd, fwd_q, fwd_x, fwd_y, fwd_z, pg_src;
+        std::vector<int> fwd_origin, surv_s0, surv_sn;
+
+        // Per-source point-vs-target-box cull (same test as prune_source), factored so the self and
+        // forward blocks share it. Appends surviving source indices to idx_ptr.
+        auto cull_box = [&](const std::vector<Real> &sx, const std::vector<Real> &sy, const std::vector<Real> &sz,
+                            int nsrc, const Real lo[3], const Real hi[3], int *__restrict__ idx_ptr) -> int {
+            const RealVec hi0v(hi[0]), hi1v(hi[1]), hi2v(hi[2]);
+            const RealVec lo0v(lo[0]), lo1v(lo[1]), lo2v(lo[2]);
+            const RealVec zero = RealVec::Zero(), rc2v(r_c_sq);
+            auto box_d2 = [&](int i) {
+                const RealVec x = RealVec::Load(&sx[i]);
+                const RealVec y = RealVec::Load(&sy[i]);
+                const RealVec z = RealVec::Load(&sz[i]);
+                const RealVec dx = sctl::max(zero, sctl::max(lo0v - x, x - hi0v));
+                const RealVec dy = sctl::max(zero, sctl::max(lo1v - y, y - hi1v));
+                const RealVec dz = sctl::max(zero, sctl::max(lo2v - z, z - hi2v));
+                return sctl::FMA(dx, dx, sctl::FMA(dy, dy, dz * dz));
+            };
+            int m = 0, s = 0;
+            for (; s + 2 * VecLen <= nsrc; s += 2 * VecLen)
+                m += sctl::mask_compress_iota_store2(box_d2(s) <= rc2v, box_d2(s + VecLen) <= rc2v, s, idx_ptr + m);
+            for (; s + VecLen <= nsrc; s += VecLen)
+                m += sctl::mask_compress_iota_store(box_d2(s) <= rc2v, s, idx_ptr + m);
+            for (; s < nsrc; ++s) {
+                const Real dx = std::max(Real(0), std::max(lo[0] - sx[s], sx[s] - hi[0]));
+                const Real dy = std::max(Real(0), std::max(lo[1] - sy[s], sy[s] - hi[1]));
+                const Real dz = std::max(Real(0), std::max(lo[2] - sz[s], sz[s] - hi[2]));
+                idx_ptr[m] = s;
+                m += (dx * dx + dy * dy + dz * dz <= r_c_sq);
+            }
+            return m;
+        };
+        auto trg_box = [](const Real *tptr, int tn, Real lo[3], Real hi[3]) {
+            for (int k = 0; k < 3; ++k)
+                lo[k] = hi[k] = tptr[k];
+            for (int i = 1; i < tn; ++i)
+                for (int k = 0; k < 3; ++k) {
+                    const Real v = tptr[3 * i + k];
+                    lo[k] = std::min(lo[k], v);
+                    hi[k] = std::max(hi[k], v);
+                }
+        };
+        // Forward half of the 26 neighbours: deltas lexicographically greater than 0, so each
+        // unordered cross-cell pair is visited exactly once (the backward half is covered when those
+        // cells are home). dx/dy/dz in {0,1,2} encode delta {-1,0,+1}.
+        auto is_forward = [](int dx, int dy, int dz) { return dx > 1 || (dx == 1 && (dy > 1 || (dy == 1 && dz > 1))); };
+
+        // 27-colour so no two concurrently-processed home cells share a write cell (home + its
+        // forward neighbours span the +-1 shell; stride 3 keeps same-colour cells >= 3 apart).
+        for (int color = 0; color < 27; ++color) {
+            const int c0x = color / 9, c0y = (color / 3) % 3, c0z = color % 3;
+#pragma omp for schedule(dynamic) collapse(3)
+            for (int cx = c0x; cx < nc; cx += 3) {
+                for (int cy = c0y; cy < nc; cy += 3) {
+                    for (int cz = c0z; cz < nc; cz += 3) {
+                        const int home = (cx * nc + cy) * nc + cz;
+                        const int hbeg = cl.cell_start[home], hend = cl.cell_start[home + 1];
+                        const int n_trg = hend - hbeg;
+                        if (n_trg == 0)
+                            continue;
+
+                        const Real *__restrict__ r_trg_ptr = cl.rs.data() + 3 * hbeg;
+                        const Real *__restrict__ q_trg_all = cl.qs.data() + hbeg;
+                        const int *__restrict__ nbc_cx = ctx.nbc_tab + cx * 3;
+                        const int *__restrict__ nbc_cy = ctx.nbc_tab + cy * 3;
+                        const int *__restrict__ nbc_cz = ctx.nbc_tab + cz * 3;
+                        const Real *__restrict__ off_cx = ctx.off_tab + cx * 3;
+                        const Real *__restrict__ off_cy = ctx.off_tab + cy * 3;
+                        const Real *__restrict__ off_cz = ctx.off_tab + cz * 3;
+
+                        // Count forward-neighbour sources so the surv buffers can be sized once.
+                        int n_fwd = 0;
+                        for (int dx = 0; dx < 3; ++dx)
+                            for (int dy = 0; dy < 3; ++dy)
+                                for (int dz = 0; dz < 3; ++dz) {
+                                    if (!is_forward(dx, dy, dz))
+                                        continue;
+                                    const int nb = (nbc_cx[dx] * nc + nbc_cy[dy]) * nc + nbc_cz[dz];
+                                    n_fwd += cl.cell_start[nb + 1] - cl.cell_start[nb];
+                                }
+
+                        const int nmax = std::max(n_trg, n_fwd);
+                        if (static_cast<int>(surv_s0.size()) < nmax)
+                            surv_s0.resize(nmax);
+                        if (static_cast<int>(surv_sn.size()) < nmax)
+                            surv_sn.resize(nmax, 1);
+                        int *__restrict__ idx_ptr = surv_s0.data();
+
+                        // Self block: home cell is its own source, evaluated full (both endpoints are
+                        // home targets, so no reciprocal). SoA-repack for the cull.
+                        src_x.resize(n_trg);
+                        src_y.resize(n_trg);
+                        src_z.resize(n_trg);
+                        for (int s = 0; s < n_trg; ++s) {
+                            src_x[s] = r_trg_ptr[3 * s + 0];
+                            src_y[s] = r_trg_ptr[3 * s + 1];
+                            src_z[s] = r_trg_ptr[3 * s + 2];
+                        }
+                        for (int t0 = 0; t0 < n_trg; t0 += VecLen) {
+                            const int tn = std::min(VecLen, n_trg - t0);
+                            const Real *__restrict__ tptr = r_trg_ptr + 3 * t0;
+                            Real lo[3], hi[3];
+                            trg_box(tptr, tn, lo, hi);
+                            const int m = cull_box(src_x, src_y, src_z, n_trg, lo, hi, idx_ptr);
+                            ctx.range_evaluator(rsc, cen, r_c_sq, Real(0), n_trg, r_trg_ptr, q_trg_all, nullptr, m,
+                                                idx_ptr, surv_sn.data(), tn, tptr,
+                                                ctx.pg_sorted + out_dim * (hbeg + t0), nullptr, nullptr);
+                        }
+
+                        if (n_fwd == 0)
+                            continue;
+
+                        // Forward block: gather the 13 forward cells (AoS + charge + origin), repack
+                        // SoA, then evaluate N3L (forward onto home targets, reciprocal onto pg_src
+                        // indexed by forward source).
+                        r_fwd.resize(3 * n_fwd);
+                        fwd_q.resize(n_fwd);
+                        fwd_origin.resize(n_fwd);
+                        int r_i = 0, c_i = 0;
+                        for (int dx = 0; dx < 3; ++dx) {
+                            const Real off_x = off_cx[dx];
+                            for (int dy = 0; dy < 3; ++dy) {
+                                const Real off_y = off_cy[dy];
+                                for (int dz = 0; dz < 3; ++dz) {
+                                    if (!is_forward(dx, dy, dz))
+                                        continue;
+                                    const Real off_z = off_cz[dz];
+                                    const int nb = (nbc_cx[dx] * nc + nbc_cy[dy]) * nc + nbc_cz[dz];
+                                    const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
+                                    for (int b = nbeg; b < nend; ++b) {
+                                        r_fwd[r_i++] = cl.rs[b * 3 + 0] + off_x;
+                                        r_fwd[r_i++] = cl.rs[b * 3 + 1] + off_y;
+                                        r_fwd[r_i++] = cl.rs[b * 3 + 2] + off_z;
+                                        fwd_q[c_i] = cl.qs[b];
+                                        fwd_origin[c_i] = b;
+                                        ++c_i;
+                                    }
+                                }
+                            }
+                        }
+                        fwd_x.resize(n_fwd);
+                        fwd_y.resize(n_fwd);
+                        fwd_z.resize(n_fwd);
+                        for (int s = 0; s < n_fwd; ++s) {
+                            fwd_x[s] = r_fwd[3 * s + 0];
+                            fwd_y[s] = r_fwd[3 * s + 1];
+                            fwd_z[s] = r_fwd[3 * s + 2];
+                        }
+                        pg_src.assign(out_dim * n_fwd, Real(0));
+                        const Real *__restrict__ r_fwd_ptr = r_fwd.data();
+                        const Real *__restrict__ fwd_q_ptr = fwd_q.data();
+                        for (int t0 = 0; t0 < n_trg; t0 += VecLen) {
+                            const int tn = std::min(VecLen, n_trg - t0);
+                            const Real *__restrict__ tptr = r_trg_ptr + 3 * t0;
+                            Real lo[3], hi[3];
+                            trg_box(tptr, tn, lo, hi);
+                            const int m = cull_box(fwd_x, fwd_y, fwd_z, n_fwd, lo, hi, idx_ptr);
+                            ctx.range_evaluator(rsc, cen, r_c_sq, Real(0), n_fwd, r_fwd_ptr, fwd_q_ptr, nullptr, m,
+                                                idx_ptr, surv_sn.data(), tn, tptr,
+                                                ctx.pg_sorted + out_dim * (hbeg + t0), q_trg_all + t0, pg_src.data());
+                        }
+                        // Scatter reciprocal contributions back onto the forward sources; safe because
+                        // same-colour home cells write disjoint neighbour cells.
+                        for (int s = 0; s < n_fwd; ++s) {
+                            const int b = fwd_origin[s];
+                            for (int k = 0; k < out_dim; ++k)
+                                ctx.pg_sorted[out_dim * b + k] += pg_src[out_dim * s + k];
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 template <typename Real>
 static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
                         const ESPParams &params, int n_digits, const PSWFKernel &pswf, dmk_eval_type eval_type,
-                        std::span<Real> pot, std::span<Real> fx, std::span<Real> fy, std::span<Real> fz) {
+                        const ShortRangeConfig &cfg, std::span<Real> pot, std::span<Real> fx, std::span<Real> fy,
+                        std::span<Real> fz) {
     sctl::Profile::Scoped short_range("short_range");
     // 27-cell stencil requires nc >= 3 so periodic images aren't double-counted
     int nc = static_cast<int>(std::floor(params.L / params.r_c));
     if (nc < 3)
         throw std::runtime_error("short_range_fast requires r_c <= L/3 (nc >= 3)");
-
-    // DMK_ESP_PRUNE selects the (experimental) geometric pruning path; nonzero modes also need
-    // the within-cell sort. 0 (unset): original dense path, verbatim. 1: sub-cell tile-vs-tile
-    // AABB pruning. 2: per-source point-vs-target-box pruning (finest granularity, survivors fed
-    // to the range evaluator as unit-length ranges). Set-but-nonnumeric maps to mode 1.
-    const int prune = [] {
-        const char *e = std::getenv("DMK_ESP_PRUNE");
-        if (!e || !*e)
-            return 0;
-        const int v = std::atoi(e);
-        return v > 0 ? v : 1;
-    }();
-    // DMK_ESP_N3L: Newton's-third-law reciprocal path. Each cross-cell pair is evaluated once
-    // (13-forward-neighbour half stencil) and scattered to both endpoints; the home cell stays
-    // full (both endpoints are targets there, so no reciprocal is needed). Home cells are
-    // 27-coloured so reciprocal writes into neighbour cells never race. Uses the per-source cull.
-    const bool n3l = util::env_is_set("DMK_ESP_N3L");
     // Stride-3 periodic colouring is conflict-free only if each axis length is divisible by the
     // stride; round nc down to a multiple of 3 (cells grow slightly, still >= r_c, still >= 3).
-    if (n3l)
+    if (cfg.n3l())
         nc -= nc % 3;
-    // One-off phase breakdown of the pruned short-range loop (gather / AABB / test / eval).
-    // sctl::Profile can't scope inside this loop cleanly; omp_get_wtime accumulators do the job.
-    const bool phase_timing = util::env_is_set("DMK_ESP_PHASE_TIMING");
-    // Source-test tile width, decoupled from SIMD width (the kernel broadcasts sources one at
-    // a time). Smaller -> tighter source AABBs -> more culling, at the cost of more AABB tests.
+
     constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
 
-    const int stile = [] {
-        const char *e = std::getenv("DMK_ESP_STILE");
-        const int v = e ? std::atoi(e) : MaxVecLen;
-        return v > 0 ? v : MaxVecLen;
-    }();
-
-    CellList<Real> cl = build_cell_list<Real>(r_src, charges, params, nc, prune != 0 || n3l, MaxVecLen);
+    CellList<Real> cl = build_cell_list<Real>(r_src, charges, params, nc, cfg, MaxVecLen);
 
     const Real L = Real(params.L);
     const Real r_c_sq = Real(params.r_c) * Real(params.r_c);
@@ -402,474 +928,28 @@ static void short_range(const std::vector<Vec3T<Real>> &r_src, const std::vector
         }
     }
 
-    double sum_gather = 0, sum_aabb = 0, sum_test = 0, sum_eval = 0; // phase_timing totals
+    const SRCtx<Real> ctx{cl,
+                          nbc_tab.data(),
+                          off_tab.data(),
+                          evaluator,
+                          range_evaluator,
+                          r_c_sq,
+                          rsc,
+                          cen,
+                          nc,
+                          out_dim,
+                          cfg.stile > 0 ? cfg.stile : MaxVecLen,
+                          pg_sorted.data()};
 
-#pragma omp parallel
-    {
-        std::vector<Real> r_src_g, charge_g;
-        // Source-tile AABBs, SoA so the tile-vs-tile test vectorizes; d2buf holds its output.
-        std::vector<Real> slo_x, slo_y, slo_z, shi_x, shi_y, shi_z, d2buf;
-        std::vector<int> tile_s0, tile_sn; // cell-aligned source tiles (start, length)
-        std::vector<int> surv_s0, surv_sn; // surviving source tiles / source indices per target-tile
-        // Mode 2 (per-source): SoA source coords.
-        std::vector<Real> src_x, src_y, src_z;
-        // N3L: gathered forward-neighbour sources (AoS + SoA), their charges, cell-sorted origin
-        // indices, and the per-source reciprocal accumulator.
-        std::vector<Real> r_fwd, fwd_q, fwd_x, fwd_y, fwd_z, pg_src;
-        std::vector<int> fwd_origin;
-        double tg = 0, ta = 0, tt = 0, te = 0; // per-thread phase times (phase_timing)
-        if (n3l) {
-            using RealVec = sctl::Vec<Real, MaxVecLen>;
-            // Per-source point-vs-target-box cull (same test as prune==2), factored so the self
-            // and forward blocks share it. Appends surviving source indices to idx_ptr.
-            auto cull_box = [&](const std::vector<Real> &sx, const std::vector<Real> &sy, const std::vector<Real> &sz,
-                                int nsrc, const Real lo[3], const Real hi[3], int *__restrict__ idx_ptr) -> int {
-                const RealVec hi0v(hi[0]), hi1v(hi[1]), hi2v(hi[2]);
-                const RealVec lo0v(lo[0]), lo1v(lo[1]), lo2v(lo[2]);
-                const RealVec zero = RealVec::Zero(), rc2v(r_c_sq);
-                auto box_d2 = [&](int i) {
-                    const RealVec x = RealVec::Load(&sx[i]);
-                    const RealVec y = RealVec::Load(&sy[i]);
-                    const RealVec z = RealVec::Load(&sz[i]);
-                    const RealVec dx = sctl::max(zero, sctl::max(lo0v - x, x - hi0v));
-                    const RealVec dy = sctl::max(zero, sctl::max(lo1v - y, y - hi1v));
-                    const RealVec dz = sctl::max(zero, sctl::max(lo2v - z, z - hi2v));
-                    return sctl::FMA(dx, dx, sctl::FMA(dy, dy, dz * dz));
-                };
-                int m = 0, s = 0;
-                for (; s + 2 * MaxVecLen <= nsrc; s += 2 * MaxVecLen)
-                    m += sctl::mask_compress_iota_store2(box_d2(s) <= rc2v, box_d2(s + MaxVecLen) <= rc2v, s,
-                                                         idx_ptr + m);
-                for (; s + MaxVecLen <= nsrc; s += MaxVecLen)
-                    m += sctl::mask_compress_iota_store(box_d2(s) <= rc2v, s, idx_ptr + m);
-                for (; s < nsrc; ++s) {
-                    const Real dx = std::max(Real(0), std::max(lo[0] - sx[s], sx[s] - hi[0]));
-                    const Real dy = std::max(Real(0), std::max(lo[1] - sy[s], sy[s] - hi[1]));
-                    const Real dz = std::max(Real(0), std::max(lo[2] - sz[s], sz[s] - hi[2]));
-                    idx_ptr[m] = s;
-                    m += (dx * dx + dy * dy + dz * dz <= r_c_sq);
-                }
-                return m;
-            };
-            auto trg_box = [](const Real *tptr, int tn, Real lo[3], Real hi[3]) {
-                for (int k = 0; k < 3; ++k)
-                    lo[k] = hi[k] = tptr[k];
-                for (int i = 1; i < tn; ++i)
-                    for (int k = 0; k < 3; ++k) {
-                        const Real v = tptr[3 * i + k];
-                        lo[k] = std::min(lo[k], v);
-                        hi[k] = std::max(hi[k], v);
-                    }
-            };
-            // Forward half of the 26 neighbours: deltas lexicographically greater than 0, so each
-            // unordered cross-cell pair is visited exactly once (the backward half is covered when
-            // those cells are home). dx/dy/dz in {0,1,2} encode delta {-1,0,+1}.
-            auto is_forward = [](int dx, int dy, int dz) {
-                return dx > 1 || (dx == 1 && (dy > 1 || (dy == 1 && dz > 1)));
-            };
-
-            // 27-colour so no two concurrently-processed home cells share a write cell (home + its
-            // forward neighbours span the +-1 shell; stride 3 keeps same-colour cells >= 3 apart).
-            for (int color = 0; color < 27; ++color) {
-                const int c0x = color / 9, c0y = (color / 3) % 3, c0z = color % 3;
-#pragma omp for schedule(dynamic) collapse(3)
-                for (int cx = c0x; cx < nc; cx += 3)
-                    for (int cy = c0y; cy < nc; cy += 3)
-                        for (int cz = c0z; cz < nc; cz += 3) {
-                            const int home = (cx * nc + cy) * nc + cz;
-                            const int hbeg = cl.cell_start[home], hend = cl.cell_start[home + 1];
-                            const int n_trg = hend - hbeg;
-                            if (n_trg == 0)
-                                continue;
-
-                            const Real *__restrict__ r_trg_ptr = cl.rs.data() + 3 * hbeg;
-                            const Real *__restrict__ q_trg_all = cl.qs.data() + hbeg;
-                            const int *__restrict__ nbc_cx = &nbc_tab[cx * 3];
-                            const int *__restrict__ nbc_cy = &nbc_tab[cy * 3];
-                            const int *__restrict__ nbc_cz = &nbc_tab[cz * 3];
-                            const Real *__restrict__ off_cx = &off_tab[cx * 3];
-                            const Real *__restrict__ off_cy = &off_tab[cy * 3];
-                            const Real *__restrict__ off_cz = &off_tab[cz * 3];
-
-                            // Count forward-neighbour sources so the surv buffers can be sized once.
-                            int n_fwd = 0;
-                            for (int dx = 0; dx < 3; ++dx)
-                                for (int dy = 0; dy < 3; ++dy)
-                                    for (int dz = 0; dz < 3; ++dz) {
-                                        if (!is_forward(dx, dy, dz))
-                                            continue;
-                                        const int nb = (nbc_cx[dx] * nc + nbc_cy[dy]) * nc + nbc_cz[dz];
-                                        n_fwd += cl.cell_start[nb + 1] - cl.cell_start[nb];
-                                    }
-
-                            const int nmax = std::max(n_trg, n_fwd);
-                            if (static_cast<int>(surv_s0.size()) < nmax)
-                                surv_s0.resize(nmax);
-                            if (static_cast<int>(surv_sn.size()) < nmax)
-                                surv_sn.resize(nmax, 1);
-                            int *__restrict__ idx_ptr = surv_s0.data();
-
-                            // Self block: home cell is its own source, evaluated full (both
-                            // endpoints are home targets, so no reciprocal). SoA-repack for the cull.
-                            src_x.resize(n_trg);
-                            src_y.resize(n_trg);
-                            src_z.resize(n_trg);
-                            for (int s = 0; s < n_trg; ++s) {
-                                src_x[s] = r_trg_ptr[3 * s + 0];
-                                src_y[s] = r_trg_ptr[3 * s + 1];
-                                src_z[s] = r_trg_ptr[3 * s + 2];
-                            }
-                            for (int t0 = 0; t0 < n_trg; t0 += MaxVecLen) {
-                                const int tn = std::min(MaxVecLen, n_trg - t0);
-                                const Real *__restrict__ tptr = r_trg_ptr + 3 * t0;
-                                Real lo[3], hi[3];
-                                trg_box(tptr, tn, lo, hi);
-                                const int m = cull_box(src_x, src_y, src_z, n_trg, lo, hi, idx_ptr);
-                                range_evaluator(rsc, cen, r_c_sq, Real(0), n_trg, r_trg_ptr, q_trg_all, nullptr, m,
-                                                idx_ptr, surv_sn.data(), tn, tptr,
-                                                pg_sorted.data() + out_dim * (hbeg + t0), nullptr, nullptr);
-                            }
-
-                            if (n_fwd == 0)
-                                continue;
-
-                            // Forward block: gather the 13 forward cells (AoS + charge + origin),
-                            // repack SoA, then evaluate N3L (forward onto home targets, reciprocal
-                            // onto pg_src indexed by forward source).
-                            r_fwd.resize(3 * n_fwd);
-                            fwd_q.resize(n_fwd);
-                            fwd_origin.resize(n_fwd);
-                            int r_i = 0, c_i = 0;
-                            for (int dx = 0; dx < 3; ++dx) {
-                                const Real off_x = off_cx[dx];
-                                for (int dy = 0; dy < 3; ++dy) {
-                                    const Real off_y = off_cy[dy];
-                                    for (int dz = 0; dz < 3; ++dz) {
-                                        if (!is_forward(dx, dy, dz))
-                                            continue;
-                                        const Real off_z = off_cz[dz];
-                                        const int nb = (nbc_cx[dx] * nc + nbc_cy[dy]) * nc + nbc_cz[dz];
-                                        const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
-                                        for (int b = nbeg; b < nend; ++b) {
-                                            r_fwd[r_i++] = cl.rs[b * 3 + 0] + off_x;
-                                            r_fwd[r_i++] = cl.rs[b * 3 + 1] + off_y;
-                                            r_fwd[r_i++] = cl.rs[b * 3 + 2] + off_z;
-                                            fwd_q[c_i] = cl.qs[b];
-                                            fwd_origin[c_i] = b;
-                                            ++c_i;
-                                        }
-                                    }
-                                }
-                            }
-                            fwd_x.resize(n_fwd);
-                            fwd_y.resize(n_fwd);
-                            fwd_z.resize(n_fwd);
-                            for (int s = 0; s < n_fwd; ++s) {
-                                fwd_x[s] = r_fwd[3 * s + 0];
-                                fwd_y[s] = r_fwd[3 * s + 1];
-                                fwd_z[s] = r_fwd[3 * s + 2];
-                            }
-                            pg_src.assign(out_dim * n_fwd, Real(0));
-                            const Real *__restrict__ r_fwd_ptr = r_fwd.data();
-                            const Real *__restrict__ fwd_q_ptr = fwd_q.data();
-                            for (int t0 = 0; t0 < n_trg; t0 += MaxVecLen) {
-                                const int tn = std::min(MaxVecLen, n_trg - t0);
-                                const Real *__restrict__ tptr = r_trg_ptr + 3 * t0;
-                                Real lo[3], hi[3];
-                                trg_box(tptr, tn, lo, hi);
-                                const int m = cull_box(fwd_x, fwd_y, fwd_z, n_fwd, lo, hi, idx_ptr);
-                                range_evaluator(rsc, cen, r_c_sq, Real(0), n_fwd, r_fwd_ptr, fwd_q_ptr, nullptr, m,
-                                                idx_ptr, surv_sn.data(), tn, tptr,
-                                                pg_sorted.data() + out_dim * (hbeg + t0), q_trg_all + t0,
-                                                pg_src.data());
-                            }
-                            // Scatter reciprocal contributions back onto the forward sources; safe
-                            // because same-colour home cells write disjoint neighbour cells.
-                            for (int s = 0; s < n_fwd; ++s) {
-                                const int b = fwd_origin[s];
-                                for (int k = 0; k < out_dim; ++k)
-                                    pg_sorted[out_dim * b + k] += pg_src[out_dim * s + k];
-                            }
-                        }
-            }
-        } else
-#pragma omp for schedule(dynamic) collapse(3)
-            for (int cx = 0; cx < nc; ++cx)
-                for (int cy = 0; cy < nc; ++cy)
-                    for (int cz = 0; cz < nc; ++cz) {
-                        const int home = (cx * nc + cy) * nc + cz;
-                        const int hbeg = cl.cell_start[home], hend = cl.cell_start[home + 1];
-                        const int n_trg = hend - hbeg;
-                        if (n_trg == 0)
-                            continue;
-
-                        double _t = phase_timing ? omp_get_wtime() : 0.0;
-
-                        const Real *__restrict__ r_trg_ptr = cl.rs.data() + 3 * hbeg;
-
-                        const int *__restrict__ nbc_cx = &nbc_tab[cx * 3];
-                        const int *__restrict__ nbc_cy = &nbc_tab[cy * 3];
-                        const int *__restrict__ nbc_cz = &nbc_tab[cz * 3];
-                        const Real *__restrict__ off_cx = &off_tab[cx * 3];
-                        const Real *__restrict__ off_cy = &off_tab[cy * 3];
-                        const Real *__restrict__ off_cz = &off_tab[cz * 3];
-
-                        int n_src = 0;
-                        for (int dx = 0; dx < 3; ++dx)
-                            for (int dy = 0; dy < 3; ++dy)
-                                for (int dz = 0; dz < 3; ++dz) {
-                                    const int nb = (nbc_cx[dx] * nc + nbc_cy[dy]) * nc + nbc_cz[dz];
-                                    const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
-                                    n_src += nend - nbeg;
-                                }
-
-                        r_src_g.resize(3 * n_src);
-                        charge_g.resize(n_src);
-                        Real *__restrict__ r_src_ptr = r_src_g.data();
-                        Real *__restrict__ charge_ptr = charge_g.data();
-                        tile_s0.clear();
-                        tile_sn.clear();
-                        int r_i = 0, c_i = 0;
-                        for (int dx = 0; dx < 3; ++dx) {
-                            const Real off_x = off_cx[dx];
-                            const int nbc_x = nbc_cx[dx];
-                            for (int dy = 0; dy < 3; ++dy) {
-                                const Real off_y = off_cy[dy];
-                                const int nbc_y = nbc_cy[dy];
-                                for (int dz = 0; dz < 3; ++dz) {
-                                    const Real off_z = off_cz[dz];
-                                    const int nbc_z = nbc_cz[dz];
-                                    const int nb = (nbc_x * nc + nbc_y) * nc + nbc_z;
-                                    const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
-                                    const int seg0 = c_i;
-                                    for (int b = nbeg; b < nend; ++b) {
-                                        r_src_ptr[r_i++] = cl.rs[b * 3 + 0] + off_x;
-                                        r_src_ptr[r_i++] = cl.rs[b * 3 + 1] + off_y;
-                                        r_src_ptr[r_i++] = cl.rs[b * 3 + 2] + off_z;
-                                        charge_ptr[c_i++] = cl.qs[b];
-                                    }
-                                    // Split this cell's contribution into VecLen source tiles that
-                                    // never cross a cell boundary, so each tile's AABB stays compact.
-                                    if (prune == 1)
-                                        for (int s = seg0; s < c_i; s += stile) {
-                                            tile_s0.push_back(s);
-                                            tile_sn.push_back(std::min(stile, c_i - s));
-                                        }
-                                }
-                            }
-                        }
-                        if (phase_timing) {
-                            const double now = omp_get_wtime();
-                            tg += now - _t;
-                            _t = now;
-                        }
-
-                        if (prune == 0) {
-                            evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, n_trg,
-                                      r_trg_ptr, pg_sorted.data() + out_dim * hbeg);
-                            if (phase_timing)
-                                te += omp_get_wtime() - _t;
-                            continue;
-                        }
-
-                        if (prune == 2) {
-                            // Per-source pruning (point-vs-target-box). Repack sources to SoA so the
-                            // per-source box-distance test vectorizes, then for each target tile keep the
-                            // individual sources within r_c of its AABB and feed them to the range
-                            // evaluator as unit-length ranges (surv_sn all 1) -- no gather/copy, and the
-                            // survivor fraction tracks the true in-range fraction far better than tiles.
-                            src_x.resize(n_src);
-                            src_y.resize(n_src);
-                            src_z.resize(n_src);
-                            for (int s = 0; s < n_src; ++s) {
-                                src_x[s] = r_src_ptr[3 * s + 0];
-                                src_y[s] = r_src_ptr[3 * s + 1];
-                                src_z[s] = r_src_ptr[3 * s + 2];
-                            }
-                            surv_s0.resize(n_src);
-                            if (static_cast<int>(surv_sn.size()) < n_src)
-                                surv_sn.resize(n_src, 1); // unit lengths; all entries stay 1 across cells
-                            int *__restrict__ idx_ptr = surv_s0.data();
-
-                            if (phase_timing) {
-                                const double now = omp_get_wtime();
-                                ta += now - _t;
-                                _t = now;
-                            }
-
-                            for (int t0 = 0; t0 < n_trg; t0 += MaxVecLen) {
-                                const int tn = std::min(MaxVecLen, n_trg - t0);
-                                const Real *__restrict__ tptr = r_trg_ptr + 3 * t0;
-
-                                Real lo[3], hi[3];
-                                for (int k = 0; k < 3; ++k)
-                                    lo[k] = hi[k] = tptr[k];
-                                for (int i = 1; i < tn; ++i)
-                                    for (int k = 0; k < 3; ++k) {
-                                        const Real v = tptr[3 * i + k];
-                                        lo[k] = std::min(lo[k], v);
-                                        hi[k] = std::max(hi[k], v);
-                                    }
-
-                                // Fused per-source test + compaction, fully SIMD: box-distance via SCTL
-                                // Vec, compare to r_c^2, and compress the surviving source indices with a
-                                // masked vcompress -- no d2 scratch, no scalar filter. Two half-width d2
-                                // masks drive one full-width int32 vcompress, so a double (8-lane) chunk
-                                // pair costs a single compress/iota/popcount. Scalar tail only.
-                                using RealVec = sctl::Vec<Real, MaxVecLen>;
-                                const RealVec hi0v(hi[0]), hi1v(hi[1]), hi2v(hi[2]);
-                                const RealVec lo0v(lo[0]), lo1v(lo[1]), lo2v(lo[2]);
-                                const RealVec zero = RealVec::Zero(), rc2v(r_c_sq);
-                                auto box_d2 = [&](int i) {
-                                    const RealVec x = RealVec::Load(&src_x[i]);
-                                    const RealVec y = RealVec::Load(&src_y[i]);
-                                    const RealVec z = RealVec::Load(&src_z[i]);
-                                    const RealVec dx = sctl::max(zero, sctl::max(lo0v - x, x - hi0v));
-                                    const RealVec dy = sctl::max(zero, sctl::max(lo1v - y, y - hi1v));
-                                    const RealVec dz = sctl::max(zero, sctl::max(lo2v - z, z - hi2v));
-                                    return sctl::FMA(dx, dx, sctl::FMA(dy, dy, dz * dz));
-                                };
-                                int m = 0, s = 0;
-                                for (; s + 2 * MaxVecLen <= n_src; s += 2 * MaxVecLen)
-                                    m += sctl::mask_compress_iota_store2(box_d2(s) <= rc2v,
-                                                                         box_d2(s + MaxVecLen) <= rc2v, s, idx_ptr + m);
-                                for (; s + MaxVecLen <= n_src; s += MaxVecLen)
-                                    m += sctl::mask_compress_iota_store(box_d2(s) <= rc2v, s, idx_ptr + m);
-                                for (; s < n_src; ++s) {
-                                    const Real dx = std::max(Real(0), std::max(lo[0] - src_x[s], src_x[s] - hi[0]));
-                                    const Real dy = std::max(Real(0), std::max(lo[1] - src_y[s], src_y[s] - hi[1]));
-                                    const Real dz = std::max(Real(0), std::max(lo[2] - src_z[s], src_z[s] - hi[2]));
-                                    idx_ptr[m] = s;
-                                    m += (dx * dx + dy * dy + dz * dz <= r_c_sq);
-                                }
-
-                                if (phase_timing) {
-                                    const double now = omp_get_wtime();
-                                    tt += now - _t;
-                                    _t = now;
-                                }
-
-                                range_evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, m,
-                                                idx_ptr, surv_sn.data(), tn, tptr,
-                                                pg_sorted.data() + out_dim * (hbeg + t0), nullptr, nullptr);
-
-                                if (phase_timing) {
-                                    const double now = omp_get_wtime();
-                                    te += now - _t;
-                                    _t = now;
-                                }
-                            }
-                            continue;
-                        }
-
-                        // Sub-cell geometric pruning (tile-vs-tile). Sources and targets are each
-                        // grouped into VecLen-wide tiles; one AABB test per (target-tile, source-tile)
-                        // pair skips up to VecLen*VecLen interactions. Surviving source tiles are passed
-                        // as a list of disjoint ranges to the range-list evaluator, which reads them
-                        // in-place from the gathered array (the dense kernel's internal d2max mask still
-                        // enforces the exact cutoff on the survivors).
-                        const int n_stiles = static_cast<int>(tile_s0.size());
-                        slo_x.resize(n_stiles);
-                        slo_y.resize(n_stiles);
-                        slo_z.resize(n_stiles);
-                        shi_x.resize(n_stiles);
-                        shi_y.resize(n_stiles);
-                        shi_z.resize(n_stiles);
-                        d2buf.resize(n_stiles);
-                        for (int st = 0; st < n_stiles; ++st) {
-                            const int s0 = tile_s0[st];
-                            const int sn = tile_sn[st];
-                            Real lo0 = r_src_ptr[3 * s0 + 0], lo1 = r_src_ptr[3 * s0 + 1], lo2 = r_src_ptr[3 * s0 + 2];
-                            Real hi0 = lo0, hi1 = lo1, hi2 = lo2;
-                            for (int i = 1; i < sn; ++i) {
-                                const Real x = r_src_ptr[3 * (s0 + i) + 0];
-                                const Real y = r_src_ptr[3 * (s0 + i) + 1];
-                                const Real z = r_src_ptr[3 * (s0 + i) + 2];
-                                lo0 = std::min(lo0, x), hi0 = std::max(hi0, x);
-                                lo1 = std::min(lo1, y), hi1 = std::max(hi1, y);
-                                lo2 = std::min(lo2, z), hi2 = std::max(hi2, z);
-                            }
-                            slo_x[st] = lo0, slo_y[st] = lo1, slo_z[st] = lo2;
-                            shi_x[st] = hi0, shi_y[st] = hi1, shi_z[st] = hi2;
-                        }
-
-                        if (phase_timing) {
-                            const double now = omp_get_wtime();
-                            ta += now - _t;
-                            _t = now;
-                        }
-
-                        surv_s0.resize(n_stiles);
-                        surv_sn.resize(n_stiles);
-                        for (int t0 = 0; t0 < n_trg; t0 += MaxVecLen) {
-                            const int tn = std::min(MaxVecLen, n_trg - t0);
-                            const Real *__restrict__ tptr = r_trg_ptr + 3 * t0;
-
-                            Real lo[3], hi[3];
-                            for (int k = 0; k < 3; ++k)
-                                lo[k] = hi[k] = tptr[k];
-                            for (int i = 1; i < tn; ++i)
-                                for (int k = 0; k < 3; ++k) {
-                                    const Real v = tptr[3 * i + k];
-                                    lo[k] = std::min(lo[k], v);
-                                    hi[k] = std::max(hi[k], v);
-                                }
-
-                            // Branchless squared box-distance of every source tile to this target tile;
-                            // SoA loads with no gather or branch, so it vectorizes cleanly.
-                            const Real hi0 = hi[0], hi1 = hi[1], hi2 = hi[2], lo0 = lo[0], lo1 = lo[1], lo2 = lo[2];
-#pragma omp simd
-                            for (int st = 0; st < n_stiles; ++st) {
-                                const Real dx = std::max(Real(0), std::max(slo_x[st] - hi0, lo0 - shi_x[st]));
-                                const Real dy = std::max(Real(0), std::max(slo_y[st] - hi1, lo1 - shi_y[st]));
-                                const Real dz = std::max(Real(0), std::max(slo_z[st] - hi2, lo2 - shi_z[st]));
-                                d2buf[st] = dx * dx + dy * dy + dz * dz;
-                            }
-
-                            // Branchless compaction of surviving source tiles into disjoint ranges:
-                            // write unconditionally, advance the cursor only on a survivor. Avoids the
-                            // ~80%-taken unpredictable branch and push_back overhead of the naive filter.
-                            int *__restrict__ s0_ptr = surv_s0.data();
-                            int *__restrict__ sn_ptr = surv_sn.data();
-                            int m = 0;
-                            for (int st = 0; st < n_stiles; ++st) {
-                                s0_ptr[m] = tile_s0[st];
-                                sn_ptr[m] = tile_sn[st];
-                                m += (d2buf[st] <= r_c_sq);
-                            }
-
-                            if (phase_timing) {
-                                const double now = omp_get_wtime();
-                                tt += now - _t;
-                                _t = now;
-                            }
-
-                            range_evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, m, s0_ptr,
-                                            sn_ptr, tn, tptr, pg_sorted.data() + out_dim * (hbeg + t0), nullptr,
-                                            nullptr);
-
-                            if (phase_timing) {
-                                const double now = omp_get_wtime();
-                                te += now - _t;
-                                _t = now;
-                            }
-                        }
-                    }
-
-        if (phase_timing) {
-#pragma omp critical
-            {
-                sum_gather += tg;
-                sum_aabb += ta;
-                sum_test += tt;
-                sum_eval += te;
-            }
-        }
-    }
-
-    if (phase_timing)
-        std::printf("# esp phase_timing (thread-summed s): gather=%.4f aabb=%.4f test=%.4f eval=%.4f\n", sum_gather,
-                    sum_aabb, sum_test, sum_eval);
+    // Each method enumerates source/target pairs its own way; they all accumulate into pg_sorted.
+    if (cfg.n3l())
+        short_range_n3l<Real, MaxVecLen>(ctx);
+    else if (cfg.prune_source())
+        short_range_prune_source<Real, MaxVecLen>(ctx);
+    else if (cfg.prune_tile())
+        short_range_prune_tile<Real, MaxVecLen>(ctx);
+    else
+        short_range_dense<Real, MaxVecLen>(ctx);
 
     for (int a = 0; a < n; ++a) {
         const int orig = cl.orig[a];
@@ -1044,11 +1124,12 @@ struct EspPlan {
     ESPParams params_base;
     DGrid scaling_coeffs;
     dmk_eval_type eval_type;     // baked in at creation; DMK_POTENTIAL skips all force computation
+    ShortRangeConfig sr_cfg;     // short-range method selection, from the caller
     std::vector<double> dbl_buf; // reused output workspace for esp_eval<double>
     std::vector<float> flt_buf;  // reused output workspace for esp_eval<float>
 
-    EspPlan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type_)
-        : n_digits(esp_digits_from_eps(eps)), eval_type(eval_type_) {
+    EspPlan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type_, ShortRangeConfig cfg)
+        : n_digits(esp_digits_from_eps(eps)), eval_type(eval_type_), sr_cfg(cfg) {
         const double eps_d = std::pow(10.0, -double(n_digits));
         const int P = esp_P_from_eps(eps_d, sigma);
         const double c = esp_pswf_c_from_P(sigma, P);
@@ -1058,8 +1139,9 @@ struct EspPlan {
     }
 };
 
-EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type) {
-    return new EspPlan(L, r_c, eps, sigma, eval_type);
+EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type,
+                         ShortRangeConfig cfg) {
+    return new EspPlan(L, r_c, eps, sigma, eval_type, cfg);
 }
 
 void esp_destroy_plan(EspPlan *plan) { delete plan; }
@@ -1089,7 +1171,8 @@ PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, co
     std::span<Real> fy_sp(buf.data() + 2 * n, want_force ? n : 0);
     std::span<Real> fz_sp(buf.data() + 3 * n, want_force ? n : 0);
 
-    short_range<Real>(r_src, charges, params, plan->n_digits, plan->pswf, plan->eval_type, pot_sp, fx_sp, fy_sp, fz_sp);
+    short_range<Real>(r_src, charges, params, plan->n_digits, plan->pswf, plan->eval_type, plan->sr_cfg, pot_sp, fx_sp,
+                      fy_sp, fz_sp);
     long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs, plan->eval_type, pot_sp, fx_sp, fy_sp,
                      fz_sp);
     self_interaction<Real>(charges, plan->pswf, params, pot_sp);
