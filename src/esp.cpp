@@ -20,6 +20,7 @@
 #include <sctl.hpp>
 #include <span>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 // Row-major flattening of a DIM-dimensional grid multi-index (matches the historical
@@ -141,10 +142,10 @@ struct CellList {
 // Scratch buffers reused across cells by the within-cell spatial sorts.
 template <typename Real, int DIM>
 struct SortScratch {
-    std::vector<Real> tr, tq;    // reordered coords / charges
-    std::vector<int> to;         // reordered origin indices
-    std::vector<int> key, off;   // sort permutation / bucket offsets
-    std::vector<uint64_t> mcode; // morton codes
+    std::vector<Real> tr, tq;                   // reordered coords / charges
+    std::vector<int> to;                        // reordered origin indices
+    std::vector<int> key, off;                  // bins: per-particle bucket key / bucket offsets
+    std::vector<std::pair<uint64_t, int>> mkey; // morton: (code, local index) pairs, sorted by code
 };
 
 // Reorder particles [b, b+len) by z-order within the cell (lower corner lo, width h), tightening
@@ -154,8 +155,7 @@ static void sort_cell_morton(CellList<Real, DIM> &cl, int b, int len, const std:
                              SortScratch<Real, DIM> &s) {
     constexpr int kMortonBits = 21; // shared quantization width for DIM=2 and DIM=3
     const Real q = Real(uint32_t(1) << kMortonBits) / h;
-    s.mcode.resize(len);
-    s.key.resize(len);
+    s.mkey.resize(len);
     s.tr.resize(DIM * len);
     s.tq.resize(len);
     s.to.resize(len);
@@ -165,12 +165,12 @@ static void sort_cell_morton(CellList<Real, DIM> &cl, int b, int len, const std:
         for (int d = 0; d < DIM; ++d)
             qc[d] = uint32_t(
                 std::min(Real((1u << kMortonBits) - 1), std::max(Real(0), (cl.rs[DIM * slot + d] - lo[d]) * q)));
-        s.mcode[i] = morton<DIM>(qc);
-        s.key[i] = i;
+        s.mkey[i] = {morton<DIM>(qc), i};
     }
-    std::sort(s.key.begin(), s.key.end(), [&](int a, int c) { return s.mcode[a] < s.mcode[c]; });
+
+    std::sort(s.mkey.begin(), s.mkey.end(), [](const auto &a, const auto &c) { return a.first < c.first; });
     for (int i = 0; i < len; ++i) {
-        const int slot = b + s.key[i];
+        const int slot = b + s.mkey[i].second;
         for (int d = 0; d < DIM; ++d)
             s.tr[DIM * i + d] = cl.rs[DIM * slot + d];
         s.tq[i] = cl.qs[slot];
