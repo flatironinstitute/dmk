@@ -1119,89 +1119,93 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
     // 2. Forward FFT (in place; b now holds the spectrum)
     fftn<Real, DIM>(b, b, nf);
 
-    std::vector<int> k_idx(nf);
-    for (int i = 0; i < nf; ++i)
-        k_idx[i] = (i <= nf / 2) ? i : i - nf;
-
-    // 3. Diagonal scaling (scaling_coeffs precomputed in plan, narrowed from double to Real here),
-    // fused with the force-spectrum construction. ik method: F = -q*grad(u), and grad(u)_hat_k =
-    // i*k*u_hat_k, so f_hat = i*k*pot_hat -- a complex-by-imaginary product, done as a real swap+scale
+    // 3. Diagonal scaling: u_hat[0] is the far-field potential spectrum (b * scaling_coeffs). For the
+    // force, the gradient spectra follow from the ik method: F = -q*grad(u), grad(u)_hat_k = i*k*u_hat_k,
+    // so u_hat[1+axis] = i*k_axis*u_hat[0] -- a complex-by-imaginary product written as a real swap+scale
     // rather than a full std::complex multiply.
-    auto &pot_hat = lr_pot_hat;
-    auto &f_hat = lr_f_hat;
-    pot_hat.resize(ntot);
-    if (want_force)
-        for (int d = 0; d < DIM; ++d)
-            f_hat[d].resize(ntot);
+    const int out_dim = want_force ? 1 + DIM : 1;
+    auto &u_hat = lr_u_hat;
+    for (int k = 0; k < out_dim; ++k)
+        u_hat[k].resize(ntot);
+
+    if (!want_force) {
 #pragma omp parallel for
-    for (int idx = 0; idx < ntot; ++idx) {
-        const std::complex<Real> ph = b[idx] * Real(scaling_coeffs[idx]);
-        pot_hat[idx] = ph;
-        if (!want_force)
-            continue;
-        std::array<int, DIM> gidx;
-        int rem = idx;
-        for (int d = DIM - 1; d >= 0; --d) {
-            gidx[d] = rem % nf;
-            rem /= nf;
-        }
+        for (int idx = 0; idx < ntot; ++idx)
+            u_hat[0][idx] = b[idx] * scaling_coeffs[idx];
+    } else {
+        // Per-axis wavenumbers scale*k_idx. Walking the grid with nested loops makes each grid index a
+        // loop counter, avoiding the O(ntot) modulo/division reconstruction of the multi-index.
+        std::vector<Real> kvals(nf);
+        for (int i = 0; i < nf; ++i)
+            kvals[i] = scale * Real((i <= nf / 2) ? i : i - nf);
+
+        auto grad_hat = [](const std::complex<Real> &ph, Real km) {
+            return std::complex<Real>(-ph.imag() * km, ph.real() * km); // i*km*ph
+        };
         // DMK's grid_idx (row-major, axis DIM-1 fastest) and FINUFFT's internal grid storage
         // (column-major, axis 0 fastest) disagree on which loop variable is which physical axis;
-        // force axis a corresponds to DMK grid axis (DIM-1-a).
-        for (int a = 0; a < DIM; ++a) {
-            const Real km = scale * Real(k_idx[gidx[DIM - 1 - a]]);
-            f_hat[a][idx] = std::complex<Real>(-ph.imag() * km, ph.real() * km); // i*km*ph
+        if constexpr (DIM == 3) {
+#pragma omp parallel for
+            for (int g0 = 0; g0 < nf; ++g0)
+                for (int g1 = 0; g1 < nf; ++g1) {
+                    const int base = (g0 * nf + g1) * nf;
+                    for (int g2 = 0; g2 < nf; ++g2) {
+                        const int idx = base + g2;
+                        const std::complex<Real> ph = b[idx] * scaling_coeffs[idx];
+                        u_hat[0][idx] = ph;
+                        u_hat[1][idx] = grad_hat(ph, kvals[g2]); // force axis 0
+                        u_hat[2][idx] = grad_hat(ph, kvals[g1]); // force axis 1
+                        u_hat[3][idx] = grad_hat(ph, kvals[g0]); // force axis 2
+                    }
+                }
+        } else {
+#pragma omp parallel for
+            for (int g0 = 0; g0 < nf; ++g0) {
+                const int base = g0 * nf;
+                for (int g1 = 0; g1 < nf; ++g1) {
+                    const int idx = base + g1;
+                    const std::complex<Real> ph = b[idx] * scaling_coeffs[idx];
+                    u_hat[0][idx] = ph;
+                    u_hat[1][idx] = grad_hat(ph, kvals[g1]); // force axis 0
+                    u_hat[2][idx] = grad_hat(ph, kvals[g0]); // force axis 1
+                }
+            }
         }
     }
 
-    // 4-5. Inverse FFT + interpolate. Every output field (the potential and each force component) is a
-    // Hermitian spectrum whose inverse transform is a real grid, so we can carry two real fields in one
-    // complex transform: pack field A into the real channel and field B into the imaginary channel as
-    // A + i*B. For Hermitian A, B this gives ifft(A + i*B) = gridA + i*gridB with gridA, gridB real, and
-    // because spreadinterponly interpolation is a real-kernel gather it stays separated: the
-    // interpolated coefficient's real part is fieldA at the target and its imaginary part is fieldB. So
-    // one complex iFFT + one complex interp delivers two real fields, halving both on the force path.
+    // 4-5. Inverse FFT + interpolate. Each output-component spectrum is Hermitian, so its inverse
+    // transform is a real grid; we carry two real components in one complex transform by packing
+    // component A into the real channel and B into the imaginary channel as A + i*B. ifft(A + i*B) =
+    // gridA + i*gridB with gridA, gridB real, and because spreadinterponly interpolation is a
+    // real-kernel gather the interpolated coefficient's real part is component A at the target and its
+    // imaginary part is component B -- one complex iFFT + interp delivers two real components.
     auto &out = lr_out;
     out.resize(n);
     auto ifft_interp = [&](std::vector<std::complex<Real>> &g) { // g -> real/imag fields in `out`
         ifftn<Real, DIM>(g, g, nf);                              // in place
         nufft2(out.data(), g.data());
     };
+    // Component 0 is the potential; components 1.. are force axes 0.. (accumulated as -q*field).
+    auto accumulate = [&](int k, int j, Real field) {
+        if (k == 0)
+            pot[j] += field;
+        else
+            force[k - 1][j] += -charges[j] * field;
+    };
 
-    if (!want_force) {
-        ifft_interp(pot_hat);
-#pragma omp parallel for
-        for (int j = 0; j < n; ++j)
-            pot[j] += out[j].real();
-        return;
-    }
-
-    // Potential (real channel) packed with the first force component (imaginary channel).
-#pragma omp parallel for
-    for (int idx = 0; idx < ntot; ++idx) // A + i*B = {A.re - B.im, A.im + B.re}
-        pot_hat[idx] = {pot_hat[idx].real() - f_hat[0][idx].imag(), pot_hat[idx].imag() + f_hat[0][idx].real()};
-    ifft_interp(pot_hat);
-#pragma omp parallel for
-    for (int j = 0; j < n; ++j) {
-        pot[j] += out[j].real();
-        force[0][j] += -charges[j] * out[j].imag();
-    }
-
-    // Remaining force components, two at a time (a lone final component -- e.g. DIM=2 -- transforms by
-    // itself with its imaginary channel unused).
-    for (int d = 1; d < DIM; d += 2) {
-        const bool paired = (d + 1 < DIM);
+    for (int k = 0; k < out_dim; k += 2) {
+        const bool paired = (k + 1 < out_dim);
         if (paired)
 #pragma omp parallel for
-            for (int idx = 0; idx < ntot; ++idx)
-                f_hat[d][idx] = {f_hat[d][idx].real() - f_hat[d + 1][idx].imag(),
-                                 f_hat[d][idx].imag() + f_hat[d + 1][idx].real()};
-        ifft_interp(f_hat[d]);
+            for (int idx = 0; idx < ntot; ++idx) // pack A + i*B = {A.re - B.im, A.im + B.re}
+                u_hat[k][idx] = {u_hat[k][idx].real() - u_hat[k + 1][idx].imag(),
+                                 u_hat[k][idx].imag() + u_hat[k + 1][idx].real()};
+        ifft_interp(u_hat[k]);
 #pragma omp parallel for
         for (int j = 0; j < n; ++j) {
-            force[d][j] += -charges[j] * out[j].real();
+            accumulate(k, j, out[j].real());
             if (paired)
-                force[d + 1][j] += -charges[j] * out[j].imag();
+                accumulate(k + 1, j, out[j].imag());
         }
     }
 }
@@ -1226,7 +1230,9 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_, int n_dim_)
     pswf = PSWFKernel(eps_d, c);
     n_f = static_cast<int>(std::ceil(pswf.c * params.L / (M_PI * params.r_c)));
     h = params.L / n_f;
-    scaling_coeffs = n_dim == 2 ? precompute_scaling_coefficients<2>() : precompute_scaling_coefficients<3>();
+    const std::vector<double> sc =
+        n_dim == 2 ? precompute_scaling_coefficients<2>() : precompute_scaling_coefficients<3>();
+    scaling_coeffs.assign(sc.begin(), sc.end());
 
     if (n_dim == 3) {
         constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();

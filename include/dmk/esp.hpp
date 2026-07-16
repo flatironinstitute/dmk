@@ -85,7 +85,7 @@ struct EspPlan {
     int P, n_f; // spread width and oversampled grid size per axis
     double h;   // oversampled grid spacing L/n_f
     PSWFKernel pswf;
-    std::vector<double> scaling_coeffs;
+    std::vector<Real> scaling_coeffs; // diagonal far-field scaling, computed in double then narrowed to Real once
     pdmk_esp_params params;
     residual_evaluator_func<Real> evaluator;
     residual_evaluator_range_func<Real> range_evaluator;
@@ -95,8 +95,8 @@ struct EspPlan {
     // the ntot-sized ones are fixed by nf/n_dim. Sized max dim (3) since EspPlan isn't DIM-templated.
     std::array<std::vector<Real>, 3> lr_coord;               // n-sized NU coordinates per axis
     std::vector<std::complex<Real>> lr_c, lr_out;            // n-sized charges / interp output
-    std::vector<std::complex<Real>> lr_b, lr_pot_hat;        // ntot-sized grids
-    std::array<std::vector<std::complex<Real>>, 3> lr_f_hat; // ntot-sized force spectra
+    std::vector<std::complex<Real>> lr_b;                    // ntot-sized spread / forward-FFT grid
+    std::array<std::vector<std::complex<Real>>, 4> lr_u_hat; // ntot-sized output-component spectra (pot + force axes)
 
     explicit EspPlan(const pdmk_esp_params &params, int n_dim = 3);
 
