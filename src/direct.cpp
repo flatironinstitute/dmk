@@ -547,6 +547,47 @@ template residual_evaluator_func<float> make_esp_evaluator_jit<float>(dmk_eval_t
                                                                       double sigma, int unroll_factor);
 template residual_evaluator_func<double> make_esp_evaluator_jit<double>(dmk_eval_type eval_level, int n_digits,
                                                                         double sigma, int unroll_factor);
+
+template <typename Real>
+residual_evaluator_range_func<Real> make_esp_range_evaluator_jit(dmk_eval_type eval_level, int n_digits, double sigma,
+                                                                 int unroll_factor) {
+    static std::mutex lock;
+    std::lock_guard<std::mutex> lock_guard(lock);
+    constexpr int VECWIDTH = sctl::DefaultVecLen<Real>();
+    constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
+
+    const std::string func_name =
+        std::format("void laplace_3d_poly_all_pairs_ranges<{}, {}, -1, -1, -1>", T_str, VECWIDTH);
+
+    const auto coeffs = get_esp_correction_coeffs<Real>(n_digits, sigma);
+    std::map<std::string, int> args_to_consume = {{"eval_level_rt", int(eval_level)},
+                                                  {"n_digits_rt", n_digits},
+                                                  {"unroll_factor", unroll_factor},
+                                                  {"n_coeffs_rt_0", int(coeffs[0].size())}};
+
+    using ft = void (*)(Real, Real, Real, Real, const Real *, int, const int *, const int *, int, const Real *,
+                        const Real *, const Real *, int, const Real *, Real *, const Real *, Real *);
+    ft jit_func = RS->compile<ft>(func_name, args_to_consume);
+    if (!jit_func)
+        throw std::runtime_error("Error compiling ESP range kernel");
+
+    std::vector<Real> coeffs_cat(coeffs[0].begin(), coeffs[0].end());
+
+    // The typedef orders (n_src, r_src, ...) before (n_ranges, ...); the compiled function keeps the
+    // template's order (n_ranges before n_src), so the two source blocks are swapped in the call.
+    return [jit_func, coeffs_cat](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_ranges, const int *range_starts,
+                                  const int *range_lens, int n_trg, const Real *r_trg, Real *pot, const Real *q_trg,
+                                  Real *pot_src) {
+        jit_func(rsc, cen, d2max, thresh2, coeffs_cat.data(), n_ranges, range_starts, range_lens, n_src, r_src, charge,
+                 normals, n_trg, r_trg, pot, q_trg, pot_src);
+    };
+}
+
+template residual_evaluator_range_func<float>
+make_esp_range_evaluator_jit<float>(dmk_eval_type eval_level, int n_digits, double sigma, int unroll_factor);
+template residual_evaluator_range_func<double>
+make_esp_range_evaluator_jit<double>(dmk_eval_type eval_level, int n_digits, double sigma, int unroll_factor);
 #endif
 // (DMK_USE_JIT)
 

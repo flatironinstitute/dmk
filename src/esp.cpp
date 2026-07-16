@@ -1288,8 +1288,10 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_, int n_dim_)
         evaluator = get_esp_3d_kernel<Real, MaxVecLen>(params.eval_type, n_digits);
         range_evaluator = get_esp_3d_kernel_ranges<Real, MaxVecLen>(params.eval_type, n_digits);
 #ifdef DMK_USE_JIT
-        if (!util::env_is_set("DMK_DEBUG_FORCE_AOT"))
+        if (!util::env_is_set("DMK_DEBUG_FORCE_AOT")) {
             evaluator = make_esp_evaluator_jit<Real>(params.eval_type, n_digits, sigma, 3);
+            range_evaluator = make_esp_range_evaluator_jit<Real>(params.eval_type, n_digits, sigma, 3);
+        }
 #endif
     }
 }
