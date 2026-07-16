@@ -438,7 +438,7 @@ static void short_range_prune_tile(const SRCtx<Real, DIM> &ctx) {
         ncells *= nc;
 #pragma omp parallel
     {
-        std::vector<Real> r_src_g, charge_g;
+        std::vector<Real> r_src_soa, charge_g; // sources gathered SoA (axis-major, stride n_src)
         // Source-tile AABBs, SoA so the tile-vs-tile test vectorizes; d2buf holds its output.
         std::array<std::vector<Real>, DIM> slo, shi;
         std::vector<Real> d2buf;
@@ -471,20 +471,21 @@ static void short_range_prune_tile(const SRCtx<Real, DIM> &ctx) {
                 n_src += cl.cell_start[nb + 1] - cl.cell_start[nb];
             });
 
-            r_src_g.resize(DIM * n_src);
+            r_src_soa.resize(DIM * n_src);
             charge_g.resize(n_src);
-            Real *__restrict__ r_src_ptr = r_src_g.data();
+            Real *__restrict__ r_src_ptr = r_src_soa.data();
             Real *__restrict__ charge_ptr = charge_g.data();
             tile_s0.clear();
             tile_sn.clear();
-            int r_i = 0, c_i = 0;
+            int c_i = 0;
             for_each_neighbor<Real, DIM>(nbc_axes, off_axes, nc, [&](const auto &, int nb, const auto &shift) {
                 const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
                 const int seg0 = c_i;
                 for (int b = nbeg; b < nend; ++b) {
                     for (int d = 0; d < DIM; ++d)
-                        r_src_ptr[r_i++] = cl.rs[b * DIM + d] + shift[d];
-                    charge_ptr[c_i++] = cl.qs[b];
+                        r_src_ptr[d * n_src + c_i] = cl.rs[b * DIM + d] + shift[d];
+                    charge_ptr[c_i] = cl.qs[b];
+                    ++c_i;
                 }
                 // Split this cell's contribution into VecLen source tiles that never cross a cell
                 // boundary, so each tile's AABB stays compact.
@@ -505,10 +506,10 @@ static void short_range_prune_tile(const SRCtx<Real, DIM> &ctx) {
                 const int sn = tile_sn[st];
                 std::array<Real, DIM> lo, hi;
                 for (int d = 0; d < DIM; ++d)
-                    lo[d] = hi[d] = r_src_ptr[DIM * s0 + d];
+                    lo[d] = hi[d] = r_src_ptr[d * n_src + s0];
                 for (int i = 1; i < sn; ++i)
                     for (int d = 0; d < DIM; ++d) {
-                        const Real v = r_src_ptr[DIM * (s0 + i) + d];
+                        const Real v = r_src_ptr[d * n_src + (s0 + i)];
                         lo[d] = std::min(lo[d], v);
                         hi[d] = std::max(hi[d], v);
                     }
@@ -579,8 +580,7 @@ static void short_range_prune_source(const SRCtx<Real, DIM> &ctx) {
         ncells *= nc;
 #pragma omp parallel
     {
-        std::vector<Real> r_src_g, charge_g;
-        std::array<std::vector<Real>, DIM> src;
+        std::vector<Real> r_src_soa, charge_g; // sources gathered SoA (axis-major, stride n_src)
         std::vector<int> surv_s0, surv_sn;
 #pragma omp for schedule(dynamic)
         for (int home = 0; home < ncells; ++home) {
@@ -609,25 +609,24 @@ static void short_range_prune_source(const SRCtx<Real, DIM> &ctx) {
                 n_src += cl.cell_start[nb + 1] - cl.cell_start[nb];
             });
 
-            r_src_g.resize(DIM * n_src);
+            // Gather neighbour sources straight into SoA (axis d block at r_src_ptr + d*n_src): the
+            // per-source box-distance cull reads each axis contiguously and the evaluator reads the
+            // same layout, so no separate AoS->SoA repack is needed.
+            r_src_soa.resize(DIM * n_src);
             charge_g.resize(n_src);
-            Real *__restrict__ r_src_ptr = r_src_g.data();
+            Real *__restrict__ r_src_ptr = r_src_soa.data();
             Real *__restrict__ charge_ptr = charge_g.data();
-            int r_i = 0, c_i = 0;
+            int c_i = 0;
             for_each_neighbor<Real, DIM>(nbc_axes, off_axes, nc, [&](const auto &, int nb, const auto &shift) {
                 const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
                 for (int b = nbeg; b < nend; ++b) {
                     for (int d = 0; d < DIM; ++d)
-                        r_src_ptr[r_i++] = cl.rs[b * DIM + d] + shift[d];
-                    charge_ptr[c_i++] = cl.qs[b];
+                        r_src_ptr[d * n_src + c_i] = cl.rs[b * DIM + d] + shift[d];
+                    charge_ptr[c_i] = cl.qs[b];
+                    ++c_i;
                 }
             });
 
-            for (int d = 0; d < DIM; ++d)
-                src[d].resize(n_src);
-            for (int s = 0; s < n_src; ++s)
-                for (int d = 0; d < DIM; ++d)
-                    src[d][s] = r_src_ptr[DIM * s + d];
             surv_s0.resize(n_src);
             if (static_cast<int>(surv_sn.size()) < n_src)
                 surv_sn.resize(n_src, 1); // unit lengths; all entries stay 1 across cells
@@ -660,7 +659,7 @@ static void short_range_prune_source(const SRCtx<Real, DIM> &ctx) {
                 auto box_d2 = [&](int i) {
                     RealVec sum = zero;
                     for (int d = 0; d < DIM; ++d) {
-                        const RealVec x = RealVec::Load(&src[d][i]);
+                        const RealVec x = RealVec::Load(&r_src_ptr[d * n_src + i]);
                         const RealVec delta = sctl::max(zero, sctl::max(lov[d] - x, x - hiv[d]));
                         sum = sctl::FMA(delta, delta, sum);
                     }
@@ -674,7 +673,8 @@ static void short_range_prune_source(const SRCtx<Real, DIM> &ctx) {
                 for (; s < n_src; ++s) {
                     Real d2 = Real(0);
                     for (int d = 0; d < DIM; ++d) {
-                        const Real delta = std::max(Real(0), std::max(lo[d] - src[d][s], src[d][s] - hi[d]));
+                        const Real sd = r_src_ptr[d * n_src + s];
+                        const Real delta = std::max(Real(0), std::max(lo[d] - sd, sd - hi[d]));
                         d2 += delta * delta;
                     }
                     idx_ptr[m] = s;
@@ -710,16 +710,16 @@ static void short_range_n3l(const SRCtx<Real, DIM> &ctx) {
         cells_per_color *= nb_per_axis;
 #pragma omp parallel
     {
-        // Gathered forward-neighbour sources (AoS + SoA), charges, cell-sorted origin indices, the
-        // per-source reciprocal accumulator, and the self-block SoA source coords.
-        std::array<std::vector<Real>, DIM> src, fwd;
-        std::vector<Real> r_fwd, fwd_q, pg_src;
+        // Gathered forward-neighbour sources (SoA, axis-major, stride n_fwd), charges, cell-sorted
+        // origin indices, the per-source reciprocal accumulator, and the self-block SoA source coords.
+        std::vector<Real> src_soa, fwd_soa, fwd_q, pg_src;
         std::vector<int> fwd_origin, surv_s0, surv_sn;
 
         // Per-source point-vs-target-box cull (same test as prune_source), factored so the self and
-        // forward blocks share it. Appends surviving source indices to idx_ptr.
-        auto cull_box = [&](const std::array<std::vector<Real>, DIM> &s_axes, int nsrc, const Real lo[DIM],
-                            const Real hi[DIM], int *__restrict__ idx_ptr) -> int {
+        // forward blocks share it. s_soa is axis-major (axis d block at s_soa + d*nsrc). Appends
+        // surviving source indices to idx_ptr.
+        auto cull_box = [&](const Real *__restrict__ s_soa, int nsrc, const Real lo[DIM], const Real hi[DIM],
+                            int *__restrict__ idx_ptr) -> int {
             std::array<RealVec, DIM> lov, hiv;
             for (int d = 0; d < DIM; ++d) {
                 lov[d] = RealVec(lo[d]);
@@ -729,7 +729,7 @@ static void short_range_n3l(const SRCtx<Real, DIM> &ctx) {
             auto box_d2 = [&](int i) {
                 RealVec sum = zero;
                 for (int d = 0; d < DIM; ++d) {
-                    const RealVec x = RealVec::Load(&s_axes[d][i]);
+                    const RealVec x = RealVec::Load(&s_soa[d * nsrc + i]);
                     const RealVec delta = sctl::max(zero, sctl::max(lov[d] - x, x - hiv[d]));
                     sum = sctl::FMA(delta, delta, sum);
                 }
@@ -743,7 +743,8 @@ static void short_range_n3l(const SRCtx<Real, DIM> &ctx) {
             for (; s < nsrc; ++s) {
                 Real d2 = Real(0);
                 for (int d = 0; d < DIM; ++d) {
-                    const Real delta = std::max(Real(0), std::max(lo[d] - s_axes[d][s], s_axes[d][s] - hi[d]));
+                    const Real sd = s_soa[d * nsrc + s];
+                    const Real delta = std::max(Real(0), std::max(lo[d] - sd, sd - hi[d]));
                     d2 += delta * delta;
                 }
                 idx_ptr[m] = s;
@@ -813,62 +814,55 @@ static void short_range_n3l(const SRCtx<Real, DIM> &ctx) {
                 int *__restrict__ idx_ptr = surv_s0.data();
 
                 // Self block: home cell is its own source, evaluated full (both endpoints are home
-                // targets, so no reciprocal). SoA-repack for the cull.
-                for (int d = 0; d < DIM; ++d)
-                    src[d].resize(n_trg);
+                // targets, so no reciprocal). Repack home coords SoA for both the cull and evaluator.
+                src_soa.resize(DIM * n_trg);
                 for (int s = 0; s < n_trg; ++s)
                     for (int d = 0; d < DIM; ++d)
-                        src[d][s] = r_trg_ptr[DIM * s + d];
+                        src_soa[d * n_trg + s] = r_trg_ptr[DIM * s + d];
                 for (int t0 = 0; t0 < n_trg; t0 += VecLen) {
                     const int tn = std::min(VecLen, n_trg - t0);
                     const Real *__restrict__ tptr = r_trg_ptr + DIM * t0;
                     Real lo[DIM], hi[DIM];
                     trg_box(tptr, tn, lo, hi);
-                    const int m = cull_box(src, n_trg, lo, hi, idx_ptr);
-                    ctx.range_evaluator(rsc, cen, r_c_sq, Real(0), n_trg, r_trg_ptr, q_trg_all, nullptr, m, idx_ptr,
-                                        surv_sn.data(), tn, tptr, ctx.pg_sorted + out_dim * (hbeg + t0), nullptr,
-                                        nullptr);
+                    const int m = cull_box(src_soa.data(), n_trg, lo, hi, idx_ptr);
+                    ctx.range_evaluator(rsc, cen, r_c_sq, Real(0), n_trg, src_soa.data(), q_trg_all, nullptr, m,
+                                        idx_ptr, surv_sn.data(), tn, tptr, ctx.pg_sorted + out_dim * (hbeg + t0),
+                                        nullptr, nullptr);
                 }
 
                 if (n_fwd == 0)
                     continue;
 
-                // Forward block: gather the forward-half-stencil cells (AoS + charge + origin),
-                // repack SoA, then evaluate N3L (forward onto home targets, reciprocal onto pg_src
-                // indexed by forward source).
-                r_fwd.resize(DIM * n_fwd);
+                // Forward block: gather the forward-half-stencil cells straight into SoA (+ charge +
+                // origin), then evaluate N3L (forward onto home targets, reciprocal onto pg_src indexed
+                // by forward source).
+                fwd_soa.resize(DIM * n_fwd);
                 fwd_q.resize(n_fwd);
                 fwd_origin.resize(n_fwd);
-                int r_i = 0, c_i = 0;
+                int c_i = 0;
                 for_each_neighbor<Real, DIM>(nbc_axes, off_axes, nc, [&](const auto &digit, int nb, const auto &shift) {
                     if (!is_forward<DIM>(digit))
                         return;
                     const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
                     for (int b = nbeg; b < nend; ++b) {
                         for (int d = 0; d < DIM; ++d)
-                            r_fwd[r_i++] = cl.rs[b * DIM + d] + shift[d];
+                            fwd_soa[d * n_fwd + c_i] = cl.rs[b * DIM + d] + shift[d];
                         fwd_q[c_i] = cl.qs[b];
                         fwd_origin[c_i] = b;
                         ++c_i;
                     }
                 });
-                for (int d = 0; d < DIM; ++d)
-                    fwd[d].resize(n_fwd);
-                for (int s = 0; s < n_fwd; ++s)
-                    for (int d = 0; d < DIM; ++d)
-                        fwd[d][s] = r_fwd[DIM * s + d];
                 pg_src.assign(out_dim * n_fwd, Real(0));
-                const Real *__restrict__ r_fwd_ptr = r_fwd.data();
                 const Real *__restrict__ fwd_q_ptr = fwd_q.data();
                 for (int t0 = 0; t0 < n_trg; t0 += VecLen) {
                     const int tn = std::min(VecLen, n_trg - t0);
                     const Real *__restrict__ tptr = r_trg_ptr + DIM * t0;
                     Real lo[DIM], hi[DIM];
                     trg_box(tptr, tn, lo, hi);
-                    const int m = cull_box(fwd, n_fwd, lo, hi, idx_ptr);
-                    ctx.range_evaluator(rsc, cen, r_c_sq, Real(0), n_fwd, r_fwd_ptr, fwd_q_ptr, nullptr, m, idx_ptr,
-                                        surv_sn.data(), tn, tptr, ctx.pg_sorted + out_dim * (hbeg + t0), q_trg_all + t0,
-                                        pg_src.data());
+                    const int m = cull_box(fwd_soa.data(), n_fwd, lo, hi, idx_ptr);
+                    ctx.range_evaluator(rsc, cen, r_c_sq, Real(0), n_fwd, fwd_soa.data(), fwd_q_ptr, nullptr, m,
+                                        idx_ptr, surv_sn.data(), tn, tptr, ctx.pg_sorted + out_dim * (hbeg + t0),
+                                        q_trg_all + t0, pg_src.data());
                 }
                 // Scatter reciprocal contributions back onto the forward sources; safe because
                 // same-colour home cells write disjoint neighbour cells.

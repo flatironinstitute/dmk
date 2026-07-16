@@ -397,12 +397,13 @@ DMK_ALWAYS_INLINE void EvalPairs(int Ns, const typename uKernelEvaluator::scalar
     }
 }
 
-// Range-list variant of EvalPairs.  The only difference is the source loop:
-// instead of iterating s = 0..Ns-1 contiguously, we iterate over disjoint
-// ranges [range_starts[r], range_starts[r] + range_lens[r]).  Everything
-// else (target loading, SIMD unrolling, accumulation, output) is identical.
+// Range-list variant of EvalPairs.  Two differences from EvalPairs: the source loop iterates over
+// disjoint ranges [range_starts[r], range_starts[r] + range_lens[r]) instead of 0..Ns-1, and the
+// source coordinates r_src are stored SoA (axis-major: all x, then all y, then all z; stride Ns) so
+// the caller's geometric cull can read them contiguously per axis without a separate AoS->SoA
+// repack. Targets r_trg stay AoS. Everything else (SIMD unrolling, accumulation, output) is identical.
 template <int KERNEL_OUTPUT_DIM, KernelEvaluator uKernelEvaluator>
-DMK_ALWAYS_INLINE void EvalPairsRanges(int, const typename uKernelEvaluator::scalar_type *__restrict__ r_src,
+DMK_ALWAYS_INLINE void EvalPairsRanges(int Ns, const typename uKernelEvaluator::scalar_type *__restrict__ r_src,
                                        const typename uKernelEvaluator::scalar_type *__restrict__ v_src,
                                        const typename uKernelEvaluator::scalar_type *__restrict__ src_normals,
                                        int n_ranges, const int *__restrict__ range_starts,
@@ -455,7 +456,7 @@ DMK_ALWAYS_INLINE void EvalPairsRanges(int, const typename uKernelEvaluator::sca
                 for (int s = 0; s < sn; s++) {
                     const int si = s0 + s;
                     for (Integer k = 0; k < SPATIAL_DIM; k++)
-                        xs[k] = RealVec::Load1(&r_src[si * SPATIAL_DIM + k]);
+                        xs[k] = RealVec::Load1(&r_src[k * Ns + si]);
                     for (Integer k = 0; k < NORMAL_DIM; k++)
                         ns[k] = RealVec::Load1(&src_normals[si * NORMAL_DIM + k]);
                     for (Integer k = 0; k < KERNEL_INPUT_DIM; k++)
@@ -488,12 +489,13 @@ DMK_ALWAYS_INLINE void EvalPairsRanges(int, const typename uKernelEvaluator::sca
                 const int s0 = range_starts[r];
                 const int sn = range_lens[r];
                 for (int s = 0; s < sn; s++) {
+                    const int si = s0 + s;
                     for (Integer k = 0; k < SPATIAL_DIM; k++)
-                        xs[k] = RealVec::Load1(&r_src[(s0 + s) * SPATIAL_DIM + k]);
+                        xs[k] = RealVec::Load1(&r_src[k * Ns + si]);
                     for (Integer k = 0; k < NORMAL_DIM; k++)
-                        ns[k] = RealVec::Load1(&src_normals[(s0 + s) * NORMAL_DIM + k]);
+                        ns[k] = RealVec::Load1(&src_normals[si * NORMAL_DIM + k]);
                     for (Integer k = 0; k < KERNEL_INPUT_DIM; k++)
-                        vs[k] = RealVec::Load1(&v_src[(s0 + s) * KERNEL_INPUT_DIM + k]);
+                        vs[k] = RealVec::Load1(&v_src[si * KERNEL_INPUT_DIM + k]);
 
                     RealVec dX[SPATIAL_DIM], U[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM];
                     for (Integer i = 0; i < SPATIAL_DIM; i++)
@@ -555,14 +557,14 @@ DMK_ALWAYS_INLINE void EvalPairsRanges(int, const typename uKernelEvaluator::sca
             }
 
             for (int r = 0; r < n_ranges; r++) {
-                const Real *__restrict__ src_ptr = r_src + range_starts[r] * SPATIAL_DIM;
-                const Real *__restrict__ charge_ptr = v_src + range_starts[r] * KERNEL_INPUT_DIM;
-                const Real *__restrict__ normal_ptr = src_normals + range_starts[r] * NORMAL_DIM;
-                for (int s = 0; s < range_lens[r];
-                     s++, src_ptr += SPATIAL_DIM, charge_ptr += KERNEL_INPUT_DIM, normal_ptr += NORMAL_DIM) {
+                const int s0 = range_starts[r];
+                const Real *__restrict__ charge_ptr = v_src + s0 * KERNEL_INPUT_DIM;
+                const Real *__restrict__ normal_ptr = src_normals + s0 * NORMAL_DIM;
+                for (int s = 0; s < range_lens[r]; s++, charge_ptr += KERNEL_INPUT_DIM, normal_ptr += NORMAL_DIM) {
+                    const int si = s0 + s;
                     RealVec xs[SPATIAL_DIM], vs[KERNEL_INPUT_DIM], ns[NORMAL_DIM];
                     for (Integer k = 0; k < SPATIAL_DIM; k++)
-                        xs[k] = RealVec::Load1(&src_ptr[k]);
+                        xs[k] = RealVec::Load1(&r_src[k * Ns + si]);
                     for (Integer k = 0; k < NORMAL_DIM; k++)
                         ns[k] = RealVec::Load1(&normal_ptr[k]);
                     for (Integer k = 0; k < KERNEL_INPUT_DIM; k++)
@@ -604,14 +606,15 @@ DMK_ALWAYS_INLINE void EvalPairsRanges(int, const typename uKernelEvaluator::sca
                 const int s0 = range_starts[r];
                 const int sn = range_lens[r];
                 for (int s = 0; s < sn; s++) {
+                    const int si = s0 + s;
                     RealVec xs[SPATIAL_DIM], vs[KERNEL_INPUT_DIM], ns[NORMAL_DIM];
 
                     for (Integer k = 0; k < SPATIAL_DIM; k++)
-                        xs[k] = RealVec::Load1(&r_src[(s0 + s) * SPATIAL_DIM + k]);
+                        xs[k] = RealVec::Load1(&r_src[k * Ns + si]);
                     for (Integer k = 0; k < NORMAL_DIM; k++)
-                        ns[k] = RealVec::Load1(&src_normals[(s0 + s) * NORMAL_DIM + k]);
+                        ns[k] = RealVec::Load1(&src_normals[si * NORMAL_DIM + k]);
                     for (Integer k = 0; k < KERNEL_INPUT_DIM; k++)
-                        vs[k] = RealVec::Load1(&v_src[(s0 + s) * KERNEL_INPUT_DIM + k]);
+                        vs[k] = RealVec::Load1(&v_src[si * KERNEL_INPUT_DIM + k]);
 
                     RealVec dX_rem[SPATIAL_DIM], U_rem[KERNEL_INPUT_DIM][KERNEL_OUTPUT_DIM];
                     for (Integer i = 0; i < SPATIAL_DIM; i++)
