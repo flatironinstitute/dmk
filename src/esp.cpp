@@ -6,6 +6,7 @@
 #include <dmk/prolate0_fun.hpp>
 #include <finufft.h>
 #include <finufft_common/kernel.h>
+#include <finufft_common/utils.h>
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -340,7 +341,98 @@ static DGrid precompute_scaling_coefficients(const PSWFKernel &pswf, const ESPPa
     return p;
 }
 
-// Long-range contribution via FINUFFT spreading/interpolation 
+// --- GPU-only: ES (exponential-of-semicircle) kernel deconvolution -------------
+// cuFINUFFT's GPU spreader only ever implements the ES kernel (it has no PSWF
+// option), so the SI/spreading-kernel deconvolution factor (phi_hat) used to build
+// the GPU scaling coefficients must be derived from the ES kernel instead of the
+// PSWF. The splitting kernel chi (S_hat, above) is unaffected: chi and phi are
+// mathematically independent in the scaling-coefficient formula (ESP paper Eq 9),
+// so PSWF chi + ES phi is a valid hybrid — only phi_hat_1d changes below.
+
+// Reproduces cuFINUFFT's own legacy nspread/beta selection (see
+// finufft-src/src/cuda/spreadinterp.cpp: setup_spreader) so this deconvolution
+// matches exactly the kernel width/shape cuFINUFFT's spreader actually uses for a
+// given tol and upsampfac.
+static void es_kernel_params_from_tol(double tol, double upsampfac, int &ns, double &beta) {
+    if (upsampfac == 2.0)
+        ns = (int)std::ceil(-std::log10(tol / 10.0));
+    else
+        ns = (int)std::ceil(-std::log(tol) / (M_PI * std::sqrt(1.0 - 1.0 / upsampfac)));
+    ns = std::max(2, ns);
+    ns = std::min(ns, 16);
+
+    double betaoverns = 2.30;
+    if (ns == 2) betaoverns = 2.20;
+    if (ns == 3) betaoverns = 2.26;
+    if (ns == 4) betaoverns = 2.38;
+    if (upsampfac != 2.0) {
+        const double gamma = 0.97;
+        betaoverns = gamma * M_PI * (1.0 - 1.0 / (2.0 * upsampfac));
+    }
+    beta = betaoverns * ns;
+}
+
+// ES kernel shape on its unit-radius support, normalized to 1 at the origin
+// (matches PSWFKernel::operator()'s normalization).
+static inline double es_kernel_shape(double u, double beta) {
+    return std::fabs(u) >= 1.0 ? 0.0 : std::exp(beta * (std::sqrt(1.0 - u * u) - 1.0));
+}
+
+// Continuous FT of the unit-support ES kernel shape, evaluated at dimensionless
+// frequency `arg`. Unlike the PSWF (which is its own FT up to a known scale factor,
+// hence PSWFKernel::pswf_hat has a closed form), the ES kernel has no closed-form
+// FT, so it's computed by Gauss-Legendre quadrature — same quadrature order
+// (q = 2 + 3*ns/2) FINUFFT itself uses internally to deconvolve this kernel.
+static double es_kernel_hat(double beta, int ns, double arg) {
+    const double J2 = ns / 2.0;
+    const int q = std::min((int)(2 + 3.0 * J2), 100);
+    std::vector<double> z(2 * q), w(2 * q);
+    finufft::common::gaussquad(2 * q, z.data(), w.data());
+    double sum = 0.0;
+    for (int n = 0; n < q; ++n)
+        sum += 2.0 * w[n] * es_kernel_shape(z[n], beta) * std::cos(arg * z[n]);
+    return sum;
+}
+
+// GPU-only scaling coefficients: reuses the PSWF-based splitting kernel (S_hat)
+// unchanged, but replaces the SI/spreading-kernel deconvolution factor (phi_hat)
+// with the ES kernel's FT, matching cuFINUFFT's native spreader.
+static DGrid precompute_scaling_coefficients_es(const PSWFKernel &pswf, const ESPParams &params, double tol) {
+    int nf = params.n_f;
+    std::vector<int> k_idx(nf);
+    for (int i = 0; i < nf; ++i)
+        k_idx[i] = (i <= nf / 2) ? i : i - nf;
+
+    int ns;
+    double beta;
+    es_kernel_params_from_tol(tol, params.sigma, ns, beta);
+    const double half_width = ns * params.h / 2.0;
+
+    std::vector<double> phi_hat_1d(nf);
+    for (int i = 0; i < nf; ++i) {
+        double k_vec = 2.0 * M_PI * k_idx[i] / params.L;
+        double arg = k_vec * half_width;
+        phi_hat_1d[i] = half_width * es_kernel_hat(beta, ns, arg);
+    }
+
+    DGrid p(nf * nf * nf, 0.0);
+    for (int ix = 0; ix < nf; ++ix)
+        for (int iy = 0; iy < nf; ++iy)
+            for (int iz = 0; iz < nf; ++iz) {
+                Vec3 k_vec = {2.0 * M_PI * k_idx[ix] / params.L, 2.0 * M_PI * k_idx[iy] / params.L,
+                              2.0 * M_PI * k_idx[iz] / params.L};
+                if (k_vec[0] == 0.0 && k_vec[1] == 0.0 && k_vec[2] == 0.0)
+                    continue;
+
+                double s = S_hat(pswf, params, k_vec);
+                double ph = phi_hat_1d[ix] * phi_hat_1d[iy] * phi_hat_1d[iz];
+                p[grid_idx(ix, iy, iz, nf)] =
+                    s / (params.L * params.L * params.L * ph * ph * static_cast<double>(nf * nf * nf));
+            }
+    return p;
+}
+
+// Long-range contribution via FINUFFT spreading/interpolation
 template <typename Real>
 static void long_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
                        const PSWFKernel &pswf, const ESPParams &params, const DGrid &scaling_coeffs,
@@ -464,6 +556,7 @@ struct EspPlan {
     PSWFKernel pswf;
     ESPParams params_base;
     DGrid scaling_coeffs;
+    DGrid scaling_coeffs_es; // GPU-only; lazily filled by esp_create_gpu_plan
     dmk_eval_type eval_type; // baked in at creation; DMK_POTENTIAL skips all force computation
     std::vector<double> dbl_buf; // reused output workspace for esp_eval<double>
     std::vector<float>  flt_buf; // reused output workspace for esp_eval<float>
@@ -488,13 +581,17 @@ void esp_destroy_plan(EspPlan *plan) { delete plan; }
 #ifdef DMK_GPU_OFFLOAD
 GpuState *esp_create_gpu_plan(EspPlan *plan) {
     const double tol = std::pow(10.0, -double(plan->n_digits));
-    const double sf  = plan->pswf(0.0) / (plan->params_base.r_c * 4.0 * M_PI * plan->params_base.c0);
+    const double sf  = plan->pswf(0.0) / (plan->params_base.r_c * 4.0 * M_PI * plan->params_base.c0); //self-interaction factor
+    // GPU spreads with cuFINUFFT's native ES kernel, not the PSWF, so it needs its
+    // own scaling coefficients (PSWF chi, ES phi) rather than plan->scaling_coeffs
+    // (PSWF chi, PSWF phi, used by the CPU path).
+    plan->scaling_coeffs_es = precompute_scaling_coefficients_es(plan->pswf, plan->params_base, tol);
     return gpu_create_state(
         plan->params_base.n_f, plan->n_digits,
         plan->params_base.L,   plan->params_base.r_c,
         plan->params_base.sigma, tol,
         sf, float(sf), plan->eval_type,
-        plan->scaling_coeffs.data());
+        plan->scaling_coeffs_es.data());
 }
 
 void esp_destroy_gpu_plan(GpuState *gpu) { gpu_destroy_state(gpu); }

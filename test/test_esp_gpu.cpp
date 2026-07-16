@@ -6,13 +6,14 @@
 #include <cmath>
 #include <random>
 #include <vector>
+#include <iostream>
 
 // ---------------------------------------------------------------------------
 // Shared fixture — 100 random charge-neutral particles in [-0.5, 0.5)^3.
 // ---------------------------------------------------------------------------
 namespace {
 
-constexpr int    N   = 100;
+constexpr int    N   = 100000;
 constexpr double L   = 1.0;
 constexpr double R_C = 0.12;
 constexpr double EPS = 1e-5;
@@ -75,6 +76,7 @@ static void check(const Result &got, const Result &ref,
     gauge(gp); gauge(rp);
     double ep = l2_rel(gp, rp);
     CHECK_MESSAGE(ep < pot_tol,   label << " pot   l2_rel=" << ep   << " tol=" << pot_tol);
+    //std::cout << "Error (potential): " << ep << std::endl;
     double ex = l2_rel(got.fx, ref.fx);
     double ey = l2_rel(got.fy, ref.fy);
     double ez = l2_rel(got.fz, ref.fz);
