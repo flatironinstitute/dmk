@@ -104,7 +104,7 @@ static inline int cell_linear_index(const std::array<int, DIM> &ci, int nc) {
 // Morton (Z-order) key from an integer coordinate, used to spatially sort particles within a cell
 // so that consecutive VecLen-runs form geometrically compact tiles. part1by2_64 (3-way bit spread)
 // serves DIM=3; part1by1_64 (2-way spread) serves DIM=2.
-static inline uint64_t part1by2_64(uint64_t x) {
+static constexpr uint64_t part1by2_64(uint64_t x) {
     x &= 0x1fffff;
     x = (x | x << 32) & 0x1f00000000ffffULL;
     x = (x | x << 16) & 0x1f0000ff0000ffULL;
@@ -113,7 +113,7 @@ static inline uint64_t part1by2_64(uint64_t x) {
     x = (x | x << 2) & 0x1249249249249249ULL;
     return x;
 }
-static inline uint64_t part1by1_64(uint64_t x) {
+static constexpr uint64_t part1by1_64(uint64_t x) {
     x &= 0xffffffffULL;
     x = (x | x << 16) & 0x0000ffff0000ffffULL;
     x = (x | x << 8) & 0x00ff00ff00ff00ffULL;
@@ -122,12 +122,33 @@ static inline uint64_t part1by1_64(uint64_t x) {
     x = (x | x << 1) & 0x5555555555555555ULL;
     return x;
 }
+// 8-bit-chunk spread tables: kSpreadN[v] = partNby._64(v). A kMortonBits (<=21) coordinate is spread
+// via three chunk lookups instead of the dependent shift/mask chain.
+inline constexpr std::array<uint64_t, 256> kSpread3 = [] {
+    std::array<uint64_t, 256> t{};
+    for (int v = 0; v < 256; ++v)
+        t[v] = part1by2_64(uint64_t(v));
+    return t;
+}();
+inline constexpr std::array<uint64_t, 256> kSpread2 = [] {
+    std::array<uint64_t, 256> t{};
+    for (int v = 0; v < 256; ++v)
+        t[v] = part1by1_64(uint64_t(v));
+    return t;
+}();
 template <int DIM>
 static inline uint64_t morton(const std::array<uint64_t, DIM> &c) {
-    if constexpr (DIM == 3)
-        return (part1by2_64(c[0]) << 2) | (part1by2_64(c[1]) << 1) | part1by2_64(c[2]);
-    else if constexpr (DIM == 2)
-        return (part1by1_64(c[0]) << 1) | part1by1_64(c[1]);
+    if constexpr (DIM == 3) {
+        auto s = [](uint64_t x) { // part1by2_64(x) for x < 2^21, via 8+8+5-bit chunks
+            return kSpread3[x & 0xff] | (kSpread3[(x >> 8) & 0xff] << 24) | (kSpread3[(x >> 16) & 0x1f] << 48);
+        };
+        return (s(c[0]) << 2) | (s(c[1]) << 1) | s(c[2]);
+    } else if constexpr (DIM == 2) {
+        auto s = [](uint64_t x) { // part1by1_64(x) for x < 2^21, via 8+8+5-bit chunks
+            return kSpread2[x & 0xff] | (kSpread2[(x >> 8) & 0xff] << 16) | (kSpread2[(x >> 16) & 0x1f] << 32);
+        };
+        return (s(c[0]) << 1) | s(c[1]);
+    }
 }
 
 // Cell list: particles sorted into DIM-dimensional cubic cells for cache-friendly traversal.
@@ -142,10 +163,10 @@ struct CellList {
 // Scratch buffers reused across cells by the within-cell spatial sorts.
 template <typename Real, int DIM>
 struct SortScratch {
-    std::vector<Real> tr, tq;                   // reordered coords / charges
-    std::vector<int> to;                        // reordered origin indices
-    std::vector<int> key, off;                  // bins: per-particle bucket key / bucket offsets
-    std::vector<std::pair<uint64_t, int>> mkey; // morton: (code, local index) pairs, sorted by code
+    std::vector<Real> tr, tq;                          // reordered coords / charges
+    std::vector<int> to;                               // reordered origin indices
+    std::vector<int> key, off;                         // bins: per-particle bucket key / bucket offsets
+    std::vector<std::pair<uint64_t, int>> mkey, mkey2; // morton: (code, local index) pairs, radix ping-pong
 };
 
 // Reorder particles [b, b+len) by z-order within the cell (lower corner lo, width h), tightening
@@ -153,9 +174,14 @@ struct SortScratch {
 template <typename Real, int DIM>
 static void sort_cell_morton(CellList<Real, DIM> &cl, int b, int len, const std::array<Real, DIM> &lo, Real h,
                              SortScratch<Real, DIM> &s) {
-    constexpr int kMortonBits = 21; // shared quantization width for DIM=2 and DIM=3
-    const Real q = Real(uint32_t(1) << kMortonBits) / h;
+    // At hundreds of points per cell, kMortonBits levels/axis fully resolve the cell (each point
+    // lands in its own sub-box), so the tiles stay as tight as a fine sort while the code fits in
+    // DIM*kMortonBits <= 16 bits -- sortable with a 2-pass byte radix (no comparisons/mispredicts).
+    constexpr int kMortonBits = 16 / DIM;
+    constexpr int n_pass = (DIM * kMortonBits + 7) / 8;
+    const Real q = Real(1 << kMortonBits) / h;
     s.mkey.resize(len);
+    s.mkey2.resize(len);
     s.tr.resize(DIM * len);
     s.tq.resize(len);
     s.to.resize(len);
@@ -164,13 +190,32 @@ static void sort_cell_morton(CellList<Real, DIM> &cl, int b, int len, const std:
         std::array<uint64_t, DIM> qc;
         for (int d = 0; d < DIM; ++d)
             qc[d] = uint32_t(
-                std::min(Real((1u << kMortonBits) - 1), std::max(Real(0), (cl.rs[DIM * slot + d] - lo[d]) * q)));
+                std::min(Real((1 << kMortonBits) - 1), std::max(Real(0), (cl.rs[DIM * slot + d] - lo[d]) * q)));
         s.mkey[i] = {morton<DIM>(qc), i};
     }
 
-    std::sort(s.mkey.begin(), s.mkey.end(), [](const auto &a, const auto &c) { return a.first < c.first; });
+    // LSD byte radix on the Morton code, ping-ponging between mkey and mkey2.
+    auto *src = &s.mkey, *dst = &s.mkey2;
+    for (int p = 0; p < n_pass; ++p) {
+        const int sh = 8 * p;
+        int hist[256] = {0};
+        for (int i = 0; i < len; ++i)
+            ++hist[((*src)[i].first >> sh) & 0xff];
+        int acc = 0;
+        for (int k = 0; k < 256; ++k) {
+            const int cnt = hist[k];
+            hist[k] = acc;
+            acc += cnt;
+        }
+        for (int i = 0; i < len; ++i) {
+            const int dgt = ((*src)[i].first >> sh) & 0xff;
+            (*dst)[hist[dgt]++] = (*src)[i];
+        }
+        std::swap(src, dst);
+    }
+    const auto &sorted = *src; // final result buffer after the last swap
     for (int i = 0; i < len; ++i) {
-        const int slot = b + s.mkey[i].second;
+        const int slot = b + sorted[i].second;
         for (int d = 0; d < DIM; ++d)
             s.tr[DIM * i + d] = cl.rs[DIM * slot + d];
         s.tq[i] = cl.qs[slot];
@@ -1108,10 +1153,16 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
     // points near NU sources while the forward FFT below reads all ntot entries.
     auto &b = lr_b;
     b.assign(ntot, std::complex<Real>(0));
-    nufft1(c.data(), b.data());
+    {
+        sctl::Profile::Scoped prof("lr_spread");
+        nufft1(c.data(), b.data());
+    }
 
     // 2. Forward FFT (in place; b now holds the spectrum)
-    fftn<Real, DIM>(b, b, nf);
+    {
+        sctl::Profile::Scoped prof("lr_fft_fwd");
+        fftn<Real, DIM>(b, b, nf);
+    }
 
     // 3. Diagonal scaling: u_hat[0] is the far-field potential spectrum (b * scaling_coeffs). For the
     // force, the gradient spectra follow from the ik method: F = -q*grad(u), grad(u)_hat_k = i*k*u_hat_k,
@@ -1176,7 +1227,11 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
     auto &out = lr_out;
     out.resize(n);
     auto ifft_interp = [&](std::vector<std::complex<Real>> &g) { // g -> real/imag fields in `out`
-        ifftn<Real, DIM>(g, g, nf);                              // in place
+        {
+            sctl::Profile::Scoped prof("lr_fft_inv");
+            ifftn<Real, DIM>(g, g, nf); // in place
+        }
+        sctl::Profile::Scoped prof("lr_interp");
         nufft2(out.data(), g.data());
     };
     // Component 0 is the potential; components 1.. are force axes 0.. (accumulated as -q*field).
