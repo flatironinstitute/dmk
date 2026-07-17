@@ -114,6 +114,8 @@ typedef struct pdmk_esp_params {
     double r_c;    // real-space cutoff radius
     double eps;    // target precision
     int log_level; // 0: trace … 6: off (matches dmk_log_level)
+    dmk_ikernel kernel = DMK_LAPLACE;
+    double fparam = 0.0;
     dmk_eval_type eval_type = DMK_POTENTIAL;
     double sigma = 1.35; // FINUFFT upsampling factor for the long-range PSWF kernel
     // Short-range tuning; defaults are the fastest known combination.

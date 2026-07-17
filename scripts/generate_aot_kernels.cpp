@@ -278,7 +278,7 @@ constexpr int unroll_factor = 3;
         for (auto el : esp_k.eval_levels) {
             for (int digits = min_digits; digits <= max_digits; ++digits) {
                 try {
-                    const auto coeffs = dmk::get_esp_correction_coeffs<double>(digits, 1.35);
+                    const auto coeffs = dmk::get_esp_correction_coeffs<double>(DMK_LAPLACE, 0.0, 0.0, 3, digits, 1.35);
 
                     CoeffsInfo info;
                     info.digits = digits;

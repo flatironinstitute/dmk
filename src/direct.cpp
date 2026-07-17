@@ -427,20 +427,35 @@ std::vector<std::vector<Real>> get_local_correction_coeffs(dmk_ikernel kernel, i
 }
 
 template <typename Real>
-std::vector<std::vector<Real>> get_esp_correction_coeffs(int n_digits, double sigma) {
+std::vector<std::vector<Real>> get_esp_correction_coeffs(dmk_ikernel kernel, double fparam, double r_c, int n_dim,
+                                                         int n_digits, double sigma) {
     static std::mutex lock;
     std::lock_guard<std::mutex> lock_guard(lock);
 
     const double eps = std::pow(10.0, -n_digits);
     dmk::Prolate0Fun prolate_fun(esp_pswf_c_from_P(sigma, esp_P_from_eps(eps, sigma)), 8000);
     const double inv_int_inf = 1.0 / prolate_fun.int_eval(1.0);
+    const double inv_4pi = 0.25 / M_PI;
+    auto taper = [&](double t) { return 1.0 - inv_int_inf * prolate_fun.int_eval(t); };
 
-    // Same form as the DMK Laplace-3D residual (1 - I(t)/c0), t = r/r_c in [0,1],
-    // scaled by 1/(4*pi) so the baked polynomial yields the full pair potential.
-    const Real inv_4pi = Real(0.25 / M_PI);
-    auto coeffs = make_polyfit_abs_error<Real>(
-        n_digits, [&](double t) { return inv_4pi * (1.0 - inv_int_inf * prolate_fun.int_eval(t)); }, 0.0, 1.0);
-    return {coeffs};
+    auto fit = [&](auto func) -> std::vector<Real> {
+        auto c = make_polyfit_abs_error<double>(n_digits, func, 0.0, 1.0);
+        return std::vector<Real>(c.begin(), c.end());
+    };
+
+    if (n_dim == 3) {
+        switch (kernel) {
+        case DMK_LAPLACE:
+            return {fit([&](double t) { return inv_4pi * taper(t); })};
+        case DMK_YUKAWA:
+            return {fit([&](double t) { return inv_4pi * std::exp(-fparam * r_c * t) * taper(t); })};
+        case DMK_SQRT_LAPLACE:
+            return {fit([&](double x) { return sl3d_local_kernel<double>(x, 1.0, prolate_fun); })};
+        default:
+            break;
+        }
+    }
+    throw std::runtime_error("ESP short-range residual not implemented for this kernel/dim (2D pending 1F)");
 }
 
 #ifdef DMK_USE_JIT
@@ -524,7 +539,7 @@ residual_evaluator_func<Real> make_esp_evaluator_jit(dmk_eval_type eval_level, i
     // ESP reuses the laplace_3d evaluator (already embedded in the jit_kernels IR).
     const std::string func_name = std::format("void laplace_3d_poly_all_pairs<{}, {}, -1, -1, -1>", T_str, VECWIDTH);
 
-    const auto coeffs = get_esp_correction_coeffs<Real>(n_digits, sigma);
+    const auto coeffs = get_esp_correction_coeffs<Real>(DMK_LAPLACE, 0.0, 0.0, 3, n_digits, sigma);
     std::map<std::string, int> args_to_consume = {{"eval_level_rt", int(eval_level)},
                                                   {"n_digits_rt", n_digits},
                                                   {"unroll_factor", unroll_factor},
@@ -559,7 +574,7 @@ residual_evaluator_range_func<Real> make_esp_range_evaluator_jit(dmk_eval_type e
     const std::string func_name =
         std::format("void laplace_3d_poly_all_pairs_ranges<{}, {}, -1, -1, -1>", T_str, VECWIDTH);
 
-    const auto coeffs = get_esp_correction_coeffs<Real>(n_digits, sigma);
+    const auto coeffs = get_esp_correction_coeffs<Real>(DMK_LAPLACE, 0.0, 0.0, 3, n_digits, sigma);
     std::map<std::string, int> args_to_consume = {{"eval_level_rt", int(eval_level)},
                                                   {"n_digits_rt", n_digits},
                                                   {"unroll_factor", unroll_factor},
@@ -704,8 +719,10 @@ template std::vector<std::vector<float>> get_local_correction_coeffs<float>(dmk_
 template std::vector<std::vector<double>> get_local_correction_coeffs<double>(dmk_ikernel kernel, int n_dim,
                                                                               int n_digits, double beta);
 
-template std::vector<std::vector<float>> get_esp_correction_coeffs<float>(int n_digits, double sigma);
-template std::vector<std::vector<double>> get_esp_correction_coeffs<double>(int n_digits, double sigma);
+template std::vector<std::vector<float>> get_esp_correction_coeffs<float>(dmk_ikernel kernel, double fparam, double r_c,
+                                                                          int n_dim, int n_digits, double sigma);
+template std::vector<std::vector<double>>
+get_esp_correction_coeffs<double>(dmk_ikernel kernel, double fparam, double r_c, int n_dim, int n_digits, double sigma);
 
 template direct_evaluator_func<float> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim,
                                                            float lambda);

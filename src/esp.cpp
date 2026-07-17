@@ -1012,13 +1012,25 @@ void EspPlan<Real>::short_range(int n, const Real *r_src, const Real *charges, s
     }
 }
 
+// Fourier symbol of the long-range (windowed) split kernel, excluding the PSWF window pswf_hat and
+// the 1/c0 normalization applied by S_hat. Laplace: 1/(2 k^2) (FT of the Laplacian Green's fn).
+static inline double esp_kernel_symbol(dmk_ikernel kernel, double fparam, double k_mag_sq) {
+    switch (kernel) {
+    case DMK_LAPLACE:
+        return 1.0 / (2.0 * k_mag_sq);
+    default:
+        throw std::runtime_error("ESP: reciprocal-space symbol not yet implemented for this kernel");
+    }
+}
+
 template <int DIM>
-static inline double S_hat(const PSWFKernel &pswf, double r_c, const std::array<double, DIM> &k_vec) {
+static inline double S_hat(const PSWFKernel &pswf, double r_c, dmk_ikernel kernel, double fparam,
+                           const std::array<double, DIM> &k_vec) {
     double k_mag_sq = 0.0;
     for (int d = 0; d < DIM; ++d)
         k_mag_sq += k_vec[d] * k_vec[d];
     const double k_mag = std::sqrt(k_mag_sq);
-    return pswf.pswf_hat(k_mag * r_c) / (2.0 * k_mag * k_mag) / pswf.c0;
+    return pswf.pswf_hat(k_mag * r_c) * esp_kernel_symbol(kernel, fparam, k_mag_sq) / pswf.c0;
 }
 
 // The far-field split's 1/k^2 structure (Fourier transform of the Laplacian Green's function) is
@@ -1066,7 +1078,7 @@ std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() const {
         if (all_zero)
             continue;
 
-        const double s = S_hat<DIM>(pswf, params.r_c, k_vec);
+        const double s = S_hat<DIM>(pswf, params.r_c, params.kernel, params.fparam, k_vec);
         p[grid_idx<DIM>(gidx, nf)] = s / (L_pow_dim * ph * ph * static_cast<double>(ntot));
     }
     return p;
@@ -1264,7 +1276,14 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
 // today since short_range throws first (see short_range's kernel-dispatch site).
 template <typename Real>
 void EspPlan<Real>::self_interaction(int n, const Real *charges, std::span<Real> pot) {
-    Real factor = Real(pswf(0.0) / (params.r_c * 4.0 * M_PI * pswf.c0));
+    Real factor;
+    switch (params.kernel) {
+    case DMK_LAPLACE:
+        factor = Real(pswf(0.0) / (params.r_c * 4.0 * M_PI * pswf.c0));
+        break;
+    default:
+        throw std::runtime_error("ESP: self-interaction not yet implemented for this kernel");
+    }
     for (int i = 0; i < n; ++i)
         pot[i] -= charges[i] * factor;
 }
@@ -1272,6 +1291,8 @@ void EspPlan<Real>::self_interaction(int n, const Real *charges, std::span<Real>
 template <typename Real>
 EspPlan<Real>::EspPlan(const pdmk_esp_params &params_, int n_dim_)
     : n_digits(esp_digits_from_eps(params_.eps)), n_dim(n_dim_), params(params_) {
+    if (params.kernel != DMK_YUKAWA && params.kernel != DMK_LAPLACE && params.kernel != DMK_SQRT_LAPLACE)
+        throw std::runtime_error("ESP supports only the scalar kernels (Yukawa, Laplace, Sqrt-Laplace)");
     const Real eps_d = std::pow(10.0, -Real(n_digits));
     const double sigma = params.sigma;
     P = esp_P_from_eps(eps_d, sigma, n_dim);
