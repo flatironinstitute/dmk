@@ -1680,6 +1680,30 @@ void sqrt_laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc
     }
 }
 
+// Range-list twin of sqrt_laplace_3d_poly_all_pairs (mirrors laplace_3d_poly_all_pairs_ranges).
+template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
+void sqrt_laplace_3d_poly_all_pairs_ranges(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max,
+                                           Real thresh2, int n_coeffs_rt_0, const Real *coeffs, int n_ranges,
+                                           const int *range_starts, const int *range_lens, int n_src, const Real *r_src,
+                                           const Real *charge, const Real *normals, int n_trg, const Real *r_trg,
+                                           Real *pot, const Real *q_trg, Real *pot_src, int unroll_factor) {
+    const int n_digits = (N_DIGITS > 0) ? N_DIGITS : n_digits_rt;
+    const int n_coeffs = (N_COEFFS > 0) ? N_COEFFS : n_coeffs_rt_0;
+    const int eval_level = (EVAL_LEVEL > 0) ? EVAL_LEVEL : eval_level_rt;
+
+    SqrtLaplacePolyEvaluator3D<Real, MaxVecLen> evaluator{thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits};
+
+    if (eval_level == 1) {
+        constexpr int KERNEL_OUTPUT_DIM = 1;
+        EvalPairsRanges<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_ranges, range_starts, range_lens, n_trg,
+                                           r_trg, pot, q_trg, pot_src, evaluator, unroll_factor);
+    } else {
+        constexpr int KERNEL_OUTPUT_DIM = 4;
+        EvalPairsRanges<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_ranges, range_starts, range_lens, n_trg,
+                                           r_trg, pot, q_trg, pot_src, evaluator, unroll_factor);
+    }
+}
+
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
 void stokes_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
                               int n_coeffs_rt_0, int n_coeffs_rt_1, const Real *coeffs, int n_src, const Real *r_src,

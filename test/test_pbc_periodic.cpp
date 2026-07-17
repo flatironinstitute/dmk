@@ -1123,6 +1123,51 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
                                 " pot_trg=", safe_l2(e2pt, r2pt));
                 CHECK(safe_l2(e2p, r2p) < pc.tol_pot);
                 CHECK(safe_l2(e2pt, r2pt) < pc.tol_pot);
+
+#ifdef DMK_BUILD_ESP
+                // ESP at sigma=1.35 can't reach eps=1e-12 (FINUFFT clips the spread width); skip n=12.
+                if (pc.n_digits < 12) {
+                    // ESP requires particles in [-L/2, L/2); shift into the box (periodic invariance).
+                    std::vector<double> r_esp(n_dim * n_src);
+                    for (int i = 0; i < n_dim * n_src; ++i)
+                        r_esp[i] = r_src[i] - 0.5 * L;
+
+                    pdmk_esp_params ep;
+                    ep.L = L;
+                    ep.r_c = L / 4;
+                    ep.eps = pc.eps;
+                    ep.kernel = DMK_SQRT_LAPLACE;
+                    ep.eval_type = eval;
+                    ep.log_level = 6;
+                    dmk::EspPlan<double> esp_plan(ep);
+                    auto esp = esp_plan.eval(n_src, r_esp.data(), &charges[0]);
+
+                    double ee2p = 0, er2p = 0, ee2g = 0, er2g = 0;
+                    for (int i = 0; i < n_test; ++i) {
+                        double ref_pot, ref_grad[3];
+                        ewald_pot_grad(&r_src[i * n_dim], i, ref_pot, with_grad ? ref_grad : nullptr);
+                        ee2p += sctl::pow<2>(esp.pot[i] - ref_pot);
+                        er2p += sctl::pow<2>(ref_pot);
+                        if (with_grad) {
+                            const double f[3] = {esp.force_x[i], esp.force_y[i], esp.force_z[i]};
+                            for (int dd = 0; dd < n_dim; ++dd) {
+                                const double ref_force = -charges[i] * ref_grad[dd];
+                                ee2g += sctl::pow<2>(f[dd] - ref_force);
+                                er2g += sctl::pow<2>(ref_force);
+                            }
+                        }
+                    }
+                    const double esp_l2_pot = safe_l2(ee2p, er2p);
+                    VERBOSE_MESSAGE("  ESP pot_src=", esp_l2_pot);
+                    CHECK(esp_l2_pot < pc.tol_pot);
+                    if (with_grad) {
+                        const double esp_l2_grad = safe_l2(ee2g, er2g);
+                        VERBOSE_MESSAGE("  ESP force_src=", esp_l2_grad);
+                        CHECK(esp_l2_grad < pc.tol_grad);
+                    }
+                }
+#endif
+
                 if (with_grad) {
                     CHECK(safe_l2(e2g, r2g) < pc.tol_grad);
                     CHECK(safe_l2(e2gt, r2gt) < pc.tol_grad);

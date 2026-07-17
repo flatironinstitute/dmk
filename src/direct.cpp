@@ -545,10 +545,14 @@ residual_evaluator_func<Real> make_esp_evaluator_jit(dmk_ikernel kernel, double 
     constexpr int VECWIDTH = sctl::DefaultVecLen<Real>();
     constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
 
-    // Laplace and Yukawa share the laplace_3d evaluator (both f = P(r)/r); only the coeffs differ.
-    if (kernel != DMK_LAPLACE && kernel != DMK_YUKAWA)
-        throw std::runtime_error("ESP JIT: only Laplace and Yukawa (3D) are wired");
-    const std::string func_name = std::format("void laplace_3d_poly_all_pairs<{}, {}, -1, -1, -1>", T_str, VECWIDTH);
+    // Laplace and Yukawa share the laplace_3d evaluator (both f = P(r)/r); Sqrt-Laplace uses its own
+    // (f = P(r)/r^2). Only the coeffs differ within each group.
+    const char *base = (kernel == DMK_LAPLACE || kernel == DMK_YUKAWA) ? "laplace_3d_poly_all_pairs"
+                       : (kernel == DMK_SQRT_LAPLACE)                  ? "sqrt_laplace_3d_poly_all_pairs"
+                                                                       : nullptr;
+    if (!base)
+        throw std::runtime_error("ESP JIT: only Laplace, Yukawa, and Sqrt-Laplace (3D) are wired");
+    const std::string func_name = std::format("void {}<{}, {}, -1, -1, -1>", base, T_str, VECWIDTH);
 
     const auto coeffs = get_esp_correction_coeffs<Real>(kernel, fparam, r_c, 3, n_digits, sigma);
     std::map<std::string, int> args_to_consume = {{"eval_level_rt", int(eval_level)},
@@ -585,10 +589,12 @@ residual_evaluator_range_func<Real> make_esp_range_evaluator_jit(dmk_ikernel ker
     constexpr int VECWIDTH = sctl::DefaultVecLen<Real>();
     constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
 
-    if (kernel != DMK_LAPLACE && kernel != DMK_YUKAWA)
-        throw std::runtime_error("ESP JIT: only Laplace and Yukawa (3D) are wired");
-    const std::string func_name =
-        std::format("void laplace_3d_poly_all_pairs_ranges<{}, {}, -1, -1, -1>", T_str, VECWIDTH);
+    const char *base = (kernel == DMK_LAPLACE || kernel == DMK_YUKAWA) ? "laplace_3d_poly_all_pairs_ranges"
+                       : (kernel == DMK_SQRT_LAPLACE)                  ? "sqrt_laplace_3d_poly_all_pairs_ranges"
+                                                                       : nullptr;
+    if (!base)
+        throw std::runtime_error("ESP JIT: only Laplace, Yukawa, and Sqrt-Laplace (3D) are wired");
+    const std::string func_name = std::format("void {}<{}, {}, -1, -1, -1>", base, T_str, VECWIDTH);
 
     const auto coeffs = get_esp_correction_coeffs<Real>(kernel, fparam, r_c, 3, n_digits, sigma);
     std::map<std::string, int> args_to_consume = {{"eval_level_rt", int(eval_level)},

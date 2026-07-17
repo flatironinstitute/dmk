@@ -952,8 +952,11 @@ void EspPlan<Real>::short_range(int n, const Real *r_src, const Real *charges, s
     const bool want_force = (params.eval_type >= DMK_POTENTIAL_GRAD);
     const int out_dim = want_force ? 1 + DIM : 1;
 
-    const Real rsc = Real(2.0 / params.r_c);
-    const Real cen = Real(-params.r_c / 2.0);
+    // Sqrt-Laplace's poly is in R^2 (SqrtLaplacePolyEvaluator3D), the others in r; both map the
+    // residual's [0, r_c] fit domain onto the evaluator's [-1, 1] variable.
+    const bool r2_var = (params.kernel == DMK_SQRT_LAPLACE);
+    const Real rsc = r2_var ? Real(2.0 / (params.r_c * params.r_c)) : Real(2.0 / params.r_c);
+    const Real cen = r2_var ? Real(-1.0) : Real(-params.r_c / 2.0);
 
     // Interleaved [pot] or [pot, d/dx, ...] per particle (out_dim = 1+DIM when forces are wanted),
     // in cell-sorted order.
@@ -1300,6 +1303,19 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_, int n_dim_)
             return sum;
         };
         self_factor *= Real(W0(params.fparam) / W0(0.0));
+    } else if (params.kernel == DMK_SQRT_LAPLACE) {
+        // G_long(r) = [F(r/r_c)/c0_sym] / r^2, F(u) = int_0^u t*psi0(t) dt, c0_sym = F(1); at r->0,
+        // F(u) ~ psi0(0) u^2/2, so W(0) = psi0(0) / (2 * c0_sym * r_c^2).
+        constexpr int nq = 200;
+        std::array<double, nq> xs, ws;
+        legerts(1, nq, xs.data(), ws.data());
+        double c0_sym = 0.0;
+        for (int j = 0; j < nq; ++j) {
+            const double t = 0.5 * (xs[j] + 1.0);
+            const double w = 0.5 * ws[j];
+            c0_sym += pswf.pswf.eval_val(t) * t * w;
+        }
+        self_factor = Real(pswf.pswf.eval_val(0.0) / (2.0 * c0_sym * params.r_c * params.r_c));
     }
 
     const std::vector<double> sc =
