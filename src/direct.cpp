@@ -435,7 +435,6 @@ std::vector<std::vector<Real>> get_esp_correction_coeffs(dmk_ikernel kernel, dou
     const double eps = std::pow(10.0, -n_digits);
     dmk::Prolate0Fun prolate_fun(esp_pswf_c_from_P(sigma, esp_P_from_eps(eps, sigma)), 8000);
     const double inv_int_inf = 1.0 / prolate_fun.int_eval(1.0);
-    const double inv_4pi = 0.25 / M_PI;
     auto taper = [&](double t) { return 1.0 - inv_int_inf * prolate_fun.int_eval(t); };
 
     auto fit = [&](auto func) -> std::vector<Real> {
@@ -446,9 +445,18 @@ std::vector<std::vector<Real>> get_esp_correction_coeffs(dmk_ikernel kernel, dou
     if (n_dim == 3) {
         switch (kernel) {
         case DMK_LAPLACE:
-            return {fit([&](double t) { return inv_4pi * taper(t); })};
-        case DMK_YUKAWA:
-            return {fit([&](double t) { return inv_4pi * std::exp(-fparam * r_c * t) * taper(t); })};
+            return {fit([&](double t) { return taper(t); })};
+        case DMK_YUKAWA: {
+            // Residual L(r), matched to the long-range window W (get_periodic_windowed_kernel_ft) by
+            // sharing the prolate windowing (beta = c, level-0 box = r_c). box_sizes_[0] = 2*r_c
+            // because local_correction_coeffs halves the level-0 box.
+            const double c = esp_pswf_c_from_P(sigma, esp_P_from_eps(eps, sigma));
+            sctl::Vector<double> box_sizes(1);
+            box_sizes[0] = 2.0 * r_c;
+            FourierData<double> fd(kernel, n_dim, eps, 16, 16, fparam, c, box_sizes);
+            const auto lc = fd.local_correction_coeffs(0, n_digits);
+            return {std::vector<Real>(lc.reg_poly.begin(), lc.reg_poly.end())};
+        }
         case DMK_SQRT_LAPLACE:
             return {fit([&](double x) { return sl3d_local_kernel<double>(x, 1.0, prolate_fun); })};
         default:
@@ -529,17 +537,20 @@ template residual_evaluator_func<double> make_evaluator_jit<double>(dmk_ikernel 
                                                                     int unroll_factor);
 
 template <typename Real>
-residual_evaluator_func<Real> make_esp_evaluator_jit(dmk_eval_type eval_level, int n_digits, double sigma,
+residual_evaluator_func<Real> make_esp_evaluator_jit(dmk_ikernel kernel, double fparam, double r_c,
+                                                     dmk_eval_type eval_level, int n_digits, double sigma,
                                                      int unroll_factor) {
     static std::mutex lock;
     std::lock_guard<std::mutex> lock_guard(lock);
     constexpr int VECWIDTH = sctl::DefaultVecLen<Real>();
     constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
 
-    // ESP reuses the laplace_3d evaluator (already embedded in the jit_kernels IR).
+    // Laplace and Yukawa share the laplace_3d evaluator (both f = P(r)/r); only the coeffs differ.
+    if (kernel != DMK_LAPLACE && kernel != DMK_YUKAWA)
+        throw std::runtime_error("ESP JIT: only Laplace and Yukawa (3D) are wired");
     const std::string func_name = std::format("void laplace_3d_poly_all_pairs<{}, {}, -1, -1, -1>", T_str, VECWIDTH);
 
-    const auto coeffs = get_esp_correction_coeffs<Real>(DMK_LAPLACE, 0.0, 0.0, 3, n_digits, sigma);
+    const auto coeffs = get_esp_correction_coeffs<Real>(kernel, fparam, r_c, 3, n_digits, sigma);
     std::map<std::string, int> args_to_consume = {{"eval_level_rt", int(eval_level)},
                                                   {"n_digits_rt", n_digits},
                                                   {"unroll_factor", unroll_factor},
@@ -558,23 +569,28 @@ residual_evaluator_func<Real> make_esp_evaluator_jit(dmk_eval_type eval_level, i
     };
 }
 
-template residual_evaluator_func<float> make_esp_evaluator_jit<float>(dmk_eval_type eval_level, int n_digits,
+template residual_evaluator_func<float> make_esp_evaluator_jit<float>(dmk_ikernel kernel, double fparam, double r_c,
+                                                                      dmk_eval_type eval_level, int n_digits,
                                                                       double sigma, int unroll_factor);
-template residual_evaluator_func<double> make_esp_evaluator_jit<double>(dmk_eval_type eval_level, int n_digits,
+template residual_evaluator_func<double> make_esp_evaluator_jit<double>(dmk_ikernel kernel, double fparam, double r_c,
+                                                                        dmk_eval_type eval_level, int n_digits,
                                                                         double sigma, int unroll_factor);
 
 template <typename Real>
-residual_evaluator_range_func<Real> make_esp_range_evaluator_jit(dmk_eval_type eval_level, int n_digits, double sigma,
+residual_evaluator_range_func<Real> make_esp_range_evaluator_jit(dmk_ikernel kernel, double fparam, double r_c,
+                                                                 dmk_eval_type eval_level, int n_digits, double sigma,
                                                                  int unroll_factor) {
     static std::mutex lock;
     std::lock_guard<std::mutex> lock_guard(lock);
     constexpr int VECWIDTH = sctl::DefaultVecLen<Real>();
     constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
 
+    if (kernel != DMK_LAPLACE && kernel != DMK_YUKAWA)
+        throw std::runtime_error("ESP JIT: only Laplace and Yukawa (3D) are wired");
     const std::string func_name =
         std::format("void laplace_3d_poly_all_pairs_ranges<{}, {}, -1, -1, -1>", T_str, VECWIDTH);
 
-    const auto coeffs = get_esp_correction_coeffs<Real>(DMK_LAPLACE, 0.0, 0.0, 3, n_digits, sigma);
+    const auto coeffs = get_esp_correction_coeffs<Real>(kernel, fparam, r_c, 3, n_digits, sigma);
     std::map<std::string, int> args_to_consume = {{"eval_level_rt", int(eval_level)},
                                                   {"n_digits_rt", n_digits},
                                                   {"unroll_factor", unroll_factor},
@@ -599,10 +615,13 @@ residual_evaluator_range_func<Real> make_esp_range_evaluator_jit(dmk_eval_type e
     };
 }
 
-template residual_evaluator_range_func<float>
-make_esp_range_evaluator_jit<float>(dmk_eval_type eval_level, int n_digits, double sigma, int unroll_factor);
+template residual_evaluator_range_func<float> make_esp_range_evaluator_jit<float>(dmk_ikernel kernel, double fparam,
+                                                                                  double r_c, dmk_eval_type eval_level,
+                                                                                  int n_digits, double sigma,
+                                                                                  int unroll_factor);
 template residual_evaluator_range_func<double>
-make_esp_range_evaluator_jit<double>(dmk_eval_type eval_level, int n_digits, double sigma, int unroll_factor);
+make_esp_range_evaluator_jit<double>(dmk_ikernel kernel, double fparam, double r_c, dmk_eval_type eval_level,
+                                     int n_digits, double sigma, int unroll_factor);
 #endif
 // (DMK_USE_JIT)
 

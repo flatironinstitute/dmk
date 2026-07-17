@@ -8,6 +8,9 @@
 
 #include <dmk.h>
 #include <dmk/direct.hpp>
+#ifdef DMK_BUILD_ESP
+#include <dmk/esp.hpp>
+#endif
 #include <dmk/fourier_data.hpp>
 #include <dmk/tensorprod.hpp>
 #include <dmk/testing.hpp>
@@ -677,6 +680,52 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
                 CHECK(l2_pot_src < pc.tol_pot);
                 CHECK(l2_pot_trg < pc.tol_pot);
 
+#ifdef DMK_BUILD_ESP
+                // ESP at sigma=1.35 can't reach eps=1e-12 (FINUFFT clips the spread width); skip n=12.
+                if (pc.n_digits < 12) {
+                    // ESP requires particles in [-L/2, L/2); shift into the box (periodic invariance
+                    // keeps pot/grad comparable to the reference at the original positions).
+                    std::vector<double> r_esp(n_dim * n_src);
+                    for (int i = 0; i < n_dim * n_src; ++i)
+                        r_esp[i] = r_src[i] - 0.5 * L;
+
+                    pdmk_esp_params ep;
+                    ep.L = L;
+                    ep.r_c = L / 4;
+                    ep.eps = pc.eps;
+                    ep.kernel = DMK_LAPLACE;
+                    ep.eval_type = eval;
+                    ep.log_level = 6;
+                    dmk::EspPlan<double> esp_plan(ep);
+                    auto esp = esp_plan.eval(n_src, r_esp.data(), &charges[0]);
+
+                    double e2p = 0, r2p = 0, e2g = 0, r2g = 0;
+                    for (int i = 0; i < n_test; ++i) {
+                        double ref_pot, ref_grad[3];
+                        ewald_pot_grad(&r_src[i * n_dim], ref_pot, with_grad ? ref_grad : nullptr);
+                        ref_pot -= charges[i] * ewald_self_factor;
+                        e2p += sctl::pow<2>(esp.pot[i] - ref_pot);
+                        r2p += sctl::pow<2>(ref_pot);
+                        if (with_grad) {
+                            const double f[3] = {esp.force_x[i], esp.force_y[i], esp.force_z[i]};
+                            for (int dd = 0; dd < n_dim; ++dd) {
+                                const double ref_force = -charges[i] * ref_grad[dd];
+                                e2g += sctl::pow<2>(f[dd] - ref_force);
+                                r2g += sctl::pow<2>(ref_force);
+                            }
+                        }
+                    }
+                    const double esp_l2_pot = safe_l2(e2p, r2p);
+                    VERBOSE_MESSAGE("  ESP pot_src=", esp_l2_pot);
+                    CHECK(esp_l2_pot < pc.tol_pot);
+                    if (with_grad) {
+                        const double esp_l2_grad = safe_l2(e2g, r2g);
+                        VERBOSE_MESSAGE("  ESP force_src=", esp_l2_grad);
+                        CHECK(esp_l2_grad < pc.tol_grad);
+                    }
+                }
+#endif
+
                 if (with_grad) {
                     const double l2_grad_src = safe_l2(err2_grad_src, ref2_grad_src);
                     const double l2_grad_trg = safe_l2(err2_grad_trg, ref2_grad_trg);
@@ -819,6 +868,50 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Yukawa PBC full pipeline vs lattice sum", 1) {
                 VERBOSE_MESSAGE("Yukawa PBC pipeline: ", label, " pot_src=", l2_pot_src, " pot_trg=", l2_pot_trg);
                 CHECK(l2_pot_src < pc.tol_pot);
                 CHECK(l2_pot_trg < pc.tol_pot);
+
+#ifdef DMK_BUILD_ESP
+                // ESP at sigma=1.35 can't reach eps=1e-12 (FINUFFT clips the spread width); skip n=12.
+                if (pc.n_digits < 12) {
+                    // ESP requires particles in [-L/2, L/2); shift into the box (periodic invariance).
+                    // Non-neutral charges here exercise the finite Yukawa k=0 mode.
+                    std::vector<double> r_esp(n_dim * n_src);
+                    for (int i = 0; i < n_dim * n_src; ++i)
+                        r_esp[i] = r_src[i] - 0.5 * L;
+
+                    pdmk_esp_params ep;
+                    ep.L = L;
+                    ep.r_c = L / 4;
+                    ep.eps = pc.eps;
+                    ep.kernel = DMK_YUKAWA;
+                    ep.fparam = lambda;
+                    ep.eval_type = eval;
+                    ep.log_level = 6;
+                    dmk::EspPlan<double> esp_plan(ep);
+                    auto esp = esp_plan.eval(n_src, r_esp.data(), &charges[0]);
+
+                    double e2p = 0, r2p = 0, e2g = 0, r2g = 0;
+                    for (int i = 0; i < n_test; ++i) {
+                        e2p += sctl::pow<2>(esp.pot[i] - ref_src[i * odim]);
+                        r2p += sctl::pow<2>(ref_src[i * odim]);
+                        if (with_grad) {
+                            const double f[3] = {esp.force_x[i], esp.force_y[i], esp.force_z[i]};
+                            for (int dd = 0; dd < n_dim; ++dd) {
+                                const double ref_force = -charges[i] * ref_src[i * odim + 1 + dd];
+                                e2g += sctl::pow<2>(f[dd] - ref_force);
+                                r2g += sctl::pow<2>(ref_force);
+                            }
+                        }
+                    }
+                    const double esp_l2_pot = safe_l2(e2p, r2p);
+                    VERBOSE_MESSAGE("  ESP pot_src=", esp_l2_pot);
+                    CHECK(esp_l2_pot < pc.tol_pot);
+                    if (with_grad) {
+                        const double esp_l2_grad = safe_l2(e2g, r2g);
+                        VERBOSE_MESSAGE("  ESP force_src=", esp_l2_grad);
+                        CHECK(esp_l2_grad < pc.tol_grad);
+                    }
+                }
+#endif
 
                 if (with_grad) {
                     const double l2_grad_src = safe_l2(err2_grad_src, ref2_grad_src);

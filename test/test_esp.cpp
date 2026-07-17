@@ -78,6 +78,9 @@ static bool run_perilap3d(int n, const double *r_src_flat, const double *charges
             fclose(ef);
         }
     }
+    if (ok)
+        for (int i = 0; i < n; ++i)
+            ref_out[i] *= 4.0 * M_PI; // perilap3d returns 1/(4*pi*r); ESP uses 1/r
     unlink(tmpfile);
     unlink(errfile);
     return ok;
@@ -238,7 +241,7 @@ TEST_CASE("[ESP] long-range only: regular grid, no short-range pairs") {
 }
 
 // Madelung constant test.
-TEST_CASE("[ESP] Madelung constant: NaCl lattice, 1/(4pi*r) kernel") {
+TEST_CASE("[ESP] Madelung constant: NaCl lattice, 1/r kernel") {
     constexpr int n_grid = 8;
     constexpr int N = n_grid * n_grid * n_grid; // 512
     constexpr double L = 1.0;
@@ -269,10 +272,10 @@ TEST_CASE("[ESP] Madelung constant: NaCl lattice, 1/(4pi*r) kernel") {
         esp_mean += esp.pot[i];
     esp_mean /= N;
 
-    // Analytical reference: phi_i = -q_i * M_NaCl / (4π h).
+    // Analytical reference: phi_i = -q_i * M_NaCl / h.
     double err2 = 0, ref2 = 0;
     for (int i = 0; i < N; ++i) {
-        const double expected = -charges[i] * M_NaCl / (4.0 * M_PI * h);
+        const double expected = -charges[i] * M_NaCl / h;
         const double diff = (esp.pot[i] - esp_mean) - expected;
         err2 += diff * diff;
         ref2 += expected * expected;

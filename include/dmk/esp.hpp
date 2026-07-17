@@ -86,6 +86,7 @@ struct EspPlan {
     double h;   // oversampled grid spacing L/n_f
     PSWFKernel pswf;
     std::vector<Real> scaling_coeffs; // diagonal far-field scaling, computed in double then narrowed to Real once
+    Real self_factor{0};              // long-range kernel value at r=0, subtracted per source (self-energy)
     pdmk_esp_params params;
     residual_evaluator_func<Real> evaluator;
     residual_evaluator_range_func<Real> range_evaluator;
@@ -103,7 +104,7 @@ struct EspPlan {
     PotForce<Real> eval(int n, const Real *r_src, const Real *charges);
 
     template <int DIM>
-    std::vector<double> precompute_scaling_coefficients() const;
+    std::vector<double> precompute_scaling_coefficients();
     template <int DIM>
     void short_range(int n, const Real *r_src, const Real *charges, std::span<Real> pot,
                      std::array<std::span<Real>, DIM> force);

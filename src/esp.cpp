@@ -9,6 +9,8 @@
 #include <dmk/aot_kernels.hpp>
 #include <dmk/direct.hpp>
 #include <dmk/esp.hpp>
+#include <dmk/fourier_data.hpp>
+#include <dmk/legeexps.hpp>
 #include <dmk/prolate.hpp>
 #include <dmk/prolate0_fun.hpp>
 #include <dmk/types.hpp>
@@ -1012,33 +1014,12 @@ void EspPlan<Real>::short_range(int n, const Real *r_src, const Real *charges, s
     }
 }
 
-// Fourier symbol of the long-range (windowed) split kernel, excluding the PSWF window pswf_hat and
-// the 1/c0 normalization applied by S_hat. Laplace: 1/(2 k^2) (FT of the Laplacian Green's fn).
-static inline double esp_kernel_symbol(dmk_ikernel kernel, double fparam, double k_mag_sq) {
-    switch (kernel) {
-    case DMK_LAPLACE:
-        return 1.0 / (2.0 * k_mag_sq);
-    default:
-        throw std::runtime_error("ESP: reciprocal-space symbol not yet implemented for this kernel");
-    }
-}
-
-template <int DIM>
-static inline double S_hat(const PSWFKernel &pswf, double r_c, dmk_ikernel kernel, double fparam,
-                           const std::array<double, DIM> &k_vec) {
-    double k_mag_sq = 0.0;
-    for (int d = 0; d < DIM; ++d)
-        k_mag_sq += k_vec[d] * k_vec[d];
-    const double k_mag = std::sqrt(k_mag_sq);
-    return pswf.pswf_hat(k_mag * r_c) * esp_kernel_symbol(kernel, fparam, k_mag_sq) / pswf.c0;
-}
-
 // The far-field split's 1/k^2 structure (Fourier transform of the Laplacian Green's function) is
 // dimension-independent by construction, so this generalizes mechanically to DIM=2 -- no new
 // physics needed here (unlike short_range's near-field correction).
 template <typename Real>
 template <int DIM>
-std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() const {
+std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() {
     const int nf = n_f;
     std::vector<int> k_idx(nf);
     for (int i = 0; i < nf; ++i)
@@ -1051,6 +1032,16 @@ std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() const {
         double arg = k_vec * (P * h) / 2.0;
         phi_hat_1d[i] = (P * h / 2.0) * pswf.pswf_hat(arg);
     }
+
+    // Long-range windowed kernel W(k), reused from the DMK level-0 periodic root-box FT so it shares
+    // the residual's prolate windowing (W + L ~= u). Sampled radially at kappa = sqrt(i)*dk,
+    // dk = 2*pi/L, and the grid point gidx maps to i = sum(k_idx[gidx]^2). k=0 is handled inside
+    // (dropped for Laplace/Sqrt-Laplace, finite for Yukawa). The lambda0/(2*c0) factor reconciles
+    // fourier_data's prolate/psi0 convention with ESP's pswf_hat-based phi_hat.
+    sctl::Vector<double> kernel_ft;
+    get_periodic_windowed_kernel_ft<double, DIM>(params.kernel, &params.fparam, pswf.c, nf, params.L,
+                                                 params.r_c / pswf.c, pswf.pswf, kernel_ft);
+    const double norm = pswf.lambda0 / (2.0 * pswf.c0);
 
     int ntot = 1;
     double L_pow_dim = 1.0;
@@ -1067,19 +1058,13 @@ std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() const {
             gidx[d] = rem % nf;
             rem /= nf;
         }
-        std::array<double, DIM> k_vec;
         double ph = 1.0;
-        bool all_zero = true;
+        int i_rad = 0;
         for (int d = 0; d < DIM; ++d) {
-            k_vec[d] = 2.0 * M_PI * k_idx[gidx[d]] / params.L;
-            all_zero &= (k_vec[d] == 0.0);
+            i_rad += k_idx[gidx[d]] * k_idx[gidx[d]];
             ph *= phi_hat_1d[gidx[d]];
         }
-        if (all_zero)
-            continue;
-
-        const double s = S_hat<DIM>(pswf, params.r_c, params.kernel, params.fparam, k_vec);
-        p[grid_idx<DIM>(gidx, nf)] = s / (L_pow_dim * ph * ph * static_cast<double>(ntot));
+        p[grid_idx<DIM>(gidx, nf)] = norm * kernel_ft[i_rad] / (L_pow_dim * ph * ph * static_cast<double>(ntot));
     }
     return p;
 }
@@ -1271,21 +1256,12 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
     }
 }
 
-// Self-interaction correction — subtracts directly from the provided potential span. 3D-only
-// formula (bakes in the 4*pi solid-angle constant); not templated on DIM. Never reached for DIM=2
-// today since short_range throws first (see short_range's kernel-dispatch site).
+// Self-interaction correction — subtracts the long-range kernel value at r=0 (self_factor, computed
+// in the constructor) from each source potential.
 template <typename Real>
 void EspPlan<Real>::self_interaction(int n, const Real *charges, std::span<Real> pot) {
-    Real factor;
-    switch (params.kernel) {
-    case DMK_LAPLACE:
-        factor = Real(pswf(0.0) / (params.r_c * 4.0 * M_PI * pswf.c0));
-        break;
-    default:
-        throw std::runtime_error("ESP: self-interaction not yet implemented for this kernel");
-    }
     for (int i = 0; i < n; ++i)
-        pot[i] -= charges[i] * factor;
+        pot[i] -= charges[i] * self_factor;
 }
 
 template <typename Real>
@@ -1300,20 +1276,55 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_, int n_dim_)
     pswf = PSWFKernel(eps_d, c);
     n_f = static_cast<int>(std::ceil(pswf.c * params.L / (M_PI * params.r_c)));
     h = params.L / n_f;
+
+    // Long-range kernel value at r=0 (self-energy). Laplace: pswf(0)/(r_c*c0). Yukawa: same base
+    // scaled by the ratio of windowed-kernel-at-zero values W0(lambda)/W0(0); the realization
+    // constant cancels in the ratio. W0(m) = int psi(sqrt(k^2+m^2)*r_c/c)/(k^2+m^2) * k^2 dk (the
+    // psi0 and 2/pi prefactors cancel). Sqrt-Laplace self-term is not yet handled (pending).
+    self_factor = Real(pswf(0.0) / (params.r_c * pswf.c0));
+    if (params.kernel == DMK_YUKAWA) {
+        auto W0 = [&](double m) {
+            constexpr int nq = 200;
+            std::array<double, nq> xs, ws;
+            legerts(1, nq, xs.data(), ws.data());
+            const double kmax = pswf.c / params.r_c;
+            double sum = 0.0;
+            for (int j = 0; j < nq; ++j) {
+                const double k = 0.5 * (xs[j] + 1.0) * kmax;
+                const double w = 0.5 * ws[j] * kmax;
+                const double xi2 = k * k + m * m;
+                const double xval = std::sqrt(xi2) * params.r_c / pswf.c;
+                const double psi = (xval <= 1.0) ? pswf.pswf.eval_val(xval) : 0.0;
+                sum += psi / xi2 * k * k * w;
+            }
+            return sum;
+        };
+        self_factor *= Real(W0(params.fparam) / W0(0.0));
+    }
+
     const std::vector<double> sc =
         n_dim == 2 ? precompute_scaling_coefficients<2>() : precompute_scaling_coefficients<3>();
     scaling_coeffs.assign(sc.begin(), sc.end());
 
     if (n_dim == 3) {
         constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
-        evaluator = get_esp_3d_kernel<Real, MaxVecLen>(params.eval_type, n_digits);
-        range_evaluator = get_esp_3d_kernel_ranges<Real, MaxVecLen>(params.eval_type, n_digits);
+        bool use_jit = false;
 #ifdef DMK_USE_JIT
-        if (!util::env_is_set("DMK_DEBUG_FORCE_AOT")) {
-            evaluator = make_esp_evaluator_jit<Real>(params.eval_type, n_digits, sigma, 3);
-            range_evaluator = make_esp_range_evaluator_jit<Real>(params.eval_type, n_digits, sigma, 3);
-        }
+        use_jit = !util::env_is_set("DMK_DEBUG_FORCE_AOT");
 #endif
+        if (use_jit) {
+#ifdef DMK_USE_JIT
+            evaluator = make_esp_evaluator_jit<Real>(params.kernel, params.fparam, params.r_c, params.eval_type,
+                                                     n_digits, sigma, 3);
+            range_evaluator = make_esp_range_evaluator_jit<Real>(params.kernel, params.fparam, params.r_c,
+                                                                 params.eval_type, n_digits, sigma, 3);
+#endif
+        } else {
+            if (params.kernel != DMK_LAPLACE)
+                throw std::runtime_error("ESP AOT path supports only Laplace; enable JIT for Yukawa/Sqrt-Laplace");
+            evaluator = get_esp_3d_kernel<Real, MaxVecLen>(params.eval_type, n_digits);
+            range_evaluator = get_esp_3d_kernel_ranges<Real, MaxVecLen>(params.eval_type, n_digits);
+        }
     }
 }
 
