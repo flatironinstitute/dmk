@@ -4,6 +4,8 @@
 #include <dmk/omp_wrapper.hpp>
 #include <sctl.hpp>
 
+#include <cuda_profiler_api.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -173,7 +175,11 @@ void run_phase(const Config &cfg, int n, const std::vector<dmk::Vec3T<Real>> &r_
     std::cout << "# phase: " << phase_name << " (gpu)\n";
     std::cout << "run,total_time,pts_per_s" << (report_err ? ",l2_rel_err_vs_cpu" : "") << "\n" << std::flush;
 
+    // Bracket only the timed GPU loop for Nsight: run under `nsys profile
+    // -c cudaProfilerApi ...` (or `ncu -c cudaProfilerApi ...`) so the trace excludes plan
+    // creation, warmup, and the CPU baseline -- see -h/--help output for the full recipe.
     double gpu_time_sum = 0;
+    cudaProfilerStart();
     for (int run = 0; run < cfg.n_runs; ++run) {
         double t0 = MY_OMP_GET_WTIME();
         auto result = dmk::esp_eval_gpu(gpu, r_src, charges);
@@ -185,6 +191,7 @@ void run_phase(const Config &cfg, int n, const std::vector<dmk::Vec3T<Real>> &r_
             std::cout << "," << l2_rel_err(result.pot, cpu_result.pot);
         std::cout << "\n" << std::flush;
     }
+    cudaProfilerStop();
 
     if (!cfg.skip_cpu_baseline) {
         const double gpu_time_avg = gpu_time_sum / cfg.n_runs;
@@ -308,7 +315,16 @@ Config parse_args(int argc, char *argv[]) {
                       << "Output CSV columns (eval phase):\n"
                       << "  run, total_time, pts_per_s[, l2_rel_err_vs_cpu]\n"
                       << "l2_rel_err_vs_cpu and the speedup line compare against one CPU esp_eval call per\n"
-                      << "phase (not perilap3d) -- pass -S to skip that reference run entirely.\n";
+                      << "phase (not perilap3d) -- pass -S to skip that reference run entirely.\n"
+                      << "\n"
+                      << "Profiling with Nsight:\n"
+                      << "  The timed GPU loop is bracketed with cudaProfilerStart()/Stop(), so pass\n"
+                      << "  -c cudaProfilerApi to have the profiler only capture that region (excludes\n"
+                      << "  plan creation, warmup, and the CPU baseline):\n"
+                      << "    nsys profile -c cudaProfilerApi -o report ./benchmark_esp_gpu -S -r 5\n"
+                      << "    ncu  -c cudaProfilerApi -o report ./benchmark_esp_gpu -S -r 1\n"
+                      << "  -S avoids wasting the capture window on the (uncaptured) CPU baseline call,\n"
+                      << "  and a small -r keeps the trace/replay count manageable for ncu especially.\n";
             exit(0);
         }
     }

@@ -26,5 +26,5 @@ endif()
 
 if (DMK_BUILD_ESP AND DMK_GPU_OFFLOAD)
   add_executable(benchmark_esp_gpu benchmark_esp_gpu.cpp)
-  target_link_libraries(benchmark_esp_gpu PRIVATE dmk_shared)
+  target_link_libraries(benchmark_esp_gpu PRIVATE dmk_shared CUDA::cudart)
 endif()

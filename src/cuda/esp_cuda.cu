@@ -50,11 +50,24 @@ struct GpuState {
     bool           fft_plan_valid    = false;
     cufinufft_plan cfnufft_plan_1    = nullptr;    // type-1 spread-only (NU → uniform)
     cufinufft_plan cfnufft_plan_2    = nullptr;    // type-2 interp-only (uniform → NU)
+    int             *d_cell_start    = nullptr;    // ncells+1 ints (ncells=nc³) — short-range cell list
+    cuDoubleComplex *d_fhat_x        = nullptr;    // nf³ complex — force spectra, force path only
+    cuDoubleComplex *d_fhat_y        = nullptr;
+    cuDoubleComplex *d_fhat_z        = nullptr;
 
-    // Per-eval device scratch; grown as needed, never shrunk.
-    double *d_dbl_buf = nullptr;   size_t dbl_cap = 0;
-    float  *d_flt_buf = nullptr;   size_t flt_cap = 0;
-    void   *d_tmp     = nullptr;   size_t tmp_cap = 0;
+    // Per-eval device scratch — grown as needed (byte capacity), never shrunk, reused across
+    // calls instead of malloc/free'd every eval. Cast to the needed type at each call site
+    // (Real can be float or double); roles always used together within one eval (e.g.
+    // pot/fx/fy/fz, or xs/ys/zs/qs) share one buffer via sub-offsets, mirroring how
+    // gpu_make_spans partitions the host output buffer.
+    void *d_scratch_pos    = nullptr; size_t scratch_pos_cap    = 0; // pos_aos (3n) + charges (n), Real
+    void *d_scratch_out    = nullptr; size_t scratch_out_cap    = 0; // pot/fx/fy/fz (4n), Real
+    void *d_scratch_idx    = nullptr; size_t scratch_idx_cap    = 0; // cell_idx (n) + orig (n), int
+    void *d_scratch_sorted = nullptr; size_t scratch_sorted_cap = 0; // xs/ys/zs/qs (4n), Real
+    void *d_scratch_pg     = nullptr; size_t scratch_pg_cap     = 0; // pg_sorted (out_dim*n), Real
+    void *d_scratch_lr_xyz = nullptr; size_t scratch_lr_xyz_cap = 0; // x/y/z (3n), double
+    void *d_scratch_lr_c   = nullptr; size_t scratch_lr_c_cap   = 0; // packed charges (n), cuDoubleComplex
+    void *d_scratch_nu_c   = nullptr; size_t scratch_nu_c_cap   = 0; // pot_c / force_c (n), cuDoubleComplex
 
     GpuState()  = default;
     ~GpuState() {
@@ -67,12 +80,32 @@ struct GpuState {
         if (d_sr_coeffs)       cudaFree(d_sr_coeffs);
         if (d_nbc_tab)         cudaFree(d_nbc_tab);
         if (d_off_tab)         cudaFree(d_off_tab);
-        if (d_dbl_buf)         cudaFree(d_dbl_buf);
-        if (d_flt_buf)         cudaFree(d_flt_buf);
-        if (d_tmp)             cudaFree(d_tmp);
+        if (d_cell_start)      cudaFree(d_cell_start);
+        if (d_fhat_x)          cudaFree(d_fhat_x);
+        if (d_fhat_y)          cudaFree(d_fhat_y);
+        if (d_fhat_z)          cudaFree(d_fhat_z);
+        if (d_scratch_pos)     cudaFree(d_scratch_pos);
+        if (d_scratch_out)     cudaFree(d_scratch_out);
+        if (d_scratch_idx)     cudaFree(d_scratch_idx);
+        if (d_scratch_sorted)  cudaFree(d_scratch_sorted);
+        if (d_scratch_pg)      cudaFree(d_scratch_pg);
+        if (d_scratch_lr_xyz)  cudaFree(d_scratch_lr_xyz);
+        if (d_scratch_lr_c)    cudaFree(d_scratch_lr_c);
+        if (d_scratch_nu_c)    cudaFree(d_scratch_nu_c);
         if (stream)            cudaStreamDestroy(stream);
     }
 };
+
+// Grows *ptr (byte capacity *cap) to at least needed_bytes, freeing+reallocating only when it
+// actually needs to grow. The core of turning "malloc/free every eval" into "malloc once,
+// reuse forever" for a fixed (or non-growing) problem size.
+static void ensure_capacity(void *&ptr, size_t &cap, size_t needed_bytes) {
+    if (cap >= needed_bytes) return;
+    if (ptr) cudaFree(ptr);
+    if (cudaMalloc(&ptr, needed_bytes) != cudaSuccess)
+        throw std::runtime_error("ensure_capacity: cudaMalloc failed");
+    cap = needed_bytes;
+}
 
 // Allocate and initialise a GpuState with all physics params and CUDA objects.
 GpuState *gpu_create_state(
@@ -176,6 +209,23 @@ GpuState *gpu_create_state(
         cudaMemcpy(gpu->d_off_tab, h_off_tab.data(), ntab * sizeof(double), cudaMemcpyHostToDevice);
     }
 
+    // Short-range cell-list CSR boundaries: size ncells+1 is fixed by nc, so this is plan-level
+    // (allocated once here, reused/overwritten every short_range_gpu call).
+    {
+        const long long ncells = (long long)gpu->nc * gpu->nc * gpu->nc;
+        if (cudaMalloc(&gpu->d_cell_start, (ncells + 1) * sizeof(int)) != cudaSuccess)
+            throw std::runtime_error("GpuState: cudaMalloc d_cell_start failed");
+    }
+
+    // Force spectra (long_range_gpu steps 6-8): size nf³ is plan-level, only needed when the
+    // plan actually computes forces.
+    if (eval_type == DMK_POTENTIAL_GRAD) {
+        if (cudaMalloc(&gpu->d_fhat_x, ntot * sizeof(cuDoubleComplex)) != cudaSuccess ||
+            cudaMalloc(&gpu->d_fhat_y, ntot * sizeof(cuDoubleComplex)) != cudaSuccess ||
+            cudaMalloc(&gpu->d_fhat_z, ntot * sizeof(cuDoubleComplex)) != cudaSuccess)
+            throw std::runtime_error("GpuState: cudaMalloc d_fhat_{x,y,z} failed");
+    }
+
     return gpu;
 }
 
@@ -237,11 +287,12 @@ static void build_cell_list_gpu(
     const int ncells = nc * nc * nc;
     const auto policy = thrust::cuda::par.on(gpu.stream);
 
-    int *d_cell_idx, *d_orig;
-    if (cudaMalloc(&d_cell_idx, n * sizeof(int)) != cudaSuccess)
-        throw std::runtime_error("build_cell_list_gpu: cudaMalloc d_cell_idx failed");
-    if (cudaMalloc(&d_orig, n * sizeof(int)) != cudaSuccess)
-        throw std::runtime_error("build_cell_list_gpu: cudaMalloc d_orig failed");
+    // d_cell_idx is transient (dead after the sort below); d_orig is this function's real
+    // output, needed by the caller through scatter_kernel. Both int, share one persistent
+    // 2n-int scratch buffer via sub-offsets.
+    ensure_capacity(gpu.d_scratch_idx, gpu.scratch_idx_cap, 2 * (size_t)n * sizeof(int));
+    int *d_cell_idx = reinterpret_cast<int *>(gpu.d_scratch_idx);
+    int *d_orig     = d_cell_idx + n;
 
     {
         const int threads = 256, blocks = (n + threads - 1) / threads;
@@ -253,22 +304,21 @@ static void build_cell_list_gpu(
     thrust::sequence(policy, orig_ptr, orig_ptr + n);
     thrust::sort_by_key(policy, cell_idx_ptr, cell_idx_ptr + n, orig_ptr); //sort particles by cell index; also sort their original indices
 
-    int *d_cell_start;
-    if (cudaMalloc(&d_cell_start, (ncells + 1) * sizeof(int)) != cudaSuccess)
-        throw std::runtime_error("build_cell_list_gpu: cudaMalloc d_cell_start failed");
-    thrust::device_ptr<int> cell_start_ptr(d_cell_start);
+    // d_cell_start is plan-level (gpu_create_state): size ncells+1 is fixed by nc.
+    thrust::device_ptr<int> cell_start_ptr(gpu.d_cell_start);
     thrust::counting_iterator<int> search_begin(0);
     // cell_start[c] = first sorted position with cell_idx >= c; standard sort+lower_bound
     // bucketing idiom, giving the same CSR boundaries as an explicit counting sort.
     thrust::lower_bound(policy, cell_idx_ptr, cell_idx_ptr + n, search_begin, search_begin + ncells + 1,
                         cell_start_ptr);
 
-    Real *d_xs, *d_ys, *d_zs, *d_qs;
-    if (cudaMalloc(&d_xs, n * sizeof(Real)) != cudaSuccess ||
-        cudaMalloc(&d_ys, n * sizeof(Real)) != cudaSuccess ||
-        cudaMalloc(&d_zs, n * sizeof(Real)) != cudaSuccess ||
-        cudaMalloc(&d_qs, n * sizeof(Real)) != cudaSuccess)
-        throw std::runtime_error("build_cell_list_gpu: cudaMalloc sorted SoA buffers failed");
+    // xs/ys/zs/qs are this function's other output, always used together downstream --
+    // one persistent 4n-Real scratch buffer via sub-offsets.
+    ensure_capacity(gpu.d_scratch_sorted, gpu.scratch_sorted_cap, 4 * (size_t)n * sizeof(Real));
+    Real *d_xs = reinterpret_cast<Real *>(gpu.d_scratch_sorted);
+    Real *d_ys = d_xs + n;
+    Real *d_zs = d_ys + n;
+    Real *d_qs = d_zs + n;
     {
         const int threads = 256, blocks = (n + threads - 1) / threads;
         //apply the permutation computed by sort_by_key, physically rearranging the particle data into cell-sorted order
@@ -276,10 +326,8 @@ static void build_cell_list_gpu(
             d_pos_aos, d_charges, d_orig, n, d_xs, d_ys, d_zs, d_qs);
     }
 
-    cudaFree(d_cell_idx);
-
     *d_xs_out = d_xs; *d_ys_out = d_ys; *d_zs_out = d_zs; *d_qs_out = d_qs;
-    *d_cell_start_out = d_cell_start;
+    *d_cell_start_out = gpu.d_cell_start;
     *d_orig_out = d_orig;
 }
 
@@ -634,18 +682,18 @@ static void long_range_gpu(
     // Uses the pre-created gpu.cfnufft_plan_2 (type-2, makeplan done at plan time).
     // -----------------------------------------------------------------------
     if (want_pot_interp) {
-        cuDoubleComplex *d_pot_c;
-        if (cudaMalloc(&d_pot_c, n * sizeof(cuDoubleComplex)) != cudaSuccess)
-            throw std::runtime_error("long_range_gpu: cudaMalloc d_pot_c failed");
+        // Reused for the force components below too (d_scratch_nu_c) -- pot_c is fully
+        // consumed here before steps 6-8 even start, so there's no lifetime overlap.
+        ensure_capacity(gpu.d_scratch_nu_c, gpu.scratch_nu_c_cap, (size_t)n * sizeof(cuDoubleComplex));
+        cuDoubleComplex *d_pot_c = reinterpret_cast<cuDoubleComplex *>(gpu.d_scratch_nu_c);
 
         // gpu.d_b is d_grid_pot (after step 4). Execute: uniform grid → NU values.
         int ier = cufinufft_execute(gpu.cfnufft_plan_2, d_pot_c, gpu.d_b);
-        if (ier != 0) { cudaFree(d_pot_c); throw std::runtime_error("long_range_gpu: cufinufft_execute interp failed, ier=" + std::to_string(ier)); }
+        if (ier != 0) throw std::runtime_error("long_range_gpu: cufinufft_execute interp failed, ier=" + std::to_string(ier));
 
         const int threads = 256;
         const int blocks  = (n + threads - 1) / threads;
         extract_real_kernel<<<blocks, threads, 0, gpu.stream>>>(n, d_pot_c, d_pot);
-        cudaFree(d_pot_c);
     }
 
     // -----------------------------------------------------------------------
@@ -655,11 +703,9 @@ static void long_range_gpu(
     // Mirrors CPU long_range()'s force block (esp.cpp).
     // -----------------------------------------------------------------------
     if (want_force_interp) {
-        cuDoubleComplex *f_hat_x, *f_hat_y, *f_hat_z;
-        if (cudaMalloc(&f_hat_x, ntot * sizeof(cuDoubleComplex)) != cudaSuccess ||
-            cudaMalloc(&f_hat_y, ntot * sizeof(cuDoubleComplex)) != cudaSuccess ||
-            cudaMalloc(&f_hat_z, ntot * sizeof(cuDoubleComplex)) != cudaSuccess)
-            throw std::runtime_error("long_range_gpu: cudaMalloc f_hat_{x,y,z} failed");
+        // Plan-level (gpu_create_state): size nf³ is fixed, allocated once whenever the plan
+        // computes forces at all.
+        cuDoubleComplex *f_hat_x = gpu.d_fhat_x, *f_hat_y = gpu.d_fhat_y, *f_hat_z = gpu.d_fhat_z;
 
         // Step 6: build the three force spectra from pot_hat.
         {
@@ -688,31 +734,26 @@ static void long_range_gpu(
         // Step 8: interp (cuFINUFFT type-2, reusing the setpts binding above)
         // each grid_force component → NU points, then accumulate
         // d_f{x,y,z}[j] += -charge[j]*real(force_c[j]).
+        // Same scratch buffer as d_pot_c above, reused sequentially across all three
+        // components (each is fully consumed by accumulate_force_kernel before the next
+        // interp_and_accumulate call touches it).
+        ensure_capacity(gpu.d_scratch_nu_c, gpu.scratch_nu_c_cap, (size_t)n * sizeof(cuDoubleComplex));
+        cuDoubleComplex *d_force_c = reinterpret_cast<cuDoubleComplex *>(gpu.d_scratch_nu_c);
+
         auto interp_and_accumulate = [&](cuDoubleComplex *grid_force, Real *d_force_out) {
             if (!d_force_out) return;
-            cuDoubleComplex *d_force_c;
-            if (cudaMalloc(&d_force_c, n * sizeof(cuDoubleComplex)) != cudaSuccess)
-                throw std::runtime_error("long_range_gpu: cudaMalloc d_force_c failed");
-
             int ier = cufinufft_execute(gpu.cfnufft_plan_2, d_force_c, grid_force);
-            if (ier != 0) {
-                cudaFree(d_force_c);
+            if (ier != 0)
                 throw std::runtime_error("long_range_gpu: cufinufft_execute force-interp failed, ier=" +
                                          std::to_string(ier));
-            }
 
             const int threads = 256;
             const int blocks  = (n + threads - 1) / threads;
             accumulate_force_kernel<Real><<<blocks, threads, 0, gpu.stream>>>(n, d_c, d_force_c, d_force_out);
-            cudaFree(d_force_c);
         };
         interp_and_accumulate(f_hat_x, d_fx);
         interp_and_accumulate(f_hat_y, d_fy);
         interp_and_accumulate(f_hat_z, d_fz);
-
-        cudaFree(f_hat_x);
-        cudaFree(f_hat_y);
-        cudaFree(f_hat_z);
     }
 }
 
@@ -733,9 +774,8 @@ static void short_range_gpu(
                               gpu);
 
     const int out_dim = want_force ? 4 : 1;
-    Real *d_pg_sorted;
-    if (cudaMalloc(&d_pg_sorted, (size_t)out_dim * n * sizeof(Real)) != cudaSuccess)
-        throw std::runtime_error("short_range_gpu: cudaMalloc d_pg_sorted failed");
+    ensure_capacity(gpu.d_scratch_pg, gpu.scratch_pg_cap, (size_t)out_dim * n * sizeof(Real));
+    Real *d_pg_sorted = reinterpret_cast<Real *>(gpu.d_scratch_pg);
 
     const Real rsc    = Real(2) / r_c;
     const Real cen    = Real(-0.5) * r_c;
@@ -753,9 +793,8 @@ static void short_range_gpu(
         scatter_kernel<Real><<<b2, t2, 0, gpu.stream>>>(n, out_dim, d_pg_sorted, d_orig, d_qs, d_pot, d_fx, d_fy,
                                                         d_fz);
     }
-
-    cudaFree(d_xs); cudaFree(d_ys); cudaFree(d_zs); cudaFree(d_qs);
-    cudaFree(d_cell_start); cudaFree(d_orig); cudaFree(d_pg_sorted);
+    // d_xs/ys/zs/qs, d_cell_start, d_orig, d_pg_sorted are all persistent GpuState scratch --
+    // nothing to free here; they're reused as-is by the next call.
 }
 
 // ---------------------------------------------------------------------------
@@ -810,20 +849,21 @@ static PotForce<Real> esp_eval_gpu_impl(
     auto [pot, fx, fy, fz] = gpu_make_spans<Real>(gpu, n);
     const Real *h_pos_aos = reinterpret_cast<const Real *>(r_src.data());
 
-    // Positions/charges in the AoS Real layout short_range_gpu wants.
-    Real *d_pos_aos, *d_charges;
-    cudaMalloc(&d_pos_aos, 3 * (size_t)n * sizeof(Real));
-    cudaMalloc(&d_charges, n * sizeof(Real));
+    // Positions/charges in the AoS Real layout short_range_gpu wants -- persistent scratch,
+    // reused across calls instead of malloc/free'd every eval (see GpuState).
+    ensure_capacity(gpu->d_scratch_pos, gpu->scratch_pos_cap, 4 * (size_t)n * sizeof(Real));
+    Real *d_pos_aos = reinterpret_cast<Real *>(gpu->d_scratch_pos);
+    Real *d_charges = d_pos_aos + 3 * (size_t)n;
     cudaMemcpyAsync(d_pos_aos, h_pos_aos, 3 * (size_t)n * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
     cudaMemcpyAsync(d_charges, charges.data(), n * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
 
-    Real *d_pot, *d_fx = nullptr, *d_fy = nullptr, *d_fz = nullptr;
-    cudaMalloc(&d_pot, n * sizeof(Real));
+    ensure_capacity(gpu->d_scratch_out, gpu->scratch_out_cap, 4 * (size_t)n * sizeof(Real));
+    Real *d_pot = reinterpret_cast<Real *>(gpu->d_scratch_out);
+    Real *d_fx = want_force ? d_pot + n : nullptr;
+    Real *d_fy = want_force ? d_pot + 2 * (size_t)n : nullptr;
+    Real *d_fz = want_force ? d_pot + 3 * (size_t)n : nullptr;
     cudaMemsetAsync(d_pot, 0, n * sizeof(Real), gpu->stream);
     if (want_force) {
-        cudaMalloc(&d_fx, n * sizeof(Real));
-        cudaMalloc(&d_fy, n * sizeof(Real));
-        cudaMalloc(&d_fz, n * sizeof(Real));
         cudaMemsetAsync(d_fx, 0, n * sizeof(Real), gpu->stream);
         cudaMemsetAsync(d_fy, 0, n * sizeof(Real), gpu->stream);
         cudaMemsetAsync(d_fz, 0, n * sizeof(Real), gpu->stream);
@@ -844,11 +884,12 @@ static PotForce<Real> esp_eval_gpu_impl(
         h_z[j] = double(r_src[j][2]) * scale;
         h_c[j] = {double(charges[j]), 0.0};
     }
-    double *d_x, *d_y, *d_z; cuDoubleComplex *d_c;
-    cudaMalloc(&d_x, n * sizeof(double));
-    cudaMalloc(&d_y, n * sizeof(double));
-    cudaMalloc(&d_z, n * sizeof(double));
-    cudaMalloc(&d_c, n * sizeof(cuDoubleComplex));
+    ensure_capacity(gpu->d_scratch_lr_xyz, gpu->scratch_lr_xyz_cap, 3 * (size_t)n * sizeof(double));
+    double *d_x = reinterpret_cast<double *>(gpu->d_scratch_lr_xyz);
+    double *d_y = d_x + n;
+    double *d_z = d_y + n;
+    ensure_capacity(gpu->d_scratch_lr_c, gpu->scratch_lr_c_cap, (size_t)n * sizeof(cuDoubleComplex));
+    cuDoubleComplex *d_c = reinterpret_cast<cuDoubleComplex *>(gpu->d_scratch_lr_c);
     cudaMemcpyAsync(d_x, h_x.data(), n * sizeof(double), cudaMemcpyHostToDevice, gpu->stream);
     cudaMemcpyAsync(d_y, h_y.data(), n * sizeof(double), cudaMemcpyHostToDevice, gpu->stream);
     cudaMemcpyAsync(d_z, h_z.data(), n * sizeof(double), cudaMemcpyHostToDevice, gpu->stream);
@@ -869,10 +910,9 @@ static PotForce<Real> esp_eval_gpu_impl(
         cudaMemcpy(fx.data(), d_fx, n * sizeof(Real), cudaMemcpyDeviceToHost);
         cudaMemcpy(fy.data(), d_fy, n * sizeof(Real), cudaMemcpyDeviceToHost);
         cudaMemcpy(fz.data(), d_fz, n * sizeof(Real), cudaMemcpyDeviceToHost);
-        cudaFree(d_fx); cudaFree(d_fy); cudaFree(d_fz);
     }
-    cudaFree(d_pos_aos); cudaFree(d_charges); cudaFree(d_pot);
-    cudaFree(d_x); cudaFree(d_y); cudaFree(d_z); cudaFree(d_c);
+    // d_pos_aos/d_charges, d_pot/d_fx/d_fy/d_fz, d_x/d_y/d_z, d_c are all persistent GpuState
+    // scratch -- nothing to free here.
 
     return {pot, fx, fy, fz};
 }
@@ -892,19 +932,19 @@ static PotForce<Real> esp_eval_gpu_short_range_impl(
     auto [pot, fx, fy, fz] = gpu_make_spans<Real>(gpu, n);
     const Real *h_pos_aos = reinterpret_cast<const Real *>(r_src.data());
 
-    Real *d_pos_aos, *d_charges;
-    cudaMalloc(&d_pos_aos, 3 * (size_t)n * sizeof(Real));
-    cudaMalloc(&d_charges, n * sizeof(Real));
+    ensure_capacity(gpu->d_scratch_pos, gpu->scratch_pos_cap, 4 * (size_t)n * sizeof(Real));
+    Real *d_pos_aos = reinterpret_cast<Real *>(gpu->d_scratch_pos);
+    Real *d_charges = d_pos_aos + 3 * (size_t)n;
     cudaMemcpyAsync(d_pos_aos, h_pos_aos, 3 * (size_t)n * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
     cudaMemcpyAsync(d_charges, charges.data(), n * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
 
-    Real *d_pot, *d_fx = nullptr, *d_fy = nullptr, *d_fz = nullptr;
-    cudaMalloc(&d_pot, n * sizeof(Real));
+    ensure_capacity(gpu->d_scratch_out, gpu->scratch_out_cap, 4 * (size_t)n * sizeof(Real));
+    Real *d_pot = reinterpret_cast<Real *>(gpu->d_scratch_out);
+    Real *d_fx = want_force ? d_pot + n : nullptr;
+    Real *d_fy = want_force ? d_pot + 2 * (size_t)n : nullptr;
+    Real *d_fz = want_force ? d_pot + 3 * (size_t)n : nullptr;
     cudaMemsetAsync(d_pot, 0, n * sizeof(Real), gpu->stream);
     if (want_force) {
-        cudaMalloc(&d_fx, n * sizeof(Real));
-        cudaMalloc(&d_fy, n * sizeof(Real));
-        cudaMalloc(&d_fz, n * sizeof(Real));
         cudaMemsetAsync(d_fx, 0, n * sizeof(Real), gpu->stream);
         cudaMemsetAsync(d_fy, 0, n * sizeof(Real), gpu->stream);
         cudaMemsetAsync(d_fz, 0, n * sizeof(Real), gpu->stream);
@@ -919,9 +959,7 @@ static PotForce<Real> esp_eval_gpu_short_range_impl(
         cudaMemcpy(fx.data(), d_fx, n * sizeof(Real), cudaMemcpyDeviceToHost);
         cudaMemcpy(fy.data(), d_fy, n * sizeof(Real), cudaMemcpyDeviceToHost);
         cudaMemcpy(fz.data(), d_fz, n * sizeof(Real), cudaMemcpyDeviceToHost);
-        cudaFree(d_fx); cudaFree(d_fy); cudaFree(d_fz);
     }
-    cudaFree(d_pos_aos); cudaFree(d_charges); cudaFree(d_pot);
 
     return {pot, fx, fy, fz};
 }
@@ -950,27 +988,26 @@ static PotForce<Real> esp_eval_gpu_long_range_impl(
         h_c[j] = {double(charges[j]), 0.0};
     }
 
-    // Upload coords and charges to device.
-    double *d_x, *d_y, *d_z; cuDoubleComplex *d_c;
-    cudaMalloc(&d_x, n * sizeof(double));
-    cudaMalloc(&d_y, n * sizeof(double));
-    cudaMalloc(&d_z, n * sizeof(double));
-    cudaMalloc(&d_c, n * sizeof(cuDoubleComplex));
+    // Upload coords and charges to device -- persistent scratch, reused across calls.
+    ensure_capacity(gpu->d_scratch_lr_xyz, gpu->scratch_lr_xyz_cap, 3 * (size_t)n * sizeof(double));
+    double *d_x = reinterpret_cast<double *>(gpu->d_scratch_lr_xyz);
+    double *d_y = d_x + n;
+    double *d_z = d_y + n;
+    ensure_capacity(gpu->d_scratch_lr_c, gpu->scratch_lr_c_cap, (size_t)n * sizeof(cuDoubleComplex));
+    cuDoubleComplex *d_c = reinterpret_cast<cuDoubleComplex *>(gpu->d_scratch_lr_c);
     cudaMemcpyAsync(d_x, h_x.data(), n * sizeof(double), cudaMemcpyHostToDevice, gpu->stream); //initialize device memory on the GPU without blocking the CPU host thread
     cudaMemcpyAsync(d_y, h_y.data(), n * sizeof(double), cudaMemcpyHostToDevice, gpu->stream);
     cudaMemcpyAsync(d_z, h_z.data(), n * sizeof(double), cudaMemcpyHostToDevice, gpu->stream);
     cudaMemcpyAsync(d_c, h_c.data(), n * sizeof(cuDoubleComplex), cudaMemcpyHostToDevice, gpu->stream);
 
-    // Device output buffers for potential and (if requested) forces.
-    Real *d_pot;
-    cudaMalloc(&d_pot, n * sizeof(Real));
+    // Device output buffers for potential and (if requested) forces -- persistent scratch.
+    ensure_capacity(gpu->d_scratch_out, gpu->scratch_out_cap, 4 * (size_t)n * sizeof(Real));
+    Real *d_pot = reinterpret_cast<Real *>(gpu->d_scratch_out);
+    Real *d_fx = want_force ? d_pot + n : nullptr;
+    Real *d_fy = want_force ? d_pot + 2 * (size_t)n : nullptr;
+    Real *d_fz = want_force ? d_pot + 3 * (size_t)n : nullptr;
     cudaMemsetAsync(d_pot, 0, n * sizeof(Real), gpu->stream);
-
-    Real *d_fx = nullptr, *d_fy = nullptr, *d_fz = nullptr;
     if (want_force) {
-        cudaMalloc(&d_fx, n * sizeof(Real));
-        cudaMalloc(&d_fy, n * sizeof(Real));
-        cudaMalloc(&d_fz, n * sizeof(Real));
         cudaMemsetAsync(d_fx, 0, n * sizeof(Real), gpu->stream);
         cudaMemsetAsync(d_fy, 0, n * sizeof(Real), gpu->stream);
         cudaMemsetAsync(d_fz, 0, n * sizeof(Real), gpu->stream);
@@ -987,10 +1024,8 @@ static PotForce<Real> esp_eval_gpu_long_range_impl(
         cudaMemcpy(fx.data(), d_fx, n * sizeof(Real), cudaMemcpyDeviceToHost);
         cudaMemcpy(fy.data(), d_fy, n * sizeof(Real), cudaMemcpyDeviceToHost);
         cudaMemcpy(fz.data(), d_fz, n * sizeof(Real), cudaMemcpyDeviceToHost);
-        cudaFree(d_fx); cudaFree(d_fy); cudaFree(d_fz);
     }
 
-    cudaFree(d_x); cudaFree(d_y); cudaFree(d_z); cudaFree(d_c); cudaFree(d_pot);
     return {pot, fx, fy, fz};
 }
 
