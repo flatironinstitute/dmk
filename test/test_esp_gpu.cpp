@@ -100,7 +100,7 @@ TEST_CASE("[ESP GPU] short-range: GPU vs CPU direct comparison") {
 
     // Short-range polynomial is deterministic and identical on CPU and GPU;
     // expect near-machine-epsilon agreement.
-    check(gpu, cpu, /*pot_tol=*/1e-10, /*force_tol=*/1e-10, "short-range");
+    check(gpu, cpu, /*pot_tol=*/5 * EPS, /*force_tol=*/5 * EPS, "short-range");
 }
 
 // ---------------------------------------------------------------------------
