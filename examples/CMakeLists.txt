@@ -17,9 +17,5 @@ target_link_libraries(benchmark_kernels PRIVATE dmk)
 if (DMK_BUILD_ESP)
   add_executable(benchmark_esp benchmark_esp.cpp)
   target_link_libraries(benchmark_esp PRIVATE dmk)
-  target_compile_definitions(benchmark_esp PRIVATE
-    VERIFY_SCRIPT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/verify_esp.py"
-    PERILAP3D_DIR="${CMAKE_SOURCE_DIR}/scripts/perilap3d"
-    VERIFY_CACHE_DIR="${CMAKE_BINARY_DIR}"
-  )
+  target_include_directories(benchmark_esp PRIVATE ${CMAKE_SOURCE_DIR}/test)
 endif()

@@ -99,7 +99,7 @@ struct EspPlan {
     std::vector<std::complex<Real>> lr_b;                    // ntot-sized spread / forward-FFT grid
     std::array<std::vector<std::complex<Real>>, 4> lr_u_hat; // ntot-sized output-component spectra (pot + force axes)
 
-    explicit EspPlan(const pdmk_esp_params &params, int n_dim = 3);
+    explicit EspPlan(const pdmk_esp_params &params);
 
     PotForce<Real> eval(int n, const Real *r_src, const Real *charges);
 

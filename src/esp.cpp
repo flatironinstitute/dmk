@@ -1271,8 +1271,8 @@ void EspPlan<Real>::self_interaction(int n, const Real *charges, std::span<Real>
 }
 
 template <typename Real>
-EspPlan<Real>::EspPlan(const pdmk_esp_params &params_, int n_dim_)
-    : n_digits(esp_digits_from_eps(params_.eps)), n_dim(n_dim_), params(params_) {
+EspPlan<Real>::EspPlan(const pdmk_esp_params &params_)
+    : n_digits(esp_digits_from_eps(params_.eps)), n_dim(params_.n_dim), params(params_) {
     if (params.kernel != DMK_YUKAWA && params.kernel != DMK_LAPLACE && params.kernel != DMK_SQRT_LAPLACE)
         throw std::runtime_error("ESP supports only the scalar kernels (Yukawa, Laplace, Sqrt-Laplace)");
     const Real eps_d = std::pow(10.0, -Real(n_digits));

@@ -1,16 +1,14 @@
 #ifdef DMK_BUILD_ESP
 
 #include <cmath>
-#include <cstdint>
-#include <cstdio>
-#include <cstring>
 #include <dmk.h>
 #include <dmk/esp.hpp>
 #include <doctest/doctest.h>
 #include <random>
-#include <stdexcept>
-#include <string>
-#include <unistd.h>
+#include <span>
+#include <vector>
+
+#include "periodic_reference.hpp"
 
 // 10-particle fixture
 namespace {
@@ -39,51 +37,20 @@ static pdmk_esp_params make_esp_params(double L, double r_c, double eps, dmk_eva
     return params;
 }
 
-// Helper: call verify_esp.py with given positions (flat N*3) and charges (N),
-// fill ref_out[N] with zero-mean perilap3d potentials. Returns true on success.
-static bool run_perilap3d(int n, const double *r_src_flat, const double *charges, double *ref_out) {
-    char tmpfile[] = "/tmp/esp_test_data_XXXXXX";
-    int fd = mkstemp(tmpfile);
-    if (fd < 0)
-        return false;
-    int32_t nn = static_cast<int32_t>(n);
-    write(fd, &nn, sizeof(nn));
-    write(fd, r_src_flat, n * 3 * sizeof(double));
-    write(fd, charges, n * sizeof(double));
-    close(fd);
-
-    char errfile[] = "/tmp/esp_test_err_XXXXXX";
-    int efd = mkstemp(errfile);
-    close(efd);
-
-    std::string cmd =
-        std::string("python3 ") + VERIFY_SCRIPT_PATH + " " + tmpfile + " " + PERILAP3D_DIR + " 2>" + errfile;
-    FILE *pipe = popen(cmd.c_str(), "r");
-    bool ok = pipe != nullptr;
-    if (ok) {
-        for (int i = 0; i < n; ++i)
-            if (fscanf(pipe, "%lf", &ref_out[i]) != 1) {
-                ok = false;
-                break;
-            }
-        int rc = pclose(pipe);
-        if (rc != 0)
-            ok = false;
+// Zero-mean triply-periodic 3D-Laplace (1/r) reference potential at each source, from the shared
+// Ewald reference. Zero-meaning makes the comparison gauge-invariant (the fixtures are neutral).
+static void laplace_reference(int n, const double *r_src, const double *charges, double L, double *ref_out) {
+    dmk::pbc_ref::EwaldRef ewald(DMK_LAPLACE, 3, n, r_src, charges, L);
+    double mean = 0;
+    for (int i = 0; i < n; ++i) {
+        double pot;
+        ewald.eval(&r_src[i * 3], i, pot, nullptr);
+        ref_out[i] = pot;
+        mean += pot;
     }
-    if (!ok) {
-        if (FILE *ef = fopen(errfile, "r")) {
-            char buf[256];
-            while (fgets(buf, sizeof(buf), ef))
-                fputs(buf, stderr);
-            fclose(ef);
-        }
-    }
-    if (ok)
-        for (int i = 0; i < n; ++i)
-            ref_out[i] *= 4.0 * M_PI; // perilap3d returns 1/(4*pi*r); ESP uses 1/r
-    unlink(tmpfile);
-    unlink(errfile);
-    return ok;
+    mean /= n;
+    for (int i = 0; i < n; ++i)
+        ref_out[i] -= mean;
 }
 
 // Finite-difference force reference: F_{i,a} = -q_i * d(pot_i)/dr_{i,a}, via central differences.
@@ -123,15 +90,14 @@ static double force_l2_rel_err(int n, std::span<double> force_x, std::span<doubl
     return std::sqrt(err2 / ref2);
 }
 
-TEST_CASE("[ESP] 10-particle double vs perilap3d") {
+TEST_CASE("[ESP] 10-particle double vs Ewald") {
     constexpr double eps = 1e-5;
 
     dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, R_C, eps, DMK_POTENTIAL));
     auto esp = plan->eval(N, R_SRC, CHARGES);
 
     double ref[N];
-    bool ok = run_perilap3d(N, R_SRC, CHARGES, ref);
-    REQUIRE_MESSAGE(ok, "perilap3d subprocess failed — check Python env and PERILAP3D_DIR");
+    laplace_reference(N, R_SRC, CHARGES, L, ref);
 
     double esp_mean = 0;
     for (int i = 0; i < N; ++i)
@@ -175,45 +141,14 @@ TEST_CASE("[ESP] long-range only: regular grid, no short-range pairs") {
                 charges[i] = ((ix + iy + iz) % 2 == 0) ? 1.0 : -1.0;
             }
 
-    // --- Load or compute perilap3d reference (cached in VERIFY_CACHE_DIR) ---
     double ref[N];
-    bool have_ref = false;
-    char cache_path[4096];
-    snprintf(cache_path, sizeof(cache_path), "%s/perilap_N%d.bin", VERIFY_CACHE_DIR, N);
-
-    if (FILE *cf = fopen(cache_path, "rb")) {
-        int32_t cached_n = 0;
-        double cached_pos[N * 3], cached_q[N];
-        bool ok = fread(&cached_n, sizeof(cached_n), 1, cf) == 1 && cached_n == static_cast<int32_t>(N) &&
-                  (int)fread(cached_pos, sizeof(double), N * 3, cf) == N * 3 &&
-                  memcmp(cached_pos, r_src, N * 3 * sizeof(double)) == 0 &&
-                  (int)fread(cached_q, sizeof(double), N, cf) == N &&
-                  memcmp(cached_q, charges, N * sizeof(double)) == 0 && (int)fread(ref, sizeof(double), N, cf) == N;
-        fclose(cf);
-        have_ref = ok;
-    }
-
-    if (!have_ref) {
-        have_ref = run_perilap3d(N, r_src, charges, ref);
-        if (have_ref) {
-            if (FILE *cf = fopen(cache_path, "wb")) {
-                const int32_t nn = N;
-                fwrite(&nn, sizeof(nn), 1, cf);
-                fwrite(r_src, sizeof(double), N * 3, cf);
-                fwrite(charges, sizeof(double), N, cf);
-                fwrite(ref, sizeof(double), N, cf);
-                fclose(cf);
-            }
-        }
-    }
-
-    REQUIRE_MESSAGE(have_ref, "perilap3d reference unavailable — check Python env and PERILAP3D_DIR");
+    laplace_reference(N, r_src, charges, L, ref);
 
     // --- Run ESP ---
     dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, r_c, eps, DMK_POTENTIAL_GRAD));
     auto esp = plan->eval(N, r_src, charges);
 
-    // Gauge-correct ESP output and compare to the (already zero-mean) perilap3d reference.
+    // Gauge-correct ESP output and compare to the (already zero-mean) Ewald reference.
     double esp_mean = 0;
     for (int i = 0; i < N; ++i)
         esp_mean += esp.pot[i];
@@ -317,39 +252,8 @@ TEST_CASE("[ESP] short-range stress: all pairs within r_c") {
         }
     }
 
-    // --- Load or compute perilap3d reference (cached in VERIFY_CACHE_DIR) ---
     double ref[N];
-    bool have_ref = false;
-    char cache_path[4096];
-    snprintf(cache_path, sizeof(cache_path), "%s/perilap_short_N%d.bin", VERIFY_CACHE_DIR, N);
-
-    if (FILE *cf = fopen(cache_path, "rb")) {
-        int32_t cached_n = 0;
-        double cached_pos[N * 3], cached_q[N];
-        bool ok = fread(&cached_n, sizeof(cached_n), 1, cf) == 1 && cached_n == static_cast<int32_t>(N) &&
-                  (int)fread(cached_pos, sizeof(double), N * 3, cf) == N * 3 &&
-                  memcmp(cached_pos, r_src, N * 3 * sizeof(double)) == 0 &&
-                  (int)fread(cached_q, sizeof(double), N, cf) == N &&
-                  memcmp(cached_q, charges, N * sizeof(double)) == 0 && (int)fread(ref, sizeof(double), N, cf) == N;
-        fclose(cf);
-        have_ref = ok;
-    }
-
-    if (!have_ref) {
-        have_ref = run_perilap3d(N, r_src, charges, ref);
-        if (have_ref) {
-            if (FILE *cf = fopen(cache_path, "wb")) {
-                const int32_t nn = N;
-                fwrite(&nn, sizeof(nn), 1, cf);
-                fwrite(r_src, sizeof(double), N * 3, cf);
-                fwrite(charges, sizeof(double), N, cf);
-                fwrite(ref, sizeof(double), N, cf);
-                fclose(cf);
-            }
-        }
-    }
-
-    REQUIRE_MESSAGE(have_ref, "perilap3d reference unavailable — check Python env and PERILAP3D_DIR");
+    laplace_reference(N, r_src, charges, L, ref);
 
     // --- Run ESP ---
     dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, r_c, eps, DMK_POTENTIAL_GRAD));
@@ -401,11 +305,13 @@ TEST_CASE("[ESP] forces - 10 particles") {
     delete plan;
 }
 
-// 2D now runs under both JIT and AOT; accuracy is validated in test_pbc_periodic.cpp. Here we just
+// 2D now runs under both JIT and AOT; accuracy is validated by the PBC cases below. Here we just
 // confirm the 2D plan constructs and evaluates without throwing on whichever path is active.
 TEST_CASE("[ESP] DIM=2 plan runs (JIT and AOT)") {
     constexpr double eps = 1e-5;
-    dmk::EspPlan<double> plan(make_esp_params(L, R_C, eps, DMK_POTENTIAL), /*n_dim=*/2);
+    auto params = make_esp_params(L, R_C, eps, DMK_POTENTIAL);
+    params.n_dim = 2;
+    dmk::EspPlan<double> plan(params);
     CHECK_NOTHROW(plan.eval(N, R_SRC, CHARGES));
 }
 
@@ -481,5 +387,221 @@ TEST_CASE("[ESP] C API pdmk_esp_eval interleaves forces") {
 
     pdmk_esp_plan_destroy(plan);
     delete plan_cxx;
+}
+
+// ---------------------------------------------------------------------------
+// Full periodic-pipeline ESP validation.cpp). Each case draws 2000
+// random sources in [0,L)^n_dim, builds an independent periodic reference (Ewald split, or an image
+// sum for the screened Yukawa kernel), then runs the ESP solver on the same points shifted into
+// [-L/2, L/2) and compares pot (+forces) across a precision sweep. sigma=1.35 cannot reach
+// eps=1e-12, so the sweep stops at 9 digits.
+namespace {
+
+struct EspPbcParams {
+    dmk_ikernel kernel;
+    int n_dim;
+    double fparam; // lambda (Yukawa); ignored otherwise
+    bool neutral;  // neutralize charges (Laplace / Sqrt-Laplace)
+    int n_img;     // image shells for the Yukawa image-sum reference (0 => Ewald reference)
+    unsigned seed;
+    int n_test;
+};
+
+static void run_esp_pbc(const EspPbcParams &c) {
+    constexpr int n_src = 2000;
+    const int n_dim = c.n_dim;
+    const double L = 1.0;
+
+    std::default_random_engine eng(c.seed);
+    std::uniform_real_distribution<double> rng(0.01, 0.99);
+    std::vector<double> r_src(size_t(n_dim) * n_src), charges(n_src);
+    for (auto &x : r_src)
+        x = rng(eng);
+    for (auto &q : charges)
+        q = rng(eng) - 0.5;
+    if (c.neutral) {
+        double s = 0;
+        for (double q : charges)
+            s += q;
+        for (double &q : charges)
+            q -= s / n_src;
+    }
+
+    // Reference pot (+grad) at the first n_test sources.
+    const int n_test = c.n_test;
+    std::vector<double> ref_pot(n_test), ref_grad(size_t(n_test) * n_dim);
+    if (c.n_img > 0) {
+        std::vector<double> ref;
+        dmk::pbc_ref::image_sum(n_dim, c.fparam, c.n_img, DMK_POTENTIAL_GRAD, n_src, r_src.data(), charges.data(), L,
+                                n_test, r_src.data(), ref);
+        const int odim = 1 + n_dim;
+        for (int i = 0; i < n_test; ++i) {
+            ref_pot[i] = ref[i * odim];
+            for (int d = 0; d < n_dim; ++d)
+                ref_grad[i * n_dim + d] = ref[i * odim + 1 + d];
+        }
+    } else {
+        dmk::pbc_ref::EwaldRef ewald(c.kernel, n_dim, n_src, r_src.data(), charges.data(), L);
+        for (int i = 0; i < n_test; ++i) {
+            double g[3];
+            ewald.eval(&r_src[i * n_dim], i, ref_pot[i], g);
+            for (int d = 0; d < n_dim; ++d)
+                ref_grad[i * n_dim + d] = g[d];
+        }
+    }
+
+    // ESP requires particles in [-L/2, L/2); the shift is periodic-invariant.
+    std::vector<double> r_esp(size_t(n_dim) * n_src);
+    for (size_t i = 0; i < r_esp.size(); ++i)
+        r_esp[i] = r_src[i] - 0.5 * L;
+
+    struct PrecisionCase {
+        int n_digits;
+        double eps, tol_pot, tol_grad;
+    };
+    const PrecisionCase cases[] = {{3, 1e-3, 1e-2, 1e-1}, {6, 1e-6, 1e-4, 1e-3}, {9, 1e-9, 1e-7, 1e-6}};
+    for (const auto &pc : cases)
+        for (int with_grad = 0; with_grad <= 1; ++with_grad) {
+            const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
+            pdmk_esp_params ep{};
+            ep.L = L;
+            ep.r_c = L / 4;
+            ep.eps = pc.eps;
+            ep.n_dim = n_dim;
+            ep.kernel = c.kernel;
+            if (c.kernel == DMK_YUKAWA)
+                ep.fparam = c.fparam;
+            ep.eval_type = eval;
+            ep.log_level = 6;
+            dmk::EspPlan<double> plan(ep);
+            auto esp = plan.eval(n_src, r_esp.data(), charges.data());
+
+            double e2p = 0, r2p = 0, e2g = 0, r2g = 0;
+            for (int i = 0; i < n_test; ++i) {
+                const double dp = esp.pot[i] - ref_pot[i];
+                e2p += dp * dp;
+                r2p += ref_pot[i] * ref_pot[i];
+                if (with_grad) {
+                    const double f[3] = {esp.force_x[i], esp.force_y[i], n_dim == 3 ? esp.force_z[i] : 0.0};
+                    for (int d = 0; d < n_dim; ++d) {
+                        const double ref_force = -charges[i] * ref_grad[i * n_dim + d];
+                        const double dg = f[d] - ref_force;
+                        e2g += dg * dg;
+                        r2g += ref_force * ref_force;
+                    }
+                }
+            }
+            const double l2p = dmk::pbc_ref::safe_l2(e2p, r2p);
+            CHECK_MESSAGE(l2p < pc.tol_pot,
+                          "n_digits=" << pc.n_digits << (with_grad ? " pot+grad" : " pot") << " pot l2=" << l2p);
+            if (with_grad) {
+                const double l2g = dmk::pbc_ref::safe_l2(e2g, r2g);
+                CHECK_MESSAGE(l2g < pc.tol_grad, "n_digits=" << pc.n_digits << " force l2=" << l2g);
+            }
+        }
+}
+
+} // namespace
+
+TEST_CASE("[ESP] 3d Laplace PBC vs Ewald") { run_esp_pbc({DMK_LAPLACE, 3, 0.0, true, 0, 99, 100}); }
+TEST_CASE("[ESP] 3d Yukawa PBC vs lattice sum") { run_esp_pbc({DMK_YUKAWA, 3, 6.0, false, 6, 123, 50}); }
+TEST_CASE("[ESP] 3d Sqrt-Laplace PBC vs Ewald") { run_esp_pbc({DMK_SQRT_LAPLACE, 3, 0.0, true, 0, 7, 100}); }
+TEST_CASE("[ESP] 2d Yukawa PBC vs lattice sum") { run_esp_pbc({DMK_YUKAWA, 2, 4.0, false, 8, 321, 50}); }
+TEST_CASE("[ESP] 2d Sqrt-Laplace PBC vs Ewald") { run_esp_pbc({DMK_SQRT_LAPLACE, 2, 0.0, true, 0, 54, 50}); }
+
+// 2D Laplace (log): the ESP source potential carries a self term and a global k=0 gauge, so it is
+// checked against the DMK periodic pipeline (which shares the same self convention) with the gauge
+// removed. Forces are gauge-free.
+TEST_CASE("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)") {
+    constexpr int n_dim = 2;
+    constexpr int n_src = 2000;
+    constexpr int n_trg = 500;
+    const double L = 1.0;
+
+    std::default_random_engine eng(88);
+    std::uniform_real_distribution<double> rng(0.01, 0.99);
+    std::vector<double> r_src(n_dim * n_src), r_trg(n_dim * n_trg), charges(n_src), rnormal(n_dim * n_src, 0.0);
+    for (auto &x : r_src)
+        x = rng(eng);
+    for (auto &x : r_trg)
+        x = rng(eng);
+    for (auto &q : charges)
+        q = rng(eng) - 0.5;
+    {
+        double s = 0;
+        for (double q : charges)
+            s += q;
+        for (double &q : charges)
+            q -= s / n_src;
+    }
+
+    std::vector<double> r_esp(n_dim * n_src);
+    for (int i = 0; i < n_dim * n_src; ++i)
+        r_esp[i] = r_src[i] - 0.5 * L;
+
+    const int n_cmp = std::min(n_src, 50);
+    struct PrecisionCase {
+        int n_digits;
+        double eps, tol_pot, tol_grad;
+    };
+    const PrecisionCase cases[] = {{3, 1e-3, 1e-2, 1e-1}, {6, 1e-6, 1e-4, 1e-3}, {9, 1e-9, 1e-7, 1e-6}};
+    for (const auto &pc : cases)
+        for (int with_grad = 0; with_grad <= 1; ++with_grad) {
+            const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
+            const int odim = with_grad ? 1 + n_dim : 1;
+
+            // DMK periodic pipeline reference at the sources (shares ESP's log self convention).
+            pdmk_params params;
+            params.eps = pc.eps;
+            params.n_dim = n_dim;
+            params.n_per_leaf = 50;
+            params.eval_src = eval;
+            params.eval_trg = eval;
+            params.kernel = DMK_LAPLACE;
+            params.use_periodic = true;
+            params.log_level = 6;
+            std::vector<double> pot_src(n_src * odim), pot_trg(n_trg * odim);
+            pdmk_tree tree = pdmk_tree_create(nullptr, params, n_src, r_src.data(), charges.data(), rnormal.data(),
+                                              n_trg, r_trg.data());
+            pdmk_tree_eval(tree, pot_src.data(), pot_trg.data());
+            pdmk_tree_destroy(tree);
+
+            pdmk_esp_params ep{};
+            ep.L = L;
+            ep.r_c = L / 4;
+            ep.eps = pc.eps;
+            ep.n_dim = 2;
+            ep.kernel = DMK_LAPLACE;
+            ep.eval_type = eval;
+            ep.log_level = 6;
+            dmk::EspPlan<double> plan(ep);
+            auto esp = plan.eval(n_src, r_esp.data(), charges.data());
+
+            double gauge = 0, pbar = 0;
+            for (int i = 0; i < n_cmp; ++i) {
+                gauge += esp.pot[i] - pot_src[i * odim];
+                pbar += pot_src[i * odim];
+            }
+            gauge /= n_cmp;
+            pbar /= n_cmp;
+            double e2p = 0, r2p = 0, e2g = 0, r2g = 0;
+            for (int i = 0; i < n_cmp; ++i) {
+                const double dp = (esp.pot[i] - pot_src[i * odim]) - gauge;
+                e2p += dp * dp;
+                r2p += (pot_src[i * odim] - pbar) * (pot_src[i * odim] - pbar);
+                if (with_grad) {
+                    const double f[2] = {esp.force_x[i], esp.force_y[i]};
+                    for (int d = 0; d < n_dim; ++d) {
+                        const double ref_force = -charges[i] * pot_src[i * odim + 1 + d];
+                        const double dg = f[d] - ref_force;
+                        e2g += dg * dg;
+                        r2g += ref_force * ref_force;
+                    }
+                }
+            }
+            CHECK(dmk::pbc_ref::safe_l2(e2p, r2p) < pc.tol_pot);
+            if (with_grad)
+                CHECK(dmk::pbc_ref::safe_l2(e2g, r2g) < pc.tol_grad);
+        }
 }
 #endif // DMK_BUILD_ESP
