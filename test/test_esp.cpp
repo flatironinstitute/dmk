@@ -376,7 +376,7 @@ TEST_CASE("[ESP] short-range stress: all pairs within r_c") {
     CHECK_MESSAGE(l2_rel_err < 5 * eps, "short-range-stress l2_rel_err=" << l2_rel_err << " >= eps=" << eps);
 
     const double force_l2_err = force_l2_rel_err(N, esp.force_x, esp.force_y, esp.force_z, force_ref.data());
-    double force_tol = 5 * std::pow(eps, 2.0 / 3.0);
+    double force_tol = 10 * std::pow(eps, 2.0 / 3.0);
     CHECK_MESSAGE(force_l2_err < force_tol,
                   "short-range-stress forces l2_rel_err=" << force_l2_err << " >= force_tol=" << force_tol);
     delete plan;

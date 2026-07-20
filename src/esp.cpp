@@ -930,9 +930,6 @@ template <typename Real>
 template <int DIM>
 void EspPlan<Real>::short_range(int n, const Real *r_src, const Real *charges, std::span<Real> pot,
                                 std::array<std::span<Real>, DIM> force) {
-    if constexpr (DIM != 3)
-        throw std::runtime_error("ESP short-range for DIM=2 is not implemented");
-
     sctl::Profile::Scoped short_range("short_range");
     // pow(3,DIM)-cell stencil requires nc >= 3 so periodic images aren't double-counted
     int nc = static_cast<int>(std::floor(params.L / params.r_c));
@@ -952,9 +949,9 @@ void EspPlan<Real>::short_range(int n, const Real *r_src, const Real *charges, s
     const bool want_force = (params.eval_type >= DMK_POTENTIAL_GRAD);
     const int out_dim = want_force ? 1 + DIM : 1;
 
-    // Sqrt-Laplace's poly is in R^2 (SqrtLaplacePolyEvaluator3D), the others in r; both map the
-    // residual's [0, r_c] fit domain onto the evaluator's [-1, 1] variable.
-    const bool r2_var = (params.kernel == DMK_SQRT_LAPLACE);
+    // Poly variable: R^2 for 2D Laplace/Yukawa and 3D Sqrt-Laplace; r for 3D Laplace/Yukawa and 2D
+    // Sqrt-Laplace (its evaluator is (r+cen)*rsc). Both map [0, r_c] onto the evaluator's [-1, 1].
+    const bool r2_var = (params.kernel == DMK_SQRT_LAPLACE) != (DIM == 2);
     const Real rsc = r2_var ? Real(2.0 / (params.r_c * params.r_c)) : Real(2.0 / params.r_c);
     const Real cen = r2_var ? Real(-1.0) : Real(-params.r_c / 2.0);
 
@@ -997,7 +994,10 @@ void EspPlan<Real>::short_range(int n, const Real *r_src, const Real *charges, s
                                pg_sorted.data()};
 
     // Each method enumerates source/target pairs its own way; they all accumulate into pg_sorted.
-    if (esp_n3l(params))
+    // The pruning/N3L strategies use range_evaluator, which 2D doesn't build yet, so 2D runs dense.
+    if (DIM == 2)
+        short_range_dense<Real, DIM, MaxVecLen>(ctx);
+    else if (esp_n3l(params))
         short_range_n3l<Real, DIM, MaxVecLen>(ctx);
     else if (esp_prune_source(params))
         short_range_prune_source<Real, DIM, MaxVecLen>(ctx);
@@ -1054,6 +1054,7 @@ std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() {
     }
 
     std::vector<double> p(ntot, 0.0);
+    double self_sum = 0.0;
     for (int lin = 0; lin < ntot; ++lin) {
         std::array<int, DIM> gidx;
         int rem = lin;
@@ -1068,7 +1069,9 @@ std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() {
             ph *= phi_hat_1d[gidx[d]];
         }
         p[grid_idx<DIM>(gidx, nf)] = norm * kernel_ft[i_rad] / (L_pow_dim * ph * ph * static_cast<double>(ntot));
+        self_sum += norm * kernel_ft[i_rad];
     }
+
     return p;
 }
 
@@ -1280,12 +1283,23 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_, int n_dim_)
     n_f = static_cast<int>(std::ceil(pswf.c * params.L / (M_PI * params.r_c)));
     h = params.L / n_f;
 
-    // Long-range kernel value at r=0 (self-energy). Laplace: pswf(0)/(r_c*c0). Yukawa: same base
-    // scaled by the ratio of windowed-kernel-at-zero values W0(lambda)/W0(0); the realization
-    // constant cancels in the ratio. W0(m) = int psi(sqrt(k^2+m^2)*r_c/c)/(k^2+m^2) * k^2 dk (the
-    // psi0 and 2/pi prefactors cancel). Sqrt-Laplace self-term is not yet handled (pending).
-    self_factor = Real(pswf(0.0) / (params.r_c * pswf.c0));
-    if (params.kernel == DMK_YUKAWA) {
+    // precompute_scaling_coefficients also sets self_factor to the reciprocal-sum self-energy
+    // W(0) = (1/V) sum_{k!=0} Ghat_long(k). Closed forms below override it for the kernels that have
+    // one; the 2D log kernels (Laplace, Yukawa) keep the reciprocal-sum value.
+    const std::vector<double> sc =
+        n_dim == 2 ? precompute_scaling_coefficients<2>() : precompute_scaling_coefficients<3>();
+    scaling_coeffs.assign(sc.begin(), sc.end());
+
+    // Closed-form self-energy overrides. base = pswf(0)/(r_c*c0) is exact for 1/r kernels with the
+    // int(psi0) window (3D Laplace, 2D Sqrt-Laplace).
+    const Real base = Real(pswf(0.0) / (params.r_c * pswf.c0));
+    if (n_dim == 3 && params.kernel == DMK_LAPLACE) {
+        self_factor = base;
+    } else if (n_dim == 2 && params.kernel == DMK_SQRT_LAPLACE) {
+        self_factor = base;
+    } else if (n_dim == 3 && params.kernel == DMK_YUKAWA) {
+        // Yukawa: base scaled by the windowed-kernel-at-zero ratio W0(lambda)/W0(0) (the realization
+        // constant cancels). W0(m) = int psi(sqrt(k^2+m^2)*r_c/c)/(k^2+m^2) * k^2 dk.
         auto W0 = [&](double m) {
             constexpr int nq = 200;
             std::array<double, nq> xs, ws;
@@ -1302,8 +1316,8 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_, int n_dim_)
             }
             return sum;
         };
-        self_factor *= Real(W0(params.fparam) / W0(0.0));
-    } else if (params.kernel == DMK_SQRT_LAPLACE) {
+        self_factor = base * Real(W0(params.fparam) / W0(0.0));
+    } else if (n_dim == 3 && params.kernel == DMK_SQRT_LAPLACE) {
         // G_long(r) = [F(r/r_c)/c0_sym] / r^2, F(u) = int_0^u t*psi0(t) dt, c0_sym = F(1); at r->0,
         // F(u) ~ psi0(0) u^2/2, so W(0) = psi0(0) / (2 * c0_sym * r_c^2).
         constexpr int nq = 200;
@@ -1316,23 +1330,44 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_, int n_dim_)
             c0_sym += pswf.pswf.eval_val(t) * t * w;
         }
         self_factor = Real(pswf.pswf.eval_val(0.0) / (2.0 * c0_sym * params.r_c * params.r_c));
+    } else if (n_dim == 2 && params.kernel == DMK_LAPLACE) {
+        // 2D log: the log kernel is not scale-invariant, so its self is not the reciprocal-grid W(0)
+        // (which drops the conditionally-convergent log tail); it is the real-space windowed-log value
+        // at r=0 at the near-field box scale. Reuse the tree's own routine (get_self_interaction_constant,
+        // DMK_LAPLACE 2D) so ESP and the tree share one convention -- same prolate (pswf.pswf),
+        // beta = pswf.c, box = r_c.
+        self_factor = calc_log_windowed_kernel_value_at_zero<Real>(2, pswf.pswf, Real(pswf.c), Real(params.r_c));
+    } else if (n_dim == 2 && params.kernel == DMK_YUKAWA) {
+        // 2D Yukawa (K0), log-singular: the self is the windowed-kernel-at-zero from the tree's own
+        // FourierData routine at the level-0 box (box_sizes[0] = 2*r_c halves to r_c), matching the
+        // residual's FourierData construction in get_esp_correction_coeffs.
+        sctl::Vector<double> box_sizes(1);
+        box_sizes[0] = 2.0 * params.r_c;
+        FourierData<double> fd(params.kernel, 2, pswf.eps, 16, 16, params.fparam, pswf.c, box_sizes);
+        self_factor = Real(fd.yukawa_windowed_kernel_value_at_zero(0));
     }
 
-    const std::vector<double> sc =
-        n_dim == 2 ? precompute_scaling_coefficients<2>() : precompute_scaling_coefficients<3>();
-    scaling_coeffs.assign(sc.begin(), sc.end());
-
-    if (n_dim == 3) {
-        constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
-        bool use_jit = false;
+    constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
+    bool use_jit = false;
 #ifdef DMK_USE_JIT
-        use_jit = !util::env_is_set("DMK_DEBUG_FORCE_AOT");
+    use_jit = !util::env_is_set("DMK_DEBUG_FORCE_AOT");
 #endif
+    if (n_dim == 2) {
+        // 2D has no AOT ESP tables and no _ranges evaluators yet, so it requires JIT and runs the
+        // dense short-range strategy (range_evaluator stays empty).
+#ifdef DMK_USE_JIT
+        if (use_jit)
+            evaluator = make_esp_evaluator_jit<Real>(params.kernel, params.fparam, params.r_c, 2, params.eval_type,
+                                                     n_digits, sigma, 3);
+        else
+#endif
+            throw std::runtime_error("ESP 2D requires JIT (no AOT tables / _ranges evaluators)");
+    } else if (n_dim == 3) {
         if (use_jit) {
 #ifdef DMK_USE_JIT
-            evaluator = make_esp_evaluator_jit<Real>(params.kernel, params.fparam, params.r_c, params.eval_type,
+            evaluator = make_esp_evaluator_jit<Real>(params.kernel, params.fparam, params.r_c, 3, params.eval_type,
                                                      n_digits, sigma, 3);
-            range_evaluator = make_esp_range_evaluator_jit<Real>(params.kernel, params.fparam, params.r_c,
+            range_evaluator = make_esp_range_evaluator_jit<Real>(params.kernel, params.fparam, params.r_c, 3,
                                                                  params.eval_type, n_digits, sigma, 3);
 #endif
         } else {

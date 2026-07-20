@@ -723,6 +723,30 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
                         VERBOSE_MESSAGE("  ESP force_src=", esp_l2_grad);
                         CHECK(esp_l2_grad < pc.tol_grad);
                     }
+
+                    // Method validation: same beta/alpha fit as the 2D-Laplace gauge diagnostic. Here
+                    // ESP's self is the validated closed form, so beta (self error) and alpha (gauge)
+                    // should both be ~0 with a tiny residual.
+                    double sq = 0, sd = 0, sqq = 0, sqd = 0;
+                    for (int i = 0; i < n_test; ++i) {
+                        const double d = esp.pot[i] - pot_src[i * odim];
+                        sq += charges[i];
+                        sd += d;
+                        sqq += charges[i] * charges[i];
+                        sqd += charges[i] * d;
+                    }
+                    const double qbar = sq / n_test, dbar = sd / n_test;
+                    const double beta = (sqd - n_test * qbar * dbar) / (sqq - n_test * qbar * qbar);
+                    const double alpha = dbar - beta * qbar;
+                    double resid2 = 0, d2 = 0;
+                    for (int i = 0; i < n_test; ++i) {
+                        const double d = esp.pot[i] - pot_src[i * odim];
+                        resid2 += sctl::pow<2>(d - (beta * charges[i] + alpha));
+                        d2 += sctl::pow<2>(d - dbar);
+                    }
+                    VERBOSE_MESSAGE("  GAUGE DIAG 3D-Laplace: beta(self err)=", beta, " alpha(gauge)=", alpha,
+                                    " S_used=", esp_plan.self_factor, " S_correct=", esp_plan.self_factor + beta,
+                                    " fit_resid=", std::sqrt(resid2 / (d2 > 0 ? d2 : 1.0)));
                 }
 #endif
 
@@ -1295,6 +1319,47 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Yukawa PBC full pipeline vs lattice sum", 1) {
                     CHECK(safe_l2(e2g, r2g) < pc.tol_grad);
                     CHECK(safe_l2(e2gt, r2gt) < pc.tol_grad);
                 }
+
+#ifdef DMK_BUILD_ESP
+                // ESP at sigma=1.35 can't reach eps=1e-12 (FINUFFT clips the spread width); skip n=12.
+                if (pc.n_digits < 12) {
+                    // K0 is screened (absolutely convergent, finite k=0), so unlike 2D-log there is no
+                    // gauge: ESP's source potential matches the lattice-sum reference directly.
+                    std::vector<double> r_esp(n_dim * n_src);
+                    for (int i = 0; i < n_dim * n_src; ++i)
+                        r_esp[i] = r_src[i] - 0.5 * L;
+
+                    pdmk_esp_params ep;
+                    ep.L = L;
+                    ep.r_c = L / 4;
+                    ep.eps = pc.eps;
+                    ep.kernel = DMK_YUKAWA;
+                    ep.fparam = lambda;
+                    ep.eval_type = eval;
+                    ep.log_level = 6;
+                    dmk::EspPlan<double> esp_plan(ep, 2);
+                    auto esp = esp_plan.eval(n_src, r_esp.data(), &charges[0]);
+
+                    double e2ep = 0, r2ep = 0, e2eg = 0, r2eg = 0;
+                    for (int i = 0; i < n_test; ++i) {
+                        e2ep += sctl::pow<2>(esp.pot[i] - ref_src[i * odim]);
+                        r2ep += sctl::pow<2>(ref_src[i * odim]);
+                        if (with_grad) {
+                            const double f[2] = {esp.force_x[i], esp.force_y[i]};
+                            for (int dd = 0; dd < n_dim; ++dd) {
+                                const double ref_force = -charges[i] * ref_src[i * odim + 1 + dd];
+                                e2eg += sctl::pow<2>(f[dd] - ref_force);
+                                r2eg += sctl::pow<2>(ref_force);
+                            }
+                        }
+                    }
+                    VERBOSE_MESSAGE("  ESP 2D-Yukawa: pot_src=", safe_l2(e2ep, r2ep),
+                                    " force_src=", with_grad ? safe_l2(e2eg, r2eg) : 0.0);
+                    CHECK(safe_l2(e2ep, r2ep) < pc.tol_pot);
+                    if (with_grad)
+                        CHECK(safe_l2(e2eg, r2eg) < pc.tol_grad);
+                }
+#endif
             }
         }
     }
@@ -1480,6 +1545,50 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
                                 " pot_trg=", safe_l2(e2pt, r2pt));
                 CHECK(safe_l2(e2p, r2p) < pc.tol_pot);
                 CHECK(safe_l2(e2pt, r2pt) < pc.tol_pot);
+
+#ifdef DMK_BUILD_ESP
+                // ESP at sigma=1.35 can't reach eps=1e-12 (FINUFFT clips the spread width); skip n=12.
+                if (pc.n_digits < 12) {
+                    std::vector<double> r_esp(n_dim * n_src);
+                    for (int i = 0; i < n_dim * n_src; ++i)
+                        r_esp[i] = r_src[i] - 0.5 * L;
+
+                    pdmk_esp_params ep;
+                    ep.L = L;
+                    ep.r_c = L / 4;
+                    ep.eps = pc.eps;
+                    ep.kernel = DMK_SQRT_LAPLACE;
+                    ep.eval_type = eval;
+                    ep.log_level = 6;
+                    dmk::EspPlan<double> esp_plan(ep, 2);
+                    auto esp = esp_plan.eval(n_src, r_esp.data(), &charges[0]);
+
+                    double ee2p = 0, er2p = 0, ee2g = 0, er2g = 0;
+                    for (int i = 0; i < n_test; ++i) {
+                        double ref_pot, ref_grad[2];
+                        ewald_pot_grad(&r_src[i * n_dim], i, ref_pot, with_grad ? ref_grad : nullptr);
+                        ee2p += sctl::pow<2>(esp.pot[i] - ref_pot);
+                        er2p += sctl::pow<2>(ref_pot);
+                        if (with_grad) {
+                            const double f[2] = {esp.force_x[i], esp.force_y[i]};
+                            for (int dd = 0; dd < n_dim; ++dd) {
+                                const double ref_force = -charges[i] * ref_grad[dd];
+                                ee2g += sctl::pow<2>(f[dd] - ref_force);
+                                er2g += sctl::pow<2>(ref_force);
+                            }
+                        }
+                    }
+                    const double esp_l2_pot = safe_l2(ee2p, er2p);
+                    VERBOSE_MESSAGE("  ESP pot_src=", esp_l2_pot);
+                    CHECK(esp_l2_pot < pc.tol_pot);
+                    if (with_grad) {
+                        const double esp_l2_grad = safe_l2(ee2g, er2g);
+                        VERBOSE_MESSAGE("  ESP force_src=", esp_l2_grad);
+                        CHECK(esp_l2_grad < pc.tol_grad);
+                    }
+                }
+#endif
+
                 if (with_grad) {
                     CHECK(safe_l2(e2g, r2g) < pc.tol_grad);
                     CHECK(safe_l2(e2gt, r2gt) < pc.tol_grad);
@@ -1679,6 +1788,57 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Laplace PBC full pipeline vs Ewald", 1) {
                 CHECK(safe_l2(e2t, r2t) < pc.tol_pot);
                 if (with_grad)
                     CHECK(safe_l2(e2gt, r2gt) < pc.tol_grad);
+
+#ifdef DMK_BUILD_ESP
+                if (pc.n_digits < 12) {
+                    // ESP evaluates at sources; compare against the DMK tree's source potential pot_src
+                    // (both periodic-log solvers, now sharing the same self via
+                    // calc_log_windowed_kernel_value_at_zero). The 2D-log potential is defined up to a
+                    // global additive constant (the k=0 gauge, irrelevant under charge neutrality), so
+                    // the potential is checked after removing that constant. Forces are gauge-free.
+                    // ESP needs particles in [-L/2, L/2); the shift is periodic-invariant.
+                    std::vector<double> r_esp(n_dim * n_src);
+                    for (int i = 0; i < n_dim * n_src; ++i)
+                        r_esp[i] = r_src[i] - 0.5 * L;
+
+                    pdmk_esp_params ep;
+                    ep.L = L;
+                    ep.r_c = L / 4;
+                    ep.eps = pc.eps;
+                    ep.kernel = DMK_LAPLACE;
+                    ep.eval_type = eval;
+                    ep.log_level = 6;
+                    dmk::EspPlan<double> esp_plan(ep, 2);
+                    auto esp = esp_plan.eval(n_src, r_esp.data(), &charges[0]);
+
+                    const int n_cmp = std::min(n_src, 50);
+                    double gauge = 0, pbar = 0;
+                    for (int i = 0; i < n_cmp; ++i) {
+                        gauge += esp.pot[i] - pot_src[i * odim];
+                        pbar += pot_src[i * odim];
+                    }
+                    gauge /= n_cmp;
+                    pbar /= n_cmp;
+                    double e2p = 0, r2p = 0, e2g = 0, r2g = 0;
+                    for (int i = 0; i < n_cmp; ++i) {
+                        e2p += sctl::pow<2>((esp.pot[i] - pot_src[i * odim]) - gauge);
+                        r2p += sctl::pow<2>(pot_src[i * odim] - pbar);
+                        if (with_grad) {
+                            const double f[2] = {esp.force_x[i], esp.force_y[i]};
+                            for (int dd = 0; dd < n_dim; ++dd) {
+                                const double ref_force = -charges[i] * pot_src[i * odim + 1 + dd];
+                                e2g += sctl::pow<2>(f[dd] - ref_force);
+                                r2g += sctl::pow<2>(ref_force);
+                            }
+                        }
+                    }
+                    VERBOSE_MESSAGE("  ESP 2D-Laplace: pot_src(gauge-removed)=", safe_l2(e2p, r2p),
+                                    " force_src=", with_grad ? safe_l2(e2g, r2g) : 0.0);
+                    CHECK(safe_l2(e2p, r2p) < pc.tol_pot);
+                    if (with_grad)
+                        CHECK(safe_l2(e2g, r2g) < pc.tol_grad);
+                }
+#endif
             }
         }
     }

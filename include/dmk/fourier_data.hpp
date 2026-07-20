@@ -73,6 +73,11 @@ template <typename Real, int DIM>
 void get_periodic_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int n_pw_periodic,
                                      Real boxsize, Real sigma1, Prolate0Fun &pf, sctl::Vector<Real> &kernel_ft);
 
+// Real-space value at r=0 of the windowed log kernel at the given box scale (the log-kernel
+// self-interaction constant). Used by the tree's self correction and by ESP.
+template <typename Real>
+Real calc_log_windowed_kernel_value_at_zero(int dim, const Prolate0Fun &pf, Real beta, Real boxsize);
+
 } // namespace dmk
 
 #endif

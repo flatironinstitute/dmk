@@ -847,6 +847,35 @@ void sqrt_laplace_2d_periodic_windowed_kernel_ft(Real dk, int n_fourier, Real b,
     }
 }
 
+template <typename Real>
+Real calc_log_windowed_kernel_value_at_zero(int dim, const Prolate0Fun &pf, Real beta, Real boxsize) {
+    const Real psi0 = pf.eval_val(0.0);
+    constexpr int n_quad = 100;
+    std::array<Real, n_quad> xs, whts;
+    legerts(1, n_quad, xs.data(), whts.data());
+    for (int i = 0; i < n_quad; ++i) {
+        xs[i] = 0.5 * (xs[i] + Real{1.0}) * beta / boxsize;
+        whts[i] *= 0.5 * beta / boxsize;
+    }
+
+    const Real rl = boxsize * sqrt(dim * 1.0) * 2;
+    const Real dfac = rl * std::log(rl);
+
+    Real fval = 0.0;
+    for (int i = 0; i < n_quad; ++i) {
+        const Real xval = xs[i] * boxsize / beta;
+        const Real fval0 = pf.eval_val(xval);
+        const Real z = rl * xs[i];
+        const Real dj0 = util::cyl_bessel_j(0, z);
+        const Real dj1 = util::cyl_bessel_j(1, z);
+        const Real tker = -(1 - dj0) / (xs[i] * xs[i]) + dfac * dj1 / xs[i];
+        const Real fhat = tker * fval0 / psi0;
+        fval += fhat * whts[i] * xs[i];
+    }
+
+    return fval;
+}
+
 template <typename Real, int DIM>
 void get_periodic_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int n_pw_periodic,
                                      Real boxsize, Real sigma1, Prolate0Fun &pf, sctl::Vector<Real> &kernel_ft) {
@@ -1229,5 +1258,9 @@ template void get_periodic_windowed_kernel_ft<double, 2>(dmk_ikernel kernel, con
 template void get_periodic_windowed_kernel_ft<double, 3>(dmk_ikernel kernel, const double *rpars, double beta,
                                                          int n_pw_periodic, double boxsize, double sigma1,
                                                          Prolate0Fun &pf, sctl::Vector<double> &kernel_ft);
+
+template float calc_log_windowed_kernel_value_at_zero<float>(int dim, const Prolate0Fun &pf, float beta, float boxsize);
+template double calc_log_windowed_kernel_value_at_zero<double>(int dim, const Prolate0Fun &pf, double beta,
+                                                               double boxsize);
 
 } // namespace dmk
