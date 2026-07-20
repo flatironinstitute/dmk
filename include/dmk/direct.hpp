@@ -129,6 +129,13 @@ template <typename Real>
 residual_evaluator_range_func<Real> make_esp_range_evaluator_jit(dmk_ikernel kernel, double fparam, double r_c,
                                                                  int n_dim, dmk_eval_type eval_level, int n_digits,
                                                                  double sigma, int unroll_factor);
+template <typename Real>
+residual_evaluator_func<Real> make_esp_evaluator_aot(dmk_ikernel kernel, double fparam, double r_c, int n_dim,
+                                                     dmk_eval_type eval_level, int n_digits, double sigma);
+template <typename Real>
+residual_evaluator_range_func<Real> make_esp_range_evaluator_aot(dmk_ikernel kernel, double fparam, double r_c,
+                                                                 int n_dim, dmk_eval_type eval_level, int n_digits,
+                                                                 double sigma);
 
 // Yukawa's local correction coefficients are level- and lambda-dependent, so its
 // evaluator is built per level from the coefficients generated in FourierData

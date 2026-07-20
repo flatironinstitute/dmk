@@ -1347,35 +1347,26 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_, int n_dim_)
         self_factor = Real(fd.yukawa_windowed_kernel_value_at_zero(0));
     }
 
-    constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
     bool use_jit = false;
 #ifdef DMK_USE_JIT
     use_jit = !util::env_is_set("DMK_DEBUG_FORCE_AOT");
 #endif
-    if (n_dim == 2) {
-        // 2D has no AOT ESP tables and no _ranges evaluators yet, so it requires JIT and runs the
-        // dense short-range strategy (range_evaluator stays empty).
+    // Both paths cover every scalar kernel in 2D and 3D. range_evaluator is built only in 3D; 2D's
+    // short_range is dense and never touches it.
+    if (use_jit) {
 #ifdef DMK_USE_JIT
-        if (use_jit)
-            evaluator = make_esp_evaluator_jit<Real>(params.kernel, params.fparam, params.r_c, 2, params.eval_type,
-                                                     n_digits, sigma, 3);
-        else
-#endif
-            throw std::runtime_error("ESP 2D requires JIT (no AOT tables / _ranges evaluators)");
-    } else if (n_dim == 3) {
-        if (use_jit) {
-#ifdef DMK_USE_JIT
-            evaluator = make_esp_evaluator_jit<Real>(params.kernel, params.fparam, params.r_c, 3, params.eval_type,
-                                                     n_digits, sigma, 3);
-            range_evaluator = make_esp_range_evaluator_jit<Real>(params.kernel, params.fparam, params.r_c, 3,
+        evaluator = make_esp_evaluator_jit<Real>(params.kernel, params.fparam, params.r_c, n_dim, params.eval_type,
+                                                 n_digits, sigma, 3);
+        if (n_dim == 3)
+            range_evaluator = make_esp_range_evaluator_jit<Real>(params.kernel, params.fparam, params.r_c, n_dim,
                                                                  params.eval_type, n_digits, sigma, 3);
 #endif
-        } else {
-            if (params.kernel != DMK_LAPLACE)
-                throw std::runtime_error("ESP AOT path supports only Laplace; enable JIT for Yukawa/Sqrt-Laplace");
-            evaluator = get_esp_3d_kernel<Real, MaxVecLen>(params.eval_type, n_digits);
-            range_evaluator = get_esp_3d_kernel_ranges<Real, MaxVecLen>(params.eval_type, n_digits);
-        }
+    } else {
+        evaluator = make_esp_evaluator_aot<Real>(params.kernel, params.fparam, params.r_c, n_dim, params.eval_type,
+                                                 n_digits, sigma);
+        if (n_dim == 3)
+            range_evaluator = make_esp_range_evaluator_aot<Real>(params.kernel, params.fparam, params.r_c, n_dim,
+                                                                 params.eval_type, n_digits, sigma);
     }
 }
 

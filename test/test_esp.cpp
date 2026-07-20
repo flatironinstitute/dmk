@@ -401,11 +401,12 @@ TEST_CASE("[ESP] forces - 10 particles") {
     delete plan;
 }
 
-TEST_CASE("[ESP] DIM=2 plan throws: no 2D short-range kernel yet") {
+// 2D now runs under both JIT and AOT; accuracy is validated in test_pbc_periodic.cpp. Here we just
+// confirm the 2D plan constructs and evaluates without throwing on whichever path is active.
+TEST_CASE("[ESP] DIM=2 plan runs (JIT and AOT)") {
     constexpr double eps = 1e-5;
-    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, R_C, eps, DMK_POTENTIAL), /*n_dim=*/2);
-    CHECK_THROWS_AS(plan->eval(N, R_SRC, CHARGES), std::runtime_error);
-    delete plan;
+    dmk::EspPlan<double> plan(make_esp_params(L, R_C, eps, DMK_POTENTIAL), /*n_dim=*/2);
+    CHECK_NOTHROW(plan.eval(N, R_SRC, CHARGES));
 }
 
 // esp_eval<float> is instantiated but was never exercised by any test before this; confirms the
