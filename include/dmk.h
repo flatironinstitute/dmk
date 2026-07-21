@@ -96,8 +96,8 @@ pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src,
                            const double *charge, const double *normal, int n_trg, const double *r_trg);
 
 #ifdef DMK_BUILD_ESP
-// ESP (Ewald Sum with PSWF kernels) — periodic Coulomb solver.
-// Particles lie in the cubic box [-L/2, L/2)^3.
+// ESP (Ewald Sum with PSWF kernels)
+// Particles lie in the cubic box [-L/2, L/2)^n_dim.
 
 // Short-range method selection bits for pdmk_esp_params.esp_flags. The three strategies
 // (source-pruning granularity, within-cell spatial sort, Newton's-third-law reciprocal) are
@@ -118,7 +118,9 @@ typedef struct pdmk_esp_params {
     double fparam = 0.0;
     int n_dim = 3; // spatial dimension (2 or 3)
     dmk_eval_type eval_type = DMK_POTENTIAL;
-    double sigma = 1.35; // FINUFFT upsampling factor for the long-range PSWF kernel
+    double sigma = 1.35;      // FINUFFT upsampling factor for the long-range PSWF kernel
+    int use_periodic = 1;     // 1: periodic box; 0: free-space (open) boundaries
+    double freespace_pad = 0; // free-space FFT-grid padding factor per axis; <=0 -> auto 2*sqrt(n_dim)
     // Short-range tuning; defaults are the fastest known combination.
     uint32_t esp_flags = DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L | DMK_ESP_MORTON; // DMK_ESP_* method bitmask
     int esp_bins = 2;  // octant-bin count per axis when DMK_ESP_MORTON is clear

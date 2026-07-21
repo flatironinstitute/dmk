@@ -82,13 +82,18 @@ PSWFKernel::PSWFKernel(double eps_, double c_, int lenw) : eps(eps_), c(c_) {
 }
 
 template <typename Real, int DIM>
-static inline std::array<int, DIM> particle_cell(const Vec3T<Real, DIM> &r, Real L, int n_cells) {
+static inline std::array<int, DIM> particle_cell(const Vec3T<Real, DIM> &r, Real L, int n_cells, bool periodic) {
     const Real cell_size = L / n_cells;
     std::array<int, DIM> ci;
     for (int d = 0; d < DIM; ++d) {
-        ci[d] = static_cast<int>(std::floor((r[d] + L / 2) / cell_size)) % n_cells;
-        if (ci[d] < 0)
-            ci[d] += n_cells;
+        int c = static_cast<int>(std::floor((r[d] + L / 2) / cell_size));
+        if (periodic) {
+            c %= n_cells;
+            if (c < 0)
+                c += n_cells;
+        } else
+            c = std::min(n_cells - 1, std::max(0, c)); // open BC: clamp boundary points, no wrap
+        ci[d] = c;
     }
     return ci;
 }
@@ -289,11 +294,12 @@ inline CellList<Real, DIM> build_cell_list(const Real *r_src, const Real *charge
         ncells *= nc;
     const Real L_r = Real(params.L);
 
+    const bool periodic = params.use_periodic;
     auto cell_of = [&](const Real *r) {
         std::array<Real, DIM> rr;
         for (int d = 0; d < DIM; ++d)
             rr[d] = r[d];
-        return cell_linear_index<DIM>(particle_cell<Real, DIM>(rr, L_r, nc), nc);
+        return cell_linear_index<DIM>(particle_cell<Real, DIM>(rr, L_r, nc, periodic), nc);
     };
 
     // pass 1: count per cell
@@ -385,13 +391,17 @@ static inline void for_each_neighbor(const std::array<const int *, DIM> &nbc, co
         std::array<int, DIM> digit, nb_axes;
         std::array<Real, DIM> shift;
         int rem = lin;
+        bool valid = true;
         for (int d = DIM - 1; d >= 0; --d) {
             digit[d] = rem % 3;
             rem /= 3;
             nb_axes[d] = nbc[d][digit[d]];
             shift[d] = off[d][digit[d]];
+            if (nb_axes[d] < 0) // free-space: out-of-range neighbour cell, skip (no periodic wrap)
+                valid = false;
         }
-        fn(digit, cell_linear_index<DIM>(nb_axes, nc), shift);
+        if (valid)
+            fn(digit, cell_linear_index<DIM>(nb_axes, nc), shift);
     }
 }
 
@@ -962,17 +972,20 @@ void EspPlan<Real>::short_range(int n, const Real *r_src, const Real *charges, s
     // For each cell coordinate c in [0, nc) and each delta d in {-1,0,+1} (stored as d=0,1,2):
     // nbc_tab[c*3+d] = neighbor cell index, off_tab[c*3+d] = image shift to subtract.
     // Precomputed once; all DIM axes share the same table since they share nc.
+    // Free-space (open BC): out-of-range neighbours are marked invalid (sentinel -1) with zero shift,
+    // and for_each_neighbor skips them — no periodic wrap/image.
+    const bool periodic = params.use_periodic;
     std::vector<int> nbc_tab(nc * 3);
     std::vector<Real> off_tab(nc * 3);
     for (int c = 0; c < nc; ++c) {
         for (int d = 0; d < 3; ++d) {
             int ci = c + d - 1;
             if (ci < 0) {
-                nbc_tab[c * 3 + d] = ci + nc;
-                off_tab[c * 3 + d] = -L;
+                nbc_tab[c * 3 + d] = periodic ? ci + nc : -1;
+                off_tab[c * 3 + d] = periodic ? -L : Real(0);
             } else if (ci >= nc) {
-                nbc_tab[c * 3 + d] = ci - nc;
-                off_tab[c * 3 + d] = L;
+                nbc_tab[c * 3 + d] = periodic ? ci - nc : -1;
+                off_tab[c * 3 + d] = periodic ? L : Real(0);
             } else {
                 nbc_tab[c * 3 + d] = ci;
                 off_tab[c * 3 + d] = Real(0);
@@ -1028,12 +1041,16 @@ std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() {
     for (int i = 0; i < nf; ++i)
         k_idx[i] = (i <= nf / 2) ? i : i - nf;
 
-    // 1-D phi_hat values
+    // 1-D phi_hat values. The spreading-kernel deconvolution is a scaled-grid ([0,2pi), nf points)
+    // quantity, so it must be box-invariant: the argument k_vec*P*h/2 = pi*P*k_idx/nf already cancels
+    // L_grid (h = L_grid/nf), but the amplitude must use the scaled spacing 1/nf, NOT the physical
+    // h = L_grid/nf. Using h here inflates ph by L_grid, ph^2 by L_grid^6, which over-suppresses the
+    // free-space long-range (harmless when L_grid == L, i.e. every periodic case with L used as-is).
     std::vector<double> phi_hat_1d(nf);
     for (int i = 0; i < nf; ++i) {
-        double k_vec = 2.0 * M_PI * k_idx[i] / params.L;
+        double k_vec = 2.0 * M_PI * k_idx[i] / L_grid;
         double arg = k_vec * (P * h) / 2.0;
-        phi_hat_1d[i] = (P * h / 2.0) * pswf.pswf_hat(arg);
+        phi_hat_1d[i] = (P / (2.0 * nf)) * pswf.pswf_hat(arg);
     }
 
     // Long-range windowed kernel W(k), reused from the DMK level-0 periodic root-box FT so it shares
@@ -1042,15 +1059,15 @@ std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() {
     // (dropped for Laplace/Sqrt-Laplace, finite for Yukawa). The lambda0/(2*c0) factor reconciles
     // fourier_data's prolate/psi0 convention with ESP's pswf_hat-based phi_hat.
     sctl::Vector<double> kernel_ft;
-    get_periodic_windowed_kernel_ft<double, DIM>(params.kernel, &params.fparam, pswf.c, nf, params.L,
-                                                 params.r_c / pswf.c, pswf.pswf, kernel_ft);
+    get_periodic_windowed_kernel_ft<double, DIM>(params.kernel, &params.fparam, pswf.c, nf, L_grid, params.r_c / pswf.c,
+                                                 pswf.pswf, kernel_ft, !params.use_periodic, trunc_rl);
     const double norm = pswf.lambda0 / (2.0 * pswf.c0);
 
     int ntot = 1;
     double L_pow_dim = 1.0;
     for (int d = 0; d < DIM; ++d) {
         ntot *= nf;
-        L_pow_dim *= params.L;
+        L_pow_dim *= L_grid;
     }
 
     std::vector<double> p(ntot, 0.0);
@@ -1089,7 +1106,7 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
     for (int d = 0; d < DIM; ++d)
         ntot *= nf;
 
-    const Real scale = Real(2.0 * M_PI / params.L);
+    const Real scale = Real(2.0 * M_PI / L_grid);
     auto &coord = lr_coord;
     auto &c = lr_c;
     for (int d = 0; d < DIM; ++d)
@@ -1280,8 +1297,20 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_)
     P = esp_P_from_eps(eps_d, sigma, n_dim);
     const double c = esp_pswf_c_from_P(sigma, P);
     pswf = PSWFKernel(eps_d, c);
-    n_f = static_cast<int>(std::ceil(pswf.c * params.L / (M_PI * params.r_c)));
-    h = params.L / n_f;
+    // Free-space needs the spectral grid enlarged (zero-padded) so the truncated kernel does not wrap.
+    // rl is the outer truncation radius. It leaves 2*r_c of taper room beyond the source-box diagonal
+    // sqrt(DIM)*L: the Sqrt-Laplace long-range symbol smoothly tapers the 1/r kernel to zero over
+    // [sqrt(DIM)*L, rl] with the prolate window (a hard cut would leave a discontinuity that aliases
+    // globally on the grid -- an eps-independent floor). The 2*r_c ramp band-limits the taper to the grid
+    // Nyquist c/r_c. Every source-target pair sits at r <= sqrt(DIM)*L, inside the plateau where the
+    // kernel is exact.
+    // Constraints: L_grid > 2*rl (no wrap) and dk*rl < pi (no symbol aliasing); L_grid = 2.2*rl gives
+    // dk*rl = 2*pi/2.2 < pi with a no-wrap margin.
+    trunc_rl = std::sqrt(double(n_dim)) * params.L + 2.0 * params.r_c;
+    pad = params.use_periodic ? 1.0 : (params.freespace_pad > 0 ? params.freespace_pad : 2.2 * trunc_rl / params.L);
+    L_grid = pad * params.L;
+    n_f = static_cast<int>(std::ceil(pswf.c * L_grid / (M_PI * params.r_c)));
+    h = L_grid / n_f;
 
     // precompute_scaling_coefficients also sets self_factor to the reciprocal-sum self-energy
     // W(0) = (1/V) sum_{k!=0} Ghat_long(k). Closed forms below override it for the kernels that have

@@ -41,7 +41,9 @@ struct Config {
     bool bench_forces = false; // -g: also benchmark forces (potential+force timed together)
     bool check_forces =
         false; // -F: validate forces against FD reference (samples 20 random particles × 6 evals each); implies -g
-    int log_level = 6; // DMK_LOG_OFF
+    int log_level = 6;        // DMK_LOG_OFF
+    bool use_periodic = true; // -o: free-space (open) boundaries instead of periodic
+    double freespace_pad = 0; // -P: free-space FFT-grid padding factor (<=0 -> auto 2*sqrt(n_dim))
     // Short-range method selection (defaults to the fastest combo); mirrors pdmk_esp_params.
     uint32_t esp_flags = DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L | DMK_ESP_MORTON;
     int esp_bins = 2;
@@ -63,6 +65,8 @@ pdmk_esp_params make_params(const Config &cfg, double r_c, dmk_eval_type eval_ty
     params.log_level = cfg.log_level;
     params.eval_type = eval_type;
     params.sigma = cfg.sigma;
+    params.use_periodic = cfg.use_periodic ? 1 : 0;
+    params.freespace_pad = cfg.freespace_pad;
     params.esp_flags = cfg.esp_flags;
     params.esp_bins = cfg.esp_bins;
     params.esp_stile = cfg.esp_stile;
@@ -139,6 +143,15 @@ bool compute_reference(const Config &cfg, int n, const std::vector<double> &r_sr
     const int n_cmp = std::min(cfg.n_direct, n);
     const double L = cfg.L;
 
+    if (!cfg.use_periodic) {
+        ref.assign(n_cmp, 0.0);
+        std::cout << "# verify: free-space direct reference for first " << n_cmp << " of " << n << " points...\n"
+                  << std::flush;
+        auto fn = dmk::get_direct_evaluator<double>(cfg.kernel, DMK_POTENTIAL, nd, cfg.fparam);
+        fn(n, r_src_d.data(), charges_d.data(), nullptr, n_cmp, r_src_d.data(), ref.data());
+        return true;
+    }
+
     if (cfg.kernel == DMK_LAPLACE && nd == 2) {
         std::cout << "# verify: skipping accuracy check for 2D Laplace (log gauge/self is validated in "
                      "test_esp.cpp, not self-contained here)\n"
@@ -195,6 +208,7 @@ void print_config(const Config &cfg, int n_threads, std::ostream &os) {
        << "# kernel:      " << dmk::util::to_string(cfg.kernel) << "\n"
        << "# fparam:      " << cfg.fparam << "\n"
        << "# sigma:       " << cfg.sigma << "\n"
+       << "# boundary:    " << (cfg.use_periodic ? "periodic" : "free-space") << "\n"
        << "# n_runs:      " << cfg.n_runs << "\n"
        << "# n_direct:    " << cfg.n_direct << "\n"
        << "# prec:        " << (cfg.prec == 'd' ? "double" : "float") << "\n"
@@ -459,7 +473,7 @@ Config parse_args(int argc, char *argv[]) {
             cfg.esp_flags &= ~bit;
     };
     int opt;
-    while ((opt = getopt_long(argc, argv, "N:d:L:c:e:r:t:l:s:D:k:f:pFgh?", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "N:d:L:c:e:r:t:l:s:D:k:f:P:opFgh?", long_opts, nullptr)) != -1) {
         switch (opt) {
         case OPT_PRUNE: {
             const int v = std::atoi(optarg);
@@ -531,6 +545,12 @@ Config parse_args(int argc, char *argv[]) {
             cfg.sigma = std::atof(optarg);
             cfg.sigma_set = true;
             break;
+        case 'o':
+            cfg.use_periodic = false;
+            break;
+        case 'P':
+            cfg.freespace_pad = std::atof(optarg);
+            break;
         case 't':
             if (optarg[0] == 'd')
                 cfg.prec = 'd';
@@ -559,6 +579,8 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -p         Also benchmark plan creation\n"
                       << "  -s sigma   FINUFFT upsampling factor for the long-range PSWF kernel (default 1.35).\n"
                       << "             Requires JIT support (-DDMK_USE_JIT=ON at configure time).\n"
+                      << "  -o         Free-space (open) boundaries instead of periodic\n"
+                      << "  -P pad     Free-space FFT-grid padding factor per axis (default: auto 2*sqrt(n_dim))\n"
                       << "  -g         Benchmark forces instead of potential (potential+force timed together).\n"
                       << "  -F         Validate forces against a finite-difference reference (no benchmark).\n"
                       << "             Samples 20 random particles, not all N.\n"

@@ -53,25 +53,16 @@ static void laplace_reference(int n, const double *r_src, const double *charges,
         ref_out[i] -= mean;
 }
 
-// Finite-difference force reference: F_{i,a} = -q_i * d(pot_i)/dr_{i,a}, via central differences.
-// `plan` must already be created with DMK_POTENTIAL_GRAD and is not destroyed here.
+// Analytic triply-periodic 3D-Laplace force reference: F_{i,a} = -q_i * d(pot_i)/dr_{i,a}, from the
+// Ewald split's exact gradient (no finite-difference error, so the comparison can assert eps).
 // force_ref must have room for 3*n doubles.
-static void fd_force_reference(dmk::EspPlan<double> *plan, int n, const double *r_src, const double *charges,
-                               double step_size, double *force_ref) {
-    std::vector<double> r_pert(3 * n);
-
+static void laplace_force_reference(int n, const double *r_src, const double *charges, double L, double *force_ref) {
+    dmk::pbc_ref::EwaldRef ewald(DMK_LAPLACE, 3, n, r_src, charges, L);
     for (int i = 0; i < n; ++i) {
-        for (int a = 0; a < 3; ++a) {
-            std::copy(r_src, r_src + 3 * n, r_pert.begin());
-
-            r_pert[3 * i + a] += step_size;
-            double pot_plus = plan->eval(n, r_pert.data(), charges).pot[i];
-
-            r_pert[3 * i + a] -= 2.0 * step_size;
-            double pot_minus = plan->eval(n, r_pert.data(), charges).pot[i];
-
-            force_ref[3 * i + a] = -charges[i] * (pot_plus - pot_minus) / (2.0 * step_size);
-        }
+        double pot, g[3];
+        ewald.eval(&r_src[i * 3], i, pot, g);
+        for (int a = 0; a < 3; ++a)
+            force_ref[3 * i + a] = -charges[i] * g[a];
     }
 }
 
@@ -162,16 +153,18 @@ TEST_CASE("[ESP] long-range only: regular grid, no short-range pairs") {
     }
     const double l2_rel_err = std::sqrt(err2 / ref2);
 
-    CHECK_MESSAGE(l2_rel_err < 5 * eps, "long-range-only l2_rel_err=" << l2_rel_err << " >= 5 * eps=" << 5 * eps);
+    CHECK_MESSAGE(l2_rel_err < eps, "long-range-only l2_rel_err=" << l2_rel_err << " >= eps=" << eps);
 
-    // Long-range forces on a symmetric lattice should be ~0. Relative error is
-    // undefined (ref ≈ 0), so we check absolute magnitude instead.
-    double max_abs = 0;
+    // Long-range forces on a symmetric lattice vanish exactly, so relative error is undefined; check
+    // that the residual is within eps of the natural force scale (potential magnitude / lattice pitch).
+    double max_abs = 0, max_pot = 0;
     for (int i = 0; i < N; ++i) {
         max_abs = std::max({max_abs, std::abs(esp.force_x[i]), std::abs(esp.force_y[i]), std::abs(esp.force_z[i])});
+        max_pot = std::max(max_pot, std::abs(ref[i]));
     }
-    double force_tol = 10 * std::pow(eps, 2.0 / 3.0);
-    CHECK_MESSAGE(max_abs < force_tol, "long-range forces should vanish on symmetric lattice, max=" << max_abs);
+    const double force_tol = eps * max_pot / h;
+    CHECK_MESSAGE(max_abs < force_tol,
+                  "long-range forces should vanish on symmetric lattice, max=" << max_abs << " tol=" << force_tol);
     delete plan;
 }
 
@@ -255,13 +248,11 @@ TEST_CASE("[ESP] short-range stress: all pairs within r_c") {
     double ref[N];
     laplace_reference(N, r_src, charges, L, ref);
 
+    std::vector<double> force_ref(3 * N);
+    laplace_force_reference(N, r_src, charges, L, force_ref.data());
+
     // --- Run ESP ---
     dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, r_c, eps, DMK_POTENTIAL_GRAD));
-
-    // Compute FD reference before the final eval so the plan's buffer is fresh when we hold spans.
-    std::vector<double> force_ref(3 * N);
-    fd_force_reference(plan, N, r_src, charges, 1e-6, force_ref.data());
-
     auto esp = plan->eval(N, r_src, charges);
 
     double esp_mean = 0;
@@ -277,31 +268,25 @@ TEST_CASE("[ESP] short-range stress: all pairs within r_c") {
     }
     const double l2_rel_err = std::sqrt(err2 / ref2);
 
-    CHECK_MESSAGE(l2_rel_err < 5 * eps, "short-range-stress l2_rel_err=" << l2_rel_err << " >= eps=" << eps);
+    CHECK_MESSAGE(l2_rel_err < eps, "short-range-stress l2_rel_err=" << l2_rel_err << " >= eps=" << eps);
 
     const double force_l2_err = force_l2_rel_err(N, esp.force_x, esp.force_y, esp.force_z, force_ref.data());
-    double force_tol = 10 * std::pow(eps, 2.0 / 3.0);
-    CHECK_MESSAGE(force_l2_err < force_tol,
-                  "short-range-stress forces l2_rel_err=" << force_l2_err << " >= force_tol=" << force_tol);
+    CHECK_MESSAGE(force_l2_err < eps, "short-range-stress forces l2_rel_err=" << force_l2_err << " >= eps=" << eps);
     delete plan;
 }
 
 TEST_CASE("[ESP] forces - 10 particles") {
     constexpr double eps = 1e-6;
 
-    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, R_C, eps, DMK_POTENTIAL_GRAD));
-
-    // Compute FD reference before the final eval so the plan's buffer is fresh when we hold spans.
     std::vector<double> force_ref(3 * N);
-    fd_force_reference(plan, N, R_SRC, CHARGES, std::pow(eps, 1.0 / 3.0), force_ref.data());
+    laplace_force_reference(N, R_SRC, CHARGES, L, force_ref.data());
 
+    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, R_C, eps, DMK_POTENTIAL_GRAD));
     auto esp = plan->eval(N, R_SRC, CHARGES);
 
-    // Compare ESP's analytic forces against the finite-difference reference.
+    // Compare ESP's analytic forces against the analytic Ewald force reference.
     const double l2_rel_err = force_l2_rel_err(N, esp.force_x, esp.force_y, esp.force_z, force_ref.data());
-    double force_tol = 10 * std::pow(eps, 2.0 / 3.0);
-    CHECK_MESSAGE(l2_rel_err < force_tol,
-                  "10-particle forces l2_rel_err=" << l2_rel_err << " >= force_tol=" << force_tol);
+    CHECK_MESSAGE(l2_rel_err < eps, "10-particle forces l2_rel_err=" << l2_rel_err << " >= eps=" << eps);
     delete plan;
 }
 
@@ -338,6 +323,9 @@ TEST_CASE("[ESP] float precision matches double") {
         pot_err2 += diff * diff;
         pot_ref2 += esp_d.pot[i] * esp_d.pot[i];
     }
+    // Tolerances here are the single-precision floor (accumulated float roundoff in the FFT/spread,
+    // ~1e-4 pot / ~1e-3 force at this grid size), NOT the method eps: this only checks the float path
+    // runs in float and tracks double, it is not an accuracy assertion (those are the double tests).
     const double pot_l2_rel_err = std::sqrt(pot_err2 / pot_ref2);
     CHECK_MESSAGE(pot_l2_rel_err < 1e-4, "float vs double potential l2_rel_err=" << pot_l2_rel_err);
 
@@ -455,18 +443,14 @@ static void run_esp_pbc(const EspPbcParams &c) {
     for (size_t i = 0; i < r_esp.size(); ++i)
         r_esp[i] = r_src[i] - 0.5 * L;
 
-    struct PrecisionCase {
-        int n_digits;
-        double eps, tol_pot, tol_grad;
-    };
-    const PrecisionCase cases[] = {{3, 1e-3, 1e-2, 1e-1}, {6, 1e-6, 1e-4, 1e-3}, {9, 1e-9, 1e-7, 1e-6}};
-    for (const auto &pc : cases)
+    const double epses[] = {1e-3, 1e-6, 1e-9};
+    for (const double eps : epses)
         for (int with_grad = 0; with_grad <= 1; ++with_grad) {
             const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
             pdmk_esp_params ep{};
             ep.L = L;
             ep.r_c = L / 4;
-            ep.eps = pc.eps;
+            ep.eps = eps;
             ep.n_dim = n_dim;
             ep.kernel = c.kernel;
             if (c.kernel == DMK_YUKAWA)
@@ -492,11 +476,10 @@ static void run_esp_pbc(const EspPbcParams &c) {
                 }
             }
             const double l2p = dmk::pbc_ref::safe_l2(e2p, r2p);
-            CHECK_MESSAGE(l2p < pc.tol_pot,
-                          "n_digits=" << pc.n_digits << (with_grad ? " pot+grad" : " pot") << " pot l2=" << l2p);
+            CHECK_MESSAGE(l2p < eps, "eps=" << eps << (with_grad ? " pot+grad" : " pot") << " pot l2=" << l2p);
             if (with_grad) {
                 const double l2g = dmk::pbc_ref::safe_l2(e2g, r2g);
-                CHECK_MESSAGE(l2g < pc.tol_grad, "n_digits=" << pc.n_digits << " force l2=" << l2g);
+                CHECK_MESSAGE(l2g < eps, "eps=" << eps << " force l2=" << l2g);
             }
         }
 }
@@ -540,19 +523,18 @@ TEST_CASE("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)") {
         r_esp[i] = r_src[i] - 0.5 * L;
 
     const int n_cmp = std::min(n_src, 50);
-    struct PrecisionCase {
-        int n_digits;
-        double eps, tol_pot, tol_grad;
-    };
-    const PrecisionCase cases[] = {{3, 1e-3, 1e-2, 1e-1}, {6, 1e-6, 1e-4, 1e-3}, {9, 1e-9, 1e-7, 1e-6}};
-    for (const auto &pc : cases)
+    // The reference here is the DMK tree pipeline (not an exact sum): it is the only reference sharing
+    // ESP's 2D-log self/gauge convention. Both ESP and the tree carry O(eps) error, so their difference
+    // is bounded by 2*eps (triangle inequality), not eps -- this is a reference floor, not a fudge.
+    const double epses[] = {1e-3, 1e-6, 1e-9};
+    for (const double eps : epses)
         for (int with_grad = 0; with_grad <= 1; ++with_grad) {
             const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
             const int odim = with_grad ? 1 + n_dim : 1;
 
             // DMK periodic pipeline reference at the sources (shares ESP's log self convention).
             pdmk_params params;
-            params.eps = pc.eps;
+            params.eps = eps;
             params.n_dim = n_dim;
             params.n_per_leaf = 50;
             params.eval_src = eval;
@@ -569,7 +551,7 @@ TEST_CASE("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)") {
             pdmk_esp_params ep{};
             ep.L = L;
             ep.r_c = L / 4;
-            ep.eps = pc.eps;
+            ep.eps = eps;
             ep.n_dim = 2;
             ep.kernel = DMK_LAPLACE;
             ep.eval_type = eval;
@@ -599,9 +581,113 @@ TEST_CASE("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)") {
                     }
                 }
             }
-            CHECK(dmk::pbc_ref::safe_l2(e2p, r2p) < pc.tol_pot);
+            CHECK(dmk::pbc_ref::safe_l2(e2p, r2p) < 2 * eps);
             if (with_grad)
-                CHECK(dmk::pbc_ref::safe_l2(e2g, r2g) < pc.tol_grad);
+                CHECK(dmk::pbc_ref::safe_l2(e2g, r2g) < 2 * eps);
         }
 }
+
+// ---------------------------------------------------------------------------
+// Free-space (open BC) ESP validation. The reference is a bare all-pairs direct sum with no periodic
+// images (DMK's free-space evaluator masks the r==0 self pair), so the comparison is absolute -- no
+// zero-mean gauge. Charges are left non-neutral to exercise the free-space k=0 (net-charge) mode.
+
+struct EspFreeParams {
+    dmk_ikernel kernel;
+    int n_dim;
+    double fparam; // lambda (Yukawa); ignored otherwise
+    unsigned seed;
+    int n_test;
+};
+
+// pot (+grad) at the first n_eval sources from every source, self pair masked, no images.
+static void freespace_reference(dmk_ikernel kernel, int n_dim, double lambda, dmk_eval_type eval, int n_src,
+                                const double *r_src, const double *charges, int n_eval, const double *r_eval,
+                                std::vector<double> &ref) {
+    const int odim = (eval == DMK_POTENTIAL_GRAD) ? 1 + n_dim : 1;
+    ref.assign(size_t(n_eval) * odim, 0.0);
+    auto fn = dmk::get_direct_evaluator<double>(kernel, eval, n_dim, lambda);
+    fn(n_src, r_src, charges, nullptr, n_eval, r_eval, ref.data());
+}
+
+static void run_esp_freespace(const EspFreeParams &c) {
+    constexpr int n_src = 2000;
+    const int n_dim = c.n_dim;
+    const double L = 1.0;
+
+    std::default_random_engine eng(c.seed);
+    std::uniform_real_distribution<double> rng(0.01, 0.99);
+    std::vector<double> r_src(size_t(n_dim) * n_src), charges(n_src);
+    for (auto &x : r_src)
+        x = rng(eng) - 0.5 * L; // in [-L/2, L/2)
+    for (auto &q : charges)
+        q = rng(eng) - 0.5;
+
+    const int n_test = c.n_test;
+    std::vector<double> ref_pot(n_test), ref_grad(size_t(n_test) * n_dim, 0.0);
+    {
+        std::vector<double> ref;
+        freespace_reference(c.kernel, n_dim, c.fparam, DMK_POTENTIAL_GRAD, n_src, r_src.data(), charges.data(), n_test,
+                            r_src.data(), ref);
+        const int odim = 1 + n_dim;
+        for (int i = 0; i < n_test; ++i) {
+            ref_pot[i] = ref[i * odim];
+            for (int d = 0; d < n_dim; ++d)
+                ref_grad[i * n_dim + d] = ref[i * odim + 1 + d];
+        }
+    }
+
+    // Free-space grids are pad^DIM larger than periodic; cap the sweep at 6 digits to bound memory.
+    const double epses[] = {1e-3, 1e-6};
+    for (const double eps : epses)
+        for (int with_grad = 0; with_grad <= 1; ++with_grad) {
+            const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
+            pdmk_esp_params ep{};
+            ep.L = L;
+            ep.r_c = L / 4;
+            ep.eps = eps;
+            ep.n_dim = n_dim;
+            ep.kernel = c.kernel;
+            if (c.kernel == DMK_YUKAWA)
+                ep.fparam = c.fparam;
+            ep.eval_type = eval;
+            ep.log_level = 6;
+            ep.use_periodic = 0;
+            ep.esp_flags = 0; // dense short-range: isolates the new long-range/open-BC path from N3L/pruning
+            dmk::EspPlan<double> plan(ep);
+            auto esp = plan.eval(n_src, r_src.data(), charges.data());
+
+            double e2p = 0, r2p = 0, e2g = 0, r2g = 0;
+            for (int i = 0; i < n_test; ++i) {
+                const double dp = esp.pot[i] - ref_pot[i];
+                e2p += dp * dp;
+                r2p += ref_pot[i] * ref_pot[i];
+                if (with_grad) {
+                    const double f[3] = {esp.force_x[i], esp.force_y[i], n_dim == 3 ? esp.force_z[i] : 0.0};
+                    for (int d = 0; d < n_dim; ++d) {
+                        const double ref_force = -charges[i] * ref_grad[i * n_dim + d];
+                        const double dg = f[d] - ref_force;
+                        e2g += dg * dg;
+                        r2g += ref_force * ref_force;
+                    }
+                }
+            }
+            const double l2p = dmk::pbc_ref::safe_l2(e2p, r2p);
+            CHECK_MESSAGE(l2p < eps, "eps=" << eps << (with_grad ? " pot+grad" : " pot") << " pot l2=" << l2p);
+            if (with_grad) {
+                const double l2g = dmk::pbc_ref::safe_l2(e2g, r2g);
+                CHECK_MESSAGE(l2g < eps, "eps=" << eps << " force l2=" << l2g);
+            }
+        }
+}
+
+TEST_CASE("[ESP] 3d Laplace free-space vs direct") { run_esp_freespace({DMK_LAPLACE, 3, 0.0, 99, 100}); }
+TEST_CASE("[ESP] 2d Laplace free-space vs direct") { run_esp_freespace({DMK_LAPLACE, 2, 0.0, 88, 100}); }
+TEST_CASE("[ESP] 3d Yukawa free-space vs direct") { run_esp_freespace({DMK_YUKAWA, 3, 6.0, 123, 100}); }
+TEST_CASE("[ESP] 2d Yukawa free-space vs direct") { run_esp_freespace({DMK_YUKAWA, 2, 4.0, 321, 100}); }
+
+// Sqrt-Laplace free-space (pot+grad vs the direct all-pairs reference; long-range via the
+// windowed-profile symbol, short-range grad via the residual poly-derivative).
+TEST_CASE("[ESP] 3d Sqrt-Laplace free-space vs direct") { run_esp_freespace({DMK_SQRT_LAPLACE, 3, 0.0, 7, 100}); }
+TEST_CASE("[ESP] 2d Sqrt-Laplace free-space vs direct") { run_esp_freespace({DMK_SQRT_LAPLACE, 2, 0.0, 54, 100}); }
 #endif // DMK_BUILD_ESP

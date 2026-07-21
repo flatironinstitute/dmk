@@ -82,8 +82,11 @@ template <typename Real>
 struct EspPlan {
     int n_digits;
     int n_dim;
-    int P, n_f; // spread width and oversampled grid size per axis
-    double h;   // oversampled grid spacing L/n_f
+    int P, n_f;      // spread width and oversampled grid size per axis
+    double h;        // oversampled grid spacing L_grid/n_f
+    double pad;      // FFT-grid padding factor per axis (1 periodic; 2*sqrt(n_dim) free-space)
+    double L_grid;   // spectral-grid period pad*L (periodic: == L)
+    double trunc_rl; // free-space kernel truncation radius = sqrt(n_dim)*L (source-box diagonal)
     PSWFKernel pswf;
     std::vector<Real> scaling_coeffs; // diagonal far-field scaling, computed in double then narrowed to Real once
     Real self_factor{0};              // long-range kernel value at r=0, subtracted per source (self-energy)
