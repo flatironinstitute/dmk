@@ -3130,38 +3130,6 @@ residual_evaluator_func<Real> get_esp_3d_kernel(dmk_eval_type eval_level, int n_
     throw std::runtime_error("Unsupported eval_level/n_digits combination");
 }
 
-// NC_TOTAL is identical between DMK_POTENTIAL and DMK_POTENTIAL_GRAD at every
-// n_digits bracket above (verified against the dispatch cascade), so only the
-// table name changes with eval_level.
-EspKernelCoeffs get_esp_3d_kernel_coeffs(dmk_eval_type eval_level, int n_digits) {
-    if (eval_level == DMK_POTENTIAL) {
-        if (n_digits <= 2)  return {esp_3d_potential_2, 5};
-        if (n_digits <= 3)  return {esp_3d_potential_3, 6};
-        if (n_digits <= 4)  return {esp_3d_potential_4, 9};
-        if (n_digits <= 5)  return {esp_3d_potential_5, 11};
-        if (n_digits <= 6)  return {esp_3d_potential_6, 13};
-        if (n_digits <= 7)  return {esp_3d_potential_7, 16};
-        if (n_digits <= 8)  return {esp_3d_potential_8, 17};
-        if (n_digits <= 9)  return {esp_3d_potential_9, 20};
-        if (n_digits <= 10) return {esp_3d_potential_10, 22};
-        if (n_digits <= 11) return {esp_3d_potential_11, 25};
-        if (n_digits <= 12) return {esp_3d_potential_12, 27};
-    } else if (eval_level == DMK_POTENTIAL_GRAD) {
-        if (n_digits <= 2)  return {esp_3d_potential_grad_2, 5};
-        if (n_digits <= 3)  return {esp_3d_potential_grad_3, 6};
-        if (n_digits <= 4)  return {esp_3d_potential_grad_4, 9};
-        if (n_digits <= 5)  return {esp_3d_potential_grad_5, 11};
-        if (n_digits <= 6)  return {esp_3d_potential_grad_6, 13};
-        if (n_digits <= 7)  return {esp_3d_potential_grad_7, 16};
-        if (n_digits <= 8)  return {esp_3d_potential_grad_8, 17};
-        if (n_digits <= 9)  return {esp_3d_potential_grad_9, 20};
-        if (n_digits <= 10) return {esp_3d_potential_grad_10, 22};
-        if (n_digits <= 11) return {esp_3d_potential_grad_11, 25};
-        if (n_digits <= 12) return {esp_3d_potential_grad_12, 27};
-    }
-    throw std::runtime_error("Unsupported eval_level/n_digits combination");
-}
-
 // Explicit instantiations
 template residual_evaluator_func<float> get_laplace_2d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type, int);
 template residual_evaluator_func<double> get_laplace_2d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type,

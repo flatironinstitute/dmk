@@ -86,7 +86,10 @@ if (DMK_GPU_OFFLOAD)
   find_package(CUDAToolkit REQUIRED)
   set(DMK_GPU_TARGET CUDA::cudart)
   list(APPEND DMK_CXX_FLAGS "-DDMK_GPU_OFFLOAD")
-  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
+  # --expt-relaxed-constexpr: lets __device__ code call host-side constexpr
+  # functions (e.g. CoeffTag::at() in esp_sr_coeffs.cuh) without needing an
+  # explicit __host__ __device__ on every one of them.
+  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo --expt-relaxed-constexpr")
 endif()
 
 if (DMK_BUILD_PVFMM)

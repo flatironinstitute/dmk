@@ -598,16 +598,12 @@ GpuState *esp_create_gpu_plan(EspPlan *plan) {
     // (PSWF chi, PSWF phi, used by the CPU path).
     plan->scaling_coeffs_es =
         precompute_scaling_coefficients_es(plan->pswf, plan->params_base, tol, GPU_SPREADER_UPSAMPFAC);
-    // Short-range polynomial fit of S(r) -- same table the CPU path's
-    // get_esp_3d_kernel dispatches into; the GPU kernel evaluates it directly.
-    const EspKernelCoeffs sr = get_esp_3d_kernel_coeffs(plan->eval_type, plan->n_digits);
     return gpu_create_state(
         plan->params_base.n_f, plan->n_digits,
         plan->params_base.L,   plan->params_base.r_c,
         GPU_SPREADER_UPSAMPFAC, tol,
         sf, float(sf), plan->eval_type,
-        plan->scaling_coeffs_es.data(),
-        sr.coeffs, sr.n_coeffs);
+        plan->scaling_coeffs_es.data());
 }
 
 void esp_destroy_gpu_plan(GpuState *gpu) { gpu_destroy_state(gpu); }

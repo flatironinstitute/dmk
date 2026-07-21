@@ -1,6 +1,7 @@
 // GPU implementation of the ESP solver.
 
 #include <dmk/cuda/esp_gpu.hpp>
+#include <dmk/cuda/esp_sr_coeffs.cuh>
 #include <dmk/esp.hpp>
 
 #include <cuda_runtime.h>
@@ -15,8 +16,8 @@
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/execution_policy.h>
 
-
 #include <cmath>
+#include <cstddef>
 #include <stdexcept>
 #include <vector>
 
@@ -52,8 +53,6 @@ struct GpuState {
     // Plan-level device data — uploaded once at esp_create_gpu_plan time.
     cudaStream_t   stream            = nullptr;
     double        *d_scaling_coeffs  = nullptr;   // nf³ doubles
-    double        *d_sr_coeffs       = nullptr;   // n_sr_coeffs doubles — short-range S(r) monomial fit
-    int            n_sr_coeffs       = 0;
     int            nc                = 0;         // cells per dimension, = floor(L/r_c)
     int           *d_nbc_tab         = nullptr;   // nc*3 ints — neighbor cell index per (cell,delta)
     double        *d_off_tab         = nullptr;   // nc*3 doubles — periodic image shift per (cell,delta)
@@ -90,7 +89,6 @@ struct GpuState {
         if (d_b_hat)          cudaFree(d_b_hat);
         if (d_b)              cudaFree(d_b);
         if (d_scaling_coeffs)  cudaFree(d_scaling_coeffs);
-        if (d_sr_coeffs)       cudaFree(d_sr_coeffs);
         if (d_nbc_tab)         cudaFree(d_nbc_tab);
         if (d_off_tab)         cudaFree(d_off_tab);
         if (d_cell_start)      cudaFree(d_cell_start);
@@ -126,8 +124,7 @@ GpuState *gpu_create_state(
     double L, double r_c, double gpu_upsampfac, double tol,
     double self_factor_d, float self_factor_f,
     dmk_eval_type eval_type,
-    const double *h_scaling_coeffs,
-    const double *h_sr_coeffs, int n_sr_coeffs)
+    const double *h_scaling_coeffs)
 {
     auto *gpu = new GpuState;
     gpu->nf            = nf;
@@ -150,13 +147,6 @@ GpuState *gpu_create_state(
         throw std::runtime_error("GpuState: cudaMalloc d_scaling_coeffs failed");
     cudaMemcpyAsync(gpu->d_scaling_coeffs, h_scaling_coeffs,
                     ntot * sizeof(double), cudaMemcpyHostToDevice, gpu->stream);
-
-    // Upload the short-range S(r) monomial-fit coefficients (plan-level constant).
-    gpu->n_sr_coeffs = n_sr_coeffs;
-    if (cudaMalloc(&gpu->d_sr_coeffs, n_sr_coeffs * sizeof(double)) != cudaSuccess)
-        throw std::runtime_error("GpuState: cudaMalloc d_sr_coeffs failed");
-    cudaMemcpyAsync(gpu->d_sr_coeffs, h_sr_coeffs,
-                    n_sr_coeffs * sizeof(double), cudaMemcpyHostToDevice, gpu->stream);
 
     // Spread output buffer — always nf³ complex doubles, so allocate once at plan time.
     if (cudaMalloc(&gpu->d_b, ntot * sizeof(cuDoubleComplex)) != cudaSuccess)
@@ -359,6 +349,68 @@ static void build_cell_list_gpu(
 }
 
 // ---------------------------------------------------------------------------
+// Compile-time Horner evaluation for the short-range polynomial S(R).
+//
+// Coefficients ride into the kernel as a compile-time *type* (CoeffTag), not
+// a runtime (pointer, count) pair -- this lets the compiler unroll the Horner
+// chain into a fixed sequence of FMAs against literal immediates instead of a
+// runtime loop reading global memory. CoeffTag::at() is a function (not a
+// `static constexpr double data[N]` member) because nvcc treats class-scope
+// constexpr arrays as host-only; the function form constant-folds on both
+// host and device when called with a compile-time-constant index.
+//
+// clang-format off
+template <typename C>
+concept CoeffTag = requires {
+    typename C::value_type;
+    { int(C::size) };
+    { typename C::value_type(C::at(std::size_t(0))) };
+};
+// clang-format on
+
+template <CoeffTag Coeffs, std::size_t I, typename Real>
+__device__ constexpr Real horner_recurse(Real x, Real acc) {
+    if constexpr (I == 0)
+        return acc;
+    else
+        return horner_recurse<Coeffs, I - 1>(x, acc * x + Real{Coeffs::at(I - 1)});
+}
+
+// P(x) only -- no gradient needed.
+template <CoeffTag Coeffs, typename Real>
+__device__ constexpr Real horner_const(Real x) {
+    static_assert(Coeffs::size > 0, "empty coefficient pack");
+    return horner_recurse<Coeffs, Coeffs::size - 1>(x, Real{Coeffs::at(Coeffs::size - 1)});
+}
+
+// P(x) and dP/dx(x) together, via synthetic division -- eval_esp_pair needs
+// both simultaneously (force requires the derivative). Runtime equivalent,
+// for reference (n = Coeffs::size, coefficients ascending-order):
+//   P = c[n-1]; dP = 0;
+//   for (i = n-2; i >= 0; --i) { dP = dP*x + P; P = P*x + c[i]; }
+// Note dP's update at each step uses the OLD P (the value *before* that
+// step's update to P) -- the same dependency the runtime loop above has.
+template <CoeffTag Coeffs, std::size_t I, typename Real>
+__device__ constexpr void horner_recurse_deriv(Real x, Real &P, Real &dP) {
+    if constexpr (I == 0) {
+        return;
+    } else {
+        Real old_P = P;
+        P = P * x + Real{Coeffs::at(I - 1)};
+        dP = dP * x + old_P;
+        return horner_recurse_deriv<Coeffs, I - 1>(x, P, dP);
+    }
+}
+
+template <CoeffTag Coeffs, typename Real>
+__device__ constexpr void horner_const_deriv(Real x, Real &P, Real &dP) {
+    static_assert(Coeffs::size > 0, "empty coefficient pack");
+    P = Real{Coeffs::at(Coeffs::size - 1)};
+    dP = Real{0};
+    horner_recurse_deriv<Coeffs, Coeffs::size - 1>(x, P, dP);
+}
+
+// ---------------------------------------------------------------------------
 // eval_esp_pair — the short-range kernel's actual math, for one source-target
 // pair. CPU reference: LaplacePolyEvaluator3D::operator(), the n_digits>=6
 // "non-transform" branch (include/dmk/vector_kernels.hpp:621-681), which ESP's
@@ -366,16 +418,27 @@ static void build_cell_list_gpu(
 //
 // S(R) is fit as a plain ascending-order monomial series in a mapped variable:
 //   x(R) = (R + cen) * rsc,   rsc = 2/r_c, cen = -r_c/2   (maps R in [0,r_c] -> [-1,1])
-//   P(x) = sr_coeffs[0] + sr_coeffs[1]*x + ... + sr_coeffs[n_sr_coeffs-1]*x^(n_sr_coeffs-1)
+//   P(x) = Coeffs::at(0) + Coeffs::at(1)*x + ... + Coeffs::at(Coeffs::size-1)*x^(Coeffs::size-1)
 //   S(R) = P(x(R)) / R
 // and the pair's potential contribution is q * S(R); the CPU convention (esp.cpp)
 // forms force as F = -q * grad(S), i.e. scatter_kernel below negates for you --
 // this function should just accumulate the *gradient* of the potential, not force.
-template <typename Real>
+//
+// Coeffs is now a compile-time CoeffTag (see esp_sr_coeffs.cuh + the
+// CoeffTag/horner_const_deriv machinery above) instead of a runtime
+// (pointer, count) pair -- the Horner evaluation below unrolls into a fixed
+// FMA chain against literal immediates rather than a loop over global memory.
+//
+// WantForce is also compile-time now (was a runtime bool) -- it's always
+// exactly eval_type == DMK_POTENTIAL_GRAD, fixed for the whole plan, so a
+// runtime check bought nothing but an extra branch executed once per pair
+// (the hottest loop here) and extra live registers (gx_acc/gy_acc/gz_acc)
+// that hurt occupancy even on potential-only launches. As a bonus, the
+// potential-only path below also skips computing the derivative entirely.
+template <CoeffTag Coeffs, bool WantForce, typename Real>
 __device__ __forceinline__ void eval_esp_pair(
     Real dx, Real dy, Real dz, Real q,
     Real rsc, Real cen, Real r_c_sq,
-    const double *sr_coeffs, int n_sr_coeffs, bool want_force,
     Real &pot_acc, Real &gx_acc, Real &gy_acc, Real &gz_acc)
 {
     const Real R2 = dx * dx + dy * dy + dz * dz;
@@ -384,45 +447,50 @@ __device__ __forceinline__ void eval_esp_pair(
     const Real Rinv = rsqrt(R2); // CUDA's rsqrt()/__drsqrt_rn(), full IEEE precision
     const double x = double((R2 * Rinv + cen) * rsc); // = (R + cen)*rsc, mapped into [-1,1]
 
-    // Simultaneous Horner value + derivative (synthetic division), ascending-order
-    // coefficients, accumulated in double regardless of Real (sr_coeffs is double).
-    double P = sr_coeffs[n_sr_coeffs - 1];
-    double dP = 0.0;
-    for (int i = n_sr_coeffs - 2; i >= 0; --i) {
-        dP = dP * x + P;
-        P  = P * x + sr_coeffs[i];
-    }
-
-    pot_acc += q * Real(P) * Rinv;
-
-    if (want_force) {
+    if constexpr (WantForce) {
+        double P, dP;
+        horner_const_deriv<Coeffs>(x, P, dP);
+        pot_acc += q * Real(P) * Rinv;
         const Real df_dR2 = Rinv * Rinv * (Real(dP) * rsc - Real(P) * Rinv);
         gx_acc += q * dx * df_dR2;
         gy_acc += q * dy * df_dR2;
         gz_acc += q * dz * df_dR2;
+    } else {
+        const double P = horner_const<Coeffs>(x);
+        pot_acc += q * Real(P) * Rinv;
     }
 }
 
 // ---------------------------------------------------------------------------
 // short_range_kernel
-// One CUDA block per home cell (nc³ blocks); threads grid-stride over that
-// cell's target particles. For each target, loops the 27-cell stencil (via
-// nbc_tab/off_tab, applying the periodic image shift to each gathered source)
-// and calls eval_esp_pair once per source, accumulating into pg_sorted.
+// One CUDA block per home cell (nc³ blocks). Each thread owns up to TARGETS
+// target particles at once (register-blocked: their positions/accumulators
+// live in per-thread register arrays for the whole source-processing pass),
+// processing successive *waves* of TARGETS-sized target groups rather than
+// one target each. On the source side, each of the 27 neighbor cells' source
+// lists are staged into shared memory in blockDim.x-sized tiles -- loaded
+// once per tile by the whole block, then read by every thread for every one
+// of its owned targets, instead of every thread re-reading the same source
+// data from global memory independently.
 // ---------------------------------------------------------------------------
-template <typename Real>
+constexpr int kShortRangeBlockSize = 128; // must match the launch config in short_range_gpu
+
+template <CoeffTag Coeffs, bool WantForce, int TARGETS, typename Real>
 __global__ void short_range_kernel(
-    int nc, int n, int out_dim, int n_digits,
+    int nc, int n, int out_dim,
     Real rsc, Real cen, Real r_c_sq,
     const int    *cell_start,
     const Real   *d_xs, const Real *d_ys, const Real *d_zs,
     const Real   *d_qs,
     const int    *nbc_tab,
     const double *off_tab,
-    const double *sr_coeffs, int n_sr_coeffs,
-    bool want_force,
     Real *pg_sorted)
 {
+    __shared__ Real s_xs[kShortRangeBlockSize];
+    __shared__ Real s_ys[kShortRangeBlockSize];
+    __shared__ Real s_zs[kShortRangeBlockSize];
+    __shared__ Real s_qs[kShortRangeBlockSize];
+
     const int home = blockIdx.x; // 0 .. nc^3-1, row-major (x*nc+y)*nc+z, one block per cell
     const int cx = home / (nc * nc);
     const int cy = (home / nc) % nc;
@@ -430,12 +498,20 @@ __global__ void short_range_kernel(
 
     const int hbeg = cell_start[home];
     const int n_trg = cell_start[home + 1] - hbeg;
+    const int n_groups = (n_trg + TARGETS - 1) / TARGETS;
+    const int n_waves = (n_groups + blockDim.x - 1) / blockDim.x;
 
-    for (int t = threadIdx.x; t < n_trg; t += blockDim.x) {
-        const int trg = hbeg + t;
-        const Real xt = d_xs[trg], yt = d_ys[trg], zt = d_zs[trg];
+    for (int wave = 0; wave < n_waves; ++wave) {
+        const int g = wave * blockDim.x + threadIdx.x;
+        const int t0 = g * TARGETS;
+        const int n_own = (g < n_groups) ? min(TARGETS, n_trg - t0) : 0; // 0 if this thread has no group this wave
 
-        Real pot_acc = Real(0), gx_acc = Real(0), gy_acc = Real(0), gz_acc = Real(0);
+        Real xt[TARGETS], yt[TARGETS], zt[TARGETS];
+        Real pot_acc[TARGETS] = {}, gx_acc[TARGETS] = {}, gy_acc[TARGETS] = {}, gz_acc[TARGETS] = {};
+        for (int k = 0; k < n_own; ++k) {
+            const int trg = hbeg + t0 + k;
+            xt[k] = d_xs[trg]; yt[k] = d_ys[trg]; zt[k] = d_zs[trg];
+        }
 
         for (int dxi = 0; dxi < 3; ++dxi) {
             const int nbx = nbc_tab[cx * 3 + dxi];
@@ -448,22 +524,54 @@ __global__ void short_range_kernel(
                     const double oz = off_tab[cz * 3 + dzi];
                     const int nb = (nbx * nc + nby) * nc + nbz;
                     const int sbeg = cell_start[nb], send = cell_start[nb + 1];
-                    for (int s = sbeg; s < send; ++s) {
-                        const Real dx = xt - (d_xs[s] + Real(ox));
-                        const Real dy = yt - (d_ys[s] + Real(oy));
-                        const Real dz = zt - (d_zs[s] + Real(oz));
-                        eval_esp_pair<Real>(dx, dy, dz, d_qs[s], rsc, cen, r_c_sq, sr_coeffs, n_sr_coeffs,
-                                            want_force, pot_acc, gx_acc, gy_acc, gz_acc);
+                    const int n_tiles = (send - sbeg + kShortRangeBlockSize - 1) / kShortRangeBlockSize;
+
+                    for (int tile = 0; tile < n_tiles; ++tile) {
+                        const int s_idx = sbeg + tile * kShortRangeBlockSize + threadIdx.x;
+                        if (s_idx < send) {
+                            // Bake the periodic image offset in at load time -- every
+                            // target reading this tile afterward gets the already-
+                            // wrapped coordinate, not just the raw source position.
+                            s_xs[threadIdx.x] = d_xs[s_idx] + Real(ox);
+                            s_ys[threadIdx.x] = d_ys[s_idx] + Real(oy);
+                            s_zs[threadIdx.x] = d_zs[s_idx] + Real(oz);
+                            s_qs[threadIdx.x] = d_qs[s_idx];
+                        }
+                        __syncthreads();
+
+                        const int n_local = min(kShortRangeBlockSize, send - sbeg - tile * kShortRangeBlockSize);
+
+                        // TODO(human): for each of this thread's n_own owned targets
+                        // (index k, position xt[k]/yt[k]/zt[k]), loop over the n_local
+                        // sources now sitting in s_xs/s_ys/s_zs/s_qs and call
+                        // eval_esp_pair<Coeffs, WantForce, Real> to accumulate into
+                        // pot_acc[k]/gx_acc[k]/gy_acc[k]/gz_acc[k]. Loop k from 0 to
+                        // n_own (NOT a fixed 0..TARGETS) -- on the last wave some
+                        // threads may have n_own == 0 and must do nothing here, while
+                        // still falling through to the __syncthreads() below.
+                        for (int k = 0; k < n_own; ++k) {
+                            // Process target k
+                            for (int s = 0; s < n_local; ++s) {
+                                // Process source s
+                                eval_esp_pair<Coeffs, WantForce, Real>(xt[k] - s_xs[s], yt[k] - s_ys[s], zt[k] - s_zs[s], s_qs[s], rsc, cen, r_c_sq, pot_acc[k], gx_acc[k], gy_acc[k], gz_acc[k]);
+                            }
+                        }
+
+
+                        __syncthreads(); // all threads done reading this tile before it's overwritten
                     }
                 }
             }
         }
 
-        pg_sorted[out_dim * trg + 0] = pot_acc;
-        if (out_dim > 1) {
-            pg_sorted[out_dim * trg + 1] = gx_acc;
-            pg_sorted[out_dim * trg + 2] = gy_acc;
-            pg_sorted[out_dim * trg + 3] = gz_acc;
+        for (int k = 0; k < n_own; ++k) {
+            const int trg = hbeg + t0 + k;
+            pg_sorted[out_dim * trg + 0] = pot_acc[k];
+            if constexpr (WantForce) {
+                pg_sorted[out_dim * trg + 1] = gx_acc[k];
+                pg_sorted[out_dim * trg + 2] = gy_acc[k];
+                pg_sorted[out_dim * trg + 3] = gz_acc[k];
+            }
         }
     }
 }
@@ -838,12 +946,33 @@ static void short_range_gpu(
 
     {
         NvtxRange range("short_range/pair_kernel");
-        const int threads = 128;
-        short_range_kernel<Real><<<nc * nc * nc, threads, 0, gpu.stream>>>(
-            nc, n, out_dim, n_digits, rsc, cen, r_c_sq,
-            d_cell_start, d_xs, d_ys, d_zs, d_qs,
-            gpu.d_nbc_tab, gpu.d_off_tab, gpu.d_sr_coeffs, gpu.n_sr_coeffs,
-            want_force, d_pg_sorted);
+        const int threads = kShortRangeBlockSize; // must match short_range_kernel's shared-memory tile size
+        constexpr int kTargetsPerThread = 4; // register-blocking width; see short_range_kernel's comment
+#define DMK_SR_LAUNCH(TAG, WANTFORCE)                                                                                  \
+    short_range_kernel<TAG, WANTFORCE, kTargetsPerThread, Real><<<nc * nc * nc, threads, 0, gpu.stream>>>(            \
+        nc, n, out_dim, rsc, cen, r_c_sq, d_cell_start, d_xs, d_ys, d_zs, d_qs,                                       \
+        gpu.d_nbc_tab, gpu.d_off_tab, d_pg_sorted)
+#define DMK_SR_CASCADE(PREFIX, WANTFORCE)                                                                              \
+    do {                                                                                                              \
+        if      (n_digits <= 2)  DMK_SR_LAUNCH(EspSrCoeffs_##PREFIX##_2, WANTFORCE);                                   \
+        else if (n_digits <= 3)  DMK_SR_LAUNCH(EspSrCoeffs_##PREFIX##_3, WANTFORCE);                                   \
+        else if (n_digits <= 4)  DMK_SR_LAUNCH(EspSrCoeffs_##PREFIX##_4, WANTFORCE);                                   \
+        else if (n_digits <= 5)  DMK_SR_LAUNCH(EspSrCoeffs_##PREFIX##_5, WANTFORCE);                                   \
+        else if (n_digits <= 6)  DMK_SR_LAUNCH(EspSrCoeffs_##PREFIX##_6, WANTFORCE);                                   \
+        else if (n_digits <= 7)  DMK_SR_LAUNCH(EspSrCoeffs_##PREFIX##_7, WANTFORCE);                                   \
+        else if (n_digits <= 8)  DMK_SR_LAUNCH(EspSrCoeffs_##PREFIX##_8, WANTFORCE);                                   \
+        else if (n_digits <= 9)  DMK_SR_LAUNCH(EspSrCoeffs_##PREFIX##_9, WANTFORCE);                                   \
+        else if (n_digits <= 10) DMK_SR_LAUNCH(EspSrCoeffs_##PREFIX##_10, WANTFORCE);                                  \
+        else if (n_digits <= 11) DMK_SR_LAUNCH(EspSrCoeffs_##PREFIX##_11, WANTFORCE);                                  \
+        else if (n_digits <= 12) DMK_SR_LAUNCH(EspSrCoeffs_##PREFIX##_12, WANTFORCE);                                  \
+        else throw std::runtime_error("short_range_gpu: unsupported n_digits (must be <= 12)");                       \
+    } while (0)
+
+        if (gpu.eval_type == DMK_POTENTIAL_GRAD) DMK_SR_CASCADE(PotGrad, true);
+        else                                     DMK_SR_CASCADE(Pot, false);
+
+#undef DMK_SR_CASCADE
+#undef DMK_SR_LAUNCH
     }
 
     {
