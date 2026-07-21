@@ -348,6 +348,14 @@ static DGrid precompute_scaling_coefficients(const PSWFKernel &pswf, const ESPPa
 // PSWF. The splitting kernel chi (S_hat, above) is unaffected: chi and phi are
 // mathematically independent in the scaling-coefficient formula (ESP paper Eq 9),
 // so PSWF chi + ES phi is a valid hybrid — only phi_hat_1d changes below.
+//
+// The GPU spreader's own upsampfac is intentionally NOT params.sigma: sigma there
+// determines grid resolution (n_f) and the PSWF bandwidth c, which must match the
+// CPU plan for consistency. The spreader's upsampfac is a separate, GPU-only
+// implementation detail with no reason to equal the PSWF's sigma -- fixed at the
+// standard 2.0 here specifically so cuFINUFFT's gpu_kerevalmeth=1 (Horner, faster
+// than the direct exp/sqrt eval required for non-standard values) is valid.
+constexpr double GPU_SPREADER_UPSAMPFAC = 2.0;
 
 // Reproduces cuFINUFFT's own legacy nspread/beta selection (see
 // finufft-src/src/cuda/spreadinterp.cpp: setup_spreader) so this deconvolution
@@ -396,8 +404,11 @@ static double es_kernel_hat(double beta, int ns, double arg) {
 
 // GPU-only scaling coefficients: reuses the PSWF-based splitting kernel (S_hat)
 // unchanged, but replaces the SI/spreading-kernel deconvolution factor (phi_hat)
-// with the ES kernel's FT, matching cuFINUFFT's native spreader.
-static DGrid precompute_scaling_coefficients_es(const PSWFKernel &pswf, const ESPParams &params, double tol) {
+// with the ES kernel's FT, matching cuFINUFFT's native spreader. gpu_upsampfac is
+// the GPU spreader's own upsampfac (GPU_SPREADER_UPSAMPFAC), NOT params.sigma --
+// see the note above.
+static DGrid precompute_scaling_coefficients_es(const PSWFKernel &pswf, const ESPParams &params, double tol,
+                                                double gpu_upsampfac) {
     int nf = params.n_f;
     std::vector<int> k_idx(nf);
     for (int i = 0; i < nf; ++i)
@@ -405,7 +416,7 @@ static DGrid precompute_scaling_coefficients_es(const PSWFKernel &pswf, const ES
 
     int ns;
     double beta;
-    es_kernel_params_from_tol(tol, params.sigma, ns, beta);
+    es_kernel_params_from_tol(tol, gpu_upsampfac, ns, beta);
     const double half_width = ns * params.h / 2.0;
 
     std::vector<double> phi_hat_1d(nf);
@@ -585,14 +596,15 @@ GpuState *esp_create_gpu_plan(EspPlan *plan) {
     // GPU spreads with cuFINUFFT's native ES kernel, not the PSWF, so it needs its
     // own scaling coefficients (PSWF chi, ES phi) rather than plan->scaling_coeffs
     // (PSWF chi, PSWF phi, used by the CPU path).
-    plan->scaling_coeffs_es = precompute_scaling_coefficients_es(plan->pswf, plan->params_base, tol);
+    plan->scaling_coeffs_es =
+        precompute_scaling_coefficients_es(plan->pswf, plan->params_base, tol, GPU_SPREADER_UPSAMPFAC);
     // Short-range polynomial fit of S(r) -- same table the CPU path's
     // get_esp_3d_kernel dispatches into; the GPU kernel evaluates it directly.
     const EspKernelCoeffs sr = get_esp_3d_kernel_coeffs(plan->eval_type, plan->n_digits);
     return gpu_create_state(
         plan->params_base.n_f, plan->n_digits,
         plan->params_base.L,   plan->params_base.r_c,
-        plan->params_base.sigma, tol,
+        GPU_SPREADER_UPSAMPFAC, tol,
         sf, float(sf), plan->eval_type,
         plan->scaling_coeffs_es.data(),
         sr.coeffs, sr.n_coeffs);

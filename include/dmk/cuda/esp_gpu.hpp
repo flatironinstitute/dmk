@@ -15,9 +15,11 @@ struct GpuState; // full definition lives in esp_cuda.cu
 // h_scaling_coeffs[nf³]: precomputed scaling coefficients (computed by esp.cpp).
 // h_sr_coeffs[n_sr_coeffs]: monomial fit of the short-range kernel S(r), same
 // table get_esp_3d_kernel dispatches into on the CPU path (esp.cpp).
+// gpu_upsampfac: the GPU spreader's own upsampfac (esp.cpp's GPU_SPREADER_UPSAMPFAC),
+// deliberately NOT the PSWF splitting kernel's sigma -- see esp.cpp for why.
 GpuState *gpu_create_state(
     int nf, int n_digits,
-    double L, double r_c, double sigma, double tol,
+    double L, double r_c, double gpu_upsampfac, double tol,
     double self_factor_d, float self_factor_f,
     dmk_eval_type eval_type,
     const double *h_scaling_coeffs,

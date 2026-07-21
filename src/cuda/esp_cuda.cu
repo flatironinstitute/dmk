@@ -6,6 +6,7 @@
 #include <cuda_runtime.h>
 #include <cufft.h>
 #include <cufinufft.h>
+#include <nvtx3/nvToolsExt.h>
 #include <thrust/device_ptr.h>
 #include <thrust/sort.h>
 #include <thrust/scan.h>
@@ -14,11 +15,23 @@
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/execution_policy.h>
 
+
 #include <cmath>
 #include <stdexcept>
 #include <vector>
 
 namespace dmk {
+
+// ---------------------------------------------------------------------------
+// NvtxRange — RAII wrapper so every pushed range pops even if the block throws
+// (several stages below throw on CUDA/cuFINUFFT errors) or returns early.
+// Purely a profiling aid for nsys/ncu -- push/pop are no-ops without a profiler
+// attached, so this has no effect on normal runs.
+// ---------------------------------------------------------------------------
+struct NvtxRange {
+    explicit NvtxRange(const char *name) { nvtxRangePushA(name); }
+    ~NvtxRange() { nvtxRangePop(); }
+};
 
 // ---------------------------------------------------------------------------
 // GpuState — owns all physics params and CUDA objects for one GPU plan.
@@ -27,7 +40,7 @@ struct GpuState {
     // Physics params — set once at esp_create_gpu_plan time, read at every eval.
     int           nf;
     int           n_digits;
-    double        L, r_c, sigma, tol;
+    double        L, r_c, gpu_upsampfac, tol;
     double        self_factor_d;
     float         self_factor_f;
     dmk_eval_type eval_type;
@@ -61,7 +74,7 @@ struct GpuState {
     // pot/fx/fy/fz, or xs/ys/zs/qs) share one buffer via sub-offsets, mirroring how
     // gpu_make_spans partitions the host output buffer.
     void *d_scratch_pos    = nullptr; size_t scratch_pos_cap    = 0; // pos_aos (3n) + charges (n), Real
-    void *d_scratch_out    = nullptr; size_t scratch_out_cap    = 0; // pot/fx/fy/fz (4n), Real
+    void *d_scratch_out    = nullptr; size_t scratch_out_cap    = 0; // pot/fx/fy/fz (4n), Real (outputs)
     void *d_scratch_idx    = nullptr; size_t scratch_idx_cap    = 0; // cell_idx (n) + orig (n), int
     void *d_scratch_sorted = nullptr; size_t scratch_sorted_cap = 0; // xs/ys/zs/qs (4n), Real
     void *d_scratch_pg     = nullptr; size_t scratch_pg_cap     = 0; // pg_sorted (out_dim*n), Real
@@ -110,7 +123,7 @@ static void ensure_capacity(void *&ptr, size_t &cap, size_t needed_bytes) {
 // Allocate and initialise a GpuState with all physics params and CUDA objects.
 GpuState *gpu_create_state(
     int nf, int n_digits,
-    double L, double r_c, double sigma, double tol,
+    double L, double r_c, double gpu_upsampfac, double tol,
     double self_factor_d, float self_factor_f,
     dmk_eval_type eval_type,
     const double *h_scaling_coeffs,
@@ -121,7 +134,7 @@ GpuState *gpu_create_state(
     gpu->n_digits      = n_digits;
     gpu->L             = L;
     gpu->r_c           = r_c;
-    gpu->sigma         = sigma;
+    gpu->gpu_upsampfac = gpu_upsampfac;
     gpu->tol           = tol;
     gpu->self_factor_d = self_factor_d;
     gpu->self_factor_f = self_factor_f;
@@ -164,8 +177,16 @@ GpuState *gpu_create_state(
     cufinufft_opts co;
     cufinufft_default_opts(&co);
     co.gpu_spreadinterponly = 1;
-    co.upsampfac            = sigma;
-    co.gpu_kerevalmeth      = 0;  // direct exp(sqrt()) — supports non-standard upsampfac (e.g. 1.35)
+    // gpu_upsampfac is GPU_SPREADER_UPSAMPFAC (esp.cpp) -- deliberately decoupled
+    // from the PSWF splitting kernel's sigma (which stays whatever the CPU plan
+    // requested, e.g. 1.35, for grid/PSWF consistency). Fixed at the standard 2.0
+    // so gpu_kerevalmeth=1 (Horner, faster than the direct exp/sqrt eval
+    // non-standard values would require) is valid; precompute_scaling_coefficients_es
+    // derives its (ns,beta) from this same constant, so the two stay consistent.
+    co.upsampfac            = gpu_upsampfac;
+    co.gpu_kerevalmeth      = 1;
+    co.gpu_method = 3;
+    //co.gpu_sort = 0;  //relevant only if co.gpu_method = 1;
     // Use the default (null) stream for cuFINUFFT internals.
     // We sync explicitly before setpts/execute so the NU data is ready.
     // co.gpu_stream is left at cudaStreamDefault (the default from cufinufft_default_opts).
@@ -176,6 +197,7 @@ GpuState *gpu_create_state(
                                  &gpu->cfnufft_plan_1, &co);
     if (ier != 0) throw std::runtime_error("GpuState: cufinufft_makeplan type-1 failed, ier=" + std::to_string(ier));
 
+    co.gpu_method = 1;
     ier = cufinufft_makeplan(/*type=*/2, /*dim=*/3, nmodes,
                              /*iflag=*/-1, /*ntransf=*/1, tol,
                              &gpu->cfnufft_plan_2, &co);
@@ -295,22 +317,26 @@ static void build_cell_list_gpu(
     int *d_orig     = d_cell_idx + n;
 
     {
+        NvtxRange range("short_range/cell_index");
         const int threads = 256, blocks = (n + threads - 1) / threads;
         cell_index_kernel<Real><<<blocks, threads, 0, gpu.stream>>>(d_pos_aos, n, L, nc, d_cell_idx); //computes each particle's cell index
     }
 
-    thrust::device_ptr<int> cell_idx_ptr(d_cell_idx); //keys for sort_by_key
-    thrust::device_ptr<int> orig_ptr(d_orig);
-    thrust::sequence(policy, orig_ptr, orig_ptr + n);
-    thrust::sort_by_key(policy, cell_idx_ptr, cell_idx_ptr + n, orig_ptr); //sort particles by cell index; also sort their original indices
+    {
+        NvtxRange range("short_range/cell_sort");
+        thrust::device_ptr<int> cell_idx_ptr(d_cell_idx); //keys for sort_by_key
+        thrust::device_ptr<int> orig_ptr(d_orig);
+        thrust::sequence(policy, orig_ptr, orig_ptr + n);
+        thrust::sort_by_key(policy, cell_idx_ptr, cell_idx_ptr + n, orig_ptr); //sort particles by cell index; also sort their original indices
 
-    // d_cell_start is plan-level (gpu_create_state): size ncells+1 is fixed by nc.
-    thrust::device_ptr<int> cell_start_ptr(gpu.d_cell_start);
-    thrust::counting_iterator<int> search_begin(0);
-    // cell_start[c] = first sorted position with cell_idx >= c; standard sort+lower_bound
-    // bucketing idiom, giving the same CSR boundaries as an explicit counting sort.
-    thrust::lower_bound(policy, cell_idx_ptr, cell_idx_ptr + n, search_begin, search_begin + ncells + 1,
-                        cell_start_ptr);
+        // d_cell_start is plan-level (gpu_create_state): size ncells+1 is fixed by nc.
+        thrust::device_ptr<int> cell_start_ptr(gpu.d_cell_start);
+        thrust::counting_iterator<int> search_begin(0);
+        // cell_start[c] = first sorted position with cell_idx >= c; standard sort+lower_bound
+        // bucketing idiom, giving the same CSR boundaries as an explicit counting sort.
+        thrust::lower_bound(policy, cell_idx_ptr, cell_idx_ptr + n, search_begin, search_begin + ncells + 1,
+                            cell_start_ptr);
+    }
 
     // xs/ys/zs/qs are this function's other output, always used together downstream --
     // one persistent 4n-Real scratch buffer via sub-offsets.
@@ -320,6 +346,7 @@ static void build_cell_list_gpu(
     Real *d_zs = d_ys + n;
     Real *d_qs = d_zs + n;
     {
+        NvtxRange range("short_range/gather_sorted");
         const int threads = 256, blocks = (n + threads - 1) / threads;
         //apply the permutation computed by sort_by_key, physically rearranging the particle data into cell-sorted order
         gather_sorted_kernel<Real><<<blocks, threads, 0, gpu.stream>>>(
@@ -344,10 +371,6 @@ static void build_cell_list_gpu(
 // and the pair's potential contribution is q * S(R); the CPU convention (esp.cpp)
 // forms force as F = -q * grad(S), i.e. scatter_kernel below negates for you --
 // this function should just accumulate the *gradient* of the potential, not force.
-//
-// Masking: contributes exactly 0 unless 0 < R2 < r_c_sq (thresh2=0, d2max=r_c_sq in
-// the CPU call) -- this is also what makes a source==target pair (R2=0, since the
-// home cell is included in its own 27-cell stencil) self-mask to zero automatically.
 template <typename Real>
 __device__ __forceinline__ void eval_esp_pair(
     Real dx, Real dy, Real dz, Real q,
@@ -572,6 +595,25 @@ __global__ void self_interaction_kernel(int n, Real factor, const Real *d_charge
 }
 
 // ---------------------------------------------------------------------------
+// scale_pack_kernel — AoS Real positions/charges (already on device) -> scaled
+// [-pi,pi) SoA double coords + packed complex charges for long_range_gpu.
+// Entirely on-device: no host-side loop, no extra host<->device round trip
+// when d_pos_aos/d_charges are already resident (esp_eval_gpu_impl).
+// ---------------------------------------------------------------------------
+template <typename Real>
+__global__ void scale_pack_kernel(
+    const Real *d_pos_aos, const Real *d_charges, int n, double scale,
+    double *d_x, double *d_y, double *d_z, cuDoubleComplex *d_c)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    d_x[i] = double(d_pos_aos[3 * i + 0]) * scale;
+    d_y[i] = double(d_pos_aos[3 * i + 1]) * scale;
+    d_z[i] = double(d_pos_aos[3 * i + 2]) * scale;
+    d_c[i] = {double(d_charges[i]), 0.0};
+}
+
+// ---------------------------------------------------------------------------
 // long_range_gpu
 // Mirrors the CPU long_range(): spread → FFT → scale → IFFT → interp (+ forces).
 // Always operates in double precision regardless of Real.
@@ -594,6 +636,7 @@ static void long_range_gpu(
     // Uses the pre-created gpu.cfnufft_plan_1 (type-1, makeplan done at plan time).
     // -----------------------------------------------------------------------
     {
+        NvtxRange range("long_range/spread");
         // cuFINUFFT plans use the default stream; our H2D copies run on gpu.stream.
         // Sync the device so both streams see consistent data before setpts.
         cudaError_t cerr = cudaDeviceSynchronize();
@@ -626,6 +669,7 @@ static void long_range_gpu(
     // Mirrors CPU: fftn_3d(b, b_hat, nf).
     // -----------------------------------------------------------------------
     {
+        NvtxRange range("long_range/fft_forward");
         cufftResult r = cufftExecZ2Z(gpu.fft_plan, gpu.d_b, gpu.d_b_hat, CUFFT_FORWARD);
         if (r != CUFFT_SUCCESS)
             throw std::runtime_error("long_range_gpu: cufftExecZ2Z forward failed, err=" + std::to_string(r));
@@ -637,6 +681,7 @@ static void long_range_gpu(
     // In-place: no extra buffer needed; d_b_hat is reused as pot_hat for IFFT.
     // -----------------------------------------------------------------------
     {
+        NvtxRange range("long_range/scale");
         const int threads = 256;
         const int blocks  = static_cast<int>((ntot + threads - 1) / threads);
         scaling_kernel<<<blocks, threads, 0, gpu.stream>>>(
@@ -649,6 +694,7 @@ static void long_range_gpu(
     // Mirrors CPU: ifftn_3d(pot_hat, grid_pot, nf).
     // -----------------------------------------------------------------------
     {
+        NvtxRange range("long_range/fft_inverse_normalize");
         cufftResult r = cufftExecZ2Z(gpu.fft_plan, gpu.d_b_hat, gpu.d_b, CUFFT_INVERSE);
         if (r != CUFFT_SUCCESS)
             throw std::runtime_error("long_range_gpu: cufftExecZ2Z inverse failed, err=" + std::to_string(r));
@@ -666,6 +712,7 @@ static void long_range_gpu(
     const bool want_pot_interp   = (d_pot != nullptr);
     const bool want_force_interp = want_force && (d_fx || d_fy || d_fz);
     if (want_pot_interp || want_force_interp) {
+        NvtxRange range("long_range/interp_setpts");
         int ier = cufinufft_setpts(gpu.cfnufft_plan_2, n,
                                    const_cast<double *>(d_x),
                                    const_cast<double *>(d_y),
@@ -682,6 +729,7 @@ static void long_range_gpu(
     // Uses the pre-created gpu.cfnufft_plan_2 (type-2, makeplan done at plan time).
     // -----------------------------------------------------------------------
     if (want_pot_interp) {
+        NvtxRange range("long_range/interp_potential");
         // Reused for the force components below too (d_scratch_nu_c) -- pot_c is fully
         // consumed here before steps 6-8 even start, so there's no lifetime overlap.
         ensure_capacity(gpu.d_scratch_nu_c, gpu.scratch_nu_c_cap, (size_t)n * sizeof(cuDoubleComplex));
@@ -703,12 +751,14 @@ static void long_range_gpu(
     // Mirrors CPU long_range()'s force block (esp.cpp).
     // -----------------------------------------------------------------------
     if (want_force_interp) {
+        NvtxRange force_path_range("long_range/force_path");
         // Plan-level (gpu_create_state): size nf³ is fixed, allocated once whenever the plan
         // computes forces at all.
         cuDoubleComplex *f_hat_x = gpu.d_fhat_x, *f_hat_y = gpu.d_fhat_y, *f_hat_z = gpu.d_fhat_z;
 
         // Step 6: build the three force spectra from pot_hat.
         {
+            NvtxRange range("long_range/force_grad_scaling");
             const int threads = 256;
             const int blocks  = static_cast<int>((ntot + threads - 1) / threads);
             grad_scaling_kernel<<<blocks, threads, 0, gpu.stream>>>(
@@ -718,6 +768,7 @@ static void long_range_gpu(
         // Step 7: inverse FFT each component in-place, then normalize (cuFFT's
         // IFFT is unnormalized, mirrors normalize_kernel usage in step 4).
         auto ifft_and_normalize = [&](cuDoubleComplex *buf) {
+            NvtxRange range("long_range/force_ifft_normalize");
             cufftResult r = cufftExecZ2Z(gpu.fft_plan, buf, buf, CUFFT_INVERSE);
             if (r != CUFFT_SUCCESS)
                 throw std::runtime_error("long_range_gpu: cufftExecZ2Z inverse (force) failed, err=" +
@@ -742,6 +793,7 @@ static void long_range_gpu(
 
         auto interp_and_accumulate = [&](cuDoubleComplex *grid_force, Real *d_force_out) {
             if (!d_force_out) return;
+            NvtxRange range("long_range/force_interp_accumulate");
             int ier = cufinufft_execute(gpu.cfnufft_plan_2, d_force_c, grid_force);
             if (ier != 0)
                 throw std::runtime_error("long_range_gpu: cufinufft_execute force-interp failed, ier=" +
@@ -770,8 +822,11 @@ static void short_range_gpu(
 {
     Real *d_xs, *d_ys, *d_zs, *d_qs;
     int  *d_cell_start, *d_orig;
-    build_cell_list_gpu<Real>(d_pos_aos, d_charges, n, nc, L, &d_xs, &d_ys, &d_zs, &d_qs, &d_cell_start, &d_orig,
-                              gpu);
+    {
+        NvtxRange range("short_range/build_cell_list");
+        build_cell_list_gpu<Real>(d_pos_aos, d_charges, n, nc, L, &d_xs, &d_ys, &d_zs, &d_qs, &d_cell_start, &d_orig,
+                                  gpu);
+    }
 
     const int out_dim = want_force ? 4 : 1;
     ensure_capacity(gpu.d_scratch_pg, gpu.scratch_pg_cap, (size_t)out_dim * n * sizeof(Real));
@@ -781,14 +836,18 @@ static void short_range_gpu(
     const Real cen    = Real(-0.5) * r_c;
     const Real r_c_sq = r_c * r_c;
 
-    const int threads = 128;
-    short_range_kernel<Real><<<nc * nc * nc, threads, 0, gpu.stream>>>(
-        nc, n, out_dim, n_digits, rsc, cen, r_c_sq,
-        d_cell_start, d_xs, d_ys, d_zs, d_qs,
-        gpu.d_nbc_tab, gpu.d_off_tab, gpu.d_sr_coeffs, gpu.n_sr_coeffs,
-        want_force, d_pg_sorted);
+    {
+        NvtxRange range("short_range/pair_kernel");
+        const int threads = 128;
+        short_range_kernel<Real><<<nc * nc * nc, threads, 0, gpu.stream>>>(
+            nc, n, out_dim, n_digits, rsc, cen, r_c_sq,
+            d_cell_start, d_xs, d_ys, d_zs, d_qs,
+            gpu.d_nbc_tab, gpu.d_off_tab, gpu.d_sr_coeffs, gpu.n_sr_coeffs,
+            want_force, d_pg_sorted);
+    }
 
     {
+        NvtxRange range("short_range/scatter");
         const int t2 = 256, b2 = (n + t2 - 1) / t2;
         scatter_kernel<Real><<<b2, t2, 0, gpu.stream>>>(n, out_dim, d_pg_sorted, d_orig, d_qs, d_pot, d_fx, d_fy,
                                                         d_fz);
@@ -854,62 +913,73 @@ static PotForce<Real> esp_eval_gpu_impl(
     ensure_capacity(gpu->d_scratch_pos, gpu->scratch_pos_cap, 4 * (size_t)n * sizeof(Real));
     Real *d_pos_aos = reinterpret_cast<Real *>(gpu->d_scratch_pos);
     Real *d_charges = d_pos_aos + 3 * (size_t)n;
-    cudaMemcpyAsync(d_pos_aos, h_pos_aos, 3 * (size_t)n * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
-    cudaMemcpyAsync(d_charges, charges.data(), n * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
-
     ensure_capacity(gpu->d_scratch_out, gpu->scratch_out_cap, 4 * (size_t)n * sizeof(Real));
     Real *d_pot = reinterpret_cast<Real *>(gpu->d_scratch_out);
     Real *d_fx = want_force ? d_pot + n : nullptr;
     Real *d_fy = want_force ? d_pot + 2 * (size_t)n : nullptr;
     Real *d_fz = want_force ? d_pot + 3 * (size_t)n : nullptr;
-    cudaMemsetAsync(d_pot, 0, n * sizeof(Real), gpu->stream);
-    if (want_force) {
-        cudaMemsetAsync(d_fx, 0, n * sizeof(Real), gpu->stream);
-        cudaMemsetAsync(d_fy, 0, n * sizeof(Real), gpu->stream);
-        cudaMemsetAsync(d_fz, 0, n * sizeof(Real), gpu->stream);
+    {
+        NvtxRange range("eval/upload_input");
+        cudaMemcpyAsync(d_pos_aos, h_pos_aos, 3 * (size_t)n * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
+        cudaMemcpyAsync(d_charges, charges.data(), n * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
+        cudaMemsetAsync(d_pot, 0, n * sizeof(Real), gpu->stream);
+        if (want_force) {
+            cudaMemsetAsync(d_fx, 0, n * sizeof(Real), gpu->stream);
+            cudaMemsetAsync(d_fy, 0, n * sizeof(Real), gpu->stream);
+            cudaMemsetAsync(d_fz, 0, n * sizeof(Real), gpu->stream);
+        }
     }
 
     // Short-range: accumulates (+=) directly into d_pot/d_fx/d_fy/d_fz.
-    short_range_gpu<Real>(*gpu, d_pos_aos, d_charges, n, nc, Real(gpu->L), Real(gpu->r_c), gpu->n_digits, want_force,
-                         d_pot, d_fx, d_fy, d_fz);
+    {
+        NvtxRange range("eval/short_range");
+        short_range_gpu<Real>(*gpu, d_pos_aos, d_charges, n, nc, Real(gpu->L), Real(gpu->r_c), gpu->n_digits,
+                             want_force, d_pot, d_fx, d_fy, d_fz);
+    }
 
     // Long-range: needs its own scaled [-pi,pi) SoA coords + packed complex charges
     // (always double, regardless of Real -- same convention as esp_eval_gpu_long_range).
+    // d_pos_aos/d_charges are already resident on device (uploaded above for
+    // short-range), so this is a pure device-to-device reshape+scale -- no host
+    // loop, no extra host<->device traffic.
     const double scale = 2.0 * M_PI / gpu->L;
-    std::vector<double> h_x(n), h_y(n), h_z(n);
-    std::vector<cuDoubleComplex> h_c(n);
-    for (int j = 0; j < n; ++j) {
-        h_x[j] = double(r_src[j][0]) * scale;
-        h_y[j] = double(r_src[j][1]) * scale;
-        h_z[j] = double(r_src[j][2]) * scale;
-        h_c[j] = {double(charges[j]), 0.0};
-    }
-    ensure_capacity(gpu->d_scratch_lr_xyz, gpu->scratch_lr_xyz_cap, 3 * (size_t)n * sizeof(double));
-    double *d_x = reinterpret_cast<double *>(gpu->d_scratch_lr_xyz);
-    double *d_y = d_x + n;
-    double *d_z = d_y + n;
-    ensure_capacity(gpu->d_scratch_lr_c, gpu->scratch_lr_c_cap, (size_t)n * sizeof(cuDoubleComplex));
-    cuDoubleComplex *d_c = reinterpret_cast<cuDoubleComplex *>(gpu->d_scratch_lr_c);
-    cudaMemcpyAsync(d_x, h_x.data(), n * sizeof(double), cudaMemcpyHostToDevice, gpu->stream);
-    cudaMemcpyAsync(d_y, h_y.data(), n * sizeof(double), cudaMemcpyHostToDevice, gpu->stream);
-    cudaMemcpyAsync(d_z, h_z.data(), n * sizeof(double), cudaMemcpyHostToDevice, gpu->stream);
-    cudaMemcpyAsync(d_c, h_c.data(), n * sizeof(cuDoubleComplex), cudaMemcpyHostToDevice, gpu->stream);
+    double *d_x, *d_y, *d_z; cuDoubleComplex *d_c;
+    {
+        NvtxRange range("eval/long_range_setup");
+        ensure_capacity(gpu->d_scratch_lr_xyz, gpu->scratch_lr_xyz_cap, 3 * (size_t)n * sizeof(double));
+        d_x = reinterpret_cast<double *>(gpu->d_scratch_lr_xyz);
+        d_y = d_x + n;
+        d_z = d_y + n;
+        ensure_capacity(gpu->d_scratch_lr_c, gpu->scratch_lr_c_cap, (size_t)n * sizeof(cuDoubleComplex));
+        d_c = reinterpret_cast<cuDoubleComplex *>(gpu->d_scratch_lr_c);
 
-    long_range_gpu<Real>(*gpu, n, gpu->tol, d_x, d_y, d_z, d_c, scale, want_force, d_pot, d_fx, d_fy, d_fz);
+        const int threads = 256, blocks = (n + threads - 1) / threads;
+        scale_pack_kernel<Real><<<blocks, threads, 0, gpu->stream>>>(
+            d_pos_aos, d_charges, n, scale, d_x, d_y, d_z, d_c);
+    }
+
+    {
+        NvtxRange range("eval/long_range");
+        long_range_gpu<Real>(*gpu, n, gpu->tol, d_x, d_y, d_z, d_c, scale, want_force, d_pot, d_fx, d_fy, d_fz);
+    }
 
     // Self-interaction correction (potential only, matches CPU self_interaction).
     {
+        NvtxRange range("eval/self_interaction");
         const int threads = 256, blocks = (n + threads - 1) / threads;
         self_interaction_kernel<Real><<<blocks, threads, 0, gpu->stream>>>(n, self_factor<Real>(gpu), d_charges,
                                                                            d_pot);
     }
 
-    cudaStreamSynchronize(gpu->stream);
-    cudaMemcpy(pot.data(), d_pot, n * sizeof(Real), cudaMemcpyDeviceToHost);
-    if (want_force) {
-        cudaMemcpy(fx.data(), d_fx, n * sizeof(Real), cudaMemcpyDeviceToHost);
-        cudaMemcpy(fy.data(), d_fy, n * sizeof(Real), cudaMemcpyDeviceToHost);
-        cudaMemcpy(fz.data(), d_fz, n * sizeof(Real), cudaMemcpyDeviceToHost);
+    {
+        NvtxRange range("eval/download_output");
+        cudaStreamSynchronize(gpu->stream);
+        cudaMemcpy(pot.data(), d_pot, n * sizeof(Real), cudaMemcpyDeviceToHost);
+        if (want_force) {
+            cudaMemcpy(fx.data(), d_fx, n * sizeof(Real), cudaMemcpyDeviceToHost);
+            cudaMemcpy(fy.data(), d_fy, n * sizeof(Real), cudaMemcpyDeviceToHost);
+            cudaMemcpy(fz.data(), d_fz, n * sizeof(Real), cudaMemcpyDeviceToHost);
+        }
     }
     // d_pos_aos/d_charges, d_pot/d_fx/d_fy/d_fz, d_x/d_y/d_z, d_c are all persistent GpuState
     // scratch -- nothing to free here.
@@ -935,30 +1005,38 @@ static PotForce<Real> esp_eval_gpu_short_range_impl(
     ensure_capacity(gpu->d_scratch_pos, gpu->scratch_pos_cap, 4 * (size_t)n * sizeof(Real));
     Real *d_pos_aos = reinterpret_cast<Real *>(gpu->d_scratch_pos);
     Real *d_charges = d_pos_aos + 3 * (size_t)n;
-    cudaMemcpyAsync(d_pos_aos, h_pos_aos, 3 * (size_t)n * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
-    cudaMemcpyAsync(d_charges, charges.data(), n * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
-
     ensure_capacity(gpu->d_scratch_out, gpu->scratch_out_cap, 4 * (size_t)n * sizeof(Real));
     Real *d_pot = reinterpret_cast<Real *>(gpu->d_scratch_out);
     Real *d_fx = want_force ? d_pot + n : nullptr;
     Real *d_fy = want_force ? d_pot + 2 * (size_t)n : nullptr;
     Real *d_fz = want_force ? d_pot + 3 * (size_t)n : nullptr;
-    cudaMemsetAsync(d_pot, 0, n * sizeof(Real), gpu->stream);
-    if (want_force) {
-        cudaMemsetAsync(d_fx, 0, n * sizeof(Real), gpu->stream);
-        cudaMemsetAsync(d_fy, 0, n * sizeof(Real), gpu->stream);
-        cudaMemsetAsync(d_fz, 0, n * sizeof(Real), gpu->stream);
+    {
+        NvtxRange range("eval/upload_input");
+        cudaMemcpyAsync(d_pos_aos, h_pos_aos, 3 * (size_t)n * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
+        cudaMemcpyAsync(d_charges, charges.data(), n * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
+        cudaMemsetAsync(d_pot, 0, n * sizeof(Real), gpu->stream);
+        if (want_force) {
+            cudaMemsetAsync(d_fx, 0, n * sizeof(Real), gpu->stream);
+            cudaMemsetAsync(d_fy, 0, n * sizeof(Real), gpu->stream);
+            cudaMemsetAsync(d_fz, 0, n * sizeof(Real), gpu->stream);
+        }
     }
 
-    short_range_gpu<Real>(*gpu, d_pos_aos, d_charges, n, nc, Real(gpu->L), Real(gpu->r_c), gpu->n_digits, want_force,
-                         d_pot, d_fx, d_fy, d_fz);
+    {
+        NvtxRange range("eval/short_range");
+        short_range_gpu<Real>(*gpu, d_pos_aos, d_charges, n, nc, Real(gpu->L), Real(gpu->r_c), gpu->n_digits,
+                             want_force, d_pot, d_fx, d_fy, d_fz);
+    }
 
-    cudaStreamSynchronize(gpu->stream);
-    cudaMemcpy(pot.data(), d_pot, n * sizeof(Real), cudaMemcpyDeviceToHost);
-    if (want_force) {
-        cudaMemcpy(fx.data(), d_fx, n * sizeof(Real), cudaMemcpyDeviceToHost);
-        cudaMemcpy(fy.data(), d_fy, n * sizeof(Real), cudaMemcpyDeviceToHost);
-        cudaMemcpy(fz.data(), d_fz, n * sizeof(Real), cudaMemcpyDeviceToHost);
+    {
+        NvtxRange range("eval/download_output");
+        cudaStreamSynchronize(gpu->stream);
+        cudaMemcpy(pot.data(), d_pot, n * sizeof(Real), cudaMemcpyDeviceToHost);
+        if (want_force) {
+            cudaMemcpy(fx.data(), d_fx, n * sizeof(Real), cudaMemcpyDeviceToHost);
+            cudaMemcpy(fy.data(), d_fy, n * sizeof(Real), cudaMemcpyDeviceToHost);
+            cudaMemcpy(fz.data(), d_fz, n * sizeof(Real), cudaMemcpyDeviceToHost);
+        }
     }
 
     return {pot, fx, fy, fz};
@@ -977,53 +1055,61 @@ static PotForce<Real> esp_eval_gpu_long_range_impl(
     [[maybe_unused]] const bool want_force = (gpu->eval_type == DMK_POTENTIAL_GRAD);
     auto [pot, fx, fy, fz] = gpu_make_spans<Real>(gpu, n);
 
-    // Host-side AoS → SoA; scale coords to [-π, π); pack charges as complex.
+    // Upload raw AoS positions/charges once, then scale+pack into SoA [-pi,pi)
+    // coords + complex charges entirely on-device (no host-side loop).
     const double scale = 2.0 * M_PI / gpu->L;
-    std::vector<double> h_x(n), h_y(n), h_z(n);
-    std::vector<cuDoubleComplex> h_c(n);
-    for (int j = 0; j < n; ++j) {
-        h_x[j] = double(r_src[j][0]) * scale;
-        h_y[j] = double(r_src[j][1]) * scale;
-        h_z[j] = double(r_src[j][2]) * scale;
-        h_c[j] = {double(charges[j]), 0.0};
+    const Real *h_pos_aos = reinterpret_cast<const Real *>(r_src.data());
+    double *d_x, *d_y, *d_z; cuDoubleComplex *d_c;
+    Real *d_pot, *d_fx = nullptr, *d_fy = nullptr, *d_fz = nullptr;
+    {
+        NvtxRange range("eval/upload_input");
+        ensure_capacity(gpu->d_scratch_pos, gpu->scratch_pos_cap, 4 * (size_t)n * sizeof(Real));
+        Real *d_pos_aos = reinterpret_cast<Real *>(gpu->d_scratch_pos);
+        Real *d_charges = d_pos_aos + 3 * (size_t)n;
+        cudaMemcpyAsync(d_pos_aos, h_pos_aos, 3 * (size_t)n * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
+        cudaMemcpyAsync(d_charges, charges.data(), n * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
+
+        ensure_capacity(gpu->d_scratch_lr_xyz, gpu->scratch_lr_xyz_cap, 3 * (size_t)n * sizeof(double));
+        d_x = reinterpret_cast<double *>(gpu->d_scratch_lr_xyz);
+        d_y = d_x + n;
+        d_z = d_y + n;
+        ensure_capacity(gpu->d_scratch_lr_c, gpu->scratch_lr_c_cap, (size_t)n * sizeof(cuDoubleComplex));
+        d_c = reinterpret_cast<cuDoubleComplex *>(gpu->d_scratch_lr_c);
+        const int threads = 256, blocks = (n + threads - 1) / threads;
+        scale_pack_kernel<Real><<<blocks, threads, 0, gpu->stream>>>(
+            d_pos_aos, d_charges, n, scale, d_x, d_y, d_z, d_c);
+
+        // Device output buffers for potential and (if requested) forces -- persistent scratch.
+        ensure_capacity(gpu->d_scratch_out, gpu->scratch_out_cap, 4 * (size_t)n * sizeof(Real));
+        d_pot = reinterpret_cast<Real *>(gpu->d_scratch_out);
+        d_fx = want_force ? d_pot + n : nullptr;
+        d_fy = want_force ? d_pot + 2 * (size_t)n : nullptr;
+        d_fz = want_force ? d_pot + 3 * (size_t)n : nullptr;
+        cudaMemsetAsync(d_pot, 0, n * sizeof(Real), gpu->stream);
+        if (want_force) {
+            cudaMemsetAsync(d_fx, 0, n * sizeof(Real), gpu->stream);
+            cudaMemsetAsync(d_fy, 0, n * sizeof(Real), gpu->stream);
+            cudaMemsetAsync(d_fz, 0, n * sizeof(Real), gpu->stream);
+        }
     }
 
-    // Upload coords and charges to device -- persistent scratch, reused across calls.
-    ensure_capacity(gpu->d_scratch_lr_xyz, gpu->scratch_lr_xyz_cap, 3 * (size_t)n * sizeof(double));
-    double *d_x = reinterpret_cast<double *>(gpu->d_scratch_lr_xyz);
-    double *d_y = d_x + n;
-    double *d_z = d_y + n;
-    ensure_capacity(gpu->d_scratch_lr_c, gpu->scratch_lr_c_cap, (size_t)n * sizeof(cuDoubleComplex));
-    cuDoubleComplex *d_c = reinterpret_cast<cuDoubleComplex *>(gpu->d_scratch_lr_c);
-    cudaMemcpyAsync(d_x, h_x.data(), n * sizeof(double), cudaMemcpyHostToDevice, gpu->stream); //initialize device memory on the GPU without blocking the CPU host thread
-    cudaMemcpyAsync(d_y, h_y.data(), n * sizeof(double), cudaMemcpyHostToDevice, gpu->stream);
-    cudaMemcpyAsync(d_z, h_z.data(), n * sizeof(double), cudaMemcpyHostToDevice, gpu->stream);
-    cudaMemcpyAsync(d_c, h_c.data(), n * sizeof(cuDoubleComplex), cudaMemcpyHostToDevice, gpu->stream);
-
-    // Device output buffers for potential and (if requested) forces -- persistent scratch.
-    ensure_capacity(gpu->d_scratch_out, gpu->scratch_out_cap, 4 * (size_t)n * sizeof(Real));
-    Real *d_pot = reinterpret_cast<Real *>(gpu->d_scratch_out);
-    Real *d_fx = want_force ? d_pot + n : nullptr;
-    Real *d_fy = want_force ? d_pot + 2 * (size_t)n : nullptr;
-    Real *d_fz = want_force ? d_pot + 3 * (size_t)n : nullptr;
-    cudaMemsetAsync(d_pot, 0, n * sizeof(Real), gpu->stream);
-    if (want_force) {
-        cudaMemsetAsync(d_fx, 0, n * sizeof(Real), gpu->stream);
-        cudaMemsetAsync(d_fy, 0, n * sizeof(Real), gpu->stream);
-        cudaMemsetAsync(d_fz, 0, n * sizeof(Real), gpu->stream);
+    {
+        NvtxRange range("eval/long_range");
+        long_range_gpu<Real>(*gpu, n, gpu->tol,
+                             d_x, d_y, d_z, d_c,
+                             scale, want_force,
+                             d_pot, d_fx, d_fy, d_fz);
     }
 
-    long_range_gpu<Real>(*gpu, n, gpu->tol,
-                         d_x, d_y, d_z, d_c,
-                         scale, want_force,
-                         d_pot, d_fx, d_fy, d_fz);
-
-    cudaStreamSynchronize(gpu->stream); //barrier - force the CPU (host) thread to wait until all previously submitted tasks in a specific GPU stream have completed
-    cudaMemcpy(pot.data(), d_pot, n * sizeof(Real), cudaMemcpyDeviceToHost);
-    if (want_force) {
-        cudaMemcpy(fx.data(), d_fx, n * sizeof(Real), cudaMemcpyDeviceToHost);
-        cudaMemcpy(fy.data(), d_fy, n * sizeof(Real), cudaMemcpyDeviceToHost);
-        cudaMemcpy(fz.data(), d_fz, n * sizeof(Real), cudaMemcpyDeviceToHost);
+    {
+        NvtxRange range("eval/download_output");
+        cudaStreamSynchronize(gpu->stream); //barrier - force the CPU (host) thread to wait until all previously submitted tasks in a specific GPU stream have completed
+        cudaMemcpy(pot.data(), d_pot, n * sizeof(Real), cudaMemcpyDeviceToHost);
+        if (want_force) {
+            cudaMemcpy(fx.data(), d_fx, n * sizeof(Real), cudaMemcpyDeviceToHost);
+            cudaMemcpy(fy.data(), d_fy, n * sizeof(Real), cudaMemcpyDeviceToHost);
+            cudaMemcpy(fz.data(), d_fz, n * sizeof(Real), cudaMemcpyDeviceToHost);
+        }
     }
 
     return {pot, fx, fy, fz};
