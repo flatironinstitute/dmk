@@ -305,7 +305,7 @@ GpuState *gpu_create_state(
 void gpu_destroy_state(GpuState *gpu) { delete gpu; }
 
 // ---------------------------------------------------------------------------
-// cell_index_kernel — flat cell index per particle (mirrors esp.cpp's particle_cell).
+// cell_index_kernel — flat cell index per particle.
 // ---------------------------------------------------------------------------
 template <typename Real>
 __global__ void cell_index_kernel(const Real *d_pos_aos, int n, Real L, int nc, int *d_cell_idx)
@@ -314,8 +314,10 @@ __global__ void cell_index_kernel(const Real *d_pos_aos, int n, Real L, int nc, 
     if (i >= n) return;
     const Real cell_size = L / Real(nc);
     auto cell_coord = [&](Real x) {
-        int c = static_cast<int>(floor((x + L / Real(2)) / cell_size)) % nc;
-        return c < 0 ? c + nc : c;
+        int c = static_cast<int>(floor((x + L / Real(2)) / cell_size));
+        c = (c >= nc) ? c - nc : c;
+        c = (c < 0)   ? c + nc : c;
+        return c;
     };
     const int cx = cell_coord(d_pos_aos[3 * i + 0]);
     const int cy = cell_coord(d_pos_aos[3 * i + 1]);
@@ -604,12 +606,15 @@ __global__ void short_range_kernel_old(
 // One CUDA block per home cell (nc³ blocks). Each thread owns up to TARGETS
 // target particles at once (register-blocked: their positions/accumulators
 // live in per-thread register arrays for the whole source-processing pass),
-// processing successive *waves* of TARGETS-sized target groups rather than
-// one target each. On the source side, each of the 27 neighbor cells' source
-// lists are staged into shared memory in blockDim.x-sized tiles -- loaded
-// once per tile by the whole block, then read by every thread for every one
-// of its owned targets, instead of every thread re-reading the same source
-// data from global memory independently.
+// processing successive *rounds* of target_stride = blockDim.x*TARGETS
+// targets. Within a round, thread i's slot q is target index
+// t_base + q*blockDim.x (strided, not blocked), so consecutive threads own
+// consecutive target indices -- coalesced position loads and result writes.
+// On the source side, each of the 27 neighbor cells' source lists are staged
+// into shared memory in blockDim.x-sized tiles -- loaded once per tile by the
+// whole block, then read by every thread for every one of its owned targets,
+// instead of every thread re-reading the same source data from global memory
+// independently.
 // ---------------------------------------------------------------------------
 constexpr int kShortRangeBlockSize = 128; // must match the launch config in short_range_gpu
 
@@ -636,19 +641,37 @@ __global__ void short_range_kernel(
 
     const int hbeg = cell_start[home];
     const int n_trg = cell_start[home + 1] - hbeg;
-    const int n_groups = (n_trg + TARGETS - 1) / TARGETS;
-    const int n_waves = (n_groups + blockDim.x - 1) / blockDim.x;
+    // Strided target-to-thread mapping (matches DirectByBoxBody on the
+    // gpu-offloading branch): for a fixed slot q, thread i owns target index
+    // t_base + q*blockDim.x, so consecutive threads own consecutive target
+    // indices -- the position load below and the final write-out are both
+    // coalesced across the warp, unlike a blocked t0 = g*TARGETS assignment
+    // where consecutive threads' targets are TARGETS apart.
+    // n_rounds doesn't depend on threadIdx.x (n_trg/target_stride are
+    // block-uniform), so every thread hits the tile loop's __syncthreads()
+    // the same number of times -- same barrier-safety requirement as before,
+    // just satisfied by round/target_stride instead of wave/n_groups.
+    const int target_stride = blockDim.x * TARGETS;
+    const int n_rounds = (n_trg + target_stride - 1) / target_stride;
 
-    for (int wave = 0; wave < n_waves; ++wave) {
-        const int g = wave * blockDim.x + threadIdx.x;
-        const int t0 = g * TARGETS;
-        const int n_own = (g < n_groups) ? min(TARGETS, n_trg - t0) : 0; // 0 if this thread has no group this wave
+    for (int round = 0; round < n_rounds; ++round) {
+        const int t_base = round * target_stride + threadIdx.x;
 
+        bool active[TARGETS];
+        int trg_idx[TARGETS];
+        bool any_active = false;
         Real xt[TARGETS], yt[TARGETS], zt[TARGETS];
         Real pot_acc[TARGETS] = {}, gx_acc[TARGETS] = {}, gy_acc[TARGETS] = {}, gz_acc[TARGETS] = {};
-        for (int k = 0; k < n_own; ++k) {
-            const int trg = hbeg + t0 + k;
-            xt[k] = d_xs[trg]; yt[k] = d_ys[trg]; zt[k] = d_zs[trg];
+#pragma unroll
+        for (int q = 0; q < TARGETS; ++q) {
+            const int t = t_base + q * blockDim.x;
+            active[q] = t < n_trg;
+            trg_idx[q] = t;
+            any_active = any_active || active[q];
+            if (active[q]) {
+                const int trg = hbeg + t;
+                xt[q] = d_xs[trg]; yt[q] = d_ys[trg]; zt[q] = d_zs[trg];
+            }
         }
 
         for (int dxi = 0; dxi < 3; ++dxi) {
@@ -679,11 +702,17 @@ __global__ void short_range_kernel(
 
                         const int n_local = min(kShortRangeBlockSize, send - sbeg - tile * kShortRangeBlockSize);
 
-                        for (int k = 0; k < n_own; ++k) {
-                            // Process target k
-                            for (int s = 0; s < n_local; ++s) {
-                                // Process source s
-                                eval_esp_pair<Coeffs, WantForce, Real>(xt[k] - s_xs[s], yt[k] - s_ys[s], zt[k] - s_zs[s], s_qs[s], rsc, cen, r_c_sq, pot_acc[k], gx_acc[k], gy_acc[k], gz_acc[k]);
+                        // any_active is a per-thread flag (not a block-wide one): skips this
+                        // thread's own accumulate loop when none of its TARGETS slots are
+                        // active this round, without affecting how many times any thread
+                        // hits the __syncthreads() calls around this block.
+                        if (any_active) {
+#pragma unroll
+                            for (int k = 0; k < TARGETS; ++k) {
+                                if (!active[k]) continue;
+                                for (int s = 0; s < n_local; ++s) {
+                                    eval_esp_pair<Coeffs, WantForce, Real>(xt[k] - s_xs[s], yt[k] - s_ys[s], zt[k] - s_zs[s], s_qs[s], rsc, cen, r_c_sq, pot_acc[k], gx_acc[k], gy_acc[k], gz_acc[k]);
+                                }
                             }
                         }
                         __syncthreads(); // all threads done reading this tile before it's overwritten
@@ -692,8 +721,10 @@ __global__ void short_range_kernel(
             }
         }
 
-        for (int k = 0; k < n_own; ++k) {
-            const int trg = hbeg + t0 + k;
+#pragma unroll
+        for (int k = 0; k < TARGETS; ++k) {
+            if (!active[k]) continue;
+            const int trg = hbeg + trg_idx[k];
             pg_sorted[out_dim * trg + 0] = pot_acc[k];
             if constexpr (WantForce) {
                 pg_sorted[out_dim * trg + 1] = gx_acc[k];
