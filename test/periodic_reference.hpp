@@ -65,7 +65,8 @@ inline void image_sum(int n_dim, double lambda, int n_img, dmk_eval_type eval, i
                     if (n_dim == 3)
                         src_shift[is * n_dim + 2] = r_src[is * n_dim + 2] + mz * L;
                 }
-                eval_fn(n_src, src_shift.data(), charges, nullptr, n_eval, r_eval, ref.data());
+                dmk::parallel_direct_eval(eval_fn, n_src, src_shift.data(), charges, (double *)nullptr, n_eval, r_eval,
+                                          ref.data(), n_dim, odim);
             }
 }
 

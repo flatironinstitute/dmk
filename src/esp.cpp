@@ -17,7 +17,6 @@
 #include <dmk/util.hpp>
 #include <ducc0/fft/fft.h>
 #include <finufft.h>
-#include <finufft_common/kernel.h>
 #include <omp.h>
 #include <sctl.hpp>
 #include <span>
@@ -62,23 +61,15 @@ static void ifftn(const std::vector<std::complex<Real>> &in, std::vector<std::co
 
 namespace dmk {
 
-PSWFKernel::PSWFKernel(double eps_, double c_, int lenw) : eps(eps_), c(c_) {
-    pswf = dmk::Prolate0Fun(c, lenw);
+PSWFKernel::PSWFKernel(double eps_, double beta_, int lenw) : eps(eps_), beta(beta_) {
+    pswf = dmk::Prolate0Fun(beta, lenw);
 
     scale = 1.0 / pswf.eval_val(0.0);
 
     double mu = pswf.rlam20 / M_PI;
-    lambda0 = std::sqrt(2.0 * M_PI * mu / c);
+    lambda0 = std::sqrt(2.0 * M_PI * mu / beta);
 
     c0 = pswf.int_eval(1.0) * scale;
-
-    int nc = 24;
-    auto pswf_lambda = [&](double x) { return pswf.eval_val(std::abs(x)) * scale; };
-    pswf_poly_coeffs = finufft::kernel::poly_fit<double>(pswf_lambda, nc);
-
-    nc = 20;
-    auto pswf_int_lambda = [&](double t) { return pswf.int_eval(t) * scale; };
-    pswf_int_poly_coeffs = finufft::kernel::poly_fit<double>(pswf_int_lambda, nc);
 }
 
 template <typename Real, int DIM>
@@ -1057,10 +1048,11 @@ std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() {
     // the residual's prolate windowing (W + L ~= u). Sampled radially at kappa = sqrt(i)*dk,
     // dk = 2*pi/L, and the grid point gidx maps to i = sum(k_idx[gidx]^2). k=0 is handled inside
     // (dropped for Laplace/Sqrt-Laplace, finite for Yukawa). The lambda0/(2*c0) factor reconciles
-    // fourier_data's prolate/psi0 convention with ESP's pswf_hat-based phi_hat.
+    // fourier_data's prolate/psi0 convention with the phi_hat normalization above.
     sctl::Vector<double> kernel_ft;
-    get_periodic_windowed_kernel_ft<double, DIM>(params.kernel, &params.fparam, pswf.c, nf, L_grid, params.r_c / pswf.c,
-                                                 pswf.pswf, kernel_ft, !params.use_periodic, trunc_rl);
+    get_periodic_windowed_kernel_ft<double, DIM>(params.kernel, &params.fparam, pswf.beta, nf, L_grid,
+                                                 params.r_c / pswf.beta, pswf.pswf, kernel_ft, !params.use_periodic,
+                                                 trunc_rl);
     const double norm = pswf.lambda0 / (2.0 * pswf.c0);
 
     int ntot = 1;
@@ -1295,8 +1287,8 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_)
     const Real eps_d = std::pow(10.0, -Real(n_digits));
     const double sigma = params.sigma;
     P = esp_P_from_eps(eps_d, sigma, n_dim);
-    const double c = esp_pswf_c_from_P(sigma, P);
-    pswf = PSWFKernel(eps_d, c);
+    const double beta = esp_beta_from_P(sigma, P);
+    pswf = PSWFKernel(eps_d, beta);
     // Free-space needs the spectral grid enlarged (zero-padded) so the truncated kernel does not wrap.
     // rl is the outer truncation radius. It leaves 2*r_c of taper room beyond the source-box diagonal
     // sqrt(DIM)*L: the Sqrt-Laplace long-range symbol smoothly tapers the 1/r kernel to zero over
@@ -1309,7 +1301,7 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_)
     trunc_rl = std::sqrt(double(n_dim)) * params.L + 2.0 * params.r_c;
     pad = params.use_periodic ? 1.0 : (params.freespace_pad > 0 ? params.freespace_pad : 2.2 * trunc_rl / params.L);
     L_grid = pad * params.L;
-    n_f = static_cast<int>(std::ceil(pswf.c * L_grid / (M_PI * params.r_c)));
+    n_f = static_cast<int>(std::ceil(pswf.beta * L_grid / (M_PI * params.r_c)));
     h = L_grid / n_f;
 
     // precompute_scaling_coefficients also sets self_factor to the reciprocal-sum self-energy
@@ -1333,13 +1325,13 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_)
             constexpr int nq = 200;
             std::array<double, nq> xs, ws;
             legerts(1, nq, xs.data(), ws.data());
-            const double kmax = pswf.c / params.r_c;
+            const double kmax = pswf.beta / params.r_c;
             double sum = 0.0;
             for (int j = 0; j < nq; ++j) {
                 const double k = 0.5 * (xs[j] + 1.0) * kmax;
                 const double w = 0.5 * ws[j] * kmax;
                 const double xi2 = k * k + m * m;
-                const double xval = std::sqrt(xi2) * params.r_c / pswf.c;
+                const double xval = std::sqrt(xi2) * params.r_c / pswf.beta;
                 const double psi = (xval <= 1.0) ? pswf.pswf.eval_val(xval) : 0.0;
                 sum += psi / xi2 * k * k * w;
             }
@@ -1365,14 +1357,14 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_)
         // at r=0 at the near-field box scale. Reuse the tree's own routine (get_self_interaction_constant,
         // DMK_LAPLACE 2D) so ESP and the tree share one convention -- same prolate (pswf.pswf),
         // beta = pswf.c, box = r_c.
-        self_factor = calc_log_windowed_kernel_value_at_zero<Real>(2, pswf.pswf, Real(pswf.c), Real(params.r_c));
+        self_factor = calc_log_windowed_kernel_value_at_zero<Real>(2, pswf.pswf, Real(pswf.beta), Real(params.r_c));
     } else if (n_dim == 2 && params.kernel == DMK_YUKAWA) {
         // 2D Yukawa (K0), log-singular: the self is the windowed-kernel-at-zero from the tree's own
         // FourierData routine at the level-0 box (box_sizes[0] = 2*r_c halves to r_c), matching the
         // residual's FourierData construction in get_esp_correction_coeffs.
         sctl::Vector<double> box_sizes(1);
         box_sizes[0] = 2.0 * params.r_c;
-        FourierData<double> fd(params.kernel, 2, pswf.eps, 16, 16, params.fparam, pswf.c, box_sizes);
+        FourierData<double> fd(params.kernel, 2, pswf.eps, 16, 16, params.fparam, pswf.beta, box_sizes);
         self_factor = Real(fd.yukawa_windowed_kernel_value_at_zero(0));
     }
 
@@ -1382,20 +1374,22 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_)
 #endif
     // Both paths cover every scalar kernel in 2D and 3D. range_evaluator is built only in 3D; 2D's
     // short_range is dense and never touches it.
+    // Pass the plan's own pswf.c to the short-range residual builders so it stays identical to the
+    // long-range c -- the single source of truth for the PSWF bandwidth.
     if (use_jit) {
 #ifdef DMK_USE_JIT
         evaluator = make_esp_evaluator_jit<Real>(params.kernel, params.fparam, params.r_c, n_dim, params.eval_type,
-                                                 n_digits, sigma, 3);
+                                                 n_digits, pswf.beta, 3);
         if (n_dim == 3)
             range_evaluator = make_esp_range_evaluator_jit<Real>(params.kernel, params.fparam, params.r_c, n_dim,
-                                                                 params.eval_type, n_digits, sigma, 3);
+                                                                 params.eval_type, n_digits, pswf.beta, 3);
 #endif
     } else {
         evaluator = make_esp_evaluator_aot<Real>(params.kernel, params.fparam, params.r_c, n_dim, params.eval_type,
-                                                 n_digits, sigma);
+                                                 n_digits, pswf.beta);
         if (n_dim == 3)
             range_evaluator = make_esp_range_evaluator_aot<Real>(params.kernel, params.fparam, params.r_c, n_dim,
-                                                                 params.eval_type, n_digits, sigma);
+                                                                 params.eval_type, n_digits, pswf.beta);
     }
 }
 
@@ -1415,10 +1409,7 @@ PotForce<Real> EspPlan<Real>::eval(int n, const Real *r_src, const Real *charges
     std::span<Real> fy_sp(buf.data() + 2 * n, want_force ? n : 0);
     std::span<Real> fz_sp(buf.data() + 3 * n, (want_force && n_dim == 3) ? n : 0);
 
-    // Runtime n_dim -> compile-time DIM dispatch (mirrors src/aot_evaluator.cpp's pattern). DIM=3 is
-    // the only dimension with a working short-range kernel; short_range throws for DIM=2 before
-    // touching long_range/self_interaction (self_interaction's 3D-only formula is therefore never
-    // exercised for DIM=2).
+    // Runtime n_dim -> compile-time DIM dispatch (mirrors src/aot_evaluator.cpp's pattern).
     if (n_dim == 3) {
         std::array<std::span<Real>, 3> force{fx_sp, fy_sp, fz_sp};
         short_range<3>(n, r_src, charges, pot_sp, force);

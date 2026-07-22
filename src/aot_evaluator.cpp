@@ -45,7 +45,7 @@ template residual_evaluator_func<double> make_evaluator_aot<double>(dmk_ikernel 
 
 template <typename Real>
 residual_evaluator_func<Real> make_esp_evaluator_aot(dmk_ikernel kernel, double fparam, double r_c, int n_dim,
-                                                     dmk_eval_type eval_level, int n_digits, double sigma) {
+                                                     dmk_eval_type eval_level, int n_digits, double beta) {
     constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
     if (kernel == DMK_LAPLACE) {
         if (n_dim == 2)
@@ -58,7 +58,7 @@ residual_evaluator_func<Real> make_esp_evaluator_aot(dmk_ikernel kernel, double 
         if (n_dim == 3)
             return get_esp_sqrt_laplace_3d_kernel<Real, MaxVecLen>(eval_level, n_digits);
     } else if (kernel == DMK_YUKAWA) {
-        const auto cc = get_esp_correction_coeffs<Real>(kernel, fparam, r_c, n_dim, n_digits, sigma);
+        const auto cc = get_esp_correction_coeffs<Real>(kernel, fparam, r_c, n_dim, n_digits, beta);
         std::vector<Real> coeffs;
         for (const auto &v : cc)
             coeffs.insert(coeffs.end(), v.begin(), v.end());
@@ -78,14 +78,14 @@ residual_evaluator_func<Real> make_esp_evaluator_aot(dmk_ikernel kernel, double 
 template <typename Real>
 residual_evaluator_range_func<Real> make_esp_range_evaluator_aot(dmk_ikernel kernel, double fparam, double r_c,
                                                                  int n_dim, dmk_eval_type eval_level, int n_digits,
-                                                                 double sigma) {
+                                                                 double beta) {
     constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
     if (kernel == DMK_LAPLACE)
         return get_esp_laplace_3d_kernel_ranges<Real, MaxVecLen>(eval_level, n_digits);
     if (kernel == DMK_SQRT_LAPLACE)
         return get_esp_sqrt_laplace_3d_kernel_ranges<Real, MaxVecLen>(eval_level, n_digits);
     if (kernel == DMK_YUKAWA) {
-        const auto cc = get_esp_correction_coeffs<Real>(kernel, fparam, r_c, n_dim, n_digits, sigma);
+        const auto cc = get_esp_correction_coeffs<Real>(kernel, fparam, r_c, n_dim, n_digits, beta);
         std::vector<Real> coeffs(cc[0].begin(), cc[0].end());
         return get_esp_yukawa_3d_kernel_ranges<Real, MaxVecLen>(eval_level, n_digits, coeffs.data(), int(coeffs.size()),
                                                                 0);

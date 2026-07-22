@@ -19,15 +19,15 @@ using Vec3 = Vec3T<double>;
 
 // Formula matches FINUFFT v2.5 kerformula=8 (PSWF):
 // https://github.com/flatironinstitute/finufft/blob/704cbfee0375a4f726e8ff5a2c4ef70d5da6257a/devel/find_sigma_bound.cpp#L103
-inline int esp_P_from_eps(double eps, double sigma, int dim = 3) {
+inline int esp_P_from_eps(double eps, double sigma, int dim) {
     const double tolfac = 0.18 * std::pow(1.4, dim - 1);
     // P: spread width = number of grid points used per dimension in the spreading stencil
     const int P = static_cast<int>(std::ceil(std::log(tolfac / eps) / (M_PI * std::sqrt(1.0 - 1.0 / sigma)) + 1.0));
     return std::max(2, P);
 }
 
-// PSWF bandwidth parameter c from the spread width P and upsampling factor sigma.
-inline double esp_pswf_c_from_P(double sigma, int P) { return M_PI * P * (1.0 - 1.0 / (2 * sigma)) - 0.05; }
+// PSWF bandwidth parameter beta from the spread width P and upsampling factor sigma.
+inline double esp_beta_from_P(double sigma, int P) { return M_PI * P * (1.0 - 1.0 / (2 * sigma)) - 0.05; }
 
 inline int esp_digits_from_eps(double eps) {
     return std::clamp(static_cast<int>(std::lround(-std::log10(eps))), 2, 12);
@@ -57,13 +57,12 @@ struct PotForce {
 // polynomial fits of the kernel and its integral for a given (eps, c).
 struct PSWFKernel {
     dmk::Prolate0Fun pswf;
-    double eps, c, lambda0, c0, scale;
-    std::vector<double> pswf_poly_coeffs, pswf_int_poly_coeffs;
+    double eps, beta, lambda0, c0, scale;
 
     PSWFKernel() = default;
     // Heavy (runs prol0ini + two poly_fit calls); declared here, defined in esp.cpp so this header
     // doesn't need finufft_common/kernel.h.
-    explicit PSWFKernel(double eps_, double c_, int lenw = 8000);
+    explicit PSWFKernel(double eps_, double beta_, int lenw = 8000);
 
     double operator()(double x) const { return pswf.eval_val(x) * scale; }
     double integral_eval(double t) const { return pswf.int_eval(t) * scale; }
@@ -73,7 +72,7 @@ struct PSWFKernel {
         return vb - va;
     }
     double pswf_hat(double k) const {
-        const double x = k / c;
+        const double x = k / beta;
         return std::fabs(x) > 1 ? 0.0 : lambda0 * (*this)(x);
     }
 };

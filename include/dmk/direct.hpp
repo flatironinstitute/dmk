@@ -110,11 +110,10 @@ inline void compute_direct(int n_dim, const auto &r_src, const auto &charges, co
 
 template <typename Real>
 std::vector<std::vector<Real>> get_local_correction_coeffs(dmk_ikernel kernel, int n_dim, int n_digits, double beta);
-// Short-range correction coefficients for the ESP (Ewald) scalar kernels. The
-// PSWF window comes from FINUFFT's spreader (see esp.hpp), not calc_bandlimiting.
+
 template <typename Real>
 std::vector<std::vector<Real>> get_esp_correction_coeffs(dmk_ikernel kernel, double fparam, double r_c, int n_dim,
-                                                         int n_digits, double sigma);
+                                                         int n_digits, double beta);
 template <typename Real>
 residual_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim, int n_digits,
                                                  int unroll_factor);
@@ -123,19 +122,19 @@ residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_ty
                                                  double beta, int unroll_factor);
 template <typename Real>
 residual_evaluator_func<Real> make_esp_evaluator_jit(dmk_ikernel kernel, double fparam, double r_c, int n_dim,
-                                                     dmk_eval_type eval_level, int n_digits, double sigma,
+                                                     dmk_eval_type eval_level, int n_digits, double beta,
                                                      int unroll_factor);
 template <typename Real>
 residual_evaluator_range_func<Real> make_esp_range_evaluator_jit(dmk_ikernel kernel, double fparam, double r_c,
                                                                  int n_dim, dmk_eval_type eval_level, int n_digits,
-                                                                 double sigma, int unroll_factor);
+                                                                 double beta, int unroll_factor);
 template <typename Real>
 residual_evaluator_func<Real> make_esp_evaluator_aot(dmk_ikernel kernel, double fparam, double r_c, int n_dim,
-                                                     dmk_eval_type eval_level, int n_digits, double sigma);
+                                                     dmk_eval_type eval_level, int n_digits, double beta);
 template <typename Real>
 residual_evaluator_range_func<Real> make_esp_range_evaluator_aot(dmk_ikernel kernel, double fparam, double r_c,
                                                                  int n_dim, dmk_eval_type eval_level, int n_digits,
-                                                                 double sigma);
+                                                                 double beta);
 
 // Yukawa's local correction coefficients are level- and lambda-dependent, so its
 // evaluator is built per level from the coefficients generated in FourierData

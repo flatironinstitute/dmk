@@ -1,6 +1,5 @@
 #include <dmk.h>
 #include <dmk/direct.hpp>
-#include <dmk/esp.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/legeexps.hpp>
 #include <dmk/polyfit.hpp>
@@ -428,22 +427,16 @@ std::vector<std::vector<Real>> get_local_correction_coeffs(dmk_ikernel kernel, i
 
 template <typename Real>
 std::vector<std::vector<Real>> get_esp_correction_coeffs(dmk_ikernel kernel, double fparam, double r_c, int n_dim,
-                                                         int n_digits, double sigma) {
+                                                         int n_digits, double beta) {
     static std::mutex lock;
     std::lock_guard<std::mutex> lock_guard(lock);
-
-    // The ESP short-range residual L(r) is the same windowed-kernel local correction DMK uses, at the
-    // level-0 scale (beta = c, box = r_c), so it pairs with the periodic window W
-    // (get_periodic_windowed_kernel_ft). Laplace/Sqrt-Laplace go through get_local_correction_coeffs;
-    // Yukawa (log-singular in 2D, needs the log-split) through FourierData::local_correction_coeffs.
     const double eps = std::pow(10.0, -n_digits);
-    const double c = esp_pswf_c_from_P(sigma, esp_P_from_eps(eps, sigma));
 
     if (kernel == DMK_YUKAWA) {
         // box_sizes_[0] = 2*r_c because local_correction_coeffs halves the level-0 box to r_c.
         sctl::Vector<double> box_sizes(1);
         box_sizes[0] = 2.0 * r_c;
-        FourierData<double> fd(kernel, n_dim, eps, 16, 16, fparam, c, box_sizes);
+        FourierData<double> fd(kernel, n_dim, eps, 16, 16, fparam, beta, box_sizes);
         const auto lc = fd.local_correction_coeffs(0, n_digits);
         if (n_dim == 2) // 2D K0: log-split [PA | PB]
             return {std::vector<Real>(lc.log_poly.begin(), lc.log_poly.end()),
@@ -451,7 +444,7 @@ std::vector<std::vector<Real>> get_esp_correction_coeffs(dmk_ikernel kernel, dou
         return {std::vector<Real>(lc.reg_poly.begin(), lc.reg_poly.end())};
     }
 
-    return get_local_correction_coeffs<Real>(kernel, n_dim, n_digits, c);
+    return get_local_correction_coeffs<Real>(kernel, n_dim, n_digits, beta);
 }
 
 #ifdef DMK_USE_JIT
@@ -544,14 +537,14 @@ static std::string esp_poly_template(dmk_ikernel kernel, int n_dim, bool ranges)
 
 template <typename Real>
 residual_evaluator_func<Real> make_esp_evaluator_jit(dmk_ikernel kernel, double fparam, double r_c, int n_dim,
-                                                     dmk_eval_type eval_level, int n_digits, double sigma,
+                                                     dmk_eval_type eval_level, int n_digits, double beta,
                                                      int unroll_factor) {
     static std::mutex lock;
     std::lock_guard<std::mutex> lock_guard(lock);
     constexpr int VECWIDTH = sctl::DefaultVecLen<Real>();
     constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
 
-    const auto coeffs = get_esp_correction_coeffs<Real>(kernel, fparam, r_c, n_dim, n_digits, sigma);
+    const auto coeffs = get_esp_correction_coeffs<Real>(kernel, fparam, r_c, n_dim, n_digits, beta);
     std::string args = std::format("void {}<{}, {}, -1, -1", esp_poly_template(kernel, n_dim, false), T_str, VECWIDTH);
     for (size_t i = 0; i < coeffs.size(); ++i)
         args += ", -1";
@@ -585,21 +578,21 @@ residual_evaluator_func<Real> make_esp_evaluator_jit(dmk_ikernel kernel, double 
 
 template residual_evaluator_func<float> make_esp_evaluator_jit<float>(dmk_ikernel kernel, double fparam, double r_c,
                                                                       int n_dim, dmk_eval_type eval_level, int n_digits,
-                                                                      double sigma, int unroll_factor);
+                                                                      double beta, int unroll_factor);
 template residual_evaluator_func<double> make_esp_evaluator_jit<double>(dmk_ikernel kernel, double fparam, double r_c,
                                                                         int n_dim, dmk_eval_type eval_level,
-                                                                        int n_digits, double sigma, int unroll_factor);
+                                                                        int n_digits, double beta, int unroll_factor);
 
 template <typename Real>
 residual_evaluator_range_func<Real> make_esp_range_evaluator_jit(dmk_ikernel kernel, double fparam, double r_c,
                                                                  int n_dim, dmk_eval_type eval_level, int n_digits,
-                                                                 double sigma, int unroll_factor) {
+                                                                 double beta, int unroll_factor) {
     static std::mutex lock;
     std::lock_guard<std::mutex> lock_guard(lock);
     constexpr int VECWIDTH = sctl::DefaultVecLen<Real>();
     constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
 
-    const auto coeffs = get_esp_correction_coeffs<Real>(kernel, fparam, r_c, n_dim, n_digits, sigma);
+    const auto coeffs = get_esp_correction_coeffs<Real>(kernel, fparam, r_c, n_dim, n_digits, beta);
     std::string args = std::format("void {}<{}, {}, -1, -1", esp_poly_template(kernel, n_dim, true), T_str, VECWIDTH);
     for (size_t i = 0; i < coeffs.size(); ++i)
         args += ", -1";
@@ -633,10 +626,10 @@ residual_evaluator_range_func<Real> make_esp_range_evaluator_jit(dmk_ikernel ker
 
 template residual_evaluator_range_func<float>
 make_esp_range_evaluator_jit<float>(dmk_ikernel kernel, double fparam, double r_c, int n_dim, dmk_eval_type eval_level,
-                                    int n_digits, double sigma, int unroll_factor);
+                                    int n_digits, double beta, int unroll_factor);
 template residual_evaluator_range_func<double>
 make_esp_range_evaluator_jit<double>(dmk_ikernel kernel, double fparam, double r_c, int n_dim, dmk_eval_type eval_level,
-                                     int n_digits, double sigma, int unroll_factor);
+                                     int n_digits, double beta, int unroll_factor);
 #endif
 // (DMK_USE_JIT)
 
@@ -754,9 +747,9 @@ template std::vector<std::vector<double>> get_local_correction_coeffs<double>(dm
                                                                               int n_digits, double beta);
 
 template std::vector<std::vector<float>> get_esp_correction_coeffs<float>(dmk_ikernel kernel, double fparam, double r_c,
-                                                                          int n_dim, int n_digits, double sigma);
+                                                                          int n_dim, int n_digits, double beta);
 template std::vector<std::vector<double>>
-get_esp_correction_coeffs<double>(dmk_ikernel kernel, double fparam, double r_c, int n_dim, int n_digits, double sigma);
+get_esp_correction_coeffs<double>(dmk_ikernel kernel, double fparam, double r_c, int n_dim, int n_digits, double beta);
 
 template direct_evaluator_func<float> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim,
                                                            float lambda);

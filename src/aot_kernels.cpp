@@ -3,6 +3,7 @@
 #include <dmk/types.hpp>
 #include <dmk/vector_kernels.hpp>
 #include <sctl.hpp>
+#include <utility>
 #include <vector>
 
 namespace dmk {
@@ -2709,8 +2710,8 @@ constexpr double esp_laplace_2d_potential_3[] = {3.40128947052315056e-01, -4.673
 
 // beta: 0
 constexpr double esp_laplace_2d_potential_4[] = {
-    3.45016179513547017e-01, -4.90729967185751126e-01, 2.22519348110155918e-01, -1.13644513332125094e-01,
-    5.52479290447718194e-02, -2.74583801879971570e-02, 9.08129137389865684e-03};
+    3.43425620766397488e-01, -4.83060291356886218e-01, 2.06815661724620681e-01, -9.56363975134247035e-02,
+    3.95916436420770332e-02, -1.53246341597736736e-02, 4.20291361748193881e-03};
 
 // beta: 0
 constexpr double esp_laplace_2d_potential_5[] = {
@@ -2754,11 +2755,11 @@ constexpr double esp_laplace_2d_potential_10[] = {
 
 // beta: 0
 constexpr double esp_laplace_2d_potential_11[] = {
-    3.46571388440025330e-01, -4.99970965412456669e-01, 2.49814676933169111e-01, -1.65901592663836778e-01,
-    1.22695395796797127e-01, -9.45778158623104132e-02, 7.29070794721699000e-02, -5.44779883549646807e-02,
-    3.85464272947623615e-02, -2.54118705248644119e-02, 1.54524158983241101e-02, -8.61004853624781734e-03,
-    4.37640013831623077e-03, -2.03925533554601959e-03, 8.82139399639814289e-04, -3.41425655243196308e-04,
-    1.09568319110402509e-04, -3.70336322807159868e-05, 1.70339102678866484e-05, -4.52962656603374815e-06};
+    3.46569438544917008e-01, -4.99948172166116755e-01, 2.49687315852250735e-01, -1.65447983870321752e-01,
+    1.21536716495854458e-01, -9.23129050508442600e-02, 6.93759616154990544e-02, -4.99598244971918015e-02,
+    3.37034475479549775e-02, -2.09903206500092580e-02, 1.19580563471582569e-02, -6.19612863377783617e-03,
+    2.92745217434708504e-03, -1.27338936535266868e-03, 4.95558628313796392e-04, -1.61953520652763686e-04,
+    5.42155727055558800e-05, -2.37106642001809648e-05, 6.22564417452058528e-06};
 
 // beta: 0
 constexpr double esp_laplace_2d_potential_12[] = {
@@ -2780,8 +2781,8 @@ constexpr double esp_laplace_2d_potential_grad_3[] = {3.40128947052315056e-01, -
 
 // beta: 0
 constexpr double esp_laplace_2d_potential_grad_4[] = {
-    3.45016179513547017e-01, -4.90729967185751126e-01, 2.22519348110155918e-01, -1.13644513332125094e-01,
-    5.52479290447718194e-02, -2.74583801879971570e-02, 9.08129137389865684e-03};
+    3.43425620766397488e-01, -4.83060291356886218e-01, 2.06815661724620681e-01, -9.56363975134247035e-02,
+    3.95916436420770332e-02, -1.53246341597736736e-02, 4.20291361748193881e-03};
 
 // beta: 0
 constexpr double esp_laplace_2d_potential_grad_5[] = {
@@ -2825,11 +2826,11 @@ constexpr double esp_laplace_2d_potential_grad_10[] = {
 
 // beta: 0
 constexpr double esp_laplace_2d_potential_grad_11[] = {
-    3.46571388440025330e-01, -4.99970965412456669e-01, 2.49814676933169111e-01, -1.65901592663836778e-01,
-    1.22695395796797127e-01, -9.45778158623104132e-02, 7.29070794721699000e-02, -5.44779883549646807e-02,
-    3.85464272947623615e-02, -2.54118705248644119e-02, 1.54524158983241101e-02, -8.61004853624781734e-03,
-    4.37640013831623077e-03, -2.03925533554601959e-03, 8.82139399639814289e-04, -3.41425655243196308e-04,
-    1.09568319110402509e-04, -3.70336322807159868e-05, 1.70339102678866484e-05, -4.52962656603374815e-06};
+    3.46569438544917008e-01, -4.99948172166116755e-01, 2.49687315852250735e-01, -1.65447983870321752e-01,
+    1.21536716495854458e-01, -9.23129050508442600e-02, 6.93759616154990544e-02, -4.99598244971918015e-02,
+    3.37034475479549775e-02, -2.09903206500092580e-02, 1.19580563471582569e-02, -6.19612863377783617e-03,
+    2.92745217434708504e-03, -1.27338936535266868e-03, 4.95558628313796392e-04, -1.61953520652763686e-04,
+    5.42155727055558800e-05, -2.37106642001809648e-05, 6.22564417452058528e-06};
 
 // beta: 0
 constexpr double esp_laplace_2d_potential_grad_12[] = {
@@ -2953,8 +2954,8 @@ residual_evaluator_func<Real> get_esp_laplace_2d_kernel(dmk_eval_type eval_level
             };
         }
         if (n_digits <= 11) {
-            constexpr int ND = 11, NC_TOTAL = 20;
-            constexpr int NC0 = 20;
+            constexpr int ND = 11, NC_TOTAL = 19;
+            constexpr int NC0 = 19;
             std::array<Real, NC_TOTAL> coeffs;
             std::copy_n(esp_laplace_2d_potential_11, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
@@ -3086,8 +3087,8 @@ residual_evaluator_func<Real> get_esp_laplace_2d_kernel(dmk_eval_type eval_level
             };
         }
         if (n_digits <= 11) {
-            constexpr int ND = 11, NC_TOTAL = 20;
-            constexpr int NC0 = 20;
+            constexpr int ND = 11, NC_TOTAL = 19;
+            constexpr int NC0 = 19;
             std::array<Real, NC_TOTAL> coeffs;
             std::copy_n(esp_laplace_2d_potential_grad_11, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
@@ -3853,9 +3854,8 @@ constexpr double esp_sqrt_laplace_2d_potential_3[] = {1.04133600766742135e-01,  
 
 // beta: 0
 constexpr double esp_sqrt_laplace_2d_potential_4[] = {
-    5.43320128472378830e-02,  -2.60343769755376320e-01, 4.85938769203017651e-01,
-    -3.89993422158306957e-01, 1.55932247506921223e-02,  1.82002113003575938e-01,
-    -7.75541018362244233e-02, -3.16791804210956388e-02, 2.17111936687518665e-02};
+    7.48050362978252698e-02,  -3.14101882852885261e-01, 4.98925595374333175e-01,  -3.05016410414623684e-01,
+    -6.33667878339093660e-02, 1.46148890336436327e-01,  -1.04242800247160098e-02, -2.70621778620233899e-02};
 
 // beta: 0
 constexpr double esp_sqrt_laplace_2d_potential_5[] = {
@@ -3904,13 +3904,12 @@ constexpr double esp_sqrt_laplace_2d_potential_10[] = {
 
 // beta: 0
 constexpr double esp_sqrt_laplace_2d_potential_11[] = {
-    2.69649877120016609e-03,  -2.86392500569618465e-02, 1.35271678076346241e-01,  -3.66159578629183802e-01,
-    5.96973980880775690e-01,  -5.15153349652325399e-01, -5.76310604274815532e-03, 5.42479022231553420e-01,
-    -5.11077976980979898e-01, -2.71043146266868457e-02, 3.94657997248520909e-01,  -2.26871877414062006e-01,
-    -1.13933343705241066e-01, 1.80916101035237059e-01,  -2.09081159209883218e-02, -7.68142131840394843e-02,
-    3.55971123048858737e-02,  2.01778038079987940e-02,  -1.82875423308622789e-02, -2.93534436066350719e-03,
-    5.84010560383291417e-03,  7.22022229663429231e-05,  -1.18746039595904419e-03, 3.27986276899419409e-05,
-    1.20172492457812526e-04};
+    3.60608271635356418e-03,  -3.62153806543686618e-02, 1.60713759844029719e-01,  -4.04455643055299185e-01,
+    5.99673416679080473e-01,  -4.34060143953398370e-01, -1.15030880967828403e-01, 5.42717646461029490e-01,
+    -3.79893105804116227e-01, -1.27937863814161473e-01, 3.43595851467267843e-01,  -1.16929985384713345e-01,
+    -1.34312395360740855e-01, 1.19648900352872303e-01,  1.63128808571401142e-02,  -5.72809483606461292e-02,
+    1.05121849839314649e-02,  1.78000445672472155e-02,  -6.86683492713142940e-03, -3.75520912883352265e-03,
+    1.92577188566938262e-03,  5.00496201838981089e-04,  -2.36731380446313105e-04, -3.19132312371425296e-05};
 
 // beta: 0
 constexpr double esp_sqrt_laplace_2d_potential_12[] = {
@@ -3934,9 +3933,8 @@ constexpr double esp_sqrt_laplace_2d_potential_grad_3[] = {1.04133600766742135e-
 
 // beta: 0
 constexpr double esp_sqrt_laplace_2d_potential_grad_4[] = {
-    5.43320128472378830e-02,  -2.60343769755376320e-01, 4.85938769203017651e-01,
-    -3.89993422158306957e-01, 1.55932247506921223e-02,  1.82002113003575938e-01,
-    -7.75541018362244233e-02, -3.16791804210956388e-02, 2.17111936687518665e-02};
+    7.48050362978252698e-02,  -3.14101882852885261e-01, 4.98925595374333175e-01,  -3.05016410414623684e-01,
+    -6.33667878339093660e-02, 1.46148890336436327e-01,  -1.04242800247160098e-02, -2.70621778620233899e-02};
 
 // beta: 0
 constexpr double esp_sqrt_laplace_2d_potential_grad_5[] = {
@@ -3985,13 +3983,12 @@ constexpr double esp_sqrt_laplace_2d_potential_grad_10[] = {
 
 // beta: 0
 constexpr double esp_sqrt_laplace_2d_potential_grad_11[] = {
-    2.69649877120016609e-03,  -2.86392500569618465e-02, 1.35271678076346241e-01,  -3.66159578629183802e-01,
-    5.96973980880775690e-01,  -5.15153349652325399e-01, -5.76310604274815532e-03, 5.42479022231553420e-01,
-    -5.11077976980979898e-01, -2.71043146266868457e-02, 3.94657997248520909e-01,  -2.26871877414062006e-01,
-    -1.13933343705241066e-01, 1.80916101035237059e-01,  -2.09081159209883218e-02, -7.68142131840394843e-02,
-    3.55971123048858737e-02,  2.01778038079987940e-02,  -1.82875423308622789e-02, -2.93534436066350719e-03,
-    5.84010560383291417e-03,  7.22022229663429231e-05,  -1.18746039595904419e-03, 3.27986276899419409e-05,
-    1.20172492457812526e-04};
+    3.60608271635356418e-03,  -3.62153806543686618e-02, 1.60713759844029719e-01,  -4.04455643055299185e-01,
+    5.99673416679080473e-01,  -4.34060143953398370e-01, -1.15030880967828403e-01, 5.42717646461029490e-01,
+    -3.79893105804116227e-01, -1.27937863814161473e-01, 3.43595851467267843e-01,  -1.16929985384713345e-01,
+    -1.34312395360740855e-01, 1.19648900352872303e-01,  1.63128808571401142e-02,  -5.72809483606461292e-02,
+    1.05121849839314649e-02,  1.78000445672472155e-02,  -6.86683492713142940e-03, -3.75520912883352265e-03,
+    1.92577188566938262e-03,  5.00496201838981089e-04,  -2.36731380446313105e-04, -3.19132312371425296e-05};
 
 // beta: 0
 constexpr double esp_sqrt_laplace_2d_potential_grad_12[] = {
@@ -4032,8 +4029,8 @@ residual_evaluator_func<Real> get_esp_sqrt_laplace_2d_kernel(dmk_eval_type eval_
             };
         }
         if (n_digits <= 4) {
-            constexpr int ND = 4, NC_TOTAL = 9;
-            constexpr int NC0 = 9;
+            constexpr int ND = 4, NC_TOTAL = 8;
+            constexpr int NC0 = 8;
             std::array<Real, NC_TOTAL> coeffs;
             std::copy_n(esp_sqrt_laplace_2d_potential_4, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
@@ -4116,8 +4113,8 @@ residual_evaluator_func<Real> get_esp_sqrt_laplace_2d_kernel(dmk_eval_type eval_
             };
         }
         if (n_digits <= 11) {
-            constexpr int ND = 11, NC_TOTAL = 25;
-            constexpr int NC0 = 25;
+            constexpr int ND = 11, NC_TOTAL = 24;
+            constexpr int NC0 = 24;
             std::array<Real, NC_TOTAL> coeffs;
             std::copy_n(esp_sqrt_laplace_2d_potential_11, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
@@ -4165,8 +4162,8 @@ residual_evaluator_func<Real> get_esp_sqrt_laplace_2d_kernel(dmk_eval_type eval_
             };
         }
         if (n_digits <= 4) {
-            constexpr int ND = 4, NC_TOTAL = 9;
-            constexpr int NC0 = 9;
+            constexpr int ND = 4, NC_TOTAL = 8;
+            constexpr int NC0 = 8;
             std::array<Real, NC_TOTAL> coeffs;
             std::copy_n(esp_sqrt_laplace_2d_potential_grad_4, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
@@ -4249,8 +4246,8 @@ residual_evaluator_func<Real> get_esp_sqrt_laplace_2d_kernel(dmk_eval_type eval_
             };
         }
         if (n_digits <= 11) {
-            constexpr int ND = 11, NC_TOTAL = 25;
-            constexpr int NC0 = 25;
+            constexpr int ND = 11, NC_TOTAL = 24;
+            constexpr int NC0 = 24;
             std::array<Real, NC_TOTAL> coeffs;
             std::copy_n(esp_sqrt_laplace_2d_potential_grad_11, NC_TOTAL, coeffs.data());
             return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,

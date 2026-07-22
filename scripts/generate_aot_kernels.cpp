@@ -5,8 +5,10 @@
 //
 // Usage: ./generate_aot_kernels > src/aot_kernels.cpp
 
+#include <cmath>
 #include <dmk.h>
 #include <dmk/direct.hpp>
+#include <dmk/esp.hpp>
 #include <dmk/util.hpp>
 #include <format>
 #include <iostream>
@@ -375,7 +377,10 @@ constexpr int unroll_factor = 3;
         for (auto el : k.eval_levels) {
             for (int digits = min_digits; digits <= max_digits; ++digits) {
                 try {
-                    const auto coeffs = dmk::get_esp_correction_coeffs<double>(k.kernel, 0.0, 0.0, k.dim, digits, 1.35);
+                    // Baked at fixed sigma=1.35, matching the plan's derivation (esp.hpp).
+                    const double beta =
+                        dmk::esp_beta_from_P(1.35, dmk::esp_P_from_eps(std::pow(10.0, -digits), 1.35, k.dim));
+                    const auto coeffs = dmk::get_esp_correction_coeffs<double>(k.kernel, 0.0, 0.0, k.dim, digits, beta);
 
                     CoeffsInfo info;
                     info.digits = digits;
