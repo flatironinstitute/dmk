@@ -1,7 +1,7 @@
 #include <cmath>
 #include <dmk.h>
 #include <dmk/esp.hpp>
-#include <doctest/doctest.h>
+#include <dmk/testing.hpp>
 #include <random>
 #include <span>
 #include <vector>
@@ -79,7 +79,7 @@ static double force_l2_rel_err(int n, std::span<double> force_x, std::span<doubl
     return std::sqrt(err2 / ref2);
 }
 
-TEST_CASE("[ESP] 10-particle double vs Ewald") {
+TEST_CASE_GENERIC("[ESP] 10-particle double vs Ewald", 1) {
     constexpr double eps = 1e-5;
 
     dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, R_C, eps, DMK_POTENTIAL));
@@ -108,7 +108,7 @@ TEST_CASE("[ESP] 10-particle double vs Ewald") {
 // Particles sit on a regular n_grid^3 cubic lattice with spacing h = L/n_grid.
 // r_c < h guarantees every inter-particle distance exceeds r_c, so the
 // short-range direct sum contributes exactly zero.
-TEST_CASE("[ESP] long-range only: regular grid, no short-range pairs") {
+TEST_CASE_GENERIC("[ESP] long-range only: regular grid, no short-range pairs", 1) {
     constexpr int n_grid = 4;
     constexpr int N = n_grid * n_grid * n_grid;
     constexpr double L = 1.0;
@@ -167,7 +167,7 @@ TEST_CASE("[ESP] long-range only: regular grid, no short-range pairs") {
 }
 
 // Madelung constant test.
-TEST_CASE("[ESP] Madelung constant: NaCl lattice, 1/r kernel") {
+TEST_CASE_GENERIC("[ESP] Madelung constant: NaCl lattice, 1/r kernel", 1) {
     constexpr int n_grid = 8;
     constexpr int N = n_grid * n_grid * n_grid; // 512
     constexpr double L = 1.0;
@@ -217,7 +217,7 @@ TEST_CASE("[ESP] Madelung constant: NaCl lattice, 1/r kernel") {
 // N particles are packed inside a sphere of radius r_c/4, so every pairwise
 // distance is at most 2*(r_c/4) = r_c/2 < r_c.
 
-TEST_CASE("[ESP] short-range stress: all pairs within r_c") {
+TEST_CASE_GENERIC("[ESP] short-range stress: all pairs within r_c", 1) {
     constexpr int N = 50;
     constexpr double L = 1.0;
     constexpr double r_c = 0.05;
@@ -273,7 +273,7 @@ TEST_CASE("[ESP] short-range stress: all pairs within r_c") {
     delete plan;
 }
 
-TEST_CASE("[ESP] forces - 10 particles") {
+TEST_CASE_GENERIC("[ESP] forces - 10 particles", 1) {
     constexpr double eps = 1e-6;
 
     std::vector<double> force_ref(3 * N);
@@ -290,7 +290,7 @@ TEST_CASE("[ESP] forces - 10 particles") {
 
 // 2D now runs under both JIT and AOT; accuracy is validated by the PBC cases below. Here we just
 // confirm the 2D plan constructs and evaluates without throwing on whichever path is active.
-TEST_CASE("[ESP] DIM=2 plan runs (JIT and AOT)") {
+TEST_CASE_GENERIC("[ESP] DIM=2 plan runs (JIT and AOT)", 1) {
     constexpr double eps = 1e-5;
     auto params = make_esp_params(L, R_C, eps, DMK_POTENTIAL);
     params.n_dim = 2;
@@ -300,7 +300,7 @@ TEST_CASE("[ESP] DIM=2 plan runs (JIT and AOT)") {
 
 // esp_eval<float> is instantiated but was never exercised by any test before this; confirms the
 // float path actually runs in float (finufftf*/complex<float> FFTs) rather than silently upcasting.
-TEST_CASE("[ESP] float precision matches double") {
+TEST_CASE_GENERIC("[ESP] float precision matches double", 1) {
     constexpr double eps = 1e-5;
 
     dmk::EspPlan<double> *plan_d = new dmk::EspPlan<double>(make_esp_params(L, R_C, eps, DMK_POTENTIAL_GRAD));
@@ -347,7 +347,7 @@ TEST_CASE("[ESP] float precision matches double") {
 
 // pdmk_esp_eval (the public C API) is not exercised by any other test; confirms it interleaves
 // [pot, fx, fy, fz] per particle rather than dropping forces (as it did before this fix).
-TEST_CASE("[ESP] C API pdmk_esp_eval interleaves forces") {
+TEST_CASE_GENERIC("[ESP] C API pdmk_esp_eval interleaves forces", 1) {
     constexpr double eps = 1e-6;
     pdmk_esp_params params{};
     params.L = L;
@@ -484,16 +484,16 @@ static void run_esp_pbc(const EspPbcParams &c) {
 
 } // namespace
 
-TEST_CASE("[ESP] 3d Laplace PBC vs Ewald") { run_esp_pbc({DMK_LAPLACE, 3, 0.0, true, 0, 99, 100}); }
-TEST_CASE("[ESP] 3d Yukawa PBC vs lattice sum") { run_esp_pbc({DMK_YUKAWA, 3, 6.0, false, 6, 123, 50}); }
-TEST_CASE("[ESP] 3d Sqrt-Laplace PBC vs Ewald") { run_esp_pbc({DMK_SQRT_LAPLACE, 3, 0.0, true, 0, 7, 100}); }
-TEST_CASE("[ESP] 2d Yukawa PBC vs lattice sum") { run_esp_pbc({DMK_YUKAWA, 2, 4.0, false, 8, 321, 50}); }
-TEST_CASE("[ESP] 2d Sqrt-Laplace PBC vs Ewald") { run_esp_pbc({DMK_SQRT_LAPLACE, 2, 0.0, true, 0, 54, 50}); }
+TEST_CASE_GENERIC("[ESP] 3d Laplace PBC vs Ewald", 1) { run_esp_pbc({DMK_LAPLACE, 3, 0.0, true, 0, 99, 100}); }
+TEST_CASE_GENERIC("[ESP] 3d Yukawa PBC vs lattice sum", 1) { run_esp_pbc({DMK_YUKAWA, 3, 6.0, false, 6, 123, 50}); }
+TEST_CASE_GENERIC("[ESP] 3d Sqrt-Laplace PBC vs Ewald", 1) { run_esp_pbc({DMK_SQRT_LAPLACE, 3, 0.0, true, 0, 7, 100}); }
+TEST_CASE_GENERIC("[ESP] 2d Yukawa PBC vs lattice sum", 1) { run_esp_pbc({DMK_YUKAWA, 2, 4.0, false, 8, 321, 50}); }
+TEST_CASE_GENERIC("[ESP] 2d Sqrt-Laplace PBC vs Ewald", 1) { run_esp_pbc({DMK_SQRT_LAPLACE, 2, 0.0, true, 0, 54, 50}); }
 
 // 2D Laplace (log): the ESP source potential carries a self term and a global k=0 gauge, so it is
 // checked against the DMK periodic pipeline (which shares the same self convention) with the gauge
 // removed. Forces are gauge-free.
-TEST_CASE("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)") {
+TEST_CASE_GENERIC("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)", 1) {
     constexpr int n_dim = 2;
     constexpr int n_src = 2000;
     constexpr int n_trg = 500;
@@ -541,7 +541,7 @@ TEST_CASE("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)") {
             params.use_periodic = true;
             params.log_level = 6;
             std::vector<double> pot_src(n_src * odim), pot_trg(n_trg * odim);
-            pdmk_tree tree = pdmk_tree_create(nullptr, params, n_src, r_src.data(), charges.data(), rnormal.data(),
+            pdmk_tree tree = pdmk_tree_create(test_comm, params, n_src, r_src.data(), charges.data(), rnormal.data(),
                                               n_trg, r_trg.data());
             pdmk_tree_eval(tree, pot_src.data(), pot_trg.data());
             pdmk_tree_destroy(tree);
@@ -679,12 +679,16 @@ static void run_esp_freespace(const EspFreeParams &c) {
         }
 }
 
-TEST_CASE("[ESP] 3d Laplace free-space vs direct") { run_esp_freespace({DMK_LAPLACE, 3, 0.0, 99, 100}); }
-TEST_CASE("[ESP] 2d Laplace free-space vs direct") { run_esp_freespace({DMK_LAPLACE, 2, 0.0, 88, 100}); }
-TEST_CASE("[ESP] 3d Yukawa free-space vs direct") { run_esp_freespace({DMK_YUKAWA, 3, 6.0, 123, 100}); }
-TEST_CASE("[ESP] 2d Yukawa free-space vs direct") { run_esp_freespace({DMK_YUKAWA, 2, 4.0, 321, 100}); }
+TEST_CASE_GENERIC("[ESP] 3d Laplace free-space vs direct", 1) { run_esp_freespace({DMK_LAPLACE, 3, 0.0, 99, 100}); }
+TEST_CASE_GENERIC("[ESP] 2d Laplace free-space vs direct", 1) { run_esp_freespace({DMK_LAPLACE, 2, 0.0, 88, 100}); }
+TEST_CASE_GENERIC("[ESP] 3d Yukawa free-space vs direct", 1) { run_esp_freespace({DMK_YUKAWA, 3, 6.0, 123, 100}); }
+TEST_CASE_GENERIC("[ESP] 2d Yukawa free-space vs direct", 1) { run_esp_freespace({DMK_YUKAWA, 2, 4.0, 321, 100}); }
 
 // Sqrt-Laplace free-space (pot+grad vs the direct all-pairs reference; long-range via the
 // windowed-profile symbol, short-range grad via the residual poly-derivative).
-TEST_CASE("[ESP] 3d Sqrt-Laplace free-space vs direct") { run_esp_freespace({DMK_SQRT_LAPLACE, 3, 0.0, 7, 100}); }
-TEST_CASE("[ESP] 2d Sqrt-Laplace free-space vs direct") { run_esp_freespace({DMK_SQRT_LAPLACE, 2, 0.0, 54, 100}); }
+TEST_CASE_GENERIC("[ESP] 3d Sqrt-Laplace free-space vs direct", 1) {
+    run_esp_freespace({DMK_SQRT_LAPLACE, 3, 0.0, 7, 100});
+}
+TEST_CASE_GENERIC("[ESP] 2d Sqrt-Laplace free-space vs direct", 1) {
+    run_esp_freespace({DMK_SQRT_LAPLACE, 2, 0.0, 54, 100});
+}
