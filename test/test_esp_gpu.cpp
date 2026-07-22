@@ -33,7 +33,7 @@ struct Fixture {
             q[i] = (i % 2 == 0) ? 1.0 : -1.0;
         }
         plan = dmk::esp_create_plan(L, R_C, EPS, 1.35, DMK_POTENTIAL_GRAD);
-        gpu  = dmk::esp_create_gpu_plan(plan);
+        gpu  = dmk::esp_create_gpu_plan(plan, /*use_float=*/false);
     }
     ~Fixture() {
         dmk::esp_destroy_gpu_plan(gpu);

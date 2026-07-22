@@ -14,6 +14,7 @@
 #include <limits>
 #include <numeric>
 #include <random>
+#include <type_traits>
 #include <vector>
 
 #ifdef DMK_HAVE_MPI
@@ -112,7 +113,7 @@ double check_forces_fd_gpu(const dmk::PotForce<double> &esp, const std::vector<d
     idx.resize(n_sample);
 
     dmk::EspPlan *plan = dmk::esp_create_plan(L, r_c, eps, sigma, DMK_POTENTIAL);
-    dmk::GpuState *gpu = dmk::esp_create_gpu_plan(plan);
+    dmk::GpuState *gpu = dmk::esp_create_gpu_plan(plan, /*use_float=*/false);
 
     std::vector<dmk::Vec3T<double>> r_pert = r_src_d;
     double err2 = 0, ref2 = 0;
@@ -149,7 +150,7 @@ void run_phase(const Config &cfg, int n, const std::vector<dmk::Vec3T<Real>> &r_
               const std::vector<Real> &charges, dmk_eval_type eval_type, const char *phase_name) {
     double t_plan0 = MY_OMP_GET_WTIME();
     dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, eval_type);
-    dmk::GpuState *gpu = dmk::esp_create_gpu_plan(plan);
+    dmk::GpuState *gpu = dmk::esp_create_gpu_plan(plan, /*use_float=*/std::is_same_v<Real, float>);
     double t_plan1 = MY_OMP_GET_WTIME();
     if (cfg.bench_plan)
         std::cout << "# plan_create_time (" << phase_name << ", cpu+gpu): " << (t_plan1 - t_plan0) << " s\n"
@@ -236,7 +237,7 @@ void run_benchmark(Config cfg) {
                       << std::flush;
 
             dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL_GRAD);
-            dmk::GpuState *gpu = dmk::esp_create_gpu_plan(plan);
+            dmk::GpuState *gpu = dmk::esp_create_gpu_plan(plan, /*use_float=*/false);
             auto esp = dmk::esp_eval_gpu(gpu, r_src_d, charges_d);
             double force_l2_err =
                 check_forces_fd_gpu(esp, r_src_d, charges_d, cfg.L, cfg.r_c, cfg.eps, cfg.sigma, n_fd_sample);

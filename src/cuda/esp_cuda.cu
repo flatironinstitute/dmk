@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstddef>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 namespace dmk {
@@ -35,6 +36,16 @@ struct NvtxRange {
 };
 
 // ---------------------------------------------------------------------------
+// ComplexT<Real> — the cuFFT/cuFINUFFT complex type matching Real, so the
+// long-range pipeline (spread/FFT/interp) can be genuinely Real-templated
+// instead of always running in double. A GpuState is created for exactly one
+// Real (see GpuState::use_float / gpu_create_state) -- this alias is what lets
+// the same long_range_gpu<Real> body compile against either library's API.
+// ---------------------------------------------------------------------------
+template <typename Real>
+using ComplexT = std::conditional_t<std::is_same_v<Real, double>, cuDoubleComplex, cuFloatComplex>;
+
+// ---------------------------------------------------------------------------
 // GpuState — owns all physics params and CUDA objects for one GPU plan.
 // ---------------------------------------------------------------------------
 struct GpuState {
@@ -45,27 +56,34 @@ struct GpuState {
     double        self_factor_d;
     float         self_factor_f;
     dmk_eval_type eval_type;
+    // The one Real this plan was created for (esp_create_gpu_plan's use_float arg).
+    // Every eval on this plan must be called with the matching Real -- checked at
+    // esp_eval_gpu_impl/short_range_impl/long_range_impl's entry via check_plan_real<Real>.
+    bool          use_float = false;
 
     // Host output workspace; grown as needed, never shrunk between calls.
     std::vector<double> h_dbl_buf;
     std::vector<float>  h_flt_buf;
 
-    // Plan-level device data — uploaded once at esp_create_gpu_plan time.
+    // Plan-level device data — uploaded once at esp_create_gpu_plan time. void*
+    // because the concrete type (Real, or ComplexT<Real>, or cufinufft_plan vs
+    // cufinufftf_plan -- both just opaque pointers) depends on use_float; cast at
+    // each point of use via reinterpret_cast<...>(this).
     cudaStream_t   stream            = nullptr;
-    double        *d_scaling_coeffs  = nullptr;   // nf³ doubles
+    void          *d_scaling_coeffs  = nullptr;   // nf³ Real
     int            nc                = 0;         // cells per dimension, = floor(L/r_c)
     int           *d_nbc_tab         = nullptr;   // nc*3 ints — neighbor cell index per (cell,delta)
-    double        *d_off_tab         = nullptr;   // nc*3 doubles — periodic image shift per (cell,delta)
-    cuDoubleComplex *d_b             = nullptr;    // nf³ complex — spread output (NU → uniform)
-    cuDoubleComplex *d_b_hat         = nullptr;    // nf³ complex — FFT of d_b (k-space)
-    cufftHandle    fft_plan{};                     // nf³ 3-D c2c, created at plan time
+    void          *d_off_tab         = nullptr;   // nc*3 Real — periodic image shift per (cell,delta)
+    void          *d_b               = nullptr;   // nf³ ComplexT<Real> — spread output (NU → uniform)
+    void          *d_b_hat           = nullptr;   // nf³ ComplexT<Real> — FFT of d_b (k-space)
+    cufftHandle    fft_plan{};                     // nf³ 3-D c2c (Z2Z or C2C), created at plan time
     bool           fft_plan_valid    = false;
-    cufinufft_plan cfnufft_plan_1    = nullptr;    // type-1 spread-only (NU → uniform)
-    cufinufft_plan cfnufft_plan_2    = nullptr;    // type-2 interp-only (uniform → NU)
+    void          *cfnufft_plan_1    = nullptr;    // cufinufft_plan or cufinufftf_plan — type-1 (NU → uniform)
+    void          *cfnufft_plan_2    = nullptr;    // cufinufft_plan or cufinufftf_plan — type-2 (uniform → NU)
     int             *d_cell_start    = nullptr;    // ncells+1 ints (ncells=nc³) — short-range cell list
-    cuDoubleComplex *d_fhat_x        = nullptr;    // nf³ complex — force spectra, force path only
-    cuDoubleComplex *d_fhat_y        = nullptr;
-    cuDoubleComplex *d_fhat_z        = nullptr;
+    void           *d_fhat_x         = nullptr;    // nf³ ComplexT<Real> — force spectra, force path only
+    void           *d_fhat_y         = nullptr;
+    void           *d_fhat_z         = nullptr;
 
     // Per-eval device scratch — grown as needed (byte capacity), never shrunk, reused across
     // calls instead of malloc/free'd every eval. Cast to the needed type at each call site
@@ -77,14 +95,20 @@ struct GpuState {
     void *d_scratch_idx    = nullptr; size_t scratch_idx_cap    = 0; // cell_idx (n) + orig (n), int
     void *d_scratch_sorted = nullptr; size_t scratch_sorted_cap = 0; // xs/ys/zs/qs (4n), Real
     void *d_scratch_pg     = nullptr; size_t scratch_pg_cap     = 0; // pg_sorted (out_dim*n), Real
-    void *d_scratch_lr_xyz = nullptr; size_t scratch_lr_xyz_cap = 0; // x/y/z (3n), double
-    void *d_scratch_lr_c   = nullptr; size_t scratch_lr_c_cap   = 0; // packed charges (n), cuDoubleComplex
-    void *d_scratch_nu_c   = nullptr; size_t scratch_nu_c_cap   = 0; // pot_c / force_c (n), cuDoubleComplex
+    void *d_scratch_lr_xyz = nullptr; size_t scratch_lr_xyz_cap = 0; // x/y/z (3n), Real
+    void *d_scratch_lr_c   = nullptr; size_t scratch_lr_c_cap   = 0; // packed charges (n), ComplexT<Real>
+    void *d_scratch_nu_c   = nullptr; size_t scratch_nu_c_cap   = 0; // pot_c / force_c (n), ComplexT<Real>
 
     GpuState()  = default;
     ~GpuState() {
-        if (cfnufft_plan_1)   cufinufft_destroy(cfnufft_plan_1);
-        if (cfnufft_plan_2)   cufinufft_destroy(cfnufft_plan_2);
+        if (cfnufft_plan_1) {
+            if (use_float) cufinufftf_destroy(reinterpret_cast<cufinufftf_plan>(cfnufft_plan_1));
+            else           cufinufft_destroy(reinterpret_cast<cufinufft_plan>(cfnufft_plan_1));
+        }
+        if (cfnufft_plan_2) {
+            if (use_float) cufinufftf_destroy(reinterpret_cast<cufinufftf_plan>(cfnufft_plan_2));
+            else           cufinufft_destroy(reinterpret_cast<cufinufft_plan>(cfnufft_plan_2));
+        }
         if (fft_plan_valid)   cufftDestroy(fft_plan);
         if (d_b_hat)          cudaFree(d_b_hat);
         if (d_b)              cudaFree(d_b);
@@ -119,11 +143,15 @@ static void ensure_capacity(void *&ptr, size_t &cap, size_t needed_bytes) {
 }
 
 // Allocate and initialise a GpuState with all physics params and CUDA objects.
+// use_float selects the ONE Real this plan is created for -- every eval call
+// on the returned GpuState must use the matching Real (esp_eval_gpu<float>
+// on a use_float=false plan throws). h_scaling_coeffs is always double (it's
+// computed CPU-side in esp.cpp); it's narrowed to float here, once, if needed.
 GpuState *gpu_create_state(
     int nf, int n_digits,
     double L, double r_c, double gpu_upsampfac, double tol,
     double self_factor_d, float self_factor_f,
-    dmk_eval_type eval_type,
+    dmk_eval_type eval_type, bool use_float,
     const double *h_scaling_coeffs)
 {
     auto *gpu = new GpuState;
@@ -136,34 +164,47 @@ GpuState *gpu_create_state(
     gpu->self_factor_d = self_factor_d;
     gpu->self_factor_f = self_factor_f;
     gpu->eval_type     = eval_type;
+    gpu->use_float     = use_float;
+
+    const size_t real_sz    = use_float ? sizeof(float) : sizeof(double);
+    const size_t complex_sz = use_float ? sizeof(cuFloatComplex) : sizeof(cuDoubleComplex);
 
     // Dedicated stream for all GPU work on this plan.
     if (cudaStreamCreate(&gpu->stream) != cudaSuccess)
         throw std::runtime_error("GpuState: cudaStreamCreate failed");
 
-    // Upload precomputed scaling coefficients (plan-level constant, nf³ doubles).
+    // Upload precomputed scaling coefficients (plan-level constant, nf³ Real).
     const long long ntot = (long long)nf * nf * nf;
-    if (cudaMalloc(&gpu->d_scaling_coeffs, ntot * sizeof(double)) != cudaSuccess)
+    if (cudaMalloc(&gpu->d_scaling_coeffs, ntot * real_sz) != cudaSuccess)
         throw std::runtime_error("GpuState: cudaMalloc d_scaling_coeffs failed");
-    cudaMemcpyAsync(gpu->d_scaling_coeffs, h_scaling_coeffs,
-                    ntot * sizeof(double), cudaMemcpyHostToDevice, gpu->stream);
+    if (use_float) {
+        std::vector<float> h_scaling_coeffs_f(ntot);
+        for (long long i = 0; i < ntot; ++i) h_scaling_coeffs_f[i] = float(h_scaling_coeffs[i]);
+        cudaMemcpy(gpu->d_scaling_coeffs, h_scaling_coeffs_f.data(), ntot * real_sz, cudaMemcpyHostToDevice);
+    } else {
+        cudaMemcpyAsync(gpu->d_scaling_coeffs, h_scaling_coeffs,
+                        ntot * real_sz, cudaMemcpyHostToDevice, gpu->stream);
+    }
 
-    // Spread output buffer — always nf³ complex doubles, so allocate once at plan time.
-    if (cudaMalloc(&gpu->d_b, ntot * sizeof(cuDoubleComplex)) != cudaSuccess)
+    // Spread output buffer — nf³ ComplexT<Real>, so allocate once at plan time.
+    if (cudaMalloc(&gpu->d_b, ntot * complex_sz) != cudaSuccess)
         throw std::runtime_error("GpuState: cudaMalloc d_b failed");
 
     // Forward 3-D c2c FFT plan: nf × nf × nf.  Created once; reused every eval.
-    if (cufftPlan3d(&gpu->fft_plan, nf, nf, nf, CUFFT_Z2Z) != CUFFT_SUCCESS)
+    if (cufftPlan3d(&gpu->fft_plan, nf, nf, nf, use_float ? CUFFT_C2C : CUFFT_Z2Z) != CUFFT_SUCCESS)
         throw std::runtime_error("GpuState: cufftPlan3d failed");
     cufftSetStream(gpu->fft_plan, gpu->stream);
     gpu->fft_plan_valid = true;
 
-    // FFT output buffer: nf³ complex doubles (k-space).
-    if (cudaMalloc(&gpu->d_b_hat, ntot * sizeof(cuDoubleComplex)) != cudaSuccess)
+    // FFT output buffer: nf³ ComplexT<Real> (k-space).
+    if (cudaMalloc(&gpu->d_b_hat, ntot * complex_sz) != cudaSuccess)
         throw std::runtime_error("GpuState: cudaMalloc d_b_hat failed");
 
     // cuFINUFFT plans — created once per plan (makeplan does not bind to n).
-    // Per eval: call setpts (binds NU points) then execute.
+    // Per eval: call setpts (binds NU points) then execute. cufinufft_plan and
+    // cufinufftf_plan are both just opaque pointer typedefs (to unrelated struct
+    // tags), so either is stored in GpuState's void* fields and reinterpret_cast
+    // back to the concrete type wherever it's used, keyed on gpu->use_float.
     cufinufft_opts co;
     cufinufft_default_opts(&co);
     co.gpu_spreadinterponly = 1;
@@ -182,16 +223,30 @@ GpuState *gpu_create_state(
     // co.gpu_stream is left at cudaStreamDefault (the default from cufinufft_default_opts).
     const int64_t nmodes[3] = {nf, nf, nf};
 
-    int ier = cufinufft_makeplan(/*type=*/1, /*dim=*/3, nmodes,
-                                 /*iflag=*/+1, /*ntransf=*/1, tol,
-                                 &gpu->cfnufft_plan_1, &co);
-    if (ier != 0) throw std::runtime_error("GpuState: cufinufft_makeplan type-1 failed, ier=" + std::to_string(ier));
-
-    co.gpu_method = 1;
-    ier = cufinufft_makeplan(/*type=*/2, /*dim=*/3, nmodes,
-                             /*iflag=*/-1, /*ntransf=*/1, tol,
-                             &gpu->cfnufft_plan_2, &co);
-    if (ier != 0) throw std::runtime_error("GpuState: cufinufft_makeplan type-2 failed, ier=" + std::to_string(ier));
+    int ier;
+    if (use_float) {
+        cufinufftf_plan p1 = nullptr, p2 = nullptr;
+        ier = cufinufftf_makeplan(/*type=*/1, /*dim=*/3, nmodes,
+                                  /*iflag=*/+1, /*ntransf=*/1, float(tol), &p1, &co);
+        if (ier != 0) throw std::runtime_error("GpuState: cufinufftf_makeplan type-1 failed, ier=" + std::to_string(ier));
+        co.gpu_method = 1;
+        ier = cufinufftf_makeplan(/*type=*/2, /*dim=*/3, nmodes,
+                                  /*iflag=*/-1, /*ntransf=*/1, float(tol), &p2, &co);
+        if (ier != 0) throw std::runtime_error("GpuState: cufinufftf_makeplan type-2 failed, ier=" + std::to_string(ier));
+        gpu->cfnufft_plan_1 = p1;
+        gpu->cfnufft_plan_2 = p2;
+    } else {
+        cufinufft_plan p1 = nullptr, p2 = nullptr;
+        ier = cufinufft_makeplan(/*type=*/1, /*dim=*/3, nmodes,
+                                 /*iflag=*/+1, /*ntransf=*/1, tol, &p1, &co);
+        if (ier != 0) throw std::runtime_error("GpuState: cufinufft_makeplan type-1 failed, ier=" + std::to_string(ier));
+        co.gpu_method = 1;
+        ier = cufinufft_makeplan(/*type=*/2, /*dim=*/3, nmodes,
+                                 /*iflag=*/-1, /*ntransf=*/1, tol, &p2, &co);
+        if (ier != 0) throw std::runtime_error("GpuState: cufinufft_makeplan type-2 failed, ier=" + std::to_string(ier));
+        gpu->cfnufft_plan_1 = p1;
+        gpu->cfnufft_plan_2 = p2;
+    }
 
     // Short-range 27-cell-stencil neighbor tables (plan-level constant: depends only
     // on nc = floor(L/r_c), not on particle data). Mirrors esp.cpp short_range()'s
@@ -213,12 +268,18 @@ GpuState *gpu_create_state(
         }
         if (cudaMalloc(&gpu->d_nbc_tab, ntab * sizeof(int)) != cudaSuccess)
             throw std::runtime_error("GpuState: cudaMalloc d_nbc_tab failed");
-        if (cudaMalloc(&gpu->d_off_tab, ntab * sizeof(double)) != cudaSuccess)
+        if (cudaMalloc(&gpu->d_off_tab, ntab * real_sz) != cudaSuccess)
             throw std::runtime_error("GpuState: cudaMalloc d_off_tab failed");
         // Blocking copy: h_nbc_tab/h_off_tab are locals going out of scope right after,
         // unlike the plan-owned buffers above that justify cudaMemcpyAsync.
         cudaMemcpy(gpu->d_nbc_tab, h_nbc_tab.data(), ntab * sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(gpu->d_off_tab, h_off_tab.data(), ntab * sizeof(double), cudaMemcpyHostToDevice);
+        if (use_float) {
+            std::vector<float> h_off_tab_f(ntab);
+            for (int i = 0; i < ntab; ++i) h_off_tab_f[i] = float(h_off_tab[i]);
+            cudaMemcpy(gpu->d_off_tab, h_off_tab_f.data(), ntab * real_sz, cudaMemcpyHostToDevice);
+        } else {
+            cudaMemcpy(gpu->d_off_tab, h_off_tab.data(), ntab * real_sz, cudaMemcpyHostToDevice);
+        }
     }
 
     // Short-range cell-list CSR boundaries: size ncells+1 is fixed by nc, so this is plan-level
@@ -232,9 +293,9 @@ GpuState *gpu_create_state(
     // Force spectra (long_range_gpu steps 6-8): size nf³ is plan-level, only needed when the
     // plan actually computes forces.
     if (eval_type == DMK_POTENTIAL_GRAD) {
-        if (cudaMalloc(&gpu->d_fhat_x, ntot * sizeof(cuDoubleComplex)) != cudaSuccess ||
-            cudaMalloc(&gpu->d_fhat_y, ntot * sizeof(cuDoubleComplex)) != cudaSuccess ||
-            cudaMalloc(&gpu->d_fhat_z, ntot * sizeof(cuDoubleComplex)) != cudaSuccess)
+        if (cudaMalloc(&gpu->d_fhat_x, ntot * complex_sz) != cudaSuccess ||
+            cudaMalloc(&gpu->d_fhat_y, ntot * complex_sz) != cudaSuccess ||
+            cudaMalloc(&gpu->d_fhat_z, ntot * complex_sz) != cudaSuccess)
             throw std::runtime_error("GpuState: cudaMalloc d_fhat_{x,y,z} failed");
     }
 
@@ -373,14 +434,14 @@ __device__ constexpr Real horner_recurse(Real x, Real acc) {
     if constexpr (I == 0)
         return acc;
     else
-        return horner_recurse<Coeffs, I - 1>(x, acc * x + Real{Coeffs::at(I - 1)});
+        return horner_recurse<Coeffs, I - 1>(x, acc * x + Real(Coeffs::at(I - 1)));
 }
 
 // P(x) only -- no gradient needed.
 template <CoeffTag Coeffs, typename Real>
 __device__ constexpr Real horner_const(Real x) {
     static_assert(Coeffs::size > 0, "empty coefficient pack");
-    return horner_recurse<Coeffs, Coeffs::size - 1>(x, Real{Coeffs::at(Coeffs::size - 1)});
+    return horner_recurse<Coeffs, Coeffs::size - 1>(x, Real(Coeffs::at(Coeffs::size - 1)));
 }
 
 // P(x) and dP/dx(x) together, via synthetic division -- eval_esp_pair needs
@@ -396,7 +457,7 @@ __device__ constexpr void horner_recurse_deriv(Real x, Real &P, Real &dP) {
         return;
     } else {
         Real old_P = P;
-        P = P * x + Real{Coeffs::at(I - 1)};
+        P = P * x + Real(Coeffs::at(I - 1));
         dP = dP * x + old_P;
         return horner_recurse_deriv<Coeffs, I - 1>(x, P, dP);
     }
@@ -405,7 +466,7 @@ __device__ constexpr void horner_recurse_deriv(Real x, Real &P, Real &dP) {
 template <CoeffTag Coeffs, typename Real>
 __device__ constexpr void horner_const_deriv(Real x, Real &P, Real &dP) {
     static_assert(Coeffs::size > 0, "empty coefficient pack");
-    P = Real{Coeffs::at(Coeffs::size - 1)};
+    P = Real(Coeffs::at(Coeffs::size - 1));
     dP = Real{0};
     horner_recurse_deriv<Coeffs, Coeffs::size - 1>(x, P, dP);
 }
@@ -435,6 +496,16 @@ __device__ constexpr void horner_const_deriv(Real x, Real &P, Real &dP) {
 // (the hottest loop here) and extra live registers (gx_acc/gy_acc/gz_acc)
 // that hurt occupancy even on potential-only launches. As a bonus, the
 // potential-only path below also skips computing the derivative entirely.
+//
+// The Horner evaluation itself runs in Real, not always double: on hardware
+// with crippled FP64 throughput (e.g. workstation/consumer Blackwell cards),
+// forcing double here for every single pair -- the single highest-frequency
+// arithmetic in this whole kernel -- would dominate the runtime regardless
+// of everything else being Real. Coeffs::at(i) still returns literal doubles
+// (the fit itself is double-precision data either way), but Real(...) narrows
+// each coefficient to a compile-time immediate before the FMA chain runs, so
+// a float Real gets a float Horner evaluation, not a double one narrowed at
+// the end.
 template <CoeffTag Coeffs, bool WantForce, typename Real>
 __device__ __forceinline__ void eval_esp_pair(
     Real dx, Real dy, Real dz, Real q,
@@ -445,19 +516,86 @@ __device__ __forceinline__ void eval_esp_pair(
     if (R2 <= Real(0) || R2 >= r_c_sq) return; // also masks the R2=0 self-pair
 
     const Real Rinv = rsqrt(R2); // CUDA's rsqrt()/__drsqrt_rn(), full IEEE precision
-    const double x = double((R2 * Rinv + cen) * rsc); // = (R + cen)*rsc, mapped into [-1,1]
+    const Real x = (R2 * Rinv + cen) * rsc; // = (R + cen)*rsc, mapped into [-1,1]
 
     if constexpr (WantForce) {
-        double P, dP;
+        Real P, dP;
         horner_const_deriv<Coeffs>(x, P, dP);
-        pot_acc += q * Real(P) * Rinv;
-        const Real df_dR2 = Rinv * Rinv * (Real(dP) * rsc - Real(P) * Rinv);
+        pot_acc += q * P * Rinv;
+        const Real df_dR2 = Rinv * Rinv * (dP * rsc - P * Rinv);
         gx_acc += q * dx * df_dR2;
         gy_acc += q * dy * df_dR2;
         gz_acc += q * dz * df_dR2;
     } else {
-        const double P = horner_const<Coeffs>(x);
-        pot_acc += q * Real(P) * Rinv;
+        const Real P = horner_const<Coeffs>(x);
+        pot_acc += q * P * Rinv;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// short_range_kernel_old — pre-Phase-2 version, kept side by side with the
+// shared-memory/register-blocked short_range_kernel below so the two can be
+// A/B'd directly. One thread per target (grid-stride over the home cell's
+// targets), direct global-memory reads for sources -- no shared-memory
+// tiling, no register-blocking of multiple targets per thread. Still calls
+// the current eval_esp_pair<Coeffs, WantForce, Real> (compile-time
+// coefficients), not the original runtime (pointer, count) version it was
+// written against, so this isolates just the Phase 2 (tiling/register-
+// blocking) change's effect rather than also reverting Phase 1.
+// ---------------------------------------------------------------------------
+template <CoeffTag Coeffs, bool WantForce, typename Real>
+__global__ void short_range_kernel_old(
+    int nc, int n, int out_dim,
+    Real rsc, Real cen, Real r_c_sq,
+    const int    *cell_start,
+    const Real   *d_xs, const Real *d_ys, const Real *d_zs,
+    const Real   *d_qs,
+    const int    *nbc_tab,
+    const Real   *off_tab,
+    Real *pg_sorted)
+{
+    const int home = blockIdx.x; // 0 .. nc^3-1, row-major (x*nc+y)*nc+z, one block per cell
+    const int cx = home / (nc * nc);
+    const int cy = (home / nc) % nc;
+    const int cz = home % nc;
+
+    const int hbeg = cell_start[home];
+    const int n_trg = cell_start[home + 1] - hbeg;
+
+    for (int t = threadIdx.x; t < n_trg; t += blockDim.x) {
+        const int trg = hbeg + t;
+        const Real xt = d_xs[trg], yt = d_ys[trg], zt = d_zs[trg];
+
+        Real pot_acc = Real(0), gx_acc = Real(0), gy_acc = Real(0), gz_acc = Real(0);
+
+        for (int dxi = 0; dxi < 3; ++dxi) {
+            const int nbx = nbc_tab[cx * 3 + dxi];
+            const Real ox = off_tab[cx * 3 + dxi];
+            for (int dyi = 0; dyi < 3; ++dyi) {
+                const int nby = nbc_tab[cy * 3 + dyi];
+                const Real oy = off_tab[cy * 3 + dyi];
+                for (int dzi = 0; dzi < 3; ++dzi) {
+                    const int nbz = nbc_tab[cz * 3 + dzi];
+                    const Real oz = off_tab[cz * 3 + dzi];
+                    const int nb = (nbx * nc + nby) * nc + nbz;
+                    const int sbeg = cell_start[nb], send = cell_start[nb + 1];
+                    for (int s = sbeg; s < send; ++s) {
+                        const Real dx = xt - (d_xs[s] + ox);
+                        const Real dy = yt - (d_ys[s] + oy);
+                        const Real dz = zt - (d_zs[s] + oz);
+                        eval_esp_pair<Coeffs, WantForce, Real>(dx, dy, dz, d_qs[s], rsc, cen, r_c_sq,
+                                                               pot_acc, gx_acc, gy_acc, gz_acc);
+                    }
+                }
+            }
+        }
+
+        pg_sorted[out_dim * trg + 0] = pot_acc;
+        if constexpr (WantForce) {
+            pg_sorted[out_dim * trg + 1] = gx_acc;
+            pg_sorted[out_dim * trg + 2] = gy_acc;
+            pg_sorted[out_dim * trg + 3] = gz_acc;
+        }
     }
 }
 
@@ -483,7 +621,7 @@ __global__ void short_range_kernel(
     const Real   *d_xs, const Real *d_ys, const Real *d_zs,
     const Real   *d_qs,
     const int    *nbc_tab,
-    const double *off_tab,
+    const Real   *off_tab,
     Real *pg_sorted)
 {
     __shared__ Real s_xs[kShortRangeBlockSize];
@@ -515,13 +653,13 @@ __global__ void short_range_kernel(
 
         for (int dxi = 0; dxi < 3; ++dxi) {
             const int nbx = nbc_tab[cx * 3 + dxi];
-            const double ox = off_tab[cx * 3 + dxi];
+            const Real ox = off_tab[cx * 3 + dxi];
             for (int dyi = 0; dyi < 3; ++dyi) {
                 const int nby = nbc_tab[cy * 3 + dyi];
-                const double oy = off_tab[cy * 3 + dyi];
+                const Real oy = off_tab[cy * 3 + dyi];
                 for (int dzi = 0; dzi < 3; ++dzi) {
                     const int nbz = nbc_tab[cz * 3 + dzi];
-                    const double oz = off_tab[cz * 3 + dzi];
+                    const Real oz = off_tab[cz * 3 + dzi];
                     const int nb = (nbx * nc + nby) * nc + nbz;
                     const int sbeg = cell_start[nb], send = cell_start[nb + 1];
                     const int n_tiles = (send - sbeg + kShortRangeBlockSize - 1) / kShortRangeBlockSize;
@@ -532,23 +670,15 @@ __global__ void short_range_kernel(
                             // Bake the periodic image offset in at load time -- every
                             // target reading this tile afterward gets the already-
                             // wrapped coordinate, not just the raw source position.
-                            s_xs[threadIdx.x] = d_xs[s_idx] + Real(ox);
-                            s_ys[threadIdx.x] = d_ys[s_idx] + Real(oy);
-                            s_zs[threadIdx.x] = d_zs[s_idx] + Real(oz);
+                            s_xs[threadIdx.x] = d_xs[s_idx] + ox;
+                            s_ys[threadIdx.x] = d_ys[s_idx] + oy;
+                            s_zs[threadIdx.x] = d_zs[s_idx] + oz;
                             s_qs[threadIdx.x] = d_qs[s_idx];
                         }
                         __syncthreads();
 
                         const int n_local = min(kShortRangeBlockSize, send - sbeg - tile * kShortRangeBlockSize);
 
-                        // TODO(human): for each of this thread's n_own owned targets
-                        // (index k, position xt[k]/yt[k]/zt[k]), loop over the n_local
-                        // sources now sitting in s_xs/s_ys/s_zs/s_qs and call
-                        // eval_esp_pair<Coeffs, WantForce, Real> to accumulate into
-                        // pot_acc[k]/gx_acc[k]/gy_acc[k]/gz_acc[k]. Loop k from 0 to
-                        // n_own (NOT a fixed 0..TARGETS) -- on the last wave some
-                        // threads may have n_own == 0 and must do nothing here, while
-                        // still falling through to the __syncthreads() below.
                         for (int k = 0; k < n_own; ++k) {
                             // Process target k
                             for (int s = 0; s < n_local; ++s) {
@@ -556,8 +686,6 @@ __global__ void short_range_kernel(
                                 eval_esp_pair<Coeffs, WantForce, Real>(xt[k] - s_xs[s], yt[k] - s_ys[s], zt[k] - s_zs[s], s_qs[s], rsc, cen, r_c_sq, pot_acc[k], gx_acc[k], gy_acc[k], gz_acc[k]);
                             }
                         }
-
-
                         __syncthreads(); // all threads done reading this tile before it's overwritten
                     }
                 }
@@ -604,14 +732,15 @@ __global__ void scatter_kernel(
 // Operates in-place: d_b_hat[i] *= scaling_coeffs[i], producing pot_hat.
 // Mirrors CPU: pot_hat[i] = b_hat[i] * scaling_coeffs[i].
 // ---------------------------------------------------------------------------
+template <typename Real>
 __global__ void scaling_kernel(
     int ntot,
-    const double    *scaling_coeffs,
-    cuDoubleComplex *b_hat)
+    const Real       *scaling_coeffs,
+    ComplexT<Real>   *b_hat)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= ntot) return;
-    double s = scaling_coeffs[i];
+    Real s = scaling_coeffs[i];
     b_hat[i] = {b_hat[i].x * s, b_hat[i].y * s}; //.x = real part; .y = imaginary part
 }
 
@@ -620,7 +749,8 @@ __global__ void scaling_kernel(
 // cuFFT's inverse transform is unnormalized (output = ntot * true IFFT).
 // Mirrors CPU: ifftn_3d divides by ntot internally.
 // ---------------------------------------------------------------------------
-__global__ void normalize_kernel(int ntot, double inv_ntot, cuDoubleComplex *data)
+template <typename Real>
+__global__ void normalize_kernel(int ntot, Real inv_ntot, ComplexT<Real> *data)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= ntot) return;
@@ -632,7 +762,7 @@ __global__ void normalize_kernel(int ntot, double inv_ntot, cuDoubleComplex *dat
 // Mirrors CPU: pot[j] += real(c[j]) after finufft3d2.
 // ---------------------------------------------------------------------------
 template <typename Real>
-__global__ void extract_real_kernel(int n, const cuDoubleComplex *d_c, Real *d_out)
+__global__ void extract_real_kernel(int n, const ComplexT<Real> *d_c, Real *d_out)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
@@ -651,12 +781,13 @@ __global__ void extract_real_kernel(int n, const cuDoubleComplex *d_c, Real *d_o
 // ---------------------------------------------------------------------------
 __device__ __forceinline__ int grad_kidx(int i, int nf) { return (i <= nf / 2) ? i : i - nf; }
 
+template <typename Real>
 __global__ void grad_scaling_kernel(
-    int nf, double coeff_grad,
-    const cuDoubleComplex *pot_hat,
-    cuDoubleComplex *f_hat_x,
-    cuDoubleComplex *f_hat_y,
-    cuDoubleComplex *f_hat_z)
+    int nf, Real coeff_grad,
+    const ComplexT<Real> *pot_hat,
+    ComplexT<Real> *f_hat_x,
+    ComplexT<Real> *f_hat_y,
+    ComplexT<Real> *f_hat_z)
 {
     const long long ntot = (long long)nf * nf * nf;
     const long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
@@ -666,11 +797,11 @@ __global__ void grad_scaling_kernel(
     const int iy = int((i / nf) % nf);
     const int ix = int(i / ((long long)nf * nf));
 
-    const cuDoubleComplex s = pot_hat[i];
+    const ComplexT<Real> s = pot_hat[i];
     auto mul_ik = [=](int k) {
-        const double factor = coeff_grad * double(k);
+        const Real factor = coeff_grad * Real(k);
         // s * (i * factor) = (-s.y*factor, s.x*factor)
-        return cuDoubleComplex{-s.y * factor, s.x * factor};
+        return ComplexT<Real>{-s.y * factor, s.x * factor};
     };
     f_hat_x[i] = mul_ik(grad_kidx(iz, nf));
     f_hat_y[i] = mul_ik(grad_kidx(iy, nf));
@@ -684,7 +815,7 @@ __global__ void grad_scaling_kernel(
 // no separate real-charges buffer is needed here.
 // ---------------------------------------------------------------------------
 template <typename Real>
-__global__ void accumulate_force_kernel(int n, const cuDoubleComplex *d_c, const cuDoubleComplex *d_force_c,
+__global__ void accumulate_force_kernel(int n, const ComplexT<Real> *d_c, const ComplexT<Real> *d_force_c,
                                         Real *d_force_out)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -704,42 +835,77 @@ __global__ void self_interaction_kernel(int n, Real factor, const Real *d_charge
 
 // ---------------------------------------------------------------------------
 // scale_pack_kernel — AoS Real positions/charges (already on device) -> scaled
-// [-pi,pi) SoA double coords + packed complex charges for long_range_gpu.
+// [-pi,pi) SoA Real coords + packed complex charges for long_range_gpu.
 // Entirely on-device: no host-side loop, no extra host<->device round trip
 // when d_pos_aos/d_charges are already resident (esp_eval_gpu_impl).
 // ---------------------------------------------------------------------------
 template <typename Real>
 __global__ void scale_pack_kernel(
-    const Real *d_pos_aos, const Real *d_charges, int n, double scale,
-    double *d_x, double *d_y, double *d_z, cuDoubleComplex *d_c)
+    const Real *d_pos_aos, const Real *d_charges, int n, Real scale,
+    Real *d_x, Real *d_y, Real *d_z, ComplexT<Real> *d_c)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    d_x[i] = double(d_pos_aos[3 * i + 0]) * scale;
-    d_y[i] = double(d_pos_aos[3 * i + 1]) * scale;
-    d_z[i] = double(d_pos_aos[3 * i + 2]) * scale;
-    d_c[i] = {double(d_charges[i]), 0.0};
+    d_x[i] = d_pos_aos[3 * i + 0] * scale;
+    d_y[i] = d_pos_aos[3 * i + 1] * scale;
+    d_z[i] = d_pos_aos[3 * i + 2] * scale;
+    d_c[i] = {d_charges[i], Real(0)};
+}
+
+// ---------------------------------------------------------------------------
+// cufinufft_{setpts,execute}_t / cufft_exec_c2c_t — Real-dispatched wrappers.
+// cufinufft_plan/cufinufftf_plan are different C types (not overloads of one
+// name), so GpuState stores whichever one this plan was created for as a
+// void*; these wrappers reinterpret_cast it back and call the matching
+// double/float library entry point, chosen at compile time via if constexpr.
+// ---------------------------------------------------------------------------
+template <typename Real>
+static int cufinufft_setpts_t(void *plan, int n, Real *x, Real *y, Real *z) {
+    if constexpr (std::is_same_v<Real, double>)
+        return cufinufft_setpts(reinterpret_cast<cufinufft_plan>(plan), n, x, y, z, 0, nullptr, nullptr, nullptr);
+    else
+        return cufinufftf_setpts(reinterpret_cast<cufinufftf_plan>(plan), n, x, y, z, 0, nullptr, nullptr, nullptr);
+}
+
+template <typename Real>
+static int cufinufft_execute_t(void *plan, ComplexT<Real> *c, ComplexT<Real> *f) {
+    if constexpr (std::is_same_v<Real, double>)
+        return cufinufft_execute(reinterpret_cast<cufinufft_plan>(plan), c, f);
+    else
+        return cufinufftf_execute(reinterpret_cast<cufinufftf_plan>(plan), c, f);
+}
+
+template <typename Real>
+static cufftResult cufft_exec_c2c_t(cufftHandle plan, ComplexT<Real> *in, ComplexT<Real> *out, int direction) {
+    if constexpr (std::is_same_v<Real, double>)
+        return cufftExecZ2Z(plan, in, out, direction);
+    else
+        return cufftExecC2C(plan, in, out, direction);
 }
 
 // ---------------------------------------------------------------------------
 // long_range_gpu
 // Mirrors the CPU long_range(): spread → FFT → scale → IFFT → interp (+ forces).
-// Always operates in double precision regardless of Real.
+// Genuinely Real-templated -- gpu must have been created with use_float
+// matching Real (see gpu_create_state / check_plan_real).
 // ---------------------------------------------------------------------------
 template <typename Real>
 static void long_range_gpu(
     GpuState &gpu,
-    int n, double tol,
-    const double *d_x, const double *d_y, const double *d_z,
-    const cuDoubleComplex *d_c,
-    double coeff_grad,
+    int n,
+    const Real *d_x, const Real *d_y, const Real *d_z,
+    const ComplexT<Real> *d_c,
+    Real coeff_grad,
     bool want_force,
     Real *d_pot, Real *d_fx, Real *d_fy, Real *d_fz)
 {
     const long long ntot = (long long)gpu.nf * gpu.nf * gpu.nf;
+    auto *d_b      = reinterpret_cast<ComplexT<Real> *>(gpu.d_b);
+    auto *d_b_hat  = reinterpret_cast<ComplexT<Real> *>(gpu.d_b_hat);
+    auto *d_scaling_coeffs = reinterpret_cast<Real *>(gpu.d_scaling_coeffs);
 
     // -----------------------------------------------------------------------
-    // Step 1: Spread — NU points → uniform grid  (gpu.d_b, nf³ complex)
+    // Step 1: Spread — NU points → uniform grid  (d_b, nf³ complex)
     // Mirrors CPU: finufft3d1 with opts.spreadinterponly=1.
     // Uses the pre-created gpu.cfnufft_plan_1 (type-1, makeplan done at plan time).
     // -----------------------------------------------------------------------
@@ -752,11 +918,10 @@ static void long_range_gpu(
             throw std::runtime_error(
                 std::string("long_range_gpu: pre-setpts sync failed: ") + cudaGetErrorString(cerr));
 
-        int ier = cufinufft_setpts(gpu.cfnufft_plan_1, n,
-                                   const_cast<double *>(d_x),
-                                   const_cast<double *>(d_y),
-                                   const_cast<double *>(d_z),
-                                   0, nullptr, nullptr, nullptr);
+        int ier = cufinufft_setpts_t<Real>(gpu.cfnufft_plan_1, n,
+                                           const_cast<Real *>(d_x),
+                                           const_cast<Real *>(d_y),
+                                           const_cast<Real *>(d_z));
         if (ier != 0) {
             cudaError_t last = cudaGetLastError();
             throw std::runtime_error(
@@ -765,22 +930,22 @@ static void long_range_gpu(
         }
 
         // Zero before spreading — cuFINUFFT accumulates into the output buffer.
-        cudaMemsetAsync(gpu.d_b, 0, ntot * sizeof(cuDoubleComplex), gpu.stream);
+        cudaMemsetAsync(d_b, 0, ntot * sizeof(ComplexT<Real>), gpu.stream);
 
-        ier = cufinufft_execute(gpu.cfnufft_plan_1, const_cast<cuDoubleComplex *>(d_c), gpu.d_b);
+        ier = cufinufft_execute_t<Real>(gpu.cfnufft_plan_1, const_cast<ComplexT<Real> *>(d_c), d_b);
         if (ier != 0)
             throw std::runtime_error("long_range_gpu: cufinufft_execute spread failed, ier=" + std::to_string(ier));
     }
 
     // -----------------------------------------------------------------------
-    // Step 2: Forward FFT — gpu.d_b → gpu.d_b_hat  (real-space grid → k-space)
+    // Step 2: Forward FFT — d_b → d_b_hat  (real-space grid → k-space)
     // Mirrors CPU: fftn_3d(b, b_hat, nf).
     // -----------------------------------------------------------------------
     {
         NvtxRange range("long_range/fft_forward");
-        cufftResult r = cufftExecZ2Z(gpu.fft_plan, gpu.d_b, gpu.d_b_hat, CUFFT_FORWARD);
+        cufftResult r = cufft_exec_c2c_t<Real>(gpu.fft_plan, d_b, d_b_hat, CUFFT_FORWARD);
         if (r != CUFFT_SUCCESS)
-            throw std::runtime_error("long_range_gpu: cufftExecZ2Z forward failed, err=" + std::to_string(r));
+            throw std::runtime_error("long_range_gpu: cufft forward failed, err=" + std::to_string(r));
     }
 
     // -----------------------------------------------------------------------
@@ -792,8 +957,8 @@ static void long_range_gpu(
         NvtxRange range("long_range/scale");
         const int threads = 256;
         const int blocks  = static_cast<int>((ntot + threads - 1) / threads);
-        scaling_kernel<<<blocks, threads, 0, gpu.stream>>>(
-            static_cast<int>(ntot), gpu.d_scaling_coeffs, gpu.d_b_hat);
+        scaling_kernel<Real><<<blocks, threads, 0, gpu.stream>>>(
+            static_cast<int>(ntot), d_scaling_coeffs, d_b_hat);
     }
     // -----------------------------------------------------------------------
     // Step 4: Inverse FFT — pot_hat (d_b_hat) → d_grid_pot.
@@ -803,15 +968,15 @@ static void long_range_gpu(
     // -----------------------------------------------------------------------
     {
         NvtxRange range("long_range/fft_inverse_normalize");
-        cufftResult r = cufftExecZ2Z(gpu.fft_plan, gpu.d_b_hat, gpu.d_b, CUFFT_INVERSE);
+        cufftResult r = cufft_exec_c2c_t<Real>(gpu.fft_plan, d_b_hat, d_b, CUFFT_INVERSE);
         if (r != CUFFT_SUCCESS)
-            throw std::runtime_error("long_range_gpu: cufftExecZ2Z inverse failed, err=" + std::to_string(r));
+            throw std::runtime_error("long_range_gpu: cufft inverse failed, err=" + std::to_string(r));
 
-        const double inv_ntot = 1.0 / double(ntot);
+        const Real inv_ntot = Real(1) / Real(ntot);
         const int threads = 256;
         const int blocks  = static_cast<int>((ntot + threads - 1) / threads);
-        normalize_kernel<<<blocks, threads, 0, gpu.stream>>>(
-            static_cast<int>(ntot), inv_ntot, gpu.d_b);
+        normalize_kernel<Real><<<blocks, threads, 0, gpu.stream>>>(
+            static_cast<int>(ntot), inv_ntot, d_b);
     }
     // gpu.cfnufft_plan_2's NU points don't change within a single long_range_gpu
     // call (same d_x/d_y/d_z throughout), so setpts is bound once here and every
@@ -821,18 +986,17 @@ static void long_range_gpu(
     const bool want_force_interp = want_force && (d_fx || d_fy || d_fz);
     if (want_pot_interp || want_force_interp) {
         NvtxRange range("long_range/interp_setpts");
-        int ier = cufinufft_setpts(gpu.cfnufft_plan_2, n,
-                                   const_cast<double *>(d_x),
-                                   const_cast<double *>(d_y),
-                                   const_cast<double *>(d_z),
-                                   0, nullptr, nullptr, nullptr);
+        int ier = cufinufft_setpts_t<Real>(gpu.cfnufft_plan_2, n,
+                                           const_cast<Real *>(d_x),
+                                           const_cast<Real *>(d_y),
+                                           const_cast<Real *>(d_z));
         if (ier != 0)
             throw std::runtime_error("long_range_gpu: cufinufft_setpts interp failed, ier=" + std::to_string(ier));
     }
 
     // -----------------------------------------------------------------------
     // Step 5: Interp (cuFINUFFT type-2, spreadinterponly=1)
-    // d_grid_pot (gpu.d_b) → d_pot_c (n complex values at NU points) → d_pot.
+    // d_grid_pot (d_b) → d_pot_c (n complex values at NU points) → d_pot.
     // Mirrors CPU: finufft3d2 with spreadinterponly=1, then pot[j] += real(c[j]).
     // Uses the pre-created gpu.cfnufft_plan_2 (type-2, makeplan done at plan time).
     // -----------------------------------------------------------------------
@@ -840,21 +1004,21 @@ static void long_range_gpu(
         NvtxRange range("long_range/interp_potential");
         // Reused for the force components below too (d_scratch_nu_c) -- pot_c is fully
         // consumed here before steps 6-8 even start, so there's no lifetime overlap.
-        ensure_capacity(gpu.d_scratch_nu_c, gpu.scratch_nu_c_cap, (size_t)n * sizeof(cuDoubleComplex));
-        cuDoubleComplex *d_pot_c = reinterpret_cast<cuDoubleComplex *>(gpu.d_scratch_nu_c);
+        ensure_capacity(gpu.d_scratch_nu_c, gpu.scratch_nu_c_cap, (size_t)n * sizeof(ComplexT<Real>));
+        auto *d_pot_c = reinterpret_cast<ComplexT<Real> *>(gpu.d_scratch_nu_c);
 
-        // gpu.d_b is d_grid_pot (after step 4). Execute: uniform grid → NU values.
-        int ier = cufinufft_execute(gpu.cfnufft_plan_2, d_pot_c, gpu.d_b);
+        // d_b is d_grid_pot (after step 4). Execute: uniform grid → NU values.
+        int ier = cufinufft_execute_t<Real>(gpu.cfnufft_plan_2, d_pot_c, d_b);
         if (ier != 0) throw std::runtime_error("long_range_gpu: cufinufft_execute interp failed, ier=" + std::to_string(ier));
 
         const int threads = 256;
         const int blocks  = (n + threads - 1) / threads;
-        extract_real_kernel<<<blocks, threads, 0, gpu.stream>>>(n, d_pot_c, d_pot);
+        extract_real_kernel<Real><<<blocks, threads, 0, gpu.stream>>>(n, d_pot_c, d_pot);
     }
 
     // -----------------------------------------------------------------------
     // Steps 6-8: force path (ik method).
-    // gpu.d_b_hat still holds pot_hat (= b_hat*scaling_coeffs from step 3 — step
+    // d_b_hat still holds pot_hat (= b_hat*scaling_coeffs from step 3 — step
     // 4's IFFT read it without mutating it), so it's used directly here.
     // Mirrors CPU long_range()'s force block (esp.cpp).
     // -----------------------------------------------------------------------
@@ -862,29 +1026,31 @@ static void long_range_gpu(
         NvtxRange force_path_range("long_range/force_path");
         // Plan-level (gpu_create_state): size nf³ is fixed, allocated once whenever the plan
         // computes forces at all.
-        cuDoubleComplex *f_hat_x = gpu.d_fhat_x, *f_hat_y = gpu.d_fhat_y, *f_hat_z = gpu.d_fhat_z;
+        auto *f_hat_x = reinterpret_cast<ComplexT<Real> *>(gpu.d_fhat_x);
+        auto *f_hat_y = reinterpret_cast<ComplexT<Real> *>(gpu.d_fhat_y);
+        auto *f_hat_z = reinterpret_cast<ComplexT<Real> *>(gpu.d_fhat_z);
 
         // Step 6: build the three force spectra from pot_hat.
         {
             NvtxRange range("long_range/force_grad_scaling");
             const int threads = 256;
             const int blocks  = static_cast<int>((ntot + threads - 1) / threads);
-            grad_scaling_kernel<<<blocks, threads, 0, gpu.stream>>>(
-                gpu.nf, coeff_grad, gpu.d_b_hat, f_hat_x, f_hat_y, f_hat_z);
+            grad_scaling_kernel<Real><<<blocks, threads, 0, gpu.stream>>>(
+                gpu.nf, coeff_grad, d_b_hat, f_hat_x, f_hat_y, f_hat_z);
         }
 
         // Step 7: inverse FFT each component in-place, then normalize (cuFFT's
         // IFFT is unnormalized, mirrors normalize_kernel usage in step 4).
-        auto ifft_and_normalize = [&](cuDoubleComplex *buf) {
+        auto ifft_and_normalize = [&](ComplexT<Real> *buf) {
             NvtxRange range("long_range/force_ifft_normalize");
-            cufftResult r = cufftExecZ2Z(gpu.fft_plan, buf, buf, CUFFT_INVERSE);
+            cufftResult r = cufft_exec_c2c_t<Real>(gpu.fft_plan, buf, buf, CUFFT_INVERSE);
             if (r != CUFFT_SUCCESS)
-                throw std::runtime_error("long_range_gpu: cufftExecZ2Z inverse (force) failed, err=" +
+                throw std::runtime_error("long_range_gpu: cufft inverse (force) failed, err=" +
                                          std::to_string(r));
-            const double inv_ntot = 1.0 / double(ntot);
+            const Real inv_ntot = Real(1) / Real(ntot);
             const int threads = 256;
             const int blocks  = static_cast<int>((ntot + threads - 1) / threads);
-            normalize_kernel<<<blocks, threads, 0, gpu.stream>>>(static_cast<int>(ntot), inv_ntot, buf);
+            normalize_kernel<Real><<<blocks, threads, 0, gpu.stream>>>(static_cast<int>(ntot), inv_ntot, buf);
         };
         ifft_and_normalize(f_hat_x);
         ifft_and_normalize(f_hat_y);
@@ -896,13 +1062,13 @@ static void long_range_gpu(
         // Same scratch buffer as d_pot_c above, reused sequentially across all three
         // components (each is fully consumed by accumulate_force_kernel before the next
         // interp_and_accumulate call touches it).
-        ensure_capacity(gpu.d_scratch_nu_c, gpu.scratch_nu_c_cap, (size_t)n * sizeof(cuDoubleComplex));
-        cuDoubleComplex *d_force_c = reinterpret_cast<cuDoubleComplex *>(gpu.d_scratch_nu_c);
+        ensure_capacity(gpu.d_scratch_nu_c, gpu.scratch_nu_c_cap, (size_t)n * sizeof(ComplexT<Real>));
+        auto *d_force_c = reinterpret_cast<ComplexT<Real> *>(gpu.d_scratch_nu_c);
 
-        auto interp_and_accumulate = [&](cuDoubleComplex *grid_force, Real *d_force_out) {
+        auto interp_and_accumulate = [&](ComplexT<Real> *grid_force, Real *d_force_out) {
             if (!d_force_out) return;
             NvtxRange range("long_range/force_interp_accumulate");
-            int ier = cufinufft_execute(gpu.cfnufft_plan_2, d_force_c, grid_force);
+            int ier = cufinufft_execute_t<Real>(gpu.cfnufft_plan_2, d_force_c, grid_force);
             if (ier != 0)
                 throw std::runtime_error("long_range_gpu: cufinufft_execute force-interp failed, ier=" +
                                          std::to_string(ier));
@@ -951,7 +1117,11 @@ static void short_range_gpu(
 #define DMK_SR_LAUNCH(TAG, WANTFORCE)                                                                                  \
     short_range_kernel<TAG, WANTFORCE, kTargetsPerThread, Real><<<nc * nc * nc, threads, 0, gpu.stream>>>(            \
         nc, n, out_dim, rsc, cen, r_c_sq, d_cell_start, d_xs, d_ys, d_zs, d_qs,                                       \
-        gpu.d_nbc_tab, gpu.d_off_tab, d_pg_sorted)
+        gpu.d_nbc_tab, reinterpret_cast<const Real *>(gpu.d_off_tab), d_pg_sorted)
+// #define DMK_SR_LAUNCH(TAG, WANTFORCE)                                                                              \
+//     short_range_kernel_old<TAG, WANTFORCE, Real><<<nc * nc * nc, threads, 0, gpu.stream>>>(                        \
+//         nc, n, out_dim, rsc, cen, r_c_sq, d_cell_start, d_xs, d_ys, d_zs, d_qs,                                    \
+//         gpu.d_nbc_tab, reinterpret_cast<const Real *>(gpu.d_off_tab), d_pg_sorted)
 #define DMK_SR_CASCADE(PREFIX, WANTFORCE)                                                                              \
     do {                                                                                                              \
         if      (n_digits <= 2)  DMK_SR_LAUNCH(EspSrCoeffs_##PREFIX##_2, WANTFORCE);                                   \
@@ -1005,6 +1175,21 @@ static Real self_factor(GpuState *gpu) {
 }
 
 // ---------------------------------------------------------------------------
+// check_plan_real — a GpuState is created for exactly one Real (use_float,
+// set in gpu_create_state); calling esp_eval_gpu<Real> with the other Real on
+// the same plan would reinterpret_cast every long-range buffer/plan handle to
+// the wrong concrete type. Fail loudly instead.
+// ---------------------------------------------------------------------------
+template <typename Real>
+static void check_plan_real(const GpuState *gpu) {
+    const bool wants_float = std::is_same_v<Real, float>;
+    if (wants_float != gpu->use_float)
+        throw std::runtime_error(
+            std::string("esp_eval_gpu: called with Real=") + (wants_float ? "float" : "double") +
+            " but this plan was created for " + (gpu->use_float ? "float" : "double"));
+}
+
+// ---------------------------------------------------------------------------
 // gpu_make_spans — resize + zero the host buffer, return four output spans.
 // ---------------------------------------------------------------------------
 template <typename Real>
@@ -1031,6 +1216,7 @@ static PotForce<Real> esp_eval_gpu_impl(
     const std::vector<Vec3T<Real>> &r_src,
     const std::vector<Real>        &charges)
 {
+    check_plan_real<Real>(gpu);
     const int  n  = static_cast<int>(r_src.size());
     const int  nc = static_cast<int>(std::floor(gpu->L / gpu->r_c));
     const bool want_force = (gpu->eval_type == DMK_POTENTIAL_GRAD);
@@ -1066,21 +1252,20 @@ static PotForce<Real> esp_eval_gpu_impl(
                              want_force, d_pot, d_fx, d_fy, d_fz);
     }
 
-    // Long-range: needs its own scaled [-pi,pi) SoA coords + packed complex charges
-    // (always double, regardless of Real -- same convention as esp_eval_gpu_long_range).
+    // Long-range: needs its own scaled [-pi,pi) SoA coords + packed complex charges.
     // d_pos_aos/d_charges are already resident on device (uploaded above for
     // short-range), so this is a pure device-to-device reshape+scale -- no host
     // loop, no extra host<->device traffic.
-    const double scale = 2.0 * M_PI / gpu->L;
-    double *d_x, *d_y, *d_z; cuDoubleComplex *d_c;
+    const Real scale = Real(2.0 * M_PI) / Real(gpu->L);
+    Real *d_x, *d_y, *d_z; ComplexT<Real> *d_c;
     {
         NvtxRange range("eval/long_range_setup");
-        ensure_capacity(gpu->d_scratch_lr_xyz, gpu->scratch_lr_xyz_cap, 3 * (size_t)n * sizeof(double));
-        d_x = reinterpret_cast<double *>(gpu->d_scratch_lr_xyz);
+        ensure_capacity(gpu->d_scratch_lr_xyz, gpu->scratch_lr_xyz_cap, 3 * (size_t)n * sizeof(Real));
+        d_x = reinterpret_cast<Real *>(gpu->d_scratch_lr_xyz);
         d_y = d_x + n;
         d_z = d_y + n;
-        ensure_capacity(gpu->d_scratch_lr_c, gpu->scratch_lr_c_cap, (size_t)n * sizeof(cuDoubleComplex));
-        d_c = reinterpret_cast<cuDoubleComplex *>(gpu->d_scratch_lr_c);
+        ensure_capacity(gpu->d_scratch_lr_c, gpu->scratch_lr_c_cap, (size_t)n * sizeof(ComplexT<Real>));
+        d_c = reinterpret_cast<ComplexT<Real> *>(gpu->d_scratch_lr_c);
 
         const int threads = 256, blocks = (n + threads - 1) / threads;
         scale_pack_kernel<Real><<<blocks, threads, 0, gpu->stream>>>(
@@ -1089,7 +1274,7 @@ static PotForce<Real> esp_eval_gpu_impl(
 
     {
         NvtxRange range("eval/long_range");
-        long_range_gpu<Real>(*gpu, n, gpu->tol, d_x, d_y, d_z, d_c, scale, want_force, d_pot, d_fx, d_fy, d_fz);
+        long_range_gpu<Real>(*gpu, n, d_x, d_y, d_z, d_c, scale, want_force, d_pot, d_fx, d_fy, d_fz);
     }
 
     // Self-interaction correction (potential only, matches CPU self_interaction).
@@ -1125,6 +1310,7 @@ static PotForce<Real> esp_eval_gpu_short_range_impl(
     const std::vector<Vec3T<Real>> &r_src,
     const std::vector<Real>        &charges)
 {
+    check_plan_real<Real>(gpu);
     const int  n  = static_cast<int>(r_src.size());
     const int  nc = static_cast<int>(std::floor(gpu->L / gpu->r_c));
     const bool want_force = (gpu->eval_type == DMK_POTENTIAL_GRAD);
@@ -1180,15 +1366,16 @@ static PotForce<Real> esp_eval_gpu_long_range_impl(
     const std::vector<Vec3T<Real>> &r_src,
     const std::vector<Real>        &charges)
 {
+    check_plan_real<Real>(gpu);
     const int  n  = static_cast<int>(r_src.size());
     [[maybe_unused]] const bool want_force = (gpu->eval_type == DMK_POTENTIAL_GRAD);
     auto [pot, fx, fy, fz] = gpu_make_spans<Real>(gpu, n);
 
     // Upload raw AoS positions/charges once, then scale+pack into SoA [-pi,pi)
     // coords + complex charges entirely on-device (no host-side loop).
-    const double scale = 2.0 * M_PI / gpu->L;
+    const Real scale = Real(2.0 * M_PI) / Real(gpu->L);
     const Real *h_pos_aos = reinterpret_cast<const Real *>(r_src.data());
-    double *d_x, *d_y, *d_z; cuDoubleComplex *d_c;
+    Real *d_x, *d_y, *d_z; ComplexT<Real> *d_c;
     Real *d_pot, *d_fx = nullptr, *d_fy = nullptr, *d_fz = nullptr;
     {
         NvtxRange range("eval/upload_input");
@@ -1198,12 +1385,12 @@ static PotForce<Real> esp_eval_gpu_long_range_impl(
         cudaMemcpyAsync(d_pos_aos, h_pos_aos, 3 * (size_t)n * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
         cudaMemcpyAsync(d_charges, charges.data(), n * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
 
-        ensure_capacity(gpu->d_scratch_lr_xyz, gpu->scratch_lr_xyz_cap, 3 * (size_t)n * sizeof(double));
-        d_x = reinterpret_cast<double *>(gpu->d_scratch_lr_xyz);
+        ensure_capacity(gpu->d_scratch_lr_xyz, gpu->scratch_lr_xyz_cap, 3 * (size_t)n * sizeof(Real));
+        d_x = reinterpret_cast<Real *>(gpu->d_scratch_lr_xyz);
         d_y = d_x + n;
         d_z = d_y + n;
-        ensure_capacity(gpu->d_scratch_lr_c, gpu->scratch_lr_c_cap, (size_t)n * sizeof(cuDoubleComplex));
-        d_c = reinterpret_cast<cuDoubleComplex *>(gpu->d_scratch_lr_c);
+        ensure_capacity(gpu->d_scratch_lr_c, gpu->scratch_lr_c_cap, (size_t)n * sizeof(ComplexT<Real>));
+        d_c = reinterpret_cast<ComplexT<Real> *>(gpu->d_scratch_lr_c);
         const int threads = 256, blocks = (n + threads - 1) / threads;
         scale_pack_kernel<Real><<<blocks, threads, 0, gpu->stream>>>(
             d_pos_aos, d_charges, n, scale, d_x, d_y, d_z, d_c);
@@ -1224,7 +1411,7 @@ static PotForce<Real> esp_eval_gpu_long_range_impl(
 
     {
         NvtxRange range("eval/long_range");
-        long_range_gpu<Real>(*gpu, n, gpu->tol,
+        long_range_gpu<Real>(*gpu, n,
                              d_x, d_y, d_z, d_c,
                              scale, want_force,
                              d_pot, d_fx, d_fy, d_fz);
