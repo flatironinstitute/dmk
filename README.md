@@ -68,16 +68,12 @@ make -j 12
 # ESP (Ewald Summation with Prolates)
 
 DMK includes an experimental periodic electrostatics solver based on prolate spheroidal wave
-functions (PSWFs), as detailed [here](https://www.nature.com/articles/s41467-026-73232-8). It's off by default; enable it at configure time:
-
-```bash
-cmake .. -DDMK_BUILD_ESP=ON
-make -j 10
-```
+functions (PSWFs), as detailed [here](https://www.nature.com/articles/s41467-026-73232-8). 
 
 Optionally, `-DDMK_USE_JIT=ON` enables runtime JIT-generated short-range kernels (matching the
 long-range window exactly at any sigma, instead of the precompiled AOT tables baked at
-sigma=1.35). This requires LLVM — RuFuS (`extern/RuFuS`) targets **LLVM 19** specifically. On FI systems: `module load llvm/19.1.7`.
+sigma=1.35). This requires LLVM — RuFuS (`extern/RuFuS`) targets **LLVM 19** specifically, though may
+work with newer versions. On FI systems: `module load llvm/19.1.7`.
 
 # Fortran code installation guide
 

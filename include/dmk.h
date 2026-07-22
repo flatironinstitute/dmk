@@ -95,7 +95,6 @@ dmk_error pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *pot_trg);
 pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src,
                            const double *charge, const double *normal, int n_trg, const double *r_trg);
 
-#ifdef DMK_BUILD_ESP
 // ESP (Ewald Sum with PSWF kernels)
 // Particles lie in the cubic box [-L/2, L/2)^n_dim.
 
@@ -145,7 +144,6 @@ void pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double
               double *pot_src);
 void pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const float *r_src, const float *charges,
                float *pot_src);
-#endif // DMK_BUILD_ESP
 
 dmk_error pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const double *normal);
 dmk_error pdmk_tree_update_chargesf(pdmk_tree tree, const float *charge, const float *normal);

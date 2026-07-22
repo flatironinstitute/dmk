@@ -1,5 +1,3 @@
-#ifdef DMK_BUILD_ESP
-
 #include <dmk.h>
 #include <dmk/omp_wrapper.hpp>
 #include <dmk/util.hpp>
@@ -19,10 +17,6 @@
 #include <string>
 #include <type_traits>
 #include <vector>
-
-#ifdef DMK_HAVE_MPI
-#error "ESP does not support MPI. DMK_BUILD_ESP and DMK_HAVE_MPI are mutually exclusive."
-#endif
 
 struct Config {
     int n_src = 100'000;
@@ -606,6 +600,18 @@ Config parse_args(int argc, char *argv[]) {
 }
 
 int main(int argc, char *argv[]) {
+#ifdef DMK_HAVE_MPI
+    int rank, np;
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &np);
+    if (np > 1) {
+        std::cerr << "ESP does not support multiple MPI ranks\n";
+        MPI_Finalize();
+        return 1;
+    }
+#endif
+
     Config cfg = parse_args(argc, argv);
 
 #ifndef DMK_USE_JIT
@@ -621,11 +627,3 @@ int main(int argc, char *argv[]) {
         run_benchmark<float>(cfg);
     return 0;
 }
-
-#else // DMK_BUILD_ESP
-#include <iostream>
-int main() {
-    std::cerr << "benchmark_esp requires -DDMK_BUILD_ESP=ON at configure time.\n";
-    return 1;
-}
-#endif // DMK_BUILD_ESP

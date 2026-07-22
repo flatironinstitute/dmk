@@ -8,12 +8,8 @@ option(DMK_BUILD_TESTS "Build tests" ON)
 option(DMK_BUILD_EXAMPLES "Build examples" ON)
 option(DMK_INSTRUMENT "Instrument the code" OFF)
 option(DMK_BUILD_PVFMM "Build PVFMM for comparison. Useless without DMK_BUILD_EXAMPLES" OFF)
-option(DMK_BUILD_ESP "Build Ewald Summation with PSWF" OFF)
 option(DMK_HAVE_MPI "Use MPI for parallelism" ON)
 
-if (DMK_BUILD_ESP AND DMK_HAVE_MPI)
-  message(FATAL_ERROR "DMK_BUILD_ESP and DMK_HAVE_MPI are mutually exclusive: ESP does not support MPI.")
-endif()
 option(DMK_HAVE_OPENMP "Use OpenMP for parallelism" ON)
 option(DMK_BUILD_REFERENCE "Build reference Fortran implementation" OFF)
 option(DMK_USE_JIT "Use JIT compilation where supported (requires LLVM)" OFF)
@@ -84,22 +80,15 @@ set(DMK_INCLUDES
 )
 
 include(FetchContent)
-if (DMK_BUILD_ESP)
-  set(FINUFFT_USE_DUCC0 ON CACHE BOOL "" FORCE)
-  FetchContent_Declare(
-	finufft
-	GIT_REPOSITORY https://github.com/flatironinstitute/finufft.git
-	GIT_TAG v2.5.1
-  )
-  FetchContent_MakeAvailable(finufft)
-  set(DMK_ESP_TARGET finufft::finufft ducc0)
-  set(DMK_ESP_SRC src/esp.cpp)
-  list(APPEND DMK_CXX_FLAGS "-DDMK_BUILD_ESP")
-else()
-  set(DMK_ESP_SRC)
-  set(DMK_ESP_TARGET)
-endif()
-
+set(FINUFFT_USE_DUCC0 ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+  finufft
+  GIT_REPOSITORY https://github.com/flatironinstitute/finufft.git
+  GIT_TAG v2.5.1
+)
+FetchContent_MakeAvailable(finufft)
+set(DMK_ESP_TARGET finufft::finufft ducc0)
+set(DMK_ESP_SRC src/esp.cpp)
 
 FetchContent_Declare(
   polyfit
@@ -179,7 +168,6 @@ if (DMK_USE_JIT)
   target_link_libraries(DMKOBJS_BOOTSTRAP PUBLIC RuFuS::rufus jit_kernels)
 endif()
 target_compile_options(DMKOBJS_BOOTSTRAP PUBLIC "${DMK_CXX_FLAGS}")
-target_compile_definitions(DMKOBJS_BOOTSTRAP PUBLIC $<$<BOOL:${DMK_BUILD_ESP}>:DMK_BUILD_ESP>)
 
 add_library(DMKOBJS_AOT OBJECT ${DMK_AOT_SRC})
 set_target_properties(DMKOBJS_AOT PROPERTIES POSITION_INDEPENDENT_CODE ON)

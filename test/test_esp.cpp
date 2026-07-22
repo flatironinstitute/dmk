@@ -1,5 +1,3 @@
-#ifdef DMK_BUILD_ESP
-
 #include <cmath>
 #include <dmk.h>
 #include <dmk/esp.hpp>
@@ -690,4 +688,3 @@ TEST_CASE("[ESP] 2d Yukawa free-space vs direct") { run_esp_freespace({DMK_YUKAW
 // windowed-profile symbol, short-range grad via the residual poly-derivative).
 TEST_CASE("[ESP] 3d Sqrt-Laplace free-space vs direct") { run_esp_freespace({DMK_SQRT_LAPLACE, 3, 0.0, 7, 100}); }
 TEST_CASE("[ESP] 2d Sqrt-Laplace free-space vs direct") { run_esp_freespace({DMK_SQRT_LAPLACE, 2, 0.0, 54, 100}); }
-#endif // DMK_BUILD_ESP

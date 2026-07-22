@@ -26,9 +26,7 @@ using pdmk_tree_impl =
     std::variant<std::unique_ptr<dmk::DMKPtTree<float, 2>>, std::unique_ptr<dmk::DMKPtTree<float, 3>>,
                  std::unique_ptr<dmk::DMKPtTree<double, 2>>, std::unique_ptr<dmk::DMKPtTree<double, 3>>>;
 
-#ifdef DMK_BUILD_ESP
 using pdmk_esp_plan_impl = std::variant<std::unique_ptr<dmk::EspPlan<float>>, std::unique_ptr<dmk::EspPlan<double>>>;
-#endif
 
 namespace dmk {
 
@@ -947,7 +945,6 @@ inline void pdmk_tree_update_charges(pdmk_tree tree, const Real *charge, const R
         *static_cast<pdmk_tree_impl *>(tree));
 }
 
-#ifdef DMK_BUILD_ESP
 // Writes pot_src interleaved [pot, fx, fy, fz] per particle (matching pdmk_tree_eval's
 // [pot, dx, dy, dz] convention) when the plan's eval_type requests forces; else just pot.
 template <typename Real>
@@ -983,7 +980,6 @@ inline void pdmk_esp_eval_impl(pdmk_esp_plan plan, int n, const Real *r_src, con
         },
         *static_cast<pdmk_esp_plan_impl *>(plan));
 }
-#endif // DMK_BUILD_ESP
 
 } // namespace dmk
 
@@ -1121,7 +1117,6 @@ dmk_error pdmk(dmk_communicator comm, pdmk_params params, int n_src, const doubl
     });
 }
 
-#ifdef DMK_BUILD_ESP
 pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator /*comm*/, pdmk_esp_params params) {
     return new pdmk_esp_plan_impl(std::unique_ptr<dmk::EspPlan<double>>(new dmk::EspPlan<double>(params)));
 }
@@ -1157,5 +1152,4 @@ void pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const float
     pdmk_esp_evalf(comm, plan, n, r_src, charges, pot_src);
     pdmk_esp_plan_destroyf(plan);
 }
-#endif // DMK_BUILD_ESP
 }
