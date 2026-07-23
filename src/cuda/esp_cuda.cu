@@ -474,40 +474,7 @@ __device__ constexpr void horner_const_deriv(Real x, Real &P, Real &dP) {
 }
 
 // ---------------------------------------------------------------------------
-// eval_esp_pair — the short-range kernel's actual math, for one source-target
-// pair. CPU reference: LaplacePolyEvaluator3D::operator(), the n_digits>=6
-// "non-transform" branch (include/dmk/vector_kernels.hpp:621-681), which ESP's
-// AOT evaluator (get_esp_3d_kernel) dispatches into via laplace_3d_poly_all_pairs.
-//
-// S(R) is fit as a plain ascending-order monomial series in a mapped variable:
-//   x(R) = (R + cen) * rsc,   rsc = 2/r_c, cen = -r_c/2   (maps R in [0,r_c] -> [-1,1])
-//   P(x) = Coeffs::at(0) + Coeffs::at(1)*x + ... + Coeffs::at(Coeffs::size-1)*x^(Coeffs::size-1)
-//   S(R) = P(x(R)) / R
-// and the pair's potential contribution is q * S(R); the CPU convention (esp.cpp)
-// forms force as F = -q * grad(S), i.e. scatter_kernel below negates for you --
-// this function should just accumulate the *gradient* of the potential, not force.
-//
-// Coeffs is now a compile-time CoeffTag (see esp_sr_coeffs.cuh + the
-// CoeffTag/horner_const_deriv machinery above) instead of a runtime
-// (pointer, count) pair -- the Horner evaluation below unrolls into a fixed
-// FMA chain against literal immediates rather than a loop over global memory.
-//
-// WantForce is also compile-time now (was a runtime bool) -- it's always
-// exactly eval_type == DMK_POTENTIAL_GRAD, fixed for the whole plan, so a
-// runtime check bought nothing but an extra branch executed once per pair
-// (the hottest loop here) and extra live registers (gx_acc/gy_acc/gz_acc)
-// that hurt occupancy even on potential-only launches. As a bonus, the
-// potential-only path below also skips computing the derivative entirely.
-//
-// The Horner evaluation itself runs in Real, not always double: on hardware
-// with crippled FP64 throughput (e.g. workstation/consumer Blackwell cards),
-// forcing double here for every single pair -- the single highest-frequency
-// arithmetic in this whole kernel -- would dominate the runtime regardless
-// of everything else being Real. Coeffs::at(i) still returns literal doubles
-// (the fit itself is double-precision data either way), but Real(...) narrows
-// each coefficient to a compile-time immediate before the FMA chain runs, so
-// a float Real gets a float Horner evaluation, not a double one narrowed at
-// the end.
+// eval_esp_pair — the short-range kernel's actual math, for one source-target pair.
 template <CoeffTag Coeffs, bool WantForce, typename Real>
 __device__ __forceinline__ void eval_esp_pair(
     Real dx, Real dy, Real dz, Real q,
@@ -622,12 +589,12 @@ template <CoeffTag Coeffs, bool WantForce, int TARGETS, typename Real>
 __global__ void short_range_kernel(
     int nc, int n, int out_dim,
     Real rsc, Real cen, Real r_c_sq,
-    const int    *cell_start,
-    const Real   *d_xs, const Real *d_ys, const Real *d_zs,
-    const Real   *d_qs,
-    const int    *nbc_tab,
-    const Real   *off_tab,
-    Real *pg_sorted)
+    const int * __restrict__ cell_start,
+    const Real * __restrict__ d_xs, const Real * __restrict__ d_ys, const Real * __restrict__ d_zs,
+    const Real * __restrict__ d_qs,
+    const int * __restrict__ nbc_tab,
+    const Real * __restrict__ off_tab,
+    Real * __restrict__ pg_sorted)
 {
     __shared__ Real s_xs[kShortRangeBlockSize];
     __shared__ Real s_ys[kShortRangeBlockSize];
@@ -641,16 +608,8 @@ __global__ void short_range_kernel(
 
     const int hbeg = cell_start[home];
     const int n_trg = cell_start[home + 1] - hbeg;
-    // Strided target-to-thread mapping (matches DirectByBoxBody on the
-    // gpu-offloading branch): for a fixed slot q, thread i owns target index
-    // t_base + q*blockDim.x, so consecutive threads own consecutive target
-    // indices -- the position load below and the final write-out are both
-    // coalesced across the warp, unlike a blocked t0 = g*TARGETS assignment
-    // where consecutive threads' targets are TARGETS apart.
-    // n_rounds doesn't depend on threadIdx.x (n_trg/target_stride are
-    // block-uniform), so every thread hits the tile loop's __syncthreads()
-    // the same number of times -- same barrier-safety requirement as before,
-    // just satisfied by round/target_stride instead of wave/n_groups.
+    // Strided target-to-thread mapping: for a fixed slot q, thread i owns target index
+    // t_base + q*blockDim.x, so consecutive threads own consecutive target indices 
     const int target_stride = blockDim.x * TARGETS;
     const int n_rounds = (n_trg + target_stride - 1) / target_stride;
 
@@ -690,9 +649,6 @@ __global__ void short_range_kernel(
                     for (int tile = 0; tile < n_tiles; ++tile) {
                         const int s_idx = sbeg + tile * kShortRangeBlockSize + threadIdx.x;
                         if (s_idx < send) {
-                            // Bake the periodic image offset in at load time -- every
-                            // target reading this tile afterward gets the already-
-                            // wrapped coordinate, not just the raw source position.
                             s_xs[threadIdx.x] = d_xs[s_idx] + ox;
                             s_ys[threadIdx.x] = d_ys[s_idx] + oy;
                             s_zs[threadIdx.x] = d_zs[s_idx] + oz;
@@ -702,10 +658,6 @@ __global__ void short_range_kernel(
 
                         const int n_local = min(kShortRangeBlockSize, send - sbeg - tile * kShortRangeBlockSize);
 
-                        // any_active is a per-thread flag (not a block-wide one): skips this
-                        // thread's own accumulate loop when none of its TARGETS slots are
-                        // active this round, without affecting how many times any thread
-                        // hits the __syncthreads() calls around this block.
                         if (any_active) {
 #pragma unroll
                             for (int k = 0; k < TARGETS; ++k) {
@@ -1144,7 +1096,7 @@ static void short_range_gpu(
     {
         NvtxRange range("short_range/pair_kernel");
         const int threads = kShortRangeBlockSize; // must match short_range_kernel's shared-memory tile size
-        constexpr int kTargetsPerThread = 4; // register-blocking width; see short_range_kernel's comment
+        constexpr int kTargetsPerThread = 3; // register-blocking width
 #define DMK_SR_LAUNCH(TAG, WANTFORCE)                                                                                  \
     short_range_kernel<TAG, WANTFORCE, kTargetsPerThread, Real><<<nc * nc * nc, threads, 0, gpu.stream>>>(            \
         nc, n, out_dim, rsc, cen, r_c_sq, d_cell_start, d_xs, d_ys, d_zs, d_qs,                                       \
