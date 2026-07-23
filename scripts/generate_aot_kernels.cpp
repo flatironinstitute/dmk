@@ -371,6 +371,18 @@ constexpr int unroll_factor = 3;
          {DMK_POTENTIAL, DMK_POTENTIAL_GRAD},
          "esp_sqrt_laplace",
          "sqrt_laplace_3d_poly_all_pairs"},
+        // Laplace-dipole reuses the Laplace residual profile (get_esp_correction_coeffs delegates to
+        // get_local_correction_coeffs) via the dipole poly driver, which differentiates it.
+        {DMK_LAPLACE_DIPOLE,
+         3,
+         {DMK_POTENTIAL, DMK_POTENTIAL_GRAD},
+         "esp_laplace_dipole",
+         "laplace_dipole_3d_poly_all_pairs"},
+        // Stokeslet/Stresslet: their biharmonic residual is scale-invariant (get_esp_correction_coeffs
+        // delegates to the cached bsize=1 get_local_correction_coeffs), so counts + values are fixed at
+        // generator time and bake exactly like the scalars. Two coeff sub-arrays (diag, offd); velocity.
+        {DMK_STOKESLET, 3, {DMK_VELOCITY}, "esp_stokeslet", "stokeslet_3d_poly_all_pairs"},
+        {DMK_STRESSLET, 3, {DMK_VELOCITY}, "esp_stresslet", "stresslet_3d_poly_all_pairs"},
     };
     for (const auto &k : esp_baked) {
         std::vector<CoeffsInfo> infos;

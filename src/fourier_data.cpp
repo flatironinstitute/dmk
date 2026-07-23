@@ -1079,6 +1079,43 @@ Real calc_log_windowed_kernel_value_at_zero(int dim, const Prolate0Fun &pf, Real
     return fval;
 }
 
+// Free-space windowed Stokeslet/Stresslet radial symbol in ESP's convention (kappa = sqrt(i)*dk). The
+// Stokes far field is Ghat^F(k) = f(k) (k^2 I - k⊗k) with the scalar biharmonic symbol f handed to the
+// Oseen projector in long_range; this routine returns f. Following papers/stokes-ewald.pdf (eq. 2.4b)
+// with the Gaussian window replaced by the PSWF: the Hasimoto splitting window What(k) = ghat_hat -
+// 0.5 k ghat_hat' becomes (psi(arg) - 0.5 arg psi'(arg))/psi0 (arg = k*sigma1, sigma1 = r_c/beta),
+// times the Vico-Greengard truncated biharmonic FT at radius rl (= -1/k^4 outside the truncation
+// ripples). ghat = 4*pi encodes DMK's 0.5*(delta/r + r⊗r/r^3) Stokeslet (half the paper's 8*pi). The
+// k=0 mode is finite but killed by the projector, so its value is irrelevant.
+template <typename Real>
+void stokes_3d_freespace_windowed_kernel_ft(Real ghat, Real dk, int n_fourier, Real sigma1, Real rl, Prolate0Fun &pf,
+                                            sctl::Vector<Real> &kernel_ft) {
+    const Real c = ghat / pf.eval_val(0.0);
+    const Real rl4 = rl * rl * rl * rl;
+    kernel_ft.ReInit(n_fourier);
+    for (int i = 0; i < n_fourier; ++i) {
+        const Real kappa = std::sqrt(Real(i)) * dk;
+        const Real arg = kappa * sigma1;
+        Real wnum = 0;
+        if (std::abs(arg) <= 1.0) {
+            auto [psi, dpsi] = pf.eval_val_derivative(arg);
+            wnum = psi - Real(0.5) * arg * dpsi;
+        }
+        const Real x = kappa * rl;
+        Real bihar;
+        if (x > 0.2) {
+            bihar =
+                -(Real(1) + Real(0.5) * std::cos(x) - Real(1.5) * std::sin(x) / x) / (kappa * kappa * kappa * kappa);
+        } else {
+            const Real x2 = x * x, x4 = x2 * x2, x6 = x2 * x4, x8 = x2 * x6, x10 = x2 * x8;
+            bihar =
+                -(Real(1) / 120 - x2 / 2520 + x4 / 120960 - x6 / 9979200.0 + x8 / 1.24540416e9 - x10 / 2.17945728e11) *
+                rl4;
+        }
+        kernel_ft[i] = c * wnum * bihar;
+    }
+}
+
 // Windowed scalar-kernel FT in ESP's reciprocal-lattice convention (kappa = sqrt(i)*dk, dk =
 // 2*pi/boxsize), shared by the tree's periodic root box and ESP. Routes on (kernel, freespace) to a
 // dedicated periodic or free-space routine -- no freespace flag is threaded into the leaf routines.
@@ -1114,6 +1151,24 @@ void get_periodic_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Re
                 return sqrt_laplace_3d_freespace_windowed_kernel_ft<Real>(dk, n_fourier, b, rl, pf, kernel_ft);
             return sqrt_laplace_3d_periodic_windowed_kernel_ft<Real>(dk, n_fourier, b, pf, kernel_ft);
         }
+    case DMK_STOKESLET:
+        // Scalar biharmonic symbol f for the Oseen projector (Stresslet reuses the same f, different
+        // projector). ESP free-space only; periodic (Hasimoto reciprocal sum) is not implemented.
+        if constexpr (DIM == 3) {
+            if (freespace)
+                return stokes_3d_freespace_windowed_kernel_ft<Real>(four_pi, dk, n_fourier, sigma1, rl, pf, kernel_ft);
+            throw std::runtime_error("ESP Stokeslet: periodic windowed FT not implemented");
+        } else
+            throw std::runtime_error("ESP Stokeslet: only DIM=3 supported");
+    case DMK_STRESSLET:
+        // Same scalar biharmonic symbol f as the Stokeslet; the Stresslet projector (an extra k factor)
+        // supplies the differing structure. ESP free-space only.
+        if constexpr (DIM == 3) {
+            if (freespace)
+                return stokes_3d_freespace_windowed_kernel_ft<Real>(four_pi, dk, n_fourier, sigma1, rl, pf, kernel_ft);
+            throw std::runtime_error("ESP Stresslet: periodic windowed FT not implemented");
+        } else
+            throw std::runtime_error("ESP Stresslet: only DIM=3 supported");
     default:
         // log in 2D (-2*pi), 1/r in 3D (4*pi).
         if (freespace)

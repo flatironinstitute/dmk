@@ -59,6 +59,11 @@ inline double esp_grad_eps(dmk_ikernel kernel, int dim, double eps) {
     } else if (kernel == DMK_YUKAWA && dim == 3) {
         a = 1.00;
         b = -0.10;
+    } else if (kernel == DMK_LAPLACE_DIPOLE && dim == 3) {
+        // Dipole shares the Laplace-3D residual profile (its evaluator differentiates it), so reuse the
+        // Laplace-3D force fit until a dedicated analyze_esp_error sweep calibrates it.
+        a = 1.01;
+        b = -0.19;
     }
     b -= 0.2;
 
@@ -70,7 +75,9 @@ inline double esp_grad_eps(dmk_ikernel kernel, int dim, double eps) {
 // (the ESP analog of DMK's d_eff bump) so every stage -- eps_d, P, beta, the short-range residual --
 // resolves to match. DMK_ESP_NO_GRAD_BUMP disables the bump, used to calibrate the grad curve raw.
 inline int esp_plan_digits(const pdmk_esp_params &p) {
-    const bool grad = p.eval_type >= DMK_POTENTIAL_GRAD && !util::env_is_set("DMK_ESP_NO_GRAD_BUMP");
+    // Laplace-dipole always needs the bump: even its potential is a derivative of the scalar residual.
+    const bool wants_deriv = p.eval_type >= DMK_POTENTIAL_GRAD || p.kernel == DMK_LAPLACE_DIPOLE;
+    const bool grad = wants_deriv && !util::env_is_set("DMK_ESP_NO_GRAD_BUMP");
     return esp_digits_from_eps(grad ? esp_grad_eps(p.kernel, p.n_dim, p.eps) : p.eps);
 }
 
@@ -86,12 +93,14 @@ inline bool esp_spatial_sort(const pdmk_esp_params &params) {
     return params.esp_flags & (DMK_ESP_PRUNE_TILE | DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L);
 }
 
-// force_x/y/z are empty spans if the plan was created with eval_type == DMK_POTENTIAL. For a
-// DIM=2 plan, force_z stays empty even when forces are requested (only force_x/force_y are
-// populated) -- callers can distinguish DIM by checking force_z.empty().
+// Potential-family kernels (scalar, Laplace-dipole) fill pot + force_x/y/z: force_x/y/z are empty if
+// eval_type == DMK_POTENTIAL, and force_z stays empty for a DIM=2 plan (callers can distinguish DIM by
+// force_z.empty()). Vector-field kernels (Stokeslet velocity) fill vel_x/y/z instead, leaving the
+// pot/force_* spans empty.
 template <typename Real>
 struct PotForce {
     std::span<Real> pot, force_x, force_y, force_z;
+    std::span<Real> vel_x, vel_y, vel_z;
 };
 
 // PSWF (prolate spheroidal wave function) far-field kernel: precomputes lambda0/scale and
@@ -130,7 +139,16 @@ struct EspPlan {
     PSWFKernel pswf;
     std::vector<Real> scaling_coeffs; // diagonal far-field scaling, computed in double then narrowed to Real once
     Real self_factor{0};              // long-range kernel value at r=0, subtracted per source (self-energy)
+    Real dipole_grad_self{0};         // Laplace-dipole gradient self-constant (grad[a] -= this * d[a] per source)
     pdmk_esp_params params;
+    // Component counts (scalar kernels: 1/1). Vector kernels carry input_dim charge components per
+    // source and output_dim potential components per target; grad_is_force distinguishes the scalar
+    // "force" gradient (-q*grad, requires the per-target charge) from a raw field gradient (dipole).
+    int input_dim{1}, output_dim{1}, normal_dim{0};
+    // Per-source payload width fed to short_range/long_range: input_dim charge comps, then normal_dim
+    // normal comps packed after them (Stresslet = force(3) + normal(3) = 6; every other kernel = input_dim).
+    int charge_dim{1};
+    bool grad_is_force{true};
     residual_evaluator_func<Real> evaluator;
     residual_evaluator_range_func<Real> range_evaluator;
     std::vector<Real> buf;
@@ -138,13 +156,15 @@ struct EspPlan {
     // long_range scratch, reused across eval calls: the n-sized buffers grow to the largest n seen,
     // the ntot-sized ones are fixed by nf/n_dim. Sized max dim (3) since EspPlan isn't DIM-templated.
     std::array<std::vector<Real>, 3> lr_coord;               // n-sized NU coordinates per axis
-    std::vector<std::complex<Real>> lr_c, lr_out;            // n-sized charges / interp output
-    std::vector<std::complex<Real>> lr_b;                    // ntot-sized spread / forward-FFT grid
+    std::vector<std::complex<Real>> lr_c, lr_out;            // n-sized channel charges / interp output
+    std::vector<std::vector<std::complex<Real>>> lr_in;      // ntot-sized per-input-channel spread/FFT grids
     std::array<std::vector<std::complex<Real>>, 4> lr_u_hat; // ntot-sized output-component spectra (pot + force axes)
 
     explicit EspPlan(const pdmk_esp_params &params);
 
-    PotForce<Real> eval(int n, const Real *r_src, const Real *charges);
+    // normals is required for the Stresslet (force-dipole orientation, normal_dim comps per source) and
+    // ignored otherwise.
+    PotForce<Real> eval(int n, const Real *r_src, const Real *charges, const Real *normals = nullptr);
 
     template <int DIM>
     std::vector<double> precompute_scaling_coefficients();

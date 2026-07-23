@@ -362,7 +362,7 @@ TEST_CASE_GENERIC("[ESP] C API pdmk_esp_eval interleaves forces", 1) {
     REQUIRE(plan != nullptr);
 
     std::vector<double> pot_src(N * 4);
-    pdmk_esp_eval(nullptr, plan, N, R_SRC, CHARGES, pot_src.data());
+    pdmk_esp_eval(nullptr, plan, N, R_SRC, CHARGES, nullptr, pot_src.data());
 
     dmk::EspPlan<double> *plan_cxx = new dmk::EspPlan<double>(params);
     auto esp = plan_cxx->eval(N, R_SRC, CHARGES);
@@ -528,6 +528,12 @@ TEST_CASE_GENERIC("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)", 1) {
     // ESP's 2D-log self/gauge convention.
     const double epses[] = {1e-3, 1e-6, 1e-9};
 
+#ifdef DMK_HAVE_MPI
+    auto comm = test_comm;
+#else
+    auto comm = nullptr;
+#endif
+
     for (const double eps : epses)
         for (int with_grad = 0; with_grad <= 1; ++with_grad) {
             const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
@@ -544,8 +550,8 @@ TEST_CASE_GENERIC("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)", 1) {
             params.use_periodic = true;
             params.log_level = 6;
             std::vector<double> pot_src(n_src * odim), pot_trg(n_trg * odim);
-            pdmk_tree tree = pdmk_tree_create(test_comm, params, n_src, r_src.data(), charges.data(), rnormal.data(),
-                                              n_trg, r_trg.data());
+            pdmk_tree tree = pdmk_tree_create(comm, params, n_src, r_src.data(), charges.data(), rnormal.data(), n_trg,
+                                              r_trg.data());
             pdmk_tree_eval(tree, pot_src.data(), pot_trg.data());
             pdmk_tree_destroy(tree);
 
@@ -695,3 +701,187 @@ TEST_CASE_GENERIC("[ESP] 3d Sqrt-Laplace free-space vs direct", 1) {
 TEST_CASE_GENERIC("[ESP] 2d Sqrt-Laplace free-space vs direct", 1) {
     run_esp_freespace({DMK_SQRT_LAPLACE, 2, 0.0, 54, 100});
 }
+
+// 3D Laplace-dipole free-space. Sources carry a 3-vector dipole strength (input_dim=3); ESP reports
+// the raw field (potential, and its gradient for POTENTIAL_GRAD) -- no -q force convention. Reference
+// is the direct all-pairs LaplaceDipole evaluator. Exercises dense + both prune short-range paths and
+// the long-range projector u(k) = -i f(k)(k.d).
+static void run_esp_freespace_dipole(unsigned seed, int n_test) {
+    constexpr int n_src = 2000;
+    constexpr int n_dim = 3;
+    const double L = 1.0;
+
+    std::default_random_engine eng(seed);
+    std::uniform_real_distribution<double> rng(0.01, 0.99);
+    std::vector<double> r_src(size_t(n_dim) * n_src), charges(size_t(n_dim) * n_src); // dipole vector per source
+    for (auto &x : r_src)
+        x = rng(eng) - 0.5 * L;
+    for (auto &q : charges)
+        q = rng(eng) - 0.5;
+
+    std::vector<double> ref_pot(n_test), ref_grad(size_t(n_test) * n_dim, 0.0);
+    {
+        std::vector<double> ref;
+        freespace_reference(DMK_LAPLACE_DIPOLE, n_dim, 0.0, DMK_POTENTIAL_GRAD, n_src, r_src.data(), charges.data(),
+                            n_test, r_src.data(), ref);
+        const int odim = 1 + n_dim;
+        for (int i = 0; i < n_test; ++i) {
+            ref_pot[i] = ref[i * odim];
+            for (int d = 0; d < n_dim; ++d)
+                ref_grad[i * n_dim + d] = ref[i * odim + 1 + d];
+        }
+    }
+
+    const uint32_t flag_sets[] = {0u, DMK_ESP_PRUNE_SOURCE | DMK_ESP_MORTON, DMK_ESP_PRUNE_TILE};
+    const double epses[] = {1e-3, 1e-6};
+    for (const uint32_t flags : flag_sets)
+        for (const double eps : epses)
+            for (int with_grad = 0; with_grad <= 1; ++with_grad) {
+                const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
+                pdmk_esp_params ep{};
+                ep.L = L;
+                ep.r_c = L / 4;
+                ep.eps = eps;
+                ep.n_dim = n_dim;
+                ep.kernel = DMK_LAPLACE_DIPOLE;
+                ep.eval_type = eval;
+                ep.log_level = 6;
+                ep.use_periodic = 0;
+                ep.esp_flags = flags;
+                dmk::EspPlan<double> plan(ep);
+                auto esp = plan.eval(n_src, r_src.data(), charges.data());
+
+                double e2p = 0, r2p = 0, e2g = 0, r2g = 0;
+                for (int i = 0; i < n_test; ++i) {
+                    const double dp = esp.pot[i] - ref_pot[i];
+                    e2p += dp * dp;
+                    r2p += ref_pot[i] * ref_pot[i];
+                    if (with_grad) {
+                        const double g[3] = {esp.force_x[i], esp.force_y[i], esp.force_z[i]};
+                        for (int d = 0; d < n_dim; ++d) {
+                            const double dg = g[d] - ref_grad[i * n_dim + d];
+                            e2g += dg * dg;
+                            r2g += ref_grad[i * n_dim + d] * ref_grad[i * n_dim + d];
+                        }
+                    }
+                }
+                const double l2p = dmk::pbc_ref::safe_l2(e2p, r2p);
+                CHECK_MESSAGE(l2p < eps, "flags=" << flags << " eps=" << eps << (with_grad ? " pot+grad" : " pot")
+                                                  << " pot l2=" << l2p);
+                if (with_grad) {
+                    const double l2g = dmk::pbc_ref::safe_l2(e2g, r2g);
+                    CHECK_MESSAGE(l2g < eps, "flags=" << flags << " eps=" << eps << " grad l2=" << l2g);
+                }
+            }
+}
+
+TEST_CASE_GENERIC("[ESP] 3d Laplace-dipole free-space vs direct", 1) { run_esp_freespace_dipole(2024, 100); }
+
+// 3D Stokeslet free-space. Sources carry a 3-vector force (input_dim=3); ESP reports the 3-vector
+// velocity (output_dim=3) in esp.vel_x/y/z. Reference is the direct all-pairs Oseen evaluator. Long
+// range is the Oseen projector against the PSWF-windowed biharmonic symbol (papers/stokes-ewald.pdf
+// eq. 2.4b with the PSWF window); short range is the decoupled biharmonic residual. Exercises dense +
+// both prune paths.
+static void run_esp_freespace_stokeslet(unsigned seed, int n_test) {
+    constexpr int n_src = 2000;
+    constexpr int n_dim = 3;
+    const double L = 1.0;
+
+    std::default_random_engine eng(seed);
+    std::uniform_real_distribution<double> rng(0.01, 0.99);
+    std::vector<double> r_src(size_t(n_dim) * n_src), forces(size_t(n_dim) * n_src); // force vector per source
+    for (auto &x : r_src)
+        x = rng(eng) - 0.5 * L;
+    for (auto &f : forces)
+        f = rng(eng) - 0.5; // non-neutral net force exercises the free-space zero-mode gauge (D.17)
+
+    std::vector<double> ref(size_t(n_test) * n_dim, 0.0); // velocity (3 comps) per target
+    {
+        auto fn = dmk::get_direct_evaluator<double>(DMK_STOKESLET, DMK_VELOCITY, n_dim, 0.0);
+        fn(n_src, r_src.data(), forces.data(), nullptr, n_test, r_src.data(), ref.data());
+    }
+
+    const uint32_t flag_sets[] = {0u, DMK_ESP_PRUNE_SOURCE | DMK_ESP_MORTON, DMK_ESP_PRUNE_TILE};
+    const double epses[] = {1e-3, 1e-6};
+    for (const uint32_t flags : flag_sets)
+        for (const double eps : epses) {
+            pdmk_esp_params ep{};
+            ep.L = L;
+            ep.r_c = L / 4;
+            ep.eps = eps;
+            ep.n_dim = n_dim;
+            ep.kernel = DMK_STOKESLET;
+            ep.eval_type = DMK_VELOCITY;
+            ep.log_level = 6;
+            ep.use_periodic = 0;
+            ep.esp_flags = flags;
+            dmk::EspPlan<double> plan(ep);
+            auto esp = plan.eval(n_src, r_src.data(), forces.data());
+
+            const std::span<double> vel[3] = {esp.vel_x, esp.vel_y, esp.vel_z};
+            double e2 = 0, r2 = 0;
+            for (int i = 0; i < n_test; ++i)
+                for (int d = 0; d < n_dim; ++d) {
+                    const double dv = vel[d][i] - ref[i * n_dim + d];
+                    e2 += dv * dv;
+                    r2 += ref[i * n_dim + d] * ref[i * n_dim + d];
+                }
+            const double l2 = dmk::pbc_ref::safe_l2(e2, r2);
+            CHECK_MESSAGE(l2 < eps, "flags=" << flags << " eps=" << eps << " velocity l2=" << l2);
+        }
+}
+
+TEST_CASE_GENERIC("[ESP] 3d Stokeslet free-space vs direct", 1) { run_esp_freespace_stokeslet(31337, 100); }
+
+static void run_esp_freespace_stresslet(unsigned seed, int n_test) {
+    constexpr int n_src = 2000;
+    constexpr int n_dim = 3;
+    const double L = 1.0;
+
+    std::default_random_engine eng(seed);
+    std::uniform_real_distribution<double> rng(0.01, 0.99);
+    std::vector<double> r_src(size_t(n_dim) * n_src), forces(size_t(n_dim) * n_src), normals(size_t(n_dim) * n_src);
+    for (auto &x : r_src)
+        x = rng(eng) - 0.5 * L;
+    for (auto &f : forces)
+        f = rng(eng) - 0.5;
+    for (auto &nv : normals)
+        nv = rng(eng) - 0.5;
+
+    std::vector<double> ref(size_t(n_test) * n_dim, 0.0); // velocity (3 comps) per target
+    {
+        auto fn = dmk::get_direct_evaluator<double>(DMK_STRESSLET, DMK_VELOCITY, n_dim, 0.0);
+        fn(n_src, r_src.data(), forces.data(), normals.data(), n_test, r_src.data(), ref.data());
+    }
+
+    const uint32_t flag_sets[] = {0u, DMK_ESP_PRUNE_SOURCE | DMK_ESP_MORTON, DMK_ESP_PRUNE_TILE};
+    const double epses[] = {1e-3, 1e-6};
+    for (const uint32_t flags : flag_sets)
+        for (const double eps : epses) {
+            pdmk_esp_params ep{};
+            ep.L = L;
+            ep.r_c = L / 4;
+            ep.eps = eps;
+            ep.n_dim = n_dim;
+            ep.kernel = DMK_STRESSLET;
+            ep.eval_type = DMK_VELOCITY;
+            ep.log_level = 6;
+            ep.use_periodic = 0;
+            ep.esp_flags = flags;
+            dmk::EspPlan<double> plan(ep);
+            auto esp = plan.eval(n_src, r_src.data(), forces.data(), normals.data());
+
+            const std::span<double> vel[3] = {esp.vel_x, esp.vel_y, esp.vel_z};
+            double e2 = 0, r2 = 0;
+            for (int i = 0; i < n_test; ++i)
+                for (int d = 0; d < n_dim; ++d) {
+                    const double dv = vel[d][i] - ref[i * n_dim + d];
+                    e2 += dv * dv;
+                    r2 += ref[i * n_dim + d] * ref[i * n_dim + d];
+                }
+            const double l2 = dmk::pbc_ref::safe_l2(e2, r2);
+            CHECK_MESSAGE(l2 < eps, "flags=" << flags << " eps=" << eps << " velocity l2=" << l2);
+        }
+}
+
+TEST_CASE_GENERIC("[ESP] 3d Stresslet free-space vs direct", 1) { run_esp_freespace_stresslet(24601, 100); }

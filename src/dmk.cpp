@@ -947,8 +947,19 @@ inline void pdmk_tree_update_charges(pdmk_tree tree, const Real *charge, const R
 
 // Writes pot_src interleaved [pot, fx, fy, fz] per particle (matching pdmk_tree_eval's
 // [pot, dx, dy, dz] convention) when the plan's eval_type requests forces; else just pot.
+// Vector-field kernels (Stokeslet/Stresslet) write the velocity interleaved [vx, vy, vz] per particle.
 template <typename Real>
 inline void esp_copy_result(const dmk::PotForce<Real> &result, int n, Real *pot_src) {
+    if (!result.vel_x.empty()) {
+        const int dim = result.vel_z.empty() ? 2 : 3;
+        for (int i = 0; i < n; ++i) {
+            pot_src[i * dim + 0] = result.vel_x[i];
+            pot_src[i * dim + 1] = result.vel_y[i];
+            if (dim == 3)
+                pot_src[i * dim + 2] = result.vel_z[i];
+        }
+        return;
+    }
     if (result.force_x.empty()) {
         std::copy(result.pot.begin(), result.pot.end(), pot_src);
         return;
@@ -969,12 +980,13 @@ inline void esp_copy_result(const dmk::PotForce<Real> &result, int n, Real *pot_
 // (A template can't have C language linkage, so this lives here rather than in the extern "C"
 // block below, which only holds the non-template pdmk_esp_eval/evalf wrappers.)
 template <typename Real>
-inline void pdmk_esp_eval_impl(pdmk_esp_plan plan, int n, const Real *r_src, const Real *charges, Real *pot_src) {
+inline void pdmk_esp_eval_impl(pdmk_esp_plan plan, int n, const Real *r_src, const Real *charges, const Real *normal,
+                               Real *pot_src) {
     std::visit(
         [&](auto &p) {
             using PlanType = std::decay_t<decltype(p)>;
             if constexpr (std::is_same_v<PlanType, std::unique_ptr<dmk::EspPlan<Real>>>)
-                esp_copy_result<Real>(p->eval(n, r_src, charges), n, pot_src);
+                esp_copy_result<Real>(p->eval(n, r_src, charges, normal), n, pot_src);
             else
                 throw api_error(DMK_ERR_INVALID_ARGUMENT, "ESP plan precision does not match eval precision");
         },
@@ -1134,13 +1146,13 @@ pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator /*comm*/, pdmk_esp_params p
 }
 
 void pdmk_esp_eval(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
-                   double *pot_src) {
-    dmk::pdmk_esp_eval_impl<double>(plan, n, r_src, charges, pot_src);
+                   const double *normal, double *pot_src) {
+    dmk::pdmk_esp_eval_impl<double>(plan, n, r_src, charges, normal, pot_src);
 }
 
 void pdmk_esp_evalf(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,
-                    float *pot_src) {
-    dmk::pdmk_esp_eval_impl<float>(plan, n, r_src, charges, pot_src);
+                    const float *normal, float *pot_src) {
+    dmk::pdmk_esp_eval_impl<float>(plan, n, r_src, charges, normal, pot_src);
 }
 
 void pdmk_esp_plan_destroy(pdmk_esp_plan plan) { delete static_cast<pdmk_esp_plan_impl *>(plan); }
@@ -1148,20 +1160,20 @@ void pdmk_esp_plan_destroy(pdmk_esp_plan plan) { delete static_cast<pdmk_esp_pla
 void pdmk_esp_plan_destroyf(pdmk_esp_plan plan) { pdmk_esp_plan_destroy(plan); }
 
 void pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double *r_src, const double *charges,
-              double *pot_src) {
+              const double *normal, double *pot_src) {
     auto plan = pdmk_esp_plan_create(comm, params);
     if (!plan) // create failed (see pdmk_last_error_message); nothing to evaluate
         return;
-    pdmk_esp_eval(comm, plan, n, r_src, charges, pot_src);
+    pdmk_esp_eval(comm, plan, n, r_src, charges, normal, pot_src);
     pdmk_esp_plan_destroy(plan);
 }
 
 void pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const float *r_src, const float *charges,
-               float *pot_src) {
+               const float *normal, float *pot_src) {
     auto plan = pdmk_esp_plan_createf(comm, params);
     if (!plan)
         return;
-    pdmk_esp_evalf(comm, plan, n, r_src, charges, pot_src);
+    pdmk_esp_evalf(comm, plan, n, r_src, charges, normal, pot_src);
     pdmk_esp_plan_destroyf(plan);
 }
 }

@@ -70,6 +70,15 @@ residual_evaluator_func<Real> make_esp_evaluator_aot(dmk_ikernel kernel, double 
         if (n_dim == 3)
             return get_esp_yukawa_3d_kernel<Real, MaxVecLen>(eval_level, n_digits, coeffs.data(), n_coeffs,
                                                              n_coeffs_log);
+    } else if (kernel == DMK_LAPLACE_DIPOLE) {
+        if (n_dim == 3)
+            return get_esp_laplace_dipole_3d_kernel<Real, MaxVecLen>(eval_level, n_digits);
+    } else if (kernel == DMK_STOKESLET) {
+        if (n_dim == 3)
+            return get_esp_stokeslet_3d_kernel<Real, MaxVecLen>(eval_level, n_digits);
+    } else if (kernel == DMK_STRESSLET) {
+        if (n_dim == 3)
+            return get_esp_stresslet_3d_kernel<Real, MaxVecLen>(eval_level, n_digits);
     }
     throw std::runtime_error("Unsupported kernel/dim for ESP AOT evaluator");
 }
@@ -90,6 +99,12 @@ residual_evaluator_range_func<Real> make_esp_range_evaluator_aot(dmk_ikernel ker
         return get_esp_yukawa_3d_kernel_ranges<Real, MaxVecLen>(eval_level, n_digits, coeffs.data(), int(coeffs.size()),
                                                                 0);
     }
+    if (kernel == DMK_LAPLACE_DIPOLE)
+        return get_esp_laplace_dipole_3d_kernel_ranges<Real, MaxVecLen>(eval_level, n_digits);
+    if (kernel == DMK_STOKESLET)
+        return get_esp_stokeslet_3d_kernel_ranges<Real, MaxVecLen>(eval_level, n_digits);
+    if (kernel == DMK_STRESSLET)
+        return get_esp_stresslet_3d_kernel_ranges<Real, MaxVecLen>(eval_level, n_digits);
     throw std::runtime_error("Unsupported kernel for ESP AOT range evaluator");
 }
 

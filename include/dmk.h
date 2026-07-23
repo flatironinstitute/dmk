@@ -132,18 +132,20 @@ typedef void *pdmk_esp_plan;
 pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator comm, pdmk_esp_params params);
 pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator comm, pdmk_esp_params params);
 
+// normal is the per-source orientation array required by the Stresslet (DIM comps per source) and
+// ignored (may be NULL) by every other kernel.
 void pdmk_esp_eval(dmk_communicator comm, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
-                   double *pot_src);
+                   const double *normal, double *pot_src);
 void pdmk_esp_evalf(dmk_communicator comm, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,
-                    float *pot_src);
+                    const float *normal, float *pot_src);
 
 void pdmk_esp_plan_destroy(pdmk_esp_plan plan);
 void pdmk_esp_plan_destroyf(pdmk_esp_plan plan);
 
 void pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double *r_src, const double *charges,
-              double *pot_src);
+              const double *normal, double *pot_src);
 void pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const float *r_src, const float *charges,
-               float *pot_src);
+               const float *normal, float *pot_src);
 
 dmk_error pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const double *normal);
 dmk_error pdmk_tree_update_chargesf(pdmk_tree tree, const float *charge, const float *normal);

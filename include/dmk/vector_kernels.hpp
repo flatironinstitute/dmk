@@ -1638,6 +1638,35 @@ void laplace_dipole_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real r
     }
 }
 
+// Range-list twin of laplace_dipole_3d_poly_all_pairs for the ESP prune paths. The dipole evaluator
+// maps r directly ((R + cen)*rsc), so unlike laplace_3d_poly_all_pairs_ranges there is no transform_poly
+// step. Newton's-third-law reciprocal (q_trg/pot_src) is unsupported for the non-symmetric vector
+// kernels; ESP always calls this forward-only (both null).
+template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
+void laplace_dipole_3d_poly_all_pairs_ranges(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max,
+                                             Real thresh2, int n_coeffs_rt_0, const Real *coeffs, int n_ranges,
+                                             const int *range_starts, const int *range_lens, int n_src,
+                                             const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                                             const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src,
+                                             int unroll_factor) {
+    constexpr bool is_static = (N_DIGITS > 0);
+    const int n_digits = is_static ? N_DIGITS : n_digits_rt;
+    const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
+    const int eval_level = (EVAL_LEVEL > 0) ? EVAL_LEVEL : eval_level_rt;
+
+    LaplaceDipolePolyEvaluator3D<Real, MaxVecLen> evaluator{thresh2, d2max, rsc, cen, coeffs, n_coeffs, n_digits};
+
+    if (eval_level == DMK_POTENTIAL) {
+        constexpr int KERNEL_OUTPUT_DIM = 1;
+        EvalPairsRanges<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_ranges, range_starts, range_lens, n_trg,
+                                           r_trg, pot, q_trg, pot_src, evaluator, unroll_factor);
+    } else {
+        constexpr int KERNEL_OUTPUT_DIM = 4;
+        EvalPairsRanges<KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_ranges, range_starts, range_lens, n_trg,
+                                           r_trg, pot, q_trg, pot_src, evaluator, unroll_factor);
+    }
+}
+
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS = -1, int EVAL_LEVEL = -1>
 void sqrt_laplace_2d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
                                     int n_coeffs_rt_0, const Real *coeffs, int n_src, const Real *r_src,
@@ -1729,6 +1758,28 @@ void stokeslet_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, R
     EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_trg, r_trg, pot, evaluator, unroll_factor);
 }
 
+// Range-list twin of stokeslet_3d_poly_all_pairs for the ESP prune paths (forward-only; the
+// non-symmetric vector kernels don't use the N3L reciprocal, so q_trg/pot_src are always null).
+template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS_0 = -1, int N_COEFFS_1 = -1, int EVAL_LEVEL = -1>
+void stokeslet_3d_poly_all_pairs_ranges(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max,
+                                        Real thresh2, int n_coeffs_rt_0, int n_coeffs_rt_1, const Real *coeffs,
+                                        int n_ranges, const int *range_starts, const int *range_lens, int n_src,
+                                        const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                                        const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src,
+                                        int unroll_factor) {
+    constexpr bool is_static = (N_DIGITS > 0);
+    const int n_digits = is_static ? N_DIGITS : n_digits_rt;
+    const int n_coeffs_diag = is_static ? N_COEFFS_0 : n_coeffs_rt_0;
+    const int n_coeffs_offdiag = is_static ? N_COEFFS_1 : n_coeffs_rt_1;
+    using Evaluator = StokesletPolyEvaluator3D<Real, MaxVecLen>;
+
+    Evaluator evaluator{thresh2,          d2max,   rsc, cen, coeffs, coeffs + n_coeffs_diag, n_coeffs_diag,
+                        n_coeffs_offdiag, n_digits};
+
+    EvalPairsRanges<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, nullptr, n_ranges, range_starts, range_lens,
+                                                  n_trg, r_trg, pot, q_trg, pot_src, evaluator, unroll_factor);
+}
+
 template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS_0 = -1, int N_COEFFS_1 = -1, int EVAL_LEVEL = -1>
 void stresslet_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max, Real thresh2,
                                  int n_coeffs_rt_0, int n_coeffs_rt_1, const Real *coeffs, int n_src, const Real *r_src,
@@ -1746,6 +1797,28 @@ void stresslet_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, R
                         n_coeffs_offdiag, n_digits};
 
     EvalPairs<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, normals, n_trg, r_trg, pot, evaluator, unroll_factor);
+}
+
+// Range-list twin of stresslet_3d_poly_all_pairs for the ESP prune paths (forward-only; q_trg/pot_src
+// always null, like the Stokeslet twin).
+template <class Real, int MaxVecLen, int N_DIGITS = -1, int N_COEFFS_0 = -1, int N_COEFFS_1 = -1, int EVAL_LEVEL = -1>
+void stresslet_3d_poly_all_pairs_ranges(int eval_level_rt, int n_digits_rt, Real rsc, Real cen, Real d2max,
+                                        Real thresh2, int n_coeffs_rt_0, int n_coeffs_rt_1, const Real *coeffs,
+                                        int n_ranges, const int *range_starts, const int *range_lens, int n_src,
+                                        const Real *r_src, const Real *charge, const Real *normals, int n_trg,
+                                        const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src,
+                                        int unroll_factor) {
+    constexpr bool is_static = (N_DIGITS > 0);
+    const int n_digits = is_static ? N_DIGITS : n_digits_rt;
+    const int n_coeffs_diag = is_static ? N_COEFFS_0 : n_coeffs_rt_0;
+    const int n_coeffs_offdiag = is_static ? N_COEFFS_1 : n_coeffs_rt_1;
+    using Evaluator = StressletPolyEvaluator3D<Real, MaxVecLen>;
+
+    Evaluator evaluator{thresh2,          d2max,   rsc, cen, coeffs, coeffs + n_coeffs_diag, n_coeffs_diag,
+                        n_coeffs_offdiag, n_digits};
+
+    EvalPairsRanges<Evaluator::KERNEL_OUTPUT_DIM>(n_src, r_src, charge, normals, n_ranges, range_starts, range_lens,
+                                                  n_trg, r_trg, pot, q_trg, pot_src, evaluator, unroll_factor);
 }
 
 template <class Real, int MaxVecLen>

@@ -155,6 +155,7 @@ static inline uint64_t morton(const std::array<uint64_t, DIM> &c) {
 template <typename Real, int DIM>
 struct CellList {
     int n_cells;
+    int qd{1};                   // charge components per particle (input_dim); qs is qd-strided
     std::vector<int> cell_start; // size n_cells^DIM + 1 (exclusive prefix sum)
     std::vector<Real> rs, qs;    // particle data reordered by cell
     std::vector<int> orig;       // orig[slot] = original particle index
@@ -183,7 +184,7 @@ static void sort_cell_morton(CellList<Real, DIM> &cl, int b, int len, const std:
     s.mkey.resize(len);
     s.mkey2.resize(len);
     s.tr.resize(DIM * len);
-    s.tq.resize(len);
+    s.tq.resize(cl.qd * len);
     s.to.resize(len);
     for (int i = 0; i < len; ++i) {
         const int slot = b + i;
@@ -213,18 +214,21 @@ static void sort_cell_morton(CellList<Real, DIM> &cl, int b, int len, const std:
         }
         std::swap(src, dst);
     }
+    const int qd = cl.qd;
     const auto &sorted = *src; // final result buffer after the last swap
     for (int i = 0; i < len; ++i) {
         const int slot = b + sorted[i].second;
         for (int d = 0; d < DIM; ++d)
             s.tr[DIM * i + d] = cl.rs[DIM * slot + d];
-        s.tq[i] = cl.qs[slot];
+        for (int k = 0; k < qd; ++k)
+            s.tq[qd * i + k] = cl.qs[qd * slot + k];
         s.to[i] = cl.orig[slot];
     }
     for (int i = 0; i < len; ++i) {
         for (int d = 0; d < DIM; ++d)
             cl.rs[DIM * (b + i) + d] = s.tr[DIM * i + d];
-        cl.qs[b + i] = s.tq[i];
+        for (int k = 0; k < qd; ++k)
+            cl.qs[qd * (b + i) + k] = s.tq[qd * i + k];
         cl.orig[b + i] = s.to[i];
     }
 }
@@ -237,11 +241,12 @@ static void sort_cell_bins(CellList<Real, DIM> &cl, int b, int len, const std::a
     int nbuckets = 1;
     for (int d = 0; d < DIM; ++d)
         nbuckets *= bins;
+    const int qd = cl.qd;
     const Real scale = Real(bins) / h;
     s.key.resize(len);
     s.off.assign(nbuckets, 0);
     s.tr.resize(DIM * len);
-    s.tq.resize(len);
+    s.tq.resize(qd * len);
     s.to.resize(len);
     for (int i = 0; i < len; ++i) {
         const int slot = b + i;
@@ -265,23 +270,26 @@ static void sort_cell_bins(CellList<Real, DIM> &cl, int b, int len, const std::a
         const int dst = s.off[s.key[i]]++;
         for (int d = 0; d < DIM; ++d)
             s.tr[DIM * dst + d] = cl.rs[DIM * slot + d];
-        s.tq[dst] = cl.qs[slot];
+        for (int k = 0; k < qd; ++k)
+            s.tq[qd * dst + k] = cl.qs[qd * slot + k];
         s.to[dst] = cl.orig[slot];
     }
     for (int i = 0; i < len; ++i) {
         for (int d = 0; d < DIM; ++d)
             cl.rs[DIM * (b + i) + d] = s.tr[DIM * i + d];
-        cl.qs[b + i] = s.tq[i];
+        for (int k = 0; k < qd; ++k)
+            cl.qs[qd * (b + i) + k] = s.tq[qd * i + k];
         cl.orig[b + i] = s.to[i];
     }
 }
 
 template <typename Real, int DIM>
 inline CellList<Real, DIM> build_cell_list(const Real *r_src, const Real *charges, int n, int nc,
-                                           const pdmk_esp_params &params, int min_sort_len = 2) {
+                                           const pdmk_esp_params &params, int qd, int min_sort_len = 2) {
     sctl::Profile::Scoped profile("build_cell_list");
     CellList<Real, DIM> cl;
     cl.n_cells = nc;
+    cl.qd = qd;
     int ncells = 1;
     for (int d = 0; d < DIM; ++d)
         ncells *= nc;
@@ -310,14 +318,15 @@ inline CellList<Real, DIM> build_cell_list(const Real *r_src, const Real *charge
 
     // pass 3: scatter into sorted arrays
     cl.rs.resize(DIM * n);
-    cl.qs.resize(n);
+    cl.qs.resize(qd * n);
     cl.orig.resize(n);
     std::vector<int> cursor(cl.cell_start.begin(), cl.cell_start.end() - 1);
     for (int j = 0; j < n; ++j) {
         int slot = cursor[cidx[j]]++;
         for (int d = 0; d < DIM; ++d)
             cl.rs[DIM * slot + d] = r_src[DIM * j + d];
-        cl.qs[slot] = charges[j];
+        for (int k = 0; k < qd; ++k)
+            cl.qs[qd * slot + k] = charges[qd * j + k];
         cl.orig[slot] = j;
     }
 
@@ -364,6 +373,9 @@ struct SRCtx {
     const residual_evaluator_range_func<Real> &range_evaluator;
     Real r_c_sq, rsc, cen;
     int nc, out_dim, stile;
+    // cl.qs packs in_dim charge comps then nrm_dim normal comps per source (nrm_dim > 0 only for the
+    // Stresslet). The gathers split them back into separate charge / normal buffers for the evaluator.
+    int in_dim, nrm_dim;
     Real *pg_sorted; // interleaved [pot] or [pot, d/dx, ...] accumulator (out_dim = 1+DIM), cell-sorted order
 };
 
@@ -416,14 +428,15 @@ static inline bool is_forward(const std::array<int, DIM> &digit) {
 template <typename Real, int DIM, int VecLen>
 static void short_range_dense(const SRCtx<Real, DIM> &ctx) {
     const auto &cl = ctx.cl;
-    const int nc = ctx.nc, out_dim = ctx.out_dim;
+    const int nc = ctx.nc, out_dim = ctx.out_dim, qd = cl.qd;
     const Real rsc = ctx.rsc, cen = ctx.cen, r_c_sq = ctx.r_c_sq;
     int ncells = 1;
     for (int d = 0; d < DIM; ++d)
         ncells *= nc;
+    const int in_dim = ctx.in_dim, nrm_dim = ctx.nrm_dim;
 #pragma omp parallel
     {
-        std::vector<Real> r_src_g, charge_g;
+        std::vector<Real> r_src_g, charge_g, normals_g;
         // Flat loop over the DIM-dimensional cell grid: OpenMP collapse(N) needs a compile-time N,
         // so decode the linear cell index into per-axis coordinates instead (dynamic scheduling
         // over all cells is unaffected).
@@ -455,21 +468,27 @@ static void short_range_dense(const SRCtx<Real, DIM> &ctx) {
             });
 
             r_src_g.resize(DIM * n_src);
-            charge_g.resize(n_src);
+            charge_g.resize(in_dim * n_src);
+            normals_g.resize(nrm_dim * n_src);
             Real *__restrict__ r_src_ptr = r_src_g.data();
             Real *__restrict__ charge_ptr = charge_g.data();
+            Real *__restrict__ normals_ptr = normals_g.data();
             int r_i = 0, c_i = 0;
             for_each_neighbor<Real, DIM>(nbc_axes, off_axes, nc, [&](const auto &, int nb, const auto &shift) {
                 const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
                 for (int b = nbeg; b < nend; ++b) {
                     for (int d = 0; d < DIM; ++d)
                         r_src_ptr[r_i++] = cl.rs[b * DIM + d] + shift[d];
-                    charge_ptr[c_i++] = cl.qs[b];
+                    for (int k = 0; k < in_dim; ++k)
+                        charge_ptr[in_dim * c_i + k] = cl.qs[qd * b + k];
+                    for (int k = 0; k < nrm_dim; ++k)
+                        normals_ptr[nrm_dim * c_i + k] = cl.qs[qd * b + in_dim + k];
+                    ++c_i;
                 }
             });
 
-            ctx.evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, n_trg, r_trg_ptr,
-                          ctx.pg_sorted + out_dim * hbeg);
+            ctx.evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nrm_dim ? normals_ptr : nullptr,
+                          n_trg, r_trg_ptr, ctx.pg_sorted + out_dim * hbeg);
         }
     }
 }
@@ -481,14 +500,15 @@ static void short_range_dense(const SRCtx<Real, DIM> &ctx) {
 template <typename Real, int DIM, int VecLen>
 static void short_range_prune_tile(const SRCtx<Real, DIM> &ctx) {
     const auto &cl = ctx.cl;
-    const int nc = ctx.nc, out_dim = ctx.out_dim, stile = ctx.stile;
+    const int nc = ctx.nc, out_dim = ctx.out_dim, stile = ctx.stile, qd = cl.qd;
     const Real rsc = ctx.rsc, cen = ctx.cen, r_c_sq = ctx.r_c_sq;
     int ncells = 1;
     for (int d = 0; d < DIM; ++d)
         ncells *= nc;
+    const int in_dim = ctx.in_dim, nrm_dim = ctx.nrm_dim;
 #pragma omp parallel
     {
-        std::vector<Real> r_src_soa, charge_g; // sources gathered SoA (axis-major, stride n_src)
+        std::vector<Real> r_src_soa, charge_g, normals_g; // sources gathered SoA (axis-major, stride n_src)
         // Source-tile AABBs, SoA so the tile-vs-tile test vectorizes; d2buf holds its output.
         std::array<std::vector<Real>, DIM> slo, shi;
         std::vector<Real> d2buf;
@@ -522,9 +542,11 @@ static void short_range_prune_tile(const SRCtx<Real, DIM> &ctx) {
             });
 
             r_src_soa.resize(DIM * n_src);
-            charge_g.resize(n_src);
+            charge_g.resize(in_dim * n_src);
+            normals_g.resize(nrm_dim * n_src);
             Real *__restrict__ r_src_ptr = r_src_soa.data();
             Real *__restrict__ charge_ptr = charge_g.data();
+            Real *__restrict__ normals_ptr = normals_g.data();
             tile_s0.clear();
             tile_sn.clear();
             int c_i = 0;
@@ -534,7 +556,10 @@ static void short_range_prune_tile(const SRCtx<Real, DIM> &ctx) {
                 for (int b = nbeg; b < nend; ++b) {
                     for (int d = 0; d < DIM; ++d)
                         r_src_ptr[d * n_src + c_i] = cl.rs[b * DIM + d] + shift[d];
-                    charge_ptr[c_i] = cl.qs[b];
+                    for (int k = 0; k < in_dim; ++k)
+                        charge_ptr[in_dim * c_i + k] = cl.qs[qd * b + k];
+                    for (int k = 0; k < nrm_dim; ++k)
+                        normals_ptr[nrm_dim * c_i + k] = cl.qs[qd * b + in_dim + k];
                     ++c_i;
                 }
                 // Split this cell's contribution into VecLen source tiles that never cross a cell
@@ -608,8 +633,9 @@ static void short_range_prune_tile(const SRCtx<Real, DIM> &ctx) {
                     m += (d2buf[st] <= r_c_sq);
                 }
 
-                ctx.range_evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, m, s0_ptr, sn_ptr,
-                                    tn, tptr, ctx.pg_sorted + out_dim * (hbeg + t0), nullptr, nullptr);
+                ctx.range_evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr,
+                                    nrm_dim ? normals_ptr : nullptr, m, s0_ptr, sn_ptr, tn, tptr,
+                                    ctx.pg_sorted + out_dim * (hbeg + t0), nullptr, nullptr);
             }
         }
     }
@@ -623,14 +649,15 @@ template <typename Real, int DIM, int VecLen>
 static void short_range_prune_source(const SRCtx<Real, DIM> &ctx) {
     using RealVec = sctl::Vec<Real, VecLen>;
     const auto &cl = ctx.cl;
-    const int nc = ctx.nc, out_dim = ctx.out_dim;
+    const int nc = ctx.nc, out_dim = ctx.out_dim, qd = cl.qd;
     const Real rsc = ctx.rsc, cen = ctx.cen, r_c_sq = ctx.r_c_sq;
     int ncells = 1;
     for (int d = 0; d < DIM; ++d)
         ncells *= nc;
+    const int in_dim = ctx.in_dim, nrm_dim = ctx.nrm_dim;
 #pragma omp parallel
     {
-        std::vector<Real> r_src_soa, charge_g; // sources gathered SoA (axis-major, stride n_src)
+        std::vector<Real> r_src_soa, charge_g, normals_g; // sources gathered SoA (axis-major, stride n_src)
         std::vector<int> surv_s0, surv_sn;
 #pragma omp for schedule(dynamic)
         for (int home = 0; home < ncells; ++home) {
@@ -663,16 +690,21 @@ static void short_range_prune_source(const SRCtx<Real, DIM> &ctx) {
             // per-source box-distance cull reads each axis contiguously and the evaluator reads the
             // same layout, so no separate AoS->SoA repack is needed.
             r_src_soa.resize(DIM * n_src);
-            charge_g.resize(n_src);
+            charge_g.resize(in_dim * n_src);
+            normals_g.resize(nrm_dim * n_src);
             Real *__restrict__ r_src_ptr = r_src_soa.data();
             Real *__restrict__ charge_ptr = charge_g.data();
+            Real *__restrict__ normals_ptr = normals_g.data();
             int c_i = 0;
             for_each_neighbor<Real, DIM>(nbc_axes, off_axes, nc, [&](const auto &, int nb, const auto &shift) {
                 const int nbeg = cl.cell_start[nb], nend = cl.cell_start[nb + 1];
                 for (int b = nbeg; b < nend; ++b) {
                     for (int d = 0; d < DIM; ++d)
                         r_src_ptr[d * n_src + c_i] = cl.rs[b * DIM + d] + shift[d];
-                    charge_ptr[c_i] = cl.qs[b];
+                    for (int k = 0; k < in_dim; ++k)
+                        charge_ptr[in_dim * c_i + k] = cl.qs[qd * b + k];
+                    for (int k = 0; k < nrm_dim; ++k)
+                        normals_ptr[nrm_dim * c_i + k] = cl.qs[qd * b + in_dim + k];
                     ++c_i;
                 }
             });
@@ -731,8 +763,9 @@ static void short_range_prune_source(const SRCtx<Real, DIM> &ctx) {
                     m += (d2 <= r_c_sq);
                 }
 
-                ctx.range_evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr, nullptr, m, idx_ptr,
-                                    surv_sn.data(), tn, tptr, ctx.pg_sorted + out_dim * (hbeg + t0), nullptr, nullptr);
+                ctx.range_evaluator(rsc, cen, r_c_sq, Real(0), n_src, r_src_ptr, charge_ptr,
+                                    nrm_dim ? normals_ptr : nullptr, m, idx_ptr, surv_sn.data(), tn, tptr,
+                                    ctx.pg_sorted + out_dim * (hbeg + t0), nullptr, nullptr);
             }
         }
     }
@@ -945,12 +978,11 @@ void EspPlan<Real>::short_range(int n, const Real *r_src, const Real *charges, s
 
     constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
 
-    CellList<Real, DIM> cl = build_cell_list<Real, DIM>(r_src, charges, n, nc, params, MaxVecLen);
+    CellList<Real, DIM> cl = build_cell_list<Real, DIM>(r_src, charges, n, nc, params, charge_dim, MaxVecLen);
 
     const Real L = Real(params.L);
     const Real r_c_sq = Real(params.r_c) * Real(params.r_c);
-    const bool want_force = (params.eval_type >= DMK_POTENTIAL_GRAD);
-    const int out_dim = want_force ? 1 + DIM : 1;
+    const int out_dim = output_dim; // 1 (pot) / 1+DIM (pot+grad) / DIM (velocity)
 
     // Poly variable: R^2 for 2D Laplace/Yukawa and 3D Sqrt-Laplace; r for 3D Laplace/Yukawa and 2D
     // Sqrt-Laplace (its evaluator is (r+cen)*rsc). Both map [0, r_c] onto the evaluator's [-1, 1].
@@ -997,13 +1029,17 @@ void EspPlan<Real>::short_range(int n, const Real *r_src, const Real *charges, s
                                nc,
                                out_dim,
                                params.esp_stile > 0 ? params.esp_stile : MaxVecLen,
+                               input_dim,
+                               normal_dim,
                                pg_sorted.data()};
 
     // Each method enumerates source/target pairs its own way; they all accumulate into pg_sorted.
     // The pruning/N3L strategies use range_evaluator, which 2D doesn't build yet, so 2D runs dense.
+    // N3L's reciprocal half-stencil assumes a symmetric kernel, so vector kernels (input_dim > 1) skip
+    // it and take the prune/dense path instead.
     if (DIM == 2)
         short_range_dense<Real, DIM, MaxVecLen>(ctx);
-    else if (esp_n3l(params))
+    else if (esp_n3l(params) && input_dim == 1)
         short_range_n3l<Real, DIM, MaxVecLen>(ctx);
     else if (esp_prune_source(params))
         short_range_prune_source<Real, DIM, MaxVecLen>(ctx);
@@ -1012,14 +1048,18 @@ void EspPlan<Real>::short_range(int n, const Real *r_src, const Real *charges, s
     else
         short_range_dense<Real, DIM, MaxVecLen>(ctx);
 
+    // Scatter cell-sorted results back to original order. Component 0 is the potential (or velocity x);
+    // components 1.. are the gradient axes (scalar kernels report them as the force -q*grad, q = the
+    // target's own charge) or the remaining raw output components (dipole gradient, Stokeslet velocity).
     for (int a = 0; a < n; ++a) {
         const int orig = cl.orig[a];
         pot[orig] += pg_sorted[out_dim * a + 0];
-        if (want_force) {
-            const Real q = cl.qs[a];
-            for (int d = 0; d < DIM; ++d)
-                force[d][orig] += -q * pg_sorted[out_dim * a + 1 + d];
-        }
+        if (out_dim == 1)
+            continue;
+        const Real q = grad_is_force ? cl.qs[a] : Real(1);
+        const Real sgn = grad_is_force ? Real(-1) : Real(1);
+        for (int k = 1; k < out_dim; ++k)
+            force[k - 1][orig] += sgn * q * pg_sorted[out_dim * a + k];
     }
 }
 
@@ -1107,11 +1147,9 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
         coord[d].resize(n);
     c.resize(n);
 #pragma omp parallel for
-    for (int j = 0; j < n; ++j) {
+    for (int j = 0; j < n; ++j)
         for (int d = 0; d < DIM; ++d)
             coord[d][j] = r_src[DIM * j + d] * scale;
-        c[j] = {charges[j], Real(0)};
-    }
 
     finufft_opts opts;
     if constexpr (std::is_same_v<Real, float>)
@@ -1163,37 +1201,55 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
             throw std::runtime_error("finufft NUFFT interp failed, ier=" + std::to_string(ier));
     };
 
-    // 1. Spread: NU points -> uniform grid (type 1). b is zeroed since spreading only writes grid
-    // points near NU sources while the forward FFT below reads all ntot entries.
-    auto &b = lr_b;
-    b.assign(ntot, std::complex<Real>(0));
-    {
-        sctl::Profile::Scoped prof("lr_spread");
-        nufft1(c.data(), b.data());
+    // 1-2. Spread each input channel (type 1, near-source only, so g is zeroed first) and forward-FFT
+    // to its spectrum. lr_in[ch] holds the spectrum of charge component ch; scalar kernels have one
+    // channel, the dipole has DIM (one per dipole-vector component), the Stresslet has DIM*DIM (the
+    // force(x)normal tensor P_ab = force[a]*normal[b], read from the packed [force | normal] payload).
+    const bool is_stresslet = (params.kernel == DMK_STRESSLET);
+    const int n_channels = is_stresslet ? DIM * DIM : input_dim;
+    lr_in.resize(n_channels);
+    for (int ch = 0; ch < n_channels; ++ch) {
+#pragma omp parallel for
+        for (int j = 0; j < n; ++j) {
+            Real q;
+            if (is_stresslet) {
+                const int a = ch / DIM, b = ch % DIM;
+                q = charges[charge_dim * j + a] * charges[charge_dim * j + input_dim + b];
+            } else
+                q = charges[input_dim * j + ch];
+            c[j] = {q, Real(0)};
+        }
+        auto &g = lr_in[ch];
+        g.assign(ntot, std::complex<Real>(0));
+        {
+            sctl::Profile::Scoped prof("lr_spread");
+            nufft1(c.data(), g.data());
+        }
+        {
+            sctl::Profile::Scoped prof("lr_fft_fwd");
+            fftn<Real, DIM>(g, g, nf);
+        }
     }
 
-    // 2. Forward FFT (in place; b now holds the spectrum)
-    {
-        sctl::Profile::Scoped prof("lr_fft_fwd");
-        fftn<Real, DIM>(b, b, nf);
-    }
-
-    // 3. Diagonal scaling: u_hat[0] is the far-field potential spectrum (b * scaling_coeffs). For the
-    // force, the gradient spectra follow from the ik method: F = -q*grad(u), grad(u)_hat_k = i*k*u_hat_k,
-    // so u_hat[1+axis] = i*k_axis*u_hat[0] -- a complex-by-imaginary product written as a real swap+scale
-    // rather than a full std::complex multiply.
-    const int out_dim = want_force ? 1 + DIM : 1;
+    // 3. Far-field spectrum. Scalar kernels multiply the input spectrum by the diagonal radial symbol;
+    // the dipole/Stokeslet/Stresslet apply their per-mode projectors (below). Force spectra follow from
+    // the ik method: grad(u)_hat = i*k*u_hat, written as a real swap+scale.
+    const int out_dim = output_dim;
     auto &u_hat = lr_u_hat;
     for (int k = 0; k < out_dim; ++k)
         u_hat[k].resize(ntot);
 
-    if (!want_force) {
+    const bool is_dipole = (params.kernel == DMK_LAPLACE_DIPOLE);
+    const bool is_stokeslet = (params.kernel == DMK_STOKESLET);
+    if (input_dim == 1 && !want_force) {
 #pragma omp parallel for
         for (int idx = 0; idx < ntot; ++idx)
-            u_hat[0][idx] = b[idx] * scaling_coeffs[idx];
+            u_hat[0][idx] = lr_in[0][idx] * scaling_coeffs[idx];
     } else {
         // Per-axis wavenumbers scale*k_idx. Walking the grid with nested loops makes each grid index a
-        // loop counter, avoiding the O(ntot) modulo/division reconstruction of the multi-index.
+        // loop counter, avoiding the O(ntot) modulo/division reconstruction of the multi-index. DMK's
+        // grid_idx (row-major, axis DIM-1 fastest) and FINUFFT's internal grid storage (column-major,
+        // axis 0 fastest) disagree on which loop variable is which physical axis: axis0<->g2 (DIM=3).
         std::vector<Real> kvals(nf);
         for (int i = 0; i < nf; ++i)
             kvals[i] = scale * Real((i <= nf / 2) ? i : i - nf);
@@ -1201,8 +1257,6 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
         auto grad_hat = [](const std::complex<Real> &ph, Real km) {
             return std::complex<Real>(-ph.imag() * km, ph.real() * km); // i*km*ph
         };
-        // DMK's grid_idx (row-major, axis DIM-1 fastest) and FINUFFT's internal grid storage
-        // (column-major, axis 0 fastest) disagree on which loop variable is which physical axis;
         if constexpr (DIM == 3) {
 #pragma omp parallel for
             for (int g0 = 0; g0 < nf; ++g0)
@@ -1210,11 +1264,60 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
                     const int base = (g0 * nf + g1) * nf;
                     for (int g2 = 0; g2 < nf; ++g2) {
                         const int idx = base + g2;
-                        const std::complex<Real> ph = b[idx] * scaling_coeffs[idx];
+                        const Real kx = kvals[g2], ky = kvals[g1], kz = kvals[g0]; // axis 0/1/2
+                        const Real f = scaling_coeffs[idx];
+                        if (is_stresslet) {
+                            // Stresslet projector (tree stresslet_3d_multiply_kernelFT), f = biharmonic symbol:
+                            //   zz = |k|^2 tr(P) - 2 k^T P k;  u_i = -i f (k_i zz + |k|^2 ((P+P^T)k)_i).
+                            // Only symmetric combinations of P appear, so the tensor storage transpose is
+                            // irrelevant. P[i][j] = spectrum of channel i*DIM+j.
+                            const std::array<Real, 3> kvec{kx, ky, kz};
+                            const Real ksq = kx * kx + ky * ky + kz * kz;
+                            std::complex<Real> P[3][3];
+                            for (int i = 0; i < 3; ++i)
+                                for (int j = 0; j < 3; ++j)
+                                    P[i][j] = lr_in[i * 3 + j][idx];
+                            const std::complex<Real> trace = P[0][0] + P[1][1] + P[2][2];
+                            std::complex<Real> kPk{0};
+                            for (int i = 0; i < 3; ++i)
+                                for (int j = 0; j < 3; ++j)
+                                    kPk += P[i][j] * (kvec[i] * kvec[j]);
+                            const std::complex<Real> zz = ksq * trace - Real(2) * kPk;
+                            const std::complex<Real> nif(0, -f); // -i f
+                            for (int i = 0; i < 3; ++i) {
+                                std::complex<Real> prod{0};
+                                for (int j = 0; j < 3; ++j)
+                                    prod += (P[i][j] + P[j][i]) * kvec[j];
+                                u_hat[i][idx] = nif * (kvec[i] * zz + ksq * prod);
+                            }
+                            continue;
+                        }
+                        if (is_stokeslet) {
+                            // Oseen projector u_i = f(k_i (k.F) - |k|^2 F_i) (tree stokeslet_3d_multiply_kernelFT),
+                            // f = biharmonic scaling_coeffs.
+                            const std::complex<Real> p0 = lr_in[0][idx], p1 = lr_in[1][idx], p2 = lr_in[2][idx];
+                            const std::complex<Real> dot = kx * p0 + ky * p1 + kz * p2;
+                            const Real dd = (kx * kx + ky * ky + kz * kz) * f;
+                            u_hat[0][idx] = dot * (kx * f) - p0 * dd;
+                            u_hat[1][idx] = dot * (ky * f) - p1 * dd;
+                            u_hat[2][idx] = dot * (kz * f) - p2 * dd;
+                            continue;
+                        }
+                        std::complex<Real> ph;
+                        if (is_dipole) {
+                            const std::complex<Real> dot =
+                                kx * lr_in[0][idx] + ky * lr_in[1][idx] + kz * lr_in[2][idx]; // k.d
+                            // phi_dip_hat = -i f (k.d) (tree laplace_dipole_multiply_kernelFT).
+                            ph = f * std::complex<Real>(0, -1) * dot; // -i f (k.d)
+                        } else {
+                            ph = lr_in[0][idx] * f;
+                        }
                         u_hat[0][idx] = ph;
-                        u_hat[1][idx] = grad_hat(ph, kvals[g2]); // force axis 0
-                        u_hat[2][idx] = grad_hat(ph, kvals[g1]); // force axis 1
-                        u_hat[3][idx] = grad_hat(ph, kvals[g0]); // force axis 2
+                        if (want_force) {
+                            u_hat[1][idx] = grad_hat(ph, kx); // axis 0
+                            u_hat[2][idx] = grad_hat(ph, ky); // axis 1
+                            u_hat[3][idx] = grad_hat(ph, kz); // axis 2
+                        }
                     }
                 }
         } else {
@@ -1223,10 +1326,12 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
                 const int base = g0 * nf;
                 for (int g1 = 0; g1 < nf; ++g1) {
                     const int idx = base + g1;
-                    const std::complex<Real> ph = b[idx] * scaling_coeffs[idx];
+                    const std::complex<Real> ph = lr_in[0][idx] * scaling_coeffs[idx];
                     u_hat[0][idx] = ph;
-                    u_hat[1][idx] = grad_hat(ph, kvals[g1]); // force axis 0
-                    u_hat[2][idx] = grad_hat(ph, kvals[g0]); // force axis 1
+                    if (want_force) {
+                        u_hat[1][idx] = grad_hat(ph, kvals[g1]); // axis 0
+                        u_hat[2][idx] = grad_hat(ph, kvals[g0]); // axis 1
+                    }
                 }
             }
         }
@@ -1248,12 +1353,15 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
         sctl::Profile::Scoped prof("lr_interp");
         nufft2(out.data(), g.data());
     };
-    // Component 0 is the potential; components 1.. are force axes 0.. (accumulated as -q*field).
+    // Component 0 is the potential; components 1.. are gradient axes. Scalar kernels report them as the
+    // force -q*grad (q = the target's own charge); the dipole reports the raw field gradient.
     auto accumulate = [&](int k, int j, Real field) {
         if (k == 0)
             pot[j] += field;
-        else
+        else if (grad_is_force)
             force[k - 1][j] += -charges[j] * field;
+        else
+            force[k - 1][j] += field;
     };
 
     for (int k = 0; k < out_dim; k += 2) {
@@ -1277,6 +1385,10 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
 // in the constructor) from each source potential.
 template <typename Real>
 void EspPlan<Real>::self_interaction(int n, const Real *charges, std::span<Real> pot) {
+    // Scalar-potential self-energy only. Laplace-dipole (self_factor 0, gradient self handled in eval)
+    // and Stokeslet (multi-component self handled in eval) do not use this scalar path.
+    if (input_dim != 1)
+        return;
     for (int i = 0; i < n; ++i)
         pot[i] -= charges[i] * self_factor;
 }
@@ -1284,9 +1396,24 @@ void EspPlan<Real>::self_interaction(int n, const Real *charges, std::span<Real>
 template <typename Real>
 EspPlan<Real>::EspPlan(const pdmk_esp_params &params_)
     : n_digits(esp_plan_digits(params_)), n_dim(params_.n_dim), params(params_) {
-    if (params.kernel != DMK_YUKAWA && params.kernel != DMK_LAPLACE && params.kernel != DMK_SQRT_LAPLACE)
-        throw api_error(DMK_ERR_INVALID_ARGUMENT,
-                        "ESP supports only the scalar kernels (Yukawa, Laplace, Sqrt-Laplace)");
+    const bool scalar_kernel =
+        params.kernel == DMK_YUKAWA || params.kernel == DMK_LAPLACE || params.kernel == DMK_SQRT_LAPLACE;
+    if (!scalar_kernel && params.kernel != DMK_LAPLACE_DIPOLE && params.kernel != DMK_STOKESLET &&
+        params.kernel != DMK_STRESSLET)
+        throw api_error(
+            DMK_ERR_INVALID_ARGUMENT,
+            "ESP supports the scalar kernels (Yukawa, Laplace, Sqrt-Laplace), Laplace-dipole, Stokeslet, Stresslet");
+    if (params.kernel == DMK_LAPLACE_DIPOLE && (n_dim != 3 || params.use_periodic))
+        throw api_error(DMK_ERR_INVALID_ARGUMENT, "ESP Laplace-dipole supports only 3D free-space (use_periodic=0)");
+    if (params.kernel == DMK_STOKESLET && (n_dim != 3 || params.use_periodic))
+        throw api_error(DMK_ERR_INVALID_ARGUMENT, "ESP Stokeslet supports only 3D free-space (use_periodic=0)");
+    if (params.kernel == DMK_STRESSLET && (n_dim != 3 || params.use_periodic))
+        throw api_error(DMK_ERR_INVALID_ARGUMENT, "ESP Stresslet supports only 3D free-space (use_periodic=0)");
+    input_dim = get_kernel_input_dim(n_dim, params.kernel);
+    output_dim = get_kernel_output_dim(n_dim, params.kernel, params.eval_type);
+    normal_dim = (params.kernel == DMK_STRESSLET) ? n_dim : 0;
+    charge_dim = input_dim + normal_dim;
+    grad_is_force = scalar_kernel;
     const Real eps_d = std::pow(10.0, -Real(n_digits));
     const double sigma = params.sigma;
     P = esp_P_from_eps(eps_d, sigma, n_dim);
@@ -1332,6 +1459,10 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_)
     // int(psi0) window (3D Laplace, 2D Sqrt-Laplace).
     const Real base = Real(pswf(0.0) / (params.r_c * pswf.c0));
     if (n_dim == 3 && params.kernel == DMK_LAPLACE) {
+        self_factor = base;
+    } else if (n_dim == 3 && params.kernel == DMK_STOKESLET) {
+        // Stokeslet 3D self is psi0/(c0*r_c) too (tree get_self_interaction_constant), applied per
+        // velocity component in eval.
         self_factor = base;
     } else if (n_dim == 2 && params.kernel == DMK_SQRT_LAPLACE) {
         self_factor = base;
@@ -1385,6 +1516,18 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_)
         self_factor = Real(fd.yukawa_windowed_kernel_value_at_zero(0));
     }
 
+    // Laplace-dipole gradient self-constant: the long-range field's even gradient at r=0 is spurious
+    // self-interaction, removed per source in eval. Mirrors get_dipole_grad_self_constant (tree.hpp).
+    if (params.kernel == DMK_LAPLACE_DIPOLE) {
+        const double delta = 1e-4;
+        const double fd1 = pswf.pswf.eval_derivative(delta);
+        const double fd2 = pswf.pswf.eval_derivative(2.0 * delta);
+        const double ddpsi0 = (8.0 * fd1 - fd2) / (6.0 * delta);
+        const double c = pswf.pswf.int_eval(1.0);
+        const double rc3 = params.r_c * params.r_c * params.r_c;
+        dipole_grad_self = Real(-ddpsi0 / (3.0 * c * rc3));
+    }
+
     bool use_jit = false;
 #ifdef DMK_USE_JIT
     use_jit = !util::env_is_set("DMK_DEBUG_FORCE_AOT");
@@ -1411,10 +1554,26 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_)
 }
 
 template <typename Real>
-PotForce<Real> EspPlan<Real>::eval(int n, const Real *r_src, const Real *charges) {
+PotForce<Real> EspPlan<Real>::eval(int n, const Real *r_src, const Real *charges, const Real *normals) {
     sctl::Profile::Scoped esp_eval("esp_eval");
     const bool want_force = (params.eval_type >= DMK_POTENTIAL_GRAD);
-    const int slots = want_force ? 1 + n_dim : 1;
+    const int slots = output_dim; // component-separated SoA: comp0 = pot/velocity-x, comp1.. = grad/velocity
+
+    // Short_range/long_range operate on a single charge_dim-wide payload per source. The Stresslet packs
+    // [force | normal] (charge_dim = input_dim + normal_dim); every other kernel passes charges through.
+    std::vector<Real> combined;
+    if (normal_dim > 0) {
+        if (!normals)
+            throw std::runtime_error("ESP Stresslet eval requires non-null normals");
+        combined.resize(size_t(charge_dim) * n);
+        for (int i = 0; i < n; ++i) {
+            for (int k = 0; k < input_dim; ++k)
+                combined[charge_dim * i + k] = charges[input_dim * i + k];
+            for (int k = 0; k < normal_dim; ++k)
+                combined[charge_dim * i + input_dim + k] = normals[normal_dim * i + k];
+        }
+    }
+    const Real *payload = normal_dim > 0 ? combined.data() : charges;
 
     // Reuse the plan's typed workspace; zero-initialize the active region.
     if (static_cast<int>(buf.size()) < slots * n)
@@ -1422,26 +1581,62 @@ PotForce<Real> EspPlan<Real>::eval(int n, const Real *r_src, const Real *charges
     std::fill(buf.begin(), buf.begin() + slots * n, Real(0));
 
     std::span<Real> pot_sp(buf.data(), n);
-    std::span<Real> fx_sp(buf.data() + n, want_force ? n : 0);
-    std::span<Real> fy_sp(buf.data() + 2 * n, want_force ? n : 0);
-    std::span<Real> fz_sp(buf.data() + 3 * n, (want_force && n_dim == 3) ? n : 0);
+    std::span<Real> fx_sp(buf.data() + n, output_dim > 1 ? n : 0);
+    std::span<Real> fy_sp(buf.data() + 2 * n, output_dim > 2 ? n : 0);
+    std::span<Real> fz_sp(buf.data() + 3 * n, output_dim > 3 ? n : 0);
 
     // Runtime n_dim -> compile-time DIM dispatch (mirrors src/aot_evaluator.cpp's pattern).
     if (n_dim == 3) {
         std::array<std::span<Real>, 3> force{fx_sp, fy_sp, fz_sp};
-        short_range<3>(n, r_src, charges, pot_sp, force);
-        long_range<3>(n, r_src, charges, pot_sp, force);
-        self_interaction(n, charges, pot_sp);
+        short_range<3>(n, r_src, payload, pot_sp, force);
+        long_range<3>(n, r_src, payload, pot_sp, force);
+        self_interaction(n, payload, pot_sp);
     } else if (n_dim == 2) {
         std::array<std::span<Real>, 2> force{fx_sp, fy_sp};
-        short_range<2>(n, r_src, charges, pot_sp, force);
-        long_range<2>(n, r_src, charges, pot_sp, force);
-        self_interaction(n, charges, pot_sp);
+        short_range<2>(n, r_src, payload, pot_sp, force);
+        long_range<2>(n, r_src, payload, pot_sp, force);
+        self_interaction(n, payload, pot_sp);
     } else {
         throw std::runtime_error("ESP: unsupported n_dim=" + std::to_string(n_dim));
     }
 
-    return {pot_sp, fx_sp, fy_sp, fz_sp};
+    // Remove the long-range dipole gradient self-interaction (grad[a] -= const * d[a] per source). The
+    // odd dipole potential self is zero, so pot needs no correction.
+    if (params.kernel == DMK_LAPLACE_DIPOLE && want_force) {
+        std::array<std::span<Real>, 3> force{fx_sp, fy_sp, fz_sp};
+        for (int i = 0; i < n; ++i)
+            for (int a = 0; a < 3; ++a)
+                force[a][i] -= dipole_grad_self * charges[3 * i + a];
+    }
+
+    // Stokeslet velocity self-interaction: subtract the long-range self term per component
+    // (comp0/1/2 = velocity x/y/z).
+    if (params.kernel == DMK_STOKESLET) {
+        std::array<std::span<Real>, 3> comp{pot_sp, fx_sp, fy_sp};
+        for (int i = 0; i < n; ++i)
+            for (int k = 0; k < 3; ++k)
+                comp[k][i] -= self_factor * charges[3 * i + k];
+
+        // Free-space zero-mode gauge: the spectral k=0 mode drops the modified biharmonic's uniform
+        // net-force flow, so add sum(force)/trunc_rl per component (Bagge & Tornberg arbitrary-periodicity
+        // D.13-D.17) for the velocity to decay at infinity.
+        std::array<Real, 3> netf{};
+        for (int i = 0; i < n; ++i)
+            for (int k = 0; k < 3; ++k)
+                netf[k] += charges[3 * i + k];
+        const Real inv_trunc_rl = Real(1.0 / trunc_rl);
+        for (int k = 0; k < 3; ++k) {
+            const Real add = inv_trunc_rl * netf[k];
+            for (int i = 0; i < n; ++i)
+                comp[k][i] += add;
+        }
+    }
+
+    // Vector-field kernels report the output components as velocity; potential-family kernels use the
+    // pot + gradient spans.
+    if (grad_is_force || params.kernel == DMK_LAPLACE_DIPOLE)
+        return {pot_sp, fx_sp, fy_sp, fz_sp, {}, {}, {}};
+    return {{}, {}, {}, {}, pot_sp, fx_sp, fy_sp};
 }
 
 template struct EspPlan<float>;

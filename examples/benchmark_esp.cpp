@@ -1,4 +1,5 @@
 #include <dmk.h>
+#include <dmk/direct.hpp>
 #include <dmk/omp_wrapper.hpp>
 #include <dmk/util.hpp>
 #include <sctl.hpp>
@@ -43,6 +44,15 @@ struct Config {
     int esp_bins = 2;
     int esp_stile = 0;
 };
+
+// Kernel traits. The non-scalar kernels (Laplace-dipole, Stokeslet, Stresslet) are 3D free-space only
+// in ESP; the Stresslet additionally needs a per-source normal, and the two Stokes kernels output a
+// velocity (DMK_VELOCITY) rather than a potential.
+static bool esp_is_scalar(dmk_ikernel k) { return k == DMK_LAPLACE || k == DMK_YUKAWA || k == DMK_SQRT_LAPLACE; }
+static bool esp_is_velocity(dmk_ikernel k) { return k == DMK_STOKESLET || k == DMK_STRESSLET; }
+static bool esp_needs_normal(dmk_ikernel k) { return k == DMK_STRESSLET; }
+// Natural potential-phase eval type for the kernel (the forces phase always uses DMK_POTENTIAL_GRAD).
+static dmk_eval_type esp_pot_eval_type(dmk_ikernel k) { return esp_is_velocity(k) ? DMK_VELOCITY : DMK_POTENTIAL; }
 
 // Build a pdmk_esp_params from the benchmark Config; r_c and eval_type are passed explicitly since
 // callers need to sweep r_c (init_sensible_defaults) or vary eval_type (potential-only FD reference
@@ -90,11 +100,12 @@ pdmk_esp_plan esp_plan_create(dmk_communicator comm, pdmk_esp_params params) {
         return pdmk_esp_plan_create(comm, params);
 }
 template <typename Real>
-void esp_eval(dmk_communicator comm, pdmk_esp_plan plan, int n, const Real *r_src, const Real *charges, Real *pot_src) {
+void esp_eval(dmk_communicator comm, pdmk_esp_plan plan, int n, const Real *r_src, const Real *charges,
+              const Real *normal, Real *pot_src) {
     if constexpr (std::is_same_v<Real, float>)
-        pdmk_esp_evalf(comm, plan, n, r_src, charges, pot_src);
+        pdmk_esp_evalf(comm, plan, n, r_src, charges, normal, pot_src);
     else
-        pdmk_esp_eval(comm, plan, n, r_src, charges, pot_src);
+        pdmk_esp_eval(comm, plan, n, r_src, charges, normal, pot_src);
 }
 template <typename Real>
 void esp_plan_destroy(pdmk_esp_plan plan) {
@@ -115,13 +126,42 @@ std::vector<Real> generate_positions(int n, int n_dim, double L, long seed = 42)
     return r;
 }
 
-// Alternating ±1 charges — ensures charge neutrality for well-conditioned Ewald.
+// Scalar (input_dim==1): alternating ±1 charges — charge neutrality for well-conditioned periodic Ewald.
+// Vector kernels (input_dim>1, free-space only): random components in [-0.5, 0.5) per source.
 template <typename Real>
-std::vector<Real> generate_charges(int n) {
-    std::vector<Real> q(n);
-    for (int i = 0; i < n; ++i)
-        q[i] = Real(1 - 2 * (i & 1));
+std::vector<Real> generate_charges(int n, int input_dim = 1, long seed = 7) {
+    if (input_dim == 1) {
+        std::vector<Real> q(n);
+        for (int i = 0; i < n; ++i)
+            q[i] = Real(1 - 2 * (i & 1));
+        return q;
+    }
+    std::default_random_engine eng(seed);
+    std::uniform_real_distribution<double> rng(-0.5, 0.5);
+    std::vector<Real> q(size_t(n) * input_dim);
+    for (auto &v : q)
+        v = Real(rng(eng));
     return q;
+}
+
+// Random unit normals (per source, DIM comps) for the Stresslet.
+template <typename Real>
+std::vector<Real> generate_normals(int n, int n_dim, long seed = 11) {
+    std::default_random_engine eng(seed);
+    std::uniform_real_distribution<double> rng(-1.0, 1.0);
+    std::vector<Real> nv(size_t(n) * n_dim);
+    for (int i = 0; i < n; ++i) {
+        double s = 0.0;
+        for (int d = 0; d < n_dim; ++d) {
+            const double x = rng(eng);
+            nv[i * n_dim + d] = Real(x);
+            s += x * x;
+        }
+        const double inv = s > 0 ? 1.0 / std::sqrt(s) : 1.0;
+        for (int d = 0; d < n_dim; ++d)
+            nv[i * n_dim + d] = Real(nv[i * n_dim + d] * inv);
+    }
+    return nv;
 }
 
 // Periodic reference potential at the first n_direct sources (self-interaction excluded). Returns
@@ -132,17 +172,23 @@ std::vector<Real> generate_charges(int n) {
 // prunes at scale). Yukawa is screened, so a parallel near-image direct sum of exp(-lambda r)/r
 // suffices. Only n_direct points are evaluated.
 bool compute_reference(const Config &cfg, int n, const std::vector<double> &r_src_d,
-                       const std::vector<double> &charges_d, std::vector<double> &ref) {
+                       const std::vector<double> &charges_d, const std::vector<double> &normals_d,
+                       std::vector<double> &ref) {
     const int nd = cfg.n_dim;
     const int n_cmp = std::min(cfg.n_direct, n);
     const double L = cfg.L;
 
     if (!cfg.use_periodic) {
-        ref.assign(n_cmp, 0.0);
+        // Reference matches the plan's potential-phase output: scalar potential, dipole potential, or
+        // Stokes velocity (interleaved out_dim comps per point). Stresslet passes the source normals.
+        const dmk_eval_type et = esp_pot_eval_type(cfg.kernel);
+        const int out_dim = dmk::get_kernel_output_dim(nd, cfg.kernel, et);
+        ref.assign(size_t(n_cmp) * out_dim, 0.0);
         std::cout << "# verify: free-space direct reference for first " << n_cmp << " of " << n << " points...\n"
                   << std::flush;
-        auto fn = dmk::get_direct_evaluator<double>(cfg.kernel, DMK_POTENTIAL, nd, cfg.fparam);
-        fn(n, r_src_d.data(), charges_d.data(), nullptr, n_cmp, r_src_d.data(), ref.data());
+        auto fn = dmk::get_direct_evaluator<double>(cfg.kernel, et, nd, cfg.fparam);
+        fn(n, r_src_d.data(), charges_d.data(), esp_needs_normal(cfg.kernel) ? normals_d.data() : nullptr, n_cmp,
+           r_src_d.data(), ref.data());
         return true;
     }
 
@@ -230,7 +276,7 @@ double l2_rel_err(std::span<Real> pot, const std::vector<double> &ref) {
 // Auto-select r_c if it wasn't explicitly given (for accuracy).
 // Sweeps all candidates and picks the one with the smallest l2_rel_err against the Ewald reference.
 void init_sensible_defaults(Config &cfg, const std::vector<double> &r_src_d, const std::vector<double> &charges_d,
-                            const std::vector<double> &ref, bool have_ref) {
+                            const std::vector<double> &normals_d, const std::vector<double> &ref, bool have_ref) {
     if (cfg.r_c != -1.0)
         return;
 
@@ -242,13 +288,17 @@ void init_sensible_defaults(Config &cfg, const std::vector<double> &r_src_d, con
         return;
     }
 
-    const int n = static_cast<int>(charges_d.size());
+    const dmk_eval_type et = esp_pot_eval_type(cfg.kernel);
+    const int out_dim = dmk::get_kernel_output_dim(cfg.n_dim, cfg.kernel, et);
+    const int input_dim = dmk::get_kernel_input_dim(cfg.n_dim, cfg.kernel);
+    const int n = static_cast<int>(charges_d.size()) / input_dim;
+    const double *normal = esp_needs_normal(cfg.kernel) ? normals_d.data() : nullptr;
     double best_l2 = std::numeric_limits<double>::max();
     for (double rc : rc_candidates) {
-        pdmk_esp_params params = make_params(cfg, rc, DMK_POTENTIAL);
+        pdmk_esp_params params = make_params(cfg, rc, et);
         pdmk_esp_plan plan = pdmk_esp_plan_create(nullptr, params);
-        std::vector<double> pot(n);
-        pdmk_esp_eval(nullptr, plan, n, r_src_d.data(), charges_d.data(), pot.data());
+        std::vector<double> pot(size_t(n) * out_dim);
+        pdmk_esp_eval(nullptr, plan, n, r_src_d.data(), charges_d.data(), normal, pot.data());
         const double l2 = l2_rel_err(std::span<double>(pot), ref);
         pdmk_esp_plan_destroy(plan);
 
@@ -287,11 +337,11 @@ double check_forces_fd(const std::vector<double> &pot_src_grad, const std::vecto
     for (int i : idx) {
         for (int a = 0; a < nd; ++a) {
             r_pert[nd * i + a] = r_src_d[nd * i + a] + step;
-            pdmk_esp_eval(nullptr, plan, n, r_pert.data(), charges_d.data(), pot.data());
+            pdmk_esp_eval(nullptr, plan, n, r_pert.data(), charges_d.data(), nullptr, pot.data());
             double pot_plus = pot[i];
 
             r_pert[nd * i + a] = r_src_d[nd * i + a] - step;
-            pdmk_esp_eval(nullptr, plan, n, r_pert.data(), charges_d.data(), pot.data());
+            pdmk_esp_eval(nullptr, plan, n, r_pert.data(), charges_d.data(), nullptr, pot.data());
             double pot_minus = pot[i];
 
             r_pert[nd * i + a] = r_src_d[nd * i + a];
@@ -310,12 +360,18 @@ double check_forces_fd(const std::vector<double> &pot_src_grad, const std::vecto
 template <typename Real>
 void warmup(const Config &cfg) {
     constexpr int nw = 100'000;
+    const int input_dim = dmk::get_kernel_input_dim(cfg.n_dim, cfg.kernel);
+    const dmk_eval_type et = esp_pot_eval_type(cfg.kernel);
+    const int out_dim = dmk::get_kernel_output_dim(cfg.n_dim, cfg.kernel, et);
     auto r_w = generate_positions<Real>(nw, cfg.n_dim, cfg.L);
-    auto q_w = generate_charges<Real>(nw);
-    pdmk_esp_params params = make_params(cfg, cfg.r_c, DMK_POTENTIAL);
+    auto q_w = generate_charges<Real>(nw, input_dim);
+    std::vector<Real> nrm_w;
+    if (esp_needs_normal(cfg.kernel))
+        nrm_w = generate_normals<Real>(nw, cfg.n_dim);
+    pdmk_esp_params params = make_params(cfg, cfg.r_c, et);
     pdmk_esp_plan plan = esp_plan_create<Real>(nullptr, params);
-    std::vector<Real> pot(nw);
-    esp_eval<Real>(nullptr, plan, nw, r_w.data(), q_w.data(), pot.data());
+    std::vector<Real> pot(size_t(nw) * out_dim);
+    esp_eval<Real>(nullptr, plan, nw, r_w.data(), q_w.data(), nrm_w.empty() ? nullptr : nrm_w.data(), pot.data());
     esp_plan_destroy<Real>(plan);
 }
 
@@ -323,20 +379,23 @@ void warmup(const Config &cfg) {
 // l2_rel_err against the Ewald reference when available.
 template <typename Real>
 void run_potential_benchmark(const Config &cfg, int n, const std::vector<Real> &r_src, const std::vector<Real> &charges,
-                             const std::vector<double> &ref, bool have_ref) {
-    pdmk_esp_params params = make_params(cfg, cfg.r_c, DMK_POTENTIAL);
+                             const std::vector<Real> &normals, const std::vector<double> &ref, bool have_ref) {
+    const dmk_eval_type et = esp_pot_eval_type(cfg.kernel);
+    const int out_dim = dmk::get_kernel_output_dim(cfg.n_dim, cfg.kernel, et);
+    const Real *normal = normals.empty() ? nullptr : normals.data();
+    pdmk_esp_params params = make_params(cfg, cfg.r_c, et);
     pdmk_esp_plan plan = esp_plan_create<Real>(nullptr, params);
 
-    std::cout << "# phase: eval_potential\n";
+    std::cout << "# phase: " << (esp_is_velocity(cfg.kernel) ? "eval_velocity" : "eval_potential") << "\n";
     std::cout << "run,total_time,pts_per_s,l2_rel_err,";
     pdmk_print_profile_data(nullptr, 'h');
     std::cout << "\n" << std::flush;
 
-    std::vector<Real> pot(n);
+    std::vector<Real> pot(size_t(n) * out_dim);
     for (int run = 0; run < cfg.n_runs; ++run) {
         sctl::Profile::reset();
         double t0 = MY_OMP_GET_WTIME();
-        esp_eval<Real>(nullptr, plan, n, r_src.data(), charges.data(), pot.data());
+        esp_eval<Real>(nullptr, plan, n, r_src.data(), charges.data(), normal, pot.data());
         double t1 = MY_OMP_GET_WTIME();
 
         std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0) << ",";
@@ -367,7 +426,7 @@ void run_forces_benchmark(const Config &cfg, int n, const std::vector<Real> &r_s
     for (int run = 0; run < cfg.n_runs; ++run) {
         sctl::Profile::reset();
         double t0 = MY_OMP_GET_WTIME();
-        esp_eval<Real>(nullptr, plan, n, r_src.data(), charges.data(), pot.data());
+        esp_eval<Real>(nullptr, plan, n, r_src.data(), charges.data(), nullptr, pot.data());
         double t1 = MY_OMP_GET_WTIME();
 
         std::cout << run << "," << (t1 - t0) << "," << n / (t1 - t0);
@@ -381,7 +440,7 @@ void run_forces_benchmark(const Config &cfg, int n, const std::vector<Real> &r_s
         std::cout << "# phase: force_check (FD on " << n_fd_sample << " random particles × 6 evals each; not all N)\n"
                   << std::flush;
         std::vector<double> pot_d(size_t(n) * (1 + cfg.n_dim));
-        pdmk_esp_eval(nullptr, plan, n, r_src_d.data(), charges_d.data(), pot_d.data());
+        pdmk_esp_eval(nullptr, plan, n, r_src_d.data(), charges_d.data(), nullptr, pot_d.data());
         double force_l2_err = check_forces_fd(pot_d, r_src_d, charges_d, params, n_fd_sample);
         std::cout << "# force_check: l2_rel_err=" << force_l2_err << "\n" << std::flush;
     }
@@ -395,27 +454,51 @@ void run_benchmark(Config cfg) {
     const int n_threads = MY_OMP_GET_MAX_THREADS();
     const int n = cfg.n_src;
 
+    // The non-scalar kernels are 3D free-space only in ESP, and have no scalar-force notion, so the
+    // -g/-F force machinery does not apply to them.
+    if (!esp_is_scalar(cfg.kernel)) {
+        if (cfg.use_periodic) {
+            std::cout << "# note: " << dmk::util::to_string(cfg.kernel)
+                      << " is free-space only in ESP; forcing free-space boundaries\n";
+            cfg.use_periodic = false;
+        }
+        if (cfg.bench_forces || cfg.check_forces) {
+            std::cout << "# note: -g/-F (forces) apply only to the scalar kernels; ignoring\n";
+            cfg.bench_forces = cfg.check_forces = false;
+        }
+    }
+
+    const int input_dim = dmk::get_kernel_input_dim(cfg.n_dim, cfg.kernel);
+    const bool needs_normal = esp_needs_normal(cfg.kernel);
+
     auto r_src_d = generate_positions<double>(n, cfg.n_dim, cfg.L);
-    auto charges_d = generate_charges<double>(n);
+    auto charges_d = generate_charges<double>(n, input_dim);
+    auto normals_d = needs_normal ? generate_normals<double>(n, cfg.n_dim) : std::vector<double>{};
 
     std::vector<double> ref;
     bool have_ref = false;
     if (cfg.n_direct > 0)
-        have_ref = compute_reference(cfg, n, r_src_d, charges_d, ref);
+        have_ref = compute_reference(cfg, n, r_src_d, charges_d, normals_d, ref);
 
-    init_sensible_defaults(cfg, r_src_d, charges_d, ref, have_ref);
+    init_sensible_defaults(cfg, r_src_d, charges_d, normals_d, ref, have_ref);
     print_config(cfg, n_threads, std::cout);
 
-    std::vector<Real> r_src(size_t(n) * cfg.n_dim), charges(n);
+    std::vector<Real> r_src(size_t(n) * cfg.n_dim), charges(size_t(n) * input_dim), normals;
     for (size_t i = 0; i < r_src.size(); ++i)
         r_src[i] = Real(r_src_d[i]);
-    for (int i = 0; i < n; ++i)
+    for (size_t i = 0; i < charges.size(); ++i)
         charges[i] = Real(charges_d[i]);
+    if (needs_normal) {
+        normals.resize(normals_d.size());
+        for (size_t i = 0; i < normals.size(); ++i)
+            normals[i] = Real(normals_d[i]);
+    }
 
     // ---- Optionally benchmark plan creation --------------------------------
     if (cfg.bench_plan) {
         std::cout << "# phase: plan_create\n" << "run,plan_time,pts_per_s\n" << std::flush;
-        pdmk_esp_params params = make_params(cfg, cfg.r_c, DMK_POTENTIAL_GRAD);
+        pdmk_esp_params params =
+            make_params(cfg, cfg.r_c, esp_is_scalar(cfg.kernel) ? DMK_POTENTIAL_GRAD : esp_pot_eval_type(cfg.kernel));
         for (int run = 0; run < cfg.n_runs; ++run) {
             double t0 = MY_OMP_GET_WTIME();
             pdmk_esp_plan plan = esp_plan_create<Real>(nullptr, params);
@@ -434,14 +517,14 @@ void run_benchmark(Config cfg) {
         std::cout << "# phase: force_check (FD on " << n_fd_sample << " random particles × 6 evals each; not all N)\n"
                   << std::flush;
         std::vector<double> pot_d(size_t(n) * (1 + cfg.n_dim));
-        pdmk_esp_eval(nullptr, plan, n, r_src_d.data(), charges_d.data(), pot_d.data());
+        pdmk_esp_eval(nullptr, plan, n, r_src_d.data(), charges_d.data(), nullptr, pot_d.data());
         double err = check_forces_fd(pot_d, r_src_d, charges_d, params, n_fd_sample);
         std::cout << "# force_check: l2_rel_err=" << err << "\n" << std::flush;
         esp_plan_destroy<Real>(plan);
     } else if (cfg.bench_forces) {
         run_forces_benchmark<Real>(cfg, n, r_src, charges, r_src_d, charges_d);
     } else {
-        run_potential_benchmark<Real>(cfg, n, r_src, charges, ref, have_ref);
+        run_potential_benchmark<Real>(cfg, n, r_src, charges, normals, ref, have_ref);
     }
 }
 
@@ -516,7 +599,8 @@ Config parse_args(int argc, char *argv[]) {
             if (auto k = dmk::util::ikernel_from_string(optarg))
                 cfg.kernel = *k;
             else {
-                std::cerr << "Unknown kernel: " << optarg << " (use laplace, sqrt_laplace, or yukawa)\n";
+                std::cerr << "Unknown kernel: " << optarg
+                          << " (use laplace, sqrt_laplace, yukawa, laplace_dipole, stokeslet, or stresslet)\n";
                 exit(1);
             }
             break;
@@ -564,7 +648,8 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -L L       Box side length (default 1.0)\n"
                       << "  -c r_c     Real-space cutoff (default: auto-picked to balance short-/long-range time)\n"
                       << "  -e eps     Tolerance (default 1e-6)\n"
-                      << "  -k kernel  laplace, sqrt_laplace, or yukawa (default laplace)\n"
+                      << "  -k kernel  laplace, sqrt_laplace, yukawa, laplace_dipole, stokeslet, stresslet\n"
+                      << "             (default laplace; the last three are 3D free-space only)\n"
                       << "  -f fparam  Yukawa screening parameter (default 6.0)\n"
                       << "  -r n_runs  Benchmark iterations (default 10)\n"
                       << "  -D n       Compare only the first n points against the reference (default 10000; 0 skips)\n"

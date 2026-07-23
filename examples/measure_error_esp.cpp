@@ -11,7 +11,8 @@
 //   -N n_src          Number of source points (default: 100000)
 //   -D n_direct       Number of points compared against the reference (default: 10000)
 //   -t f|d            Precision (default: d)
-//   -k kernel         laplace, sqrt_laplace, yukawa, all (default: all)
+//   -k kernel         laplace, sqrt_laplace, yukawa, laplace_dipole, stokeslet, stresslet, all
+//                     (default: all; the last three are 3D free-space only)
 //   -d dim            2, 3, or 0 for both (default: 0)
 //   -l lambda         Yukawa fparam (default: 6.0)
 //   -L box            Box side length (default: 1.0)
@@ -74,12 +75,19 @@ pdmk_esp_plan esp_plan_create(pdmk_esp_params params) {
         return pdmk_esp_plan_create(MYCOMM, params);
 }
 template <typename Real>
-void esp_eval(pdmk_esp_plan plan, int n, const Real *r_src, const Real *charges, Real *pot) {
+void esp_eval(pdmk_esp_plan plan, int n, const Real *r_src, const Real *charges, const Real *normal, Real *pot) {
     if constexpr (std::is_same_v<Real, float>)
-        pdmk_esp_evalf(MYCOMM, plan, n, r_src, charges, pot);
+        pdmk_esp_evalf(MYCOMM, plan, n, r_src, charges, normal, pot);
     else
-        pdmk_esp_eval(MYCOMM, plan, n, r_src, charges, pot);
+        pdmk_esp_eval(MYCOMM, plan, n, r_src, charges, normal, pot);
 }
+
+// Kernel traits (see benchmark_esp.cpp). The non-scalar kernels are 3D free-space only in ESP; the
+// Stresslet needs a per-source normal; the two Stokes kernels output a velocity (DMK_VELOCITY).
+static bool esp_is_scalar(dmk_ikernel k) { return k == DMK_LAPLACE || k == DMK_YUKAWA || k == DMK_SQRT_LAPLACE; }
+static bool esp_is_velocity(dmk_ikernel k) { return k == DMK_STOKESLET || k == DMK_STRESSLET; }
+static bool esp_needs_normal(dmk_ikernel k) { return k == DMK_STRESSLET; }
+static dmk_eval_type esp_eval_type(dmk_ikernel k) { return esp_is_velocity(k) ? DMK_VELOCITY : DMK_POTENTIAL_GRAD; }
 template <typename Real>
 void esp_plan_destroy(pdmk_esp_plan plan) {
     if constexpr (std::is_same_v<Real, float>)
@@ -98,25 +106,57 @@ std::vector<Real> generate_positions(int n, int n_dim, double L, long seed = 42)
     return r;
 }
 
-// Alternating +-1 charges: charge neutrality for well-conditioned Ewald.
+// Scalar (input_dim==1): alternating +-1 charges for charge-neutral periodic Ewald. Vector kernels
+// (input_dim>1, free-space): random components in [-0.5, 0.5) per source.
 template <typename Real>
-std::vector<Real> generate_charges(int n) {
-    std::vector<Real> q(n);
-    for (int i = 0; i < n; ++i)
-        q[i] = Real(1 - 2 * (i & 1));
+std::vector<Real> generate_charges(int n, int input_dim = 1, long seed = 7) {
+    if (input_dim == 1) {
+        std::vector<Real> q(n);
+        for (int i = 0; i < n; ++i)
+            q[i] = Real(1 - 2 * (i & 1));
+        return q;
+    }
+    std::default_random_engine eng(seed);
+    std::uniform_real_distribution<double> rng(-0.5, 0.5);
+    std::vector<Real> q(size_t(n) * input_dim);
+    for (auto &v : q)
+        v = Real(rng(eng));
     return q;
 }
 
-// Exact interleaved [pot, dpot/dx, ...] reference at the first n_cmp sources (self excluded).
+// Random unit normals (DIM comps per source) for the Stresslet.
+template <typename Real>
+std::vector<Real> generate_normals(int n, int n_dim, long seed = 11) {
+    std::default_random_engine eng(seed);
+    std::uniform_real_distribution<double> rng(-1.0, 1.0);
+    std::vector<Real> nv(size_t(n) * n_dim);
+    for (int i = 0; i < n; ++i) {
+        double s = 0.0;
+        for (int d = 0; d < n_dim; ++d) {
+            const double x = rng(eng);
+            nv[i * n_dim + d] = Real(x);
+            s += x * x;
+        }
+        const double inv = s > 0 ? 1.0 / std::sqrt(s) : 1.0;
+        for (int d = 0; d < n_dim; ++d)
+            nv[i * n_dim + d] = Real(nv[i * n_dim + d] * inv);
+    }
+    return nv;
+}
+
+// Exact interleaved reference at the first n_cmp sources (self excluded). Layout matches the plan's
+// output for the kernel's eval type: scalar/dipole [pot, dpot/dx, ...] (od = 1+dim), Stokes velocity
+// [vx, vy, vz] (od = dim).
 bool compute_reference(const Config &cfg, int n_dim, dmk_ikernel kernel, int n, const std::vector<double> &r_src,
-                       const std::vector<double> &charges, int n_cmp, std::vector<double> &ref) {
-    const int od = 1 + n_dim;
+                       const std::vector<double> &charges, const std::vector<double> &normals, int n_cmp,
+                       std::vector<double> &ref) {
+    const dmk_eval_type et = esp_eval_type(kernel);
+    const int od = dmk::get_kernel_output_dim(n_dim, kernel, et);
     ref.assign(size_t(n_cmp) * od, 0.0);
 
     if (!cfg.use_periodic) {
         std::vector<double> r_trg(r_src.begin(), r_src.begin() + size_t(n_cmp) * n_dim);
-        dmk::compute_direct(n_dim, r_src, charges, std::vector<double>{}, r_trg, ref, kernel, DMK_POTENTIAL_GRAD,
-                            cfg.fparam);
+        dmk::compute_direct(n_dim, r_src, charges, normals, r_trg, ref, kernel, et, cfg.fparam);
         return true;
     }
 
@@ -175,10 +215,16 @@ bool compute_reference(const Config &cfg, int n_dim, dmk_ikernel kernel, int n, 
 
 template <typename Real>
 ErrorMetrics run_one(const Config &cfg, int n_dim, dmk_ikernel kernel, int digits, double r_c,
-                     const std::vector<Real> &r_src, const std::vector<Real> &charges, const std::vector<double> &ref,
-                     int n_cmp) {
+                     const std::vector<Real> &r_src, const std::vector<Real> &charges, const std::vector<Real> &normals,
+                     const std::vector<double> &ref, int n_cmp) {
     const int n = cfg.n_src;
-    const int od = 1 + n_dim;
+    const dmk_eval_type et = esp_eval_type(kernel);
+    const int od = dmk::get_kernel_output_dim(n_dim, kernel, et);
+    // "pot" block = the primary field (velocity kernels: all od comps; else the single potential comp);
+    // "force" block = the trailing derivative comps. Scalar kernels report the force -q*dpot/dx (needs
+    // the target charge); the dipole/velocity kernels report the raw field, matching the reference.
+    const int n_pot = esp_is_velocity(kernel) ? od : 1;
+    const bool grad_is_force = esp_is_scalar(kernel);
 
     pdmk_esp_params params{};
     params.L = cfg.L;
@@ -189,7 +235,7 @@ ErrorMetrics run_one(const Config &cfg, int n_dim, dmk_ikernel kernel, int digit
     if (kernel == DMK_YUKAWA)
         params.fparam = cfg.fparam;
     params.n_dim = n_dim;
-    params.eval_type = DMK_POTENTIAL_GRAD;
+    params.eval_type = et;
     params.sigma = cfg.sigma;
     params.use_periodic = cfg.use_periodic ? 1 : 0;
 
@@ -198,36 +244,45 @@ ErrorMetrics run_one(const Config &cfg, int n_dim, dmk_ikernel kernel, int digit
         throw std::runtime_error(pdmk_last_error_message());
     std::vector<Real> pot(size_t(n) * od);
 
+    const Real *normal = normals.empty() ? nullptr : normals.data();
     double st = MY_OMP_GET_WTIME();
-    esp_eval<Real>(plan, n, r_src.data(), charges.data(), pot.data());
+    esp_eval<Real>(plan, n, r_src.data(), charges.data(), normal, pot.data());
     double dt = MY_OMP_GET_WTIME() - st;
     esp_plan_destroy<Real>(plan);
 
-    // Gauge: periodic potential is fixed only up to a constant (charge-neutral fixtures).
-    double mean_dmk = 0.0, mean_ref = 0.0;
+    // Gauge: the periodic potential is fixed only up to a per-component constant (charge-neutral
+    // fixtures); free-space kernels have no gauge, so the means stay zero.
+    std::vector<double> mean_dmk(n_pot, 0.0), mean_ref(n_pot, 0.0);
     if (cfg.use_periodic)
-        for (int i = 0; i < n_cmp; ++i) {
-            mean_dmk += double(pot[size_t(i) * od]);
-            mean_ref += ref[size_t(i) * od];
-        }
-    mean_dmk /= n_cmp;
-    mean_ref /= n_cmp;
+        for (int i = 0; i < n_cmp; ++i)
+            for (int c = 0; c < n_pot; ++c) {
+                mean_dmk[c] += double(pot[size_t(i) * od + c]);
+                mean_ref[c] += ref[size_t(i) * od + c];
+            }
+    for (int c = 0; c < n_pot; ++c) {
+        mean_dmk[c] /= n_cmp;
+        mean_ref[c] /= n_cmp;
+    }
 
     double pe2 = 0, pr2 = 0, pmax = 0, fe2 = 0, fr2 = 0, fmax = 0;
     for (int i = 0; i < n_cmp; ++i) {
-        const double pd = double(pot[size_t(i) * od]) - mean_dmk;
-        const double pr = ref[size_t(i) * od] - mean_ref;
-        const double diff = pd - pr;
-        pe2 += diff * diff;
-        pr2 += pr * pr;
-        if (std::abs(pr) > 0.0)
-            pmax = std::max(pmax, std::abs(diff / pr));
+        double pd2 = 0, pr2i = 0;
+        for (int c = 0; c < n_pot; ++c) {
+            const double diff =
+                (double(pot[size_t(i) * od + c]) - mean_dmk[c]) - (ref[size_t(i) * od + c] - mean_ref[c]);
+            const double pr = ref[size_t(i) * od + c] - mean_ref[c];
+            pd2 += diff * diff;
+            pr2i += pr * pr;
+        }
+        pe2 += pd2;
+        pr2 += pr2i;
+        if (pr2i > 0.0)
+            pmax = std::max(pmax, std::sqrt(pd2 / pr2i));
 
         double fd2 = 0, fr2i = 0;
-        for (int d = 0; d < n_dim; ++d) {
-            // ESP returns force = -q * dpot/dx; reference stores dpot/dx.
-            const double f_dmk = double(pot[size_t(i) * od + 1 + d]);
-            const double f_ref = -charges[i] * ref[size_t(i) * od + 1 + d];
+        for (int c = n_pot; c < od; ++c) {
+            const double f_dmk = double(pot[size_t(i) * od + c]);
+            const double f_ref = grad_is_force ? -charges[i] * ref[size_t(i) * od + c] : ref[size_t(i) * od + c];
             const double fd = f_dmk - f_ref;
             fd2 += fd * fd;
             fr2i += f_ref * f_ref;
@@ -238,11 +293,11 @@ ErrorMetrics run_one(const Config &cfg, int n_dim, dmk_ikernel kernel, int digit
             fmax = std::max(fmax, std::sqrt(fd2 / fr2i));
     }
 
-    return {std::sqrt(pe2 / pr2), pmax, std::sqrt(fe2 / fr2), fmax, dt};
+    return {std::sqrt(pe2 / pr2), pmax, fr2 > 0.0 ? std::sqrt(fe2 / fr2) : 0.0, fmax, dt};
 }
 
 template <typename Real>
-void run_sweep(const Config &cfg) {
+void run_sweep(Config cfg) {
     std::vector<dmk_ikernel> kernels;
     if (static_cast<int>(cfg.kernel_filter) == -1)
         kernels = {DMK_LAPLACE, DMK_SQRT_LAPLACE, DMK_YUKAWA};
@@ -250,18 +305,30 @@ void run_sweep(const Config &cfg) {
         kernels = {cfg.kernel_filter};
     std::vector<int> dims = cfg.dim_filter == 0 ? std::vector<int>{2, 3} : std::vector<int>{cfg.dim_filter};
 
+    // The non-scalar kernels are 3D free-space only in ESP (only reachable via an explicit single -k).
+    if (kernels.size() == 1 && !esp_is_scalar(kernels[0])) {
+        if (cfg.use_periodic) {
+            std::cout << "# note: " << dmk::util::to_string(kernels[0])
+                      << " is free-space only in ESP; forcing free-space boundaries\n";
+            cfg.use_periodic = false;
+        }
+        dims = {3};
+    }
+
     std::cout << "kernel,dim,digits,eps_fu,r_c,sigma,P,c,n_f,pot_l2,pot_max,force_l2,force_max,time\n" << std::flush;
 
     const int n = cfg.n_src;
     const int n_cmp = std::min(cfg.n_direct, n);
 
     for (auto kernel : kernels) {
+        const bool needs_normal = esp_needs_normal(kernel);
         for (auto n_dim : dims) {
             auto r_src_d = generate_positions<double>(n, n_dim, cfg.L, cfg.seed);
-            auto charges_d = generate_charges<double>(n);
+            auto charges_d = generate_charges<double>(n, dmk::get_kernel_input_dim(n_dim, kernel));
+            auto normals_d = needs_normal ? generate_normals<double>(n, n_dim) : std::vector<double>{};
 
             std::vector<double> ref;
-            bool have_ref = compute_reference(cfg, n_dim, kernel, n, r_src_d, charges_d, n_cmp, ref);
+            bool have_ref = compute_reference(cfg, n_dim, kernel, n, r_src_d, charges_d, normals_d, n_cmp, ref);
             if (!have_ref) {
                 std::cout << "# " << dmk::util::to_string(kernel) << " dim=" << n_dim
                           << " periodic: no self-contained reference, skipping\n"
@@ -271,6 +338,7 @@ void run_sweep(const Config &cfg) {
 
             std::vector<Real> r_src(r_src_d.begin(), r_src_d.end());
             std::vector<Real> charges(charges_d.begin(), charges_d.end());
+            std::vector<Real> normals(normals_d.begin(), normals_d.end());
 
             for (int digits = cfg.dig_min; digits <= cfg.dig_max; ++digits) {
                 const double eps_fu = std::pow(10.0, -digits);
@@ -282,7 +350,7 @@ void run_sweep(const Config &cfg) {
                         cfg.use_periodic ? 1.0 : 2.2 * (std::sqrt(double(n_dim)) * cfg.L + 2.0 * r_c) / cfg.L;
                     const int n_f = int(std::ceil(c * pad * cfg.L / (M_PI * r_c)));
                     try {
-                        auto e = run_one<Real>(cfg, n_dim, kernel, digits, r_c, r_src, charges, ref, n_cmp);
+                        auto e = run_one<Real>(cfg, n_dim, kernel, digits, r_c, r_src, charges, normals, ref, n_cmp);
                         std::cout << dmk::util::to_string(kernel) << "," << n_dim << "," << digits << ","
                                   << std::scientific << std::setprecision(1) << eps_fu << "," << std::fixed
                                   << std::setprecision(4) << r_c << "," << cfg.sigma << "," << P << "," << std::fixed
@@ -339,7 +407,8 @@ Config parse_args(int argc, char *argv[]) {
             else if (auto k = dmk::util::ikernel_from_string(optarg))
                 cfg.kernel_filter = *k;
             else {
-                std::cerr << "Unknown kernel: " << optarg << " (use laplace, sqrt_laplace, yukawa, all)\n";
+                std::cerr << "Unknown kernel: " << optarg
+                          << " (use laplace, sqrt_laplace, yukawa, laplace_dipole, stokeslet, stresslet, all)\n";
                 exit(1);
             }
             break;
@@ -383,7 +452,8 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -N n_src        Number of source points (default 100000)\n"
                       << "  -D n_direct     Points compared against reference (default 10000)\n"
                       << "  -t f|d          Precision (default d)\n"
-                      << "  -k kernel       laplace, sqrt_laplace, yukawa, all (default all)\n"
+                      << "  -k kernel       laplace, sqrt_laplace, yukawa, laplace_dipole, stokeslet, stresslet, all\n"
+                      << "                  (default all; the last three are 3D free-space only)\n"
                       << "  -d dim          2, 3, or 0 for both (default 0)\n"
                       << "  -l lambda       Yukawa fparam (default 6.0)\n"
                       << "  -L box          Box side length (default 1.0)\n"

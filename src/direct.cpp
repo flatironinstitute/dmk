@@ -444,6 +444,8 @@ std::vector<std::vector<Real>> get_esp_correction_coeffs(dmk_ikernel kernel, dou
         return {std::vector<Real>(lc.reg_poly.begin(), lc.reg_poly.end())};
     }
 
+    // Stokeslet/Stresslet: their biharmonic residual is scale-invariant, so they reuse the cached
+    // scale-free coeffs like the scalar kernels.
     return get_local_correction_coeffs<Real>(kernel, n_dim, n_digits, beta);
 }
 
@@ -530,6 +532,12 @@ static std::string esp_poly_template(dmk_ikernel kernel, int n_dim, bool ranges)
         base = "yukawa_2d"; // 2D K0: log-split, its own evaluator
     else if (kernel == DMK_LAPLACE)
         base = std::format("laplace_{}d", n_dim);
+    else if (kernel == DMK_LAPLACE_DIPOLE)
+        base = std::format("laplace_dipole_{}d", n_dim);
+    else if (kernel == DMK_STOKESLET)
+        base = std::format("stokeslet_{}d", n_dim);
+    else if (kernel == DMK_STRESSLET)
+        base = std::format("stresslet_{}d", n_dim);
     else
         throw std::runtime_error("ESP JIT: unsupported kernel/dim");
     return base + suffix;
