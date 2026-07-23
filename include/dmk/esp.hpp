@@ -3,6 +3,7 @@
 #include <dmk.h>
 #include <dmk/prolate0_fun.hpp>
 #include <dmk/types.hpp>
+#include <dmk/util.hpp>
 
 #include <algorithm>
 #include <array>
@@ -31,6 +32,46 @@ inline double esp_beta_from_P(double sigma, int P) { return M_PI * P * (1.0 - 1.
 
 inline int esp_digits_from_eps(double eps) {
     return std::clamp(static_cast<int>(std::lround(-std::log10(eps))), 2, 12);
+}
+
+// Effective tolerance to resolve internally when gradients/forces are requested. A gradient costs
+// extra PSWF resolution relative to the potential, and the amount is kernel- and dimension-dependent
+// (the DMK d_eff analog). Force lower-envelope fits (achieved force digits >= a*requested + b) come
+// from scripts/analyze_esp_error.py over DMK_ESP_NO_GRAD_BUMP=1 measure_error_esp sweeps: to guarantee
+// the requested target on the force, resolve d = ceil((target - b)/a) digits internally.
+inline double esp_grad_eps(dmk_ikernel kernel, int dim, double eps) {
+    double a = 1.0, b = 0.0;
+    if (kernel == DMK_LAPLACE && dim == 2) {
+        a = 1.0;
+        b = 0.0;
+    } else if (kernel == DMK_LAPLACE && dim == 3) {
+        a = 1.01;
+        b = -0.19;
+    } else if (kernel == DMK_SQRT_LAPLACE && dim == 2) {
+        a = 0.99;
+        b = 0.21;
+    } else if (kernel == DMK_SQRT_LAPLACE && dim == 3) {
+        a = 1.03;
+        b = 0.02;
+    } else if (kernel == DMK_YUKAWA && dim == 2) {
+        a = 0.88;
+        b = 0.02;
+    } else if (kernel == DMK_YUKAWA && dim == 3) {
+        a = 1.00;
+        b = -0.10;
+    }
+    b -= 0.2;
+
+    const double target = -std::log10(eps);
+    return std::pow(10.0, -std::ceil((target - b) / a));
+}
+
+// n_digits the plan resolves to: the requested eps, tightened by esp_grad_eps when forces are wanted
+// (the ESP analog of DMK's d_eff bump) so every stage -- eps_d, P, beta, the short-range residual --
+// resolves to match. DMK_ESP_NO_GRAD_BUMP disables the bump, used to calibrate the grad curve raw.
+inline int esp_plan_digits(const pdmk_esp_params &p) {
+    const bool grad = p.eval_type >= DMK_POTENTIAL_GRAD && !util::env_is_set("DMK_ESP_NO_GRAD_BUMP");
+    return esp_digits_from_eps(grad ? esp_grad_eps(p.kernel, p.n_dim, p.eps) : p.eps);
 }
 
 // Short-range method predicates over pdmk_esp_params.esp_flags (DMK_ESP_* bits, see dmk.h). The

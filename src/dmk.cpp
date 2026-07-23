@@ -1118,11 +1118,19 @@ dmk_error pdmk(dmk_communicator comm, pdmk_params params, int n_src, const doubl
 }
 
 pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator /*comm*/, pdmk_esp_params params) {
-    return new pdmk_esp_plan_impl(std::unique_ptr<dmk::EspPlan<double>>(new dmk::EspPlan<double>(params)));
+    pdmk_esp_plan result = nullptr;
+    dmk::dmk_guard([&] {
+        result = new pdmk_esp_plan_impl(std::unique_ptr<dmk::EspPlan<double>>(new dmk::EspPlan<double>(params)));
+    });
+    return result;
 }
 
 pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator /*comm*/, pdmk_esp_params params) {
-    return new pdmk_esp_plan_impl(std::unique_ptr<dmk::EspPlan<float>>(new dmk::EspPlan<float>(params)));
+    pdmk_esp_plan result = nullptr;
+    dmk::dmk_guard([&] {
+        result = new pdmk_esp_plan_impl(std::unique_ptr<dmk::EspPlan<float>>(new dmk::EspPlan<float>(params)));
+    });
+    return result;
 }
 
 void pdmk_esp_eval(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
@@ -1142,6 +1150,8 @@ void pdmk_esp_plan_destroyf(pdmk_esp_plan plan) { pdmk_esp_plan_destroy(plan); }
 void pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double *r_src, const double *charges,
               double *pot_src) {
     auto plan = pdmk_esp_plan_create(comm, params);
+    if (!plan) // create failed (see pdmk_last_error_message); nothing to evaluate
+        return;
     pdmk_esp_eval(comm, plan, n, r_src, charges, pot_src);
     pdmk_esp_plan_destroy(plan);
 }
@@ -1149,6 +1159,8 @@ void pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double
 void pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const float *r_src, const float *charges,
                float *pot_src) {
     auto plan = pdmk_esp_plan_createf(comm, params);
+    if (!plan)
+        return;
     pdmk_esp_evalf(comm, plan, n, r_src, charges, pot_src);
     pdmk_esp_plan_destroyf(plan);
 }

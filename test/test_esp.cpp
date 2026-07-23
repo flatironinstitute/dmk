@@ -301,7 +301,10 @@ TEST_CASE_GENERIC("[ESP] DIM=2 plan runs (JIT and AOT)", 1) {
 // esp_eval<float> is instantiated but was never exercised by any test before this; confirms the
 // float path actually runs in float (finufftf*/complex<float> FFTs) rather than silently upcasting.
 TEST_CASE_GENERIC("[ESP] float precision matches double", 1) {
-    constexpr double eps = 1e-5;
+    // Requesting gradients bumps the internal resolution by ~1 digit; at eps=1e-4 that lands at the
+    // single-precision spread-width cap (P=8), the most float can resolve. Asking for more (e.g. 1e-5)
+    // exceeds float's cap and is rejected at plan creation -- not something float can deliver.
+    constexpr double eps = 1e-4;
 
     dmk::EspPlan<double> *plan_d = new dmk::EspPlan<double>(make_esp_params(L, R_C, eps, DMK_POTENTIAL_GRAD));
     auto esp_d = plan_d->eval(N, R_SRC, CHARGES);
@@ -521,10 +524,10 @@ TEST_CASE_GENERIC("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)", 1) {
         r_esp[i] = r_src[i] - 0.5 * L;
 
     const int n_cmp = std::min(n_src, 50);
-    // The reference here is the DMK tree pipeline (not an exact sum): it is the only reference sharing
-    // ESP's 2D-log self/gauge convention. Both ESP and the tree carry O(eps) error, so their difference
-    // is bounded by 2*eps (triangle inequality), not eps -- this is a reference floor, not a fudge.
+    // FIXME: The reference here is the DMK tree pipeline (not an exact sum): it is the only reference sharing
+    // ESP's 2D-log self/gauge convention.
     const double epses[] = {1e-3, 1e-6, 1e-9};
+
     for (const double eps : epses)
         for (int with_grad = 0; with_grad <= 1; ++with_grad) {
             const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
@@ -532,7 +535,7 @@ TEST_CASE_GENERIC("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)", 1) {
 
             // DMK periodic pipeline reference at the sources (shares ESP's log self convention).
             pdmk_params params;
-            params.eps = eps;
+            params.eps = 1e-12;
             params.n_dim = n_dim;
             params.n_per_leaf = 50;
             params.eval_src = eval;
@@ -579,9 +582,9 @@ TEST_CASE_GENERIC("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)", 1) {
                     }
                 }
             }
-            CHECK(dmk::pbc_ref::safe_l2(e2p, r2p) < 2 * eps);
+            CHECK(dmk::pbc_ref::safe_l2(e2p, r2p) < eps);
             if (with_grad)
-                CHECK(dmk::pbc_ref::safe_l2(e2g, r2g) < 2 * eps);
+                CHECK(dmk::pbc_ref::safe_l2(e2g, r2g) < eps);
         }
 }
 

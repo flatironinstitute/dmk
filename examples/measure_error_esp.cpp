@@ -35,9 +35,7 @@
 #include <getopt.h>
 #include <iomanip>
 #include <iostream>
-#include <limits>
 #include <random>
-#include <stdexcept>
 #include <string_view>
 #include <type_traits>
 #include <vector>
@@ -110,7 +108,6 @@ std::vector<Real> generate_charges(int n) {
 }
 
 // Exact interleaved [pot, dpot/dx, ...] reference at the first n_cmp sources (self excluded).
-// Returns false when no self-contained reference exists (periodic 2D Laplace).
 bool compute_reference(const Config &cfg, int n_dim, dmk_ikernel kernel, int n, const std::vector<double> &r_src,
                        const std::vector<double> &charges, int n_cmp, std::vector<double> &ref) {
     const int od = 1 + n_dim;
@@ -123,8 +120,38 @@ bool compute_reference(const Config &cfg, int n_dim, dmk_ikernel kernel, int n, 
         return true;
     }
 
-    if (kernel == DMK_LAPLACE && n_dim == 2)
-        return false;
+    if (kernel == DMK_LAPLACE && n_dim == 2) {
+        // The 2D log kernel has no self-contained exact periodic reference (EwaldRef/image_sum don't
+        // cover it), so use DMK's own periodic pipeline at eps=1e-12 as the "exact" reference; it
+        // shares ESP's log self/gauge convention (validated in test_esp). DMK works in the unit box,
+        // so map the centered sweep coords [-L/2,L/2) -> [0,1) by s = r/L + 1/2. For neutral charges
+        // the periodic-log potential is unchanged (up to the k=0 gauge run_one removes) and the
+        // physical gradient is the unit-box gradient divided by L.
+        std::vector<double> r_dmk(size_t(n) * n_dim), rnormal(size_t(n) * n_dim, 0.0);
+        for (size_t i = 0; i < r_dmk.size(); ++i)
+            r_dmk[i] = r_src[i] / cfg.L + 0.5;
+
+        pdmk_params params;
+        params.eps = 1e-12;
+        params.n_dim = n_dim;
+        params.n_per_leaf = 280;
+        params.eval_src = DMK_POTENTIAL_GRAD;
+        params.eval_trg = DMK_POTENTIAL_GRAD;
+        params.kernel = DMK_LAPLACE;
+        params.use_periodic = true;
+        params.log_level = 6;
+        std::vector<double> pot_src(size_t(n) * od), pot_trg;
+        pdmk_tree tree = pdmk_tree_create(MYCOMM, params, n, r_dmk.data(), charges.data(), rnormal.data(), 0, nullptr);
+        pdmk_tree_eval(tree, pot_src.data(), pot_trg.data());
+        pdmk_tree_destroy(tree);
+
+        for (int i = 0; i < n_cmp; ++i) {
+            ref[size_t(i) * od] = pot_src[size_t(i) * od];
+            for (int d = 0; d < n_dim; ++d)
+                ref[size_t(i) * od + 1 + d] = pot_src[size_t(i) * od + 1 + d] / cfg.L;
+        }
+        return true;
+    }
 
     if (kernel == DMK_YUKAWA) {
         const int n_img = std::max(2, int(std::ceil(21.0 / (cfg.fparam * cfg.L))));
@@ -167,6 +194,8 @@ ErrorMetrics run_one(const Config &cfg, int n_dim, dmk_ikernel kernel, int digit
     params.use_periodic = cfg.use_periodic ? 1 : 0;
 
     pdmk_esp_plan plan = esp_plan_create<Real>(params);
+    if (!plan) // e.g. requested precision exceeds the (single-precision) spread-width cap
+        throw std::runtime_error(pdmk_last_error_message());
     std::vector<Real> pot(size_t(n) * od);
 
     double st = MY_OMP_GET_WTIME();

@@ -8,6 +8,7 @@
 #include <dmk.h>
 #include <dmk/aot_kernels.hpp>
 #include <dmk/direct.hpp>
+#include <dmk/error.hpp>
 #include <dmk/esp.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/legeexps.hpp>
@@ -17,6 +18,7 @@
 #include <dmk/util.hpp>
 #include <ducc0/fft/fft.h>
 #include <finufft.h>
+#include <finufft_common/constants.h>
 #include <omp.h>
 #include <sctl.hpp>
 #include <span>
@@ -1281,12 +1283,27 @@ void EspPlan<Real>::self_interaction(int n, const Real *charges, std::span<Real>
 
 template <typename Real>
 EspPlan<Real>::EspPlan(const pdmk_esp_params &params_)
-    : n_digits(esp_digits_from_eps(params_.eps)), n_dim(params_.n_dim), params(params_) {
+    : n_digits(esp_plan_digits(params_)), n_dim(params_.n_dim), params(params_) {
     if (params.kernel != DMK_YUKAWA && params.kernel != DMK_LAPLACE && params.kernel != DMK_SQRT_LAPLACE)
-        throw std::runtime_error("ESP supports only the scalar kernels (Yukawa, Laplace, Sqrt-Laplace)");
+        throw api_error(DMK_ERR_INVALID_ARGUMENT,
+                        "ESP supports only the scalar kernels (Yukawa, Laplace, Sqrt-Laplace)");
     const Real eps_d = std::pow(10.0, -Real(n_digits));
     const double sigma = params.sigma;
     P = esp_P_from_eps(eps_d, sigma, n_dim);
+    // FINUFFT caps the spread width at MAX_NSPREAD, and further at 8 in single precision for sigma<1.4
+    // (finufft_core.cpp). Beyond that, FINUFFT silently clamps ns while ESP would keep deconvolving at
+    // the larger P -- an inconsistency that yields garbage. Refuse instead of returning wrong answers.
+    int max_P = finufft::common::MAX_NSPREAD;
+    if constexpr (std::is_same_v<Real, float>)
+        if (sigma < 1.4)
+            max_P = 8;
+    if (P > max_P)
+        throw api_error(DMK_ERR_INVALID_ARGUMENT,
+                        "ESP: requested eps=" + std::to_string(params.eps) +
+                            " needs PSWF spread width P=" + std::to_string(P) + " > cap " + std::to_string(max_P) +
+                            " at sigma=" + std::to_string(sigma) + " (" +
+                            (std::is_same_v<Real, float> ? "single" : "double") + " precision); loosen eps" +
+                            (std::is_same_v<Real, float> ? ", use double precision," : "") + " or raise sigma");
     const double beta = esp_beta_from_P(sigma, P);
     pswf = PSWFKernel(eps_d, beta);
     // Free-space needs the spectral grid enlarged (zero-padded) so the truncated kernel does not wrap.
@@ -1356,7 +1373,7 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_)
         // (which drops the conditionally-convergent log tail); it is the real-space windowed-log value
         // at r=0 at the near-field box scale. Reuse the tree's own routine (get_self_interaction_constant,
         // DMK_LAPLACE 2D) so ESP and the tree share one convention -- same prolate (pswf.pswf),
-        // beta = pswf.c, box = r_c.
+        // beta = pswf.beta, box = r_c.
         self_factor = calc_log_windowed_kernel_value_at_zero<Real>(2, pswf.pswf, Real(pswf.beta), Real(params.r_c));
     } else if (n_dim == 2 && params.kernel == DMK_YUKAWA) {
         // 2D Yukawa (K0), log-singular: the self is the windowed-kernel-at-zero from the tree's own
@@ -1374,8 +1391,8 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_)
 #endif
     // Both paths cover every scalar kernel in 2D and 3D. range_evaluator is built only in 3D; 2D's
     // short_range is dense and never touches it.
-    // Pass the plan's own pswf.c to the short-range residual builders so it stays identical to the
-    // long-range c -- the single source of truth for the PSWF bandwidth.
+    // Pass the plan's own pswf.beta to the short-range residual builders so it stays identical to the
+    // long-range beta -- the single source of truth for the PSWF bandwidth.
     if (use_jit) {
 #ifdef DMK_USE_JIT
         evaluator = make_esp_evaluator_jit<Real>(params.kernel, params.fparam, params.r_c, n_dim, params.eval_type,
