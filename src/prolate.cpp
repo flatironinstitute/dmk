@@ -6,7 +6,6 @@
 #include <cmath>
 #include <vector>
 
-
 namespace dmk {
 void prolc180(double eps, double &c) {
     static const std::array<double, 180> cs = {

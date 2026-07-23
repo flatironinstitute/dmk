@@ -425,6 +425,28 @@ std::vector<std::vector<Real>> get_local_correction_coeffs(dmk_ikernel kernel, i
     throw std::runtime_error("Unsupported kernel/dim for local correction coefficients");
 }
 
+template <typename Real>
+std::vector<std::vector<Real>> get_esp_correction_coeffs(dmk_ikernel kernel, double fparam, double r_c, int n_dim,
+                                                         int n_digits, double beta) {
+    static std::mutex lock;
+    std::lock_guard<std::mutex> lock_guard(lock);
+    const double eps = std::pow(10.0, -n_digits);
+
+    if (kernel == DMK_YUKAWA) {
+        // box_sizes_[0] = 2*r_c because local_correction_coeffs halves the level-0 box to r_c.
+        sctl::Vector<double> box_sizes(1);
+        box_sizes[0] = 2.0 * r_c;
+        FourierData<double> fd(kernel, n_dim, eps, 16, 16, fparam, beta, box_sizes);
+        const auto lc = fd.local_correction_coeffs(0, n_digits);
+        if (n_dim == 2) // 2D K0: log-split [PA | PB]
+            return {std::vector<Real>(lc.log_poly.begin(), lc.log_poly.end()),
+                    std::vector<Real>(lc.reg_poly.begin(), lc.reg_poly.end())};
+        return {std::vector<Real>(lc.reg_poly.begin(), lc.reg_poly.end())};
+    }
+
+    return get_local_correction_coeffs<Real>(kernel, n_dim, n_digits, beta);
+}
+
 #ifdef DMK_USE_JIT
 namespace {
 std::unique_ptr<RuFuS> RS;
@@ -494,6 +516,120 @@ template residual_evaluator_func<float> make_evaluator_jit<float>(dmk_ikernel ke
 template residual_evaluator_func<double> make_evaluator_jit<double>(dmk_ikernel kernel, dmk_eval_type eval_level,
                                                                     int n_dim, int n_digits, double beta,
                                                                     int unroll_factor);
+
+// Template name for an ESP short-range poly evaluator: Laplace/Yukawa in 3D share laplace_3d
+// (f = P(r)/r); Sqrt-Laplace and the 2D log kernels use their own. `_ranges` for the N3L/prune path.
+static std::string esp_poly_template(dmk_ikernel kernel, int n_dim, bool ranges) {
+    const char *suffix = ranges ? "_poly_all_pairs_ranges" : "_poly_all_pairs";
+    std::string base;
+    if (kernel == DMK_SQRT_LAPLACE)
+        base = std::format("sqrt_laplace_{}d", n_dim);
+    else if (kernel == DMK_YUKAWA && n_dim == 3)
+        base = "laplace_3d"; // Yukawa 3D reuses laplace_3d (both P(r)/r)
+    else if (kernel == DMK_YUKAWA && n_dim == 2)
+        base = "yukawa_2d"; // 2D K0: log-split, its own evaluator
+    else if (kernel == DMK_LAPLACE)
+        base = std::format("laplace_{}d", n_dim);
+    else
+        throw std::runtime_error("ESP JIT: unsupported kernel/dim");
+    return base + suffix;
+}
+
+template <typename Real>
+residual_evaluator_func<Real> make_esp_evaluator_jit(dmk_ikernel kernel, double fparam, double r_c, int n_dim,
+                                                     dmk_eval_type eval_level, int n_digits, double beta,
+                                                     int unroll_factor) {
+    static std::mutex lock;
+    std::lock_guard<std::mutex> lock_guard(lock);
+    constexpr int VECWIDTH = sctl::DefaultVecLen<Real>();
+    constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
+
+    const auto coeffs = get_esp_correction_coeffs<Real>(kernel, fparam, r_c, n_dim, n_digits, beta);
+    std::string args = std::format("void {}<{}, {}, -1, -1", esp_poly_template(kernel, n_dim, false), T_str, VECWIDTH);
+    for (size_t i = 0; i < coeffs.size(); ++i)
+        args += ", -1";
+    const std::string func_name = args + ">";
+
+    std::map<std::string, int> args_to_consume = {
+        {"eval_level_rt", int(eval_level)}, {"n_digits_rt", n_digits}, {"unroll_factor", unroll_factor}};
+    // yukawa_2d's log-split evaluator names its two coeff counts n_coeffs_log_rt / n_coeffs_reg_rt;
+    // every other template uses the positional n_coeffs_rt_i.
+    const bool yuk2d = (kernel == DMK_YUKAWA && n_dim == 2);
+    for (size_t i = 0; i < coeffs.size(); ++i) {
+        const std::string name =
+            yuk2d ? (i == 0 ? "n_coeffs_log_rt" : "n_coeffs_reg_rt") : "n_coeffs_rt_" + std::to_string(i);
+        args_to_consume[name] = int(coeffs[i].size());
+    }
+
+    auto jit_func = RS->compile<void (*)(Real, Real, Real, Real, const Real *, int, const Real *, const Real *,
+                                         const Real *, int, const Real *, Real *)>(func_name, args_to_consume);
+    if (!jit_func)
+        throw std::runtime_error("Error compiling ESP kernel");
+
+    std::vector<Real> coeffs_cat;
+    for (const auto &cvec : coeffs)
+        coeffs_cat.insert(coeffs_cat.end(), cvec.begin(), cvec.end());
+
+    return [jit_func, coeffs_cat](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+        jit_func(rsc, cen, d2max, thresh2, coeffs_cat.data(), n_src, r_src, charge, normals, n_trg, r_trg, pot);
+    };
+}
+
+template residual_evaluator_func<float> make_esp_evaluator_jit<float>(dmk_ikernel kernel, double fparam, double r_c,
+                                                                      int n_dim, dmk_eval_type eval_level, int n_digits,
+                                                                      double beta, int unroll_factor);
+template residual_evaluator_func<double> make_esp_evaluator_jit<double>(dmk_ikernel kernel, double fparam, double r_c,
+                                                                        int n_dim, dmk_eval_type eval_level,
+                                                                        int n_digits, double beta, int unroll_factor);
+
+template <typename Real>
+residual_evaluator_range_func<Real> make_esp_range_evaluator_jit(dmk_ikernel kernel, double fparam, double r_c,
+                                                                 int n_dim, dmk_eval_type eval_level, int n_digits,
+                                                                 double beta, int unroll_factor) {
+    static std::mutex lock;
+    std::lock_guard<std::mutex> lock_guard(lock);
+    constexpr int VECWIDTH = sctl::DefaultVecLen<Real>();
+    constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
+
+    const auto coeffs = get_esp_correction_coeffs<Real>(kernel, fparam, r_c, n_dim, n_digits, beta);
+    std::string args = std::format("void {}<{}, {}, -1, -1", esp_poly_template(kernel, n_dim, true), T_str, VECWIDTH);
+    for (size_t i = 0; i < coeffs.size(); ++i)
+        args += ", -1";
+    const std::string func_name = args + ">";
+
+    std::map<std::string, int> args_to_consume = {
+        {"eval_level_rt", int(eval_level)}, {"n_digits_rt", n_digits}, {"unroll_factor", unroll_factor}};
+    for (size_t i = 0; i < coeffs.size(); ++i)
+        args_to_consume["n_coeffs_rt_" + std::to_string(i)] = int(coeffs[i].size());
+
+    using ft = void (*)(Real, Real, Real, Real, const Real *, int, const int *, const int *, int, const Real *,
+                        const Real *, const Real *, int, const Real *, Real *, const Real *, Real *);
+    ft jit_func = RS->compile<ft>(func_name, args_to_consume);
+    if (!jit_func)
+        throw std::runtime_error("Error compiling ESP range kernel");
+
+    std::vector<Real> coeffs_cat;
+    for (const auto &cvec : coeffs)
+        coeffs_cat.insert(coeffs_cat.end(), cvec.begin(), cvec.end());
+
+    // The typedef orders (n_src, r_src, ...) before (n_ranges, ...); the compiled function keeps the
+    // template's order (n_ranges before n_src), so the two source blocks are swapped in the call.
+    return [jit_func, coeffs_cat](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_ranges, const int *range_starts,
+                                  const int *range_lens, int n_trg, const Real *r_trg, Real *pot, const Real *q_trg,
+                                  Real *pot_src) {
+        jit_func(rsc, cen, d2max, thresh2, coeffs_cat.data(), n_ranges, range_starts, range_lens, n_src, r_src, charge,
+                 normals, n_trg, r_trg, pot, q_trg, pot_src);
+    };
+}
+
+template residual_evaluator_range_func<float>
+make_esp_range_evaluator_jit<float>(dmk_ikernel kernel, double fparam, double r_c, int n_dim, dmk_eval_type eval_level,
+                                    int n_digits, double beta, int unroll_factor);
+template residual_evaluator_range_func<double>
+make_esp_range_evaluator_jit<double>(dmk_ikernel kernel, double fparam, double r_c, int n_dim, dmk_eval_type eval_level,
+                                     int n_digits, double beta, int unroll_factor);
 #endif
 // (DMK_USE_JIT)
 
@@ -609,6 +745,11 @@ template std::vector<std::vector<float>> get_local_correction_coeffs<float>(dmk_
                                                                             double beta);
 template std::vector<std::vector<double>> get_local_correction_coeffs<double>(dmk_ikernel kernel, int n_dim,
                                                                               int n_digits, double beta);
+
+template std::vector<std::vector<float>> get_esp_correction_coeffs<float>(dmk_ikernel kernel, double fparam, double r_c,
+                                                                          int n_dim, int n_digits, double beta);
+template std::vector<std::vector<double>>
+get_esp_correction_coeffs<double>(dmk_ikernel kernel, double fparam, double r_c, int n_dim, int n_digits, double beta);
 
 template direct_evaluator_func<float> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim,
                                                            float lambda);

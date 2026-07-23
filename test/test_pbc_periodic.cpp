@@ -14,6 +14,8 @@
 #include <dmk/tree.hpp>
 #include <dmk/util.hpp>
 
+#include "periodic_reference.hpp"
+
 #include <sctl.hpp>
 
 #define VERBOSE_MESSAGE(...)                                                                                           \
@@ -497,105 +499,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
     }
 
     const double L = 1.0;
-    const double V_box = L * L * L;
-    const double dk = 2.0 * M_PI / L;
-    const double alpha = 10.0;
-    const double r_c = 0.5 * L;
-    const int n_ewald = 15;
-    const int d = 2 * n_ewald + 1;
-
-    std::vector<std::complex<double>> rho(d * d * d, {0.0, 0.0});
-    for (int is = 0; is < n_src; ++is) {
-        const std::complex<double> ex0 = std::exp(std::complex<double>(0.0, -dk * r_src[is * 3 + 0]));
-        const std::complex<double> ey0 = std::exp(std::complex<double>(0.0, -dk * r_src[is * 3 + 1]));
-        const std::complex<double> ez0 = std::exp(std::complex<double>(0.0, -dk * r_src[is * 3 + 2]));
-        std::vector<std::complex<double>> ex(d), ey(d), ez(d);
-        for (int a = -n_ewald; a <= n_ewald; ++a) {
-            ex[a + n_ewald] = std::pow(ex0, a);
-            ey[a + n_ewald] = std::pow(ey0, a);
-            ez[a + n_ewald] = std::pow(ez0, a);
-        }
-        for (int ix = 0; ix < d; ++ix)
-            for (int iy = 0; iy < d; ++iy) {
-                const auto t2 = charges[is] * ex[ix] * ey[iy];
-                for (int iz = 0; iz < d; ++iz)
-                    rho[ix * d * d + iy * d + iz] += t2 * ez[iz];
-            }
-    }
-
-    auto ewald_pot_grad = [&](const double *r_eval, double &pot_out, double *grad_out) {
-        pot_out = 0.0;
-        if (grad_out)
-            grad_out[0] = grad_out[1] = grad_out[2] = 0.0;
-
-        for (int is = 0; is < n_src; ++is) {
-            for (int mx = -1; mx <= 1; ++mx)
-                for (int my = -1; my <= 1; ++my)
-                    for (int mz = -1; mz <= 1; ++mz) {
-                        const double dx = r_eval[0] - r_src[is * 3 + 0] - mx * L;
-                        const double dy = r_eval[1] - r_src[is * 3 + 1] - my * L;
-                        const double dz = r_eval[2] - r_src[is * 3 + 2] - mz * L;
-                        const double r2 = dx * dx + dy * dy + dz * dz;
-                        const double r = std::sqrt(r2);
-                        if (r > 1e-15 && r <= r_c) {
-                            pot_out += charges[is] * std::erfc(alpha * r) / r;
-                            if (grad_out) {
-                                const double scale = -charges[is] * (std::erfc(alpha * r) / (r * r2) +
-                                                                     2.0 * alpha * std::exp(-alpha * alpha * r2) /
-                                                                         (std::sqrt(M_PI) * r2));
-                                grad_out[0] += scale * dx;
-                                grad_out[1] += scale * dy;
-                                grad_out[2] += scale * dz;
-                            }
-                        }
-                    }
-        }
-
-        const std::complex<double> etx0 = std::exp(std::complex<double>(0.0, dk * r_eval[0]));
-        const std::complex<double> ety0 = std::exp(std::complex<double>(0.0, dk * r_eval[1]));
-        const std::complex<double> etz0 = std::exp(std::complex<double>(0.0, dk * r_eval[2]));
-        std::vector<std::complex<double>> etx(d), ety(d), etz(d);
-        for (int a = -n_ewald; a <= n_ewald; ++a) {
-            etx[a + n_ewald] = std::pow(etx0, a);
-            ety[a + n_ewald] = std::pow(ety0, a);
-            etz[a + n_ewald] = std::pow(etz0, a);
-        }
-
-        double pot_long = 0.0;
-        double grad_long[3] = {0, 0, 0};
-        for (int nx = -n_ewald; nx <= n_ewald; ++nx)
-            for (int ny = -n_ewald; ny <= n_ewald; ++ny)
-                for (int nz = -n_ewald; nz <= n_ewald; ++nz) {
-                    if (nx == 0 && ny == 0 && nz == 0)
-                        continue;
-                    const double kx = dk * nx;
-                    const double ky = dk * ny;
-                    const double kz = dk * nz;
-                    const double k2 = kx * kx + ky * ky + kz * kz;
-                    const double G = std::exp(-k2 / (4.0 * alpha * alpha)) / k2;
-                    const int ix = nx + n_ewald;
-                    const int iy = ny + n_ewald;
-                    const int iz = nz + n_ewald;
-                    const auto &rho_k = rho[ix * d * d + iy * d + iz];
-                    const auto eikr = etx[nx + n_ewald] * ety[ny + n_ewald] * etz[nz + n_ewald];
-                    const auto rho_eikr = rho_k * eikr;
-                    pot_long += G * std::real(rho_eikr);
-                    if (grad_out) {
-                        const double im = -std::imag(rho_eikr);
-                        grad_long[0] += G * kx * im;
-                        grad_long[1] += G * ky * im;
-                        grad_long[2] += G * kz * im;
-                    }
-                }
-        pot_out += (4.0 * M_PI / V_box) * pot_long;
-        if (grad_out) {
-            grad_out[0] += (4.0 * M_PI / V_box) * grad_long[0];
-            grad_out[1] += (4.0 * M_PI / V_box) * grad_long[1];
-            grad_out[2] += (4.0 * M_PI / V_box) * grad_long[2];
-        }
-    };
-
-    const double ewald_self_factor = 2.0 * alpha / std::sqrt(M_PI);
+    dmk::pbc_ref::EwaldRef ewald(DMK_LAPLACE, n_dim, n_src, &r_src[0], &charges[0], L);
 
     struct PrecisionCase {
         int n_digits;
@@ -640,8 +544,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
                 for (int i = 0; i < n_test; ++i) {
                     double ewald_pot;
                     double ewald_grad[3];
-                    ewald_pot_grad(&r_src[i * n_dim], ewald_pot, with_grad ? ewald_grad : nullptr);
-                    ewald_pot -= charges[i] * ewald_self_factor;
+                    ewald.eval(&r_src[i * n_dim], i, ewald_pot, with_grad ? ewald_grad : nullptr);
                     err2_pot_src += sctl::pow<2>(pot_src[i * odim] - ewald_pot);
                     ref2_pot_src += sctl::pow<2>(ewald_pot);
                     if (with_grad) {
@@ -658,7 +561,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
                 for (int i = 0; i < n_test_trg; ++i) {
                     double ewald_pot;
                     double ewald_grad[3];
-                    ewald_pot_grad(&r_trg[i * n_dim], ewald_pot, with_grad ? ewald_grad : nullptr);
+                    ewald.eval(&r_trg[i * n_dim], -1, ewald_pot, with_grad ? ewald_grad : nullptr);
                     err2_pot_trg += sctl::pow<2>(pot_trg[i * odim] - ewald_pot);
                     ref2_pot_trg += sctl::pow<2>(ewald_pot);
                     if (with_grad) {
@@ -722,26 +625,6 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Yukawa PBC full pipeline vs lattice sum", 1) {
     // exp(-lambda*r) decays fast; the nearest excluded image (shell 7) is ~exp(-36).
     const int n_img = 6;
 
-    // Periodic reference: DMK's own free-space direct evaluator summed over image shifts m*L.
-    // The evaluator masks the r==0 pair, so a source vs the unshifted (m=0) sources drops only its
-    // self term while nonzero shifts add its periodic images -- matching the periodic solver.
-    auto make_ref = [&](dmk_eval_type eval, int n_eval, const double *r_eval, std::vector<double> &ref) {
-        const int odim = (eval == DMK_POTENTIAL_GRAD) ? 1 + n_dim : 1;
-        ref.assign(size_t(n_eval) * odim, 0.0);
-        auto eval_fn = dmk::get_direct_evaluator<double>(DMK_YUKAWA, eval, n_dim, lambda);
-        std::vector<double> src_shift(n_dim * n_src);
-        for (int mx = -n_img; mx <= n_img; ++mx)
-            for (int my = -n_img; my <= n_img; ++my)
-                for (int mz = -n_img; mz <= n_img; ++mz) {
-                    for (int is = 0; is < n_src; ++is) {
-                        src_shift[is * 3 + 0] = r_src[is * 3 + 0] + mx * L;
-                        src_shift[is * 3 + 1] = r_src[is * 3 + 1] + my * L;
-                        src_shift[is * 3 + 2] = r_src[is * 3 + 2] + mz * L;
-                    }
-                    eval_fn(n_src, src_shift.data(), &charges[0], nullptr, n_eval, r_eval, ref.data());
-                }
-    };
-
     struct PrecisionCase {
         int n_digits;
         double eps;
@@ -782,7 +665,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Yukawa PBC full pipeline vs lattice sum", 1) {
 
                 const int n_test = std::min(n_src, 50);
                 std::vector<double> ref_src;
-                make_ref(eval, n_test, &r_src[0], ref_src);
+                dmk::pbc_ref::image_sum(n_dim, lambda, n_img, eval, n_src, &r_src[0], &charges[0], L, n_test, &r_src[0],
+                                        ref_src);
                 double err2_pot_src = 0, ref2_pot_src = 0;
                 double err2_grad_src = 0, ref2_grad_src = 0;
                 for (int i = 0; i < n_test; ++i) {
@@ -798,7 +682,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Yukawa PBC full pipeline vs lattice sum", 1) {
 
                 const int n_test_trg = std::min(n_trg, 50);
                 std::vector<double> ref_trg;
-                make_ref(eval, n_test_trg, &r_trg[0], ref_trg);
+                dmk::pbc_ref::image_sum(n_dim, lambda, n_img, eval, n_src, &r_src[0], &charges[0], L, n_test_trg,
+                                        &r_trg[0], ref_trg);
                 double err2_pot_trg = 0, ref2_pot_trg = 0;
                 double err2_grad_trg = 0, ref2_grad_trg = 0;
                 for (int i = 0; i < n_test_trg; ++i) {
@@ -872,98 +757,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
     }
 
     const double L = 1.0;
-    const double V_box = L * L * L;
-    const double dk = 2.0 * M_PI / L;
-    const double eta = 6.0;
-    const int n_real = 2; // exp(-eta^2 r^2) is negligible past nearest images
-    const int n_ewald = 15;
-    const int d = 2 * n_ewald + 1;
-
-    std::vector<std::complex<double>> rho(d * d * d, {0.0, 0.0});
-    for (int is = 0; is < n_src; ++is) {
-        const std::complex<double> ex0 = std::exp(std::complex<double>(0.0, -dk * r_src[is * 3 + 0]));
-        const std::complex<double> ey0 = std::exp(std::complex<double>(0.0, -dk * r_src[is * 3 + 1]));
-        const std::complex<double> ez0 = std::exp(std::complex<double>(0.0, -dk * r_src[is * 3 + 2]));
-        std::vector<std::complex<double>> ex(d), ey(d), ez(d);
-        for (int a = -n_ewald; a <= n_ewald; ++a) {
-            ex[a + n_ewald] = std::pow(ex0, a);
-            ey[a + n_ewald] = std::pow(ey0, a);
-            ez[a + n_ewald] = std::pow(ez0, a);
-        }
-        for (int ix = 0; ix < d; ++ix)
-            for (int iy = 0; iy < d; ++iy) {
-                const auto t2 = charges[is] * ex[ix] * ey[iy];
-                for (int iz = 0; iz < d; ++iz)
-                    rho[ix * d * d + iy * d + iz] += t2 * ez[iz];
-            }
-    }
-
-    // self_idx >= 0 subtracts that source's self term (eta^2); the self term is a constant so it
-    // does not affect the gradient (3 comps, optional).
-    auto ewald_pot_grad = [&](const double *r_eval, int self_idx, double &pot_out, double *grad_out) {
-        pot_out = 0.0;
-        if (grad_out)
-            grad_out[0] = grad_out[1] = grad_out[2] = 0.0;
-        for (int is = 0; is < n_src; ++is)
-            for (int mx = -n_real; mx <= n_real; ++mx)
-                for (int my = -n_real; my <= n_real; ++my)
-                    for (int mz = -n_real; mz <= n_real; ++mz) {
-                        const double dx = r_eval[0] - r_src[is * 3 + 0] - mx * L;
-                        const double dy = r_eval[1] - r_src[is * 3 + 1] - my * L;
-                        const double dz = r_eval[2] - r_src[is * 3 + 2] - mz * L;
-                        const double r2 = dx * dx + dy * dy + dz * dz;
-                        if (r2 < 1e-28)
-                            continue;
-                        const double g = std::exp(-eta * eta * r2);
-                        pot_out += charges[is] * g / r2;
-                        if (grad_out) {
-                            // grad of exp(-eta^2 r^2)/r^2 = -2 exp(-eta^2 r^2)(eta^2 r^2 + 1)/r^4 * r_vec
-                            const double scale = -2.0 * charges[is] * g * (eta * eta * r2 + 1.0) / (r2 * r2);
-                            grad_out[0] += scale * dx;
-                            grad_out[1] += scale * dy;
-                            grad_out[2] += scale * dz;
-                        }
-                    }
-
-        const std::complex<double> etx0 = std::exp(std::complex<double>(0.0, dk * r_eval[0]));
-        const std::complex<double> ety0 = std::exp(std::complex<double>(0.0, dk * r_eval[1]));
-        const std::complex<double> etz0 = std::exp(std::complex<double>(0.0, dk * r_eval[2]));
-        std::vector<std::complex<double>> etx(d), ety(d), etz(d);
-        for (int a = -n_ewald; a <= n_ewald; ++a) {
-            etx[a + n_ewald] = std::pow(etx0, a);
-            ety[a + n_ewald] = std::pow(ety0, a);
-            etz[a + n_ewald] = std::pow(etz0, a);
-        }
-
-        double pot_long = 0.0, grad_long[3] = {0, 0, 0};
-        for (int nx = -n_ewald; nx <= n_ewald; ++nx)
-            for (int ny = -n_ewald; ny <= n_ewald; ++ny)
-                for (int nz = -n_ewald; nz <= n_ewald; ++nz) {
-                    if (nx == 0 && ny == 0 && nz == 0)
-                        continue;
-                    const double kx = dk * nx, ky = dk * ny, kz = dk * nz;
-                    const double kmag = std::sqrt(kx * kx + ky * ky + kz * kz);
-                    const double G = std::erfc(kmag / (2.0 * eta)) / kmag;
-                    const auto &rho_k = rho[(nx + n_ewald) * d * d + (ny + n_ewald) * d + (nz + n_ewald)];
-                    const auto eikr = etx[nx + n_ewald] * ety[ny + n_ewald] * etz[nz + n_ewald];
-                    const auto rho_eikr = rho_k * eikr;
-                    pot_long += G * std::real(rho_eikr);
-                    if (grad_out) {
-                        const double im = -std::imag(rho_eikr);
-                        grad_long[0] += G * kx * im;
-                        grad_long[1] += G * ky * im;
-                        grad_long[2] += G * kz * im;
-                    }
-                }
-        pot_out += (2.0 * M_PI * M_PI / V_box) * pot_long;
-        if (grad_out) {
-            grad_out[0] += (2.0 * M_PI * M_PI / V_box) * grad_long[0];
-            grad_out[1] += (2.0 * M_PI * M_PI / V_box) * grad_long[1];
-            grad_out[2] += (2.0 * M_PI * M_PI / V_box) * grad_long[2];
-        }
-        if (self_idx >= 0)
-            pot_out -= charges[self_idx] * eta * eta; // L(0)
-    };
+    dmk::pbc_ref::EwaldRef ewald(DMK_SQRT_LAPLACE, n_dim, n_src, &r_src[0], &charges[0], L);
 
     struct PrecisionCase {
         int n_digits;
@@ -1001,7 +795,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
                 double e2p = 0, r2p = 0, e2g = 0, r2g = 0;
                 for (int i = 0; i < n_test; ++i) {
                     double ref_pot, ref_grad[3];
-                    ewald_pot_grad(&r_src[i * n_dim], i, ref_pot, with_grad ? ref_grad : nullptr);
+                    ewald.eval(&r_src[i * n_dim], i, ref_pot, with_grad ? ref_grad : nullptr);
                     e2p += sctl::pow<2>(pot_src[i * odim] - ref_pot);
                     r2p += sctl::pow<2>(ref_pot);
                     if (with_grad)
@@ -1015,7 +809,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
                 double e2pt = 0, r2pt = 0, e2gt = 0, r2gt = 0;
                 for (int i = 0; i < n_test_trg; ++i) {
                     double ref_pot, ref_grad[3];
-                    ewald_pot_grad(&r_trg[i * n_dim], -1, ref_pot, with_grad ? ref_grad : nullptr);
+                    ewald.eval(&r_trg[i * n_dim], -1, ref_pot, with_grad ? ref_grad : nullptr);
                     e2pt += sctl::pow<2>(pot_trg[i * odim] - ref_pot);
                     r2pt += sctl::pow<2>(ref_pot);
                     if (with_grad)
@@ -1030,6 +824,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
                                 " pot_trg=", safe_l2(e2pt, r2pt));
                 CHECK(safe_l2(e2p, r2p) < pc.tol_pot);
                 CHECK(safe_l2(e2pt, r2pt) < pc.tol_pot);
+
                 if (with_grad) {
                     CHECK(safe_l2(e2g, r2g) < pc.tol_grad);
                     CHECK(safe_l2(e2gt, r2gt) < pc.tol_grad);
@@ -1071,22 +866,6 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Yukawa PBC full pipeline vs lattice sum", 1) {
     const double lambda = 4.0;
     const int n_img = 8; // K0(lambda*r) ~ exp(-lambda*r); shell 7 is ~exp(-28)
 
-    // Reference = free-space direct evaluator (potential or potential+grad) summed over images.
-    auto make_ref = [&](dmk_eval_type eval, int n_eval, const double *r_eval, std::vector<double> &ref) {
-        const int odim = (eval == DMK_POTENTIAL_GRAD) ? 1 + n_dim : 1;
-        ref.assign(size_t(n_eval) * odim, 0.0);
-        auto eval_fn = dmk::get_direct_evaluator<double>(DMK_YUKAWA, eval, n_dim, lambda);
-        std::vector<double> src_shift(n_dim * n_src);
-        for (int mx = -n_img; mx <= n_img; ++mx)
-            for (int my = -n_img; my <= n_img; ++my) {
-                for (int is = 0; is < n_src; ++is) {
-                    src_shift[is * 2 + 0] = r_src[is * 2 + 0] + mx * L;
-                    src_shift[is * 2 + 1] = r_src[is * 2 + 1] + my * L;
-                }
-                eval_fn(n_src, src_shift.data(), &charges[0], nullptr, n_eval, r_eval, ref.data());
-            }
-    };
-
     struct PrecisionCase {
         int n_digits;
         double eps;
@@ -1122,7 +901,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Yukawa PBC full pipeline vs lattice sum", 1) {
 
                 const int n_test = std::min(n_src, 50);
                 std::vector<double> ref_src;
-                make_ref(eval, n_test, &r_src[0], ref_src);
+                dmk::pbc_ref::image_sum(n_dim, lambda, n_img, eval, n_src, &r_src[0], &charges[0], L, n_test, &r_src[0],
+                                        ref_src);
                 double e2p = 0, r2p = 0, e2g = 0, r2g = 0;
                 for (int i = 0; i < n_test; ++i) {
                     e2p += sctl::pow<2>(pot_src[i * odim] - ref_src[i * odim]);
@@ -1136,7 +916,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Yukawa PBC full pipeline vs lattice sum", 1) {
 
                 const int n_test_trg = std::min(n_trg, 50);
                 std::vector<double> ref_trg;
-                make_ref(eval, n_test_trg, &r_trg[0], ref_trg);
+                dmk::pbc_ref::image_sum(n_dim, lambda, n_img, eval, n_src, &r_src[0], &charges[0], L, n_test_trg,
+                                        &r_trg[0], ref_trg);
                 double e2pt = 0, r2pt = 0, e2gt = 0, r2gt = 0;
                 for (int i = 0; i < n_test_trg; ++i) {
                     e2pt += sctl::pow<2>(pot_trg[i * odim] - ref_trg[i * odim]);
@@ -1199,85 +980,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
     }
 
     const double L = 1.0;
-    const double V_box = L * L;
-    const double dk = 2.0 * M_PI / L;
-    const double eta = 6.0;
-    const int n_real = 2;
-    const int n_ewald = 15;
-    const int d = 2 * n_ewald + 1;
-
-    std::vector<std::complex<double>> rho(d * d, {0.0, 0.0});
-    for (int is = 0; is < n_src; ++is) {
-        const std::complex<double> ex0 = std::exp(std::complex<double>(0.0, -dk * r_src[is * 2 + 0]));
-        const std::complex<double> ey0 = std::exp(std::complex<double>(0.0, -dk * r_src[is * 2 + 1]));
-        std::vector<std::complex<double>> ex(d), ey(d);
-        for (int a = -n_ewald; a <= n_ewald; ++a) {
-            ex[a + n_ewald] = std::pow(ex0, a);
-            ey[a + n_ewald] = std::pow(ey0, a);
-        }
-        for (int ix = 0; ix < d; ++ix)
-            for (int iy = 0; iy < d; ++iy)
-                rho[ix * d + iy] += charges[is] * ex[ix] * ey[iy];
-    }
-
-    // self_idx >= 0 subtracts that source's self term (2 eta/sqrt(pi)); pass -1 for targets.
-    // grad_out (2 comps) optional; the self term is a constant so it does not affect the gradient.
-    auto ewald_pot_grad = [&](const double *r_eval, int self_idx, double &pot_out, double *grad_out) {
-        pot_out = 0.0;
-        if (grad_out)
-            grad_out[0] = grad_out[1] = 0.0;
-        const double two_eta_sqrtpi = 2.0 * eta / std::sqrt(M_PI);
-        for (int is = 0; is < n_src; ++is)
-            for (int mx = -n_real; mx <= n_real; ++mx)
-                for (int my = -n_real; my <= n_real; ++my) {
-                    const double dx = r_eval[0] - r_src[is * 2 + 0] - mx * L;
-                    const double dy = r_eval[1] - r_src[is * 2 + 1] - my * L;
-                    const double r2 = dx * dx + dy * dy;
-                    if (r2 < 1e-28)
-                        continue;
-                    const double r = std::sqrt(r2);
-                    pot_out += charges[is] * std::erfc(eta * r) / r;
-                    if (grad_out) {
-                        // grad of erfc(eta r)/r = -[erfc(eta r)/r^3 + 2 eta/(sqrt(pi) r^2) exp(-eta^2 r^2)] r_vec
-                        const double scale = -charges[is] * (std::erfc(eta * r) / (r * r2) +
-                                                             two_eta_sqrtpi * std::exp(-eta * eta * r2) / r2);
-                        grad_out[0] += scale * dx;
-                        grad_out[1] += scale * dy;
-                    }
-                }
-
-        const std::complex<double> etx0 = std::exp(std::complex<double>(0.0, dk * r_eval[0]));
-        const std::complex<double> ety0 = std::exp(std::complex<double>(0.0, dk * r_eval[1]));
-        std::vector<std::complex<double>> etx(d), ety(d);
-        for (int a = -n_ewald; a <= n_ewald; ++a) {
-            etx[a + n_ewald] = std::pow(etx0, a);
-            ety[a + n_ewald] = std::pow(ety0, a);
-        }
-        double pot_long = 0.0, grad_long[2] = {0, 0};
-        for (int nx = -n_ewald; nx <= n_ewald; ++nx)
-            for (int ny = -n_ewald; ny <= n_ewald; ++ny) {
-                if (nx == 0 && ny == 0)
-                    continue;
-                const double kx = dk * nx, ky = dk * ny;
-                const double kmag = std::sqrt(kx * kx + ky * ky);
-                const double G = std::erfc(kmag / (2.0 * eta)) / kmag;
-                const auto eikr = etx[nx + n_ewald] * ety[ny + n_ewald];
-                const auto rho_eikr = rho[(nx + n_ewald) * d + (ny + n_ewald)] * eikr;
-                pot_long += G * std::real(rho_eikr);
-                if (grad_out) {
-                    const double im = -std::imag(rho_eikr);
-                    grad_long[0] += G * kx * im;
-                    grad_long[1] += G * ky * im;
-                }
-            }
-        pot_out += (2.0 * M_PI / V_box) * pot_long;
-        if (grad_out) {
-            grad_out[0] += (2.0 * M_PI / V_box) * grad_long[0];
-            grad_out[1] += (2.0 * M_PI / V_box) * grad_long[1];
-        }
-        if (self_idx >= 0)
-            pot_out -= charges[self_idx] * two_eta_sqrtpi;
-    };
+    dmk::pbc_ref::EwaldRef ewald(DMK_SQRT_LAPLACE, n_dim, n_src, &r_src[0], &charges[0], L);
 
     struct PrecisionCase {
         int n_digits;
@@ -1315,7 +1018,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
                 double e2p = 0, r2p = 0, e2g = 0, r2g = 0;
                 for (int i = 0; i < n_test; ++i) {
                     double ref_pot, ref_grad[2];
-                    ewald_pot_grad(&r_src[i * n_dim], i, ref_pot, with_grad ? ref_grad : nullptr);
+                    ewald.eval(&r_src[i * n_dim], i, ref_pot, with_grad ? ref_grad : nullptr);
                     e2p += sctl::pow<2>(pot_src[i * odim] - ref_pot);
                     r2p += sctl::pow<2>(ref_pot);
                     if (with_grad)
@@ -1328,7 +1031,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
                 double e2pt = 0, r2pt = 0, e2gt = 0, r2gt = 0;
                 for (int i = 0; i < n_test_trg; ++i) {
                     double ref_pot, ref_grad[2];
-                    ewald_pot_grad(&r_trg[i * n_dim], -1, ref_pot, with_grad ? ref_grad : nullptr);
+                    ewald.eval(&r_trg[i * n_dim], -1, ref_pot, with_grad ? ref_grad : nullptr);
                     e2pt += sctl::pow<2>(pot_trg[i * odim] - ref_pot);
                     r2pt += sctl::pow<2>(ref_pot);
                     if (with_grad)
@@ -1342,6 +1045,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
                                 " pot_trg=", safe_l2(e2pt, r2pt));
                 CHECK(safe_l2(e2p, r2p) < pc.tol_pot);
                 CHECK(safe_l2(e2pt, r2pt) < pc.tol_pot);
+
                 if (with_grad) {
                     CHECK(safe_l2(e2g, r2g) < pc.tol_grad);
                     CHECK(safe_l2(e2gt, r2gt) < pc.tol_grad);
@@ -1389,107 +1093,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Laplace PBC full pipeline vs Ewald", 1) {
             charges[i] -= sum / n_src;
     }
 
-    // Exponential integral E1(x) = int_x^inf exp(-t)/t dt, x > 0 (Numerical Recipes expint(1, .)).
-    auto E1 = [](double x) {
-        const double EULER = 0.5772156649015328606;
-        if (x < 1.0) {
-            double ans = -std::log(x) - EULER, fact = 1.0;
-            for (int i = 1; i <= 100; ++i) {
-                fact *= -x / i;
-                const double del = -fact / i;
-                ans += del;
-                if (std::abs(del) < std::abs(ans) * 1e-16)
-                    break;
-            }
-            return ans;
-        }
-        double b = x + 1.0, c = 1e300, dd = 1.0 / b, h = dd;
-        for (int i = 1; i <= 100; ++i) {
-            const double an = -1.0 * i * i;
-            b += 2.0;
-            dd = 1.0 / (an * dd + b);
-            c = b + an / c;
-            const double del = c * dd;
-            h *= del;
-            if (std::abs(del - 1.0) < 1e-16)
-                break;
-        }
-        return h * std::exp(-x);
-    };
-
     const double L = 1.0;
-    const double V_box = L * L;
-    const double dk = 2.0 * M_PI / L;
-    const double eta = 6.0;
-    const int n_real = 2;
-    const int n_ewald = 15;
-    const int d = 2 * n_ewald + 1;
-
-    std::vector<std::complex<double>> rho(d * d, {0.0, 0.0});
-    for (int is = 0; is < n_src; ++is) {
-        const std::complex<double> ex0 = std::exp(std::complex<double>(0.0, -dk * r_src[is * 2 + 0]));
-        const std::complex<double> ey0 = std::exp(std::complex<double>(0.0, -dk * r_src[is * 2 + 1]));
-        std::vector<std::complex<double>> ex(d), ey(d);
-        for (int a = -n_ewald; a <= n_ewald; ++a) {
-            ex[a + n_ewald] = std::pow(ex0, a);
-            ey[a + n_ewald] = std::pow(ey0, a);
-        }
-        for (int ix = 0; ix < d; ++ix)
-            for (int iy = 0; iy < d; ++iy)
-                rho[ix * d + iy] += charges[is] * ex[ix] * ey[iy];
-    }
-
-    auto ewald_pot_grad = [&](const double *r_eval, double &pot_out, double *grad_out) {
-        pot_out = 0.0;
-        if (grad_out)
-            grad_out[0] = grad_out[1] = 0.0;
-        for (int is = 0; is < n_src; ++is)
-            for (int mx = -n_real; mx <= n_real; ++mx)
-                for (int my = -n_real; my <= n_real; ++my) {
-                    const double dx = r_eval[0] - r_src[is * 2 + 0] - mx * L;
-                    const double dy = r_eval[1] - r_src[is * 2 + 1] - my * L;
-                    const double r2 = dx * dx + dy * dy;
-                    if (r2 < 1e-28)
-                        continue;
-                    pot_out += charges[is] * (-0.5) * E1(eta * eta * r2);
-                    if (grad_out) {
-                        // grad of -1/2 E1(eta^2 r^2) = exp(-eta^2 r^2)/r^2 * r_vec
-                        const double g = charges[is] * std::exp(-eta * eta * r2) / r2;
-                        grad_out[0] += g * dx;
-                        grad_out[1] += g * dy;
-                    }
-                }
-
-        const std::complex<double> etx0 = std::exp(std::complex<double>(0.0, dk * r_eval[0]));
-        const std::complex<double> ety0 = std::exp(std::complex<double>(0.0, dk * r_eval[1]));
-        std::vector<std::complex<double>> etx(d), ety(d);
-        for (int a = -n_ewald; a <= n_ewald; ++a) {
-            etx[a + n_ewald] = std::pow(etx0, a);
-            ety[a + n_ewald] = std::pow(ety0, a);
-        }
-        double pot_long = 0.0, grad_long[2] = {0, 0};
-        for (int nx = -n_ewald; nx <= n_ewald; ++nx)
-            for (int ny = -n_ewald; ny <= n_ewald; ++ny) {
-                if (nx == 0 && ny == 0)
-                    continue;
-                const double kx = dk * nx, ky = dk * ny;
-                const double k2 = kx * kx + ky * ky;
-                const double G = -std::exp(-k2 / (4.0 * eta * eta)) / k2;
-                const auto eikr = etx[nx + n_ewald] * ety[ny + n_ewald];
-                const auto rho_eikr = rho[(nx + n_ewald) * d + (ny + n_ewald)] * eikr;
-                pot_long += G * std::real(rho_eikr);
-                if (grad_out) {
-                    const double im = -std::imag(rho_eikr);
-                    grad_long[0] += G * kx * im;
-                    grad_long[1] += G * ky * im;
-                }
-            }
-        pot_out += (2.0 * M_PI / V_box) * pot_long;
-        if (grad_out) {
-            grad_out[0] += (2.0 * M_PI / V_box) * grad_long[0];
-            grad_out[1] += (2.0 * M_PI / V_box) * grad_long[1];
-        }
-    };
+    dmk::pbc_ref::EwaldRef ewald(DMK_LAPLACE, n_dim, n_src, &r_src[0], &charges[0], L);
 
     struct PrecisionCase {
         int n_digits;
@@ -1527,7 +1132,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Laplace PBC full pipeline vs Ewald", 1) {
                 double e2t = 0, r2t = 0, e2gt = 0, r2gt = 0;
                 for (int i = 0; i < n_test_trg; ++i) {
                     double ref_pot, ref_grad[2];
-                    ewald_pot_grad(&r_trg[i * n_dim], ref_pot, with_grad ? ref_grad : nullptr);
+                    ewald.eval(&r_trg[i * n_dim], -1, ref_pot, with_grad ? ref_grad : nullptr);
                     e2t += sctl::pow<2>(pot_trg[i * odim] - ref_pot);
                     r2t += sctl::pow<2>(ref_pot);
                     if (with_grad)

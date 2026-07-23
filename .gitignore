@@ -38,6 +38,9 @@ fort*
 *.data
 l3dptsa.txt
 
+# python cache
+*.pyc
+
 # emacs files
 *~
 TAGS
@@ -48,6 +51,5 @@ out
 # Build and various utilities
 /compile_commands.json
 /.cache
-/build
 /build*
 /docs

@@ -67,11 +67,19 @@ template <typename Real, int DIM>
 void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars, Real beta, int npw, Real boxsize,
                               Prolate0Fun &pf, sctl::Vector<Real> &windowed_kernel);
 
-// Periodic windowed kernel FT for the root box, sampled on the reciprocal grid kappa = sqrt(i)*dk.
-// Scalar kernels (Laplace, Yukawa, Sqrt-Laplace), 3D.
+// Windowed scalar-kernel FT (Laplace, Yukawa, Sqrt-Laplace; 2D and 3D) in ESP's reciprocal-lattice
+// convention, sampled on kappa = sqrt(i)*dk (dk = 2*pi/boxsize). freespace=false: periodic root-box
+// symbol (k=0 dropped for the non-screened kernels). freespace=true: the same symbol with its bare
+// Green's-function FT truncated at radius rl (Vico-Greengard) and the k=0 mode kept finite.
 template <typename Real, int DIM>
 void get_periodic_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int n_pw_periodic,
-                                     Real boxsize, Real sigma1, Prolate0Fun &pf, sctl::Vector<Real> &kernel_ft);
+                                     Real boxsize, Real sigma1, Prolate0Fun &pf, sctl::Vector<Real> &kernel_ft,
+                                     bool freespace = false, Real rl = 0);
+
+// Real-space value at r=0 of the windowed log kernel at the given box scale (the log-kernel
+// self-interaction constant). Used by the tree's self correction and by ESP.
+template <typename Real>
+Real calc_log_windowed_kernel_value_at_zero(int dim, const Prolate0Fun &pf, Real beta, Real boxsize);
 
 } // namespace dmk
 

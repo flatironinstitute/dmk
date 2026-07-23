@@ -8,6 +8,7 @@
 #include <dmk/chebychev.hpp>
 #include <dmk/direct.hpp>
 #include <dmk/error.hpp>
+#include <dmk/esp.hpp>
 #include <dmk/fortran.h>
 #include <dmk/fourier_data.hpp>
 #include <dmk/logger.h>
@@ -24,6 +25,8 @@
 using pdmk_tree_impl =
     std::variant<std::unique_ptr<dmk::DMKPtTree<float, 2>>, std::unique_ptr<dmk::DMKPtTree<float, 3>>,
                  std::unique_ptr<dmk::DMKPtTree<double, 2>>, std::unique_ptr<dmk::DMKPtTree<double, 3>>>;
+
+using pdmk_esp_plan_impl = std::variant<std::unique_ptr<dmk::EspPlan<float>>, std::unique_ptr<dmk::EspPlan<double>>>;
 
 namespace dmk {
 
@@ -942,6 +945,42 @@ inline void pdmk_tree_update_charges(pdmk_tree tree, const Real *charge, const R
         *static_cast<pdmk_tree_impl *>(tree));
 }
 
+// Writes pot_src interleaved [pot, fx, fy, fz] per particle (matching pdmk_tree_eval's
+// [pot, dx, dy, dz] convention) when the plan's eval_type requests forces; else just pot.
+template <typename Real>
+inline void esp_copy_result(const dmk::PotForce<Real> &result, int n, Real *pot_src) {
+    if (result.force_x.empty()) {
+        std::copy(result.pot.begin(), result.pot.end(), pot_src);
+        return;
+    }
+    const int dim = result.force_z.empty() ? 2 : 3; // scaffolding for a future DIM=2 plan
+    const int out_dim = 1 + dim;
+    for (int i = 0; i < n; ++i) {
+        pot_src[i * out_dim + 0] = result.pot[i];
+        pot_src[i * out_dim + 1] = result.force_x[i];
+        pot_src[i * out_dim + 2] = result.force_y[i];
+        if (dim == 3)
+            pot_src[i * out_dim + 3] = result.force_z[i];
+    }
+}
+
+// Dispatches to the plan's own precision -- evalf genuinely runs EspPlan<float>::eval (float
+// FFTs/SIMD throughout), it never up-converts through a double plan.
+// (A template can't have C language linkage, so this lives here rather than in the extern "C"
+// block below, which only holds the non-template pdmk_esp_eval/evalf wrappers.)
+template <typename Real>
+inline void pdmk_esp_eval_impl(pdmk_esp_plan plan, int n, const Real *r_src, const Real *charges, Real *pot_src) {
+    std::visit(
+        [&](auto &p) {
+            using PlanType = std::decay_t<decltype(p)>;
+            if constexpr (std::is_same_v<PlanType, std::unique_ptr<dmk::EspPlan<Real>>>)
+                esp_copy_result<Real>(p->eval(n, r_src, charges), n, pot_src);
+            else
+                throw api_error(DMK_ERR_INVALID_ARGUMENT, "ESP plan precision does not match eval precision");
+        },
+        *static_cast<pdmk_esp_plan_impl *>(plan));
+}
+
 } // namespace dmk
 
 extern "C" {
@@ -1076,5 +1115,53 @@ dmk_error pdmk(dmk_communicator comm, pdmk_params params, int n_src, const doubl
         else
             dmk::pdmk<double, 3>(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg);
     });
+}
+
+pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator /*comm*/, pdmk_esp_params params) {
+    pdmk_esp_plan result = nullptr;
+    dmk::dmk_guard([&] {
+        result = new pdmk_esp_plan_impl(std::unique_ptr<dmk::EspPlan<double>>(new dmk::EspPlan<double>(params)));
+    });
+    return result;
+}
+
+pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator /*comm*/, pdmk_esp_params params) {
+    pdmk_esp_plan result = nullptr;
+    dmk::dmk_guard([&] {
+        result = new pdmk_esp_plan_impl(std::unique_ptr<dmk::EspPlan<float>>(new dmk::EspPlan<float>(params)));
+    });
+    return result;
+}
+
+void pdmk_esp_eval(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
+                   double *pot_src) {
+    dmk::pdmk_esp_eval_impl<double>(plan, n, r_src, charges, pot_src);
+}
+
+void pdmk_esp_evalf(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,
+                    float *pot_src) {
+    dmk::pdmk_esp_eval_impl<float>(plan, n, r_src, charges, pot_src);
+}
+
+void pdmk_esp_plan_destroy(pdmk_esp_plan plan) { delete static_cast<pdmk_esp_plan_impl *>(plan); }
+
+void pdmk_esp_plan_destroyf(pdmk_esp_plan plan) { pdmk_esp_plan_destroy(plan); }
+
+void pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double *r_src, const double *charges,
+              double *pot_src) {
+    auto plan = pdmk_esp_plan_create(comm, params);
+    if (!plan) // create failed (see pdmk_last_error_message); nothing to evaluate
+        return;
+    pdmk_esp_eval(comm, plan, n, r_src, charges, pot_src);
+    pdmk_esp_plan_destroy(plan);
+}
+
+void pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const float *r_src, const float *charges,
+               float *pot_src) {
+    auto plan = pdmk_esp_plan_createf(comm, params);
+    if (!plan)
+        return;
+    pdmk_esp_evalf(comm, plan, n, r_src, charges, pot_src);
+    pdmk_esp_plan_destroyf(plan);
 }
 }

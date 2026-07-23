@@ -95,6 +95,56 @@ dmk_error pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *pot_trg);
 pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src,
                            const double *charge, const double *normal, int n_trg, const double *r_trg);
 
+// ESP (Ewald Sum with PSWF kernels)
+// Particles lie in the cubic box [-L/2, L/2)^n_dim.
+
+// Short-range method selection bits for pdmk_esp_params.esp_flags. The three strategies
+// (source-pruning granularity, within-cell spatial sort, Newton's-third-law reciprocal) are
+// independent. The default combination below is the empirically fastest.
+enum {
+    DMK_ESP_PRUNE_TILE = 1u << 0,   // sub-cell tile-vs-tile AABB pruning
+    DMK_ESP_PRUNE_SOURCE = 1u << 1, // per-source point-vs-target-box pruning (finest granularity)
+    DMK_ESP_N3L = 1u << 2,          // Newton's-third-law reciprocal (13-forward half stencil, 27-coloured)
+    DMK_ESP_MORTON = 1u << 3,       // Morton within-cell sort (else octant-bin counting sort)
+};
+
+typedef struct pdmk_esp_params {
+    double L;      // periodic box side length
+    double r_c;    // real-space cutoff radius
+    double eps;    // target precision
+    int log_level; // 0: trace … 6: off (matches dmk_log_level)
+    dmk_ikernel kernel = DMK_LAPLACE;
+    double fparam = 0.0;
+    int n_dim = 3; // spatial dimension (2 or 3)
+    dmk_eval_type eval_type = DMK_POTENTIAL;
+    double sigma = 1.35;      // FINUFFT upsampling factor for the long-range PSWF kernel
+    int use_periodic = 1;     // 1: periodic box; 0: free-space (open) boundaries
+    double freespace_pad = 0; // free-space FFT-grid padding factor per axis; <=0 -> auto 2*sqrt(n_dim)
+    // Short-range tuning; defaults are the fastest known combination.
+    uint32_t esp_flags = DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L | DMK_ESP_MORTON; // DMK_ESP_* method bitmask
+    int esp_bins = 2;  // octant-bin count per axis when DMK_ESP_MORTON is clear
+    int esp_stile = 0; // source-tile width for DMK_ESP_PRUNE_TILE (0 -> SIMD width)
+} pdmk_esp_params;
+
+// Opaque plan handle (heap-allocated internally).
+typedef void *pdmk_esp_plan;
+
+pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator comm, pdmk_esp_params params);
+pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator comm, pdmk_esp_params params);
+
+void pdmk_esp_eval(dmk_communicator comm, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
+                   double *pot_src);
+void pdmk_esp_evalf(dmk_communicator comm, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,
+                    float *pot_src);
+
+void pdmk_esp_plan_destroy(pdmk_esp_plan plan);
+void pdmk_esp_plan_destroyf(pdmk_esp_plan plan);
+
+void pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double *r_src, const double *charges,
+              double *pot_src);
+void pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const float *r_src, const float *charges,
+               float *pot_src);
+
 dmk_error pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const double *normal);
 dmk_error pdmk_tree_update_chargesf(pdmk_tree tree, const float *charge, const float *normal);
 

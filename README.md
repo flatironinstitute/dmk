@@ -65,6 +65,16 @@ cmake .. -DCMAKE_CXX_COMPILER="$LLVM_ROOT/bin/clang++" -DCMAKE_POLICY_VERSION_MI
 make -j 12
 ```
 
+# ESP (Ewald Summation with Prolates)
+
+DMK includes an experimental periodic electrostatics solver based on prolate spheroidal wave
+functions (PSWFs), as detailed [here](https://www.nature.com/articles/s41467-026-73232-8). 
+
+Optionally, `-DDMK_USE_JIT=ON` enables runtime JIT-generated short-range kernels (matching the
+long-range window exactly at any sigma, instead of the precompiled AOT tables baked at
+sigma=1.35). This requires LLVM — RuFuS (`extern/RuFuS`) targets **LLVM 19** specifically, though may
+work with newer versions. On FI systems: `module load llvm/19.1.7`.
+
 # Fortran code installation guide
 
 We use make utility to install static and/or dynamic libraries, and to run the tests. 
