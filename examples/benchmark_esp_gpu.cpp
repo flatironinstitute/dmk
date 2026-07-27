@@ -33,6 +33,7 @@ struct Config {
     bool bench_forces = false;    // -g: also benchmark forces (potential+force timed together)
     bool check_forces = false;    // -F: validate GPU forces against FD reference; implies -g
     bool skip_cpu_baseline = false; // -S: skip the CPU reference run (also disables l2_rel_err reporting)
+    bool use_pruning = false;      // -P: use the sorted+geometrically-pruned short-range kernel instead of the dense one
 };
 
 // Generate N random positions in [-L/2, L/2)^3.
@@ -66,7 +67,8 @@ void print_config(const Config &cfg, std::ostream &os) {
        << "# bench_plan:        " << (cfg.bench_plan ? "true" : "false") << "\n"
        << "# bench_forces:      " << (cfg.bench_forces ? "true" : "false") << "\n"
        << "# check_forces:      " << (cfg.check_forces ? "true" : "false") << "\n"
-       << "# skip_cpu_baseline: " << (cfg.skip_cpu_baseline ? "true" : "false") << "\n";
+       << "# skip_cpu_baseline: " << (cfg.skip_cpu_baseline ? "true" : "false") << "\n"
+       << "# use_pruning:       " << (cfg.use_pruning ? "true" : "false") << "\n";
 }
 
 // GPU-vs-CPU relative L2 error, gauged (mean-subtracted) on both sides first: ESP potentials
@@ -150,7 +152,7 @@ void run_phase(const Config &cfg, int n, const std::vector<dmk::Vec3T<Real>> &r_
               const std::vector<Real> &charges, dmk_eval_type eval_type, const char *phase_name) {
     double t_plan0 = MY_OMP_GET_WTIME();
     dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, eval_type);
-    dmk::GpuState *gpu = dmk::esp_create_gpu_plan(plan, /*use_float=*/std::is_same_v<Real, float>);
+    dmk::GpuState *gpu = dmk::esp_create_gpu_plan(plan, /*use_float=*/std::is_same_v<Real, float>, cfg.use_pruning);
     double t_plan1 = MY_OMP_GET_WTIME();
     if (cfg.bench_plan)
         std::cout << "# plan_create_time (" << phase_name << ", cpu+gpu): " << (t_plan1 - t_plan0) << " s\n"
@@ -237,7 +239,7 @@ void run_benchmark(Config cfg) {
                       << std::flush;
 
             dmk::EspPlan *plan = dmk::esp_create_plan(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL_GRAD);
-            dmk::GpuState *gpu = dmk::esp_create_gpu_plan(plan, /*use_float=*/false);
+            dmk::GpuState *gpu = dmk::esp_create_gpu_plan(plan, /*use_float=*/false, cfg.use_pruning);
             auto esp = dmk::esp_eval_gpu(gpu, r_src_d, charges_d);
             double force_l2_err =
                 check_forces_fd_gpu(esp, r_src_d, charges_d, cfg.L, cfg.r_c, cfg.eps, cfg.sigma, n_fd_sample);
@@ -251,7 +253,7 @@ void run_benchmark(Config cfg) {
 Config parse_args(int argc, char *argv[]) {
     Config cfg;
     int opt;
-    while ((opt = getopt(argc, argv, "N:L:c:e:r:t:s:pFSgh?")) != -1) {
+    while ((opt = getopt(argc, argv, "N:L:c:e:r:t:s:pPFSgh?")) != -1) {
         switch (opt) {
         case 'N':
             cfg.n_src = int(std::atof(optarg));
@@ -270,6 +272,9 @@ Config parse_args(int argc, char *argv[]) {
             break;
         case 'p':
             cfg.bench_plan = true;
+            break;
+        case 'P':
+            cfg.use_pruning = true;
             break;
         case 'g':
             cfg.bench_forces = true;
@@ -311,6 +316,8 @@ Config parse_args(int argc, char *argv[]) {
                       << "             random particles, not all N. Implies -g.\n"
                       << "  -S         Skip the CPU baseline run (no speedup or l2_rel_err_vs_cpu reporting,\n"
                       << "             GPU timing only, faster to iterate)\n"
+                      << "  -P         Use the sorted+geometrically-pruned short-range kernel instead of the\n"
+                      << "             dense (all-27-neighbor-cells) one. Default is dense (off).\n"
                       << "  -h         Help\n"
                       << "\n"
                       << "Output CSV columns (eval phase):\n"

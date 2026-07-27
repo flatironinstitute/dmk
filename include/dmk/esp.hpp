@@ -59,8 +59,12 @@ PotForce<Real> esp_eval_long_range(EspPlan *plan, const std::vector<Vec3T<Real>>
 // use_float selects the ONE Real this plan is created for (its cuFFT/cuFINUFFT
 // plans and long-range buffers only exist for that precision) -- every
 // esp_eval_gpu*<Real> call on the returned GpuState must match it.
+// use_pruning selects the short-range strategy: false (default) is the dense
+// all-27-neighbor-cells kernel, true is the sorted+geometrically-pruned one
+// (tile-vs-tile AABB culling). Also fixed at plan-creation time -- create two
+// plans to compare both strategies.
 struct GpuState;
-GpuState *esp_create_gpu_plan(EspPlan *plan, bool use_float);
+GpuState *esp_create_gpu_plan(EspPlan *plan, bool use_float, bool use_pruning = false);
 void      esp_destroy_gpu_plan(GpuState *gpu);
 
 // GPU evaluation — same semantics as esp_eval but runs on GPU.

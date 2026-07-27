@@ -597,7 +597,7 @@ EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma, dmk_eva
 void esp_destroy_plan(EspPlan *plan) { delete plan; }
 
 #ifdef DMK_GPU_OFFLOAD
-GpuState *esp_create_gpu_plan(EspPlan *plan, bool use_float) {
+GpuState *esp_create_gpu_plan(EspPlan *plan, bool use_float, bool use_pruning) {
     const double tol = std::pow(10.0, -double(plan->n_digits));
     const double sf  = plan->pswf(0.0) / (plan->params_base.r_c * 4.0 * M_PI * plan->params_base.c0); //self-interaction factor
     // GPU spreads with cuFINUFFT's native ES kernel, not the PSWF, so it needs its
@@ -609,7 +609,7 @@ GpuState *esp_create_gpu_plan(EspPlan *plan, bool use_float) {
         plan->params_base.n_f, plan->n_digits,
         plan->params_base.L,   plan->params_base.r_c,
         GPU_SPREADER_UPSAMPFAC, tol,
-        sf, float(sf), plan->eval_type, use_float,
+        sf, float(sf), plan->eval_type, use_float, use_pruning,
         plan->scaling_coeffs_es.data());
 }
 

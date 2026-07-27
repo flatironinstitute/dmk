@@ -23,11 +23,16 @@ struct GpuState; // full definition lives in esp_cuda.cu
 // spread/FFT buffers) is allocated for that Real only. Every later
 // esp_eval_gpu*<Real> call on the returned GpuState must use the matching
 // Real (a mismatched call throws) -- see esp.hpp's float/double overloads.
+// use_pruning: selects which short-range strategy this plan's short_range_gpu
+// calls will use -- false (default) is the existing dense (all-27-neighbor-
+// cells) kernel, true is the sorted+geometrically-pruned kernel (tile-vs-tile
+// AABB culling, mirrors CPU's short_range_prune_tile). Fixed at plan-creation
+// time, like use_float; create two GpuStates to compare both strategies.
 GpuState *gpu_create_state(
     int nf, int n_digits,
     double L, double r_c, double gpu_upsampfac, double tol,
     double self_factor_d, float self_factor_f,
-    dmk_eval_type eval_type, bool use_float,
+    dmk_eval_type eval_type, bool use_float, bool use_pruning,
     const double *h_scaling_coeffs);
 
 // Called from esp_destroy_gpu_plan in esp.cpp.

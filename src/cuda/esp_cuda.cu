@@ -61,6 +61,18 @@ struct GpuState {
     // Every eval on this plan must be called with the matching Real -- checked at
     // esp_eval_gpu_impl/short_range_impl/long_range_impl's entry via check_plan_real<Real>.
     bool          use_float = false;
+    // Short-range strategy: false = dense (short_range_kernel), true = sorted +
+    // geometrically-pruned (short_range_kernel_pruned). Fixed at plan-creation
+    // time (esp_create_gpu_plan's use_pruning arg), read in short_range_gpu.
+    bool          use_pruning = false;
+    // Cache for short_range_kernel_pruned's shared-memory sizing (see
+    // compute_max_cell_pop / short_range_gpu): computing the exact max cell
+    // population requires a host-device sync every call, so it's only
+    // recomputed when n changes -- reused as-is across repeated calls with
+    // the same n (the common case: same plan, same particle count, e.g. a
+    // benchmark loop or successive timesteps of one simulation).
+    int           pruned_max_tiles_cache   = 0;
+    int           pruned_max_tiles_cache_n = -1;
 
     // Host output workspace; grown as needed, never shrunk between calls.
     std::vector<double> h_dbl_buf;
@@ -152,7 +164,7 @@ GpuState *gpu_create_state(
     int nf, int n_digits,
     double L, double r_c, double gpu_upsampfac, double tol,
     double self_factor_d, float self_factor_f,
-    dmk_eval_type eval_type, bool use_float,
+    dmk_eval_type eval_type, bool use_float, bool use_pruning,
     const double *h_scaling_coeffs)
 {
     auto *gpu = new GpuState;
@@ -166,6 +178,7 @@ GpuState *gpu_create_state(
     gpu->self_factor_f = self_factor_f;
     gpu->eval_type     = eval_type;
     gpu->use_float     = use_float;
+    gpu->use_pruning   = use_pruning;
 
     const size_t real_sz    = use_float ? sizeof(float) : sizeof(double);
     const size_t complex_sz = use_float ? sizeof(cuFloatComplex) : sizeof(cuDoubleComplex);
@@ -535,7 +548,7 @@ __device__ __forceinline__ void eval_esp_pair(
     Real &pot_acc, Real &gx_acc, Real &gy_acc, Real &gz_acc)
 {
     const Real R2 = dx * dx + dy * dy + dz * dz;
-    //if (R2 <= Real(0) || R2 >= r_c_sq) return; // also masks the R2=0 self-pair
+    if (R2 <= Real(0) || R2 >= r_c_sq) return; // also masks the R2=0 self-pair
 
     const Real Rinv = rsqrt(R2); // CUDA's rsqrt()/__drsqrt_rn(), full IEEE precision
     const Real x = (R2 * Rinv + cen) * rsc; // = (R + cen)*rsc, mapped into [-1,1]
@@ -735,6 +748,242 @@ __global__ void short_range_kernel(
                 pg_sorted[out_dim * trg + 1] = gx_acc[k];
                 pg_sorted[out_dim * trg + 2] = gy_acc[k];
                 pg_sorted[out_dim * trg + 3] = gz_acc[k];
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// short_range_kernel_pruned
+// Sorted + geometrically-pruned strategy, mirrors CPU's short_range_prune_tile
+// (one AABB test per target-tile x source-tile pair, skipping whole tiles
+// farther than r_c). Kept fully side by side with short_range_kernel above --
+// neither is modified by the other; short_range_gpu picks one via
+// gpu.use_pruning.
+//
+// Unlike short_range_kernel's block-wide register-blocked target grouping,
+// pruning only pays off when the AABB under test is tight, so the grouping
+// here is per-WARP (32 targets = one warp), not per-block: each warp computes
+// its own tight target-tile AABB independently, with no need for
+// block-wide __syncthreads() during the per-warp evaluation phase.
+//
+// Phase 1 (whole block, once per home cell): every one of the 27 neighbor
+// cells' source ranges is split into 32-wide tiles that never cross a cell
+// boundary (so one periodic-image shift applies to the whole tile, exactly
+// like the CPU reference); one warp computes each tile's AABB via a
+// shuffle-reduction and stores (lo, hi, shift, base, len) into shared memory.
+// Phase 2 (per warp, independent): each warp grid-strides over its own
+// 32-target tiles, computes their AABB the same way, tests it against every
+// precomputed source-tile AABB (branchless squared-box-distance vs r_c^2,
+// same formula as CPU), and for survivors, loads+__shfl_sync-broadcasts each
+// source across the warp before calling the unchanged eval_esp_pair.
+// ---------------------------------------------------------------------------
+template <typename Real>
+__device__ __forceinline__ Real warp_reduce_min(Real v) {
+#pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1)
+        v = min(v, __shfl_xor_sync(0xffffffffu, v, offset));
+    return v;
+}
+template <typename Real>
+__device__ __forceinline__ Real warp_reduce_max(Real v) {
+#pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1)
+        v = max(v, __shfl_xor_sync(0xffffffffu, v, offset));
+    return v;
+}
+
+// Functor (not a lambda) for thrust::transform_reduce below, matching
+// MulByEspNbuckets's rationale: avoids depending on extended-lambda support.
+struct CellPopulation {
+    const int *cell_start;
+    __host__ __device__ int operator()(int i) const { return cell_start[i + 1] - cell_start[i]; }
+};
+
+// Max particle count over all ncells cells -- used to size short_range_kernel_pruned's
+// per-tile shared-memory table safely (worst case: all 27 neighbors of some
+// home cell are this populated). O(ncells) reduction, negligible next to the
+// short-range kernel itself.
+static int compute_max_cell_pop(const int *d_cell_start, int ncells, cudaStream_t stream) {
+    auto begin = thrust::counting_iterator<int>(0);
+    return thrust::transform_reduce(thrust::cuda::par.on(stream), begin, begin + ncells,
+                                    CellPopulation{d_cell_start}, 0, thrust::maximum<int>());
+}
+
+constexpr int kPrunedBlockSize = 128; // must match the launch config in short_range_gpu (4 warps)
+constexpr int kPrunedTileWidth = 32;  // = warpSize; one warp per source/target tile
+
+template <CoeffTag Coeffs, bool WantForce, typename Real>
+__global__ void short_range_kernel_pruned(
+    int nc, int n, int out_dim,
+    Real rsc, Real cen, Real r_c_sq,
+    const int * __restrict__ cell_start,
+    const Real * __restrict__ d_xs, const Real * __restrict__ d_ys, const Real * __restrict__ d_zs,
+    const Real * __restrict__ d_qs,
+    const int * __restrict__ nbc_tab,
+    const Real * __restrict__ off_tab,
+    Real * __restrict__ pg_sorted,
+    int max_tiles)
+{
+    // Dynamic shared memory: per-tile AABB/shift/base/len table, sized by the
+    // caller (max_tiles) from compute_max_cell_pop's cached-with-margin bound
+    // (see short_range_gpu) -- large enough in practice, not an absolute guarantee.
+    extern __shared__ unsigned char s_raw[];
+    Real *s_lo_x = reinterpret_cast<Real *>(s_raw);
+    Real *s_lo_y = s_lo_x + max_tiles;
+    Real *s_lo_z = s_lo_y + max_tiles;
+    Real *s_hi_x = s_lo_z + max_tiles;
+    Real *s_hi_y = s_hi_x + max_tiles;
+    Real *s_hi_z = s_hi_y + max_tiles;
+    Real *s_shift_x = s_hi_z + max_tiles;
+    Real *s_shift_y = s_shift_x + max_tiles;
+    Real *s_shift_z = s_shift_y + max_tiles;
+    int  *s_base = reinterpret_cast<int *>(s_shift_z + max_tiles);
+    int  *s_len  = s_base + max_tiles;
+
+    // Small fixed-size metadata for the 27 neighbor cells themselves (not the
+    // tiles within them) -- static shared memory, coexists with the dynamic
+    // allocation above.
+    __shared__ int  s_nb_lin[27];
+    __shared__ int  s_nb_tile0[28]; // exclusive prefix sum of per-neighbor tile counts; [27] = total
+    __shared__ Real s_nb_shift_x[27], s_nb_shift_y[27], s_nb_shift_z[27];
+
+    const int home = blockIdx.x; // 0 .. nc^3-1, row-major (x*nc+y)*nc+z, one block per cell
+    const int cx = home / (nc * nc);
+    const int cy = (home / nc) % nc;
+    const int cz = home % nc;
+
+    const int hbeg = cell_start[home];
+    const int n_trg = cell_start[home + 1] - hbeg;
+    if (n_trg == 0) return;
+
+    const int tid = threadIdx.x;
+    const int warp_id = tid / warpSize;
+    const int lane = tid % warpSize;
+    const int n_warps = blockDim.x / warpSize;
+
+    // Enumerate the 27 neighbors and each one's tile count (one thread per
+    // neighbor -- only 27 needed, cheap and simple vs. spreading over warps).
+    if (tid < 27) {
+        const int dzi = tid % 3, dyi = (tid / 3) % 3, dxi = tid / 9;
+        const int nbx = nbc_tab[cx * 3 + dxi];
+        const int nby = nbc_tab[cy * 3 + dyi];
+        const int nbz = nbc_tab[cz * 3 + dzi];
+        const Real ox = off_tab[cx * 3 + dxi];
+        const Real oy = off_tab[cy * 3 + dyi];
+        const Real oz = off_tab[cz * 3 + dzi];
+        const int nb = (nbx * nc + nby) * nc + nbz;
+        s_nb_lin[tid] = nb;
+        s_nb_shift_x[tid] = ox;
+        s_nb_shift_y[tid] = oy;
+        s_nb_shift_z[tid] = oz;
+        const int len = cell_start[nb + 1] - cell_start[nb];
+        s_nb_tile0[tid] = (len + kPrunedTileWidth - 1) / kPrunedTileWidth;
+    }
+    __syncthreads();
+    if (tid == 0) {
+        int acc = 0;
+        for (int i = 0; i < 27; ++i) {
+            const int c = s_nb_tile0[i];
+            s_nb_tile0[i] = acc;
+            acc += c;
+        }
+        s_nb_tile0[27] = acc;
+    }
+    __syncthreads();
+    // max_tiles is a cached-with-margin bound (see short_range_gpu), not a hard
+    // guarantee -- clamp defensively so a rare margin-exceeded cell degrades to a
+    // silently truncated (slightly wrong) tile list instead of a shared-memory
+    // overflow.
+    const int n_stiles = min(s_nb_tile0[27], max_tiles);
+
+    // Phase 1: one warp per source tile (grid-strided over all n_stiles),
+    // gather + AABB-reduce + store to shared memory.
+    for (int gt = warp_id; gt < n_stiles; gt += n_warps) {
+        int nbi = 0;
+        while (nbi < 26 && s_nb_tile0[nbi + 1] <= gt)
+            ++nbi;
+        const int local_tile = gt - s_nb_tile0[nbi];
+        const int nb = s_nb_lin[nbi];
+        const int nb_beg = cell_start[nb], nb_end = cell_start[nb + 1];
+        const int t_base = nb_beg + local_tile * kPrunedTileWidth;
+        const int t_len = min(kPrunedTileWidth, nb_end - t_base);
+        const Real ox = s_nb_shift_x[nbi], oy = s_nb_shift_y[nbi], oz = s_nb_shift_z[nbi];
+
+        const bool valid = lane < t_len;
+        const Real x = valid ? d_xs[t_base + lane] + ox : Real(0);
+        const Real y = valid ? d_ys[t_base + lane] + oy : Real(0);
+        const Real z = valid ? d_zs[t_base + lane] + oz : Real(0);
+        Real lo_x = warp_reduce_min(valid ? x : Real(INFINITY));
+        Real hi_x = warp_reduce_max(valid ? x : Real(-INFINITY));
+        Real lo_y = warp_reduce_min(valid ? y : Real(INFINITY));
+        Real hi_y = warp_reduce_max(valid ? y : Real(-INFINITY));
+        Real lo_z = warp_reduce_min(valid ? z : Real(INFINITY));
+        Real hi_z = warp_reduce_max(valid ? z : Real(-INFINITY));
+
+        if (lane == 0) {
+            s_lo_x[gt] = lo_x; s_lo_y[gt] = lo_y; s_lo_z[gt] = lo_z;
+            s_hi_x[gt] = hi_x; s_hi_y[gt] = hi_y; s_hi_z[gt] = hi_z;
+            s_shift_x[gt] = ox; s_shift_y[gt] = oy; s_shift_z[gt] = oz;
+            s_base[gt] = t_base; s_len[gt] = t_len;
+        }
+    }
+    __syncthreads(); // every warp's Phase 2 reads the full shared tile table
+
+    // Phase 2: each warp grid-strides over its own 32-target tiles.
+    for (int t0 = warp_id * kPrunedTileWidth; t0 < n_trg; t0 += n_warps * kPrunedTileWidth) {
+        const int tlen = min(kPrunedTileWidth, n_trg - t0);
+        const bool my_active = lane < tlen;
+        const int trg = hbeg + t0 + lane;
+        const Real xt = my_active ? d_xs[trg] : Real(0);
+        const Real yt = my_active ? d_ys[trg] : Real(0);
+        const Real zt = my_active ? d_zs[trg] : Real(0);
+
+        const Real tlo_x = warp_reduce_min(my_active ? xt : Real(INFINITY));
+        const Real thi_x = warp_reduce_max(my_active ? xt : Real(-INFINITY));
+        const Real tlo_y = warp_reduce_min(my_active ? yt : Real(INFINITY));
+        const Real thi_y = warp_reduce_max(my_active ? yt : Real(-INFINITY));
+        const Real tlo_z = warp_reduce_min(my_active ? zt : Real(INFINITY));
+        const Real thi_z = warp_reduce_max(my_active ? zt : Real(-INFINITY));
+
+        Real pot_acc = Real(0), gx_acc = Real(0), gy_acc = Real(0), gz_acc = Real(0);
+
+        for (int st = 0; st < n_stiles; ++st) {
+            // Branchless squared box-distance, same formula as CPU's short_range_prune_tile.
+            const Real ddx = max(Real(0), max(s_lo_x[st] - thi_x, tlo_x - s_hi_x[st]));
+            const Real ddy = max(Real(0), max(s_lo_y[st] - thi_y, tlo_y - s_hi_y[st]));
+            const Real ddz = max(Real(0), max(s_lo_z[st] - thi_z, tlo_z - s_hi_z[st]));
+            if (ddx * ddx + ddy * ddy + ddz * ddz > r_c_sq)
+                continue; // whole tile pruned: no source load, no eval_esp_pair calls
+
+            const int s_base_i = s_base[st], s_len_i = s_len[st];
+            const Real shx = s_shift_x[st], shy = s_shift_y[st], shz = s_shift_z[st];
+            const bool have_src = lane < s_len_i;
+            const Real sx = have_src ? d_xs[s_base_i + lane] + shx : Real(0);
+            const Real sy = have_src ? d_ys[s_base_i + lane] + shy : Real(0);
+            const Real sz = have_src ? d_zs[s_base_i + lane] + shz : Real(0);
+            const Real sq = have_src ? d_qs[s_base_i + lane] : Real(0);
+
+            // Every lane loads one source and broadcasts it to the whole warp in
+            // turn -- avoids both shared-memory tile-staging and redundant
+            // per-lane global reads for the same tile.
+            for (int l = 0; l < s_len_i; ++l) {
+                const Real bx = __shfl_sync(0xffffffffu, sx, l);
+                const Real by = __shfl_sync(0xffffffffu, sy, l);
+                const Real bz = __shfl_sync(0xffffffffu, sz, l);
+                const Real bq = __shfl_sync(0xffffffffu, sq, l);
+                if (my_active)
+                    eval_esp_pair<Coeffs, WantForce, Real>(xt - bx, yt - by, zt - bz, bq, rsc, cen, r_c_sq,
+                                                           pot_acc, gx_acc, gy_acc, gz_acc);
+            }
+        }
+
+        if (my_active) {
+            pg_sorted[out_dim * trg + 0] = pot_acc;
+            if constexpr (WantForce) {
+                pg_sorted[out_dim * trg + 1] = gx_acc;
+                pg_sorted[out_dim * trg + 2] = gy_acc;
+                pg_sorted[out_dim * trg + 3] = gz_acc;
             }
         }
     }
@@ -1150,10 +1399,50 @@ static void short_range_gpu(
         NvtxRange range("short_range/pair_kernel");
         const int threads = kShortRangeBlockSize; // must match short_range_kernel's shared-memory tile size
         constexpr int kTargetsPerThread = 3; // register-blocking width
+
+        // Pruned-path-only: size short_range_kernel_pruned's per-tile shared-memory
+        // table from the max cell population. Computing this exactly requires a
+        // host-device sync (thrust::transform_reduce returns a host scalar), which
+        // would otherwise happen on EVERY call -- so it's cached in GpuState and only
+        // recomputed when n changes (the common case is repeated calls with the same
+        // n, e.g. a benchmark loop or successive simulation timesteps, where the sync
+        // is pure overhead unrelated to any actual change in cell populations). A 25%
+        // margin absorbs modest population drift between calls at the same n (e.g.
+        // particles moving slightly between timesteps) without needing to resync;
+        // this is a pragmatic bound, not a rigorous one -- a dataset whose max cell
+        // population grows by >25% while n stays fixed could still overflow it.
+        int pruned_max_tiles = 0;
+        size_t pruned_shmem_bytes = 0;
+        if (gpu.use_pruning) {
+            if (n != gpu.pruned_max_tiles_cache_n) {
+                NvtxRange pop_range("short_range/max_cell_pop");
+                const int max_pop = compute_max_cell_pop(d_cell_start, nc * nc * nc, gpu.stream);
+                const int tiles = 27 * ((max_pop + kPrunedTileWidth - 1) / kPrunedTileWidth);
+                gpu.pruned_max_tiles_cache = tiles + tiles / 4; // +25% margin
+                gpu.pruned_max_tiles_cache_n = n;
+            }
+            pruned_max_tiles = gpu.pruned_max_tiles_cache;
+            pruned_shmem_bytes = (size_t)pruned_max_tiles * (9 * sizeof(Real) + 2 * sizeof(int));
+        }
+
 #define DMK_SR_LAUNCH(TAG, WANTFORCE)                                                                                  \
-    short_range_kernel<TAG, WANTFORCE, kTargetsPerThread, Real><<<nc * nc * nc, threads, 0, gpu.stream>>>(            \
-        nc, n, out_dim, rsc, cen, r_c_sq, d_cell_start, d_xs, d_ys, d_zs, d_qs,                                       \
-        gpu.d_nbc_tab, reinterpret_cast<const Real *>(gpu.d_off_tab), d_pg_sorted)
+    do {                                                                                                              \
+        if (gpu.use_pruning) {                                                                                        \
+            auto *_k = short_range_kernel_pruned<TAG, WANTFORCE, Real>;                                              \
+            cudaError_t _attr_err =                                                                                   \
+                cudaFuncSetAttribute(_k, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)pruned_shmem_bytes);        \
+            if (_attr_err != cudaSuccess)                                                                             \
+                throw std::runtime_error(std::string("short_range_gpu: cudaFuncSetAttribute failed: ") +              \
+                                         cudaGetErrorString(_attr_err));                                              \
+            _k<<<nc * nc * nc, kPrunedBlockSize, pruned_shmem_bytes, gpu.stream>>>(                                    \
+                nc, n, out_dim, rsc, cen, r_c_sq, d_cell_start, d_xs, d_ys, d_zs, d_qs,                                \
+                gpu.d_nbc_tab, reinterpret_cast<const Real *>(gpu.d_off_tab), d_pg_sorted, pruned_max_tiles);          \
+        } else {                                                                                                       \
+            short_range_kernel<TAG, WANTFORCE, kTargetsPerThread, Real><<<nc * nc * nc, threads, 0, gpu.stream>>>(     \
+                nc, n, out_dim, rsc, cen, r_c_sq, d_cell_start, d_xs, d_ys, d_zs, d_qs,                                \
+                gpu.d_nbc_tab, reinterpret_cast<const Real *>(gpu.d_off_tab), d_pg_sorted);                           \
+        }                                                                                                              \
+    } while (0)
 // #define DMK_SR_LAUNCH(TAG, WANTFORCE)                                                                              \
 //     short_range_kernel_old<TAG, WANTFORCE, Real><<<nc * nc * nc, threads, 0, gpu.stream>>>(                        \
 //         nc, n, out_dim, rsc, cen, r_c_sq, d_cell_start, d_xs, d_ys, d_zs, d_qs,                                    \
