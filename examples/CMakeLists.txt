@@ -22,6 +22,12 @@ if (DMK_BUILD_ESP)
     PERILAP3D_DIR="${CMAKE_SOURCE_DIR}/scripts/perilap3d"
     VERIFY_CACHE_DIR="${CMAKE_BINARY_DIR}"
   )
+
+  add_executable(plot_esp_splitting plot_esp_splitting.cpp)
+  target_link_libraries(plot_esp_splitting PRIVATE dmk_shared)
+
+  add_executable(plot_esp_fourier plot_esp_fourier.cpp)
+  target_link_libraries(plot_esp_fourier PRIVATE dmk_shared)
 endif()
 
 if (DMK_BUILD_ESP AND DMK_GPU_OFFLOAD)

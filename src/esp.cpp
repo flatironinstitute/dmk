@@ -325,6 +325,7 @@ static DGrid precompute_scaling_coefficients(const PSWFKernel &pswf, const ESPPa
     }
 
     DGrid p(nf * nf * nf, 0.0);
+#pragma omp parallel for collapse(3)
     for (int ix = 0; ix < nf; ++ix)
         for (int iy = 0; iy < nf; ++iy)
             for (int iz = 0; iz < nf; ++iz) {
@@ -427,6 +428,7 @@ static DGrid precompute_scaling_coefficients_es(const PSWFKernel &pswf, const ES
     }
 
     DGrid p(nf * nf * nf, 0.0);
+#pragma omp parallel for collapse(3)
     for (int ix = 0; ix < nf; ++ix)
         for (int iy = 0; iy < nf; ++iy)
             for (int iz = 0; iz < nf; ++iz) {
@@ -456,6 +458,7 @@ static void long_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<
 
     double scale = 2.0 * M_PI / params.L;
     std::vector<double> x(n), y(n), z(n);
+#pragma omp parallel for
     for (int j = 0; j < n; j++) {
         x[j] = double(r_src[j][0]) * scale;
         y[j] = double(r_src[j][1]) * scale;
@@ -463,6 +466,7 @@ static void long_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<
     }
 
     std::vector<std::complex<double>> c(n);
+#pragma omp parallel for
     for (int j = 0; j < n; j++)
         c[j] = {double(charges[j]), 0.0};
 
@@ -498,6 +502,7 @@ static void long_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<
     if (ier > 1)
         throw std::runtime_error("finufft3d2 interp failed, ier=" + std::to_string(ier));
 
+#pragma omp parallel for
     for (int j = 0; j < n; j++)
         pot[j] += Real(pot_c[j].real());
 
@@ -546,6 +551,7 @@ static void long_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<
     if (ier > 1)
         throw std::runtime_error("finufft3d2 interp failed, ier=" + std::to_string(ier));
 
+#pragma omp parallel for
     for (int j = 0; j < n; j++) {
         fx[j] += -charges[j] * Real(force_x_c[j].real());
         fy[j] += -charges[j] * Real(force_y_c[j].real());
@@ -558,6 +564,7 @@ template <typename Real>
 static void self_interaction(const std::vector<Real> &charges, const PSWFKernel &pswf,
                              const ESPParams &params, std::span<Real> pot) {
     Real factor = Real(pswf(0.0) / (params.r_c * 4.0 * M_PI * params.c0));
+#pragma omp parallel for
     for (int i = 0; i < params.n; ++i)
         pot[i] -= charges[i] * factor;
 }

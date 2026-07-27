@@ -14,6 +14,7 @@
 #include <thrust/sequence.h>
 #include <thrust/binary_search.h>
 #include <thrust/iterator/counting_iterator.h>
+#include <thrust/iterator/transform_iterator.h>
 #include <thrust/execution_policy.h>
 
 #include <cmath>
@@ -305,24 +306,71 @@ GpuState *gpu_create_state(
 void gpu_destroy_state(GpuState *gpu) { delete gpu; }
 
 // ---------------------------------------------------------------------------
-// cell_index_kernel — flat cell index per particle.
+// cell_index_kernel — flat (cell, spatial-bin) composite key per particle.
+// Mirrors esp.cpp's particle_cell/cell_linear_index for the cell part, and
+// sort_cell_bins for the bin part: within its cell, each particle is further
+// classified into one of kEspNbuckets spatial sub-boxes (octants, for the
+// default kEspBins=2), so that once sorted by this composite key, particles
+// within a cell end up spatially clustered, not just cell-clustered.
+//
+// This is purely a reordering -- short_range_kernel/short_range_kernel_old
+// need no changes at all, since cell_start still demarcates exactly the same
+// cell boundaries as before (see build_cell_list_gpu's scaled lower_bound
+// search); they just see tighter within-cell tile locality "for free". On
+// its own this doesn't reduce any arithmetic (nothing prunes using it yet)
+// -- it's the same preparatory-infrastructure role sort_cell_bins plays on
+// the CPU side, there specifically enabling short_range_prune_tile /
+// short_range_prune_source. kEspBins is a fixed default here, not yet wired
+// to a runtime/plan parameter the way esp.cpp's params.esp_bins is.
 // ---------------------------------------------------------------------------
+constexpr int kEspBins     = 2; // sub-cell bins per axis (octants for DIM=3), matches esp.cpp's default
+constexpr int kEspNbuckets = kEspBins * kEspBins * kEspBins;
+
+// Functor (not a lambda) for thrust::make_transform_iterator below -- thrust's device-side
+// algorithms need a __host__ __device__-callable functor, and a plain struct avoids depending
+// on CUDA extended-lambda support being enabled for this build.
+struct MulByEspNbuckets {
+    __host__ __device__ int operator()(int c) const { return c * kEspNbuckets; }
+};
+
 template <typename Real>
 __global__ void cell_index_kernel(const Real *d_pos_aos, int n, Real L, int nc, int *d_cell_idx)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
     const Real cell_size = L / Real(nc);
-    auto cell_coord = [&](Real x) {
-        int c = static_cast<int>(floor((x + L / Real(2)) / cell_size));
+
+    // Returns the wrapped cell coordinate for axis value x, and writes that axis's
+    // sub-cell bin index (0..kEspBins-1) into bin_out.
+    auto cell_coord_and_bin = [&](Real x, int &bin_out) {
+        const Real u = (x + L / Real(2)) / cell_size; // continuous cell coordinate
+        int c = static_cast<int>(floor(u));
+        // frac = u mod 1 -- the fraction of the way through this axis's cell. Unaffected
+        // by the +-nc wrap below, since that only relabels which physical cell c refers
+        // to (by exactly nc), not the particle's position within it.
+        Real frac = u - floor(u);
+        int b = static_cast<int>(frac * Real(kEspBins));
+        b = (b < 0) ? 0 : (b >= kEspBins ? kEspBins - 1 : b);
+        bin_out = b;
         c = (c >= nc) ? c - nc : c;
         c = (c < 0)   ? c + nc : c;
         return c;
     };
-    const int cx = cell_coord(d_pos_aos[3 * i + 0]);
-    const int cy = cell_coord(d_pos_aos[3 * i + 1]);
-    const int cz = cell_coord(d_pos_aos[3 * i + 2]);
-    d_cell_idx[i] = (cx * nc + cy) * nc + cz;
+
+    int bx, by, bz;
+    const int cx = cell_coord_and_bin(d_pos_aos[3 * i + 0], bx);
+    const int cy = cell_coord_and_bin(d_pos_aos[3 * i + 1], by);
+    const int cz = cell_coord_and_bin(d_pos_aos[3 * i + 2], bz);
+
+    // Composite key: cell_lin*nbuckets + bin_lin. Sorting by this groups by cell first
+    // (bin_lin < nbuckets for every cell, so it never crosses a cell boundary), then by
+    // spatial bin within each cell -- the same final ordering sort_cell_bins produces via
+    // its own separate per-cell counting sort, reached here with one composite-key global
+    // sort instead (many small independent per-cell sorts don't map onto GPU parallelism
+    // the way a plain OpenMP-over-cells loop does on CPU).
+    const int cell_lin = (cx * nc + cy) * nc + cz;
+    const int bin_lin  = (bz * kEspBins + by) * kEspBins + bx; // matches sort_cell_bins' key = key*bins + bidx[d], d=DIM-1..0
+    d_cell_idx[i] = cell_lin * kEspNbuckets + bin_lin;
 }
 
 // ---------------------------------------------------------------------------
@@ -372,21 +420,26 @@ static void build_cell_list_gpu(
     {
         NvtxRange range("short_range/cell_index");
         const int threads = 256, blocks = (n + threads - 1) / threads;
-        cell_index_kernel<Real><<<blocks, threads, 0, gpu.stream>>>(d_pos_aos, n, L, nc, d_cell_idx); //computes each particle's cell index
+        cell_index_kernel<Real><<<blocks, threads, 0, gpu.stream>>>(d_pos_aos, n, L, nc, d_cell_idx); //computes each particle's (cell,bin) composite key
     }
 
     {
         NvtxRange range("short_range/cell_sort");
-        thrust::device_ptr<int> cell_idx_ptr(d_cell_idx); //keys for sort_by_key
+        thrust::device_ptr<int> cell_idx_ptr(d_cell_idx); //keys for sort_by_key (composite cell*kEspNbuckets+bin)
         thrust::device_ptr<int> orig_ptr(d_orig);
         thrust::sequence(policy, orig_ptr, orig_ptr + n);
-        thrust::sort_by_key(policy, cell_idx_ptr, cell_idx_ptr + n, orig_ptr); //sort particles by cell index; also sort their original indices
+        thrust::sort_by_key(policy, cell_idx_ptr, cell_idx_ptr + n, orig_ptr); //sort particles by composite key; also sort their original indices
 
-        // d_cell_start is plan-level (gpu_create_state): size ncells+1 is fixed by nc.
+        // d_cell_start is plan-level (gpu_create_state): size ncells+1 is fixed by nc. Search for
+        // c*kEspNbuckets (not c) since the sort key is now the composite cell*kEspNbuckets+bin --
+        // cell_start[c] is still exactly "first sorted position belonging to cell c" either way,
+        // the bin part is transparent to it (bin_lin is always < kEspNbuckets, so it never pushes
+        // a particle across a cell boundary).
         thrust::device_ptr<int> cell_start_ptr(gpu.d_cell_start);
-        thrust::counting_iterator<int> search_begin(0);
-        // cell_start[c] = first sorted position with cell_idx >= c; standard sort+lower_bound
-        // bucketing idiom, giving the same CSR boundaries as an explicit counting sort.
+        auto search_begin = thrust::make_transform_iterator(thrust::counting_iterator<int>(0),
+                                                            MulByEspNbuckets{});
+        // cell_start[c] = first sorted position with composite key >= c*kEspNbuckets; standard
+        // sort+lower_bound bucketing idiom, giving the same CSR boundaries as an explicit counting sort.
         thrust::lower_bound(policy, cell_idx_ptr, cell_idx_ptr + n, search_begin, search_begin + ncells + 1,
                             cell_start_ptr);
     }
@@ -482,7 +535,7 @@ __device__ __forceinline__ void eval_esp_pair(
     Real &pot_acc, Real &gx_acc, Real &gy_acc, Real &gz_acc)
 {
     const Real R2 = dx * dx + dy * dy + dz * dz;
-    if (R2 <= Real(0) || R2 >= r_c_sq) return; // also masks the R2=0 self-pair
+    //if (R2 <= Real(0) || R2 >= r_c_sq) return; // also masks the R2=0 self-pair
 
     const Real Rinv = rsqrt(R2); // CUDA's rsqrt()/__drsqrt_rn(), full IEEE precision
     const Real x = (R2 * Rinv + cen) * rsc; // = (R + cen)*rsc, mapped into [-1,1]
@@ -616,7 +669,7 @@ __global__ void short_range_kernel(
     for (int round = 0; round < n_rounds; ++round) {
         const int t_base = round * target_stride + threadIdx.x;
 
-        bool active[TARGETS];
+        bool active[TARGETS]; //which of this thread's TARGETS target slots actually correspond to a real particle in this round
         int trg_idx[TARGETS];
         bool any_active = false;
         Real xt[TARGETS], yt[TARGETS], zt[TARGETS];

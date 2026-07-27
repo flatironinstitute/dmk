@@ -188,7 +188,7 @@ void init_sensible_defaults(Config &cfg, const std::vector<dmk::Vec3T<double>> &
     if (cfg.r_c != -1.0)
         return;
 
-    const std::vector<double> rc_candidates = {0.03 * cfg.L, 0.05 * cfg.L, 0.07 * cfg.L, 0.10 * cfg.L, 0.12 * cfg.L};
+    const std::vector<double> rc_candidates = {0.02 * cfg.L, 0.03 * cfg.L, 0.04 * cfg.L, 0.05 * cfg.L, 0.06 * cfg.L, 0.07 * cfg.L, 0.10 * cfg.L, 0.12 * cfg.L};
 
     if (!have_ref) {
         cfg.r_c = rc_candidates[rc_candidates.size() / 2];
