@@ -1,0 +1,21 @@
+# Minimal Doxygen config for the DMK documentation build.
+# Emits XML only, for consumption by Breathe/Sphinx. Run from the docs/ directory.
+# The full-HTML Doxygen dump lives in the root-level Doxyfile.
+
+PROJECT_NAME     = "DMK"
+OUTPUT_DIRECTORY = doxygen
+INPUT            = ../include/dmk.h
+FILE_PATTERNS    = *.h
+
+EXTRACT_ALL      = YES
+RECURSIVE        = NO
+
+GENERATE_HTML    = NO
+GENERATE_LATEX   = NO
+GENERATE_XML     = YES
+XML_OUTPUT       = xml
+
+# Let Doxygen parse the extern "C" block and MPI-guarded typedef.
+MACRO_EXPANSION  = YES
+PREDEFINED       = DMK_HAVE_MPI __cplusplus
+QUIET            = YES

@@ -3,6 +3,12 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+#define DMK_DEFAULT(x) = x
+#else
+#define DMK_DEFAULT(x)
+#endif
+
 typedef enum : int {
     DMK_YUKAWA = 0,
     DMK_LAPLACE = 1,
@@ -21,9 +27,9 @@ typedef enum : int {
 } dmk_eval_type;
 
 typedef enum : int {
-    DMK_SUCCESS = 0,              // no error
-    DMK_ERR_INVALID_ARGUMENT = 1, // null ptr, negative count, eps<=0, bad dim/kernel/eval value
-    DMK_ERR_INTERNAL = 2,         // any C++ exception caught at the boundary (detail in last-error)
+    DMK_SUCCESS = 0,              ///< no error
+    DMK_ERR_INVALID_ARGUMENT = 1, ///< null ptr, negative count, eps<=0, bad dim/kernel/eval value
+    DMK_ERR_INTERNAL = 2,         ///< any C++ exception caught at the boundary (detail in last-error)
 } dmk_error;
 
 typedef enum : int {
@@ -38,13 +44,13 @@ typedef enum : int {
 
 // Debug flags
 enum {
-    DMK_DEBUG_OMIT_PW = 1u << 0,        // Don't sum in plane-wave contributions
-    DMK_DEBUG_OMIT_DIRECT = 1u << 1,    // Don't sum in direct constributions
-    DMK_DEBUG_DUMP_TREE = 1u << 2,      // Dump tree files to local directory
-    DMK_DEBUG_FORCE_AOT = 1u << 3,      // Use ahead-of-time kernels, even when compiled with JIT support
-    DMK_DEBUG_OVERRIDE_BETA = 1u << 4,  // Load beta from debug_params[0]
-    DMK_DEBUG_OVERRIDE_ORDER = 1u << 5, // Load proxy expansion order from debug_params[1]
-    DMK_DEBUG_USE_PQ = 1u << 6,         // Use experimental priority queue for threading
+    DMK_DEBUG_OMIT_PW = 1u << 0,        ///< Don't sum in plane-wave contributions
+    DMK_DEBUG_OMIT_DIRECT = 1u << 1,    ///< Don't sum in direct constributions
+    DMK_DEBUG_DUMP_TREE = 1u << 2,      ///< Dump tree files to local directory
+    DMK_DEBUG_FORCE_AOT = 1u << 3,      ///< Use ahead-of-time kernels, even when compiled with JIT support
+    DMK_DEBUG_OVERRIDE_BETA = 1u << 4,  ///< Load beta from debug_params[0]
+    DMK_DEBUG_OVERRIDE_ORDER = 1u << 5, ///< Load proxy expansion order from debug_params[1]
+    DMK_DEBUG_USE_PQ = 1u << 6,         ///< Use experimental priority queue for threading
 };
 
 enum {
@@ -61,17 +67,19 @@ typedef void *dmk_communicator;
 #endif
 
 typedef struct pdmk_params {
-    int n_dim = 0;                          // dimension of system
-    double eps = 1e-3;                      // target precision
-    dmk_ikernel kernel = DMK_YUKAWA;        // evaluation kernel
-    dmk_eval_type eval_src = DMK_POTENTIAL; // level to compute at sources (potential, pot+grad, pot+grad+hess)
-    dmk_eval_type eval_trg = DMK_POTENTIAL; // level to compute at sources (potential, pot+grad, pot+grad+hess)
-    double fparam = 6.0;                    // param for selected potential (FIXME: make more flexible)
-    int use_periodic = false;               // use periodic boundary conditions (in all dimensions, currently)
-    int n_per_leaf = 200;                   // tuning: number of particles per leaf in N-tree
-    int log_level = 6;                      // 0: trace, 1: debug, 2: info, 3: warn, 4: err, 5: critical, 6: off
-    uint32_t debug_flags = 0;               // Debug params bit field, see above
-    double debug_params[8] = {0};           // 0: beta, 1: order, rest: placeholders
+    int n_dim DMK_DEFAULT(0);                   ///< dimension of system
+    double eps DMK_DEFAULT(1e-3);               ///< target precision
+    dmk_ikernel kernel DMK_DEFAULT(DMK_YUKAWA); ///< evaluation kernel
+    dmk_eval_type
+        eval_src DMK_DEFAULT(DMK_POTENTIAL); ///< level to compute at sources (potential, pot+grad, pot+grad+hess)
+    dmk_eval_type
+        eval_trg DMK_DEFAULT(DMK_POTENTIAL); ///< level to compute at sources (potential, pot+grad, pot+grad+hess)
+    double fparam DMK_DEFAULT(6.0);          ///< param for selected potential (Yukawa lambda param)
+    int use_periodic DMK_DEFAULT(false);     ///< use periodic boundary conditions (in all dimensions, currently)
+    int n_per_leaf DMK_DEFAULT(200);         ///< tuning: number of particles per leaf in N-tree
+    int log_level DMK_DEFAULT(6);            ///< 0: trace, 1: debug, 2: info, 3: warn, 4: err, 5: critical, 6: off
+    uint32_t debug_flags DMK_DEFAULT(0);     ///< Debug params bit field, see above
+    double debug_params[8] DMK_DEFAULT({0}); ///< 0: beta, 1: order, rest: placeholders
 } pdmk_params;
 
 #ifdef __cplusplus
@@ -102,28 +110,28 @@ pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src,
 // (source-pruning granularity, within-cell spatial sort, Newton's-third-law reciprocal) are
 // independent. The default combination below is the empirically fastest.
 enum {
-    DMK_ESP_PRUNE_TILE = 1u << 0,   // sub-cell tile-vs-tile AABB pruning
-    DMK_ESP_PRUNE_SOURCE = 1u << 1, // per-source point-vs-target-box pruning (finest granularity)
-    DMK_ESP_N3L = 1u << 2,          // Newton's-third-law reciprocal (13-forward half stencil, 27-coloured)
-    DMK_ESP_MORTON = 1u << 3,       // Morton within-cell sort (else octant-bin counting sort)
+    DMK_ESP_PRUNE_TILE = 1u << 0,   ///< sub-cell tile-vs-tile AABB pruning
+    DMK_ESP_PRUNE_SOURCE = 1u << 1, ///< per-source point-vs-target-box pruning (finest granularity)
+    DMK_ESP_N3L = 1u << 2,          ///< Newton's-third-law reciprocal (13-forward half stencil, 27-coloured)
+    DMK_ESP_MORTON = 1u << 3,       ///< Morton within-cell sort (else octant-bin counting sort)
 };
 
 typedef struct pdmk_esp_params {
-    double L;      // periodic box side length
-    double r_c;    // real-space cutoff radius
-    double eps;    // target precision
-    int log_level; // 0: trace … 6: off (matches dmk_log_level)
-    dmk_ikernel kernel = DMK_LAPLACE;
-    double fparam = 0.0;
-    int n_dim = 3; // spatial dimension (2 or 3)
-    dmk_eval_type eval_type = DMK_POTENTIAL;
-    double sigma = 1.35;      // FINUFFT upsampling factor for the long-range PSWF kernel
-    int use_periodic = 1;     // 1: periodic box; 0: free-space (open) boundaries
-    double freespace_pad = 0; // free-space FFT-grid padding factor per axis; <=0 -> auto 2*sqrt(n_dim)
-    // Short-range tuning; defaults are the fastest known combination.
-    uint32_t esp_flags = DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L | DMK_ESP_MORTON; // DMK_ESP_* method bitmask
-    int esp_bins = 2;  // octant-bin count per axis when DMK_ESP_MORTON is clear
-    int esp_stile = 0; // source-tile width for DMK_ESP_PRUNE_TILE (0 -> SIMD width)
+    double L DMK_DEFAULT(1.0);                          ///< periodic box side length
+    double r_c DMK_DEFAULT(0.05);                       ///< real-space cutoff radius
+    double eps DMK_DEFAULT(1e-6);                       ///< target precision
+    int log_level DMK_DEFAULT(6);                       ///< 0: trace … 6: off (matches dmk_log_level)
+    dmk_ikernel kernel DMK_DEFAULT(DMK_LAPLACE);        ///< Pair interaction to calculate
+    double fparam DMK_DEFAULT(0.0);                     ///< lambda scaling in yukawa (e.g. exp(-lambda*r)/r for 3D)
+    int n_dim DMK_DEFAULT(3);                           ///< spatial dimension (2 or 3)
+    dmk_eval_type eval_type DMK_DEFAULT(DMK_POTENTIAL); ///< Value type from kernel to calculate
+    double sigma DMK_DEFAULT(1.35);                     ///< FINUFFT upsampling factor for the long-range PSWF kernel
+    int use_periodic DMK_DEFAULT(1);                    ///< 1: periodic box); 0: free-space (open) boundaries
+    double freespace_pad DMK_DEFAULT(0); ///< free-space FFT-grid padding factor per axis); <=0 -> auto 2*sqrt(n_dim)
+    ///< Short-range tuning); defaults are the fastest known combination.
+    uint32_t esp_flags DMK_DEFAULT(DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L | DMK_ESP_MORTON);
+    int esp_bins DMK_DEFAULT(2);  ///< octant-bin count per axis when DMK_ESP_MORTON is clear
+    int esp_stile DMK_DEFAULT(0); ///< source-tile width for DMK_ESP_PRUNE_TILE (0 -> SIMD width)
 } pdmk_esp_params;
 
 // Opaque plan handle (heap-allocated internally).
@@ -161,5 +169,7 @@ dmk_error pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const floa
 #ifdef __cplusplus
 }
 #endif
+
+#undef DMK_DEFAULT
 
 #endif

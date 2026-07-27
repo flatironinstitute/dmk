@@ -52,4 +52,7 @@ out
 /compile_commands.json
 /.cache
 /build*
-/docs
+
+# Generated documentation output (Sphinx build + Doxygen XML)
+docs/_build/
+docs/doxygen/
