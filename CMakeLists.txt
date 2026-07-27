@@ -9,6 +9,7 @@ option(DMK_BUILD_EXAMPLES "Build examples" ON)
 option(DMK_INSTRUMENT "Instrument the code" OFF)
 option(DMK_BUILD_PVFMM "Build PVFMM for comparison. Useless without DMK_BUILD_EXAMPLES" OFF)
 option(DMK_HAVE_MPI "Use MPI for parallelism" ON)
+
 option(DMK_HAVE_OPENMP "Use OpenMP for parallelism" ON)
 option(DMK_BUILD_REFERENCE "Build reference Fortran implementation" OFF)
 option(DMK_USE_JIT "Use JIT compilation where supported (requires LLVM)" OFF)
@@ -79,6 +80,16 @@ set(DMK_INCLUDES
 )
 
 include(FetchContent)
+set(FINUFFT_USE_DUCC0 ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+  finufft
+  GIT_REPOSITORY https://github.com/flatironinstitute/finufft.git
+  GIT_TAG v2.5.1
+)
+FetchContent_MakeAvailable(finufft)
+set(DMK_ESP_TARGET finufft::finufft ducc0)
+set(DMK_ESP_SRC src/esp.cpp)
+
 FetchContent_Declare(
   polyfit
   GIT_REPOSITORY https://github.com/DiamonDinoia/polyfit.git
@@ -143,13 +154,14 @@ set(DMK_BOOTSTRAP_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/
   src/fourier_data.cpp src/tensorprod.cpp src/planewave.cpp src/direct.cpp src/prolate.cpp src/prolate0_eval.cpp
   src/timing.cpp
   ${DMK_TEST_SRC}
+  ${DMK_ESP_SRC}
 )
 set(DMK_AOT_SRC src/aot_evaluator.cpp src/aot_kernels.cpp)
 
 add_library(DMKOBJS_BOOTSTRAP OBJECT ${DMK_BOOTSTRAP_SRC})
 set_target_properties(DMKOBJS_BOOTSTRAP PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(DMKOBJS_BOOTSTRAP PUBLIC ${DMK_INCLUDES})
-target_link_libraries(DMKOBJS_BOOTSTRAP PUBLIC ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET}
+target_link_libraries(DMKOBJS_BOOTSTRAP PUBLIC ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET} ${DMK_ESP_TARGET}
   nda::nda_c spdlog::spdlog_header_only doctest::doctest BLAS::BLAS polyfit::polyfit
 )
 if (DMK_USE_JIT)

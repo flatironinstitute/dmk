@@ -9,5 +9,4 @@
 #define TEST_CASE_GENERIC(name, arg) TEST_CASE(name)
 #endif
 
-
 #endif

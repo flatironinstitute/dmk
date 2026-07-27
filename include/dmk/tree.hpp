@@ -4,6 +4,7 @@
 #include <cmath>
 #include <complex>
 #include <dmk.h>
+#include <dmk/fourier_data.hpp>
 #include <dmk/logger.h>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
@@ -505,36 +506,6 @@ inline void shift_planewave(const ndview<Complex, DIM + 1> &pwexp1_, ndview<Comp
     shift_planewave_impl<Real, VecLen>(nexp, nd, pw1, pw2, shift_r, shift_i);
 }
 
-template <typename Real>
-Real calc_log_windowed_kernel_value_at_zero(int dim, const FourierData<Real> &fourier_data, Real boxsize) {
-    const Real psi0 = fourier_data.prolate0_fun.eval_val(0.0);
-    const Real beta = fourier_data.beta();
-    constexpr int n_quad = 100;
-    std::array<Real, n_quad> xs, whts;
-    legerts(1, n_quad, xs.data(), whts.data());
-    for (int i = 0; i < n_quad; ++i) {
-        xs[i] = 0.5 * (xs[i] + Real{1.0}) * beta / boxsize;
-        whts[i] *= 0.5 * beta / boxsize;
-    }
-
-    const Real rl = boxsize * sqrt(dim * 1.0) * 2;
-    const Real dfac = rl * std::log(rl);
-
-    Real fval = 0.0;
-    for (int i = 0; i < n_quad; ++i) {
-        const Real xval = xs[i] * boxsize / beta;
-        const Real fval0 = fourier_data.prolate0_fun.eval_val(xval);
-        const Real z = rl * xs[i];
-        const Real dj0 = util::cyl_bessel_j(0, z);
-        const Real dj1 = util::cyl_bessel_j(1, z);
-        const Real tker = -(1 - dj0) / (xs[i] * xs[i]) + dfac * dj1 / xs[i];
-        const Real fhat = tker * fval0 / psi0;
-        fval += fhat * whts[i] * xs[i];
-    }
-
-    return fval;
-}
-
 template <typename Real, int DIM>
 Real get_self_interaction_constant(FourierData<Real> &fourier_data, dmk_ikernel kernel, int i_level, Real boxsize) {
     const double bsize = i_level == 0 ? 0.5 * boxsize : boxsize;
@@ -545,8 +516,8 @@ Real get_self_interaction_constant(FourierData<Real> &fourier_data, dmk_ikernel 
             const Real psi0 = fourier_data.prolate0_fun.eval_val(0.0);
             const auto c = fourier_data.prolate0_fun.intvals(fourier_data.beta());
             if constexpr (DIM == 2) {
-                const auto log_windowed_kernel_at_zero =
-                    calc_log_windowed_kernel_value_at_zero(DIM, fourier_data, Real{1.0});
+                const auto log_windowed_kernel_at_zero = calc_log_windowed_kernel_value_at_zero(
+                    DIM, fourier_data.prolate0_fun, fourier_data.beta(), Real{1.0});
                 return log_windowed_kernel_at_zero - i_level * std::log(2.0);
             } else if constexpr (DIM == 3)
                 return psi0 / (c[0] * bsize);

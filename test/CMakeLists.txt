@@ -1,4 +1,4 @@
-set(TEST_ALL_SRC test_all.cpp test_pbc_periodic.cpp test_direct.cpp)
+set(TEST_ALL_SRC test_all.cpp test_pbc_periodic.cpp test_direct.cpp test_esp.cpp)
 if (DMK_BUILD_REFERENCE)
   list(APPEND TEST_ALL_SRC test_reference.cpp)
 endif()
