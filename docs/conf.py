@@ -1,12 +1,16 @@
 # Sphinx configuration for the DMK documentation.
 
+import os
+
 project = "DMK"
 copyright = "2025, The Simons Foundation, Inc."
 author = "Leslie Greengard, Shidong Jiang, Robert Blackwell"
 
-# Hardcoded for now; CMake has no project(dmk VERSION ...) yet (see RELEASE_1.0.md).
-version = "1.0"
-release = "1.0"
+# Displayed version: hardcoded default, overridden by the git tag on Read the Docs
+# tag builds
+version = release = "1.0"
+if os.environ.get("READTHEDOCS_VERSION_TYPE") == "tag":
+    version = release = os.environ.get("READTHEDOCS_VERSION", version).lstrip("v")
 
 extensions = [
     "sphinx.ext.mathjax",
