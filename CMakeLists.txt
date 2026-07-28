@@ -85,6 +85,7 @@ FetchContent_Declare(
   finufft
   GIT_REPOSITORY https://github.com/flatironinstitute/finufft.git
   GIT_TAG v2.5.1
+  EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(finufft)
 set(DMK_ESP_TARGET finufft::finufft ducc0)
