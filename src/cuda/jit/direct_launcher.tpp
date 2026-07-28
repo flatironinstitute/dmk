@@ -83,6 +83,17 @@ struct DirectJitTraits<dmk::cuda::LaplacePolyEvaluator3DCuda<Coeffs>> {
 };
 
 template <typename Coeffs>
+struct DirectJitTraits<dmk::cuda::LaplaceDipolePolyEvaluator3DCuda<Coeffs>> {
+    using Real = typename Coeffs::value_type;
+
+    static const char *family() { return "LaplaceDipole3D"; }
+
+    static std::string coeff_prelude() { return emit_coeff_tag<Coeffs>("Coeff0"); }
+
+    static std::string evaluator_expr() { return "LaplaceDipolePolyEvaluator3DCuda<Coeff0>"; }
+};
+
+template <typename Coeffs>
 struct DirectJitTraits<dmk::cuda::SqrtLaplacePolyEvaluator2DCuda<Coeffs>> {
     using Real = typename Coeffs::value_type;
 

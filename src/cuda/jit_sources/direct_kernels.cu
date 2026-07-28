@@ -77,6 +77,27 @@ struct LaplacePolyEvaluator3DCuda {
     }
 };
 
+// Placeholder: GPU Laplace-dipole direct evaluation is not implemented yet;
+// returns zero. See LaplaceDipolePolyEvaluator3DCuda in direct_kernels.cuh.
+template <typename Coeffs>
+struct LaplaceDipolePolyEvaluator3DCuda {
+    static constexpr int SPATIAL_DIM = 3;
+    static constexpr int KERNEL_INPUT_DIM = 3;
+    static constexpr int KERNEL_OUTPUT_DIM = 1;
+    static constexpr int NORMAL_DIM = 0;
+    static constexpr Real scale_factor = Real{1};
+
+    Real thresh2;
+    Real d2max;
+    Real rsc;
+    Real cen;
+
+    __device__ inline void operator()(Real (&u)[3][1], const Real (&dX)[3]) const {
+        for (int k = 0; k < 3; ++k)
+            u[k][0] = Real{0};
+    }
+};
+
 template <typename Coeffs>
 struct SqrtLaplacePolyEvaluator2DCuda {
     static constexpr int SPATIAL_DIM = 2;

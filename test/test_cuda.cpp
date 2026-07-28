@@ -1,15 +1,8 @@
-// Compares the CUDA AOT residual evaluators against their CPU AOT
-// counterparts on identical inputs. With rsc=1, cen=0 the host's
-// shift_scale_polynomial and transform_poly preprocessing are no-ops, so
-// the two paths should evaluate the same polynomial expression to within
+// Compares the production CUDA per-box direct driver (launch_direct_by_box_dispatch,
+// the path used by CudaDirectContext) against the CPU AOT evaluator on identical
+// inputs. The two should evaluate the same polynomial expression to within
 // floating-point reassociation noise.
-//
-// Kernels not yet wired up in the bootstrap CUDA AOT throw at getter time
-// — those test cases WARN and pass rather than fail, so the file becomes
-// progressively more useful as scripts/generate_aot_kernels --target=cuda
-// fills in the missing entries.
 
-#include <dmk/cuda/aot_kernels.hpp>
 #include <dmk/cuda/charge2proxy_kernels.hpp>
 #include <dmk/cuda/direct_kernels.hpp>
 #include <dmk/cuda/pw2proxy_kernels.hpp>
@@ -27,7 +20,6 @@
 
 #include <cmath>
 #include <complex>
-#include <functional>
 #include <random>
 #include <vector>
 
@@ -89,19 +81,6 @@ double rel_l2(const std::vector<Real> &a, const std::vector<Real> &b) {
     return std::sqrt(err / nrm);
 }
 
-// Build a CUDA evaluator via the supplied getter, but if it throws (n_digits
-// not yet generated in the bootstrap) return a null function. Caller WARNs.
-template <typename Real>
-dmk::residual_evaluator_func<Real>
-try_cuda(const std::function<dmk::residual_evaluator_func<Real>(dmk_eval_type, int)> &getter, dmk_eval_type ev,
-         int n_digits) {
-    try {
-        return getter(ev, n_digits);
-    } catch (const std::exception &) {
-        return {};
-    }
-}
-
 // Invoke the per-box direct driver (the production path used by
 // CudaDirectContext) as if it were a flat all-pairs evaluator: build a
 // degenerate one-box "tree" with direct_work=[0], list1=[[0]], and let the
@@ -160,19 +139,10 @@ void run_direct_by_box_pair_eval(dmk_ikernel kernel, int dim, int n_digits, Real
 
 template <typename Real>
 void compare_kernel(dmk_ikernel kernel, int n_dim, int n_digits, dmk_eval_type eval_level, int charge_dim, int out_dim,
-                    bool with_normals,
-                    const std::function<dmk::residual_evaluator_func<Real>(dmk_eval_type, int)> &cuda_getter,
-                    double tol) {
+                    bool with_normals, double tol) {
     std::vector<Real> r_src, r_trg, charges, normals;
     dmk::util::init_test_data(n_dim, charge_dim, N_SRC, N_TRG, /*uniform=*/true,
                               /*set_fixed_charges=*/false, r_src, r_trg, normals, charges, SEED);
-
-    auto cuda_eval = try_cuda<Real>(cuda_getter, eval_level, n_digits);
-    if (!cuda_eval) {
-        WARN_MESSAGE(false, "CUDA AOT not yet generated for this kernel/digits — run "
-                            "./generate_aot_kernels --target=cuda > src/cuda_kernels.cu");
-        return;
-    }
 
     auto cpu_eval = dmk::make_evaluator_aot<Real>(kernel, eval_level, n_dim, n_digits, /*unroll_factor=*/3);
 
@@ -206,20 +176,7 @@ void compare_kernel(dmk_ikernel kernel, int n_dim, int n_digits, dmk_eval_type e
 
     const std::size_t pot_n = static_cast<std::size_t>(N_TRG) * out_dim;
 
-    // Path 1: all-pairs driver (EvalPairsCuda via the AOT residual_evaluator_func).
-    {
-        DeviceBuf<Real> d_pot(pot_n);
-        REQUIRE_CUDA(cudaMemset(d_pot.p, 0, d_pot.n * sizeof(Real)));
-        cuda_eval(rsc, cen, d2max, thresh2, N_SRC, d_r_src.p, d_charges.p, d_normals_ptr, N_TRG, d_r_trg.p, d_pot.p);
-        REQUIRE_CUDA(cudaDeviceSynchronize());
-        std::vector<Real> pot_cuda(d_pot.n);
-        REQUIRE_CUDA(cudaMemcpy(pot_cuda.data(), d_pot.p, d_pot.n * sizeof(Real), cudaMemcpyDeviceToHost));
-        const double err = rel_l2(pot_cuda, pot_cpu);
-        INFO("all-pairs driver rel_l2 = " << err);
-        CHECK(err < tol);
-    }
-
-    // Path 2: per-box driver (DirectResidualByBoxKernelTiled, production path).
+    // Per-box driver (DirectResidualByBoxKernelTiled, production path).
     {
         DeviceBuf<Real> d_pot(pot_n);
         REQUIRE_CUDA(cudaMemset(d_pot.p, 0, d_pot.n * sizeof(Real)));
@@ -241,45 +198,33 @@ constexpr double TOL_DOUBLE = 1e-12;
 constexpr double TOL_FLOAT = 2e-6;
 
 TEST_CASE("[CUDA] Laplace 2D vs CPU AOT") {
-    auto getter_d = [](dmk_eval_type ev, int n) { return dmk::get_laplace_2d_kernel_cuda<double>(ev, n); };
-    auto getter_f = [](dmk_eval_type ev, int n) { return dmk::get_laplace_2d_kernel_cuda<float>(ev, n); };
-    compare_kernel<double>(DMK_LAPLACE, 2, N_DIGITS_D, DMK_POTENTIAL, 1, 1, false, getter_d, TOL_DOUBLE);
-    compare_kernel<float>(DMK_LAPLACE, 2, N_DIGITS_F, DMK_POTENTIAL, 1, 1, false, getter_f, TOL_FLOAT);
+    compare_kernel<double>(DMK_LAPLACE, 2, N_DIGITS_D, DMK_POTENTIAL, 1, 1, false, TOL_DOUBLE);
+    compare_kernel<float>(DMK_LAPLACE, 2, N_DIGITS_F, DMK_POTENTIAL, 1, 1, false, TOL_FLOAT);
 }
 
 TEST_CASE("[CUDA] Laplace 3D vs CPU AOT") {
-    auto getter_d = [](dmk_eval_type ev, int n) { return dmk::get_laplace_3d_kernel_cuda<double>(ev, n); };
-    auto getter_f = [](dmk_eval_type ev, int n) { return dmk::get_laplace_3d_kernel_cuda<float>(ev, n); };
-    compare_kernel<double>(DMK_LAPLACE, 3, N_DIGITS_D, DMK_POTENTIAL, 1, 1, false, getter_d, TOL_DOUBLE);
-    compare_kernel<float>(DMK_LAPLACE, 3, N_DIGITS_F, DMK_POTENTIAL, 1, 1, false, getter_f, TOL_FLOAT);
+    compare_kernel<double>(DMK_LAPLACE, 3, N_DIGITS_D, DMK_POTENTIAL, 1, 1, false, TOL_DOUBLE);
+    compare_kernel<float>(DMK_LAPLACE, 3, N_DIGITS_F, DMK_POTENTIAL, 1, 1, false, TOL_FLOAT);
 }
 
 TEST_CASE("[CUDA] SqrtLaplace 2D vs CPU AOT") {
-    auto getter_d = [](dmk_eval_type ev, int n) { return dmk::get_sqrt_laplace_2d_kernel_cuda<double>(ev, n); };
-    auto getter_f = [](dmk_eval_type ev, int n) { return dmk::get_sqrt_laplace_2d_kernel_cuda<float>(ev, n); };
-    compare_kernel<double>(DMK_SQRT_LAPLACE, 2, N_DIGITS_D, DMK_POTENTIAL, 1, 1, false, getter_d, TOL_DOUBLE);
-    compare_kernel<float>(DMK_SQRT_LAPLACE, 2, N_DIGITS_F, DMK_POTENTIAL, 1, 1, false, getter_f, TOL_FLOAT);
+    compare_kernel<double>(DMK_SQRT_LAPLACE, 2, N_DIGITS_D, DMK_POTENTIAL, 1, 1, false, TOL_DOUBLE);
+    compare_kernel<float>(DMK_SQRT_LAPLACE, 2, N_DIGITS_F, DMK_POTENTIAL, 1, 1, false, TOL_FLOAT);
 }
 
 TEST_CASE("[CUDA] SqrtLaplace 3D vs CPU AOT") {
-    auto getter_d = [](dmk_eval_type ev, int n) { return dmk::get_sqrt_laplace_3d_kernel_cuda<double>(ev, n); };
-    auto getter_f = [](dmk_eval_type ev, int n) { return dmk::get_sqrt_laplace_3d_kernel_cuda<float>(ev, n); };
-    compare_kernel<double>(DMK_SQRT_LAPLACE, 3, N_DIGITS_D, DMK_POTENTIAL, 1, 1, false, getter_d, TOL_DOUBLE);
-    compare_kernel<float>(DMK_SQRT_LAPLACE, 3, N_DIGITS_F, DMK_POTENTIAL, 1, 1, false, getter_f, TOL_FLOAT);
+    compare_kernel<double>(DMK_SQRT_LAPLACE, 3, N_DIGITS_D, DMK_POTENTIAL, 1, 1, false, TOL_DOUBLE);
+    compare_kernel<float>(DMK_SQRT_LAPLACE, 3, N_DIGITS_F, DMK_POTENTIAL, 1, 1, false, TOL_FLOAT);
 }
 
 TEST_CASE("[CUDA] Stokeslet 3D vs CPU AOT") {
-    auto getter_d = [](dmk_eval_type ev, int n) { return dmk::get_stokeslet_3d_kernel_cuda<double>(ev, n); };
-    auto getter_f = [](dmk_eval_type ev, int n) { return dmk::get_stokeslet_3d_kernel_cuda<float>(ev, n); };
-    compare_kernel<double>(DMK_STOKESLET, 3, N_DIGITS_D, DMK_VELOCITY, 3, 3, false, getter_d, TOL_DOUBLE);
-    compare_kernel<float>(DMK_STOKESLET, 3, N_DIGITS_F, DMK_VELOCITY, 3, 3, false, getter_f, TOL_FLOAT);
+    compare_kernel<double>(DMK_STOKESLET, 3, N_DIGITS_D, DMK_VELOCITY, 3, 3, false, TOL_DOUBLE);
+    compare_kernel<float>(DMK_STOKESLET, 3, N_DIGITS_F, DMK_VELOCITY, 3, 3, false, TOL_FLOAT);
 }
 
 TEST_CASE("[CUDA] Stresslet 3D vs CPU AOT") {
-    auto getter_d = [](dmk_eval_type ev, int n) { return dmk::get_stresslet_3d_kernel_cuda<double>(ev, n); };
-    auto getter_f = [](dmk_eval_type ev, int n) { return dmk::get_stresslet_3d_kernel_cuda<float>(ev, n); };
-    compare_kernel<double>(DMK_STRESSLET, 3, N_DIGITS_D, DMK_VELOCITY, 3, 3, true, getter_d, TOL_DOUBLE);
-    compare_kernel<float>(DMK_STRESSLET, 3, N_DIGITS_F, DMK_VELOCITY, 3, 3, true, getter_f, TOL_FLOAT);
+    compare_kernel<double>(DMK_STRESSLET, 3, N_DIGITS_D, DMK_VELOCITY, 3, 3, true, TOL_DOUBLE);
+    compare_kernel<float>(DMK_STRESSLET, 3, N_DIGITS_F, DMK_VELOCITY, 3, 3, true, TOL_FLOAT);
 }
 
 // Downward-pass kernel tests: each GPU kernel against its CPU counterpart
