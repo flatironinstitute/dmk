@@ -58,7 +58,7 @@ int tuning_param_or(const TuningParams &params, const char *name, int fallback) 
 
 TuningParams pw_to_proxy_tuning_params(const PwToProxyLaunchConfig &config) {
     return TuningParams{
-        {"COL_REG", config.col_reg}, {"K2_TILE", config.k2_tile}, {"K3_TILE", config.k3_tile},
+        {"COL_REG", config.col_reg}, {"K2_TILE", config.k2_tile},      {"K3_TILE", config.k3_tile},
         {"KR_TILE", config.kr_tile}, {"BLOCK_SIZE", config.blocksize},
     };
 }
@@ -66,8 +66,8 @@ TuningParams pw_to_proxy_tuning_params(const PwToProxyLaunchConfig &config) {
 PwToProxyLaunchConfig pw_to_proxy_config_from_params(const TuningParams &params,
                                                      const PwToProxyLaunchConfig &defaults) {
     return PwToProxyLaunchConfig{
-        tuning_param_or(params, "COL_REG", defaults.col_reg),   tuning_param_or(params, "K2_TILE", defaults.k2_tile),
-        tuning_param_or(params, "K3_TILE", defaults.k3_tile),   tuning_param_or(params, "KR_TILE", defaults.kr_tile),
+        tuning_param_or(params, "COL_REG", defaults.col_reg),      tuning_param_or(params, "K2_TILE", defaults.k2_tile),
+        tuning_param_or(params, "K3_TILE", defaults.k3_tile),      tuning_param_or(params, "KR_TILE", defaults.kr_tile),
         tuning_param_or(params, "BLOCK_SIZE", defaults.blocksize),
     };
 }
@@ -260,17 +260,15 @@ std::string pw_to_proxy_tuning_key(const dmk::cuda::PwToProxyArgs<Real> &args) {
     std::ostringstream ss;
     ss << "PwToProxyKernel"
        << "|real=" << jit_real_name<Real>() << "|dim=" << DIM << "|n_order=" << args.n_order << "|n_pw=" << args.n_pw
-       << "|n_pw2=" << args.n_pw2 << "|n_charge_dim=" << args.n_charge_dim << "|n_boxes=" << args.n_boxes_at_level;
+       << "|n_pw2=" << args.n_pw2 << "|n_charge_dim=" << args.n_charge_dim;
     return ss.str();
 }
 
 template <typename Real, int DIM>
-std::string pw_to_proxy_multilevel_tuning_key(const std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h,
-                                              int max_boxes) {
+std::string pw_to_proxy_multilevel_tuning_key(const std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h) {
     std::ostringstream ss;
     ss << "PwToProxyMultiLevelKernel"
-       << "|real=" << jit_real_name<Real>() << "|dim=" << DIM << "|n_args=" << args_h.size()
-       << "|max_boxes=" << max_boxes;
+       << "|real=" << jit_real_name<Real>() << "|dim=" << DIM;
 
     if (!args_h.empty()) {
         ss << "|n_order=" << args_h[0].n_order << "|n_pw=" << args_h[0].n_pw << "|n_pw2=" << args_h[0].n_pw2
@@ -320,15 +318,9 @@ void launch_pw_to_proxy_jit(JitCache &cache, const dmk::cuda::PwToProxyArgs<Real
     key.sm_minor = cache.sm_minor();
 
     key.params = {
-        {"COL_REG", col_reg},
-        {"K2_TILE", k2_tile},
-        {"K3_TILE", k3_tile},
-        {"KR_TILE", kr_tile},
-        {"N_ORDER", args.n_order},
-        {"N_CHARGE_DIM", args.n_charge_dim},
-        {"N_PW", args.n_pw},
-        {"N_PW2", args.n_pw2},
-        {"BLOCK_SIZE", blocksize},
+        {"COL_REG", col_reg}, {"K2_TILE", k2_tile},      {"K3_TILE", k3_tile},
+        {"KR_TILE", kr_tile}, {"N_ORDER", args.n_order}, {"N_CHARGE_DIM", args.n_charge_dim},
+        {"N_PW", args.n_pw},  {"N_PW2", args.n_pw2},     {"BLOCK_SIZE", blocksize},
     };
 
     auto kernel = cache.get_kernel(key);
@@ -380,15 +372,9 @@ void launch_pw_to_proxy_multilevel_jit(JitCache &cache, const std::vector<dmk::c
     key.sm_minor = cache.sm_minor();
 
     key.params = {
-        {"COL_REG", col_reg},
-        {"K2_TILE", k2_tile},
-        {"K3_TILE", k3_tile},
-        {"KR_TILE", kr_tile},
-        {"N_ORDER", args_h[0].n_order},
-        {"N_CHARGE_DIM", args_h[0].n_charge_dim},
-        {"N_PW", args_h[0].n_pw},
-        {"N_PW2", args_h[0].n_pw2},
-        {"BLOCK_SIZE", blocksize},
+        {"COL_REG", col_reg},     {"K2_TILE", k2_tile},           {"K3_TILE", k3_tile},
+        {"KR_TILE", kr_tile},     {"N_ORDER", args_h[0].n_order}, {"N_CHARGE_DIM", args_h[0].n_charge_dim},
+        {"N_PW", args_h[0].n_pw}, {"N_PW2", args_h[0].n_pw2},     {"BLOCK_SIZE", blocksize},
 
     };
 
@@ -457,8 +443,7 @@ PwToProxyLaunchConfig tune_pw_to_proxy_launch_config(JitCache &cache, const dmk:
     };
 
     const std::vector<TuningParameter> space{
-        {"COL_REG", {1, 2}}, {"K2_TILE", {2, 3}}, {"K3_TILE", {3}},
-        {"KR_TILE", {4, 6}}, {"BLOCK_SIZE", {128, 256}},
+        {"COL_REG", {1, 2}}, {"K2_TILE", {2, 3}}, {"K3_TILE", {3}}, {"KR_TILE", {4, 6}}, {"BLOCK_SIZE", {128, 256}},
     };
 
     const auto constraint = [&](const TuningParams &params) {
@@ -475,8 +460,8 @@ PwToProxyLaunchConfig tune_pw_to_proxy_launch_config(JitCache &cache, const dmk:
             return false;
         }
 
-        const std::size_t shared_bytes = pw_to_proxy_shared_bytes(args.n_pw, args.n_order, config.k3_tile,
-                                                                  sizeof(dmk::cuda_helpers::complx<Real>));
+        const std::size_t shared_bytes =
+            pw_to_proxy_shared_bytes(args.n_pw, args.n_order, config.k3_tile, sizeof(dmk::cuda_helpers::complx<Real>));
         return shared_bytes <= max_shared_bytes;
     };
 
@@ -553,7 +538,7 @@ tune_pw_to_proxy_multilevel_launch_config(JitCache &cache, const std::vector<dmk
         return defaults;
     }
 
-    const std::string tune_key = pw_to_proxy_multilevel_tuning_key<Real, DIM>(args_h, max_boxes);
+    const std::string tune_key = pw_to_proxy_multilevel_tuning_key<Real, DIM>(args_h);
     const bool force = env_flag_enabled("DMK_JIT_AUTOTUNE_FORCE");
     int device = 0;
     check_cuda(cudaGetDevice(&device), "PwToProxy multilevel tune cudaGetDevice");
@@ -583,8 +568,11 @@ tune_pw_to_proxy_multilevel_launch_config(JitCache &cache, const std::vector<dmk
     };
 
     const std::vector<TuningParameter> space{
-        {"COL_REG", {1, 2}}, {"K2_TILE", {2, 3}}, {"K3_TILE", {1,2,3}},
-        {"KR_TILE", {3, 6, 9}}, {"BLOCK_SIZE", {128, 256, 448}},
+        {"COL_REG", {1, 2}},
+        {"K2_TILE", {2, 3}},
+        {"K3_TILE", {1, 2, 3}},
+        {"KR_TILE", {3, 6, 9}},
+        {"BLOCK_SIZE", {128, 256, 448}},
     };
 
     const auto constraint = [&](const TuningParams &params) {
@@ -601,8 +589,8 @@ tune_pw_to_proxy_multilevel_launch_config(JitCache &cache, const std::vector<dmk
             return false;
         }
 
-        const std::size_t shared_bytes = pw_to_proxy_shared_bytes(max_n_pw, max_n_order, config.k3_tile,
-                                                                  sizeof(dmk::cuda_helpers::complx<Real>));
+        const std::size_t shared_bytes =
+            pw_to_proxy_shared_bytes(max_n_pw, max_n_order, config.k3_tile, sizeof(dmk::cuda_helpers::complx<Real>));
         return shared_bytes <= max_shared_bytes;
     };
 
@@ -617,7 +605,8 @@ tune_pw_to_proxy_multilevel_launch_config(JitCache &cache, const std::vector<dmk
         try {
             const double runtime_ms = benchmark_cuda_ms(stream, options.benchmark, [&](cudaStream_t bench_stream) {
                 launch_pw_to_proxy_multilevel_jit<Real>(cache, args_h, d_args_scratch, bench_stream, config.col_reg,
-                                                        config.k2_tile, config.k3_tile, config.kr_tile, config.blocksize);
+                                                        config.k2_tile, config.k3_tile, config.kr_tile,
+                                                        config.blocksize);
             });
             restore_device_range_snapshots(*snapshots, stream);
             return runtime_ms;

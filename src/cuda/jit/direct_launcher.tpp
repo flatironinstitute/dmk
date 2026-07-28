@@ -247,8 +247,6 @@ std::string direct_tuning_key(
        << "|input_dim=" << Evaluator::KERNEL_INPUT_DIM
        << "|output_dim=" << Evaluator::KERNEL_OUTPUT_DIM
        << "|normal_dim=" << Evaluator::NORMAL_DIM
-       << "|n_work=" << args.n_work
-       << "|n_levels=" << args.n_levels
        << "|nlist1_stride=" << args.nlist1_stride
        << "|targets_per_thread_space=1-4"
        << "|source_loop_unroll=4";

@@ -90,18 +90,16 @@ template <typename Real, int DIM>
 std::string shift_pw_tuning_key(const dmk::cuda::ShiftPwArgs<Real> &args) {
     std::ostringstream ss;
     ss << "ShiftPwByBoxKernel"
-       << "|real=" << jit_real_name<Real>() << "|dim=" << DIM << "|n_boxes=" << args.n_boxes_at_level
-       << "|n_neighbors=" << args.n_neighbors << "|n_pw_modes=" << args.n_pw_modes
-       << "|n_charge_dim=" << args.n_charge_dim;
+       << "|real=" << jit_real_name<Real>() << "|dim=" << DIM << "|n_neighbors=" << args.n_neighbors
+       << "|n_pw_modes=" << args.n_pw_modes << "|n_charge_dim=" << args.n_charge_dim;
     return ss.str();
 }
 
 template <typename Real, int DIM>
-std::string shift_pw_multilevel_tuning_key(const std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, int max_boxes) {
+std::string shift_pw_multilevel_tuning_key(const std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h) {
     std::ostringstream ss;
     ss << "ShiftPwKernel"
-       << "|real=" << jit_real_name<Real>() << "|dim=" << DIM << "|n_args=" << args_h.size()
-       << "|max_boxes=" << max_boxes;
+       << "|real=" << jit_real_name<Real>() << "|dim=" << DIM;
 
     if (!args_h.empty()) {
         ss << "|n_neighbors=" << args_h[0].n_neighbors << "|n_pw_modes=" << args_h[0].n_pw_modes
@@ -297,7 +295,7 @@ ShiftPwLaunchConfig tune_shift_pw_multilevel_config(JitCache &cache,
         return defaults;
     }
 
-    const std::string tune_key = shift_pw_multilevel_tuning_key<Real, DIM>(args_h, max_boxes);
+    const std::string tune_key = shift_pw_multilevel_tuning_key<Real, DIM>(args_h);
     const bool force = env_flag_enabled("DMK_JIT_AUTOTUNE_FORCE");
     int device = 0;
     check_cuda(cudaGetDevice(&device), "ShiftPw multilevel tune cudaGetDevice");

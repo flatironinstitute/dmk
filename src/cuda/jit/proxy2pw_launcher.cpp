@@ -147,16 +147,15 @@ std::string proxy2pw_tuning_key(const dmk::cuda::Proxy2PwArgs<Real> &args) {
     std::ostringstream ss;
     ss << "Proxy2PwKernel"
        << "|real=" << jit_real_name<Real>() << "|dim=" << DIM << "|n_order=" << args.n_order << "|n_pw=" << args.n_pw
-       << "|n_pw2=" << args.n_pw2 << "|n_charge_dim=" << args.n_charge_dim << "|n_boxes=" << args.n_boxes_at_level;
+       << "|n_pw2=" << args.n_pw2 << "|n_charge_dim=" << args.n_charge_dim;
     return ss.str();
 }
 
 template <typename Real, int DIM>
-std::string proxy2pw_multilevel_tuning_key(const std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, int max_boxes) {
+std::string proxy2pw_multilevel_tuning_key(const std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h) {
     std::ostringstream ss;
     ss << "Proxy2PwMultiLevelKernel"
-       << "|real=" << jit_real_name<Real>() << "|dim=" << DIM << "|n_args=" << args_h.size()
-       << "|max_boxes=" << max_boxes;
+       << "|real=" << jit_real_name<Real>() << "|dim=" << DIM;
 
     if (!args_h.empty()) {
         ss << "|n_order=" << args_h[0].n_order << "|n_pw=" << args_h[0].n_pw << "|n_pw2=" << args_h[0].n_pw2
@@ -408,7 +407,7 @@ tune_proxy2pw_multilevel_launch_config(JitCache &cache, const std::vector<dmk::c
         return defaults;
     }
 
-    const std::string tune_key = proxy2pw_multilevel_tuning_key<Real, DIM>(pa_h, max_boxes);
+    const std::string tune_key = proxy2pw_multilevel_tuning_key<Real, DIM>(pa_h);
     const bool force = env_flag_enabled("DMK_JIT_AUTOTUNE_FORCE");
     int device = 0;
     check_cuda(cudaGetDevice(&device), "Proxy2Pw multilevel tune cudaGetDevice");

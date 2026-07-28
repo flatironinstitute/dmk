@@ -119,12 +119,12 @@ void check_eval_targets_shape_or_throw(int dim, int eval_level, int n_charge_dim
 
 template <typename Real>
 EvalTargetsWorkSummary make_eval_targets_work_summary(const dmk::cuda::EvalTargetsArgs<Real> &args,
-                                                       cudaStream_t stream) {
+                                                      cudaStream_t stream) {
     EvalTargetsWorkSummary summary;
     summary.boxes.resize(static_cast<std::size_t>(args.n_eval_boxes));
 
-    check_cuda(cudaMemcpyAsync(summary.boxes.data(), args.eval_targets_box_list,
-                               summary.boxes.size() * sizeof(int), cudaMemcpyDeviceToHost, stream),
+    check_cuda(cudaMemcpyAsync(summary.boxes.data(), args.eval_targets_box_list, summary.boxes.size() * sizeof(int),
+                               cudaMemcpyDeviceToHost, stream),
                "EvalTargets copy eval box list");
     check_cuda(cudaStreamSynchronize(stream), "EvalTargets sync eval box list");
 
@@ -189,9 +189,9 @@ make_eval_targets_output_snapshots(const dmk::cuda::EvalTargetsArgs<Real> &args,
 
         Real *saved = static_cast<Real *>(raw);
         try {
-            check_cuda(cudaMemcpyAsync(saved, args.pot_flat + offset, count * sizeof(Real), cudaMemcpyDeviceToDevice,
-                                       stream),
-                       "EvalTargets output snapshot cudaMemcpyAsync");
+            check_cuda(
+                cudaMemcpyAsync(saved, args.pot_flat + offset, count * sizeof(Real), cudaMemcpyDeviceToDevice, stream),
+                "EvalTargets output snapshot cudaMemcpyAsync");
         } catch (...) {
             cudaFree(saved);
             throw;
@@ -219,8 +219,7 @@ std::string eval_targets_tuning_key(int eval_level, int n_charge_dim, const dmk:
     std::ostringstream ss;
     ss << "EvalTargetsByBoxKernel"
        << "|real=" << jit_real_name<Real>() << "|dim=" << DIM << "|eval_level=" << eval_level
-       << "|n_charge_dim=" << n_charge_dim << "|n_order=" << args.n_order
-       << "|n_eval_boxes=" << args.n_eval_boxes << "|tuning=block_tpt_v1";
+       << "|n_charge_dim=" << n_charge_dim << "|n_order=" << args.n_order << "|tuning=block_tpt_v1";
     return ss.str();
 }
 

@@ -239,8 +239,7 @@ std::string tensorprod_tuning_key(const dmk::cuda::TensorprodArgs<Real> &args) {
     std::ostringstream ss;
     ss << "TensorprodKernel"
        << "|real=" << jit_real_name<Real>() << "|dim=" << DIM << "|n_order=" << args.n_order
-       << "|n_charge_dim=" << args.n_charge_dim << "|n_pairs=" << args.n_pairs
-       << "|atomic=" << (args.additive_atomic ? 1 : 0);
+       << "|n_charge_dim=" << args.n_charge_dim << "|atomic=" << (args.additive_atomic ? 1 : 0);
     return ss.str();
 }
 

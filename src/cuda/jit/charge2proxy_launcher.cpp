@@ -166,12 +166,11 @@ std::mutex &charge2proxy_config_cache_mutex() {
 }
 
 template <typename Real>
-std::string charge2proxy_tuning_key(const dmk::cuda::Charge2ProxyArgs<Real> &args, int n_launch_groups) {
+std::string charge2proxy_tuning_key(const dmk::cuda::Charge2ProxyArgs<Real> &args) {
     std::ostringstream ss;
     ss << "Charge2ProxyKernel"
        << "|real=" << jit_real_name<Real>() << "|dim=3"
-       << "|n_order=" << args.n_order << "|n_charge_dim=" << args.n_charge_dim << "|n_groups=" << args.n_groups
-       << "|n_launch_groups=" << n_launch_groups;
+       << "|n_order=" << args.n_order << "|n_charge_dim=" << args.n_charge_dim;
     return ss.str();
 }
 
@@ -228,7 +227,7 @@ Charge2ProxyLaunchConfig tune_charge2proxy_launch_config(JitCache &cache, const 
         return defaults;
     }
 
-    const std::string tune_key = charge2proxy_tuning_key(args, n_launch_groups);
+    const std::string tune_key = charge2proxy_tuning_key(args);
     const bool force = env_flag_enabled("DMK_JIT_AUTOTUNE_FORCE");
     int device = 0;
     check_cuda(cudaGetDevice(&device), "Charge2Proxy tune cudaGetDevice");
