@@ -25,7 +25,7 @@ int main(int argc, char **argv) {
     params.eval_src = DMK_VELOCITY;
     params.eval_trg = DMK_VELOCITY;
 
-    pdmk_tree tree = pdmk_tree_create(MPI_COMM_WORLD, &params, n_src, r_src, charge, NULL, 0, NULL);
+    pdmk_tree tree = pdmk_tree_create(MPI_COMM_WORLD, params, n_src, r_src, charge, NULL, 0, NULL);
     pdmk_tree_eval(tree, vel, NULL);
 
     for (int i = 0; i < 3 * n_src; ++i)
