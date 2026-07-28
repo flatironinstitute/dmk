@@ -7,6 +7,7 @@
 #include <dmk/prolate0_fun.hpp>
 #include <dmk/types.hpp>
 #include <sctl.hpp>
+#include <vector>
 
 namespace dmk {
 
@@ -17,16 +18,18 @@ struct FourierData {
                 const sctl::Vector<T> &boxsize_);
 
     T yukawa_windowed_kernel_value_at_zero(int i_level);
-    void update_local_coeffs(T eps);
     void calc_planewave_coeff_matrices(int i_level, int n_order, int n_pw, sctl::Vector<std::complex<T>> &prox2pw,
                                        sctl::Vector<std::complex<T>> &pw2poly) const;
 
-    ndview<T, 1> cheb_coeffs(int i_level) {
-        if (coeffs1_.Dim())
-            return ndview<T, 1>({ncoeffs1_[i_level]}, &coeffs1_[i_level * n_coeffs_max]);
-        else
-            return ndview<T, 1>({0}, nullptr);
+    // Per-level Yukawa short-range residual coefficients, generated on demand
+    // (captured into the residual evaluator at construction; not stored here).
+    // reg_poly is the monomial remainder polynomial (3D: the full fit Q; 2D: PB).
+    // log_poly is the 2D log-coefficient polynomial PA and is empty in 3D.
+    struct LocalCorrectionCoeffs {
+        std::vector<double> log_poly;
+        std::vector<double> reg_poly;
     };
+    LocalCorrectionCoeffs local_correction_coeffs(int i_level, int n_digits);
 
     T beta() const { return beta_; }
 
@@ -51,16 +54,6 @@ struct FourierData {
     struct kernel_params windowed_kernel_;
     sctl::Vector<struct kernel_params> difference_kernels_;
     sctl::Vector<T> box_sizes_;
-
-    // Local chebyshev polynomial coefficients for yukawa potential
-    sctl::Vector<T> coeffs1_;
-    sctl::Vector<T> coeffs2_;
-    sctl::Vector<int> ncoeffs1_;
-    sctl::Vector<int> ncoeffs2_;
-    static constexpr int n_coeffs_max = 100;
-
-    void update_local_coeffs_yukawa(T eps);
-    void update_local_coeffs_laplace(T eps);
 };
 
 template <int DIM, typename T>
@@ -73,6 +66,20 @@ void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, 
 template <typename Real, int DIM>
 void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars, Real beta, int npw, Real boxsize,
                               Prolate0Fun &pf, sctl::Vector<Real> &windowed_kernel);
+
+// Windowed scalar-kernel FT (Laplace, Yukawa, Sqrt-Laplace; 2D and 3D) in ESP's reciprocal-lattice
+// convention, sampled on kappa = sqrt(i)*dk (dk = 2*pi/boxsize). freespace=false: periodic root-box
+// symbol (k=0 dropped for the non-screened kernels). freespace=true: the same symbol with its bare
+// Green's-function FT truncated at radius rl (Vico-Greengard) and the k=0 mode kept finite.
+template <typename Real, int DIM>
+void get_periodic_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int n_pw_periodic,
+                                     Real boxsize, Real sigma1, Prolate0Fun &pf, sctl::Vector<Real> &kernel_ft,
+                                     bool freespace = false, Real rl = 0);
+
+// Real-space value at r=0 of the windowed log kernel at the given box scale (the log-kernel
+// self-interaction constant). Used by the tree's self correction and by ESP.
+template <typename Real>
+Real calc_log_windowed_kernel_value_at_zero(int dim, const Prolate0Fun &pf, Real beta, Real boxsize);
 
 } // namespace dmk
 

@@ -19,5 +19,4 @@ static inline void MY_OMP_SET_NUM_THREADS [[maybe_unused]] (int) {}
 double MY_OMP_GET_WTIME();
 #endif
 
-
 #endif

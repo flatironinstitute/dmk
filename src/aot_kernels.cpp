@@ -3,259 +3,468 @@
 #include <dmk/types.hpp>
 #include <dmk/vector_kernels.hpp>
 #include <sctl.hpp>
+#include <utility>
+#include <vector>
 
 namespace dmk {
 constexpr int unroll_factor = 3;
 
 // beta: 5.634
-constexpr double laplace_2d_2[] = {3.13982699174314650e-01, -3.96433852452082069e-01, 9.92426154819550377e-02,
-                                   -1.90368403844127405e-02, 2.13177249723958250e-03};
+constexpr double laplace_2d_potential_2[] = {3.13982699174314484e-01, -4.10704839203723027e-01,
+                                             1.00841621315376787e-01};
 
 // beta: 8.298
-constexpr double laplace_2d_3[] = {3.34951846520722518e-01, -4.51425311660508977e-01, 1.58903913746138520e-01,
-                                   -5.64403577878143242e-02, 1.42225947874835106e-02};
+constexpr double laplace_2d_potential_3[] = {3.34951846520722407e-01, -4.51425311660508810e-01, 1.58903913746138464e-01,
+                                             -5.64403577878145671e-02, 1.42225947874834065e-02};
 
 // beta: 10.962
-constexpr double laplace_2d_4[] = {3.42281810696065336e-01,  -4.78096715201645150e-01, 1.97779137306704961e-01,
-                                   -8.64773139989030160e-02, 3.29622925119338744e-02,  -1.11027177029749714e-02,
-                                   2.66035143382815312e-03};
+constexpr double laplace_2d_potential_4[] = {
+    3.42281810696065225e-01, -4.78096715201645039e-01, 1.97779137306704156e-01, -8.64773139989045148e-02,
+    3.29622925119373092e-02, -1.11027177029734518e-02, 2.66035143382534287e-03};
 
 // beta: 13.626000000000001
-constexpr double laplace_2d_5[] = {3.44915842042819665e-01,  -4.89961369975528027e-01, 2.21480836889886956e-01,
-                                   -1.14394622555646933e-01, 5.37419473726064301e-02,  -2.20909817502120964e-02,
-                                   8.68893222440876058e-03,  -2.38434123821282566e-03};
+constexpr double laplace_2d_potential_5[] = {
+    3.44915842042819276e-01, -4.89961369975527417e-01, 2.21480836889887872e-01, -1.14394622555649167e-01,
+    5.37419473726036268e-02, -2.20909817502096921e-02, 8.68893222441128633e-03, -2.38434123821410155e-03};
 
 // beta: 16.29
-constexpr double laplace_2d_6[] = {3.45919386101466886e-01,  -4.95402969807283156e-01, 2.34698481783677582e-01,
-                                   -1.34144614252904887e-01, 7.44254544344874341e-02,  -3.68405773102182116e-02,
-                                   1.55070858412738963e-02,  -5.72102694789653789e-03, 2.10161274532129783e-03,
-                                   -5.43016405664242330e-04};
+constexpr double laplace_2d_potential_6[] = {
+    3.45919386101467274e-01, -4.95402969807283933e-01, 2.34698481783675972e-01, -1.34144614252900723e-01,
+    7.44254544344914032e-02, -3.68405773102265660e-02, 1.55070858412720419e-02, -5.72102694789228174e-03,
+    2.10161274532063257e-03, -5.43016405663384401e-04};
 
 // beta: 18.954
-constexpr double laplace_2d_7[] = {3.46309605610155224e-01,  -4.97894142081210078e-01, 2.42004772957524095e-01,
-                                   -1.47223285510184099e-01, 9.04992322165261154e-02,  -5.15970733773772269e-02,
-                                   2.62285491415453278e-02,  -1.16171240842201182e-02, 4.37704958272407043e-03,
-                                   -1.47657199336714384e-03, 5.16155202890721063e-04,  -1.27179066559064544e-04};
+constexpr double laplace_2d_potential_7[] = {
+    3.46309605610155724e-01, -4.97894142081208302e-01, 2.42004772957522207e-01, -1.47223285510205026e-01,
+    9.04992322165410756e-02, -5.15970733772863344e-02, 2.62285491414976715e-02, -1.16171240843858936e-02,
+    4.37704958278528448e-03, -1.47657199323493558e-03, 5.16155202864718859e-04, -1.27179066597735380e-04};
 
 // beta: 21.618000000000002
-constexpr double laplace_2d_8[] = {3.46465542185645459e-01,  -4.99035132663591008e-01, 2.45882072899040793e-01,
-                                   -1.55393224628365384e-01, 1.02514215430682176e-01,  -6.47292055179352205e-02,
-                                   3.73878506826006082e-02,  -1.93480188301886798e-02, 8.78913966227064594e-03,
-                                   -3.39457735346379097e-03, 1.21346253132454730e-03,  -4.78748932442096548e-04,
-                                   1.26630496274552024e-04};
+constexpr double laplace_2d_potential_8[] = {
+    3.46465542185645348e-01, -4.99035132663589454e-01, 2.45882072899038323e-01, -1.55393224628376625e-01,
+    1.02514215430704353e-01, -6.47292055178661507e-02, 3.73878506825243914e-02, -1.93480188303643205e-02,
+    8.78913966239580971e-03, -3.39457735327883562e-03, 1.21346253122973815e-03, -4.78748932510798374e-04,
+    1.26630496301005581e-04};
 
 // beta: 24.282
-constexpr double laplace_2d_9[] = {3.46528846828475290e-01,  -4.99557977040003987e-01, 2.47905052833453571e-01,
-                                   -1.60284225913706196e-01, 1.10846135755074099e-01,  -7.54150698050898988e-02,
-                                   4.80865525877394173e-02,  -2.79232245364154502e-02, 1.45623181721780022e-02,
-                                   -6.79931168318733715e-03, 2.80441551454466446e-03,  -9.89738256485566499e-04,
-                                   3.29839686466982932e-04,  -1.25436314790291635e-04, 3.18225495247252316e-05};
+constexpr double laplace_2d_potential_9[] = {
+    3.46528846828475512e-01, -4.99557977040004486e-01, 2.47905052833442330e-01, -1.60284225913657014e-01,
+    1.10846135755186995e-01, -7.54150698054852076e-02, 4.80865525872168770e-02, -2.79232245351371221e-02,
+    1.45623181734892658e-02, -6.79931168517869909e-03, 2.80441551272698607e-03, -9.89738255009701062e-04,
+    3.29839687779785121e-04, -1.25436315205536459e-04, 3.18225491380680947e-05};
 
 // beta: 26.946
-constexpr double laplace_2d_10[] = {3.46554885811630575e-01,  -4.99797464298173455e-01, 2.48944698681241722e-01,
-                                    -1.63125446206647234e-01, 1.16346774593003702e-01,  -8.34671988757569872e-02,
-                                    5.73882295658860106e-02,  -3.66610908749546716e-02, 2.13543038581039853e-02,
-                                    -1.12222679561388324e-02, 5.30517947282425906e-03,  -2.26374685941606269e-03,
-                                    8.61022869058034870e-04,  -2.81768838630406821e-04, 8.87191470372068481e-05,
-                                    -3.29018614557762698e-05, 8.07179489848754229e-06};
+constexpr double laplace_2d_potential_10[] = {
+    3.46554885811630853e-01, -4.99797464298173455e-01, 2.48944698681216159e-01, -1.63125446206659613e-01,
+    1.16346774593473992e-01, -8.34671988756369998e-02, 5.73882295625524272e-02, -3.66610908754051515e-02,
+    2.13543038700066308e-02, -1.12222679553081964e-02, 5.30517944926881153e-03, -2.26374686018651020e-03,
+    8.61022895264152116e-04, -2.81768838303849951e-04, 8.87191316876973700e-05, -3.29018614992763312e-05,
+    8.07179858317884762e-06};
 
 // beta: 29.610000000000003
-constexpr double laplace_2d_11[] = {
-    3.46565709674464428e-01, -4.99907196210289839e-01, 2.49472734764018850e-01, -1.64733889213781792e-01,
-    1.19837338306038599e-01, -8.92269677062905442e-02, 6.49198653833157890e-02, -4.46941265869241558e-02,
-    2.85001358243681460e-02, -1.66176703156392692e-02, 8.79668798277245638e-03, -4.21256156538598117e-03,
-    1.82742664813772583e-03, -7.22659111899728260e-04, 2.56912723428001676e-04, -7.88574045760395340e-05,
-    2.37007778910783070e-05, -8.64819611048636306e-06, 2.06422790809902417e-06};
+constexpr double laplace_2d_potential_11[] = {
+    3.46565709674465094e-01, -4.99907196210288063e-01, 2.49472734764011134e-01, -1.64733889213835916e-01,
+    1.19837338306174199e-01, -8.92269677054972760e-02, 6.49198653819345189e-02, -4.46941265928255324e-02,
+    2.85001358325083255e-02, -1.66176702923096463e-02, 8.79668795459629879e-03, -4.21256161652550261e-03,
+    1.82742670532939151e-03, -7.22659049547272488e-04, 2.56912656929267965e-04, -7.88574441230219627e-05,
+    2.37008187601658978e-05, -8.64818594561571058e-06, 2.06421763494927860e-06};
 
 // beta: 32.274
-constexpr double laplace_2d_12[] = {3.46570248057884389e-01,  -4.99957475122443762e-01, 2.49738364433143178e-01,
-                                    -1.65626336543615915e-01, 1.21983083621515789e-01,  -9.31667001765092706e-02,
-                                    7.06770768790406650e-02,  -5.15857979538693195e-02, 3.54026974664242433e-02,
-                                    -2.24978416961984090e-02, 1.31167910565566700e-02,  -6.98218022855232653e-03,
-                                    3.38578404329130389e-03,  -1.49440897266812575e-03, 6.02319291133440195e-04,
-                                    -2.23441579545037290e-04, 7.50610147733028798e-05,  -2.17998920378964566e-05,
-                                    6.30358375631785338e-06,  -2.27901245929962573e-06, 5.31730474006170036e-07};
+constexpr double laplace_2d_potential_12[] = {
+    3.46570248057884112e-01, -4.99957475122447703e-01, 2.49738364433155918e-01, -1.65626336543459207e-01,
+    1.21983083621168845e-01, -9.31667001786511961e-02, 7.06770768825998180e-02, -5.15857979397892699e-02,
+    3.54026974475554965e-02, -2.24978417491871335e-02, 1.31167911174540647e-02, -6.98218010512264946e-03,
+    3.38578391419955098e-03, -1.49440915455886932e-03, 6.02319473465380974e-04, -2.23441414363640490e-04,
+    7.50608500362041887e-05, -2.17999762591245994e-05, 6.30366914511524866e-06, -2.27899405997317675e-06,
+    5.31711328225587679e-07};
+
+// beta: 8.298
+constexpr double laplace_2d_potential_grad_2[] = {3.33184878464347523e-01, -4.51920756221624531e-01,
+                                                  1.73104766068554572e-01, -5.57791053902824685e-02};
+
+// beta: 10.962
+constexpr double laplace_2d_potential_grad_3[] = {3.42281810696065225e-01, -4.74651459773262618e-01,
+                                                  1.96951614757899823e-01, -1.00323195712632374e-01,
+                                                  3.62826089068870872e-02};
+
+// beta: 13.626000000000001
+constexpr double laplace_2d_potential_grad_4[] = {
+    3.44920176871832851e-01, -4.90219983293960493e-01, 2.21402436660400853e-01, -1.12317042749265614e-01,
+    5.39515154583057807e-02, -2.62565947730729748e-02, 8.54901943386063116e-03};
+
+// beta: 16.29
+constexpr double laplace_2d_potential_grad_5[] = {
+    3.45919146747371453e-01,  -4.95384047142610362e-01, 2.34706170592353158e-01,
+    -1.34397807809618242e-01, 7.43869214863100287e-02,  -3.59269319087773056e-02,
+    1.55688336432483511e-02,  -6.94127245226134303e-03, 2.07070483110859344e-03};
+
+// beta: 18.954
+constexpr double laplace_2d_potential_grad_6[] = {
+    3.46309619226134346e-01, -4.97895496150747074e-01, 2.42004090029890595e-01, -1.47196123726516248e-01,
+    9.05047070413049215e-02, -5.17495022047923595e-02, 2.62131967637282796e-02, -1.12681604438563624e-02,
+    4.39461479383792489e-03, -1.82596802602346515e-03, 5.09123001543922973e-04};
+
+// beta: 21.618000000000002
+constexpr double laplace_2d_potential_grad_7[] = {
+    3.46465481149457799e-01, -4.99035213704343006e-01, 2.45886484874547978e-01, -1.55391599177290507e-01,
+    1.02462596819992091e-01, -6.47383266612105573e-02, 3.76085576353272014e-02, -1.93271385034128156e-02,
+    8.36278734178631973e-03, -3.41548261536371665e-03, 1.59294342657918873e-03, -4.71139754944352777e-04};
+
+// beta: 24.282
+constexpr double laplace_2d_potential_grad_8[] = {
+    3.46528850665512644e-01, -4.99557971203262896e-01, 2.47904675576324757e-01, -1.60284389745183303e-01,
+    1.10852186669316538e-01, -7.54137567280888516e-02, 4.80501777980043149e-02, -2.79277329985425649e-02,
+    1.46664049601722152e-02, -6.79178891784799031e-03, 2.65156392996357664e-03, -9.95762146790877493e-04,
+    4.41120395207718254e-04, -1.23581352430928809e-04};
+
+// beta: 26.946
+constexpr double laplace_2d_potential_grad_9[] = {
+    3.46554885568200133e-01, -4.99797464715028450e-01, 2.48944729926751041e-01, -1.63125430610346817e-01,
+    1.16346117020254644e-01, -8.34673675997331110e-02, 5.73934992453168230e-02, -3.66602863431243764e-02,
+    2.13335722325376335e-02, -1.12242367621553252e-02, 5.34945915592105036e-03, -2.26116713984573885e-03,
+    8.08640035600749138e-04, -2.83489992079079636e-04, 1.20982359820109676e-04, -3.24425805455391781e-05};
+
+// beta: 29.610000000000003
+constexpr double laplace_2d_potential_grad_10[] = {
+    3.46565709690033974e-01, -4.99907196180672031e-01, 2.49472732235761552e-01, -1.64733890638174868e-01,
+    1.19837405855919774e-01, -8.92269477338899081e-02, 6.49191707778410121e-02, -4.46942522873097978e-02,
+    2.85037127803011714e-02, -1.66172508690107072e-02, 8.78634304061538807e-03, -4.21335541659834719e-03,
+    1.84499848202147876e-03, -7.21803531769095582e-04, 2.39519579115910413e-04, -7.93466372906915141e-05,
+    3.29838548005580403e-05, -8.53301440667630269e-06};
+
+// beta: 32.274
+constexpr double laplace_2d_potential_grad_11[] = {
+    3.46570248056881081e-01, -4.99957475124544970e-01, 2.49738364634183724e-01, -1.65626336417381809e-01,
+    1.21983076975847496e-01, -9.31667024007819672e-02, 7.06771620639621706e-02, -5.15857801414879094e-02,
+    3.54021430998109413e-02, -2.24979189524362536e-02, 1.31188628289548199e-02, -6.98198342246089329e-03,
+    3.38107124337101630e-03, -1.49471195871859227e-03, 6.08953502918277954e-04, -2.23164396137474582e-04,
+    6.94180102995598755e-05, -2.19385584355635272e-05, 8.96076073885869778e-06, -2.24980540167689541e-06};
+
+// beta: 34.938
+constexpr double laplace_2d_potential_grad_12[] = {
+    3.46572164823273354e-01, -4.99980513692723005e-01, 2.49870931711544508e-01, -1.66113309105725859e-01,
+    1.23268093600736456e-01, -9.57656964850455705e-02, 7.48757309988536957e-02, -5.71610723375744131e-02,
+    4.16176237001389809e-02, -2.84092648965482315e-02, 1.79794295480792260e-02, -1.04803560261190250e-02,
+    5.60237911544359674e-03, -2.73762881778151718e-03, 1.23043887386833852e-03, -5.15732685692955948e-04,
+    1.93879563434523231e-04, -6.03241382498267414e-05, 1.99638666969661163e-05, -9.13280861293721183e-06,
+    2.39519245994369023e-06};
 
 template <class Real, int MaxVecLen>
 residual_evaluator_func<Real> get_laplace_2d_kernel(dmk_eval_type eval_level, int n_digits) {
     constexpr int UF = unroll_factor;
-    if (n_digits <= 2) {
-        constexpr int ND = 2, NC_TOTAL = 5;
-        constexpr int NC0 = 5;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_2d_2, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
+    if (eval_level == DMK_POTENTIAL) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 3;
+            constexpr int NC0 = 3;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 7;
+            constexpr int NC0 = 7;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 8;
+            constexpr int NC0 = 8;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 10;
+            constexpr int NC0 = 10;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 12;
+            constexpr int NC0 = 12;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 13;
+            constexpr int NC0 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 15;
+            constexpr int NC0 = 15;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 17;
+            constexpr int NC0 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 19;
+            constexpr int NC0 = 19;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 21;
+            constexpr int NC0 = 21;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+    } else if (eval_level == DMK_POTENTIAL_GRAD) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 4;
+            constexpr int NC0 = 4;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_grad_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_grad_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 7;
+            constexpr int NC0 = 7;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_grad_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 9;
+            constexpr int NC0 = 9;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_grad_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 11;
+            constexpr int NC0 = 11;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_grad_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 12;
+            constexpr int NC0 = 12;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_grad_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 14;
+            constexpr int NC0 = 14;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_grad_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_grad_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 18;
+            constexpr int NC0 = 18;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_grad_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 20;
+            constexpr int NC0 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_grad_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 21;
+            constexpr int NC0 = 21;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_2d_potential_grad_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
     }
-    if (n_digits <= 3) {
-        constexpr int ND = 3, NC_TOTAL = 5;
-        constexpr int NC0 = 5;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_2d_3, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 4) {
-        constexpr int ND = 4, NC_TOTAL = 7;
-        constexpr int NC0 = 7;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_2d_4, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 5) {
-        constexpr int ND = 5, NC_TOTAL = 8;
-        constexpr int NC0 = 8;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_2d_5, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 6) {
-        constexpr int ND = 6, NC_TOTAL = 10;
-        constexpr int NC0 = 10;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_2d_6, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 7) {
-        constexpr int ND = 7, NC_TOTAL = 12;
-        constexpr int NC0 = 12;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_2d_7, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 8) {
-        constexpr int ND = 8, NC_TOTAL = 13;
-        constexpr int NC0 = 13;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_2d_8, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 9) {
-        constexpr int ND = 9, NC_TOTAL = 15;
-        constexpr int NC0 = 15;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_2d_9, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 10) {
-        constexpr int ND = 10, NC_TOTAL = 17;
-        constexpr int NC0 = 17;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_2d_10, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 11) {
-        constexpr int ND = 11, NC_TOTAL = 19;
-        constexpr int NC0 = 19;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_2d_11, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 12) {
-        constexpr int ND = 12, NC_TOTAL = 21;
-        constexpr int NC0 = 21;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_2d_12, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
 }
 // beta: 5.634
-constexpr double laplace_3d_2[] = {2.17998183953000496e-01, -5.01498435116888963e-01, 3.38241507826899823e-01,
-                                   1.03815575056770545e-03, -5.66276391535132859e-02};
+constexpr double laplace_3d_potential_2[] = {2.25282002582155055e-01, -4.99920725695796930e-01, 2.81210802686322481e-01,
+                                             -1.03887468188636439e-03};
 
 // beta: 8.298
-constexpr double laplace_3d_3[] = {1.35676693383068231e-01,  -4.22679758881918444e-01, 4.46694841556203426e-01,
-                                   -1.21102947058209454e-01, -8.26625453105883506e-02, 4.40644298701292625e-02};
+constexpr double laplace_3d_potential_3[] = {1.35676693383068231e-01,  -4.22679758881918444e-01,
+                                             4.46694841556203426e-01,  -1.21102947058209454e-01,
+                                             -8.26625453105883506e-02, 4.40644298701292625e-02};
 
 // beta: 10.962
-constexpr double laplace_3d_4[] = {8.61916042476558453e-02,  -3.39357689807749219e-01, 4.95769318253879487e-01,
-                                   -2.63353000669118043e-01, -7.92301496463873600e-02, 1.25856582628138036e-01,
-                                   -2.76665730002910318e-03, -2.31735239043814184e-02};
+constexpr double laplace_3d_potential_4[] = {
+    8.61916042476558453e-02,  -3.39357689807749219e-01, 4.95769318253879487e-01,  -2.63353000669118043e-01,
+    -7.92301496463873600e-02, 1.25856582628138036e-01,  -2.76665730002910318e-03, -2.31735239043814184e-02};
 
 // beta: 13.626000000000001
-constexpr double laplace_3d_5[] = {5.58390435893019663e-02,  -2.64586084955049261e-01, 4.87356384393162034e-01,
-                                   -3.84994597954706641e-01, 1.16315189240913750e-02,  1.85666658452653177e-01,
-                                   -8.23628275754923894e-02, -3.98393432987490456e-02, 3.31102704081132765e-02,
-                                   3.75332824122639758e-03,  -5.57532476536800898e-03};
+constexpr double laplace_3d_potential_5[] = {
+    5.58390435893019663e-02, -2.64586084955049261e-01, 4.87356384393162034e-01,  -3.84994597954706641e-01,
+    1.16315189240913750e-02, 1.85666658452653177e-01,  -8.23628275754923894e-02, -3.98393432987490456e-02,
+    3.31102704081132765e-02, 3.75332824122639758e-03,  -5.57532476536800898e-03};
 
 // beta: 16.29
-constexpr double laplace_3d_6[] = {3.65651153834013268e-02,  -2.02373828741634704e-01, 4.50680962873918789e-01,
-                                   -4.71259094659650657e-01, 1.31151290530008124e-01,  1.97006325911610741e-01,
-                                   -1.75941155471667859e-01, -1.49657566484197244e-02, 7.23405502287229746e-02,
-                                   -1.16581017499437639e-02, -1.68036765809427453e-02, 3.25068552699544610e-03,
-                                   2.00696867284461816e-03};
+constexpr double laplace_3d_potential_6[] = {
+    3.65651153834013268e-02, -2.02373828741634704e-01, 4.50680962873918789e-01,  -4.71259094659650657e-01,
+    1.31151290530008124e-01, 1.97006325911610741e-01,  -1.75941155471667859e-01, -1.49657566484197244e-02,
+    7.23405502287229746e-02, -1.16581017499437639e-02, -1.68036765809427453e-02, 3.25068552699544610e-03,
+    2.00696867284461816e-03};
 
 // beta: 18.954
-constexpr double laplace_3d_7[] = {2.41435731559801123e-02,  -1.52729533229260889e-01, 3.98895426171370859e-01,
-                                   -5.19059925199433780e-01, 2.61759703204077210e-01,  1.53278369473923204e-01,
-                                   -2.67097148186365596e-01, 5.99652945526592748e-02,  1.00000753621406493e-01,
-                                   -5.88930498174368017e-02, -1.92963638496512387e-02, 2.06712499977083665e-02,
-                                   1.59403688932523418e-03,  -3.23248151527584038e-03};
+constexpr double laplace_3d_potential_7[] = {
+    2.41435731559801123e-02, -1.52729533229260889e-01, 3.98895426171370859e-01,  -5.19059925199433780e-01,
+    2.61759703204077210e-01, 1.53278369473923204e-01,  -2.67097148186365596e-01, 5.99652945526592748e-02,
+    1.00000753621406493e-01, -5.88930498174368017e-02, -1.92963638496512387e-02, 2.06712499977083665e-02,
+    1.59403688932523418e-03, -3.23248151527584038e-03};
 
 // beta: 21.618000000000002
-constexpr double laplace_3d_8[] = {1.60439437296675640e-02,  -1.14126073550636378e-01, 3.41987337192511121e-01,
-                                   -5.32522731286782625e-01, 3.82845035891724916e-01,  6.19184951923090338e-02,
-                                   -3.28185447928564689e-01, 1.72307149780891899e-01,  8.96059941698951201e-02,
-                                   -1.23461528598353215e-01, 7.59229237815524285e-03,  4.44741945776204600e-02,
-                                   -1.41898651813544500e-02, -9.64407308797441548e-03, 5.05118678882309890e-03,
-                                   1.05456872216903733e-03,  -7.50479469805201546e-04};
+constexpr double laplace_3d_potential_8[] = {
+    1.60439437296675640e-02,  -1.14126073550636378e-01, 3.41987337192511121e-01,  -5.32522731286782625e-01,
+    3.82845035891724916e-01,  6.19184951923090338e-02,  -3.28185447928564689e-01, 1.72307149780891899e-01,
+    8.96059941698951201e-02,  -1.23461528598353215e-01, 7.59229237815524285e-03,  4.44741945776204600e-02,
+    -1.41898651813544500e-02, -9.64407308797441548e-03, 5.05118678882309890e-03,  1.05456872216903733e-03,
+    -7.50479469805201546e-04};
 
 // beta: 24.282
-constexpr double laplace_3d_9[] = {
+constexpr double laplace_3d_potential_9[] = {
     1.07159462374928523e-02,  -8.46341160946152277e-02, 2.86172402632982548e-01,  -5.18876415012229586e-01,
     4.81152338514268363e-01,  -6.26555153882026178e-02, -3.41806798659518574e-01, 3.02197463492700547e-01,
     2.78618128968503437e-02,  -1.84360855208628632e-01, 6.88980134368040315e-02,  5.65882082276001064e-02,
@@ -263,7 +472,7 @@ constexpr double laplace_3d_9[] = {
     -3.69762826634758429e-03, 2.15584244995764644e-04,  4.19195434991927001e-04};
 
 // beta: 26.946
-constexpr double laplace_3d_10[] = {
+constexpr double laplace_3d_potential_10[] = {
     7.18708237059719791e-03,  -6.23865646673537194e-02, 2.34945455950023613e-01,  -4.86161809063531958e-01,
     5.50172803263395238e-01,  -2.02350858567595993e-01, -3.00904600453594573e-01, 4.23072285773979484e-01,
     -8.85142719163944380e-02, -2.14363943722174016e-01, 1.62465545958938223e-01,  3.54600844428899428e-02,
@@ -272,7 +481,7 @@ constexpr double laplace_3d_10[] = {
     -5.14221535104267654e-05, 1.23018192605541074e-04};
 
 // beta: 29.610000000000003
-constexpr double laplace_3d_11[] = {
+constexpr double laplace_3d_potential_11[] = {
     4.83699369429514345e-03,  -4.57629949245662096e-02, 1.89944134896976174e-01,  -4.41694820807374988e-01,
     5.88938808524209989e-01,  -3.40295394858704248e-01, -2.09484233544280640e-01, 5.10379535704030496e-01,
     -2.47274179951901069e-01, -1.90310301964979833e-01, 2.70493212718880660e-01,  -3.20750547444539069e-02,
@@ -281,7 +490,7 @@ constexpr double laplace_3d_11[] = {
     6.85379511706281038e-04,  4.91463901760632997e-04,  -9.20146044351580157e-05, -4.24102106538326771e-05};
 
 // beta: 32.274
-constexpr double laplace_3d_12[] = {
+constexpr double laplace_3d_potential_12[] = {
     3.26488932883790091e-03,  -3.34334184769561060e-02, 1.51628119161831165e-01,  -3.91438301385976573e-01,
     6.00144886697036140e-01,  -4.63260754695098143e-01, -7.91094654958735960e-02, 5.46372213823562269e-01,
     -4.25336253533089070e-01, -9.77574303076449019e-02, 3.64039081784227669e-01,  -1.51925312083628056e-01,
@@ -289,187 +498,404 @@ constexpr double laplace_3d_12[] = {
     1.86967051122529301e-02,  1.88572407480448352e-02,  -1.12662015297383296e-02, -3.44125699098016269e-03,
     3.78038404248679481e-03,  2.39078119218961082e-04,  -7.82727229555982935e-04, 4.93023050799382170e-05,
     7.93878994049295519e-05,  -1.09102680236039761e-05};
+
+// beta: 8.298
+constexpr double laplace_3d_potential_grad_2[] = {1.35373393795720692e-01, -4.36907496688934471e-01,
+                                                  4.49104115534396831e-01, -6.54190101699606286e-02,
+                                                  -8.50658566475083061e-02};
+
+// beta: 10.962
+constexpr double laplace_3d_potential_grad_3[] = {8.60612156248130727e-02,  -3.40111927203895936e-01,
+                                                  4.97659587015112592e-01,  -2.50082439360021058e-01,
+                                                  -8.37086507244033384e-02, 9.08624864724610626e-02};
+
+// beta: 13.626000000000001
+constexpr double laplace_3d_potential_grad_4[] = {
+    5.58390435893020218e-02,  -2.64717167590847735e-01, 4.87559575065030892e-01,
+    -3.83241492306865494e-01, 8.96132752589977148e-03,  1.79344646567271587e-01,
+    -7.28417849593808592e-02, -3.14007565336095265e-02, 2.05017147121834692e-02};
+
+// beta: 16.29
+constexpr double laplace_3d_potential_grad_5[] = {
+    3.65651153834012990e-02, -2.02336522120227985e-01, 4.50703044165623401e-01,  -4.71988793396330319e-01,
+    1.30713175727858899e-01, 2.01028804034472791e-01,  -1.73501647366733819e-01, -2.40526631146708372e-02,
+    6.67882926557134132e-02, -2.65352836539563090e-03, -1.12698283550172283e-02};
+
+// beta: 18.954
+constexpr double laplace_3d_potential_grad_6[] = {
+    2.41435365819562368e-02, -1.52718808764497921e-01, 3.98897944342020083e-01,  -5.19356388662591928e-01,
+    2.61731244800182006e-01, 1.55627597162875442e-01,  -2.66978590303516672e-01, 5.19699102108855393e-02,
+    9.97763197131621704e-02, -4.56454000595140560e-02, -1.90998195412067882e-02, 1.01237641756432902e-02,
+    1.52931819491995431e-03};
+
+// beta: 21.618000000000002
+constexpr double laplace_3d_potential_grad_7[] = {
+    1.60439680211329795e-02,  -1.14126099610511914e-01, 3.41984271196447198e-01,  -5.32521756854699824e-01,
+    3.82908730215659632e-01,  6.19079603329049238e-02,  -3.28690650132687112e-01, 1.72357352569426858e-01,
+    9.15769080873981428e-02,  -1.23584312439697891e-01, 3.41197217941373396e-03,  4.46349951564157174e-02,
+    -9.27357818320668700e-03, -9.75130738557921685e-03, 2.03839781997119636e-03,  1.08317173001665928e-03};
+
+// beta: 24.282
+constexpr double laplace_3d_potential_grad_8[] = {
+    1.07159462374928523e-02,  -8.46341793364562833e-02, 2.86172289845876782e-01,  -5.18873461702700878e-01,
+    4.81157708128312989e-01,  -6.26959661442080818e-02, -3.41881484578489769e-01, 3.02447220896404911e-01,
+    2.83287777506400426e-02,  -1.85181087225704200e-01, 6.73483269472894552e-02,  5.81198065641782002e-02,
+    -4.33665484079018421e-02, -9.86037397693287181e-03, 1.34367184014683710e-02,  6.78038463523805333e-04,
+    -1.91174021845368926e-03};
+
+// beta: 26.946
+constexpr double laplace_3d_potential_grad_9[] = {
+    7.18708246440367265e-03,  -6.23865649137638756e-02, 2.34945437005272401e-01,  -4.86161760244670338e-01,
+    5.50173433125147771e-01,  -2.02352457277721304e-01, -3.00912710492949653e-01, 4.23092619570351436e-01,
+    -8.84613031406586287e-02, -2.14495407348589684e-01, 1.62267009118026828e-01,  3.59486417552733750e-02,
+    -8.86671064485698157e-02, 1.50553796593915507e-02,  2.86417091603183814e-02,  -1.18732171211611646e-02,
+    -5.75137033229802461e-03, 3.67017900763767562e-03,  5.77819645270764371e-04,  -4.97413300023614720e-04};
+
+// beta: 29.610000000000003
+constexpr double laplace_3d_potential_grad_10[] = {
+    4.83699364701164342e-03,  -4.57629949453203164e-02, 1.89944146189103547e-01,  -4.41694815805404428e-01,
+    5.88938361753583606e-01,  -3.40295594190500927e-01, -2.09477327720605233e-01, 5.10382635298455400e-01,
+    -2.47328995077170849e-01, -1.90335030062067756e-01, 2.70747291815721935e-01,  -3.19599348895081709e-02,
+    -1.26400907973926058e-01, 6.56380950546598396e-02,  3.23455685814820898e-02,  -3.54431405368228966e-02,
+    -3.15749917183956626e-03, 1.16554507911594430e-02,  -6.25242294921542078e-04, -2.44259444406770901e-03,
+    1.77610289495549849e-04,  2.57923748564379933e-04};
+
+// beta: 32.274
+constexpr double laplace_3d_potential_grad_11[] = {
+    3.26488932935758936e-03,  -3.34334184589342026e-02, 1.51628119013288543e-01,  -3.91438303230557672e-01,
+    6.00144893739365637e-01,  -4.63260698656872971e-01, -7.91095963485347747e-02, 5.46371422708288978e-01,
+    -4.25334996766092766e-01, -9.77511664059468321e-02, 3.64031957093882585e-01,  -1.51956009896253158e-01,
+    -1.30781688719692979e-01, 1.40134444080656562e-01,  5.60786571449403779e-03,  -6.44986132385584748e-02,
+    1.87924679144229438e-02,  1.91671466716092885e-02,  -1.13661256210334030e-02, -3.74395560480559296e-03,
+    3.84651785292284892e-03,  4.28341104036052773e-04,  -8.07875592590791974e-04, -1.91890722053818430e-05,
+    8.35723911323348051e-05};
+
+// beta: 34.938
+constexpr double laplace_3d_potential_grad_12[] = {
+    2.20928059493365235e-03,  -2.43426875242211231e-02, 1.19761893706071723e-01,  -3.39856659040368825e-01,
+    5.88505140797872417e-01,  -5.62618110858054132e-01, 7.48570909907567972e-02,  5.22999143696575630e-01,
+    -5.95015655106605257e-01, 6.28415423705892401e-02,  4.10829665279586365e-01,  -3.12678103311007982e-01,
+    -7.88556227096840062e-02, 2.21754901069865118e-01,  -6.05635485305918708e-02, -8.38912139235251930e-02,
+    5.89552927275863239e-02,  1.58589038944522143e-02,  -2.78508907904069791e-02, 1.30941825171451503e-03,
+    8.91950669951599787e-03,  -1.86784537729052513e-03, -2.04171779144781936e-03, 5.57931216423200984e-04,
+    3.14659759362786421e-04,  -6.72204654220478630e-05, -2.50956269826985266e-05};
 
 template <class Real, int MaxVecLen>
 residual_evaluator_func<Real> get_laplace_3d_kernel(dmk_eval_type eval_level, int n_digits) {
     constexpr int UF = unroll_factor;
-    if (n_digits <= 2) {
-        constexpr int ND = 2, NC_TOTAL = 5;
-        constexpr int NC0 = 5;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_3d_2, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
+    if (eval_level == DMK_POTENTIAL) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 4;
+            constexpr int NC0 = 4;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 8;
+            constexpr int NC0 = 8;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 11;
+            constexpr int NC0 = 11;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 13;
+            constexpr int NC0 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 14;
+            constexpr int NC0 = 14;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 17;
+            constexpr int NC0 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 19;
+            constexpr int NC0 = 19;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 24;
+            constexpr int NC0 = 24;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 26;
+            constexpr int NC0 = 26;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+    } else if (eval_level == DMK_POTENTIAL_GRAD) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_grad_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_grad_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 9;
+            constexpr int NC0 = 9;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_grad_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 11;
+            constexpr int NC0 = 11;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_grad_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 13;
+            constexpr int NC0 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_grad_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_grad_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 17;
+            constexpr int NC0 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_grad_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 20;
+            constexpr int NC0 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_grad_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_grad_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 25;
+            constexpr int NC0 = 25;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_grad_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 27;
+            constexpr int NC0 = 27;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_3d_potential_grad_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
     }
-    if (n_digits <= 3) {
-        constexpr int ND = 3, NC_TOTAL = 6;
-        constexpr int NC0 = 6;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_3d_3, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 4) {
-        constexpr int ND = 4, NC_TOTAL = 8;
-        constexpr int NC0 = 8;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_3d_4, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 5) {
-        constexpr int ND = 5, NC_TOTAL = 11;
-        constexpr int NC0 = 11;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_3d_5, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 6) {
-        constexpr int ND = 6, NC_TOTAL = 13;
-        constexpr int NC0 = 13;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_3d_6, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 7) {
-        constexpr int ND = 7, NC_TOTAL = 14;
-        constexpr int NC0 = 14;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_3d_7, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 8) {
-        constexpr int ND = 8, NC_TOTAL = 17;
-        constexpr int NC0 = 17;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_3d_8, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 9) {
-        constexpr int ND = 9, NC_TOTAL = 19;
-        constexpr int NC0 = 19;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_3d_9, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 10) {
-        constexpr int ND = 10, NC_TOTAL = 22;
-        constexpr int NC0 = 22;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_3d_10, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 11) {
-        constexpr int ND = 11, NC_TOTAL = 24;
-        constexpr int NC0 = 24;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_3d_11, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 12) {
-        constexpr int ND = 12, NC_TOTAL = 26;
-        constexpr int NC0 = 26;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(laplace_3d_12, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                coeffs.data(), n_src, r_src, charge, normals, n_trg,
-                                                                r_trg, pot, UF);
-        };
-    }
-    throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
 }
 // beta: 5.634
-constexpr double sqrt_laplace_2d_2[] = {2.17998183953000496e-01, -5.01498435116888963e-01, 3.38241507826899823e-01,
-                                        1.03815575056770545e-03, -5.66276391535132859e-02};
+constexpr double sqrt_laplace_2d_potential_2[] = {2.25282002582155055e-01, -4.99920725695796930e-01,
+                                                  2.81210802686322481e-01, -1.03887468188636439e-03};
 
 // beta: 8.298
-constexpr double sqrt_laplace_2d_3[] = {1.35676693383068231e-01,  -4.22679758881918444e-01, 4.46694841556203426e-01,
-                                        -1.21102947058209454e-01, -8.26625453105883506e-02, 4.40644298701292625e-02};
+constexpr double sqrt_laplace_2d_potential_3[] = {1.35676693383068231e-01,  -4.22679758881918444e-01,
+                                                  4.46694841556203426e-01,  -1.21102947058209454e-01,
+                                                  -8.26625453105883506e-02, 4.40644298701292625e-02};
 
 // beta: 10.962
-constexpr double sqrt_laplace_2d_4[] = {8.61916042476558453e-02,  -3.39357689807749219e-01, 4.95769318253879487e-01,
-                                        -2.63353000669118043e-01, -7.92301496463873600e-02, 1.25856582628138036e-01,
-                                        -2.76665730002910318e-03, -2.31735239043814184e-02};
+constexpr double sqrt_laplace_2d_potential_4[] = {
+    8.61916042476558453e-02,  -3.39357689807749219e-01, 4.95769318253879487e-01,  -2.63353000669118043e-01,
+    -7.92301496463873600e-02, 1.25856582628138036e-01,  -2.76665730002910318e-03, -2.31735239043814184e-02};
 
 // beta: 13.626000000000001
-constexpr double sqrt_laplace_2d_5[] = {5.58390435893019663e-02,  -2.64586084955049261e-01, 4.87356384393162034e-01,
-                                        -3.84994597954706641e-01, 1.16315189240913750e-02,  1.85666658452653177e-01,
-                                        -8.23628275754923894e-02, -3.98393432987490456e-02, 3.31102704081132765e-02,
-                                        3.75332824122639758e-03,  -5.57532476536800898e-03};
+constexpr double sqrt_laplace_2d_potential_5[] = {
+    5.58390435893019663e-02, -2.64586084955049261e-01, 4.87356384393162034e-01,  -3.84994597954706641e-01,
+    1.16315189240913750e-02, 1.85666658452653177e-01,  -8.23628275754923894e-02, -3.98393432987490456e-02,
+    3.31102704081132765e-02, 3.75332824122639758e-03,  -5.57532476536800898e-03};
 
 // beta: 16.29
-constexpr double sqrt_laplace_2d_6[] = {3.65651153834013268e-02,  -2.02373828741634704e-01, 4.50680962873918789e-01,
-                                        -4.71259094659650657e-01, 1.31151290530008124e-01,  1.97006325911610741e-01,
-                                        -1.75941155471667859e-01, -1.49657566484197244e-02, 7.23405502287229746e-02,
-                                        -1.16581017499437639e-02, -1.68036765809427453e-02, 3.25068552699544610e-03,
-                                        2.00696867284461816e-03};
+constexpr double sqrt_laplace_2d_potential_6[] = {
+    3.65651153834013268e-02, -2.02373828741634704e-01, 4.50680962873918789e-01,  -4.71259094659650657e-01,
+    1.31151290530008124e-01, 1.97006325911610741e-01,  -1.75941155471667859e-01, -1.49657566484197244e-02,
+    7.23405502287229746e-02, -1.16581017499437639e-02, -1.68036765809427453e-02, 3.25068552699544610e-03,
+    2.00696867284461816e-03};
 
 // beta: 18.954
-constexpr double sqrt_laplace_2d_7[] = {2.41435731559801123e-02,  -1.52729533229260889e-01, 3.98895426171370859e-01,
-                                        -5.19059925199433780e-01, 2.61759703204077210e-01,  1.53278369473923204e-01,
-                                        -2.67097148186365596e-01, 5.99652945526592748e-02,  1.00000753621406493e-01,
-                                        -5.88930498174368017e-02, -1.92963638496512387e-02, 2.06712499977083665e-02,
-                                        1.59403688932523418e-03,  -3.23248151527584038e-03};
+constexpr double sqrt_laplace_2d_potential_7[] = {
+    2.41435731559801123e-02, -1.52729533229260889e-01, 3.98895426171370859e-01,  -5.19059925199433780e-01,
+    2.61759703204077210e-01, 1.53278369473923204e-01,  -2.67097148186365596e-01, 5.99652945526592748e-02,
+    1.00000753621406493e-01, -5.88930498174368017e-02, -1.92963638496512387e-02, 2.06712499977083665e-02,
+    1.59403688932523418e-03, -3.23248151527584038e-03};
 
 // beta: 21.618000000000002
-constexpr double sqrt_laplace_2d_8[] = {1.60439437296675640e-02,  -1.14126073550636378e-01, 3.41987337192511121e-01,
-                                        -5.32522731286782625e-01, 3.82845035891724916e-01,  6.19184951923090338e-02,
-                                        -3.28185447928564689e-01, 1.72307149780891899e-01,  8.96059941698951201e-02,
-                                        -1.23461528598353215e-01, 7.59229237815524285e-03,  4.44741945776204600e-02,
-                                        -1.41898651813544500e-02, -9.64407308797441548e-03, 5.05118678882309890e-03,
-                                        1.05456872216903733e-03,  -7.50479469805201546e-04};
+constexpr double sqrt_laplace_2d_potential_8[] = {
+    1.60439437296675640e-02,  -1.14126073550636378e-01, 3.41987337192511121e-01,  -5.32522731286782625e-01,
+    3.82845035891724916e-01,  6.19184951923090338e-02,  -3.28185447928564689e-01, 1.72307149780891899e-01,
+    8.96059941698951201e-02,  -1.23461528598353215e-01, 7.59229237815524285e-03,  4.44741945776204600e-02,
+    -1.41898651813544500e-02, -9.64407308797441548e-03, 5.05118678882309890e-03,  1.05456872216903733e-03,
+    -7.50479469805201546e-04};
 
 // beta: 24.282
-constexpr double sqrt_laplace_2d_9[] = {
+constexpr double sqrt_laplace_2d_potential_9[] = {
     1.07159462374928523e-02,  -8.46341160946152277e-02, 2.86172402632982548e-01,  -5.18876415012229586e-01,
     4.81152338514268363e-01,  -6.26555153882026178e-02, -3.41806798659518574e-01, 3.02197463492700547e-01,
     2.78618128968503437e-02,  -1.84360855208628632e-01, 6.88980134368040315e-02,  5.65882082276001064e-02,
@@ -477,7 +903,7 @@ constexpr double sqrt_laplace_2d_9[] = {
     -3.69762826634758429e-03, 2.15584244995764644e-04,  4.19195434991927001e-04};
 
 // beta: 26.946
-constexpr double sqrt_laplace_2d_10[] = {
+constexpr double sqrt_laplace_2d_potential_10[] = {
     7.18708237059719791e-03,  -6.23865646673537194e-02, 2.34945455950023613e-01,  -4.86161809063531958e-01,
     5.50172803263395238e-01,  -2.02350858567595993e-01, -3.00904600453594573e-01, 4.23072285773979484e-01,
     -8.85142719163944380e-02, -2.14363943722174016e-01, 1.62465545958938223e-01,  3.54600844428899428e-02,
@@ -486,7 +912,7 @@ constexpr double sqrt_laplace_2d_10[] = {
     -5.14221535104267654e-05, 1.23018192605541074e-04};
 
 // beta: 29.610000000000003
-constexpr double sqrt_laplace_2d_11[] = {
+constexpr double sqrt_laplace_2d_potential_11[] = {
     4.83699369429514345e-03,  -4.57629949245662096e-02, 1.89944134896976174e-01,  -4.41694820807374988e-01,
     5.88938808524209989e-01,  -3.40295394858704248e-01, -2.09484233544280640e-01, 5.10379535704030496e-01,
     -2.47274179951901069e-01, -1.90310301964979833e-01, 2.70493212718880660e-01,  -3.20750547444539069e-02,
@@ -495,7 +921,7 @@ constexpr double sqrt_laplace_2d_11[] = {
     6.85379511706281038e-04,  4.91463901760632997e-04,  -9.20146044351580157e-05, -4.24102106538326771e-05};
 
 // beta: 32.274
-constexpr double sqrt_laplace_2d_12[] = {
+constexpr double sqrt_laplace_2d_potential_12[] = {
     3.26488932883790091e-03,  -3.34334184769561060e-02, 1.51628119161831165e-01,  -3.91438301385976573e-01,
     6.00144886697036140e-01,  -4.63260754695098143e-01, -7.91094654958735960e-02, 5.46372213823562269e-01,
     -4.25336253533089070e-01, -9.77574303076449019e-02, 3.64039081784227669e-01,  -1.51925312083628056e-01,
@@ -504,192 +930,409 @@ constexpr double sqrt_laplace_2d_12[] = {
     3.78038404248679481e-03,  2.39078119218961082e-04,  -7.82727229555982935e-04, 4.93023050799382170e-05,
     7.93878994049295519e-05,  -1.09102680236039761e-05};
 
+// beta: 8.298
+constexpr double sqrt_laplace_2d_potential_grad_2[] = {1.35373393795720692e-01, -4.36907496688934471e-01,
+                                                       4.49104115534396831e-01, -6.54190101699606286e-02,
+                                                       -8.50658566475083061e-02};
+
+// beta: 10.962
+constexpr double sqrt_laplace_2d_potential_grad_3[] = {8.60612156248130727e-02,  -3.40111927203895936e-01,
+                                                       4.97659587015112592e-01,  -2.50082439360021058e-01,
+                                                       -8.37086507244033384e-02, 9.08624864724610626e-02};
+
+// beta: 13.626000000000001
+constexpr double sqrt_laplace_2d_potential_grad_4[] = {
+    5.58390435893020218e-02,  -2.64717167590847735e-01, 4.87559575065030892e-01,
+    -3.83241492306865494e-01, 8.96132752589977148e-03,  1.79344646567271587e-01,
+    -7.28417849593808592e-02, -3.14007565336095265e-02, 2.05017147121834692e-02};
+
+// beta: 16.29
+constexpr double sqrt_laplace_2d_potential_grad_5[] = {
+    3.65651153834012990e-02, -2.02336522120227985e-01, 4.50703044165623401e-01,  -4.71988793396330319e-01,
+    1.30713175727858899e-01, 2.01028804034472791e-01,  -1.73501647366733819e-01, -2.40526631146708372e-02,
+    6.67882926557134132e-02, -2.65352836539563090e-03, -1.12698283550172283e-02};
+
+// beta: 18.954
+constexpr double sqrt_laplace_2d_potential_grad_6[] = {
+    2.41435365819562368e-02, -1.52718808764497921e-01, 3.98897944342020083e-01,  -5.19356388662591928e-01,
+    2.61731244800182006e-01, 1.55627597162875442e-01,  -2.66978590303516672e-01, 5.19699102108855393e-02,
+    9.97763197131621704e-02, -4.56454000595140560e-02, -1.90998195412067882e-02, 1.01237641756432902e-02,
+    1.52931819491995431e-03};
+
+// beta: 21.618000000000002
+constexpr double sqrt_laplace_2d_potential_grad_7[] = {
+    1.60439680211329795e-02,  -1.14126099610511914e-01, 3.41984271196447198e-01,  -5.32521756854699824e-01,
+    3.82908730215659632e-01,  6.19079603329049238e-02,  -3.28690650132687112e-01, 1.72357352569426858e-01,
+    9.15769080873981428e-02,  -1.23584312439697891e-01, 3.41197217941373396e-03,  4.46349951564157174e-02,
+    -9.27357818320668700e-03, -9.75130738557921685e-03, 2.03839781997119636e-03,  1.08317173001665928e-03};
+
+// beta: 24.282
+constexpr double sqrt_laplace_2d_potential_grad_8[] = {
+    1.07159462374928523e-02,  -8.46341793364562833e-02, 2.86172289845876782e-01,  -5.18873461702700878e-01,
+    4.81157708128312989e-01,  -6.26959661442080818e-02, -3.41881484578489769e-01, 3.02447220896404911e-01,
+    2.83287777506400426e-02,  -1.85181087225704200e-01, 6.73483269472894552e-02,  5.81198065641782002e-02,
+    -4.33665484079018421e-02, -9.86037397693287181e-03, 1.34367184014683710e-02,  6.78038463523805333e-04,
+    -1.91174021845368926e-03};
+
+// beta: 26.946
+constexpr double sqrt_laplace_2d_potential_grad_9[] = {
+    7.18708246440367265e-03,  -6.23865649137638756e-02, 2.34945437005272401e-01,  -4.86161760244670338e-01,
+    5.50173433125147771e-01,  -2.02352457277721304e-01, -3.00912710492949653e-01, 4.23092619570351436e-01,
+    -8.84613031406586287e-02, -2.14495407348589684e-01, 1.62267009118026828e-01,  3.59486417552733750e-02,
+    -8.86671064485698157e-02, 1.50553796593915507e-02,  2.86417091603183814e-02,  -1.18732171211611646e-02,
+    -5.75137033229802461e-03, 3.67017900763767562e-03,  5.77819645270764371e-04,  -4.97413300023614720e-04};
+
+// beta: 29.610000000000003
+constexpr double sqrt_laplace_2d_potential_grad_10[] = {
+    4.83699364701164342e-03,  -4.57629949453203164e-02, 1.89944146189103547e-01,  -4.41694815805404428e-01,
+    5.88938361753583606e-01,  -3.40295594190500927e-01, -2.09477327720605233e-01, 5.10382635298455400e-01,
+    -2.47328995077170849e-01, -1.90335030062067756e-01, 2.70747291815721935e-01,  -3.19599348895081709e-02,
+    -1.26400907973926058e-01, 6.56380950546598396e-02,  3.23455685814820898e-02,  -3.54431405368228966e-02,
+    -3.15749917183956626e-03, 1.16554507911594430e-02,  -6.25242294921542078e-04, -2.44259444406770901e-03,
+    1.77610289495549849e-04,  2.57923748564379933e-04};
+
+// beta: 32.274
+constexpr double sqrt_laplace_2d_potential_grad_11[] = {
+    3.26488932935758936e-03,  -3.34334184589342026e-02, 1.51628119013288543e-01,  -3.91438303230557672e-01,
+    6.00144893739365637e-01,  -4.63260698656872971e-01, -7.91095963485347747e-02, 5.46371422708288978e-01,
+    -4.25334996766092766e-01, -9.77511664059468321e-02, 3.64031957093882585e-01,  -1.51956009896253158e-01,
+    -1.30781688719692979e-01, 1.40134444080656562e-01,  5.60786571449403779e-03,  -6.44986132385584748e-02,
+    1.87924679144229438e-02,  1.91671466716092885e-02,  -1.13661256210334030e-02, -3.74395560480559296e-03,
+    3.84651785292284892e-03,  4.28341104036052773e-04,  -8.07875592590791974e-04, -1.91890722053818430e-05,
+    8.35723911323348051e-05};
+
+// beta: 34.938
+constexpr double sqrt_laplace_2d_potential_grad_12[] = {
+    2.20928059493365235e-03,  -2.43426875242211231e-02, 1.19761893706071723e-01,  -3.39856659040368825e-01,
+    5.88505140797872417e-01,  -5.62618110858054132e-01, 7.48570909907567972e-02,  5.22999143696575630e-01,
+    -5.95015655106605257e-01, 6.28415423705892401e-02,  4.10829665279586365e-01,  -3.12678103311007982e-01,
+    -7.88556227096840062e-02, 2.21754901069865118e-01,  -6.05635485305918708e-02, -8.38912139235251930e-02,
+    5.89552927275863239e-02,  1.58589038944522143e-02,  -2.78508907904069791e-02, 1.30941825171451503e-03,
+    8.91950669951599787e-03,  -1.86784537729052513e-03, -2.04171779144781936e-03, 5.57931216423200984e-04,
+    3.14659759362786421e-04,  -6.72204654220478630e-05, -2.50956269826985266e-05};
+
 template <class Real, int MaxVecLen>
 residual_evaluator_func<Real> get_sqrt_laplace_2d_kernel(dmk_eval_type eval_level, int n_digits) {
     constexpr int UF = unroll_factor;
-    if (n_digits <= 2) {
-        constexpr int ND = 2, NC_TOTAL = 5;
-        constexpr int NC0 = 5;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_2d_2, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
+    if (eval_level == DMK_POTENTIAL) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 4;
+            constexpr int NC0 = 4;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 8;
+            constexpr int NC0 = 8;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 11;
+            constexpr int NC0 = 11;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 13;
+            constexpr int NC0 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 14;
+            constexpr int NC0 = 14;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 17;
+            constexpr int NC0 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 19;
+            constexpr int NC0 = 19;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 24;
+            constexpr int NC0 = 24;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 26;
+            constexpr int NC0 = 26;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+    } else if (eval_level == DMK_POTENTIAL_GRAD) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_grad_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_grad_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 9;
+            constexpr int NC0 = 9;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_grad_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 11;
+            constexpr int NC0 = 11;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_grad_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 13;
+            constexpr int NC0 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_grad_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_grad_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 17;
+            constexpr int NC0 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_grad_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 20;
+            constexpr int NC0 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_grad_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_grad_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 25;
+            constexpr int NC0 = 25;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_grad_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 27;
+            constexpr int NC0 = 27;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_2d_potential_grad_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
     }
-    if (n_digits <= 3) {
-        constexpr int ND = 3, NC_TOTAL = 6;
-        constexpr int NC0 = 6;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_2d_3, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 4) {
-        constexpr int ND = 4, NC_TOTAL = 8;
-        constexpr int NC0 = 8;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_2d_4, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 5) {
-        constexpr int ND = 5, NC_TOTAL = 11;
-        constexpr int NC0 = 11;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_2d_5, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 6) {
-        constexpr int ND = 6, NC_TOTAL = 13;
-        constexpr int NC0 = 13;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_2d_6, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 7) {
-        constexpr int ND = 7, NC_TOTAL = 14;
-        constexpr int NC0 = 14;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_2d_7, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 8) {
-        constexpr int ND = 8, NC_TOTAL = 17;
-        constexpr int NC0 = 17;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_2d_8, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 9) {
-        constexpr int ND = 9, NC_TOTAL = 19;
-        constexpr int NC0 = 19;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_2d_9, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 10) {
-        constexpr int ND = 10, NC_TOTAL = 22;
-        constexpr int NC0 = 22;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_2d_10, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 11) {
-        constexpr int ND = 11, NC_TOTAL = 24;
-        constexpr int NC0 = 24;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_2d_11, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 12) {
-        constexpr int ND = 12, NC_TOTAL = 26;
-        constexpr int NC0 = 26;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_2d_12, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
 }
 // beta: 5.634
-constexpr double sqrt_laplace_3d_2[] = {1.70377350205786732e-01, -3.72069899729749132e-01, 2.99557895721420997e-01,
-                                        -1.27633186141294125e-01, 3.00319654889434559e-02};
+constexpr double sqrt_laplace_3d_potential_2[] = {1.66639685121228759e-01, -3.72953915884949028e-01,
+                                                  3.29557157561368219e-01, -1.26453601528666415e-01};
 
 // beta: 8.298
-constexpr double sqrt_laplace_3d_3[] = {7.91978589785346659e-02,  -2.45556231979947831e-01, 3.10542894094654409e-01,
-                                        -2.22210595880110412e-01, 1.10036966003753095e-01,  -3.21968345732795563e-02};
+constexpr double sqrt_laplace_3d_potential_3[] = {7.91978589785346659e-02, -2.45556231979947831e-01,
+                                                  3.10542894094654409e-01, -2.22210595880110412e-01,
+                                                  1.10036966003753095e-01, -3.21968345732795563e-02};
 
 // beta: 10.962
-constexpr double sqrt_laplace_3d_4[] = {3.63330830581356859e-02,  -1.46897108702979756e-01, 2.58172198445237366e-01,
-                                        -2.62483939309452519e-01, 1.73229141234193473e-01,  -8.23021132783420262e-02,
-                                        3.22518135742099893e-02,  -8.31453182523136762e-03};
+constexpr double sqrt_laplace_3d_potential_4[] = {
+    3.63330830581356859e-02, -1.46897108702979756e-01, 2.58172198445237366e-01, -2.62483939309452519e-01,
+    1.73229141234193473e-01, -8.23021132783420262e-02, 3.22518135742099893e-02, -8.31453182523136762e-03};
 
 // beta: 13.626000000000001
-constexpr double sqrt_laplace_3d_5[] = {1.66949912633374414e-02,  -8.31192981790163099e-02, 1.85061254218017307e-01,
-                                        -2.46112910600663870e-01, 2.20740470450016241e-01,  -1.42387037970086672e-01,
-                                        6.84079736524102477e-02,  -2.62021156736557785e-02, 9.09443088932886286e-03,
-                                        -2.17848788786685968e-03};
+constexpr double sqrt_laplace_3d_potential_5[] = {
+    1.66949912633374414e-02, -8.31192981790163099e-02, 1.85061254218017307e-01, -2.46112910600663870e-01,
+    2.20740470450016241e-01, -1.42387037970086672e-01, 6.84079736524102477e-02, -2.62021156736557785e-02,
+    9.09443088932886286e-03, -2.17848788786685968e-03};
 
 // beta: 16.29
-constexpr double sqrt_laplace_3d_6[] = {7.66135334798236003e-03,  -4.53460064600191559e-02, 1.22365952894679164e-01,
-                                        -2.00806900680655515e-01, 2.26148637790386020e-01,  -1.87250798075070168e-01,
-                                        1.17935909173898776e-01,  -5.71933009584770294e-02, 2.33877256550076192e-02,
-                                        -9.40241516580353140e-03, 2.50030721515872613e-03};
+constexpr double sqrt_laplace_3d_potential_6[] = {
+    7.66135334798236003e-03, -4.53460064600191559e-02, 1.22365952894679164e-01, -2.00806900680655515e-01,
+    2.26148637790386020e-01, -1.87250798075070168e-01, 1.17935909173898776e-01, -5.71933009584770294e-02,
+    2.33877256550076192e-02, -9.40241516580353140e-03, 2.50030721515872613e-03};
 
 // beta: 18.954
-constexpr double sqrt_laplace_3d_7[] = {3.51445342148692550e-03,  -2.41014381042033189e-02, 7.64127033167854852e-02,
-                                        -1.49397384737238348e-01, 2.02775460932299673e-01,  -2.04023245065494852e-01,
-                                        1.59015999180011691e-01,  -9.92026665073098696e-02, 5.01979960203051689e-02,
-                                        -2.05177759693448737e-02, 7.39125485298571579e-03,  -2.75745092701631771e-03,
-                                        6.92124748007945205e-04};
+constexpr double sqrt_laplace_3d_potential_7[] = {
+    3.51445342148692550e-03, -2.41014381042033189e-02, 7.64127033167854852e-02, -1.49397384737238348e-01,
+    2.02775460932299673e-01, -2.04023245065494852e-01, 1.59015999180011691e-01, -9.92026665073098696e-02,
+    5.01979960203051689e-02, -2.05177759693448737e-02, 7.39125485298571579e-03, -2.75745092701631771e-03,
+    6.92124748007945205e-04};
 
 // beta: 21.618000000000002
-constexpr double sqrt_laplace_3d_8[] = {1.61174988202417505e-03,  -1.25691348601554235e-02, 4.57741335802777718e-02,
-                                        -1.03820899225845559e-01, 1.65091545579915067e-01,  -1.96508862202331797e-01,
-                                        1.82562132481562472e-01,  -1.36304342704379799e-01, 8.37388361173495577e-02,
-                                        -4.32045966025541017e-02, 1.87936207937851492e-02,  -6.79699829910315398e-03,
-                                        2.23671051124683289e-03,  -7.95163500146314436e-04, 1.91270551293962389e-04};
+constexpr double sqrt_laplace_3d_potential_8[] = {
+    1.61174988202417505e-03, -1.25691348601554235e-02, 4.57741335802777718e-02, -1.03820899225845559e-01,
+    1.65091545579915067e-01, -1.96508862202331797e-01, 1.82562132481562472e-01, -1.36304342704379799e-01,
+    8.37388361173495577e-02, -4.32045966025541017e-02, 1.87936207937851492e-02, -6.79699829910315398e-03,
+    2.23671051124683289e-03, -7.95163500146314436e-04, 1.91270551293962389e-04};
 
 // beta: 24.282
-constexpr double sqrt_laplace_3d_9[] = {7.39035238548680241e-04,  -6.45859168795810852e-03, 2.65647508543220626e-02,
-                                        -6.85773817502468436e-02, 1.25051962795149518e-01,  -1.71923502217809804e-01,
-                                        1.85788609906626573e-01,  -1.62492820865026560e-01, 1.17529845523670379e-01,
-                                        -7.14785656307210387e-02, 3.71137792074310788e-02,  -1.66995500536824583e-02,
-                                        6.50031187391446764e-03,  -2.14254985626222919e-03, 6.58848022803448763e-04,
-                                        -2.27037761807801847e-04, 5.28565437249281289e-05};
+constexpr double sqrt_laplace_3d_potential_9[] = {
+    7.39035238548680241e-04, -6.45859168795810852e-03, 2.65647508543220626e-02, -6.85773817502468436e-02,
+    1.25051962795149518e-01, -1.71923502217809804e-01, 1.85788609906626573e-01, -1.62492820865026560e-01,
+    1.17529845523670379e-01, -7.14785656307210387e-02, 3.71137792074310788e-02, -1.66995500536824583e-02,
+    6.50031187391446764e-03, -2.14254985626222919e-03, 6.58848022803448763e-04, -2.27037761807801847e-04,
+    5.28565437249281289e-05};
 
 // beta: 26.946
-constexpr double sqrt_laplace_3d_10[] = {
+constexpr double sqrt_laplace_3d_potential_10[] = {
     3.38831131733497099e-04, -3.27997311310871797e-03, 1.50363692967013275e-02, -4.35303625170772729e-02,
     8.95567105551411946e-02, -1.39729373330694601e-01, 1.72326147835233229e-01, -1.72918552984859697e-01,
     1.44243970824506990e-01, -1.01717326789266413e-01, 6.14446173599117879e-02, -3.21363795722774820e-02,
@@ -697,7 +1340,7 @@ constexpr double sqrt_laplace_3d_10[] = {
     1.90651387895472024e-04, -6.44318883441207511e-05, 1.46171940583598262e-05};
 
 // beta: 29.610000000000003
-constexpr double sqrt_laplace_3d_11[] = {
+constexpr double sqrt_laplace_3d_potential_11[] = {
     1.55333911424860509e-04, -1.64987197832693901e-03, 8.34085475287905595e-03, -2.67623570882231550e-02,
     6.13251009959118812e-02, -1.07085208200108792e-01, 1.48499490336974321e-01, -1.68304846323130919e-01,
     1.59248455975876974e-01, -1.27893284668800983e-01, 8.83498267678457377e-02, -5.30497478285679933e-02,
@@ -705,7 +1348,7 @@ constexpr double sqrt_laplace_3d_11[] = {
     6.32850797393553870e-04, -1.95798117146164769e-04, 7.47197332259662988e-05, -1.80059869400571431e-05};
 
 // beta: 32.274
-constexpr double sqrt_laplace_3d_12[] = {
+constexpr double sqrt_laplace_3d_potential_12[] = {
     7.12071070677504559e-05, -8.23351155758915800e-04, 4.55031052690462248e-03, -1.60272607034530959e-02,
     4.04822113467893513e-02, -7.82342839479691771e-02, 1.20541888710177097e-01, -1.52373450954484124e-01,
     1.61393659233772108e-01, -1.45597045258188285e-01, 1.13336109429034798e-01, -7.69524387193569748e-02,
@@ -713,166 +1356,376 @@ constexpr double sqrt_laplace_3d_12[] = {
     1.89990326484568367e-03, -6.58700423507349868e-04, 1.93914528233811239e-04, -5.74185615178931822e-05,
     2.16076137692343146e-05, -5.07987035269845689e-06};
 
+// beta: 8.298
+constexpr double sqrt_laplace_3d_potential_grad_2[] = {7.89802449280127133e-02, -2.35548805368288455e-01,
+                                                       3.12290771164578929e-01, -2.62384446480394495e-01,
+                                                       1.08286760592471554e-01};
+
+// beta: 10.962
+constexpr double sqrt_laplace_3d_potential_grad_3[] = {
+    3.63465256804728146e-02, -1.47800804637158889e-01, 2.57929434677331482e-01, -2.55231585449419152e-01,
+    1.73877577113410425e-01, -9.68342397466479959e-02, 3.18190961551187076e-02};
+
+// beta: 13.626000000000001
+constexpr double sqrt_laplace_3d_potential_grad_4[] = {
+    1.66248040829861526e-02, -8.31024263431551918e-02, 1.87319272394801117e-01, -2.46654868841845704e-01,
+    2.09414076865696963e-01, -1.39671040645203914e-01, 8.65690428758947722e-02, -3.05543460542532543e-02};
+
+// beta: 16.29
+constexpr double sqrt_laplace_3d_potential_grad_5[] = {
+    7.66618091725305983e-03, -4.53409654336876244e-02, 1.22123574420764533e-01, -2.00874295372418882e-01,
+    2.28093026474940813e-01, -1.87007741371277458e-01, 1.12480865898401269e-01, -5.75177924237513655e-02,
+    2.96312983665110719e-02, -9.25805793874532462e-03};
+
+// beta: 18.954
+constexpr double sqrt_laplace_3d_potential_grad_6[] = {
+    3.51411915768513059e-03, -2.41018499635920619e-02, 7.64368509877199342e-02, -1.49389128215570516e-01,
+    2.02493062783261568e-01, -2.04069559160185682e-01, 1.60223065432488515e-01, -9.90966724640134217e-02,
+    4.78668243735029114e-02, -2.06238738074232125e-02, 9.46572804722171923e-03, -2.71883966701338530e-03};
+
+// beta: 21.618000000000002
+constexpr double sqrt_laplace_3d_potential_grad_7[] = {
+    1.61177298443002017e-03, -1.25691020855052578e-02, 4.57718631850524763e-02, -1.03821818817198458e-01,
+    1.65127948518738105e-01, -1.96501494031810109e-01, 1.82343356300377568e-01, -1.36329635572047692e-01,
+    8.43647321968289399e-02, -4.31624010018129695e-02, 1.78746527212965932e-02, -6.83078153118692796e-03,
+    2.90564999275443221e-03, -7.84761793558288773e-04};
+
+// beta: 24.282
+constexpr double sqrt_laplace_3d_potential_grad_8[] = {
+    7.39033642042871610e-04, -6.45859424927859322e-03, 2.65649557005325464e-02, -6.85772859508420596e-02,
+    1.25047652937917975e-01, -1.71924538341297561e-01, 1.85823140655049124e-01, -1.62487881255399091e-01,
+    1.17394021879029434e-01, -7.14906516267174857e-02, 3.74038339303499473e-02, -1.66837159401374106e-02,
+    6.15722191278053436e-03, -2.15311295991707161e-03, 8.70137678650751475e-04, -2.24219326420912465e-04};
+
+// beta: 26.946
+constexpr double sqrt_laplace_3d_potential_grad_9[] = {
+    3.38831242132142457e-04, -3.27997291554629061e-03, 1.50363513740574793e-02, -4.35303720156173940e-02,
+    8.95571893026800431e-02, -1.39729240174482183e-01, 1.72321225871979483e-01, -1.72919390879598678e-01,
+    1.44269313069592620e-01, -1.01714531265053490e-01, 6.13713347175685112e-02, -3.21416697275711469e-02,
+    1.48385076588159973e-02, -5.96441161908862170e-03, 2.01085485529744513e-03, -6.56746815795308412e-04,
+    2.56391792932196268e-04, -6.36645634260495687e-05};
+
+// beta: 29.610000000000003
+constexpr double sqrt_laplace_3d_potential_grad_10[] = {
+    1.55333919067746182e-04, -1.64987326987062091e-03, 8.34085351224265158e-03, -2.67622794341940487e-02,
+    6.13251341340559294e-02, -1.07086577238952388e-01, 1.48499149658078117e-01, -1.68293878461220098e-01,
+    1.59250210019094729e-01, -1.27940869196930457e-01, 8.83447546793649785e-02, -5.29284987367465223e-02,
+    2.79263955855996865e-02, -1.32069350247974778e-02, 5.44705972349908158e-03, -1.84981446224861848e-03,
+    6.37400657471720502e-04, -2.81274103918515100e-04, 7.37080957784227699e-05};
+
+// beta: 32.274
+constexpr double sqrt_laplace_3d_potential_grad_11[] = {
+    7.12071065392950162e-05, -8.23351055056525038e-04, 4.55031063294344690e-03, -1.60272681020447241e-02,
+    4.04822078407657063e-02, -7.82341238911463399e-02, 1.20541933653337791e-01, -1.52375038350935438e-01,
+    1.61393366754883083e-01, -1.45588393087316637e-01, 1.13337202434098075e-01, -7.69807824083283826e-02,
+    4.59899554795469220e-02, -2.43143351992718450e-02, 1.15202461534616631e-02, -4.97387178229021388e-03,
+    1.89692675078037489e-03, -5.98762592574507229e-04, 1.95316012461516639e-04, -8.40735260247666794e-05,
+    2.13271800906585903e-05};
+
+// beta: 34.938
+constexpr double sqrt_laplace_3d_potential_grad_12[] = {
+    3.26407909116977195e-05, -4.08145985541612136e-04, 2.44792175171207544e-03, -9.39005809659832630e-03,
+    2.59200788238149321e-02, -5.49311212173696634e-02, 9.31240300068331972e-02, -1.29941437790310949e-01,
+    1.52407611196136827e-01, -1.52713682132779471e-01, 1.32423321989069809e-01, -1.00427435108102869e-01,
+    6.72145604078629999e-02, -4.00128282102433439e-02, 2.13056327980733033e-02, -1.01876201105600139e-02,
+    4.42471732486051685e-03, -1.77466182611472271e-03, 6.34675393337830423e-04, -1.88153609942894761e-04,
+    5.86737114223496252e-05, -2.48559120845308420e-05, 6.13580588784667597e-06};
+
 template <class Real, int MaxVecLen>
 residual_evaluator_func<Real> get_sqrt_laplace_3d_kernel(dmk_eval_type eval_level, int n_digits) {
     constexpr int UF = unroll_factor;
-    if (n_digits <= 2) {
-        constexpr int ND = 2, NC_TOTAL = 5;
-        constexpr int NC0 = 5;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_3d_2, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
+    if (eval_level == DMK_POTENTIAL) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 4;
+            constexpr int NC0 = 4;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 8;
+            constexpr int NC0 = 8;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 10;
+            constexpr int NC0 = 10;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 11;
+            constexpr int NC0 = 11;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 13;
+            constexpr int NC0 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 15;
+            constexpr int NC0 = 15;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 17;
+            constexpr int NC0 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 19;
+            constexpr int NC0 = 19;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 20;
+            constexpr int NC0 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+    } else if (eval_level == DMK_POTENTIAL_GRAD) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_grad_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 7;
+            constexpr int NC0 = 7;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_grad_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 8;
+            constexpr int NC0 = 8;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_grad_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 10;
+            constexpr int NC0 = 10;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_grad_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 12;
+            constexpr int NC0 = 12;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_grad_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 14;
+            constexpr int NC0 = 14;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_grad_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_grad_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 18;
+            constexpr int NC0 = 18;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_grad_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 19;
+            constexpr int NC0 = 19;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_grad_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 21;
+            constexpr int NC0 = 21;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_grad_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 23;
+            constexpr int NC0 = 23;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(sqrt_laplace_3d_potential_grad_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
     }
-    if (n_digits <= 3) {
-        constexpr int ND = 3, NC_TOTAL = 6;
-        constexpr int NC0 = 6;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_3d_3, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 4) {
-        constexpr int ND = 4, NC_TOTAL = 8;
-        constexpr int NC0 = 8;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_3d_4, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 5) {
-        constexpr int ND = 5, NC_TOTAL = 10;
-        constexpr int NC0 = 10;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_3d_5, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 6) {
-        constexpr int ND = 6, NC_TOTAL = 11;
-        constexpr int NC0 = 11;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_3d_6, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 7) {
-        constexpr int ND = 7, NC_TOTAL = 13;
-        constexpr int NC0 = 13;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_3d_7, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 8) {
-        constexpr int ND = 8, NC_TOTAL = 15;
-        constexpr int NC0 = 15;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_3d_8, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 9) {
-        constexpr int ND = 9, NC_TOTAL = 17;
-        constexpr int NC0 = 17;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_3d_9, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 10) {
-        constexpr int ND = 10, NC_TOTAL = 19;
-        constexpr int NC0 = 19;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_3d_10, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 11) {
-        constexpr int ND = 11, NC_TOTAL = 20;
-        constexpr int NC0 = 20;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_3d_11, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 12) {
-        constexpr int ND = 12, NC_TOTAL = 22;
-        constexpr int NC0 = 22;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(sqrt_laplace_3d_12, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                     coeffs.data(), n_src, r_src, charge, normals,
-                                                                     n_trg, r_trg, pot, UF);
-        };
-    }
-    throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
 }
 // beta: 7.330382858376184
-constexpr double stokeslet_3d_2[] = {6.46585315157422791e-01, 6.93259814445607997e-02, -5.09262308622825510e-01,
-                                     1.88917224393363864e-01, 1.16314532713259866e-01, 1.92450020623884527e-01,
-                                     3.93968150690583441e-01, 9.30611345914341137e-02, -1.50577677973807056e-01,
-                                     -3.84254298021486571e-02};
+constexpr double stokeslet_3d_velocity_2[] = {
+    6.46585315157422791e-01,  6.93259814445607997e-02, -5.09262308622825510e-01, 1.88917224393363864e-01,
+    1.16314532713259866e-01,  1.92450020623884527e-01, 3.93968150690583441e-01,  9.30611345914341137e-02,
+    -1.50577677973807056e-01, -3.84254298021486571e-02};
 
 // beta: 10.471975511965976
-constexpr double stokeslet_3d_3[] = {6.30612792618083673e-01, -1.36708458383978965e-01, -3.85338779412424559e-01,
-                                     6.38618135509286144e-01, -5.08648323578271000e-02, -3.13942931549626381e-01,
-                                     5.60047738045148166e-02, 6.23373861780524077e-02,  2.76083114071107028e-01,
-                                     4.86318837484639388e-01, -1.10469228153752777e-01, -3.63055363572730549e-01,
-                                     1.47227241587711416e-01, 1.27075228997353851e-01,  -6.34230033498545259e-02};
+constexpr double stokeslet_3d_velocity_3[] = {
+    6.30612792618083673e-01,  -1.36708458383978965e-01, -3.85338779412424559e-01, 6.38618135509286144e-01,
+    -5.08648323578271000e-02, -3.13942931549626381e-01, 5.60047738045148166e-02,  6.23373861780524077e-02,
+    2.76083114071107028e-01,  4.86318837484639388e-01,  -1.10469228153752777e-01, -3.63055363572730549e-01,
+    1.47227241587711416e-01,  1.27075228997353851e-01,  -6.34230033498545259e-02};
 
 // beta: 12.566370614359172
-constexpr double stokeslet_3d_4[] = {6.13322712563699524e-01,  -2.01624449424386259e-01, -2.32028937577098165e-01,
-                                     7.33489288721090538e-01,  -3.41614690994520409e-01, -3.40697161970044682e-01,
-                                     2.82858368657883441e-01,  5.88843656364278351e-02,  -7.25749410873288425e-02,
-                                     3.20404625789169006e-01,  4.94697950288248867e-01,  -2.62762686356410535e-01,
-                                     -3.95091641581537645e-01, 3.70450623134320811e-01,  1.80520908709162126e-01,
-                                     -2.37050902180235334e-01, -3.01628507782872521e-02, 5.89832284801799153e-02};
+constexpr double stokeslet_3d_velocity_4[] = {
+    6.13322712563699524e-01,  -2.01624449424386259e-01, -2.32028937577098165e-01, 7.33489288721090538e-01,
+    -3.41614690994520409e-01, -3.40697161970044682e-01, 2.82858368657883441e-01,  5.88843656364278351e-02,
+    -7.25749410873288425e-02, 3.20404625789169006e-01,  4.94697950288248867e-01,  -2.62762686356410535e-01,
+    -3.95091641581537645e-01, 3.70450623134320811e-01,  1.80520908709162126e-01,  -2.37050902180235334e-01,
+    -3.01628507782872521e-02, 5.89832284801799153e-02};
 
 // beta: 14.660765716752367
-constexpr double stokeslet_3d_5[] = {
+constexpr double stokeslet_3d_velocity_5[] = {
     5.95783858991115300e-01,  -2.36849928844740071e-01, -7.93562580941886281e-02, 7.35496554120976476e-01,
     -6.24887588939058491e-01, -2.35281438621003508e-01, 5.18657166951863924e-01,  -5.85376380256098852e-02,
     -1.92326168215607107e-01, 5.85428031993767070e-02,  3.21355975950695302e-02,  -1.33682388210643131e-02,
@@ -881,7 +1734,7 @@ constexpr double stokeslet_3d_5[] = {
     1.47515595677268935e-01,  -5.79474650443776509e-02, -2.47426728899774635e-02, 1.23532123785838124e-02};
 
 // beta: 17.80235837034216
-constexpr double stokeslet_3d_6[] = {
+constexpr double stokeslet_3d_velocity_6[] = {
     5.71933051025435568e-01,  -2.49670071898085100e-01, 1.20807779553928601e-01,  5.95125218488698815e-01,
     -9.59639779065700083e-01, 1.53560150750471830e-01,  7.23864152195165200e-01,  -4.53671835002142698e-01,
     -2.41193372969342346e-01, 2.83029087887763486e-01,  3.45180166978954345e-02,  -9.27224590589868364e-02,
@@ -891,7 +1744,7 @@ constexpr double stokeslet_3d_6[] = {
     -1.50327518871403998e-02, 7.89261796847458286e-02,  -1.75110279061032399e-03, -1.21752851116402744e-02};
 
 // beta: 19.896753472735355
-constexpr double stokeslet_3d_7[] = {
+constexpr double stokeslet_3d_velocity_7[] = {
     5.58512243628603522e-01,  -2.41051503205823386e-01, 2.22692165315985763e-01,  4.41842844235874277e-01,
     -1.08056569967768956e+00, 5.01728896805155311e-01,  6.87088250052929839e-01,  -7.88916402022912133e-01,
     -8.36085000570491316e-02, 4.68362553167833651e-01,  -1.07962888225136153e-01, -1.63607017039422986e-01,
@@ -903,7 +1756,7 @@ constexpr double stokeslet_3d_7[] = {
     3.19704001075809228e-03};
 
 // beta: 23.03834612632515
-constexpr double stokeslet_3d_8[] = {
+constexpr double stokeslet_3d_velocity_8[] = {
     5.42230542476679900e-01,  -2.14426416711980677e-01, 3.24429677377300496e-01,  1.78887957732040553e-01,
     -1.09289867077762270e+00, 1.03082696965571818e+00,  3.53871504802021286e-01,  -1.21890239950962176e+00,
     4.24158769029330751e-01,  6.11447333411187288e-01,  -4.90727138209865521e-01, -1.44960503923408812e-01,
@@ -916,7 +1769,7 @@ constexpr double stokeslet_3d_8[] = {
     2.18439655090139255e-03,  1.86634567606520354e-03};
 
 // beta: 25.132741228718345
-constexpr double stokeslet_3d_9[] = {
+constexpr double stokeslet_3d_velocity_9[] = {
     5.33698283751446567e-01,  -1.92380984266390248e-01, 3.61384475102725700e-01,  7.22520928906478406e-03,
     -1.00010058473076291e+00, 1.32345496248184080e+00,  -2.90834316780071815e-02, -1.35734798427252779e+00,
     9.08637418257487228e-01,  5.12646657379677628e-01,  -8.21270749724975269e-01, 3.37054482921715567e-02,
@@ -930,7 +1783,7 @@ constexpr double stokeslet_3d_9[] = {
     -2.25701734594689141e-03, -1.13266251275299690e-04};
 
 // beta: 28.274333882308134
-constexpr double stokeslet_3d_10[] = {
+constexpr double stokeslet_3d_velocity_10[] = {
     5.23793769586208158e-01,  -1.58194219538990544e-01, 3.80058387544242038e-01,  -2.16260140622226676e-01,
     -7.52246076747023817e-01, 1.59999023666816376e+00,  -7.38783361420466189e-01, -1.23405004983160982e+00,
     1.68296814328509647e+00,  -2.84036481569071610e-02, -1.23457923194330421e+00, 6.05288163707055182e-01,
@@ -945,7 +1798,7 @@ constexpr double stokeslet_3d_10[] = {
     1.23899764957655523e-03,  -7.36070373105735128e-04};
 
 // beta: 30.36872898470133
-constexpr double stokeslet_3d_11[] = {
+constexpr double stokeslet_3d_velocity_11[] = {
     5.18770739328228037e-01,  -1.36486154038013480e-01, 3.74096186013782250e-01,  -3.34016934108132546e-01,
     -5.43627016719355316e-01, 1.65898965114324914e+00,  -1.22746345346421504e+00, -9.16802225049482056e-01,
     2.10773372845021356e+00,  -6.44033018621028908e-01, -1.31418882592423691e+00, 1.15466707729020723e+00,
@@ -961,7 +1814,7 @@ constexpr double stokeslet_3d_11[] = {
     -7.66084889211131823e-06, 4.54322437591712491e-04};
 
 // beta: 33.510321638291124
-constexpr double stokeslet_3d_12[] = {
+constexpr double stokeslet_3d_velocity_12[] = {
     5.13071805589289998e-01,  -1.07201910095512706e-01, 3.47069140423970746e-01,  -4.59620111795896014e-01,
     -2.11497356248989188e-01, 1.56679431364261190e+00,  -1.86698431835799372e+00, -1.44882284775543130e-01,
     2.42060746975680585e+00,  -1.81155562721736962e+00, -9.38637249545207220e-01, 2.02714777949378799e+00,
@@ -980,175 +1833,177 @@ constexpr double stokeslet_3d_12[] = {
 template <class Real, int MaxVecLen>
 residual_evaluator_func<Real> get_stokeslet_3d_kernel(dmk_eval_type eval_level, int n_digits) {
     constexpr int UF = unroll_factor;
-    if (n_digits <= 2) {
-        constexpr int ND = 2, NC_TOTAL = 10;
-        constexpr int NC0 = 5;
-        constexpr int NC1 = 5;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stokeslet_3d_2, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
+    if (eval_level == DMK_VELOCITY) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 10;
+            constexpr int NC0 = 5;
+            constexpr int NC1 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stokeslet_3d_velocity_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 15;
+            constexpr int NC0 = 8;
+            constexpr int NC1 = 7;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stokeslet_3d_velocity_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 18;
+            constexpr int NC0 = 9;
+            constexpr int NC1 = 9;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stokeslet_3d_velocity_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 24;
+            constexpr int NC0 = 12;
+            constexpr int NC1 = 12;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stokeslet_3d_velocity_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 28;
+            constexpr int NC0 = 14;
+            constexpr int NC1 = 14;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stokeslet_3d_velocity_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 33;
+            constexpr int NC0 = 17;
+            constexpr int NC1 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stokeslet_3d_velocity_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 38;
+            constexpr int NC0 = 19;
+            constexpr int NC1 = 19;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stokeslet_3d_velocity_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 42;
+            constexpr int NC0 = 21;
+            constexpr int NC1 = 21;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stokeslet_3d_velocity_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 46;
+            constexpr int NC0 = 23;
+            constexpr int NC1 = 23;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stokeslet_3d_velocity_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 50;
+            constexpr int NC0 = 25;
+            constexpr int NC1 = 25;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stokeslet_3d_velocity_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 56;
+            constexpr int NC0 = 28;
+            constexpr int NC1 = 28;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stokeslet_3d_velocity_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
     }
-    if (n_digits <= 3) {
-        constexpr int ND = 3, NC_TOTAL = 15;
-        constexpr int NC0 = 8;
-        constexpr int NC1 = 7;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stokeslet_3d_3, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 4) {
-        constexpr int ND = 4, NC_TOTAL = 18;
-        constexpr int NC0 = 9;
-        constexpr int NC1 = 9;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stokeslet_3d_4, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 5) {
-        constexpr int ND = 5, NC_TOTAL = 24;
-        constexpr int NC0 = 12;
-        constexpr int NC1 = 12;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stokeslet_3d_5, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 6) {
-        constexpr int ND = 6, NC_TOTAL = 28;
-        constexpr int NC0 = 14;
-        constexpr int NC1 = 14;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stokeslet_3d_6, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 7) {
-        constexpr int ND = 7, NC_TOTAL = 33;
-        constexpr int NC0 = 17;
-        constexpr int NC1 = 16;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stokeslet_3d_7, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 8) {
-        constexpr int ND = 8, NC_TOTAL = 38;
-        constexpr int NC0 = 19;
-        constexpr int NC1 = 19;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stokeslet_3d_8, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 9) {
-        constexpr int ND = 9, NC_TOTAL = 42;
-        constexpr int NC0 = 21;
-        constexpr int NC1 = 21;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stokeslet_3d_9, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 10) {
-        constexpr int ND = 10, NC_TOTAL = 46;
-        constexpr int NC0 = 23;
-        constexpr int NC1 = 23;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stokeslet_3d_10, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 11) {
-        constexpr int ND = 11, NC_TOTAL = 50;
-        constexpr int NC0 = 25;
-        constexpr int NC1 = 25;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stokeslet_3d_11, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
-    }
-    if (n_digits <= 12) {
-        constexpr int ND = 12, NC_TOTAL = 56;
-        constexpr int NC0 = 28;
-        constexpr int NC1 = 28;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stokeslet_3d_12, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
-    }
-    throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
 }
 // beta: 7.330382858376184
-constexpr double stresslet_3d_2[] = {-4.16204699764625152e-01, -6.04264155268749770e-01, 5.28850164523664179e-01,
-                                     8.78755988128362420e-01,  -1.94947076077764236e-01, -3.57648685485067008e-01,
-                                     -4.47344763353390240e-01, 2.31628621076223840e-01,  2.77407251192390181e-01,
-                                     -9.07859118406483499e-03, -1.11338845618492499e-01};
+constexpr double stresslet_3d_velocity_2[] = {
+    -4.16204699764625152e-01, -6.04264155268749770e-01, 5.28850164523664179e-01,  8.78755988128362420e-01,
+    -1.94947076077764236e-01, -3.57648685485067008e-01, -4.47344763353390240e-01, 2.31628621076223840e-01,
+    2.77407251192390181e-01,  -9.07859118406483499e-03, -1.11338845618492499e-01};
 
 // beta: 10.471975511965976
-constexpr double stresslet_3d_3[] = {
+constexpr double stresslet_3d_velocity_3[] = {
     -4.91085066317952901e-01, -2.63643632895059932e-01, 1.43102610884093107e+00, 5.10726003944930507e-01,
     -1.71281297968425927e+00, -3.23687472789660313e-01, 1.00829054938074325e+00, 6.64915302855536849e-02,
     -2.45793704540756164e-01, -3.87611908034877217e-01, 4.00897592487451937e-01, 3.57133903678194031e-01,
     -2.12354254586355873e-01, -3.50275910258909196e-01, 5.80858202313804806e-02, 1.27911306999798108e-01};
 
 // beta: 12.566370614359172
-constexpr double stresslet_3d_4[] = {-4.94652564695905295e-01, 3.14907038059517794e-02,  1.70965189099022097e+00,
-                                     -3.19739199343181013e-01, -2.39495733527934096e+00, 6.53526817811645344e-01,
-                                     1.73480077540123223e+00,  -5.05105423696310618e-01, -6.81313899424385139e-01,
-                                     1.37630018908988794e-01,  1.24252704444913875e-01,  -3.44427522740028969e-01,
-                                     5.05327544180735444e-01,  3.03979560806886373e-01,  -5.03481715340017177e-01,
-                                     -3.99966918518655346e-01, 4.04972580464559861e-01,  2.57682772126790083e-01,
-                                     -2.07428094140584940e-01, -6.80894951116618186e-02, 4.98581000380637351e-02};
+constexpr double stresslet_3d_velocity_4[] = {
+    -4.94652564695905295e-01, 3.14907038059517794e-02, 1.70965189099022097e+00,  -3.19739199343181013e-01,
+    -2.39495733527934096e+00, 6.53526817811645344e-01, 1.73480077540123223e+00,  -5.05105423696310618e-01,
+    -6.81313899424385139e-01, 1.37630018908988794e-01, 1.24252704444913875e-01,  -3.44427522740028969e-01,
+    5.05327544180735444e-01,  3.03979560806886373e-01, -5.03481715340017177e-01, -3.99966918518655346e-01,
+    4.04972580464559861e-01,  2.57682772126790083e-01, -2.07428094140584940e-01, -6.80894951116618186e-02,
+    4.98581000380637351e-02};
 
 // beta: 14.660765716752367
-constexpr double stresslet_3d_5[] = {
+constexpr double stresslet_3d_velocity_5[] = {
     -4.75726589328531790e-01, 3.17476851067920063e-01,  1.73033622662750086e+00,  -1.35203187055482266e+00,
     -2.47847728478193252e+00, 2.28489823291960947e+00,  1.77825622068339317e+00,  -2.01385151358343162e+00,
     -6.84467760478567500e-01, 1.03449473009329984e+00,  1.42836510776023023e-01,  -3.19965818347235698e-01,
@@ -1158,7 +2013,7 @@ constexpr double stresslet_3d_5[] = {
     9.69159003023067900e-03,  -4.55502617992340694e-02};
 
 // beta: 17.80235837034216
-constexpr double stresslet_3d_6[] = {
+constexpr double stresslet_3d_velocity_6[] = {
     -4.22400502219173524e-01, 6.63949529304095343e-01, 1.36293721985524741e+00,  -2.73839396088193565e+00,
     -1.35428797526978406e+00, 4.60707897515222786e+00, -7.74176457858334749e-02, -4.15653680038142692e+00,
     1.11845008070391883e+00,  2.26603946446304683e+00, -9.30723076618889977e-01, -8.05488463845373648e-01,
@@ -1169,7 +2024,7 @@ constexpr double stresslet_3d_6[] = {
     1.16637785671195621e-01,  2.25424710055287837e-02, -1.97424007195010597e-02};
 
 // beta: 19.896753472735355
-constexpr double stresslet_3d_7[] = {
+constexpr double stresslet_3d_velocity_7[] = {
     -3.78954773558962399e-01, 8.24338608929578442e-01,  9.46571008448101603e-01,  -3.35297182133979099e+00,
     4.10522667803363064e-02,  5.50144778840421189e+00,  -2.48117744216424407e+00, -4.70618173928989858e+00,
     3.61269363151551337e+00,  2.26596358883996540e+00,  -2.64944769868514030e+00, -5.87896524900204276e-01,
@@ -1181,7 +2036,7 @@ constexpr double stresslet_3d_7[] = {
     -9.42046342723299179e-02, 2.74306457432451105e-03,  1.31214443479037591e-02};
 
 // beta: 23.03834612632515
-constexpr double stresslet_3d_8[] = {
+constexpr double stresslet_3d_velocity_8[] = {
     -3.11817968514464638e-01, 9.60677369806450909e-01,  2.24858517978243133e-01,  -3.66459898705409026e+00,
     2.52930858862507035e+00,  5.21697240148801988e+00,  -6.77059961594726456e+00, -2.93892464075596305e+00,
     7.96138367556943294e+00,  -4.89596966057200156e-01, -5.48554753030222209e+00, 1.82132067670353259e+00,
@@ -1195,7 +2050,7 @@ constexpr double stresslet_3d_8[] = {
     5.84701376616699083e-03};
 
 // beta: 25.132741228718345
-constexpr double stresslet_3d_9[] = {
+constexpr double stresslet_3d_velocity_9[] = {
     -2.69206248562092854e-01, 9.91975211769262177e-01,  -2.47527668722514027e-01, -3.48304819226536866e+00,
     4.11045062969357389e+00,  3.90231158566534653e+00,  -9.28160284286009762e+00, 1.40007394293998028e-01,
     1.00586729557474293e+01,  -4.43121543242281124e+00, -6.25159365157605329e+00, 5.06721045758107724e+00,
@@ -1210,7 +2065,7 @@ constexpr double stresslet_3d_9[] = {
     -2.74841928170661658e-03};
 
 // beta: 28.274333882308134
-constexpr double stresslet_3d_10[] = {
+constexpr double stresslet_3d_velocity_10[] = {
     -2.11678730168907786e-01, 9.71795506848312618e-01,  -8.60458807648499802e-01, -2.76019369279560589e+00,
     5.92226293768438961e+00,  6.39558598644854093e-01,  -1.13321770208724963e+01, 6.82130895051047847e+00,
     1.00034720014280758e+01,  -1.23339095716308762e+01, -3.42223833187025095e+00, 1.10483657383432252e+01,
@@ -1226,7 +2081,7 @@ constexpr double stresslet_3d_10[] = {
     -1.75673811722793795e-04, -1.34844526177238066e-03};
 
 // beta: 30.36872898470133
-constexpr double stresslet_3d_11[] = {
+constexpr double stresslet_3d_velocity_11[] = {
     -1.78351138746256188e-01, 9.26543511098677275e-01,  -1.18040197688064286e+00, -2.08077648351970401e+00,
     6.61293898416919923e+00,  -2.01050132330106957e+00, -1.11518150072339886e+01, 1.17513791058806767e+01,
     7.14765691091395627e+00,  -1.74780327503378707e+01, 1.88577046211033084e+00,  1.40629477272611414e+01,
@@ -1243,7 +2098,7 @@ constexpr double stresslet_3d_11[] = {
     -4.84579177235908067e-03, 1.09355299532316115e-03,  4.10765206007309357e-04};
 
 // beta: 33.510321638291124
-constexpr double stresslet_3d_12[] = {
+constexpr double stresslet_3d_velocity_12[] = {
     -1.36068382632040019e-01, 8.30206663514010845e-01,  -1.51492871813114438e+00, -9.38161731679668320e-01,
     6.81371900885790716e+00,  -5.98886386329479059e+00, -8.47250818086918578e+00, 1.80974147359075346e+01,
     -1.27353252176920551e+00, -2.20361156131437212e+01, 1.43959718912688448e+01,  1.35219326406985303e+01,
@@ -1263,150 +2118,6500 @@ constexpr double stresslet_3d_12[] = {
 template <class Real, int MaxVecLen>
 residual_evaluator_func<Real> get_stresslet_3d_kernel(dmk_eval_type eval_level, int n_digits) {
     constexpr int UF = unroll_factor;
-    if (n_digits <= 2) {
-        constexpr int ND = 2, NC_TOTAL = 11;
-        constexpr int NC0 = 6;
-        constexpr int NC1 = 5;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stresslet_3d_2, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
+    if (eval_level == DMK_VELOCITY) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 11;
+            constexpr int NC0 = 6;
+            constexpr int NC1 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stresslet_3d_velocity_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 16;
+            constexpr int NC0 = 9;
+            constexpr int NC1 = 7;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stresslet_3d_velocity_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 21;
+            constexpr int NC0 = 11;
+            constexpr int NC1 = 10;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stresslet_3d_velocity_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 26;
+            constexpr int NC0 = 14;
+            constexpr int NC1 = 12;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stresslet_3d_velocity_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 31;
+            constexpr int NC0 = 16;
+            constexpr int NC1 = 15;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stresslet_3d_velocity_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 35;
+            constexpr int NC0 = 18;
+            constexpr int NC1 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stresslet_3d_velocity_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 41;
+            constexpr int NC0 = 21;
+            constexpr int NC1 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stresslet_3d_velocity_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 45;
+            constexpr int NC0 = 23;
+            constexpr int NC1 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stresslet_3d_velocity_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 50;
+            constexpr int NC0 = 25;
+            constexpr int NC1 = 25;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stresslet_3d_velocity_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 55;
+            constexpr int NC0 = 28;
+            constexpr int NC1 = 27;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stresslet_3d_velocity_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 60;
+            constexpr int NC0 = 30;
+            constexpr int NC1 = 30;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(stresslet_3d_velocity_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
     }
-    if (n_digits <= 3) {
-        constexpr int ND = 3, NC_TOTAL = 16;
-        constexpr int NC0 = 9;
-        constexpr int NC1 = 7;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stresslet_3d_3, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
+}
+// beta: 8.298
+constexpr double laplace_dipole_3d_potential_2[] = {1.35373393795720692e-01, -4.36907496688934471e-01,
+                                                    4.49104115534396831e-01, -6.54190101699606286e-02,
+                                                    -8.50658566475083061e-02};
+
+// beta: 10.962
+constexpr double laplace_dipole_3d_potential_3[] = {8.60612156248130727e-02,  -3.40111927203895936e-01,
+                                                    4.97659587015112592e-01,  -2.50082439360021058e-01,
+                                                    -8.37086507244033384e-02, 9.08624864724610626e-02};
+
+// beta: 13.626000000000001
+constexpr double laplace_dipole_3d_potential_4[] = {
+    5.58390435893020218e-02,  -2.64717167590847735e-01, 4.87559575065030892e-01,
+    -3.83241492306865494e-01, 8.96132752589977148e-03,  1.79344646567271587e-01,
+    -7.28417849593808592e-02, -3.14007565336095265e-02, 2.05017147121834692e-02};
+
+// beta: 16.29
+constexpr double laplace_dipole_3d_potential_5[] = {
+    3.65651153834012990e-02, -2.02336522120227985e-01, 4.50703044165623401e-01,  -4.71988793396330319e-01,
+    1.30713175727858899e-01, 2.01028804034472791e-01,  -1.73501647366733819e-01, -2.40526631146708372e-02,
+    6.67882926557134132e-02, -2.65352836539563090e-03, -1.12698283550172283e-02};
+
+// beta: 18.954
+constexpr double laplace_dipole_3d_potential_6[] = {
+    2.41435365819562368e-02, -1.52718808764497921e-01, 3.98897944342020083e-01,  -5.19356388662591928e-01,
+    2.61731244800182006e-01, 1.55627597162875442e-01,  -2.66978590303516672e-01, 5.19699102108855393e-02,
+    9.97763197131621704e-02, -4.56454000595140560e-02, -1.90998195412067882e-02, 1.01237641756432902e-02,
+    1.52931819491995431e-03};
+
+// beta: 21.618000000000002
+constexpr double laplace_dipole_3d_potential_7[] = {
+    1.60439680211329795e-02,  -1.14126099610511914e-01, 3.41984271196447198e-01,  -5.32521756854699824e-01,
+    3.82908730215659632e-01,  6.19079603329049238e-02,  -3.28690650132687112e-01, 1.72357352569426858e-01,
+    9.15769080873981428e-02,  -1.23584312439697891e-01, 3.41197217941373396e-03,  4.46349951564157174e-02,
+    -9.27357818320668700e-03, -9.75130738557921685e-03, 2.03839781997119636e-03,  1.08317173001665928e-03};
+
+// beta: 24.282
+constexpr double laplace_dipole_3d_potential_8[] = {
+    1.07159462374928523e-02,  -8.46341793364562833e-02, 2.86172289845876782e-01,  -5.18873461702700878e-01,
+    4.81157708128312989e-01,  -6.26959661442080818e-02, -3.41881484578489769e-01, 3.02447220896404911e-01,
+    2.83287777506400426e-02,  -1.85181087225704200e-01, 6.73483269472894552e-02,  5.81198065641782002e-02,
+    -4.33665484079018421e-02, -9.86037397693287181e-03, 1.34367184014683710e-02,  6.78038463523805333e-04,
+    -1.91174021845368926e-03};
+
+// beta: 26.946
+constexpr double laplace_dipole_3d_potential_9[] = {
+    7.18708246440367265e-03,  -6.23865649137638756e-02, 2.34945437005272401e-01,  -4.86161760244670338e-01,
+    5.50173433125147771e-01,  -2.02352457277721304e-01, -3.00912710492949653e-01, 4.23092619570351436e-01,
+    -8.84613031406586287e-02, -2.14495407348589684e-01, 1.62267009118026828e-01,  3.59486417552733750e-02,
+    -8.86671064485698157e-02, 1.50553796593915507e-02,  2.86417091603183814e-02,  -1.18732171211611646e-02,
+    -5.75137033229802461e-03, 3.67017900763767562e-03,  5.77819645270764371e-04,  -4.97413300023614720e-04};
+
+// beta: 29.610000000000003
+constexpr double laplace_dipole_3d_potential_10[] = {
+    4.83699364701164342e-03,  -4.57629949453203164e-02, 1.89944146189103547e-01,  -4.41694815805404428e-01,
+    5.88938361753583606e-01,  -3.40295594190500927e-01, -2.09477327720605233e-01, 5.10382635298455400e-01,
+    -2.47328995077170849e-01, -1.90335030062067756e-01, 2.70747291815721935e-01,  -3.19599348895081709e-02,
+    -1.26400907973926058e-01, 6.56380950546598396e-02,  3.23455685814820898e-02,  -3.54431405368228966e-02,
+    -3.15749917183956626e-03, 1.16554507911594430e-02,  -6.25242294921542078e-04, -2.44259444406770901e-03,
+    1.77610289495549849e-04,  2.57923748564379933e-04};
+
+// beta: 32.274
+constexpr double laplace_dipole_3d_potential_11[] = {
+    3.26488932935758936e-03,  -3.34334184589342026e-02, 1.51628119013288543e-01,  -3.91438303230557672e-01,
+    6.00144893739365637e-01,  -4.63260698656872971e-01, -7.91095963485347747e-02, 5.46371422708288978e-01,
+    -4.25334996766092766e-01, -9.77511664059468321e-02, 3.64031957093882585e-01,  -1.51956009896253158e-01,
+    -1.30781688719692979e-01, 1.40134444080656562e-01,  5.60786571449403779e-03,  -6.44986132385584748e-02,
+    1.87924679144229438e-02,  1.91671466716092885e-02,  -1.13661256210334030e-02, -3.74395560480559296e-03,
+    3.84651785292284892e-03,  4.28341104036052773e-04,  -8.07875592590791974e-04, -1.91890722053818430e-05,
+    8.35723911323348051e-05};
+
+// beta: 34.938
+constexpr double laplace_dipole_3d_potential_12[] = {
+    2.20928059493365235e-03,  -2.43426875242211231e-02, 1.19761893706071723e-01,  -3.39856659040368825e-01,
+    5.88505140797872417e-01,  -5.62618110858054132e-01, 7.48570909907567972e-02,  5.22999143696575630e-01,
+    -5.95015655106605257e-01, 6.28415423705892401e-02,  4.10829665279586365e-01,  -3.12678103311007982e-01,
+    -7.88556227096840062e-02, 2.21754901069865118e-01,  -6.05635485305918708e-02, -8.38912139235251930e-02,
+    5.89552927275863239e-02,  1.58589038944522143e-02,  -2.78508907904069791e-02, 1.30941825171451503e-03,
+    8.91950669951599787e-03,  -1.86784537729052513e-03, -2.04171779144781936e-03, 5.57931216423200984e-04,
+    3.14659759362786421e-04,  -6.72204654220478630e-05, -2.50956269826985266e-05};
+
+// beta: 10.962
+constexpr double laplace_dipole_3d_potential_grad_2[] = {8.62385196222487382e-02, -3.69606890598850102e-01,
+                                                         4.96528359242903339e-01, -1.35056019181326203e-01,
+                                                         -8.26655143090101602e-02};
+
+// beta: 13.626000000000001
+constexpr double laplace_dipole_3d_potential_grad_3[] = {
+    5.58390435893020218e-02,  -2.68224601604254487e-01, 4.89913880123119205e-01, -3.55473001377395126e-01,
+    -9.41724969141645094e-03, 1.24158739588970515e-01,  -3.66153264211257837e-02};
+
+// beta: 16.29
+constexpr double laplace_dipole_3d_potential_grad_4[] = {
+    3.65651153834012574e-02,  -2.02219699079765197e-01, 4.51113257897009567e-01,
+    -4.73415552498067493e-01, 1.25319537002709064e-01,  2.05866251141961998e-01,
+    -1.54263382045602748e-01, -3.02262697822126523e-02, 4.13057433149017009e-02};
+
+// beta: 18.954
+constexpr double laplace_dipole_3d_potential_grad_5[] = {
+    2.41428264185806554e-02, -1.52727869680320011e-01, 3.98949974709263577e-01,  -5.19177765526997237e-01,
+    2.61117386337001989e-01, 1.54637461300230455e-01,  -2.64338880048808067e-01, 5.42159245410239812e-02,
+    9.46559170453594445e-02, -4.78782113257822800e-02, -1.45280446299070731e-02, 1.09318845545621941e-02};
+
+// beta: 21.618000000000002
+constexpr double laplace_dipole_3d_potential_grad_6[] = {
+    1.60442397518085061e-02,  -1.14125963916594200e-01, 3.41958267358202006e-01,  -5.32534965218171563e-01,
+    3.83317532269755568e-01,  6.21182126658174905e-02,  -3.31110384703709348e-01, 1.71100900312455118e-01,
+    9.84161626308610038e-02,  -1.20006039185096711e-01, -6.53102794862081212e-03, 3.94007856926334443e-02,
+    -2.09499861869103486e-03, -5.95305557781742548e-03};
+
+// beta: 24.282
+constexpr double laplace_dipole_3d_potential_grad_7[] = {
+    1.07160079128625838e-02,  -8.46341158092657198e-02, 2.86164499021600849e-01,  -5.18875766767919577e-01,
+    4.81319657371681087e-01,  -6.26716138228798347e-02, -3.43166628407990892e-01, 3.02333276254381500e-01,
+    3.33443644897920902e-02,  -1.84906521509741906e-01, 5.67068599479376018e-02,  5.77646395912575078e-02,
+    -3.08482687716683940e-02, -9.62597357990953133e-03, 5.76355781306377938e-03,  6.16069860444641874e-04};
+
+// beta: 26.946
+constexpr double laplace_dipole_3d_potential_grad_8[] = {
+    7.18708696662491778e-03,  -6.23865689551251629e-02, 2.34944710690734387e-01,  -4.86161114286023543e-01,
+    5.50192734853164001e-01,  -2.02369500338105940e-01, -3.01110304866148037e-01, 4.23266087435998251e-01,
+    -8.74475787629959700e-02, -2.15381152490050520e-01, 1.59344583655217781e-01,  3.84920455777423495e-02,
+    -8.37167992995778570e-02, 1.07615211220452502e-02,  2.37535306040852282e-02,  -7.64544525195382310e-03,
+    -3.14796804429392455e-03, 1.42413054340977422e-03};
+
+// beta: 29.610000000000003
+constexpr double laplace_dipole_3d_potential_grad_9[] = {
+    4.83699326096378480e-03,  -4.57629954580399262e-02, 1.89944221480222636e-01,  -4.41694714069628958e-01,
+    5.88935927419048988e-01,  -3.40298929884357115e-01, -2.09446691925963741e-01, 5.10425103847264250e-01,
+    -2.47525302437725081e-01, -1.90609828373504236e-01, 2.71471275139919088e-01,  -3.09379896488533174e-02,
+    -1.28029034250649959e-01, 6.33232710359899059e-02,  3.46146441220189921e-02,  -3.21966583676554161e-02,
+    -5.07059312783855829e-03, 8.90306557998376234e-03,  2.68560059999608245e-04,  -1.15032511431834169e-03};
+
+// beta: 32.274
+constexpr double laplace_dipole_3d_potential_grad_10[] = {
+    3.26488932935758936e-03,  -3.34334185506430376e-02, 1.51628119493200181e-01,  -3.91438294942497100e-01,
+    6.00144851831136861e-01,  -4.63260918760944662e-01, -7.91085138437753604e-02, 5.46374110005457214e-01,
+    -4.25347914237247993e-01, -9.77693410806410035e-02, 3.64117657338724032e-01,  -1.51881085092464729e-01,
+    -1.31129249398179382e-01, 1.39936439149828284e-01,  6.51349223744272701e-03,  -6.41561071253722026e-02,
+    1.72450849082454623e-02,  1.87813212539231812e-02,  -9.64179204742389613e-03, -3.47131547998901814e-03,
+    2.63966265771625437e-03,  3.18610628889500901e-04,  -3.26288287241088381e-04};
+
+// beta: 34.938
+constexpr double laplace_dipole_3d_potential_grad_11[] = {
+    2.20928059493365235e-03,  -2.43426874167138145e-02, 1.19761893744165224e-01,  -3.39856670097353264e-01,
+    5.88505136847381705e-01,  -5.62617773502591567e-01, 7.48572123686999658e-02,  5.22994363348513347e-01,
+    -5.95017385431159895e-01, 6.28795154646747956e-02,  4.10843482479753275e-01,  -3.12864733302772646e-01,
+    -7.89238443713683874e-02, 2.22354547276362474e-01,  -6.03434581580932633e-02, -8.51869204020025417e-02,
+    5.84780012910704819e-02,  1.77559686951297667e-02,  -2.71498128653384109e-02, -5.46958996643641697e-04,
+    8.23146016803313549e-03,  -7.05186804239541398e-04, -1.60965058569251533e-03, 1.36535741088278140e-04,
+    1.57683919047350445e-04};
+
+// beta: 37.602000000000004
+constexpr double laplace_dipole_3d_potential_grad_12[] = {
+    1.49823059313269804e-03,  -1.76723677453100407e-02, 9.37416850035556748e-02,  -2.90036032576421687e-01,
+    5.59493501073330068e-01,  -6.34136265052617221e-01, 2.36525018454831704e-01,  4.41573031874518573e-01,
+    -7.30140015822103861e-01, 2.76879521960966934e-01,  3.83892966507353994e-01,  -4.87141707988068162e-01,
+    4.70954151879119862e-02,  2.81242356731793708e-01,  -1.71882770391268508e-01, -7.21116911333790495e-02,
+    1.15715198336007838e-01,  -9.32251397240195685e-03, -4.64092892516939151e-02, 1.65508950546909735e-02,
+    1.24073890916912687e-02,  -7.42335693525890492e-03, -2.11885570946907615e-03, 1.79751538166786655e-03,
+    1.82721599378981371e-04,  -1.99385600891264998e-04, -1.19467253448366012e-06};
+
+template <class Real, int MaxVecLen>
+residual_evaluator_func<Real> get_laplace_dipole_3d_kernel(dmk_eval_type eval_level, int n_digits) {
+    constexpr int UF = unroll_factor;
+    if (eval_level == DMK_POTENTIAL) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 9;
+            constexpr int NC0 = 9;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 11;
+            constexpr int NC0 = 11;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 13;
+            constexpr int NC0 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 17;
+            constexpr int NC0 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 20;
+            constexpr int NC0 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 25;
+            constexpr int NC0 = 25;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 27;
+            constexpr int NC0 = 27;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+    } else if (eval_level == DMK_POTENTIAL_GRAD) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_grad_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 7;
+            constexpr int NC0 = 7;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_grad_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 9;
+            constexpr int NC0 = 9;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_grad_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 12;
+            constexpr int NC0 = 12;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_grad_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 14;
+            constexpr int NC0 = 14;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_grad_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_grad_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 18;
+            constexpr int NC0 = 18;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_grad_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 20;
+            constexpr int NC0 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_grad_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 23;
+            constexpr int NC0 = 23;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_grad_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 25;
+            constexpr int NC0 = 25;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_grad_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 27;
+            constexpr int NC0 = 27;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(laplace_dipole_3d_potential_grad_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
     }
-    if (n_digits <= 4) {
-        constexpr int ND = 4, NC_TOTAL = 21;
-        constexpr int NC0 = 11;
-        constexpr int NC1 = 10;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stresslet_3d_4, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
+}
+// beta: 0
+constexpr double esp_laplace_2d_potential_2[] = {3.31407136429506921e-01, -4.44983736810248387e-01,
+                                                 1.62401433556102814e-01, -5.00058300147462609e-02};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_3[] = {3.40128947052315056e-01, -4.67350647165909405e-01,
+                                                 1.82788419908278349e-01, -8.17008810764013882e-02,
+                                                 2.64736698760322069e-02};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_4[] = {
+    3.43425620766397488e-01, -4.83060291356886218e-01, 2.06815661724620681e-01, -9.56363975134247035e-02,
+    3.95916436420770332e-02, -1.53246341597736736e-02, 4.20291361748193881e-03};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_5[] = {
+    3.45791791835113105e-01,  -4.94638823701766983e-01, 2.32700982261791756e-01,
+    -1.31082086812848581e-01, 7.07661487158944280e-02,  -3.32311664679305063e-02,
+    1.38345849225210826e-02,  -5.79296273169795876e-03, 1.65288291026933999e-03};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_6[] = {
+    3.46177360874770079e-01, -4.97005359585988293e-01, 2.39238298635452873e-01, -1.42036658203261917e-01,
+    8.39478592675435148e-02, -4.50956813087812561e-02, 2.07009764054380367e-02, -8.57882208536839622e-03,
+    3.73645702728076694e-03, -1.08487244360550516e-03};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_7[] = {
+    3.46468682743447387e-01, -4.99060441846808478e-01, 2.45979346429547135e-01, -1.55603351771571224e-01,
+    1.02798920331395538e-01, -6.51428372035875447e-02, 3.79965193211083893e-02, -1.96129938771228453e-02,
+    8.51796667695034135e-03, -3.49990324444903736e-03, 1.64828520828645621e-03, -4.90244168606017959e-04};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_8[] = {
+    3.46519150735571824e-01, -4.99473711075286486e-01, 2.47560863981100110e-01, -1.59404941233487224e-01,
+    1.09264632049333191e-01, -7.32609399355232949e-02, 4.57677006506466630e-02, -2.59573159176157316e-02,
+    1.32358357921169446e-02, -5.94709367463631261e-03, 2.26595137107045343e-03, -8.19215573556561169e-04,
+    3.41489111493683585e-04, -9.24085343018617470e-05};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_9[] = {
+    3.46558679524847812e-01, -4.99834850211860637e-01, 2.49119199277336473e-01, -1.63639510952304751e-01,
+    1.17422312190085157e-01, -8.51767864078933484e-02, 5.95417024913368273e-02, -3.88522855705760450e-02,
+    2.31844720284554856e-02, -1.25568836236085758e-02, 6.19029095450276262e-03, -2.70350276174949377e-03,
+    9.89234630104329250e-04, -3.61255417262498475e-04, 1.65073323779927277e-04, -4.58897637330004399e-05};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_10[] = {
+    3.46565736631153143e-01, -4.99907483838147593e-01, 2.49474193193855942e-01, -1.64738596995519460e-01,
+    1.19848226786064466e-01, -8.92458933743993515e-02, 6.49454929811426884e-02, -4.47241318333999258e-02,
+    2.85320317877610155e-02, -1.66399873734038341e-02, 8.80197625127055079e-03, -4.22275855139565316e-03,
+    1.85005998716256332e-03, -7.24135133333572690e-04, 2.40373469830557974e-04, -7.96763180834371540e-05,
+    3.31537216045767031e-05, -8.58140495277231689e-06};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_11[] = {
+    3.46569438544917008e-01, -4.99948172166116755e-01, 2.49687315852250735e-01, -1.65447983870321752e-01,
+    1.21536716495854458e-01, -9.23129050508442600e-02, 6.93759616154990544e-02, -4.99598244971918015e-02,
+    3.37034475479549775e-02, -2.09903206500092580e-02, 1.19580563471582569e-02, -6.19612863377783617e-03,
+    2.92745217434708504e-03, -1.27338936535266868e-03, 4.95558628313796392e-04, -1.61953520652763686e-04,
+    5.42155727055558800e-05, -2.37106642001809648e-05, 6.22564417452058528e-06};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_12[] = {
+    3.46572419186334690e-01, -4.99983734338924124e-01, 2.49890490129001885e-01, -1.66189269242562027e-01,
+    1.23480378383596170e-01, -9.62211538819075368e-02, 7.56573041156004267e-02, -5.82648007363986351e-02,
+    4.29282085819712375e-02, -2.97393061293908384e-02, 1.91454632870272819e-02, -1.13721975169510398e-02,
+    6.20945182474741744e-03, -3.10964651516892985e-03, 1.42589296070909865e-03, -6.02154924850327325e-04,
+    2.37188910790665021e-04, -8.43051474034488220e-05, 2.51246517177253442e-05, -7.86554630397245592e-06,
+    3.35467646215108378e-06, -8.42728173519944100e-07};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_grad_2[] = {3.31407136429506921e-01, -4.44983736810248387e-01,
+                                                      1.62401433556102814e-01, -5.00058300147462609e-02};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_grad_3[] = {3.40128947052315056e-01, -4.67350647165909405e-01,
+                                                      1.82788419908278349e-01, -8.17008810764013882e-02,
+                                                      2.64736698760322069e-02};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_grad_4[] = {
+    3.43425620766397488e-01, -4.83060291356886218e-01, 2.06815661724620681e-01, -9.56363975134247035e-02,
+    3.95916436420770332e-02, -1.53246341597736736e-02, 4.20291361748193881e-03};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_grad_5[] = {
+    3.45791791835113105e-01,  -4.94638823701766983e-01, 2.32700982261791756e-01,
+    -1.31082086812848581e-01, 7.07661487158944280e-02,  -3.32311664679305063e-02,
+    1.38345849225210826e-02,  -5.79296273169795876e-03, 1.65288291026933999e-03};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_grad_6[] = {
+    3.46177360874770079e-01, -4.97005359585988293e-01, 2.39238298635452873e-01, -1.42036658203261917e-01,
+    8.39478592675435148e-02, -4.50956813087812561e-02, 2.07009764054380367e-02, -8.57882208536839622e-03,
+    3.73645702728076694e-03, -1.08487244360550516e-03};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_grad_7[] = {
+    3.46468682743447387e-01, -4.99060441846808478e-01, 2.45979346429547135e-01, -1.55603351771571224e-01,
+    1.02798920331395538e-01, -6.51428372035875447e-02, 3.79965193211083893e-02, -1.96129938771228453e-02,
+    8.51796667695034135e-03, -3.49990324444903736e-03, 1.64828520828645621e-03, -4.90244168606017959e-04};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_grad_8[] = {
+    3.46519150735571824e-01, -4.99473711075286486e-01, 2.47560863981100110e-01, -1.59404941233487224e-01,
+    1.09264632049333191e-01, -7.32609399355232949e-02, 4.57677006506466630e-02, -2.59573159176157316e-02,
+    1.32358357921169446e-02, -5.94709367463631261e-03, 2.26595137107045343e-03, -8.19215573556561169e-04,
+    3.41489111493683585e-04, -9.24085343018617470e-05};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_grad_9[] = {
+    3.46558679524847812e-01, -4.99834850211860637e-01, 2.49119199277336473e-01, -1.63639510952304751e-01,
+    1.17422312190085157e-01, -8.51767864078933484e-02, 5.95417024913368273e-02, -3.88522855705760450e-02,
+    2.31844720284554856e-02, -1.25568836236085758e-02, 6.19029095450276262e-03, -2.70350276174949377e-03,
+    9.89234630104329250e-04, -3.61255417262498475e-04, 1.65073323779927277e-04, -4.58897637330004399e-05};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_grad_10[] = {
+    3.46565736631153143e-01, -4.99907483838147593e-01, 2.49474193193855942e-01, -1.64738596995519460e-01,
+    1.19848226786064466e-01, -8.92458933743993515e-02, 6.49454929811426884e-02, -4.47241318333999258e-02,
+    2.85320317877610155e-02, -1.66399873734038341e-02, 8.80197625127055079e-03, -4.22275855139565316e-03,
+    1.85005998716256332e-03, -7.24135133333572690e-04, 2.40373469830557974e-04, -7.96763180834371540e-05,
+    3.31537216045767031e-05, -8.58140495277231689e-06};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_grad_11[] = {
+    3.46569438544917008e-01, -4.99948172166116755e-01, 2.49687315852250735e-01, -1.65447983870321752e-01,
+    1.21536716495854458e-01, -9.23129050508442600e-02, 6.93759616154990544e-02, -4.99598244971918015e-02,
+    3.37034475479549775e-02, -2.09903206500092580e-02, 1.19580563471582569e-02, -6.19612863377783617e-03,
+    2.92745217434708504e-03, -1.27338936535266868e-03, 4.95558628313796392e-04, -1.61953520652763686e-04,
+    5.42155727055558800e-05, -2.37106642001809648e-05, 6.22564417452058528e-06};
+
+// beta: 0
+constexpr double esp_laplace_2d_potential_grad_12[] = {
+    3.46572419186334690e-01, -4.99983734338924124e-01, 2.49890490129001885e-01, -1.66189269242562027e-01,
+    1.23480378383596170e-01, -9.62211538819075368e-02, 7.56573041156004267e-02, -5.82648007363986351e-02,
+    4.29282085819712375e-02, -2.97393061293908384e-02, 1.91454632870272819e-02, -1.13721975169510398e-02,
+    6.20945182474741744e-03, -3.10964651516892985e-03, 1.42589296070909865e-03, -6.02154924850327325e-04,
+    2.37188910790665021e-04, -8.43051474034488220e-05, 2.51246517177253442e-05, -7.86554630397245592e-06,
+    3.35467646215108378e-06, -8.42728173519944100e-07};
+
+template <class Real, int MaxVecLen>
+residual_evaluator_func<Real> get_esp_laplace_2d_kernel(dmk_eval_type eval_level, int n_digits) {
+    constexpr int UF = unroll_factor;
+    if (eval_level == DMK_POTENTIAL) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 4;
+            constexpr int NC0 = 4;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 7;
+            constexpr int NC0 = 7;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 9;
+            constexpr int NC0 = 9;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 10;
+            constexpr int NC0 = 10;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 12;
+            constexpr int NC0 = 12;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 14;
+            constexpr int NC0 = 14;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 18;
+            constexpr int NC0 = 18;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 19;
+            constexpr int NC0 = 19;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+    } else if (eval_level == DMK_POTENTIAL_GRAD) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 4;
+            constexpr int NC0 = 4;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_grad_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_grad_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 7;
+            constexpr int NC0 = 7;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_grad_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 9;
+            constexpr int NC0 = 9;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_grad_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 10;
+            constexpr int NC0 = 10;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_grad_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 12;
+            constexpr int NC0 = 12;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_grad_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 14;
+            constexpr int NC0 = 14;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_grad_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_grad_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 18;
+            constexpr int NC0 = 18;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_grad_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 19;
+            constexpr int NC0 = 19;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_grad_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_2d_potential_grad_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
     }
-    if (n_digits <= 5) {
-        constexpr int ND = 5, NC_TOTAL = 26;
-        constexpr int NC0 = 14;
-        constexpr int NC1 = 12;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stresslet_3d_5, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
+}
+// beta: 0
+constexpr double esp_laplace_3d_potential_2[] = {1.46043479102109242e-01, -4.48124731669416465e-01,
+                                                 4.35914711993546311e-01, -5.38387037196021503e-02,
+                                                 -8.25639062699168175e-02};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_3[] = {1.04133600766742135e-01,  -3.74373800188472716e-01,
+                                                 4.81821233961852946e-01,  -1.96187641183801442e-01,
+                                                 -8.61252306266795525e-02, 7.10647698133234501e-02};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_4[] = {
+    5.43320128472378830e-02,  -2.60343769755376320e-01, 4.85938769203017651e-01,
+    -3.89993422158306957e-01, 1.55932247506921223e-02,  1.82002113003575938e-01,
+    -7.75541018362244233e-02, -3.16791804210956388e-02, 2.17111936687518665e-02};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_5[] = {
+    3.96594239545312241e-02, -2.13378407156156080e-01, 4.59363956790847960e-01,  -4.58088243114778193e-01,
+    1.06028171632214493e-01, 2.01776376120107764e-01,  -1.54999513025094432e-01, -2.95461968367859602e-02,
+    6.01390212750857397e-02, -7.65481059040259157e-04, -1.01927682465977193e-02};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_6[] = {
+    2.90888944223709547e-02, -1.73640638695914590e-01, 4.23390139355747541e-01,  -5.02262986738708950e-01,
+    2.02898614255830001e-01, 1.80782687174541351e-01,  -2.27909618417582893e-01, 1.65362999270791886e-02,
+    8.99651098590546344e-02, -2.79790896727191742e-02, -1.95032336351645720e-02, 6.56417253194244849e-03,
+    2.07012103277505336e-03};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_7[] = {
+    1.58244199473351020e-02,  -1.12986541924241624e-01, 3.40045119258153616e-01,  -5.32457500664570649e-01,
+    3.86677882261270478e-01,  5.81259375482236704e-02,  -3.30031160471666918e-01, 1.76611192341328938e-01,
+    9.04887417156891166e-02,  -1.25823073849432782e-01, 4.67123869722863710e-03,  4.52942703428539165e-02,
+    -9.80864655862628831e-03, -9.85227984574808986e-03, 2.13242513826724517e-03,  1.08799945685769347e-03};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_8[] = {
+    1.17231580915822722e-02,  -9.05353222551797954e-02, 2.98340176354504105e-01,  -5.23860767662847171e-01,
+    4.61592699614139568e-01,  -3.28651247577806949e-02, -3.43500535202847346e-01, 2.73075032897807324e-01,
+    4.69320766561510949e-02,  -1.72730131566305428e-01, 5.08348801215075946e-02,  5.64968285555136965e-02,
+    -3.55413650977575088e-02, -1.04651820198408615e-02, 1.12298436255384975e-02,  8.84665953410915078e-04,
+    -1.61093920963949894e-03};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_9[] = {
+    6.47815297479929254e-03,  -5.75561163138182119e-02, 2.22542888868799749e-01,  -4.75401142936118626e-01,
+    5.63171171567656503e-01,  -2.39205486176427395e-01, -2.81514169930950520e-01, 4.50051499905713914e-01,
+    -1.26711397274764576e-01, -2.14310381783922005e-01, 1.90295634998373570e-01,  2.34933668084848779e-02,
+    -1.00093976391690764e-01, 2.49668587896511411e-02,  3.12600056196909587e-02,  -1.62116727749224213e-02,
+    -5.99494314888489570e-03, 4.81648424002121319e-03,  5.66632773515921744e-04,  -6.43410029663226378e-04};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_10[] = {
+    4.82940991365448172e-03,  -4.57062279063623969e-02, 1.89778461315788960e-01,  -4.41502915321420997e-01,
+    5.89034882049339736e-01,  -3.40821689904170777e-01, -2.09026410004837460e-01, 5.10636108498294550e-01,
+    -2.48017187456896160e-01, -1.90107327407145726e-01, 2.71171505098679100e-01,  -3.23347269063452222e-02,
+    -1.26507396610198247e-01, 6.58902116761357071e-02,  3.23204041236374168e-02,  -3.55495056512201632e-02,
+    -3.12648850393294504e-03, 1.16858419523565710e-02,  -6.36421439630153866e-04, -2.44821684015647349e-03,
+    1.79241552565874635e-04,  2.58447829201842363e-04};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_11[] = {
+    2.69649877120016609e-03,  -2.86392500569618465e-02, 1.35271678076346241e-01,  -3.66159578629183802e-01,
+    5.96973980880775690e-01,  -5.15153349652325399e-01, -5.76310604274815532e-03, 5.42479022231553420e-01,
+    -5.11077976980979898e-01, -2.71043146266868457e-02, 3.94657997248520909e-01,  -2.26871877414062006e-01,
+    -1.13933343705241066e-01, 1.80916101035237059e-01,  -2.09081159209883218e-02, -7.68142131840394843e-02,
+    3.55971123048858737e-02,  2.01778038079987940e-02,  -1.82875423308622789e-02, -2.93534436066350719e-03,
+    5.84010560383291417e-03,  7.22022229663429231e-05,  -1.18746039595904419e-03, 3.27986276899419409e-05,
+    1.20172492457812526e-04};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_12[] = {
+    2.01894167356022258e-03,  -2.26088357700140428e-02, 1.13244591599582584e-01,  -3.28079035678587150e-01,
+    5.83131592920810848e-01,  -5.81724851395885700e-01, 1.12154425086347737e-01,  5.09095616999565515e-01,
+    -6.30227589249374387e-01, 1.08419373433402452e-01,  4.11928983549371186e-01,  -3.53100126353551758e-01,
+    -5.66074272472616435e-02, 2.38790235966301251e-01,  -8.24566554335681434e-02, -8.48864085556200326e-02,
+    7.09480533335020008e-02,  1.24943332386891620e-02,  -3.22303433749053514e-02, 3.71440505962503846e-03,
+    9.99847038110844751e-03,  -2.79522624622548970e-03, -2.20118196270363119e-03, 7.70834736273828445e-04,
+    3.22280259185794068e-04,  -9.03154343234308901e-05, -2.41415356722164210e-05};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_grad_2[] = {1.46043479102109242e-01, -4.48124731669416465e-01,
+                                                      4.35914711993546311e-01, -5.38387037196021503e-02,
+                                                      -8.25639062699168175e-02};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_grad_3[] = {1.04133600766742135e-01,  -3.74373800188472716e-01,
+                                                      4.81821233961852946e-01,  -1.96187641183801442e-01,
+                                                      -8.61252306266795525e-02, 7.10647698133234501e-02};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_grad_4[] = {
+    5.43320128472378830e-02,  -2.60343769755376320e-01, 4.85938769203017651e-01,
+    -3.89993422158306957e-01, 1.55932247506921223e-02,  1.82002113003575938e-01,
+    -7.75541018362244233e-02, -3.16791804210956388e-02, 2.17111936687518665e-02};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_grad_5[] = {
+    3.96594239545312241e-02, -2.13378407156156080e-01, 4.59363956790847960e-01,  -4.58088243114778193e-01,
+    1.06028171632214493e-01, 2.01776376120107764e-01,  -1.54999513025094432e-01, -2.95461968367859602e-02,
+    6.01390212750857397e-02, -7.65481059040259157e-04, -1.01927682465977193e-02};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_grad_6[] = {
+    2.90888944223709547e-02, -1.73640638695914590e-01, 4.23390139355747541e-01,  -5.02262986738708950e-01,
+    2.02898614255830001e-01, 1.80782687174541351e-01,  -2.27909618417582893e-01, 1.65362999270791886e-02,
+    8.99651098590546344e-02, -2.79790896727191742e-02, -1.95032336351645720e-02, 6.56417253194244849e-03,
+    2.07012103277505336e-03};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_grad_7[] = {
+    1.58244199473351020e-02,  -1.12986541924241624e-01, 3.40045119258153616e-01,  -5.32457500664570649e-01,
+    3.86677882261270478e-01,  5.81259375482236704e-02,  -3.30031160471666918e-01, 1.76611192341328938e-01,
+    9.04887417156891166e-02,  -1.25823073849432782e-01, 4.67123869722863710e-03,  4.52942703428539165e-02,
+    -9.80864655862628831e-03, -9.85227984574808986e-03, 2.13242513826724517e-03,  1.08799945685769347e-03};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_grad_8[] = {
+    1.17231580915822722e-02,  -9.05353222551797954e-02, 2.98340176354504105e-01,  -5.23860767662847171e-01,
+    4.61592699614139568e-01,  -3.28651247577806949e-02, -3.43500535202847346e-01, 2.73075032897807324e-01,
+    4.69320766561510949e-02,  -1.72730131566305428e-01, 5.08348801215075946e-02,  5.64968285555136965e-02,
+    -3.55413650977575088e-02, -1.04651820198408615e-02, 1.12298436255384975e-02,  8.84665953410915078e-04,
+    -1.61093920963949894e-03};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_grad_9[] = {
+    6.47815297479929254e-03,  -5.75561163138182119e-02, 2.22542888868799749e-01,  -4.75401142936118626e-01,
+    5.63171171567656503e-01,  -2.39205486176427395e-01, -2.81514169930950520e-01, 4.50051499905713914e-01,
+    -1.26711397274764576e-01, -2.14310381783922005e-01, 1.90295634998373570e-01,  2.34933668084848779e-02,
+    -1.00093976391690764e-01, 2.49668587896511411e-02,  3.12600056196909587e-02,  -1.62116727749224213e-02,
+    -5.99494314888489570e-03, 4.81648424002121319e-03,  5.66632773515921744e-04,  -6.43410029663226378e-04};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_grad_10[] = {
+    4.82940991365448172e-03,  -4.57062279063623969e-02, 1.89778461315788960e-01,  -4.41502915321420997e-01,
+    5.89034882049339736e-01,  -3.40821689904170777e-01, -2.09026410004837460e-01, 5.10636108498294550e-01,
+    -2.48017187456896160e-01, -1.90107327407145726e-01, 2.71171505098679100e-01,  -3.23347269063452222e-02,
+    -1.26507396610198247e-01, 6.58902116761357071e-02,  3.23204041236374168e-02,  -3.55495056512201632e-02,
+    -3.12648850393294504e-03, 1.16858419523565710e-02,  -6.36421439630153866e-04, -2.44821684015647349e-03,
+    1.79241552565874635e-04,  2.58447829201842363e-04};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_grad_11[] = {
+    2.69649877120016609e-03,  -2.86392500569618465e-02, 1.35271678076346241e-01,  -3.66159578629183802e-01,
+    5.96973980880775690e-01,  -5.15153349652325399e-01, -5.76310604274815532e-03, 5.42479022231553420e-01,
+    -5.11077976980979898e-01, -2.71043146266868457e-02, 3.94657997248520909e-01,  -2.26871877414062006e-01,
+    -1.13933343705241066e-01, 1.80916101035237059e-01,  -2.09081159209883218e-02, -7.68142131840394843e-02,
+    3.55971123048858737e-02,  2.01778038079987940e-02,  -1.82875423308622789e-02, -2.93534436066350719e-03,
+    5.84010560383291417e-03,  7.22022229663429231e-05,  -1.18746039595904419e-03, 3.27986276899419409e-05,
+    1.20172492457812526e-04};
+
+// beta: 0
+constexpr double esp_laplace_3d_potential_grad_12[] = {
+    2.01894167356022258e-03,  -2.26088357700140428e-02, 1.13244591599582584e-01,  -3.28079035678587150e-01,
+    5.83131592920810848e-01,  -5.81724851395885700e-01, 1.12154425086347737e-01,  5.09095616999565515e-01,
+    -6.30227589249374387e-01, 1.08419373433402452e-01,  4.11928983549371186e-01,  -3.53100126353551758e-01,
+    -5.66074272472616435e-02, 2.38790235966301251e-01,  -8.24566554335681434e-02, -8.48864085556200326e-02,
+    7.09480533335020008e-02,  1.24943332386891620e-02,  -3.22303433749053514e-02, 3.71440505962503846e-03,
+    9.99847038110844751e-03,  -2.79522624622548970e-03, -2.20118196270363119e-03, 7.70834736273828445e-04,
+    3.22280259185794068e-04,  -9.03154343234308901e-05, -2.41415356722164210e-05};
+
+template <class Real, int MaxVecLen>
+residual_evaluator_func<Real> get_esp_laplace_3d_kernel(dmk_eval_type eval_level, int n_digits) {
+    constexpr int UF = unroll_factor;
+    if (eval_level == DMK_POTENTIAL) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 9;
+            constexpr int NC0 = 9;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 11;
+            constexpr int NC0 = 11;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 13;
+            constexpr int NC0 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 17;
+            constexpr int NC0 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 20;
+            constexpr int NC0 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 25;
+            constexpr int NC0 = 25;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 27;
+            constexpr int NC0 = 27;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+    } else if (eval_level == DMK_POTENTIAL_GRAD) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 9;
+            constexpr int NC0 = 9;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 11;
+            constexpr int NC0 = 11;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 13;
+            constexpr int NC0 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 17;
+            constexpr int NC0 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 20;
+            constexpr int NC0 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 25;
+            constexpr int NC0 = 25;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 27;
+            constexpr int NC0 = 27;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
     }
-    if (n_digits <= 6) {
-        constexpr int ND = 6, NC_TOTAL = 31;
-        constexpr int NC0 = 16;
-        constexpr int NC1 = 15;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stresslet_3d_6, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
+}
+
+template <class Real, int MaxVecLen>
+residual_evaluator_range_func<Real> get_esp_laplace_3d_kernel_ranges(dmk_eval_type eval_level, int n_digits) {
+    constexpr int UF = unroll_factor;
+    if (eval_level == DMK_POTENTIAL) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 9;
+            constexpr int NC0 = 9;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 11;
+            constexpr int NC0 = 11;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 13;
+            constexpr int NC0 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 17;
+            constexpr int NC0 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 20;
+            constexpr int NC0 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 25;
+            constexpr int NC0 = 25;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 27;
+            constexpr int NC0 = 27;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+    } else if (eval_level == DMK_POTENTIAL_GRAD) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 9;
+            constexpr int NC0 = 9;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 11;
+            constexpr int NC0 = 11;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 13;
+            constexpr int NC0 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 17;
+            constexpr int NC0 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 20;
+            constexpr int NC0 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 25;
+            constexpr int NC0 = 25;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 27;
+            constexpr int NC0 = 27;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_3d_potential_grad_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
     }
-    if (n_digits <= 7) {
-        constexpr int ND = 7, NC_TOTAL = 35;
-        constexpr int NC0 = 18;
-        constexpr int NC1 = 17;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stresslet_3d_7, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
+}
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_2[] = {1.46043479102109242e-01, -4.48124731669416465e-01,
+                                                      4.35914711993546311e-01, -5.38387037196021503e-02,
+                                                      -8.25639062699168175e-02};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_3[] = {1.04133600766742135e-01,  -3.74373800188472716e-01,
+                                                      4.81821233961852946e-01,  -1.96187641183801442e-01,
+                                                      -8.61252306266795525e-02, 7.10647698133234501e-02};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_4[] = {
+    7.48050362978252698e-02,  -3.14101882852885261e-01, 4.98925595374333175e-01,  -3.05016410414623684e-01,
+    -6.33667878339093660e-02, 1.46148890336436327e-01,  -1.04242800247160098e-02, -2.70621778620233899e-02};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_5[] = {
+    3.96594239545312241e-02, -2.13378407156156080e-01, 4.59363956790847960e-01,  -4.58088243114778193e-01,
+    1.06028171632214493e-01, 2.01776376120107764e-01,  -1.54999513025094432e-01, -2.95461968367859602e-02,
+    6.01390212750857397e-02, -7.65481059040259157e-04, -1.01927682465977193e-02};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_6[] = {
+    2.90888944223709547e-02, -1.73640638695914590e-01, 4.23390139355747541e-01,  -5.02262986738708950e-01,
+    2.02898614255830001e-01, 1.80782687174541351e-01,  -2.27909618417582893e-01, 1.65362999270791886e-02,
+    8.99651098590546344e-02, -2.79790896727191742e-02, -1.95032336351645720e-02, 6.56417253194244849e-03,
+    2.07012103277505336e-03};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_7[] = {
+    1.58244199473351020e-02,  -1.12986541924241624e-01, 3.40045119258153616e-01,  -5.32457500664570649e-01,
+    3.86677882261270478e-01,  5.81259375482236704e-02,  -3.30031160471666918e-01, 1.76611192341328938e-01,
+    9.04887417156891166e-02,  -1.25823073849432782e-01, 4.67123869722863710e-03,  4.52942703428539165e-02,
+    -9.80864655862628831e-03, -9.85227984574808986e-03, 2.13242513826724517e-03,  1.08799945685769347e-03};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_8[] = {
+    1.17231580915822722e-02,  -9.05353222551797954e-02, 2.98340176354504105e-01,  -5.23860767662847171e-01,
+    4.61592699614139568e-01,  -3.28651247577806949e-02, -3.43500535202847346e-01, 2.73075032897807324e-01,
+    4.69320766561510949e-02,  -1.72730131566305428e-01, 5.08348801215075946e-02,  5.64968285555136965e-02,
+    -3.55413650977575088e-02, -1.04651820198408615e-02, 1.12298436255384975e-02,  8.84665953410915078e-04,
+    -1.61093920963949894e-03};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_9[] = {
+    6.47815297479929254e-03,  -5.75561163138182119e-02, 2.22542888868799749e-01,  -4.75401142936118626e-01,
+    5.63171171567656503e-01,  -2.39205486176427395e-01, -2.81514169930950520e-01, 4.50051499905713914e-01,
+    -1.26711397274764576e-01, -2.14310381783922005e-01, 1.90295634998373570e-01,  2.34933668084848779e-02,
+    -1.00093976391690764e-01, 2.49668587896511411e-02,  3.12600056196909587e-02,  -1.62116727749224213e-02,
+    -5.99494314888489570e-03, 4.81648424002121319e-03,  5.66632773515921744e-04,  -6.43410029663226378e-04};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_10[] = {
+    4.82940991365448172e-03,  -4.57062279063623969e-02, 1.89778461315788960e-01,  -4.41502915321420997e-01,
+    5.89034882049339736e-01,  -3.40821689904170777e-01, -2.09026410004837460e-01, 5.10636108498294550e-01,
+    -2.48017187456896160e-01, -1.90107327407145726e-01, 2.71171505098679100e-01,  -3.23347269063452222e-02,
+    -1.26507396610198247e-01, 6.58902116761357071e-02,  3.23204041236374168e-02,  -3.55495056512201632e-02,
+    -3.12648850393294504e-03, 1.16858419523565710e-02,  -6.36421439630153866e-04, -2.44821684015647349e-03,
+    1.79241552565874635e-04,  2.58447829201842363e-04};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_11[] = {
+    3.60608271635356418e-03,  -3.62153806543686618e-02, 1.60713759844029719e-01,  -4.04455643055299185e-01,
+    5.99673416679080473e-01,  -4.34060143953398370e-01, -1.15030880967828403e-01, 5.42717646461029490e-01,
+    -3.79893105804116227e-01, -1.27937863814161473e-01, 3.43595851467267843e-01,  -1.16929985384713345e-01,
+    -1.34312395360740855e-01, 1.19648900352872303e-01,  1.63128808571401142e-02,  -5.72809483606461292e-02,
+    1.05121849839314649e-02,  1.78000445672472155e-02,  -6.86683492713142940e-03, -3.75520912883352265e-03,
+    1.92577188566938262e-03,  5.00496201838981089e-04,  -2.36731380446313105e-04, -3.19132312371425296e-05};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_12[] = {
+    2.01894167356022258e-03,  -2.26088357700140428e-02, 1.13244591599582584e-01,  -3.28079035678587150e-01,
+    5.83131592920810848e-01,  -5.81724851395885700e-01, 1.12154425086347737e-01,  5.09095616999565515e-01,
+    -6.30227589249374387e-01, 1.08419373433402452e-01,  4.11928983549371186e-01,  -3.53100126353551758e-01,
+    -5.66074272472616435e-02, 2.38790235966301251e-01,  -8.24566554335681434e-02, -8.48864085556200326e-02,
+    7.09480533335020008e-02,  1.24943332386891620e-02,  -3.22303433749053514e-02, 3.71440505962503846e-03,
+    9.99847038110844751e-03,  -2.79522624622548970e-03, -2.20118196270363119e-03, 7.70834736273828445e-04,
+    3.22280259185794068e-04,  -9.03154343234308901e-05, -2.41415356722164210e-05};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_grad_2[] = {1.46043479102109242e-01, -4.48124731669416465e-01,
+                                                           4.35914711993546311e-01, -5.38387037196021503e-02,
+                                                           -8.25639062699168175e-02};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_grad_3[] = {1.04133600766742135e-01,  -3.74373800188472716e-01,
+                                                           4.81821233961852946e-01,  -1.96187641183801442e-01,
+                                                           -8.61252306266795525e-02, 7.10647698133234501e-02};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_grad_4[] = {
+    7.48050362978252698e-02,  -3.14101882852885261e-01, 4.98925595374333175e-01,  -3.05016410414623684e-01,
+    -6.33667878339093660e-02, 1.46148890336436327e-01,  -1.04242800247160098e-02, -2.70621778620233899e-02};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_grad_5[] = {
+    3.96594239545312241e-02, -2.13378407156156080e-01, 4.59363956790847960e-01,  -4.58088243114778193e-01,
+    1.06028171632214493e-01, 2.01776376120107764e-01,  -1.54999513025094432e-01, -2.95461968367859602e-02,
+    6.01390212750857397e-02, -7.65481059040259157e-04, -1.01927682465977193e-02};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_grad_6[] = {
+    2.90888944223709547e-02, -1.73640638695914590e-01, 4.23390139355747541e-01,  -5.02262986738708950e-01,
+    2.02898614255830001e-01, 1.80782687174541351e-01,  -2.27909618417582893e-01, 1.65362999270791886e-02,
+    8.99651098590546344e-02, -2.79790896727191742e-02, -1.95032336351645720e-02, 6.56417253194244849e-03,
+    2.07012103277505336e-03};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_grad_7[] = {
+    1.58244199473351020e-02,  -1.12986541924241624e-01, 3.40045119258153616e-01,  -5.32457500664570649e-01,
+    3.86677882261270478e-01,  5.81259375482236704e-02,  -3.30031160471666918e-01, 1.76611192341328938e-01,
+    9.04887417156891166e-02,  -1.25823073849432782e-01, 4.67123869722863710e-03,  4.52942703428539165e-02,
+    -9.80864655862628831e-03, -9.85227984574808986e-03, 2.13242513826724517e-03,  1.08799945685769347e-03};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_grad_8[] = {
+    1.17231580915822722e-02,  -9.05353222551797954e-02, 2.98340176354504105e-01,  -5.23860767662847171e-01,
+    4.61592699614139568e-01,  -3.28651247577806949e-02, -3.43500535202847346e-01, 2.73075032897807324e-01,
+    4.69320766561510949e-02,  -1.72730131566305428e-01, 5.08348801215075946e-02,  5.64968285555136965e-02,
+    -3.55413650977575088e-02, -1.04651820198408615e-02, 1.12298436255384975e-02,  8.84665953410915078e-04,
+    -1.61093920963949894e-03};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_grad_9[] = {
+    6.47815297479929254e-03,  -5.75561163138182119e-02, 2.22542888868799749e-01,  -4.75401142936118626e-01,
+    5.63171171567656503e-01,  -2.39205486176427395e-01, -2.81514169930950520e-01, 4.50051499905713914e-01,
+    -1.26711397274764576e-01, -2.14310381783922005e-01, 1.90295634998373570e-01,  2.34933668084848779e-02,
+    -1.00093976391690764e-01, 2.49668587896511411e-02,  3.12600056196909587e-02,  -1.62116727749224213e-02,
+    -5.99494314888489570e-03, 4.81648424002121319e-03,  5.66632773515921744e-04,  -6.43410029663226378e-04};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_grad_10[] = {
+    4.82940991365448172e-03,  -4.57062279063623969e-02, 1.89778461315788960e-01,  -4.41502915321420997e-01,
+    5.89034882049339736e-01,  -3.40821689904170777e-01, -2.09026410004837460e-01, 5.10636108498294550e-01,
+    -2.48017187456896160e-01, -1.90107327407145726e-01, 2.71171505098679100e-01,  -3.23347269063452222e-02,
+    -1.26507396610198247e-01, 6.58902116761357071e-02,  3.23204041236374168e-02,  -3.55495056512201632e-02,
+    -3.12648850393294504e-03, 1.16858419523565710e-02,  -6.36421439630153866e-04, -2.44821684015647349e-03,
+    1.79241552565874635e-04,  2.58447829201842363e-04};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_grad_11[] = {
+    3.60608271635356418e-03,  -3.62153806543686618e-02, 1.60713759844029719e-01,  -4.04455643055299185e-01,
+    5.99673416679080473e-01,  -4.34060143953398370e-01, -1.15030880967828403e-01, 5.42717646461029490e-01,
+    -3.79893105804116227e-01, -1.27937863814161473e-01, 3.43595851467267843e-01,  -1.16929985384713345e-01,
+    -1.34312395360740855e-01, 1.19648900352872303e-01,  1.63128808571401142e-02,  -5.72809483606461292e-02,
+    1.05121849839314649e-02,  1.78000445672472155e-02,  -6.86683492713142940e-03, -3.75520912883352265e-03,
+    1.92577188566938262e-03,  5.00496201838981089e-04,  -2.36731380446313105e-04, -3.19132312371425296e-05};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_2d_potential_grad_12[] = {
+    2.01894167356022258e-03,  -2.26088357700140428e-02, 1.13244591599582584e-01,  -3.28079035678587150e-01,
+    5.83131592920810848e-01,  -5.81724851395885700e-01, 1.12154425086347737e-01,  5.09095616999565515e-01,
+    -6.30227589249374387e-01, 1.08419373433402452e-01,  4.11928983549371186e-01,  -3.53100126353551758e-01,
+    -5.66074272472616435e-02, 2.38790235966301251e-01,  -8.24566554335681434e-02, -8.48864085556200326e-02,
+    7.09480533335020008e-02,  1.24943332386891620e-02,  -3.22303433749053514e-02, 3.71440505962503846e-03,
+    9.99847038110844751e-03,  -2.79522624622548970e-03, -2.20118196270363119e-03, 7.70834736273828445e-04,
+    3.22280259185794068e-04,  -9.03154343234308901e-05, -2.41415356722164210e-05};
+
+template <class Real, int MaxVecLen>
+residual_evaluator_func<Real> get_esp_sqrt_laplace_2d_kernel(dmk_eval_type eval_level, int n_digits) {
+    constexpr int UF = unroll_factor;
+    if (eval_level == DMK_POTENTIAL) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 8;
+            constexpr int NC0 = 8;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 11;
+            constexpr int NC0 = 11;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 13;
+            constexpr int NC0 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 17;
+            constexpr int NC0 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 20;
+            constexpr int NC0 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 24;
+            constexpr int NC0 = 24;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 27;
+            constexpr int NC0 = 27;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+    } else if (eval_level == DMK_POTENTIAL_GRAD) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_grad_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_grad_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 8;
+            constexpr int NC0 = 8;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_grad_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 11;
+            constexpr int NC0 = 11;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_grad_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 13;
+            constexpr int NC0 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_grad_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_grad_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 17;
+            constexpr int NC0 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_grad_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 20;
+            constexpr int NC0 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_grad_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_grad_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 24;
+            constexpr int NC0 = 24;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_grad_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 27;
+            constexpr int NC0 = 27;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_2d_potential_grad_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_2d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
     }
-    if (n_digits <= 8) {
-        constexpr int ND = 8, NC_TOTAL = 41;
-        constexpr int NC0 = 21;
-        constexpr int NC1 = 20;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stresslet_3d_8, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
+}
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_2[] = {8.96381467338864951e-02, -2.57182183283078958e-01,
+                                                      3.17288970308536367e-01, -2.41196782850746916e-01,
+                                                      9.27549072282227577e-02};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_3[] = {5.09815427800193316e-02, -1.84031646905249174e-01,
+                                                      2.75837970519588749e-01, -2.51598622358623292e-01,
+                                                      1.72591084616892460e-01, -6.42423032140182620e-02};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_4[] = {
+    1.58081037559418582e-02, -8.00181112755787155e-02, 1.83069081452299498e-01, -2.44402088446964344e-01,
+    2.09928540281145243e-01, -1.42859005708558751e-01, 9.11147544593241404e-02, -3.27015160605852728e-02};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_5[] = {
+    8.91203146812140530e-03, -5.11007903657666879e-02, 1.33065042514096843e-01, -2.10691175441184875e-01,
+    2.29212995551205168e-01, -1.80252043861282379e-01, 1.04575528234663068e-01, -5.07250218565727107e-02,
+    2.42306613026016422e-02, -7.23016083106520647e-03};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_6[] = {
+    4.99486657775736163e-03, -3.21373710699190476e-02, 9.50647736659427506e-02, -1.72407740212183219e-01,
+    2.15841213555762024e-01, -1.99626341515829142e-01, 1.42738674019386141e-01, -8.05357220823958997e-02,
+    3.59175187598478329e-02, -1.38742313777577616e-02, 5.44279026571374905e-03, -1.41856144133320396e-03};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_7[] = {
+    1.56967399528195792e-03, -1.22909118204044543e-02, 4.49552845160746672e-02, -1.02448121259333974e-01,
+    1.63756462055961061e-01, -1.95890703309489322e-01, 1.82766482185317769e-01, -1.37439013362758711e-01,
+    8.55880560604187907e-02, -4.40516353163853402e-02, 1.83303689208363305e-02, -7.05518401123043752e-03,
+    3.03364676863889481e-03, -8.24425417955647680e-04};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_8[] = {
+    8.79769531890064408e-04, -7.50346593081252858e-03, 3.00720764201056652e-02, -7.55241504646798345e-02,
+    1.33773336933155546e-01, -1.78387869332855276e-01, 1.86733416066399122e-01, -1.57943219649359284e-01,
+    1.10270705404717784e-01, -6.47822764929656958e-02, 3.26103689837094757e-02, -1.40180231659652564e-02,
+    5.02321627847738660e-03, -1.68288801875860600e-03, 6.37109256876428509e-04, -1.58106717175056409e-04};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_9[] = {
+    2.76326171607464374e-04, -2.74290574995829980e-03, 1.29121875546715000e-02, -3.84395392835679695e-02,
+    8.14361009396698393e-02, -1.31013844473427010e-01, 1.66817527234382618e-01, -1.73051670990193585e-01,
+    1.49446338663523359e-01, -1.09167883917487649e-01, 6.82884799921246594e-02, -3.71438896383521414e-02,
+    1.78673498742155969e-02, -7.46145521239084761e-03, 2.58508389106426031e-03, -8.83162700040421842e-04,
+    3.70605498405958194e-04, -9.56479956719217021e-05};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_10[] = {
+    1.54852720771869842e-04, -1.64534206722766023e-03, 8.32102981560023554e-03, -2.67090538256101462e-02,
+    6.12280598179089294e-02, -1.06962424027702480e-01, 1.48392401578966132e-01, -1.68249763083702375e-01,
+    1.59283854508077888e-01, -1.28030652040046655e-01, 8.84510344925368147e-02, -5.30188998740236603e-02,
+    2.79890435612546347e-02, -1.32444364799451948e-02, 5.46541271233928934e-03, -1.85662637833486225e-03,
+    6.40162613758207670e-04, -2.82802151817846076e-04, 7.41481629260780877e-05};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_11[] = {
+    4.86264973615752966e-05, -5.84641033936986795e-04, 3.36574059681582277e-03, -1.23711991147361314e-02,
+    3.26662072543045523e-02, -6.61103296119098516e-02, 1.06852856029330714e-01, -1.41922679912396210e-01,
+    1.58204473840308724e-01, -1.50430877919325218e-01, 1.23603610238367481e-01, -8.87145486478330553e-02,
+    5.61327540452923116e-02, -3.15217388471871057e-02, 1.57879335169683020e-02, -7.13679341893215524e-03,
+    2.95990417586200916e-03, -1.09006576535600522e-03, 3.32852423984818300e-04, -1.05875503156490172e-04,
+    4.50413800996483278e-05, -1.12502249485618536e-05};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_12[] = {
+    2.72480048038037585e-05, -3.46652258045090640e-04, 2.11690682709517230e-03, -8.27405124054090765e-03,
+    2.32889031054351846e-02, -5.03623983070625725e-02, 8.71828207879123684e-02, -1.24307196129794087e-01,
+    1.49081991892961480e-01, -1.52843884919624751e-01, 1.35691367718960343e-01, -1.05416098955378304e-01,
+    7.23184199280030859e-02, -4.41572478606217164e-02, 2.41239087164536493e-02, -1.18333468600312422e-02,
+    5.28032093333203733e-03, -2.18371665748135326e-03, 8.01779795835931954e-04, -2.40591371459076593e-04,
+    7.75069725845497207e-05, -3.48154394387783188e-05, 8.82531650640820420e-06};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_grad_2[] = {8.96381467338864951e-02, -2.57182183283078958e-01,
+                                                           3.17288970308536367e-01, -2.41196782850746916e-01,
+                                                           9.27549072282227577e-02};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_grad_3[] = {5.09815427800193316e-02, -1.84031646905249174e-01,
+                                                           2.75837970519588749e-01, -2.51598622358623292e-01,
+                                                           1.72591084616892460e-01, -6.42423032140182620e-02};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_grad_4[] = {
+    1.58081037559418582e-02, -8.00181112755787155e-02, 1.83069081452299498e-01, -2.44402088446964344e-01,
+    2.09928540281145243e-01, -1.42859005708558751e-01, 9.11147544593241404e-02, -3.27015160605852728e-02};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_grad_5[] = {
+    8.91203146812140530e-03, -5.11007903657666879e-02, 1.33065042514096843e-01, -2.10691175441184875e-01,
+    2.29212995551205168e-01, -1.80252043861282379e-01, 1.04575528234663068e-01, -5.07250218565727107e-02,
+    2.42306613026016422e-02, -7.23016083106520647e-03};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_grad_6[] = {
+    4.99486657775736163e-03, -3.21373710699190476e-02, 9.50647736659427506e-02, -1.72407740212183219e-01,
+    2.15841213555762024e-01, -1.99626341515829142e-01, 1.42738674019386141e-01, -8.05357220823958997e-02,
+    3.59175187598478329e-02, -1.38742313777577616e-02, 5.44279026571374905e-03, -1.41856144133320396e-03};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_grad_7[] = {
+    1.56967399528195792e-03, -1.22909118204044543e-02, 4.49552845160746672e-02, -1.02448121259333974e-01,
+    1.63756462055961061e-01, -1.95890703309489322e-01, 1.82766482185317769e-01, -1.37439013362758711e-01,
+    8.55880560604187907e-02, -4.40516353163853402e-02, 1.83303689208363305e-02, -7.05518401123043752e-03,
+    3.03364676863889481e-03, -8.24425417955647680e-04};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_grad_8[] = {
+    8.79769531890064408e-04, -7.50346593081252858e-03, 3.00720764201056652e-02, -7.55241504646798345e-02,
+    1.33773336933155546e-01, -1.78387869332855276e-01, 1.86733416066399122e-01, -1.57943219649359284e-01,
+    1.10270705404717784e-01, -6.47822764929656958e-02, 3.26103689837094757e-02, -1.40180231659652564e-02,
+    5.02321627847738660e-03, -1.68288801875860600e-03, 6.37109256876428509e-04, -1.58106717175056409e-04};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_grad_9[] = {
+    2.76326171607464374e-04, -2.74290574995829980e-03, 1.29121875546715000e-02, -3.84395392835679695e-02,
+    8.14361009396698393e-02, -1.31013844473427010e-01, 1.66817527234382618e-01, -1.73051670990193585e-01,
+    1.49446338663523359e-01, -1.09167883917487649e-01, 6.82884799921246594e-02, -3.71438896383521414e-02,
+    1.78673498742155969e-02, -7.46145521239084761e-03, 2.58508389106426031e-03, -8.83162700040421842e-04,
+    3.70605498405958194e-04, -9.56479956719217021e-05};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_grad_10[] = {
+    1.54852720771869842e-04, -1.64534206722766023e-03, 8.32102981560023554e-03, -2.67090538256101462e-02,
+    6.12280598179089294e-02, -1.06962424027702480e-01, 1.48392401578966132e-01, -1.68249763083702375e-01,
+    1.59283854508077888e-01, -1.28030652040046655e-01, 8.84510344925368147e-02, -5.30188998740236603e-02,
+    2.79890435612546347e-02, -1.32444364799451948e-02, 5.46541271233928934e-03, -1.85662637833486225e-03,
+    6.40162613758207670e-04, -2.82802151817846076e-04, 7.41481629260780877e-05};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_grad_11[] = {
+    4.86264973615752966e-05, -5.84641033936986795e-04, 3.36574059681582277e-03, -1.23711991147361314e-02,
+    3.26662072543045523e-02, -6.61103296119098516e-02, 1.06852856029330714e-01, -1.41922679912396210e-01,
+    1.58204473840308724e-01, -1.50430877919325218e-01, 1.23603610238367481e-01, -8.87145486478330553e-02,
+    5.61327540452923116e-02, -3.15217388471871057e-02, 1.57879335169683020e-02, -7.13679341893215524e-03,
+    2.95990417586200916e-03, -1.09006576535600522e-03, 3.32852423984818300e-04, -1.05875503156490172e-04,
+    4.50413800996483278e-05, -1.12502249485618536e-05};
+
+// beta: 0
+constexpr double esp_sqrt_laplace_3d_potential_grad_12[] = {
+    2.72480048038037585e-05, -3.46652258045090640e-04, 2.11690682709517230e-03, -8.27405124054090765e-03,
+    2.32889031054351846e-02, -5.03623983070625725e-02, 8.71828207879123684e-02, -1.24307196129794087e-01,
+    1.49081991892961480e-01, -1.52843884919624751e-01, 1.35691367718960343e-01, -1.05416098955378304e-01,
+    7.23184199280030859e-02, -4.41572478606217164e-02, 2.41239087164536493e-02, -1.18333468600312422e-02,
+    5.28032093333203733e-03, -2.18371665748135326e-03, 8.01779795835931954e-04, -2.40591371459076593e-04,
+    7.75069725845497207e-05, -3.48154394387783188e-05, 8.82531650640820420e-06};
+
+template <class Real, int MaxVecLen>
+residual_evaluator_func<Real> get_esp_sqrt_laplace_3d_kernel(dmk_eval_type eval_level, int n_digits) {
+    constexpr int UF = unroll_factor;
+    if (eval_level == DMK_POTENTIAL) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 8;
+            constexpr int NC0 = 8;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 10;
+            constexpr int NC0 = 10;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 12;
+            constexpr int NC0 = 12;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 14;
+            constexpr int NC0 = 14;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 18;
+            constexpr int NC0 = 18;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 19;
+            constexpr int NC0 = 19;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 23;
+            constexpr int NC0 = 23;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+    } else if (eval_level == DMK_POTENTIAL_GRAD) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 8;
+            constexpr int NC0 = 8;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 10;
+            constexpr int NC0 = 10;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 12;
+            constexpr int NC0 = 12;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 14;
+            constexpr int NC0 = 14;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 18;
+            constexpr int NC0 = 18;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 19;
+            constexpr int NC0 = 19;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 23;
+            constexpr int NC0 = 23;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                sqrt_laplace_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
     }
-    if (n_digits <= 9) {
-        constexpr int ND = 9, NC_TOTAL = 45;
-        constexpr int NC0 = 23;
-        constexpr int NC1 = 22;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stresslet_3d_9, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
+}
+
+template <class Real, int MaxVecLen>
+residual_evaluator_range_func<Real> get_esp_sqrt_laplace_3d_kernel_ranges(dmk_eval_type eval_level, int n_digits) {
+    constexpr int UF = unroll_factor;
+    if (eval_level == DMK_POTENTIAL) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 8;
+            constexpr int NC0 = 8;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 10;
+            constexpr int NC0 = 10;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 12;
+            constexpr int NC0 = 12;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 14;
+            constexpr int NC0 = 14;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 18;
+            constexpr int NC0 = 18;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 19;
+            constexpr int NC0 = 19;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 23;
+            constexpr int NC0 = 23;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+    } else if (eval_level == DMK_POTENTIAL_GRAD) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 8;
+            constexpr int NC0 = 8;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 10;
+            constexpr int NC0 = 10;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 12;
+            constexpr int NC0 = 12;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 14;
+            constexpr int NC0 = 14;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 18;
+            constexpr int NC0 = 18;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 19;
+            constexpr int NC0 = 19;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 23;
+            constexpr int NC0 = 23;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_sqrt_laplace_3d_potential_grad_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                sqrt_laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
     }
-    if (n_digits <= 10) {
-        constexpr int ND = 10, NC_TOTAL = 50;
-        constexpr int NC0 = 25;
-        constexpr int NC1 = 25;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stresslet_3d_10, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
+}
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_2[] = {1.46043479102109242e-01, -4.48124731669416465e-01,
+                                                        4.35914711993546311e-01, -5.38387037196021503e-02,
+                                                        -8.25639062699168175e-02};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_3[] = {1.04133600766742135e-01,  -3.74373800188472716e-01,
+                                                        4.81821233961852946e-01,  -1.96187641183801442e-01,
+                                                        -8.61252306266795525e-02, 7.10647698133234501e-02};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_4[] = {
+    5.43320128472378830e-02,  -2.60343769755376320e-01, 4.85938769203017651e-01,
+    -3.89993422158306957e-01, 1.55932247506921223e-02,  1.82002113003575938e-01,
+    -7.75541018362244233e-02, -3.16791804210956388e-02, 2.17111936687518665e-02};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_5[] = {
+    3.96594239545312241e-02, -2.13378407156156080e-01, 4.59363956790847960e-01,  -4.58088243114778193e-01,
+    1.06028171632214493e-01, 2.01776376120107764e-01,  -1.54999513025094432e-01, -2.95461968367859602e-02,
+    6.01390212750857397e-02, -7.65481059040259157e-04, -1.01927682465977193e-02};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_6[] = {
+    2.90888944223709547e-02, -1.73640638695914590e-01, 4.23390139355747541e-01,  -5.02262986738708950e-01,
+    2.02898614255830001e-01, 1.80782687174541351e-01,  -2.27909618417582893e-01, 1.65362999270791886e-02,
+    8.99651098590546344e-02, -2.79790896727191742e-02, -1.95032336351645720e-02, 6.56417253194244849e-03,
+    2.07012103277505336e-03};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_7[] = {
+    1.58244199473351020e-02,  -1.12986541924241624e-01, 3.40045119258153616e-01,  -5.32457500664570649e-01,
+    3.86677882261270478e-01,  5.81259375482236704e-02,  -3.30031160471666918e-01, 1.76611192341328938e-01,
+    9.04887417156891166e-02,  -1.25823073849432782e-01, 4.67123869722863710e-03,  4.52942703428539165e-02,
+    -9.80864655862628831e-03, -9.85227984574808986e-03, 2.13242513826724517e-03,  1.08799945685769347e-03};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_8[] = {
+    1.17231580915822722e-02,  -9.05353222551797954e-02, 2.98340176354504105e-01,  -5.23860767662847171e-01,
+    4.61592699614139568e-01,  -3.28651247577806949e-02, -3.43500535202847346e-01, 2.73075032897807324e-01,
+    4.69320766561510949e-02,  -1.72730131566305428e-01, 5.08348801215075946e-02,  5.64968285555136965e-02,
+    -3.55413650977575088e-02, -1.04651820198408615e-02, 1.12298436255384975e-02,  8.84665953410915078e-04,
+    -1.61093920963949894e-03};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_9[] = {
+    6.47815297479929254e-03,  -5.75561163138182119e-02, 2.22542888868799749e-01,  -4.75401142936118626e-01,
+    5.63171171567656503e-01,  -2.39205486176427395e-01, -2.81514169930950520e-01, 4.50051499905713914e-01,
+    -1.26711397274764576e-01, -2.14310381783922005e-01, 1.90295634998373570e-01,  2.34933668084848779e-02,
+    -1.00093976391690764e-01, 2.49668587896511411e-02,  3.12600056196909587e-02,  -1.62116727749224213e-02,
+    -5.99494314888489570e-03, 4.81648424002121319e-03,  5.66632773515921744e-04,  -6.43410029663226378e-04};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_10[] = {
+    4.82940991365448172e-03,  -4.57062279063623969e-02, 1.89778461315788960e-01,  -4.41502915321420997e-01,
+    5.89034882049339736e-01,  -3.40821689904170777e-01, -2.09026410004837460e-01, 5.10636108498294550e-01,
+    -2.48017187456896160e-01, -1.90107327407145726e-01, 2.71171505098679100e-01,  -3.23347269063452222e-02,
+    -1.26507396610198247e-01, 6.58902116761357071e-02,  3.23204041236374168e-02,  -3.55495056512201632e-02,
+    -3.12648850393294504e-03, 1.16858419523565710e-02,  -6.36421439630153866e-04, -2.44821684015647349e-03,
+    1.79241552565874635e-04,  2.58447829201842363e-04};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_11[] = {
+    2.69649877120016609e-03,  -2.86392500569618465e-02, 1.35271678076346241e-01,  -3.66159578629183802e-01,
+    5.96973980880775690e-01,  -5.15153349652325399e-01, -5.76310604274815532e-03, 5.42479022231553420e-01,
+    -5.11077976980979898e-01, -2.71043146266868457e-02, 3.94657997248520909e-01,  -2.26871877414062006e-01,
+    -1.13933343705241066e-01, 1.80916101035237059e-01,  -2.09081159209883218e-02, -7.68142131840394843e-02,
+    3.55971123048858737e-02,  2.01778038079987940e-02,  -1.82875423308622789e-02, -2.93534436066350719e-03,
+    5.84010560383291417e-03,  7.22022229663429231e-05,  -1.18746039595904419e-03, 3.27986276899419409e-05,
+    1.20172492457812526e-04};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_12[] = {
+    2.01894167356022258e-03,  -2.26088357700140428e-02, 1.13244591599582584e-01,  -3.28079035678587150e-01,
+    5.83131592920810848e-01,  -5.81724851395885700e-01, 1.12154425086347737e-01,  5.09095616999565515e-01,
+    -6.30227589249374387e-01, 1.08419373433402452e-01,  4.11928983549371186e-01,  -3.53100126353551758e-01,
+    -5.66074272472616435e-02, 2.38790235966301251e-01,  -8.24566554335681434e-02, -8.48864085556200326e-02,
+    7.09480533335020008e-02,  1.24943332386891620e-02,  -3.22303433749053514e-02, 3.71440505962503846e-03,
+    9.99847038110844751e-03,  -2.79522624622548970e-03, -2.20118196270363119e-03, 7.70834736273828445e-04,
+    3.22280259185794068e-04,  -9.03154343234308901e-05, -2.41415356722164210e-05};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_grad_2[] = {1.46043479102109242e-01, -4.48124731669416465e-01,
+                                                             4.35914711993546311e-01, -5.38387037196021503e-02,
+                                                             -8.25639062699168175e-02};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_grad_3[] = {1.04133600766742135e-01,  -3.74373800188472716e-01,
+                                                             4.81821233961852946e-01,  -1.96187641183801442e-01,
+                                                             -8.61252306266795525e-02, 7.10647698133234501e-02};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_grad_4[] = {
+    5.43320128472378830e-02,  -2.60343769755376320e-01, 4.85938769203017651e-01,
+    -3.89993422158306957e-01, 1.55932247506921223e-02,  1.82002113003575938e-01,
+    -7.75541018362244233e-02, -3.16791804210956388e-02, 2.17111936687518665e-02};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_grad_5[] = {
+    3.96594239545312241e-02, -2.13378407156156080e-01, 4.59363956790847960e-01,  -4.58088243114778193e-01,
+    1.06028171632214493e-01, 2.01776376120107764e-01,  -1.54999513025094432e-01, -2.95461968367859602e-02,
+    6.01390212750857397e-02, -7.65481059040259157e-04, -1.01927682465977193e-02};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_grad_6[] = {
+    2.90888944223709547e-02, -1.73640638695914590e-01, 4.23390139355747541e-01,  -5.02262986738708950e-01,
+    2.02898614255830001e-01, 1.80782687174541351e-01,  -2.27909618417582893e-01, 1.65362999270791886e-02,
+    8.99651098590546344e-02, -2.79790896727191742e-02, -1.95032336351645720e-02, 6.56417253194244849e-03,
+    2.07012103277505336e-03};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_grad_7[] = {
+    1.58244199473351020e-02,  -1.12986541924241624e-01, 3.40045119258153616e-01,  -5.32457500664570649e-01,
+    3.86677882261270478e-01,  5.81259375482236704e-02,  -3.30031160471666918e-01, 1.76611192341328938e-01,
+    9.04887417156891166e-02,  -1.25823073849432782e-01, 4.67123869722863710e-03,  4.52942703428539165e-02,
+    -9.80864655862628831e-03, -9.85227984574808986e-03, 2.13242513826724517e-03,  1.08799945685769347e-03};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_grad_8[] = {
+    1.17231580915822722e-02,  -9.05353222551797954e-02, 2.98340176354504105e-01,  -5.23860767662847171e-01,
+    4.61592699614139568e-01,  -3.28651247577806949e-02, -3.43500535202847346e-01, 2.73075032897807324e-01,
+    4.69320766561510949e-02,  -1.72730131566305428e-01, 5.08348801215075946e-02,  5.64968285555136965e-02,
+    -3.55413650977575088e-02, -1.04651820198408615e-02, 1.12298436255384975e-02,  8.84665953410915078e-04,
+    -1.61093920963949894e-03};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_grad_9[] = {
+    6.47815297479929254e-03,  -5.75561163138182119e-02, 2.22542888868799749e-01,  -4.75401142936118626e-01,
+    5.63171171567656503e-01,  -2.39205486176427395e-01, -2.81514169930950520e-01, 4.50051499905713914e-01,
+    -1.26711397274764576e-01, -2.14310381783922005e-01, 1.90295634998373570e-01,  2.34933668084848779e-02,
+    -1.00093976391690764e-01, 2.49668587896511411e-02,  3.12600056196909587e-02,  -1.62116727749224213e-02,
+    -5.99494314888489570e-03, 4.81648424002121319e-03,  5.66632773515921744e-04,  -6.43410029663226378e-04};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_grad_10[] = {
+    4.82940991365448172e-03,  -4.57062279063623969e-02, 1.89778461315788960e-01,  -4.41502915321420997e-01,
+    5.89034882049339736e-01,  -3.40821689904170777e-01, -2.09026410004837460e-01, 5.10636108498294550e-01,
+    -2.48017187456896160e-01, -1.90107327407145726e-01, 2.71171505098679100e-01,  -3.23347269063452222e-02,
+    -1.26507396610198247e-01, 6.58902116761357071e-02,  3.23204041236374168e-02,  -3.55495056512201632e-02,
+    -3.12648850393294504e-03, 1.16858419523565710e-02,  -6.36421439630153866e-04, -2.44821684015647349e-03,
+    1.79241552565874635e-04,  2.58447829201842363e-04};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_grad_11[] = {
+    2.69649877120016609e-03,  -2.86392500569618465e-02, 1.35271678076346241e-01,  -3.66159578629183802e-01,
+    5.96973980880775690e-01,  -5.15153349652325399e-01, -5.76310604274815532e-03, 5.42479022231553420e-01,
+    -5.11077976980979898e-01, -2.71043146266868457e-02, 3.94657997248520909e-01,  -2.26871877414062006e-01,
+    -1.13933343705241066e-01, 1.80916101035237059e-01,  -2.09081159209883218e-02, -7.68142131840394843e-02,
+    3.55971123048858737e-02,  2.01778038079987940e-02,  -1.82875423308622789e-02, -2.93534436066350719e-03,
+    5.84010560383291417e-03,  7.22022229663429231e-05,  -1.18746039595904419e-03, 3.27986276899419409e-05,
+    1.20172492457812526e-04};
+
+// beta: 0
+constexpr double esp_laplace_dipole_3d_potential_grad_12[] = {
+    2.01894167356022258e-03,  -2.26088357700140428e-02, 1.13244591599582584e-01,  -3.28079035678587150e-01,
+    5.83131592920810848e-01,  -5.81724851395885700e-01, 1.12154425086347737e-01,  5.09095616999565515e-01,
+    -6.30227589249374387e-01, 1.08419373433402452e-01,  4.11928983549371186e-01,  -3.53100126353551758e-01,
+    -5.66074272472616435e-02, 2.38790235966301251e-01,  -8.24566554335681434e-02, -8.48864085556200326e-02,
+    7.09480533335020008e-02,  1.24943332386891620e-02,  -3.22303433749053514e-02, 3.71440505962503846e-03,
+    9.99847038110844751e-03,  -2.79522624622548970e-03, -2.20118196270363119e-03, 7.70834736273828445e-04,
+    3.22280259185794068e-04,  -9.03154343234308901e-05, -2.41415356722164210e-05};
+
+template <class Real, int MaxVecLen>
+residual_evaluator_func<Real> get_esp_laplace_dipole_3d_kernel(dmk_eval_type eval_level, int n_digits) {
+    constexpr int UF = unroll_factor;
+    if (eval_level == DMK_POTENTIAL) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 9;
+            constexpr int NC0 = 9;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 11;
+            constexpr int NC0 = 11;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 13;
+            constexpr int NC0 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 17;
+            constexpr int NC0 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 20;
+            constexpr int NC0 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 25;
+            constexpr int NC0 = 25;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 27;
+            constexpr int NC0 = 27;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+    } else if (eval_level == DMK_POTENTIAL_GRAD) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 9;
+            constexpr int NC0 = 9;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 11;
+            constexpr int NC0 = 11;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 13;
+            constexpr int NC0 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 17;
+            constexpr int NC0 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 20;
+            constexpr int NC0 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 25;
+            constexpr int NC0 = 25;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 27;
+            constexpr int NC0 = 27;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_dipole_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_src, r_src, charge, normals, n_trg,
+                    r_trg, pot, UF);
+            };
+        }
     }
-    if (n_digits <= 11) {
-        constexpr int ND = 11, NC_TOTAL = 55;
-        constexpr int NC0 = 28;
-        constexpr int NC1 = 27;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stresslet_3d_11, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
+}
+
+template <class Real, int MaxVecLen>
+residual_evaluator_range_func<Real> get_esp_laplace_dipole_3d_kernel_ranges(dmk_eval_type eval_level, int n_digits) {
+    constexpr int UF = unroll_factor;
+    if (eval_level == DMK_POTENTIAL) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 9;
+            constexpr int NC0 = 9;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 11;
+            constexpr int NC0 = 11;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 13;
+            constexpr int NC0 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 17;
+            constexpr int NC0 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 20;
+            constexpr int NC0 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 25;
+            constexpr int NC0 = 25;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 27;
+            constexpr int NC0 = 27;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+    } else if (eval_level == DMK_POTENTIAL_GRAD) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 5;
+            constexpr int NC0 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 6;
+            constexpr int NC0 = 6;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 9;
+            constexpr int NC0 = 9;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 11;
+            constexpr int NC0 = 11;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 13;
+            constexpr int NC0 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 16;
+            constexpr int NC0 = 16;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 17;
+            constexpr int NC0 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 20;
+            constexpr int NC0 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 22;
+            constexpr int NC0 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 25;
+            constexpr int NC0 = 25;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 27;
+            constexpr int NC0 = 27;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_laplace_dipole_3d_potential_grad_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_dipole_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, coeffs.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
     }
-    if (n_digits <= 12) {
-        constexpr int ND = 12, NC_TOTAL = 60;
-        constexpr int NC0 = 30;
-        constexpr int NC1 = 30;
-        std::array<Real, NC_TOTAL> coeffs;
-        std::copy_n(stresslet_3d_12, NC_TOTAL, coeffs.data());
-        return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
-                   const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
-            stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1>(eval_level, ND, rsc, cen, d2max, thresh2, NC0,
-                                                                       NC1, coeffs.data(), n_src, r_src, charge,
-                                                                       normals, n_trg, r_trg, pot, UF);
-        };
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
+}
+// beta: 0
+constexpr double esp_stokeslet_3d_velocity_2[] = {
+    6.45330168077935418e-01,  4.02561489357531471e-02, -5.00781940028783623e-01, 2.18252701054278853e-01,
+    1.07900009948411202e-01,  2.08475458435832900e-01, 4.08581057100382172e-01,  6.48839672128554146e-02,
+    -1.65139179001566438e-01, -2.51798823541386392e-02};
+
+// beta: 0
+constexpr double esp_stokeslet_3d_velocity_3[] = {
+    6.35117598279079876e-01, -1.09823600977811256e-01, -4.21237114742523955e-01, 5.90649651555818833e-01,
+    9.10881503594436330e-04, -2.86895083348190971e-01, 3.56906167615126391e-02,  5.64950888486494551e-02,
+    2.61024452441512789e-01, 4.79348710924276278e-01,  -6.57198657043774614e-02, -3.50003624332287433e-01,
+    9.88567317360971171e-02, 1.20821076230939836e-01,  -4.47737895732901875e-02};
+
+// beta: 0
+constexpr double esp_stokeslet_3d_velocity_4[] = {
+    6.02998242771318083e-01,  -2.25538691712745792e-01, -1.43989708138149958e-01, 7.46924581142423993e-01,
+    -4.92152412067750400e-01, -3.03009492152616022e-01, 3.77166893204392673e-01,  2.16366565946393558e-02,
+    -9.40651705695215445e-02, 1.00052430259784681e-02,  3.42683351415823012e-01,  4.85747471983049794e-01,
+    -3.42350781388136627e-01, -3.55186209789876584e-01, 4.78467207074801726e-01,  1.14881591266974906e-01,
+    -3.02601574854770738e-01, 1.81108277818025146e-02,  7.38339047804456722e-02,  -1.35716787648408211e-02};
+
+// beta: 0
+constexpr double esp_stokeslet_3d_velocity_5[] = {
+    5.86876584445977345e-01,  -2.45935476013306925e-01, -2.98971559351797174e-03, 7.02283993299189557e-01,
+    -7.59197162537268322e-01, -1.25399480157157489e-01, 6.12373862421075610e-01,  -1.67081496845167349e-01,
+    -2.23604877478071895e-01, 1.10039432069176782e-01,  3.65458715728510450e-02,  -2.39083149932594261e-02,
+    3.73464860776902774e-01,  4.59341417399685092e-01,  -4.56416507770840973e-01, -2.44755913400802466e-01,
+    6.53511027925004262e-01,  -7.32346282603155152e-02, -4.58350843399149555e-01, 1.89483905951682019e-01,
+    1.64595615764232983e-01,  -1.02178058283854664e-01, -2.68079413999300041e-02, 2.13442018576410833e-02};
+
+// beta: 0
+constexpr double esp_stokeslet_3d_velocity_6[] = {
+    5.72279083872819117e-01,  -2.49742022702694050e-01, 1.18040155819408840e-01,  5.98346552895317241e-01,
+    -9.55628876691553386e-01, 1.45839849937107302e-01,  7.22716305486585942e-01,  -4.46109891136227621e-01,
+    -2.42442393416013979e-01, 2.78931113700176814e-01,  3.55880790190828133e-02,  -9.14139103503797262e-02,
+    -5.51851268983808980e-04, 1.41489297023000907e-02,  3.98632017397967331e-01,  4.23389676395730830e-01,
+    -5.41430460206661968e-01, -9.62788655208145772e-02, 7.52735762975043077e-01,  -3.25072107347094519e-01,
+    -4.94838422678293699e-01, 4.24295643211262508e-01,  1.52546240363086033e-01,  -2.42207524038145383e-01,
+    -1.61496209207082769e-02, 7.78881716296915549e-02,  -1.49603344103104992e-03, -1.20155653820326613e-02};
+
+// beta: 0
+constexpr double esp_stokeslet_3d_velocity_7[] = {
+    5.48581076121191780e-01,  -2.27061647214790802e-01, 2.88613466296047172e-01,  2.91687767509671847e-01,
+    -1.11183626355490794e+00, 8.14177075070700140e-01,  5.35058909441032515e-01,  -1.06035627136248101e+00,
+    1.68559879779971999e-01,  5.84344514111508229e-01,  -2.99540380491454372e-01, -1.82584720269397927e-01,
+    1.62134956121299245e-01,  3.22890936379820401e-02,  -4.84196179945188127e-02, -2.49580069597767204e-03,
+    6.84800161053422066e-03,  4.35594529169838429e-01,  3.40048165776445033e-01,  -6.28661774608792578e-01,
+    2.40770638252217090e-01,  7.25224652654012036e-01,  -8.72312980865794896e-01, -2.05553422664869478e-01,
+    8.83793026385699010e-01,  -2.56997829400001820e-01, -4.58639263525761010e-01, 2.90519382547901439e-01,
+    1.37445148130330930e-01,  -1.47210721723035759e-01, -2.25401328895335068e-02, 4.31522473198324222e-02,
+    1.43538619706511691e-03,  -6.06708814259779294e-03};
+
+// beta: 0
+constexpr double esp_stokeslet_3d_velocity_8[] = {
+    5.39406064722753542e-01,  -2.07804892591352902e-01, 3.38283309939463706e-01,  1.24543297727807867e-01,
+    -1.07187018937736123e+00, 1.12892347923220893e+00,  2.46856921026415294e-01,  -1.27848344687706539e+00,
+    5.65095740670132018e-01,  6.02827631223275984e-01,  -5.90209432112017374e-01, -1.10351516628452245e-01,
+    3.03762042978786673e-01,  -2.49212153049918408e-02, -1.00566591817998874e-01, 1.86990433118731543e-02,
+    2.16357172473477140e-02,  -3.43238333601580655e-03, -2.39358366286809366e-03, 4.48870777236093033e-01,
+    2.98340186642652216e-01,  -6.36623587184168116e-01, 3.99318776782193963e-01,  6.10282153313895348e-01,
+    -1.09607609307319143e+00, 9.65792045746942107e-02,  1.00551699938332617e+00,  -6.11626030819647504e-01,
+    -4.30451398591817136e-01, 5.38042374433874926e-01,  5.45111663573235386e-02,  -2.65712106321734032e-01,
+    3.46909900362110529e-02,  8.66444779608876170e-02,  -1.91919913066799924e-02, -1.84908325375043835e-02,
+    3.34136676198408750e-03,  2.03356951553153222e-03};
+
+// beta: 0
+constexpr double esp_stokeslet_3d_velocity_9[] = {
+    5.25538981783497006e-01,  -1.64986776104815741e-01, 3.79287408051037667e-01,  -1.75539754643736667e-01,
+    -8.09916708538945374e-01, 1.56215046471226171e+00,  -5.89828549412836911e-01, -1.29324888484936285e+00,
+    1.53413026521247819e+00,  1.19285123821474062e-01,  -1.17361764254831735e+00, 4.62862839029407336e-01,
+    4.82206911915685266e-01,  -4.01804149914476272e-01, -1.02763451489586100e-01, 1.90424341766742750e-01,
+    1.73883874483230432e-04,  -6.03777946267899934e-02, 5.95026224982889238e-03,  1.25666528114293883e-02,
+    -1.16136129096078614e-03, -1.33206208955337206e-03, 4.67982865270842985e-01,  2.22542892091093264e-01,
+    -6.01830303140966749e-01, 6.50940959908270833e-01,  2.46745753272201912e-01,  -1.32294700857178049e+00,
+    8.71339832321877061e-01,  8.43223171633317503e-01,  -1.40739945757869500e+00, 9.48585910741818750e-02,
+    9.83247512606144514e-01,  -4.85736845741554790e-01, -3.81939699025557189e-01, 3.75435152423082119e-01,
+    7.12550111650920998e-02,  -1.72247107531754651e-01, 6.03575085084342034e-03,  5.38955505883771877e-02,
+    -6.61938197129546737e-03, -1.11414216522547124e-02, 1.18211641481926876e-03,  1.17606585311597436e-03};
+
+// beta: 0
+constexpr double esp_stokeslet_3d_velocity_10[] = {
+    5.20438409006638847e-01,  -1.44072221025614899e-01, 3.77586693770008475e-01,  -2.95064921148863069e-01,
+    -6.20534092848069929e-01, 1.64956729593177065e+00,  -1.05560730561509897e+00, -1.05071912014691926e+00,
+    1.97127364019937334e+00,  -4.03916533554575907e-01, -1.31192388056495024e+00, 9.48229287112095531e-01,
+    3.88144820130259638e-01,  -6.77215903681530285e-01, 3.70070974357352075e-02,  2.95881262595688199e-01,
+    -9.02855978781445107e-02, -8.88813853591309544e-02, 4.39878731156773742e-02,  1.84838780580627166e-02,
+    -1.14588819670327184e-02, -2.44710404284200628e-03, 1.37122525764388778e-03,  1.55465263746289677e-04,
+    4.74732181032067213e-01,  1.89778448909329323e-01,  -5.67365143719162246e-01, 7.36567841540866297e-01,
+    3.14987612085671775e-02,  -1.30874580617148450e+00, 1.26464066403055786e+00,  5.40086116787813819e-01,
+    -1.72331160226701008e+00, 5.93999105039683117e-01,  1.04100799747092787e+00,  -9.15779335730488531e-01,
+    -2.62376670150980873e-01, 6.10991227234983225e-01,  -6.79536422608677249e-02, -2.59708117093241098e-01,
+    9.17710211512029611e-02,  7.64484273167567729e-02,  -4.21337063668163689e-02, -1.54798172136885702e-02,
+    1.07687923641252917e-02,  1.95493067759875370e-03,  -1.27865253176690473e-03, -1.13021299502640883e-04};
+
+// beta: 0
+constexpr double esp_stokeslet_3d_velocity_11[] = {
+    5.12971375673901941e-01,  -1.06632427936200411e-01, 3.46331841063612700e-01,  -4.61628821080934004e-01,
+    -2.04551073040647180e-01, 1.56275011827907528e+00,  -1.87851587213689308e+00, -1.25618309617478358e-01,
+    2.42192545620370403e+00,  -1.83762845965806165e+00, -9.23462315986234072e-01, 2.04400705432847563e+00,
+    -4.32938829087462118e-01, -1.11696864455789990e+00, 7.26757564997034700e-01,  3.22116767668577275e-01,
+    -4.63784743744248495e-01, -4.46493790660573361e-03, 1.90270104005864832e-01,  -4.26878187982654977e-02,
+    -5.41735751661287721e-02, 2.16642457704927967e-02,  1.01219512968544825e-02,  -5.55079321509482481e-03,
+    -9.51884083335958640e-04, 6.42026728735983093e-04,  4.84332125555563986e-01,  1.35271678046394062e-01,
+    -4.81603519336896768e-01, 8.27788394242883974e-01,  -3.92422898495839723e-01, -1.04759660199941451e+00,
+    1.88427880444767371e+00,  -4.16863071616383696e-01, -1.91084580970450735e+00, 1.86475149897253045e+00,
+    5.28794849428510516e-01,  -1.81722714440295996e+00, 5.46906230002338511e-01,  9.36347866310586974e-01,
+    -7.05930099981114112e-01, -2.45940355822564294e-01, 4.28315063243543681e-01,  -1.47794805291696033e-02,
+    -1.72115574676396266e-01, 4.47101762643978343e-02,  4.84215291815941196e-02,  -2.11648554019119410e-02,
+    -8.96798594136317788e-03, 5.31089717636047329e-03,  8.37286280268241686e-04,  -6.09001245288428097e-04};
+
+// beta: 0
+constexpr double esp_stokeslet_3d_velocity_12[] = {
+    5.10294947053572701e-01,  -9.06357558182818018e-02, 3.22251664181469333e-01,  -5.10105117151201215e-01,
+    -3.51673821367180783e-03, 1.40871142116777648e+00,  -2.17437784760166597e+00, 4.84524736441024950e-01,
+    2.34816963042997706e+00,  -2.60170480443309682e+00, -3.23793042824442823e-01, 2.45798526485808022e+00,
+    -1.18311225137647780e+00, -1.09315779756170284e+00, 1.25177128980511454e+00,  1.07932682244523959e-01,
+    -7.02343836056771198e-01, 1.85049612720302320e-01,  2.60978337845894637e-01,  -1.47711805300286880e-01,
+    -6.60437689089072438e-02, 6.51331523850651184e-02,  1.04816444712558261e-02,  -1.94183735904337462e-02,
+    -7.41125545462553628e-04, 3.75826891618937300e-03,  -1.89032602673012395e-05, -3.61484878460096681e-04,
+    4.87686111272849276e-01,  1.13244591600100336e-01,  -4.35496255782633568e-01, 8.38184151408877365e-01,
+    -5.79614854615742914e-01, -8.26986518957383510e-01, 2.06222342045085094e+00,  -9.93621200325024656e-01,
+    -1.71794201702203253e+00, 2.49329338936809464e+00,  -8.81361083661525574e-02, -2.10493181336644231e+00,
+    1.23972042281791661e+00,  8.54548757758811561e-01,  -1.16931684160658111e+00, -2.35277575544764611e-02,
+    6.31400252279186169e-01,  -1.96654626002729593e-01, -2.28754194692605467e-01, 1.42856549938671029e-01,
+    5.60510947178592886e-02,  -6.13409534844171420e-02, -8.28395272231670018e-03, 1.80814574129800204e-02,
+    4.20067664214398260e-04,  -3.47967658532472024e-03, 4.28556055798588644e-05,  3.33648788706084954e-04};
+
+template <class Real, int MaxVecLen>
+residual_evaluator_func<Real> get_esp_stokeslet_3d_kernel(dmk_eval_type eval_level, int n_digits) {
+    constexpr int UF = unroll_factor;
+    if (eval_level == DMK_VELOCITY) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 10;
+            constexpr int NC0 = 5;
+            constexpr int NC1 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 15;
+            constexpr int NC0 = 8;
+            constexpr int NC1 = 7;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 20;
+            constexpr int NC0 = 10;
+            constexpr int NC1 = 10;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 24;
+            constexpr int NC0 = 12;
+            constexpr int NC1 = 12;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 28;
+            constexpr int NC0 = 14;
+            constexpr int NC1 = 14;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 34;
+            constexpr int NC0 = 17;
+            constexpr int NC1 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 38;
+            constexpr int NC0 = 19;
+            constexpr int NC1 = 19;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 44;
+            constexpr int NC0 = 22;
+            constexpr int NC1 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 48;
+            constexpr int NC0 = 24;
+            constexpr int NC1 = 24;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 52;
+            constexpr int NC0 = 26;
+            constexpr int NC1 = 26;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 56;
+            constexpr int NC0 = 28;
+            constexpr int NC1 = 28;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stokeslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
     }
-    throw std::runtime_error("Unsupported n_digits: " + std::to_string(n_digits));
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
+}
+
+template <class Real, int MaxVecLen>
+residual_evaluator_range_func<Real> get_esp_stokeslet_3d_kernel_ranges(dmk_eval_type eval_level, int n_digits) {
+    constexpr int UF = unroll_factor;
+    if (eval_level == DMK_VELOCITY) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 10;
+            constexpr int NC0 = 5;
+            constexpr int NC1 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stokeslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 15;
+            constexpr int NC0 = 8;
+            constexpr int NC1 = 7;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stokeslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 20;
+            constexpr int NC0 = 10;
+            constexpr int NC1 = 10;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stokeslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 24;
+            constexpr int NC0 = 12;
+            constexpr int NC1 = 12;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stokeslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 28;
+            constexpr int NC0 = 14;
+            constexpr int NC1 = 14;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stokeslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 34;
+            constexpr int NC0 = 17;
+            constexpr int NC1 = 17;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stokeslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 38;
+            constexpr int NC0 = 19;
+            constexpr int NC1 = 19;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stokeslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 44;
+            constexpr int NC0 = 22;
+            constexpr int NC1 = 22;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stokeslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 48;
+            constexpr int NC0 = 24;
+            constexpr int NC1 = 24;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stokeslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 52;
+            constexpr int NC0 = 26;
+            constexpr int NC1 = 26;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stokeslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 56;
+            constexpr int NC0 = 28;
+            constexpr int NC1 = 28;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stokeslet_3d_velocity_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stokeslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+    }
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
+}
+// beta: 0
+constexpr double esp_stresslet_3d_velocity_2[] = {
+    -4.33762662231073570e-01, -5.62694683820209374e-01, 6.60103953831522761e-01,  8.87052459143668370e-01,
+    -2.86892155369771640e-01, -3.84718323529047057e-01, -4.37922791067697825e-01, 2.63268908186378658e-01,
+    2.98643858456378086e-01,  -3.26107453185396357e-02, -1.34296197308459098e-01};
+
+// beta: 0
+constexpr double esp_stresslet_3d_velocity_3[] = {
+    -4.83835387070397194e-01, -3.47247383885136540e-01, 1.29430442989743710e+00, 6.82447009259609882e-01,
+    -1.44140693907767625e+00, -4.56297159125734986e-01, 8.03597613705667180e-01, 1.05915915273022576e-01,
+    -1.88089108849234438e-01, -4.00254009915286257e-01, 3.67600951987724633e-01, 3.58540933281277896e-01,
+    -1.53966694183135577e-01, -3.25508339032646921e-01, 3.09464782321373540e-02, 1.12386351568700027e-01};
+
+// beta: 0
+constexpr double esp_stresslet_3d_velocity_4[] = {
+    -4.85718458395109853e-01, 2.03640978683756052e-01, 1.75162040642852346e+00, -9.26126734031615495e-01,
+    -2.52112000260660984e+00, 1.59705946079919348e+00, 1.84146961889991445e+00, -1.36089779970759306e+00,
+    -7.11736185714871294e-01, 6.03931577854525670e-01, 1.24640313703815106e-01, -1.18477344317494043e-01,
+    -3.19137362188256890e-01, 5.53545283381120523e-01, 2.37330076678356566e-01, -6.59869987526000457e-01,
+    -3.28777259489548945e-01, 6.15549861631708439e-01, 2.19271777063300755e-01, -3.47813143475401543e-01,
+    -5.90136992278391601e-02, 8.83522894876288267e-02};
+
+// beta: 0
+constexpr double esp_stresslet_3d_velocity_5[] = {
+    -4.59339952618963931e-01, 4.53809202828116154e-01,  1.64688697276913421e+00,  -1.88768233309130373e+00,
+    -2.24419335389960750e+00, 3.17457492985946210e+00,  1.40317961186393259e+00,  -2.83258662131181005e+00,
+    -3.48456683937060363e-01, 1.49347056727745686e+00,  -1.79342974668070636e-02, -4.75744239792280477e-01,
+    1.96841387882719411e-02,  7.39854196178224705e-02,  -2.79645660538240914e-01, 6.10546004905437645e-01,
+    9.23461365314681565e-02,  -8.72050324728246395e-01, -9.22375491775250383e-02, 9.68856815012811623e-01,
+    -4.61495568963420078e-04, -6.97847608918795381e-01, 6.73493654693382987e-02,  2.98686116700634108e-01,
+    -4.95446425234441906e-02, -5.82548721686719298e-02, 1.21348500794357002e-02};
+
+// beta: 0
+constexpr double esp_stresslet_3d_velocity_6[] = {
+    -4.23389941283545734e-01, 6.59406949575899182e-01, 1.37161110402624020e+00,  -2.72008732981686530e+00,
+    -1.38244940634501834e+00, 4.57710068679918969e+00, -3.01573376267261946e-02, -4.13091461983612884e+00,
+    1.07182041538766915e+00,  2.25390327682400038e+00, -9.02359033801729216e-01, -8.02527659246098479e-01,
+    3.55357655764951819e-01,  1.85272622752057442e-01, -6.04700432896773943e-02, -2.21901277150313055e-02,
+    -2.42498090734091148e-01, 6.43187082057843695e-01, -8.42146897127681732e-02, -1.00277339126060605e+00,
+    2.91731343975150770e-01,  1.19830702665044520e+00, -5.03786608941581893e-01, -9.41068858054024404e-01,
+    5.06717230651031914e-01,  4.79624674329220846e-01, -3.12447767111559971e-01, -1.49858389843352757e-01,
+    1.13729562639194454e-01,  2.25698020294049298e-02, -1.92435958117624199e-02};
+
+// beta: 0
+constexpr double esp_stresslet_3d_velocity_7[] = {
+    -3.40048359637295239e-01, 9.17275184951068079e-01,  5.35039296060603742e-01,  -3.62315406252702177e+00,
+    1.46005201907913329e+00,  5.59345226634502346e+00,  -4.94836248915564614e+00, -4.11758418108021385e+00,
+    6.16674852453990674e+00,  1.16618180902758684e+00,  -4.39269494981035535e+00, 3.85778189602603849e-01,
+    2.06191405853106602e+00,  -4.78586586194227170e-01, -6.72756096918256774e-01, 1.86155304489050683e-01,
+    1.46694132382690856e-01,  -2.95192199792431512e-02, -1.65874084732246310e-02, -1.77754957142211484e-01,
+    6.45806523940719912e-01,  -4.50309658441921057e-01, -9.66945525598739808e-01, 1.21175035648734064e+00,
+    9.92144144083929369e-01,  -1.85332677154172365e+00, -4.88560726830629732e-01, 1.78970573035931491e+00,
+    -7.05060878462405588e-02, -1.14749240619016279e+00, 2.67181758660415491e-01,  4.94779866866891405e-01,
+    -1.83319482484826629e-01, -1.35586190031887932e-01, 6.42108099947536481e-02,  1.82336307710931934e-02,
+    -1.00118613094228748e-02};
+
+// beta: 0
+constexpr double esp_stresslet_3d_velocity_8[] = {
+    -2.98340282000057411e-01, 9.74906980368804410e-01,  7.53080222089307222e-02,  -3.63907207705233260e+00,
+    3.03874738824764679e+00,  4.90046361261969565e+00,  -7.61243577602310495e+00, -2.14037693986212929e+00,
+    8.73548258133275368e+00,  -1.53634375181806493e+00, -5.88150287468153188e+00, 2.68369773143526169e+00,
+    2.55766913354665792e+00,  -1.83804588611794428e+00, -7.34111205740778150e-01, 7.68549246426516453e-01,
+    1.29391885182474103e-01,  -1.98613751573445241e-01, -9.81564105498417688e-03, 2.48346084017877014e-02,
+    -3.93464001536868938e-04, -1.50575982468821062e-01, 6.23309234916242572e-01,  -6.11521077655085010e-01,
+    -8.13708495065003201e-01, 1.62320263766282902e+00,  5.37468305110224809e-01,  -2.44095156646784428e+00,
+    2.91609771582185706e-01,  2.30049794462981039e+00,  -9.40637946536438951e-01, -1.42342957201568798e+00,
+    9.44200368522494671e-01,  5.88785224688787912e-01,  -5.70529329056652212e-01, -1.60463833422456736e-01,
+    2.30201551442711622e-01,  2.64405736240715568e-02,  -5.94827044310497280e-02, -1.98442648244757762e-03,
+    7.56916826105518466e-03};
+
+// beta: 0
+constexpr double esp_stresslet_3d_velocity_9[] = {
+    -2.22542891738181231e-01, 9.81117842371594384e-01,  -7.49162202536646227e-01, -2.93981614016339110e+00,
+    5.62774305393912844e+00,  1.38693527580400922e+00,  -1.11303667170604328e+01, 5.35409260159362077e+00,
+    1.04028450212257990e+01,  -1.06714808708241637e+01, -4.47366929625354981e+00, 9.87551714499374000e+00,
+    -3.53045768516167147e-01, -5.76910958162372989e+00, 1.70868457384808026e+00,  2.34125963976244789e+00,
+    -1.18201894031793686e+00, -6.80247431619845022e-01, 4.73372926141852723e-01,  1.38594813363493247e-01,
+    -1.15258269392520346e-01, -1.79683137761794676e-02, 1.34185040885026197e-02,  1.10501316393031351e-03,
+    -1.06198098528463306e-01, 5.49582173792954154e-01,  -8.51551064326781404e-01, -3.28997850455901242e-01,
+    2.12266117049445802e+00,  -8.60632363908143683e-01, -2.83879884868414756e+00, 2.62788235958894578e+00,
+    2.06034582796057331e+00,  -3.46202478870892216e+00, -5.08578531836467396e-01, 2.80489917212615847e+00,
+    -4.97880237455173680e-01, -1.54428243165762336e+00, 6.37584036795996401e-01,  6.02221666287610979e-01,
+    -3.84113393931024283e-01, -1.65942142090225841e-01, 1.48312071708048859e-01,  3.00430737416814836e-02,
+    -3.60387367383068410e-02, -2.74887109745640705e-03, 4.25580244118122474e-03};
+
+// beta: 0
+constexpr double esp_stresslet_3d_velocity_10[] = {
+    -1.89778448863059640e-01, 9.44951863809540549e-01,  -1.07497322952546748e+00, -2.33570098655670622e+00,
+    6.41773263387601833e+00,  -1.04404681884995787e+00, -1.13684033263742688e+01, 1.00050043824895294e+01,
+    8.43990725341168080e+00,  -1.57496733171206191e+01, -3.32144752589901393e-01, 1.31937810937894735e+01,
+    -4.81363178550535320e+00, -6.91066883987475222e+00, 4.90105382922110167e+00,  2.27441739144228228e+00,
+    -2.86676017074655842e+00, -3.49468735276121434e-01, 1.16957446037397594e+00,  -7.74678431173946996e-02,
+    -3.43133103385690530e-01, 6.52032192037850650e-02,  6.72107605674434339e-02,  -1.85658566040234722e-02,
+    -6.65412169678491171e-03, 2.23444548172181115e-03,  -8.85273018925631094e-02, 5.04762402361664586e-01,
+    -9.25689562040109770e-01, -4.19990349374643329e-02, 2.17074337345447033e+00,  -1.65676506172328852e+00,
+    -2.52483454509180261e+00, 3.87513949644360078e+00,  1.09006207737756378e+00,  -4.65630585147631937e+00,
+    9.29889749769625462e-01,  3.48418781474726780e+00,  -1.86547269976755103e+00, -1.69913732588763811e+00,
+    1.56230788436759149e+00,  5.12665488727775620e-01,  -8.58415089919391416e-01, -6.09254980875861551e-02,
+    3.42094781973301121e-01,  -2.08278230181626577e-02, -9.98863183736157650e-02, 1.08443785229366593e-02,
+    1.97105165436367927e-02,  -1.63898611115798412e-03, -1.98286682609797064e-03};
+
+// beta: 0
+constexpr double esp_stresslet_3d_velocity_11[] = {
+    -1.35271678040821158e-01, 8.27935362930804053e-01,  -1.52015814727730469e+00, -9.13673848981569559e-01,
+    6.80767486018383483e+00,  -6.06768100724531845e+00, -8.38763867830890320e+00, 1.82046679001362719e+01,
+    -1.49589236217361421e+00, -2.20694469720892954e+01, 1.47006877667729796e+01,  1.34194469425450240e+01,
+    -1.87309082315122168e+01, -2.26238725845227640e+00, 1.35565849921935566e+01,  -3.23443249076295469e+00,
+    -6.56494397504898597e+00, 3.47736880956567163e+00,  2.18805015185548557e+00,  -1.98015377661958847e+00,
+    -4.55301367826801417e-01, 7.82345545904296724e-01,  2.25658709479995348e-02,  -2.21690214870628066e-01,
+    2.09557056397373341e-02,  4.16063592789712930e-02,  -7.29929107471203546e-03, -3.90535137588239687e-03,
+    8.94383636998104443e-04,  -6.07584337902685317e-02, 4.11250132381451861e-01,  -9.88322902017065297e-01,
+    5.23230442722502409e-01,  1.87680206130256377e+00,  -3.07015690606200353e+00, -9.11600691903336591e-01,
+    5.65135954115112238e+00,  -2.40948011544685681e+00, -5.49173483642305982e+00, 5.42907127655123922e+00,
+    2.65596727364522245e+00,  -5.69706246569687380e+00, 1.81966309899306539e-01,  3.81438021436499275e+00,
+    -1.32323174688465883e+00, -1.76416702972069817e+00, 1.14246443881865201e+00,  5.65394776338294935e-01,
+    -6.12576236427414766e-01, -1.14294924198820425e-01, 2.36918103388174456e-01,  8.47045755391224314e-03,
+    -6.69062626904607799e-02, 2.02540896549924417e-03,  1.26561387587892319e-02,  -4.57632315623875911e-04,
+    -1.20639229065328240e-03};
+
+// beta: 0
+constexpr double esp_stresslet_3d_velocity_12[] = {
+    -1.13244591599551997e-01, 7.57747919509134449e-01,  -1.64355994375662307e+00, -1.96092976648136547e-01,
+    6.45339214186532217e+00,  -8.23841017926719843e+00, -5.41799690027584724e+00, 2.06989240632872189e+01,
+    -8.69602025223604080e+00, -2.15586662069917168e+01, 2.40347709899128539e+01,  8.27993633827152031e+00,
+    -2.59805225865359404e+01, 5.25215098074422126e+00,  1.67015003163964870e+01,  -9.72545474764537765e+00,
+    -6.69679492161604983e+00, 7.41835966738841623e+00,  1.27823219285769718e+00,  -3.78672300433313591e+00,
+    3.43013413709510107e-01,  1.43775989893744360e+00,  -4.05401546621625974e-01, -4.18408637812396678e-01,
+    1.89903488267497839e-01,  9.15347697889091483e-02,  -5.71559492934831936e-02, -1.37205137364135987e-02,
+    1.08985142508862074e-02,  1.06262850219565348e-03,  -1.01436533093148418e-03, -5.00620859281954503e-02,
+    3.65827231437048928e-01,  -9.83349569866412310e-01, 7.72819825912401170e-01,  1.57151582414532065e+00,
+    -3.57312325236483685e+00, 2.56225432960631994e-01,  5.90602037109264622e+00,  -4.61662976533342118e+00,
+    -4.69293185502479115e+00, 7.92358098024883617e+00,  6.55073746395932188e-01,  -7.42118781937487970e+00,
+    2.60512216043379885e+00,  4.40077222301223614e+00,  -3.26482894732226470e+00, -1.60910252147227650e+00,
+    2.27484297126729329e+00,  2.14024759681644694e-01,  -1.11713089267078258e+00, 1.45947373784610535e-01,
+    4.15156134388412312e-01,  -1.17828977313931549e-01, -1.19078260793949300e-01, 4.50323953973024507e-02,
+    2.57681010168318535e-02,  -9.96623999593681392e-03, -3.83317179586554774e-03, 1.02799005315761189e-03,
+    2.95838026262379677e-04};
+
+template <class Real, int MaxVecLen>
+residual_evaluator_func<Real> get_esp_stresslet_3d_kernel(dmk_eval_type eval_level, int n_digits) {
+    constexpr int UF = unroll_factor;
+    if (eval_level == DMK_VELOCITY) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 11;
+            constexpr int NC0 = 6;
+            constexpr int NC1 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 16;
+            constexpr int NC0 = 9;
+            constexpr int NC1 = 7;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 22;
+            constexpr int NC0 = 12;
+            constexpr int NC1 = 10;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 27;
+            constexpr int NC0 = 14;
+            constexpr int NC1 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 31;
+            constexpr int NC0 = 16;
+            constexpr int NC1 = 15;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 37;
+            constexpr int NC0 = 19;
+            constexpr int NC1 = 18;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 41;
+            constexpr int NC0 = 21;
+            constexpr int NC1 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 47;
+            constexpr int NC0 = 24;
+            constexpr int NC1 = 23;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 51;
+            constexpr int NC0 = 26;
+            constexpr int NC1 = 25;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 57;
+            constexpr int NC0 = 29;
+            constexpr int NC1 = 28;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 61;
+            constexpr int NC0 = 31;
+            constexpr int NC1 = 30;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                stresslet_3d_poly_all_pairs<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+    }
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
+}
+
+template <class Real, int MaxVecLen>
+residual_evaluator_range_func<Real> get_esp_stresslet_3d_kernel_ranges(dmk_eval_type eval_level, int n_digits) {
+    constexpr int UF = unroll_factor;
+    if (eval_level == DMK_VELOCITY) {
+        if (n_digits <= 2) {
+            constexpr int ND = 2, NC_TOTAL = 11;
+            constexpr int NC0 = 6;
+            constexpr int NC1 = 5;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_2, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stresslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 3) {
+            constexpr int ND = 3, NC_TOTAL = 16;
+            constexpr int NC0 = 9;
+            constexpr int NC1 = 7;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_3, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stresslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 4) {
+            constexpr int ND = 4, NC_TOTAL = 22;
+            constexpr int NC0 = 12;
+            constexpr int NC1 = 10;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_4, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stresslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 5) {
+            constexpr int ND = 5, NC_TOTAL = 27;
+            constexpr int NC0 = 14;
+            constexpr int NC1 = 13;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_5, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stresslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 6) {
+            constexpr int ND = 6, NC_TOTAL = 31;
+            constexpr int NC0 = 16;
+            constexpr int NC1 = 15;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_6, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stresslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 7) {
+            constexpr int ND = 7, NC_TOTAL = 37;
+            constexpr int NC0 = 19;
+            constexpr int NC1 = 18;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_7, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stresslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 8) {
+            constexpr int ND = 8, NC_TOTAL = 41;
+            constexpr int NC0 = 21;
+            constexpr int NC1 = 20;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_8, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stresslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 9) {
+            constexpr int ND = 9, NC_TOTAL = 47;
+            constexpr int NC0 = 24;
+            constexpr int NC1 = 23;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_9, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stresslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 10) {
+            constexpr int ND = 10, NC_TOTAL = 51;
+            constexpr int NC0 = 26;
+            constexpr int NC1 = 25;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_10, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stresslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 11) {
+            constexpr int ND = 11, NC_TOTAL = 57;
+            constexpr int NC0 = 29;
+            constexpr int NC1 = 28;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_11, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stresslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_digits <= 12) {
+            constexpr int ND = 12, NC_TOTAL = 61;
+            constexpr int NC0 = 31;
+            constexpr int NC1 = 30;
+            std::array<Real, NC_TOTAL> coeffs;
+            std::copy_n(esp_stresslet_3d_velocity_12, NC_TOTAL, coeffs.data());
+            return [=](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                stresslet_3d_poly_all_pairs_ranges<Real, MaxVecLen, ND, NC0, NC1, DMK_VELOCITY>(
+                    eval_level, ND, rsc, cen, d2max, thresh2, NC0, NC1, coeffs.data(), n_ranges, range_starts,
+                    range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+    }
+    throw std::runtime_error("Unsupported eval_level/n_digits combination");
+}
+
+template <class Real, int MaxVecLen>
+residual_evaluator_func<Real> get_esp_yukawa_3d_kernel(dmk_eval_type eval_level, int n_digits, const Real *coeffs,
+                                                       int n_coeffs, int n_coeffs_log) {
+    constexpr int UF = unroll_factor;
+    (void)n_coeffs_log;
+    if (eval_level == DMK_POTENTIAL) {
+        if (n_coeffs == 3) {
+            constexpr int NC0 = 3;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 4) {
+            constexpr int NC0 = 4;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 5) {
+            constexpr int NC0 = 5;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 6) {
+            constexpr int NC0 = 6;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 7) {
+            constexpr int NC0 = 7;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 8) {
+            constexpr int NC0 = 8;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 9) {
+            constexpr int NC0 = 9;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 10) {
+            constexpr int NC0 = 10;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 11) {
+            constexpr int NC0 = 11;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 12) {
+            constexpr int NC0 = 12;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 13) {
+            constexpr int NC0 = 13;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 14) {
+            constexpr int NC0 = 14;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 15) {
+            constexpr int NC0 = 15;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 16) {
+            constexpr int NC0 = 16;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 17) {
+            constexpr int NC0 = 17;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 18) {
+            constexpr int NC0 = 18;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 19) {
+            constexpr int NC0 = 19;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 20) {
+            constexpr int NC0 = 20;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 21) {
+            constexpr int NC0 = 21;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 22) {
+            constexpr int NC0 = 22;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 23) {
+            constexpr int NC0 = 23;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 24) {
+            constexpr int NC0 = 24;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 25) {
+            constexpr int NC0 = 25;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 26) {
+            constexpr int NC0 = 26;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 27) {
+            constexpr int NC0 = 27;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 28) {
+            constexpr int NC0 = 28;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 29) {
+            constexpr int NC0 = 29;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 30) {
+            constexpr int NC0 = 30;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 31) {
+            constexpr int NC0 = 31;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+    } else if (eval_level == DMK_POTENTIAL_GRAD) {
+        if (n_coeffs == 3) {
+            constexpr int NC0 = 3;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 4) {
+            constexpr int NC0 = 4;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 5) {
+            constexpr int NC0 = 5;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 6) {
+            constexpr int NC0 = 6;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 7) {
+            constexpr int NC0 = 7;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 8) {
+            constexpr int NC0 = 8;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 9) {
+            constexpr int NC0 = 9;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 10) {
+            constexpr int NC0 = 10;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 11) {
+            constexpr int NC0 = 11;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 12) {
+            constexpr int NC0 = 12;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 13) {
+            constexpr int NC0 = 13;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 14) {
+            constexpr int NC0 = 14;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 15) {
+            constexpr int NC0 = 15;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 16) {
+            constexpr int NC0 = 16;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 17) {
+            constexpr int NC0 = 17;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 18) {
+            constexpr int NC0 = 18;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 19) {
+            constexpr int NC0 = 19;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 20) {
+            constexpr int NC0 = 20;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 21) {
+            constexpr int NC0 = 21;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 22) {
+            constexpr int NC0 = 22;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 23) {
+            constexpr int NC0 = 23;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 24) {
+            constexpr int NC0 = 24;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 25) {
+            constexpr int NC0 = 25;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 26) {
+            constexpr int NC0 = 26;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 27) {
+            constexpr int NC0 = 27;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 28) {
+            constexpr int NC0 = 28;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 29) {
+            constexpr int NC0 = 29;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 30) {
+            constexpr int NC0 = 30;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 31) {
+            constexpr int NC0 = 31;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level,
+                    n_digits](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                              const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                laplace_3d_poly_all_pairs<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src, charge, normals,
+                    n_trg, r_trg, pot, UF);
+            };
+        }
+    }
+    throw std::runtime_error("ESP Yukawa: n_coeffs outside AOT range [3,31]");
+}
+
+template <class Real, int MaxVecLen>
+residual_evaluator_range_func<Real> get_esp_yukawa_3d_kernel_ranges(dmk_eval_type eval_level, int n_digits,
+                                                                    const Real *coeffs, int n_coeffs,
+                                                                    int n_coeffs_log) {
+    constexpr int UF = unroll_factor;
+    (void)n_coeffs_log;
+    if (eval_level == DMK_POTENTIAL) {
+        if (n_coeffs == 3) {
+            constexpr int NC0 = 3;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 4) {
+            constexpr int NC0 = 4;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 5) {
+            constexpr int NC0 = 5;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 6) {
+            constexpr int NC0 = 6;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 7) {
+            constexpr int NC0 = 7;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 8) {
+            constexpr int NC0 = 8;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 9) {
+            constexpr int NC0 = 9;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 10) {
+            constexpr int NC0 = 10;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 11) {
+            constexpr int NC0 = 11;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 12) {
+            constexpr int NC0 = 12;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 13) {
+            constexpr int NC0 = 13;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 14) {
+            constexpr int NC0 = 14;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 15) {
+            constexpr int NC0 = 15;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 16) {
+            constexpr int NC0 = 16;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 17) {
+            constexpr int NC0 = 17;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 18) {
+            constexpr int NC0 = 18;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 19) {
+            constexpr int NC0 = 19;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 20) {
+            constexpr int NC0 = 20;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 21) {
+            constexpr int NC0 = 21;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 22) {
+            constexpr int NC0 = 22;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 23) {
+            constexpr int NC0 = 23;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 24) {
+            constexpr int NC0 = 24;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 25) {
+            constexpr int NC0 = 25;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 26) {
+            constexpr int NC0 = 26;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 27) {
+            constexpr int NC0 = 27;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 28) {
+            constexpr int NC0 = 28;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 29) {
+            constexpr int NC0 = 29;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 30) {
+            constexpr int NC0 = 30;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 31) {
+            constexpr int NC0 = 31;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+    } else if (eval_level == DMK_POTENTIAL_GRAD) {
+        if (n_coeffs == 3) {
+            constexpr int NC0 = 3;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 4) {
+            constexpr int NC0 = 4;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 5) {
+            constexpr int NC0 = 5;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 6) {
+            constexpr int NC0 = 6;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 7) {
+            constexpr int NC0 = 7;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 8) {
+            constexpr int NC0 = 8;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 9) {
+            constexpr int NC0 = 9;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 10) {
+            constexpr int NC0 = 10;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 11) {
+            constexpr int NC0 = 11;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 12) {
+            constexpr int NC0 = 12;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 13) {
+            constexpr int NC0 = 13;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 14) {
+            constexpr int NC0 = 14;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 15) {
+            constexpr int NC0 = 15;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 16) {
+            constexpr int NC0 = 16;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 17) {
+            constexpr int NC0 = 17;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 18) {
+            constexpr int NC0 = 18;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 19) {
+            constexpr int NC0 = 19;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 20) {
+            constexpr int NC0 = 20;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 21) {
+            constexpr int NC0 = 21;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 22) {
+            constexpr int NC0 = 22;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 23) {
+            constexpr int NC0 = 23;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 24) {
+            constexpr int NC0 = 24;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 25) {
+            constexpr int NC0 = 25;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 26) {
+            constexpr int NC0 = 26;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 27) {
+            constexpr int NC0 = 27;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 28) {
+            constexpr int NC0 = 28;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 29) {
+            constexpr int NC0 = 29;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 30) {
+            constexpr int NC0 = 30;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+        if (n_coeffs == 31) {
+            constexpr int NC0 = 31;
+            std::vector<Real> cf(coeffs, coeffs + NC0);
+            return [cf = std::move(cf), eval_level, n_digits](
+                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src, const Real *charge,
+                       const Real *normals, int n_ranges, const int *range_starts, const int *range_lens, int n_trg,
+                       const Real *r_trg, Real *pot, const Real *q_trg, Real *pot_src) {
+                laplace_3d_poly_all_pairs_ranges<Real, MaxVecLen, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges, range_starts, range_lens,
+                    n_src, r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);
+            };
+        }
+    }
+    throw std::runtime_error("ESP Yukawa: n_coeffs outside AOT range [3,31]");
+}
+
+template <class Real, int MaxVecLen>
+residual_evaluator_func<Real> get_esp_yukawa_2d_kernel(dmk_eval_type eval_level, int n_digits, const Real *coeffs,
+                                                       int n_coeffs, int n_coeffs_log) {
+    constexpr int UF = unroll_factor;
+    (void)n_coeffs_log;
+    if (eval_level == DMK_POTENTIAL) {
+        if (n_coeffs == 3) {
+            constexpr int NC0 = 3;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 4) {
+            constexpr int NC0 = 4;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 5) {
+            constexpr int NC0 = 5;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 6) {
+            constexpr int NC0 = 6;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 7) {
+            constexpr int NC0 = 7;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 8) {
+            constexpr int NC0 = 8;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 9) {
+            constexpr int NC0 = 9;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 10) {
+            constexpr int NC0 = 10;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 11) {
+            constexpr int NC0 = 11;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 12) {
+            constexpr int NC0 = 12;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 13) {
+            constexpr int NC0 = 13;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 14) {
+            constexpr int NC0 = 14;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 15) {
+            constexpr int NC0 = 15;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 16) {
+            constexpr int NC0 = 16;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 17) {
+            constexpr int NC0 = 17;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 18) {
+            constexpr int NC0 = 18;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 19) {
+            constexpr int NC0 = 19;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 20) {
+            constexpr int NC0 = 20;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 21) {
+            constexpr int NC0 = 21;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 22) {
+            constexpr int NC0 = 22;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 23) {
+            constexpr int NC0 = 23;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 24) {
+            constexpr int NC0 = 24;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 25) {
+            constexpr int NC0 = 25;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 26) {
+            constexpr int NC0 = 26;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 27) {
+            constexpr int NC0 = 27;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 28) {
+            constexpr int NC0 = 28;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 29) {
+            constexpr int NC0 = 29;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 30) {
+            constexpr int NC0 = 30;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 31) {
+            constexpr int NC0 = 31;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+    } else if (eval_level == DMK_POTENTIAL_GRAD) {
+        if (n_coeffs == 3) {
+            constexpr int NC0 = 3;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 4) {
+            constexpr int NC0 = 4;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 5) {
+            constexpr int NC0 = 5;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 6) {
+            constexpr int NC0 = 6;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 7) {
+            constexpr int NC0 = 7;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 8) {
+            constexpr int NC0 = 8;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 9) {
+            constexpr int NC0 = 9;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 10) {
+            constexpr int NC0 = 10;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 11) {
+            constexpr int NC0 = 11;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 12) {
+            constexpr int NC0 = 12;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 13) {
+            constexpr int NC0 = 13;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 14) {
+            constexpr int NC0 = 14;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 15) {
+            constexpr int NC0 = 15;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 16) {
+            constexpr int NC0 = 16;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 17) {
+            constexpr int NC0 = 17;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 18) {
+            constexpr int NC0 = 18;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 19) {
+            constexpr int NC0 = 19;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 20) {
+            constexpr int NC0 = 20;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 21) {
+            constexpr int NC0 = 21;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 22) {
+            constexpr int NC0 = 22;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 23) {
+            constexpr int NC0 = 23;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 24) {
+            constexpr int NC0 = 24;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 25) {
+            constexpr int NC0 = 25;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 26) {
+            constexpr int NC0 = 26;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 27) {
+            constexpr int NC0 = 27;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 28) {
+            constexpr int NC0 = 28;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 29) {
+            constexpr int NC0 = 29;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 30) {
+            constexpr int NC0 = 30;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+        if (n_coeffs == 31) {
+            constexpr int NC0 = 31;
+            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);
+            return [cf = std::move(cf), eval_level, n_digits,
+                    n_coeffs_log](Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,
+                                  const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) {
+                yukawa_2d_poly_all_pairs<Real, MaxVecLen, -1, -1, NC0, DMK_POTENTIAL_GRAD>(
+                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(), n_src, r_src, charge,
+                    normals, n_trg, r_trg, pot, UF);
+            };
+        }
+    }
+    throw std::runtime_error("ESP Yukawa: n_coeffs outside AOT range [3,31]");
 }
 
 // Explicit instantiations
@@ -1432,5 +8637,69 @@ template residual_evaluator_func<float> get_stresslet_3d_kernel<float, sctl::Def
                                                                                                      int);
 template residual_evaluator_func<double> get_stresslet_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type,
                                                                                                         int);
+template residual_evaluator_func<float> get_laplace_dipole_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type,
+                                                                                                          int);
+template residual_evaluator_func<double>
+get_laplace_dipole_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int);
+template residual_evaluator_func<float> get_esp_laplace_2d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type,
+                                                                                                       int);
+template residual_evaluator_func<double> get_esp_laplace_2d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type,
+                                                                                                          int);
+template residual_evaluator_func<float> get_esp_laplace_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type,
+                                                                                                       int);
+template residual_evaluator_range_func<float>
+get_esp_laplace_3d_kernel_ranges<float, sctl::DefaultVecLen<float>()>(dmk_eval_type, int);
+template residual_evaluator_func<double> get_esp_laplace_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type,
+                                                                                                          int);
+template residual_evaluator_range_func<double>
+get_esp_laplace_3d_kernel_ranges<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int);
+template residual_evaluator_func<float>
+get_esp_sqrt_laplace_2d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type, int);
+template residual_evaluator_func<double>
+get_esp_sqrt_laplace_2d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int);
+template residual_evaluator_func<float>
+get_esp_sqrt_laplace_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type, int);
+template residual_evaluator_range_func<float>
+get_esp_sqrt_laplace_3d_kernel_ranges<float, sctl::DefaultVecLen<float>()>(dmk_eval_type, int);
+template residual_evaluator_func<double>
+get_esp_sqrt_laplace_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int);
+template residual_evaluator_range_func<double>
+get_esp_sqrt_laplace_3d_kernel_ranges<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int);
+template residual_evaluator_func<float>
+get_esp_laplace_dipole_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type, int);
+template residual_evaluator_range_func<float>
+get_esp_laplace_dipole_3d_kernel_ranges<float, sctl::DefaultVecLen<float>()>(dmk_eval_type, int);
+template residual_evaluator_func<double>
+get_esp_laplace_dipole_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int);
+template residual_evaluator_range_func<double>
+get_esp_laplace_dipole_3d_kernel_ranges<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int);
+template residual_evaluator_func<float> get_esp_stokeslet_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type,
+                                                                                                         int);
+template residual_evaluator_range_func<float>
+get_esp_stokeslet_3d_kernel_ranges<float, sctl::DefaultVecLen<float>()>(dmk_eval_type, int);
+template residual_evaluator_func<double>
+get_esp_stokeslet_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int);
+template residual_evaluator_range_func<double>
+get_esp_stokeslet_3d_kernel_ranges<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int);
+template residual_evaluator_func<float> get_esp_stresslet_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type,
+                                                                                                         int);
+template residual_evaluator_range_func<float>
+get_esp_stresslet_3d_kernel_ranges<float, sctl::DefaultVecLen<float>()>(dmk_eval_type, int);
+template residual_evaluator_func<double>
+get_esp_stresslet_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int);
+template residual_evaluator_range_func<double>
+get_esp_stresslet_3d_kernel_ranges<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int);
+template residual_evaluator_func<float>
+get_esp_yukawa_3d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type, int, const float *, int, int);
+template residual_evaluator_range_func<float>
+get_esp_yukawa_3d_kernel_ranges<float, sctl::DefaultVecLen<float>()>(dmk_eval_type, int, const float *, int, int);
+template residual_evaluator_func<double>
+get_esp_yukawa_3d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int, const double *, int, int);
+template residual_evaluator_range_func<double>
+get_esp_yukawa_3d_kernel_ranges<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int, const double *, int, int);
+template residual_evaluator_func<float>
+get_esp_yukawa_2d_kernel<float, sctl::DefaultVecLen<float>()>(dmk_eval_type, int, const float *, int, int);
+template residual_evaluator_func<double>
+get_esp_yukawa_2d_kernel<double, sctl::DefaultVecLen<double>()>(dmk_eval_type, int, const double *, int, int);
 
 } // namespace dmk

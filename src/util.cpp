@@ -3,8 +3,6 @@
 #include <dmk/fortran.h>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
-#include <limits>
-#include <random>
 
 namespace dmk::util {
 using dmk::ndview;
@@ -16,8 +14,14 @@ double calc_bandlimiting(const pdmk_params &p) {
     if (p.kernel == DMK_STOKESLET || p.kernel == DMK_STRESSLET) {
         return M_PI / 3.0 * std::ceil(3.0 / M_PI * (0.69 + d) / 0.39);
     }
-    const double beta = 2.664 * d + 0.306;
-    return beta;
+
+    // Each spatial derivative taken on the kernel makes solution
+    // converge ~1 digit slower
+    const int n_derivs_src = (p.kernel == DMK_LAPLACE_DIPOLE) ? 1 : 0;
+    const int n_derivs_trg = (p.eval_src >= DMK_POTENTIAL_GRAD || p.eval_trg >= DMK_POTENTIAL_GRAD) ? 1 : 0;
+    constexpr double digits_per_deriv = 1.0;
+    const double d_eff = d + digits_per_deriv * (n_derivs_src + n_derivs_trg);
+    return 2.664 * d_eff + 0.306;
 }
 
 template <typename Real>
@@ -150,92 +154,6 @@ void mk_tensor_product_fourier_transform(int dim, int npw, int nfourier, Real *f
         return mk_tensor_product_fourier_transform_3d(npw, fhat_view, pswfft_view);
     }
     throw std::runtime_error("Invalid dimension: " + std::to_string(dim));
-}
-
-template <typename Real>
-void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges,
-                    std::vector<Real> &r_src, std::vector<Real> &r_trg, std::vector<Real> &rnormal,
-                    std::vector<Real> &charges, long seed) {
-    r_src.resize(n_dim * n_src);
-    r_trg.resize(n_dim * n_trg);
-    charges.resize(nd * n_src);
-    rnormal.resize(n_dim * n_src);
-
-    double rin = 0.45;
-    double wrig = 0.12;
-    double rwig = 0;
-    int nwig = 6;
-    std::default_random_engine eng(seed);
-    std::uniform_real_distribution<double> rng;
-
-    for (int i = 0; i < n_src; ++i) {
-        if (!uniform) {
-            if (n_dim == 2) {
-                const double phi = rng(eng) * 2 * M_PI;
-                r_src[i * 2 + 0] = 0.5 * (cos(phi) + 1.0);
-                r_src[i * 2 + 1] = 0.5 * (sin(phi) + 1.0);
-            }
-            if (n_dim == 3) {
-                double theta = rng(eng) * M_PI;
-                double rr = rin + rwig * cos(nwig * theta);
-                double ct = cos(theta);
-                double st = sin(theta);
-                double phi = rng(eng) * 2 * M_PI;
-                double cp = cos(phi);
-                double sp = sin(phi);
-
-                r_src[i * 3 + 0] = rr * st * cp + 0.5;
-                r_src[i * 3 + 1] = rr * st * sp + 0.5;
-                r_src[i * 3 + 2] = rr * ct + 0.5;
-            }
-        } else {
-            for (int j = 0; j < n_dim; ++j)
-                r_src[i * n_dim + j] = rng(eng);
-        }
-
-        for (int j = 0; j < n_dim; ++j)
-            rnormal[i * n_dim + j] = rng(eng);
-
-        for (int j = 0; j < nd; ++j) {
-            charges[i * nd + j] = rng(eng) - 0.5;
-        }
-    }
-
-    for (int i_trg = 0; i_trg < n_trg; ++i_trg) {
-        if (!uniform) {
-            if (n_dim == 2) {
-                double phi = rng(eng) * 2 * M_PI;
-                r_trg[i_trg * 2 + 0] = 0.5 * (cos(phi) + 1.0);
-                r_trg[i_trg * 2 + 1] = 0.5 * (sin(phi) + 1.0);
-            }
-            if (n_dim == 3) {
-                double theta = rng(eng) * M_PI;
-                double rr = rin + rwig * cos(nwig * theta);
-                double ct = cos(theta);
-                double st = sin(theta);
-                double phi = rng(eng) * 2 * M_PI;
-                double cp = cos(phi);
-                double sp = sin(phi);
-
-                r_trg[i_trg * 3 + 0] = rr * st * cp + 0.5;
-                r_trg[i_trg * 3 + 1] = rr * st * sp + 0.5;
-                r_trg[i_trg * 3 + 2] = rr * ct + 0.5;
-            }
-        } else {
-            for (int j = 0; j < n_dim; ++j)
-                r_trg[i_trg * n_dim + j] = rng(eng);
-        }
-    }
-
-    if (set_fixed_charges && n_src > 0)
-        for (int i = 0; i < n_dim; ++i)
-            r_src[i] = 0.0;
-    if (set_fixed_charges && n_src > 1)
-        for (int i = n_dim; i < 2 * n_dim; ++i)
-            r_src[i] = 1 - std::numeric_limits<Real>::epsilon();
-    if (set_fixed_charges && n_src > 2)
-        for (int i = 2 * n_dim; i < 3 * n_dim; ++i)
-            r_src[i] = 0.05;
 }
 
 template void mk_tensor_product_fourier_transform(int dim, int npw, const ndview<float, 1> &fhat,

@@ -166,7 +166,8 @@ OBJS = $(COMOBJS) $(PDMKOBJS)
 
 
 
-.PHONY: usage lib install test-static test-dyn python 
+.PHONY: usage lib install test-static test-dyn python test-dipole
+.PHONY: test-l3d-laplace-dipole-pdmk
 
 default: usage
 
@@ -181,6 +182,7 @@ usage:
 	@echo "  make lib - compile the main library (in lib/ and lib-static/)"
 	@echo "  make test-static - compile and run validation tests"
 	@echo "  make test-dyn - test successful installation by validation tests linked to dynamic library"
+	@echo "  make test-dipole - compile and run 3D Laplace dipole validation test"
 	@echo "  make objclean - removal all object files, preserving lib"
 	@echo "  make clean - also remove lib and demo executables"
 	@echo ""
@@ -244,6 +246,14 @@ test-dyn: $(DYNAMICLIB)  test/pdmk-dyn
 test/pdmk-static:
 	$(FC) $(FFLAGS) test/pdmk/testpdmk.f -o test/pdmk/int2-pdmk lib-static/$(STATICLIB) $(LIBS) 
 
+test-dipole: test-l3d-laplace-dipole-pdmk
+
+test-l3d-laplace-dipole-pdmk: test/pdmk/test_l3d_laplace_dipole_pdmk
+	test/pdmk/test_l3d_laplace_dipole_pdmk
+
+test/pdmk/test_l3d_laplace_dipole_pdmk: $(STATICLIB) test/pdmk/test_l3d_laplace_dipole_pdmk.f
+	$(FC) $(FFLAGS) test/pdmk/test_l3d_laplace_dipole_pdmk.f -o test/pdmk/test_l3d_laplace_dipole_pdmk lib-static/$(STATICLIB) $(LIBS)
+
 #
 # Linking test files to dynamic libraries
 #
@@ -258,6 +268,7 @@ test/pdmk-dyn:
 clean: objclean
 	rm -f lib-static/*.a lib/*.so
 	rm -f test/pdmk/int2-pdmk
+	rm -f test/pdmk/test_l3d_laplace_dipole_pdmk
 	rm -f test/bdmk/int2-bdmk
 
 objclean: 

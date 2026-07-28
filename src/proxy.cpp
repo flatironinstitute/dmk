@@ -166,7 +166,7 @@ void charge2proxycharge_3d(const ndview<const T, 2> &r_src, const ndview<const T
     matrixview<T> poly_y({n_src, order}, &workspace[2 * n_src * order + n_src * order * order]);
     matrixview<T> poly_z({n_src, order}, &workspace[3 * n_src * order + n_src * order * order]);
     ndview<T, 1> charges({n_src}, &workspace[4 * n_src * order + n_src * order * order]);
-    constexpr int MAX_ORDER = 80;
+    constexpr int MAX_ORDER = max_proxy_order;
     auto calc_polynomial = dmk::chebyshev::get_polynomial_calculator<T>(order);
 
     for (int i_src = 0; i_src < n_src; ++i_src) {
@@ -229,6 +229,152 @@ inline void calc_polynomial_and_derivative(int order, T x, T *poly, T *dpoly) {
     }
 }
 
+// Vectorized Chebyshev T_k(sc * (r_d - cen_d)) evaluation over n_trg points for all DIM spatial
+// dimensions in a single pass. r_in is the {DIM, n_trg} F-layout source-coordinate base pointer
+// (so the per-target component d is r_in[i*DIM + d]), cen[d] is the per-dim center, and
+// poly_out[d] is a length n_trg * ORDER buffer with layout poly_out[d][k * n_trg + i].
+template <typename Real, int VecLen, int ORDER, int DIM>
+inline void chebyshev_polynomials_nd_vec(const Real *__restrict r_in, const Real *cen, Real sc, int n_trg,
+                                         Real *const *poly_out) {
+    using vec_t = sctl::Vec<Real, VecLen>;
+    int i = 0;
+    for (; i + VecLen <= n_trg; i += VecLen) {
+        alignas(alignof(vec_t)) Real x_bufs[DIM][VecLen];
+        for (int u = 0; u < VecLen; ++u)
+            for (int d = 0; d < DIM; ++d)
+                x_bufs[d][u] = (r_in[(i + u) * DIM + d] - cen[d]) * sc;
+
+        vec_t xv[DIM], pm2[DIM], pm1[DIM];
+        for (int d = 0; d < DIM; ++d) {
+            xv[d] = vec_t::LoadAligned(x_bufs[d]);
+            pm2[d] = vec_t(Real{1});
+            pm2[d].Store(&poly_out[d][0 * n_trg + i]);
+        }
+        if constexpr (ORDER >= 2) {
+            for (int d = 0; d < DIM; ++d) {
+                pm1[d] = xv[d];
+                pm1[d].Store(&poly_out[d][1 * n_trg + i]);
+            }
+            for (int k = 2; k < ORDER; ++k) {
+                for (int d = 0; d < DIM; ++d) {
+                    vec_t pk = Real{2} * xv[d] * pm1[d] - pm2[d];
+                    pk.Store(&poly_out[d][k * n_trg + i]);
+                    pm2[d] = pm1[d];
+                    pm1[d] = pk;
+                }
+            }
+        }
+    }
+    for (; i < n_trg; ++i) {
+        Real x[DIM], pm2[DIM], pm1[DIM];
+        for (int d = 0; d < DIM; ++d) {
+            x[d] = (r_in[i * DIM + d] - cen[d]) * sc;
+            pm2[d] = Real{1};
+            poly_out[d][0 * n_trg + i] = pm2[d];
+        }
+        if constexpr (ORDER >= 2) {
+            for (int d = 0; d < DIM; ++d) {
+                pm1[d] = x[d];
+                poly_out[d][1 * n_trg + i] = pm1[d];
+            }
+            for (int k = 2; k < ORDER; ++k) {
+                for (int d = 0; d < DIM; ++d) {
+                    Real pk = Real{2} * x[d] * pm1[d] - pm2[d];
+                    poly_out[d][k * n_trg + i] = pk;
+                    pm2[d] = pm1[d];
+                    pm1[d] = pk;
+                }
+            }
+        }
+    }
+}
+
+template <typename Real, int VecLen, int ORDER, int DIM>
+inline void chebyshev_polynomials_deriv_nd_vec(const Real *__restrict r_in, const Real *cen, Real sc, int n_trg,
+                                               Real *const *poly_out, Real *const *dpoly_out) {
+    using vec_t = sctl::Vec<Real, VecLen>;
+    const vec_t two(Real{2});
+    int i = 0;
+    for (; i + VecLen <= n_trg; i += VecLen) {
+        alignas(alignof(vec_t)) Real x_bufs[DIM][VecLen];
+        for (int u = 0; u < VecLen; ++u)
+            for (int d = 0; d < DIM; ++d)
+                x_bufs[d][u] = (r_in[(i + u) * DIM + d] - cen[d]) * sc;
+
+        vec_t xv[DIM], pm2[DIM], pm1[DIM], dpm2[DIM], dpm1[DIM];
+        for (int d = 0; d < DIM; ++d) {
+            xv[d] = vec_t::LoadAligned(x_bufs[d]);
+            pm2[d] = vec_t(Real{1});
+            dpm2[d] = vec_t::Zero();
+            pm2[d].Store(&poly_out[d][0 * n_trg + i]);
+            dpm2[d].Store(&dpoly_out[d][0 * n_trg + i]);
+        }
+        if constexpr (ORDER >= 2) {
+            for (int d = 0; d < DIM; ++d) {
+                pm1[d] = xv[d];
+                dpm1[d] = vec_t(Real{1});
+                pm1[d].Store(&poly_out[d][1 * n_trg + i]);
+                dpm1[d].Store(&dpoly_out[d][1 * n_trg + i]);
+            }
+            for (int k = 2; k < ORDER; ++k) {
+                for (int d = 0; d < DIM; ++d) {
+                    vec_t pk = two * xv[d] * pm1[d] - pm2[d];
+                    vec_t dpk = two * pm1[d] + two * xv[d] * dpm1[d] - dpm2[d];
+                    pk.Store(&poly_out[d][k * n_trg + i]);
+                    dpk.Store(&dpoly_out[d][k * n_trg + i]);
+                    pm2[d] = pm1[d];
+                    pm1[d] = pk;
+                    dpm2[d] = dpm1[d];
+                    dpm1[d] = dpk;
+                }
+            }
+        }
+    }
+    for (; i < n_trg; ++i) {
+        Real x[DIM], pm2[DIM], pm1[DIM], dpm2[DIM], dpm1[DIM];
+        for (int d = 0; d < DIM; ++d) {
+            x[d] = (r_in[i * DIM + d] - cen[d]) * sc;
+            pm2[d] = Real{1};
+            dpm2[d] = Real{0};
+            poly_out[d][0 * n_trg + i] = pm2[d];
+            dpoly_out[d][0 * n_trg + i] = dpm2[d];
+        }
+        if constexpr (ORDER >= 2) {
+            for (int d = 0; d < DIM; ++d) {
+                pm1[d] = x[d];
+                dpm1[d] = Real{1};
+                poly_out[d][1 * n_trg + i] = pm1[d];
+                dpoly_out[d][1 * n_trg + i] = dpm1[d];
+            }
+            for (int k = 2; k < ORDER; ++k) {
+                for (int d = 0; d < DIM; ++d) {
+                    Real pk = Real{2} * x[d] * pm1[d] - pm2[d];
+                    Real dpk = Real{2} * pm1[d] + Real{2} * x[d] * dpm1[d] - dpm2[d];
+                    poly_out[d][k * n_trg + i] = pk;
+                    dpoly_out[d][k * n_trg + i] = dpk;
+                    pm2[d] = pm1[d];
+                    pm1[d] = pk;
+                    dpm2[d] = dpm1[d];
+                    dpm1[d] = dpk;
+                }
+            }
+        }
+    }
+}
+
+template <class F, int... Is>
+inline void dispatch_order_impl(int order, F &&f, std::integer_sequence<int, Is...>) {
+    const bool dispatched =
+        ((Is + min_proxy_order == order ? (f.template operator()<Is + min_proxy_order>(), true) : false) || ...);
+    if (!dispatched)
+        throw std::runtime_error("Unsupported order: " + std::to_string(order));
+}
+
+template <class F>
+inline void dispatch_order(int order, F &&f) {
+    dispatch_order_impl(order, std::forward<F>(f), std::make_integer_sequence<int, n_proxy_orders>{});
+}
+
 template <typename T, int EVAL_LEVEL = 1>
 void eval_targets_2d(const ndview<T, 3> &coeffs, const ndview<T, 2> &r_trg, const ndview<T, 1> &cen, T sc,
                      ndview<T, 2> pot, sctl::Vector<T> &workspace) {
@@ -244,52 +390,69 @@ void eval_targets_2d(const ndview<T, 3> &coeffs, const ndview<T, 2> &r_trg, cons
     const int poly_block = n_order * n_trg;
     const int n_poly_sets = (EVAL_LEVEL == 1) ? 2 : 4;
     const int n_tmp_sets = (EVAL_LEVEL == 1) ? 1 : 2;
+    const int acc_buf_size = (EVAL_LEVEL == 2) ? 3 * n_trg : 0;
 
-    workspace.ReInit(n_poly_sets * poly_block + n_tmp_sets * poly_block);
+    workspace.ReInit(n_poly_sets * poly_block + n_tmp_sets * poly_block + acc_buf_size + n_trg);
 
-    ndview<T, 2> poly_x({n_order, n_trg}, &workspace[0]);
-    ndview<T, 2> poly_y({n_order, n_trg}, &workspace[poly_block]);
+    ndview<T, 2> poly_x({n_trg, n_order}, &workspace[0]);
+    ndview<T, 2> poly_y({n_trg, n_order}, &workspace[poly_block]);
 
     T *dpoly_base = &workspace[2 * poly_block];
-    ndview<T, 2> dpoly_x({n_order, n_trg}, dpoly_base);
-    ndview<T, 2> dpoly_y({n_order, n_trg}, dpoly_base + poly_block);
+    ndview<T, 2> dpoly_x({n_trg, n_order}, dpoly_base);
+    ndview<T, 2> dpoly_y({n_trg, n_order}, dpoly_base + poly_block);
 
     int tmp_offset = n_poly_sets * poly_block;
-    ndview<T, 2> tmp({n_order, n_trg}, &workspace[tmp_offset]);
-    ndview<T, 2> tmp_y({n_order, n_trg}, (EVAL_LEVEL == 2) ? &workspace[tmp_offset + poly_block] : nullptr);
+    ndview<T, 2> tmp({n_trg, n_order}, &workspace[tmp_offset]);
+    ndview<T, 2> tmp_y({n_trg, n_order}, (EVAL_LEVEL == 2) ? &workspace[tmp_offset + poly_block] : nullptr);
 
+    T *acc_base = (EVAL_LEVEL == 2) ? &workspace[n_poly_sets * poly_block + n_tmp_sets * poly_block] : nullptr;
+    T *pot_tmp = &workspace[n_poly_sets * poly_block + n_tmp_sets * poly_block + acc_buf_size];
+
+    // ---- Compute Chebyshev polynomials (and derivatives if needed) ----
+    constexpr int VecLen = sctl::DefaultVecLen<T>();
+    T *poly_outs[2] = {poly_x.data(), poly_y.data()};
     if constexpr (EVAL_LEVEL == 1) {
-        auto calc_polynomial = dmk::chebyshev::get_polynomial_calculator<T>(n_order);
-        for (int i = 0; i < n_trg; ++i)
-            calc_polynomial((r_trg(0, i) - cen(0)) * sc, &poly_x(0, i));
-        for (int i = 0; i < n_trg; ++i)
-            calc_polynomial((r_trg(1, i) - cen(1)) * sc, &poly_y(0, i));
+        dispatch_order(n_order, [&]<int ORDER>() {
+            chebyshev_polynomials_nd_vec<T, VecLen, ORDER, 2>(&r_trg(0, 0), &cen(0), sc, n_trg, poly_outs);
+        });
     } else {
-        for (int i = 0; i < n_trg; ++i)
-            calc_polynomial_and_derivative(n_order, (r_trg(0, i) - cen(0)) * sc, &poly_x(0, i), &dpoly_x(0, i));
-        for (int i = 0; i < n_trg; ++i)
-            calc_polynomial_and_derivative(n_order, (r_trg(1, i) - cen(1)) * sc, &poly_y(0, i), &dpoly_y(0, i));
+        T *dpoly_outs[2] = {dpoly_x.data(), dpoly_y.data()};
+        dispatch_order(n_order, [&]<int ORDER>() {
+            chebyshev_polynomials_deriv_nd_vec<T, VecLen, ORDER, 2>(&r_trg(0, 0), &cen(0), sc, n_trg, poly_outs,
+                                                                    dpoly_outs);
+        });
     }
 
-    auto opt_dot = dmk::util::get_opt_dot<T>(n_order);
+    // ---- Per charge dimension: GEMM + accumulation ----
     for (int i_dim = 0; i_dim < n_charge_dim; ++i_dim) {
-        // tmp(i, trg) = sum_j coeffs(i, j, dim) * poly_y(j, trg)
-        gemm::gemm('n', 'n', n_order, n_trg, n_order, T{1.0}, &coeffs(0, 0, i_dim), n_order, poly_y.data(), n_order,
-                   T{0.0}, tmp.data(), n_order);
+        gemm::gemm('n', 't', n_trg, n_order, n_order, T{1.0}, poly_y.data(), n_trg, &coeffs(0, 0, i_dim), n_order,
+                   T{0.0}, tmp.data(), n_trg);
 
         if constexpr (EVAL_LEVEL == 1) {
+            std::memset(pot_tmp, 0, n_trg * sizeof(T));
+            for (int i = 0; i < n_order; ++i)
+                util::vec_fma(pot_tmp, &tmp(0, i), &poly_x(0, i), n_trg);
             for (int k = 0; k < n_trg; ++k)
-                pot(i_dim, k) += opt_dot(&tmp(0, k), &poly_x(0, k));
+                pot(i_dim, k) += pot_tmp[k];
         } else {
-            // tmp_y(i, trg) = sum_j coeffs(i, j, dim) * dpoly_y(j, trg)
-            gemm::gemm('n', 'n', n_order, n_trg, n_order, T{1.0}, &coeffs(0, 0, i_dim), n_order, dpoly_y.data(),
-                       n_order, T{0.0}, tmp_y.data(), n_order);
+            gemm::gemm('n', 't', n_trg, n_order, n_order, T{1.0}, dpoly_y.data(), n_trg, &coeffs(0, 0, i_dim), n_order,
+                       T{0.0}, tmp_y.data(), n_trg);
 
-            const int base_row = i_dim * output_dim;
-            for (int k = 0; k < n_trg; ++k) {
-                pot(base_row + 0, k) += opt_dot(&tmp(0, k), &poly_x(0, k));
-                pot(base_row + 1, k) += sc * opt_dot(&tmp(0, k), &dpoly_x(0, k));
-                pot(base_row + 2, k) += sc * opt_dot(&tmp_y(0, k), &poly_x(0, k));
+            T *__restrict__ acc_pot = acc_base;
+            T *__restrict__ acc_gx = acc_base + n_trg;
+            T *__restrict__ acc_gy = acc_base + 2 * n_trg;
+            std::fill(acc_pot, acc_pot + 3 * n_trg, T{0});
+
+            for (int i = 0; i < n_order; ++i)
+                util::vec_fma_2_grad(acc_pot, acc_gx, acc_gy, &tmp(0, i), &tmp_y(0, i), &poly_x(0, i), &dpoly_x(0, i),
+                                     n_trg);
+
+            T *__restrict__ pot_out = &pot(i_dim * output_dim, 0);
+            const int stride = n_charge_dim * output_dim;
+            for (int t = 0; t < n_trg; ++t) {
+                pot_out[t * stride + 0] += acc_pot[t];
+                pot_out[t * stride + 1] += sc * acc_gx[t];
+                pot_out[t * stride + 2] += sc * acc_gy[t];
             }
         }
     }
@@ -333,43 +496,18 @@ void eval_targets_3d(const ndview<T, 4> &coeffs, const ndview<T, 2> &r_trg, cons
     T *pot_tmp = &workspace[n_poly_sets * poly_block + n_tmp_sets * tmp_block + acc_buf_size];
 
     // ---- Compute Chebyshev polynomials (and derivatives if needed) ----
-    constexpr int MAX_ORDER = 80;
+    constexpr int VecLen = sctl::DefaultVecLen<T>();
+    T *poly_outs[3] = {poly_x.data(), poly_y.data(), poly_z.data()};
     if constexpr (EVAL_LEVEL == 1) {
-        auto calc_polynomial = dmk::chebyshev::get_polynomial_calculator<T>(n_order);
-        for (int i = 0; i < n_trg; ++i) {
-            T tmp[MAX_ORDER];
-            calc_polynomial(sc * (r_trg(0, i) - cen(0)), tmp);
-            for (int k = 0; k < n_order; ++k)
-                poly_x(i, k) = tmp[k];
-            calc_polynomial(sc * (r_trg(1, i) - cen(1)), tmp);
-            for (int k = 0; k < n_order; ++k)
-                poly_y(i, k) = tmp[k];
-            calc_polynomial(sc * (r_trg(2, i) - cen(2)), tmp);
-            for (int k = 0; k < n_order; ++k)
-                poly_z(i, k) = tmp[k];
-        }
+        dispatch_order(n_order, [&]<int ORDER>() {
+            chebyshev_polynomials_nd_vec<T, VecLen, ORDER, 3>(&r_trg(0, 0), &cen(0), sc, n_trg, poly_outs);
+        });
     } else {
-        for (int i = 0; i < n_trg; ++i) {
-            T p[MAX_ORDER], dp[MAX_ORDER];
-
-            calc_polynomial_and_derivative(n_order, sc * (r_trg(0, i) - cen(0)), p, dp);
-            for (int k = 0; k < n_order; ++k) {
-                poly_x(i, k) = p[k];
-                dpoly_x(i, k) = dp[k];
-            }
-
-            calc_polynomial_and_derivative(n_order, sc * (r_trg(1, i) - cen(1)), p, dp);
-            for (int k = 0; k < n_order; ++k) {
-                poly_y(i, k) = p[k];
-                dpoly_y(i, k) = dp[k];
-            }
-
-            calc_polynomial_and_derivative(n_order, sc * (r_trg(2, i) - cen(2)), p, dp);
-            for (int k = 0; k < n_order; ++k) {
-                poly_z(i, k) = p[k];
-                dpoly_z(i, k) = dp[k];
-            }
-        }
+        T *dpoly_outs[3] = {dpoly_x.data(), dpoly_y.data(), dpoly_z.data()};
+        dispatch_order(n_order, [&]<int ORDER>() {
+            chebyshev_polynomials_deriv_nd_vec<T, VecLen, ORDER, 3>(&r_trg(0, 0), &cen(0), sc, n_trg, poly_outs,
+                                                                    dpoly_outs);
+        });
     }
 
     // ---- Per charge dimension: GEMM + accumulation ----
@@ -606,151 +744,5 @@ TEST_CASE("[DMK] proxy eval_target_gradients finite difference") {
     check_eval_target_gradients_fd<2>();
     check_eval_target_gradients_fd<3>();
 }
-
-#ifdef DMK_HAVE_REFERENCE
-TEST_CASE("[DMK] proxycharge2pw") {
-    const int n_charge_dim = 1;
-    const int n_pw = 10;
-    const int n_pw2 = (n_pw + 1) / 2;
-    const int n_pw_coeffs = n_pw * n_pw2;
-
-    for (int n_dim : {2, 3}) {
-        CAPTURE(n_dim);
-        for (int n_order : {10, 16, 24}) {
-            const int n_pw_modes = dmk::util::int_pow(n_pw, n_dim - 1) * n_pw2;
-            const int n_pw_coeffs = n_pw_modes * n_charge_dim;
-            const int n_proxy_coeffs = dmk::util::int_pow(n_order, n_dim) * n_charge_dim;
-
-            CAPTURE(n_order);
-            sctl::Vector<double> proxy_coeffs(n_proxy_coeffs);
-            sctl::Vector<std::complex<double>> poly2pw(n_order * n_pw), pw2poly(n_order * n_pw);
-            nda::vector<std::complex<double>> pw_coeffs(n_pw_coeffs), pw_coeffs_fort(n_pw_coeffs);
-
-            dmk::calc_planewave_coeff_matrices(1.0, 1.0, n_pw, n_order, poly2pw, pw2poly);
-
-            for (auto &c : proxy_coeffs)
-                c = drand48();
-
-            pw_coeffs = 0.0;
-            proxycharge2pw(n_dim, n_charge_dim, n_order, n_pw, &proxy_coeffs[0], &poly2pw[0], &pw_coeffs[0]);
-
-            pw_coeffs_fort = 0.0;
-            dmk_proxycharge2pw_(&n_dim, &n_charge_dim, &n_order, &proxy_coeffs[0], &n_pw, (double *)&poly2pw[0],
-                                (double *)&pw_coeffs_fort[0]);
-
-            const double l2 = nda::linalg::norm(pw_coeffs - pw_coeffs_fort) / pw_coeffs.size();
-            CHECK(l2 < std::numeric_limits<double>::epsilon());
-
-            sctl::Vector<double> workspace;
-            if (n_dim == 2) {
-                const ndview<double, 3> proxy_coeffs_view({n_order, n_order, n_charge_dim}, &proxy_coeffs[0]);
-                const ndview<std::complex<double>, 2> poly2pw_view({n_pw, n_order}, &poly2pw[0]);
-                ndview<std::complex<double>, 3> pw_expansion_view({n_pw, n_pw2, n_charge_dim}, &pw_coeffs[0]);
-
-                proxycharge2pw<double, 2>(proxy_coeffs_view, poly2pw_view, pw_expansion_view, workspace);
-            }
-            if (n_dim == 3) {
-                const ndview<double, 4> proxy_coeffs_view({n_order, n_order, n_order, n_charge_dim}, &proxy_coeffs[0]);
-                const ndview<std::complex<double>, 2> poly2pw_view({n_pw, n_order}, &poly2pw[0]);
-                ndview<std::complex<double>, 4> pw_expansion_view({n_pw, n_pw, n_pw2, n_charge_dim}, &pw_coeffs[0]);
-                proxycharge2pw<double, 3>(proxy_coeffs_view, poly2pw_view, pw_expansion_view, workspace);
-            }
-
-            const double rel_err = nda::linalg::norm(pw_coeffs - pw_coeffs_fort) / pw_coeffs.size();
-            CHECK(rel_err < std::numeric_limits<double>::epsilon());
-        }
-    }
-}
-
-TEST_CASE("[DMK] charge2proxycharge") {
-    const int n_src = 500;
-    const int n_charge_dim = 2;
-
-    for (int n_dim : {2, 3}) {
-        CAPTURE(n_dim);
-        for (int n_order : {9, 18, 28, 38}) {
-            CAPTURE(n_order);
-            using dmk::util::int_pow;
-            nda::vector<double> r_src(n_src * n_dim);
-            nda::vector<double> charge(n_src * n_charge_dim);
-            nda::vector<double> coeffs(int_pow(n_order, n_dim) * n_charge_dim);
-            nda::vector<double> coeffs_fort(int_pow(n_order, n_dim) * n_charge_dim);
-            const double center[] = {0.5, 0.5, 0.5};
-            const double scale_factor = 1.2;
-
-            for (int i = 0; i < n_src * n_dim; ++i)
-                r_src[i] = drand48();
-
-            for (int i = 0; i < n_src * n_charge_dim; ++i)
-                charge[i] = drand48() - 0.5;
-
-            coeffs = 0.0;
-            sctl::Vector<double> workspace;
-
-            if (n_dim == 2) {
-                ndview<double, 3> coeffs_view({n_order, n_order, n_charge_dim}, coeffs.data());
-                ndview<const double, 2> src_view({2, n_src}, r_src.data());
-                ndview<const double, 1> center_view({n_dim}, center);
-                ndview<const double, 2> charge_view({n_charge_dim, n_src}, charge.data());
-                dmk::proxy::charge2proxycharge<double, 2>(src_view, charge_view, center_view, scale_factor, coeffs_view,
-                                                          workspace);
-            }
-            if (n_dim == 3) {
-                ndview<double, 4> coeffs_view({n_order, n_order, n_order, n_charge_dim}, coeffs.data());
-                ndview<const double, 2> src_view({3, n_src}, r_src.data());
-                ndview<const double, 1> center_view({n_dim}, center);
-                ndview<const double, 2> charge_view({n_charge_dim, n_src}, charge.data());
-                dmk::proxy::charge2proxycharge<double, 3>(src_view, charge_view, center_view, scale_factor, coeffs_view,
-                                                          workspace);
-            }
-            coeffs_fort = 0.0;
-            pdmk_charge2proxycharge_(&n_dim, &n_charge_dim, &n_order, &n_src, r_src.data(), charge.data(), center,
-                                     &scale_factor, coeffs_fort.data());
-
-            const double l2 = nda::linalg::norm(coeffs - coeffs_fort) / coeffs.size();
-            CHECK(l2 < std::numeric_limits<double>::epsilon());
-        }
-    }
-}
-
-TEST_CASE("[DMK] eval_targets_3d") {
-    const int n_trg = 53;
-    const int n_charge_dim = 1;
-    const int n_dim = 3;
-
-    for (int n_order : {9, 18, 28, 38}) {
-        CAPTURE(n_order);
-        using dmk::util::int_pow;
-        nda::vector<double> r_trg(n_trg * n_dim);
-        nda::vector<double> coeffs(int_pow(n_order, n_dim) * n_charge_dim);
-        nda::vector<double> pot(n_charge_dim * n_trg);
-        nda::vector<double> pot_fort(n_charge_dim * n_trg);
-        const double center[] = {0.5, 0.5, 0.5};
-        const double scale_factor = 1.2;
-
-        for (int i = 0; i < n_trg * n_dim; ++i)
-            r_trg[i] = drand48();
-
-        for (auto &coeff : coeffs)
-            coeff = (drand48() - 0.5);
-
-        pot = 0.0;
-        pot_fort = 0.0;
-
-        ndview<double, 4> coeffs_view({n_order, n_order, n_order, n_charge_dim}, coeffs.data());
-        ndview<double, 2> trg_view({3, n_trg}, r_trg.data());
-        ndview<double, 1> center_view({n_dim}, const_cast<double *>(center));
-        ndview<double, 2> pot_view({n_charge_dim, n_trg}, pot.data());
-        sctl::Vector<double> workspace;
-        eval_targets<double, 3>(coeffs_view, trg_view, center_view, scale_factor, pot_view, workspace);
-
-        pdmk_ortho_evalt_nd_(&n_dim, &n_charge_dim, &n_order, coeffs.data(), &n_trg, r_trg.data(), center,
-                             &scale_factor, pot_fort.data());
-
-        const double l2 = nda::linalg::norm(pot - pot_fort) / coeffs.size();
-        CHECK(l2 < std::numeric_limits<double>::epsilon());
-    }
-}
-#endif
 
 } // namespace dmk::proxy
