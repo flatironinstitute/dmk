@@ -111,7 +111,20 @@ SplitSource split_at_kernel_start(const std::string &source, std::string_view la
 
 SplitSource load_split_jit_source(std::string_view filename, std::string_view label) {
     const auto source_path = jit_source_root() / std::filesystem::path(std::string(filename));
-    const std::string source = read_text_file(source_path, label);
+
+    std::string source;
+    if (std::getenv("DMK_JIT_SOURCE_DIR")) {
+        source = read_text_file(source_path, label);
+    } else {
+        const std::string_view *embedded = find_embedded_jit_source(filename);
+
+        if (!embedded) {
+            throw std::runtime_error(std::string(label) + " JIT: no embedded source for: " + std::string(filename));
+        }
+
+        source = std::string(*embedded);
+    }
+
     SplitSource split = split_at_kernel_start(source, label);
 
     constexpr const char *marker = "// KERNEL_START";

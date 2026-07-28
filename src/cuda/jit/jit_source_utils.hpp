@@ -30,6 +30,14 @@ int required_int_param(const JitKey &key, const char *name, std::string_view lab
 
 std::filesystem::path jit_source_root();
 
+const std::string_view *find_embedded_jit_source(std::string_view filename);
+
+int embedded_jit_header_count();
+
+const char *embedded_jit_header_name(int i);
+
+const char *embedded_jit_header_source(int i);
+
 std::string read_text_file(const std::filesystem::path &path, std::string_view label);
 
 SplitSource split_at_kernel_start(const std::string &source, std::string_view label);

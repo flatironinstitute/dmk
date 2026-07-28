@@ -1,7 +1,10 @@
 #include "jit_compiler.hpp"
 
+#include "jit_source_utils.hpp"
+
 #include <nvrtc.h>
 
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -41,7 +44,21 @@ CompiledBinary JitCompiler::compile(const std::string &source, const std::string
                                     const std::string &name_expression) const {
     nvrtcProgram prog = nullptr;
 
-    nvrtcResult res = nvrtcCreateProgram(&prog, source.c_str(), program_name.c_str(), 0, nullptr, nullptr);
+    std::vector<const char *> header_sources;
+    std::vector<const char *> header_names;
+
+    if (!std::getenv("DMK_JIT_SOURCE_DIR")) {
+        const int n = embedded_jit_header_count();
+
+        for (int i = 0; i < n; ++i) {
+            header_sources.push_back(embedded_jit_header_source(i));
+            header_names.push_back(embedded_jit_header_name(i));
+        }
+    }
+
+    nvrtcResult res = nvrtcCreateProgram(
+        &prog, source.c_str(), program_name.c_str(), static_cast<int>(header_sources.size()),
+        header_sources.empty() ? nullptr : header_sources.data(), header_names.empty() ? nullptr : header_names.data());
     if (res != NVRTC_SUCCESS) {
         throw_nvrtc(res, "nvrtcCreateProgram");
     }

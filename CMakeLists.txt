@@ -83,11 +83,39 @@ if (DMK_GPU_OFFLOAD)
     ${DMK_CUDA_JIT_GENERATED_INCLUDE_DIR}/dmk_jit_config.hpp
     @ONLY
   )
+
+  file(GLOB DMK_JIT_CU_SOURCES CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/src/cuda/jit_sources/*.cu")
+  file(GLOB DMK_JIT_HEADER_FILES CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/include/dmk/cuda/*_kernelargs.hpp")
+  set(DMK_JIT_EMBED_HEADERS "")
+  foreach(hfile ${DMK_JIT_HEADER_FILES})
+    get_filename_component(hname "${hfile}" NAME)
+    list(APPEND DMK_JIT_EMBED_HEADERS "dmk/cuda/${hname}=${hfile}")
+  endforeach()
+  set(DMK_JIT_EMBEDDED_SOURCES "${DMK_CUDA_JIT_GENERATED_INCLUDE_DIR}/dmk_jit_embedded_sources.cpp")
+
+  string(REPLACE ";" "|" DMK_JIT_CU_SOURCES_ARG "${DMK_JIT_CU_SOURCES}")
+  string(REPLACE ";" "|" DMK_JIT_EMBED_HEADERS_ARG "${DMK_JIT_EMBED_HEADERS}")
+
+  add_custom_command(
+    OUTPUT ${DMK_JIT_EMBEDDED_SOURCES}
+    COMMAND ${CMAKE_COMMAND}
+      -DEMBED_OUTPUT=${DMK_JIT_EMBEDDED_SOURCES}
+      -DEMBED_CU=${DMK_JIT_CU_SOURCES_ARG}
+      -DEMBED_HEADERS=${DMK_JIT_EMBED_HEADERS_ARG}
+      -P ${PROJECT_SOURCE_DIR}/cmake/embed_jit_sources.cmake
+    DEPENDS ${DMK_JIT_CU_SOURCES} ${DMK_JIT_HEADER_FILES}
+      ${PROJECT_SOURCE_DIR}/cmake/embed_jit_sources.cmake
+    VERBATIM
+  )
+
   list(APPEND DMK_CXX_FLAGS "-DDMK_GPU_OFFLOAD")
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo -Xptxas=-warn-spills")
 endif()
 
 set(DMK_CUDA_JIT_SRC
+  ${DMK_JIT_EMBEDDED_SOURCES}
   src/cuda/jit/autotune.cpp
   src/cuda/jit/jit_cache.cpp
   src/cuda/jit/jit_compiler.cpp
