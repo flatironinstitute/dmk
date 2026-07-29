@@ -23,9 +23,20 @@
 #include <dmk/omp_wrapper.hpp>
 #include <dmk/testing.hpp>
 
+#ifdef DMK_GPU_OFFLOAD
+#include <dmk/cuda/pt/tree.hpp>
+// V2 GPU point-tree evaluators join the handle variant, selected at create by
+// the DMK_GPU_V2 env var. Deleted with the rest of V1 at cutover.
+using pdmk_tree_impl =
+    std::variant<std::unique_ptr<dmk::DMKPtTree<float, 2>>, std::unique_ptr<dmk::DMKPtTree<float, 3>>,
+                 std::unique_ptr<dmk::DMKPtTree<double, 2>>, std::unique_ptr<dmk::DMKPtTree<double, 3>>,
+                 std::unique_ptr<dmk::cuda::pt::Tree<float, 2>>, std::unique_ptr<dmk::cuda::pt::Tree<float, 3>>,
+                 std::unique_ptr<dmk::cuda::pt::Tree<double, 2>>, std::unique_ptr<dmk::cuda::pt::Tree<double, 3>>>;
+#else
 using pdmk_tree_impl =
     std::variant<std::unique_ptr<dmk::DMKPtTree<float, 2>>, std::unique_ptr<dmk::DMKPtTree<float, 3>>,
                  std::unique_ptr<dmk::DMKPtTree<double, 2>>, std::unique_ptr<dmk::DMKPtTree<double, 3>>>;
+#endif
 
 using pdmk_esp_plan_impl = std::variant<std::unique_ptr<dmk::EspPlan<float>>, std::unique_ptr<dmk::EspPlan<double>>>;
 
@@ -904,6 +915,17 @@ inline pdmk_tree pdmk_tree_create(dmk_communicator comm, const pdmk_params &para
 
     if (params.n_dim != 2 && params.n_dim != 3)
         throw api_error(DMK_ERR_INVALID_ARGUMENT, "Invalid dimension: " + std::to_string(params.n_dim));
+
+#ifdef DMK_GPU_OFFLOAD
+    if (params.eval_path == DMK_EVAL_PATH_GPU && util::env_is_set("DMK_GPU_V2")) {
+        if (params.n_dim == 2)
+            return new pdmk_tree_impl(std::make_unique<dmk::cuda::pt::Tree<Real, 2>>(
+                sctl_comm, params, r_src_vec, charge_vec, normal_vec, r_trg_vec));
+        return new pdmk_tree_impl(std::make_unique<dmk::cuda::pt::Tree<Real, 3>>(sctl_comm, params, r_src_vec,
+                                                                                 charge_vec, normal_vec, r_trg_vec));
+    }
+#endif
+
     if (params.n_dim == 2) {
         return new pdmk_tree_impl(std::unique_ptr<dmk::DMKPtTree<Real, 2>>(
             new dmk::DMKPtTree<Real, 2>(sctl_comm, params, r_src_vec, charge_vec, normal_vec, r_trg_vec)));
@@ -917,9 +939,16 @@ inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *pot_trg) {
     std::visit(
         [&](auto &t) {
             using TreeType = std::decay_t<decltype(t)>;
-            if constexpr (std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 2>>> ||
-                          std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 3>>>) {
-                const auto &comm = (*static_cast<TreeType *>(tree))->GetComm();
+            constexpr bool is_cpu = std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 2>>> ||
+                                    std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 3>>>;
+#ifdef DMK_GPU_OFFLOAD
+            constexpr bool is_gpu = std::is_same_v<TreeType, std::unique_ptr<dmk::cuda::pt::Tree<Real, 2>>> ||
+                                    std::is_same_v<TreeType, std::unique_ptr<dmk::cuda::pt::Tree<Real, 3>>>;
+#else
+            constexpr bool is_gpu = false;
+#endif
+            if constexpr (is_cpu || is_gpu) {
+                const auto &comm = t->GetComm();
                 sctl::Profile::Scoped prof("pdmk_tree_eval", &comm);
                 nvtxRangePush("pdmk_tree_eval");
                 t->eval();
@@ -937,8 +966,15 @@ inline void pdmk_tree_update_charges(pdmk_tree tree, const Real *charge, const R
     std::visit(
         [&](auto &t) {
             using TreeType = std::decay_t<decltype(t)>;
-            if constexpr (std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 2>>> ||
-                          std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 3>>>) {
+            constexpr bool is_cpu = std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 2>>> ||
+                                    std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 3>>>;
+#ifdef DMK_GPU_OFFLOAD
+            constexpr bool is_gpu = std::is_same_v<TreeType, std::unique_ptr<dmk::cuda::pt::Tree<Real, 2>>> ||
+                                    std::is_same_v<TreeType, std::unique_ptr<dmk::cuda::pt::Tree<Real, 3>>>;
+#else
+            constexpr bool is_gpu = false;
+#endif
+            if constexpr (is_cpu || is_gpu) {
                 t->update_charges(charge, normal);
             } else {
                 throw api_error(DMK_ERR_INVALID_ARGUMENT, "tree precision does not match update_charges precision");

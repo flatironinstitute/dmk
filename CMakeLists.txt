@@ -255,6 +255,8 @@ if (DMK_GPU_OFFLOAD)
               src/cuda/downward.cpp
               src/cuda/form_outgoing.cpp
               src/cuda/upward.cpp
+              src/cuda/pt/state.cpp
+              src/cuda/pt/tree.cpp
               ${DMK_CUDA_JIT_SRC}
               )
   set_target_properties(DMKOBJS_CUDA PROPERTIES POSITION_INDEPENDENT_CODE ON)
