@@ -85,7 +85,8 @@ if (DMK_GPU_OFFLOAD)
   )
 
   file(GLOB DMK_JIT_CU_SOURCES CONFIGURE_DEPENDS
-    "${PROJECT_SOURCE_DIR}/src/cuda/jit_sources/*.cu")
+    "${PROJECT_SOURCE_DIR}/src/cuda/jit_sources/*.cu"
+    "${PROJECT_SOURCE_DIR}/src/cuda/pt/jit_sources/*.cu")
   file(GLOB DMK_JIT_HEADER_FILES CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/include/dmk/cuda/*_kernelargs.hpp")
   set(DMK_JIT_EMBED_HEADERS "")
@@ -257,6 +258,8 @@ if (DMK_GPU_OFFLOAD)
               src/cuda/upward.cpp
               src/cuda/pt/state.cpp
               src/cuda/pt/tree.cpp
+              src/cuda/pt/direct.cpp
+              src/cuda/pt/launchers.cpp
               ${DMK_CUDA_JIT_SRC}
               )
   set_target_properties(DMKOBJS_CUDA PROPERTIES POSITION_INDEPENDENT_CODE ON)

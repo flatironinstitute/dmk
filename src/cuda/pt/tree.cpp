@@ -1,8 +1,11 @@
 #include <dmk/cuda/pt/tree.hpp>
 
+#include <dmk/cuda/direct.hpp>
+#include <dmk/cuda/pt/passes.hpp>
 #include <dmk/cuda/shared_state.hpp>
 #include <dmk/util.hpp>
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -24,6 +27,23 @@ bool dev_equal(const cuda_helpers::DeviceBuffer<T> &a, const cuda_helpers::Devic
     cudaMemcpy(ha.data(), a.data(), a.size_bytes(), cudaMemcpyDeviceToHost);
     cudaMemcpy(hb.data(), b.data(), b.size_bytes(), cudaMemcpyDeviceToHost);
     return std::memcmp(ha.data(), hb.data(), a.size_bytes()) == 0;
+}
+
+// Relative L2 error between two device buffers of `n` reals.
+template <typename Real>
+double dev_rel_l2(const Real *a, const Real *b, std::size_t n) {
+    if (n == 0)
+        return 0.0;
+    std::vector<Real> ha(n), hb(n);
+    cudaMemcpy(ha.data(), a, n * sizeof(Real), cudaMemcpyDeviceToHost);
+    cudaMemcpy(hb.data(), b, n * sizeof(Real), cudaMemcpyDeviceToHost);
+    double num = 0, den = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        const double d = double(ha[i]) - double(hb[i]);
+        num += d * d;
+        den += double(hb[i]) * double(hb[i]);
+    }
+    return den > 0 ? std::sqrt(num / den) : std::sqrt(num);
 }
 
 template <typename Real, int DIM>
@@ -123,6 +143,19 @@ template <typename Real, int DIM>
 void Tree<Real, DIM>::eval() {
     // Scaffold: delegate to the owned V1 pipeline. Replaced pass by pass.
     tree_->eval();
+
+    // Transitional parity gate (removed at cutover): run the V2 direct pass and
+    // compare its near-field output to the V1 direct oracle (already validated
+    // == CPU). V1 direct output is live in cuda_direct_ctx_ after eval().
+    if (util::env_is_set("DMK_GPU_V2_CHECK") && tree_->cuda_direct_ctx_) {
+        pt::direct(*state_, state_->direct_stream.get());
+        state_->direct_stream.sync();
+        const double e_src = dev_rel_l2<Real>(state_->outputs.d_pot_direct_src.data(),
+                                              tree_->cuda_direct_ctx_->device_pot_src(), state_->outputs.pot_src_size);
+        const double e_trg = dev_rel_l2<Real>(state_->outputs.d_pot_direct_trg.data(),
+                                              tree_->cuda_direct_ctx_->device_pot_trg(), state_->outputs.pot_trg_size);
+        std::fprintf(stderr, "[GPU_V2] direct parity vs V1: rel_l2 src=%.3e trg=%.3e\n", e_src, e_trg);
+    }
 }
 
 template <typename Real, int DIM>

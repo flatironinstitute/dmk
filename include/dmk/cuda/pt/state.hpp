@@ -80,6 +80,8 @@ struct BuildInputs {
         int n_pw2_win = 0;                  ///< (n_pw_win+1)/2
         int n_pw_modes_win = 0;             ///< PW modes per box (windowed root)
         Real hpw_win = 0;                   ///< windowed plane-wave spacing
+        int n_digits = 0;                   ///< requested accuracy digits (direct coeff generation)
+        double beta = 0;                    ///< PSWF bandwidth (direct coeff generation)
         int pw2poly_per_level_reals = 0;    ///< = 2*n_pw*n_order
         int poly2pw_per_level_reals = 0;    ///< = 2*n_pw*n_order
         int radialft_per_level_reals = 0;   ///< = n_pw_modes
@@ -147,13 +149,15 @@ struct BuildInputs {
 
     /// Potential output layout.
     struct Outputs {
-        dmk_ikernel kernel = DMK_LAPLACE;      ///< kernel (single source of truth)
-        int pot_src_dof = 0;                   ///< output components per source
-        int pot_trg_dof = 0;                   ///< output components per target
-        std::size_t pot_src_size = 0;          ///< total source pot reals
-        std::size_t pot_trg_size = 0;          ///< total target pot reals
-        std::span<const long> pot_src_offsets; ///< [n_boxes+1] into source pot
-        std::span<const long> pot_trg_offsets; ///< [n_boxes+1] into target pot
+        dmk_ikernel kernel = DMK_LAPLACE;       ///< kernel (single source of truth)
+        dmk_eval_type eval_src = DMK_POTENTIAL; ///< eval type at sources (direct output dim + coeffs)
+        dmk_eval_type eval_trg = DMK_POTENTIAL; ///< eval type at targets
+        int pot_src_dof = 0;                    ///< output components per source
+        int pot_trg_dof = 0;                    ///< output components per target
+        std::size_t pot_src_size = 0;           ///< total source pot reals
+        std::size_t pot_trg_size = 0;           ///< total target pot reals
+        std::span<const long> pot_src_offsets;  ///< [n_boxes+1] into source pot
+        std::span<const long> pot_trg_offsets;  ///< [n_boxes+1] into target pot
     } outputs;
 };
 
@@ -219,6 +223,8 @@ struct State {
         int n_pw2_win = 0;                    ///< (n_pw_win+1)/2
         int n_pw_modes_win = 0;               ///< PW modes per box (windowed root)
         Real hpw_win = 0;                     ///< windowed PW spacing
+        int n_digits = 0;                     ///< requested accuracy digits (direct coeff generation)
+        double beta = 0;                      ///< PSWF bandwidth (direct coeff generation)
         int pw2poly_per_level_reals = 0;      ///< flat stride for d_pw2poly_flat
         int poly2pw_per_level_reals = 0;      ///< flat stride for d_poly2pw_flat
         int radialft_per_level_reals = 0;     ///< flat stride for d_radialft_flat
@@ -305,16 +311,20 @@ struct State {
         DeviceBuffer<long> d_pw_out_offsets; ///< per-box offsets into d_pw_out, -1 = none
     } scratch;
 
-    /// Potential outputs (descattered user-order results).
+    /// Potential outputs.
     struct Outputs {
-        int pot_src_dof = 0;                  ///< output components per source
-        int pot_trg_dof = 0;                  ///< output components per target
-        std::size_t pot_src_size = 0;         ///< total source pot reals
-        std::size_t pot_trg_size = 0;         ///< total target pot reals
-        DeviceBuffer<long> d_pot_src_offsets; ///< per-box offsets into source pot
-        DeviceBuffer<long> d_pot_trg_offsets; ///< per-box offsets into target pot
-        DeviceBuffer<Real> d_pot_src_final;   ///< descattered user-order source pot (finalize->desort)
-        DeviceBuffer<Real> d_pot_trg_final;   ///< descattered user-order target pot (finalize->desort)
+        dmk_eval_type eval_src = DMK_POTENTIAL; ///< eval type at sources (direct output dim + coeffs)
+        dmk_eval_type eval_trg = DMK_POTENTIAL; ///< eval type at targets
+        int pot_src_dof = 0;                    ///< output components per source
+        int pot_trg_dof = 0;                    ///< output components per target
+        std::size_t pot_src_size = 0;           ///< total source pot reals
+        std::size_t pot_trg_size = 0;           ///< total target pot reals
+        DeviceBuffer<long> d_pot_src_offsets;   ///< per-box offsets into source pot
+        DeviceBuffer<long> d_pot_trg_offsets;   ///< per-box offsets into target pot
+        DeviceBuffer<Real> d_pot_direct_src;    ///< near-field src pot, sorted order (direct pass)
+        DeviceBuffer<Real> d_pot_direct_trg;    ///< near-field trg pot, sorted order (direct pass)
+        DeviceBuffer<Real> d_pot_src_final;     ///< descattered user-order source pot (finalize->desort)
+        DeviceBuffer<Real> d_pot_trg_final;     ///< descattered user-order target pot (finalize->desort)
     } outputs;
 
     /// Direct runs concurrently with the upward+downward chain; eval waits on

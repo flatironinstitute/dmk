@@ -217,6 +217,8 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
     else
         fou.n_pw_modes_win = fou.n_pw_win * fou.n_pw2_win;
     fou.hpw_win = (Real)tree.expansion_constants.hpw_win;
+    fou.n_digits = tree.n_digits;
+    fou.beta = tree.expansion_constants.beta;
 
     fou.p2c = real_span<Real>(tree.p2c);
     fou.c2p = real_span<Real>(tree.c2p);
@@ -312,6 +314,8 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
     // --- Outputs ---
     auto &out = in.outputs;
     out.kernel = tree.params.kernel;
+    out.eval_src = tree.params.eval_src;
+    out.eval_trg = tree.params.eval_trg;
     out.pot_src_dof = tree.kernel_output_dim_src;
     out.pot_trg_dof = tree.kernel_output_dim_trg;
     out.pot_src_size = (tree.r_src_sorted_owned.Dim() / DIM) * out.pot_src_dof;
@@ -367,6 +371,8 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     fourier.n_pw2_win = fi.n_pw2_win;
     fourier.n_pw_modes_win = fi.n_pw_modes_win;
     fourier.hpw_win = fi.hpw_win;
+    fourier.n_digits = fi.n_digits;
+    fourier.beta = fi.beta;
     fourier.pw2poly_per_level_reals = fi.pw2poly_per_level_reals;
     fourier.poly2pw_per_level_reals = fi.poly2pw_per_level_reals;
     fourier.radialft_per_level_reals = fi.radialft_per_level_reals;
@@ -453,12 +459,16 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     scratch.d_box0_id.upload(&zero_int, 1);
 
     // --- Outputs ---
+    outputs.eval_src = in.outputs.eval_src;
+    outputs.eval_trg = in.outputs.eval_trg;
     outputs.pot_src_dof = in.outputs.pot_src_dof;
     outputs.pot_trg_dof = in.outputs.pot_trg_dof;
     outputs.pot_src_size = in.outputs.pot_src_size;
     outputs.pot_trg_size = in.outputs.pot_trg_size;
     up(outputs.d_pot_src_offsets, in.outputs.pot_src_offsets);
     up(outputs.d_pot_trg_offsets, in.outputs.pot_trg_offsets);
+    outputs.d_pot_direct_src.resize(outputs.pot_src_size);
+    outputs.d_pot_direct_trg.resize(outputs.pot_trg_size);
     outputs.d_pot_src_final.resize(outputs.pot_src_size);
     outputs.d_pot_trg_final.resize(outputs.pot_trg_size);
 
