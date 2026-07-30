@@ -28,16 +28,32 @@ using DGrid = std::vector<double>;
 
 static inline int grid_idx(int ix, int iy, int iz, int n_f) { return ix * n_f * n_f + iy * n_f + iz; }
 
+// ducc0's own thread-count auto-detection (used to size its lazily-constructed
+// global pool) reads the calling thread's OWN pthread affinity mask, not the
+// system's core count -- under OMP_PROC_BIND=true, libgomp pins the master
+// thread to a single core as soon as the OpenMP runtime initializes, so ducc0
+// sees "1 CPU available" and permanently clamps its pool to 1 thread the first
+// time any ducc0 FFT runs (during warmup), regardless of the nthreads argument
+// passed to later c2c() calls. Force the pool up to the size we actually want.
+static void ensure_ducc0_pool_size(size_t nthreads) {
+    if (ducc0::thread_pool_size() < nthreads)
+        ducc0::resize_thread_pool(nthreads - 1);
+}
+
 static void fftn_3d(const CGrid &in, CGrid &out, int n) {
     out = in;
     ducc0::vfmav<std::complex<double>> v(out.data(), {(size_t)n, (size_t)n, (size_t)n});
-    ducc0::c2c(v, v, {0, 1, 2}, true, 1.0);
+    size_t nthreads = (size_t)omp_get_max_threads();
+    ensure_ducc0_pool_size(nthreads);
+    ducc0::c2c(v, v, {0, 1, 2}, true, 1.0, nthreads);
 }
 
 static void ifftn_3d(const CGrid &in, CGrid &out, int n) {
     out = in;
     ducc0::vfmav<std::complex<double>> v(out.data(), {(size_t)n, (size_t)n, (size_t)n});
-    ducc0::c2c(v, v, {0, 1, 2}, false, 1.0 / ((double)n * n * n));
+    size_t nthreads = (size_t)omp_get_max_threads();
+    ensure_ducc0_pool_size(nthreads);
+    ducc0::c2c(v, v, {0, 1, 2}, false, 1.0 / ((double)n * n * n), nthreads);
 }
 
 namespace dmk {
@@ -477,30 +493,40 @@ static void long_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<
     double tol = pswf.eps;
 
     // 1. Spread: NU points -> uniform grid (type 1)
+    sctl::Profile::Tic("spread", nullptr);
     std::vector<std::complex<double>> b(ntot, 0.0);
     int ier = finufft3d1(n, x.data(), y.data(), z.data(), c.data(), +1, tol, nf, nf, nf, b.data(), &opts);
     if (ier > 1)
         throw std::runtime_error("finufft3d1 spread failed, ier=" + std::to_string(ier));
+    sctl::Profile::Toc();
 
     // 2. Forward FFT
+    sctl::Profile::Tic("fft_fwd", nullptr);
     CGrid b_hat(ntot);
     fftn_3d(b, b_hat, nf);
+    sctl::Profile::Toc();
 
     // 3. Diagonal scaling (precomputed in plan)
+    sctl::Profile::Tic("diagonal", nullptr);
     CGrid pot_hat(ntot);
 #pragma omp parallel for
     for (int idx = 0; idx < ntot; ++idx)
         pot_hat[idx] = b_hat[idx] * scaling_coeffs[idx];
+    sctl::Profile::Toc();
 
     // 4. Inverse FFT
+    sctl::Profile::Tic("fft_inv", nullptr);
     CGrid grid_pot(ntot);
     ifftn_3d(pot_hat, grid_pot, nf);
+    sctl::Profile::Toc();
 
     // 5. Interpolate: uniform grid -> NU points (type 2)
+    sctl::Profile::Tic("interp", nullptr);
     std::vector<std::complex<double>> pot_c(n);
     ier = finufft3d2(n, x.data(), y.data(), z.data(), pot_c.data(), +1, tol, nf, nf, nf, grid_pot.data(), &opts);
     if (ier > 1)
         throw std::runtime_error("finufft3d2 interp failed, ier=" + std::to_string(ier));
+    sctl::Profile::Toc();
 
 #pragma omp parallel for
     for (int j = 0; j < n; j++)
@@ -597,7 +623,7 @@ EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma, dmk_eva
 void esp_destroy_plan(EspPlan *plan) { delete plan; }
 
 #ifdef DMK_GPU_OFFLOAD
-GpuState *esp_create_gpu_plan(EspPlan *plan, bool use_float, bool use_pruning) {
+GpuState *esp_create_gpu_plan(EspPlan *plan, bool use_float, GpuSrStrategy strategy) {
     const double tol = std::pow(10.0, -double(plan->n_digits));
     const double sf  = plan->pswf(0.0) / (plan->params_base.r_c * 4.0 * M_PI * plan->params_base.c0); //self-interaction factor
     // GPU spreads with cuFINUFFT's native ES kernel, not the PSWF, so it needs its
@@ -609,7 +635,7 @@ GpuState *esp_create_gpu_plan(EspPlan *plan, bool use_float, bool use_pruning) {
         plan->params_base.n_f, plan->n_digits,
         plan->params_base.L,   plan->params_base.r_c,
         GPU_SPREADER_UPSAMPFAC, tol,
-        sf, float(sf), plan->eval_type, use_float, use_pruning,
+        sf, float(sf), plan->eval_type, use_float, strategy,
         plan->scaling_coeffs_es.data());
 }
 

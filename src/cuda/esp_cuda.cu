@@ -61,16 +61,16 @@ struct GpuState {
     // Every eval on this plan must be called with the matching Real -- checked at
     // esp_eval_gpu_impl/short_range_impl/long_range_impl's entry via check_plan_real<Real>.
     bool          use_float = false;
-    // Short-range strategy: false = dense (short_range_kernel), true = sorted +
-    // geometrically-pruned (short_range_kernel_pruned). Fixed at plan-creation
-    // time (esp_create_gpu_plan's use_pruning arg), read in short_range_gpu.
-    bool          use_pruning = false;
-    // Cache for short_range_kernel_pruned's shared-memory sizing (see
-    // compute_max_cell_pop / short_range_gpu): computing the exact max cell
-    // population requires a host-device sync every call, so it's only
-    // recomputed when n changes -- reused as-is across repeated calls with
-    // the same n (the common case: same plan, same particle count, e.g. a
-    // benchmark loop or successive timesteps of one simulation).
+    // Short-range strategy (see GpuSrStrategy in esp.hpp). Fixed at plan-creation
+    // time (esp_create_gpu_plan's strategy arg), read in short_range_gpu.
+    GpuSrStrategy strategy = GpuSrStrategy::Dense;
+    // Cache for short_range_kernel_pruned/short_range_kernel_pruned_source's
+    // shared-memory sizing (see compute_max_cell_pop / short_range_gpu):
+    // computing the exact max cell population requires a host-device sync
+    // every call, so it's only recomputed when n changes -- reused as-is
+    // across repeated calls with the same n (the common case: same plan,
+    // same particle count, e.g. a benchmark loop or successive timesteps of
+    // one simulation).
     int           pruned_max_tiles_cache   = 0;
     int           pruned_max_tiles_cache_n = -1;
 
@@ -164,7 +164,7 @@ GpuState *gpu_create_state(
     int nf, int n_digits,
     double L, double r_c, double gpu_upsampfac, double tol,
     double self_factor_d, float self_factor_f,
-    dmk_eval_type eval_type, bool use_float, bool use_pruning,
+    dmk_eval_type eval_type, bool use_float, GpuSrStrategy strategy,
     const double *h_scaling_coeffs)
 {
     auto *gpu = new GpuState;
@@ -178,7 +178,7 @@ GpuState *gpu_create_state(
     gpu->self_factor_f = self_factor_f;
     gpu->eval_type     = eval_type;
     gpu->use_float     = use_float;
-    gpu->use_pruning   = use_pruning;
+    gpu->strategy      = strategy;
 
     const size_t real_sz    = use_float ? sizeof(float) : sizeof(double);
     const size_t complex_sz = use_float ? sizeof(cuFloatComplex) : sizeof(cuDoubleComplex);
@@ -759,7 +759,7 @@ __global__ void short_range_kernel(
 // (one AABB test per target-tile x source-tile pair, skipping whole tiles
 // farther than r_c). Kept fully side by side with short_range_kernel above --
 // neither is modified by the other; short_range_gpu picks one via
-// gpu.use_pruning.
+// gpu.strategy (see GpuSrStrategy in esp.hpp).
 //
 // Unlike short_range_kernel's block-wide register-blocked target grouping,
 // pruning only pays off when the AABB under test is tight, so the grouping
@@ -812,6 +812,20 @@ static int compute_max_cell_pop(const int *d_cell_start, int ncells, cudaStream_
 
 constexpr int kPrunedBlockSize = 128; // must match the launch config in short_range_gpu (4 warps)
 constexpr int kPrunedTileWidth = 32;  // = warpSize; one warp per source/target tile
+
+// Diagnostic-only: how many (target-tile, source-tile) pairs actually get
+// pruned vs evaluated. Read back and printed once per short_range_gpu call
+// in the pruned path -- not meant to stay long-term, just to quantify whether
+// this config gives the AABB test any real headroom to skip tiles.
+__device__ unsigned long long g_prune_tiles_tested    = 0;
+__device__ unsigned long long g_prune_tiles_evaluated = 0;
+
+// Same idea, but at per-source-POINT granularity for short_range_kernel_pruned_source
+// (see below): tested counts every candidate point as if evaluated densely
+// (i.e. what the box-vs-box pre-filter would have let through), evaluated
+// counts only points that also survive the finer per-point test.
+__device__ unsigned long long g_prune_points_tested    = 0;
+__device__ unsigned long long g_prune_points_evaluated = 0;
 
 template <CoeffTag Coeffs, bool WantForce, typename Real>
 __global__ void short_range_kernel_pruned(
@@ -953,7 +967,13 @@ __global__ void short_range_kernel_pruned(
             const Real ddx = max(Real(0), max(s_lo_x[st] - thi_x, tlo_x - s_hi_x[st]));
             const Real ddy = max(Real(0), max(s_lo_y[st] - thi_y, tlo_y - s_hi_y[st]));
             const Real ddz = max(Real(0), max(s_lo_z[st] - thi_z, tlo_z - s_hi_z[st]));
-            if (ddx * ddx + ddy * ddy + ddz * ddz > r_c_sq)
+            const bool pruned = ddx * ddx + ddy * ddy + ddz * ddz > r_c_sq;
+            if (lane == 0) {
+                atomicAdd(&g_prune_tiles_tested, 1ull);
+                if (!pruned)
+                    atomicAdd(&g_prune_tiles_evaluated, 1ull);
+            }
+            if (pruned)
                 continue; // whole tile pruned: no source load, no eval_esp_pair calls
 
             const int s_base_i = s_base[st], s_len_i = s_len[st];
@@ -976,6 +996,234 @@ __global__ void short_range_kernel_pruned(
                     eval_esp_pair<Coeffs, WantForce, Real>(xt - bx, yt - by, zt - bz, bq, rsc, cen, r_c_sq,
                                                            pot_acc, gx_acc, gy_acc, gz_acc);
             }
+        }
+
+        if (my_active) {
+            pg_sorted[out_dim * trg + 0] = pot_acc;
+            if constexpr (WantForce) {
+                pg_sorted[out_dim * trg + 1] = gx_acc;
+                pg_sorted[out_dim * trg + 2] = gy_acc;
+                pg_sorted[out_dim * trg + 3] = gz_acc;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// short_range_kernel_pruned_source
+// Box-vs-POINT pruning, mirrors CPU's short_range_prune_source: instead of
+// testing a whole source tile's AABB against the target tile's AABB (as
+// short_range_kernel_pruned above does), each individual source point is
+// tested against the target box. This is strictly finer -- a source chunk
+// whose AABB straddles the r_c boundary can still have most of its individual
+// points genuinely out of range, which box-vs-box can't detect but box-vs-
+// point does. Measured to matter here: box-vs-box only skips ~10% of tile
+// pairs when cell width ~= r_c (see g_prune_tiles_* above), since r_c is
+// deliberately close to the cell size by construction (nc = floor(L/r_c)).
+//
+// Phase 1 is IDENTICAL to short_range_kernel_pruned's (same per-home-cell
+// source-chunk table, same shared-memory layout/sizing) -- reused verbatim.
+// Phase 2 replaces the per-chunk AABB-vs-AABB test with: (a) the same cheap
+// AABB-vs-AABB pre-filter as a free first pass (skips a whole chunk with no
+// per-point work when possible), then (b) for chunks that don't fully clear
+// it, a per-lane box-vs-point test, warp-ballot to find survivors, and a
+// shared-memory scatter/gather compaction (not a register-shuffle sorting
+// network -- much simpler to get right, and the extra static shared memory
+// is a few KB, negligible next to the existing dynamic per-tile table) that
+// packs survivors into a dense sub-list before evaluation.
+// ---------------------------------------------------------------------------
+template <CoeffTag Coeffs, bool WantForce, typename Real>
+__global__ void short_range_kernel_pruned_source(
+    int nc, int n, int out_dim,
+    Real rsc, Real cen, Real r_c_sq,
+    const int * __restrict__ cell_start,
+    const Real * __restrict__ d_xs, const Real * __restrict__ d_ys, const Real * __restrict__ d_zs,
+    const Real * __restrict__ d_qs,
+    const int * __restrict__ nbc_tab,
+    const Real * __restrict__ off_tab,
+    Real * __restrict__ pg_sorted,
+    int max_tiles)
+{
+    // Dynamic shared memory: identical per-tile AABB/shift/base/len table to
+    // short_range_kernel_pruned -- see that kernel's comment for the layout.
+    extern __shared__ unsigned char s_raw[];
+    Real *s_lo_x = reinterpret_cast<Real *>(s_raw);
+    Real *s_lo_y = s_lo_x + max_tiles;
+    Real *s_lo_z = s_lo_y + max_tiles;
+    Real *s_hi_x = s_lo_z + max_tiles;
+    Real *s_hi_y = s_hi_x + max_tiles;
+    Real *s_hi_z = s_hi_y + max_tiles;
+    Real *s_shift_x = s_hi_z + max_tiles;
+    Real *s_shift_y = s_shift_x + max_tiles;
+    Real *s_shift_z = s_shift_y + max_tiles;
+    int  *s_base = reinterpret_cast<int *>(s_shift_z + max_tiles);
+    int  *s_len  = s_base + max_tiles;
+
+    __shared__ int  s_nb_lin[27];
+    __shared__ int  s_nb_tile0[28];
+    __shared__ Real s_nb_shift_x[27], s_nb_shift_y[27], s_nb_shift_z[27];
+
+    // Per-warp compaction staging buffer: kPrunedBlockSize/kPrunedTileWidth
+    // warps, kPrunedTileWidth (=32, one per lane) slots each. Static (not part
+    // of the dynamic per-tile allocation above) since its size is fixed at
+    // compile time regardless of particle density.
+    constexpr int kMaxWarps = kPrunedBlockSize / kPrunedTileWidth;
+    __shared__ Real s_stage_x[kMaxWarps][kPrunedTileWidth];
+    __shared__ Real s_stage_y[kMaxWarps][kPrunedTileWidth];
+    __shared__ Real s_stage_z[kMaxWarps][kPrunedTileWidth];
+    __shared__ Real s_stage_q[kMaxWarps][kPrunedTileWidth];
+
+    const int home = blockIdx.x;
+    const int cx = home / (nc * nc);
+    const int cy = (home / nc) % nc;
+    const int cz = home % nc;
+
+    const int hbeg = cell_start[home];
+    const int n_trg = cell_start[home + 1] - hbeg;
+    if (n_trg == 0) return;
+
+    const int tid = threadIdx.x;
+    const int warp_id = tid / warpSize;
+    const int lane = tid % warpSize;
+    const int n_warps = blockDim.x / warpSize;
+
+    // --- Phase 1 (identical to short_range_kernel_pruned) ---
+    if (tid < 27) {
+        const int dzi = tid % 3, dyi = (tid / 3) % 3, dxi = tid / 9;
+        const int nbx = nbc_tab[cx * 3 + dxi];
+        const int nby = nbc_tab[cy * 3 + dyi];
+        const int nbz = nbc_tab[cz * 3 + dzi];
+        const Real ox = off_tab[cx * 3 + dxi];
+        const Real oy = off_tab[cy * 3 + dyi];
+        const Real oz = off_tab[cz * 3 + dzi];
+        const int nb = (nbx * nc + nby) * nc + nbz;
+        s_nb_lin[tid] = nb;
+        s_nb_shift_x[tid] = ox;
+        s_nb_shift_y[tid] = oy;
+        s_nb_shift_z[tid] = oz;
+        const int len = cell_start[nb + 1] - cell_start[nb];
+        s_nb_tile0[tid] = (len + kPrunedTileWidth - 1) / kPrunedTileWidth;
+    }
+    __syncthreads();
+    if (tid == 0) {
+        int acc = 0;
+        for (int i = 0; i < 27; ++i) {
+            const int c = s_nb_tile0[i];
+            s_nb_tile0[i] = acc;
+            acc += c;
+        }
+        s_nb_tile0[27] = acc;
+    }
+    __syncthreads();
+    const int n_stiles = min(s_nb_tile0[27], max_tiles);
+
+    for (int gt = warp_id; gt < n_stiles; gt += n_warps) {
+        int nbi = 0;
+        while (nbi < 26 && s_nb_tile0[nbi + 1] <= gt)
+            ++nbi;
+        const int local_tile = gt - s_nb_tile0[nbi];
+        const int nb = s_nb_lin[nbi];
+        const int nb_beg = cell_start[nb], nb_end = cell_start[nb + 1];
+        const int t_base = nb_beg + local_tile * kPrunedTileWidth;
+        const int t_len = min(kPrunedTileWidth, nb_end - t_base);
+        const Real ox = s_nb_shift_x[nbi], oy = s_nb_shift_y[nbi], oz = s_nb_shift_z[nbi];
+
+        const bool valid = lane < t_len;
+        const Real x = valid ? d_xs[t_base + lane] + ox : Real(0);
+        const Real y = valid ? d_ys[t_base + lane] + oy : Real(0);
+        const Real z = valid ? d_zs[t_base + lane] + oz : Real(0);
+        Real lo_x = warp_reduce_min(valid ? x : Real(INFINITY));
+        Real hi_x = warp_reduce_max(valid ? x : Real(-INFINITY));
+        Real lo_y = warp_reduce_min(valid ? y : Real(INFINITY));
+        Real hi_y = warp_reduce_max(valid ? y : Real(-INFINITY));
+        Real lo_z = warp_reduce_min(valid ? z : Real(INFINITY));
+        Real hi_z = warp_reduce_max(valid ? z : Real(-INFINITY));
+
+        if (lane == 0) {
+            s_lo_x[gt] = lo_x; s_lo_y[gt] = lo_y; s_lo_z[gt] = lo_z;
+            s_hi_x[gt] = hi_x; s_hi_y[gt] = hi_y; s_hi_z[gt] = hi_z;
+            s_shift_x[gt] = ox; s_shift_y[gt] = oy; s_shift_z[gt] = oz;
+            s_base[gt] = t_base; s_len[gt] = t_len;
+        }
+    }
+    __syncthreads();
+
+    // --- Phase 2: per warp, box-vs-point pruning + compaction ---
+    for (int t0 = warp_id * kPrunedTileWidth; t0 < n_trg; t0 += n_warps * kPrunedTileWidth) {
+        const int tlen = min(kPrunedTileWidth, n_trg - t0);
+        const bool my_active = lane < tlen;
+        const int trg = hbeg + t0 + lane;
+        const Real xt = my_active ? d_xs[trg] : Real(0);
+        const Real yt = my_active ? d_ys[trg] : Real(0);
+        const Real zt = my_active ? d_zs[trg] : Real(0);
+
+        const Real tlo_x = warp_reduce_min(my_active ? xt : Real(INFINITY));
+        const Real thi_x = warp_reduce_max(my_active ? xt : Real(-INFINITY));
+        const Real tlo_y = warp_reduce_min(my_active ? yt : Real(INFINITY));
+        const Real thi_y = warp_reduce_max(my_active ? yt : Real(-INFINITY));
+        const Real tlo_z = warp_reduce_min(my_active ? zt : Real(INFINITY));
+        const Real thi_z = warp_reduce_max(my_active ? zt : Real(-INFINITY));
+
+        Real pot_acc = Real(0), gx_acc = Real(0), gy_acc = Real(0), gz_acc = Real(0);
+
+        for (int st = 0; st < n_stiles; ++st) {
+            // Cheap box-vs-box pre-filter, reusing the existing Phase-1 AABBs:
+            // a whole chunk out of range needs no per-point work at all. Free
+            // (same AABBs short_range_kernel_pruned already computes), and
+            // preserves that kernel's ~10% skip as a base case here too.
+            const Real ddx = max(Real(0), max(s_lo_x[st] - thi_x, tlo_x - s_hi_x[st]));
+            const Real ddy = max(Real(0), max(s_lo_y[st] - thi_y, tlo_y - s_hi_y[st]));
+            const Real ddz = max(Real(0), max(s_lo_z[st] - thi_z, tlo_z - s_hi_z[st]));
+            const bool box_pruned = ddx * ddx + ddy * ddy + ddz * ddz > r_c_sq;
+
+            const int s_len_i = s_len[st];
+            if (lane == 0)
+                atomicAdd(&g_prune_points_tested, (unsigned long long)s_len_i);
+            if (box_pruned)
+                continue;
+
+            const int s_base_i = s_base[st];
+            const Real shx = s_shift_x[st], shy = s_shift_y[st], shz = s_shift_z[st];
+            const bool have_src = lane < s_len_i;
+            const Real sx = have_src ? d_xs[s_base_i + lane] + shx : Real(0);
+            const Real sy = have_src ? d_ys[s_base_i + lane] + shy : Real(0);
+            const Real sz = have_src ? d_zs[s_base_i + lane] + shz : Real(0);
+            const Real sq = have_src ? d_qs[s_base_i + lane] : Real(0);
+
+            // Per-point box-distance test: same formula as the box-vs-box test
+            // above, but with the source side degenerated to a single point
+            // (lo=hi=s) instead of a chunk AABB -- strictly finer.
+            const Real pdx = max(Real(0), max(tlo_x - sx, sx - thi_x));
+            const Real pdy = max(Real(0), max(tlo_y - sy, sy - thi_y));
+            const Real pdz = max(Real(0), max(tlo_z - sz, sz - thi_z));
+            const bool in_range = have_src && (pdx * pdx + pdy * pdy + pdz * pdz <= r_c_sq);
+
+            const unsigned mask = __ballot_sync(0xffffffffu, in_range);
+            if (lane == 0)
+                atomicAdd(&g_prune_points_evaluated, (unsigned long long)__popc(mask));
+            if (mask == 0)
+                continue; // chunk's box test didn't clear it, but no individual survivors either
+
+            if (in_range) {
+                const int slot = __popc(mask & ((1u << lane) - 1u));
+                s_stage_x[warp_id][slot] = sx;
+                s_stage_y[warp_id][slot] = sy;
+                s_stage_z[warp_id][slot] = sz;
+                s_stage_q[warp_id][slot] = sq;
+            }
+            __syncwarp(); // scatters visible before any lane reads the staging buffer
+
+            const int m = __popc(mask);
+            for (int i = 0; i < m; ++i) {
+                const Real bx = s_stage_x[warp_id][i];
+                const Real by = s_stage_y[warp_id][i];
+                const Real bz = s_stage_z[warp_id][i];
+                const Real bq = s_stage_q[warp_id][i];
+                if (my_active)
+                    eval_esp_pair<Coeffs, WantForce, Real>(xt - bx, yt - by, zt - bz, bq, rsc, cen, r_c_sq,
+                                                           pot_acc, gx_acc, gy_acc, gz_acc);
+            }
+            __syncwarp(); // all reads of this chunk's staging buffer done before the next chunk scatters
         }
 
         if (my_active) {
@@ -1400,20 +1648,21 @@ static void short_range_gpu(
         const int threads = kShortRangeBlockSize; // must match short_range_kernel's shared-memory tile size
         constexpr int kTargetsPerThread = 3; // register-blocking width
 
-        // Pruned-path-only: size short_range_kernel_pruned's per-tile shared-memory
-        // table from the max cell population. Computing this exactly requires a
-        // host-device sync (thrust::transform_reduce returns a host scalar), which
-        // would otherwise happen on EVERY call -- so it's cached in GpuState and only
-        // recomputed when n changes (the common case is repeated calls with the same
-        // n, e.g. a benchmark loop or successive simulation timesteps, where the sync
-        // is pure overhead unrelated to any actual change in cell populations). A 25%
-        // margin absorbs modest population drift between calls at the same n (e.g.
-        // particles moving slightly between timesteps) without needing to resync;
-        // this is a pragmatic bound, not a rigorous one -- a dataset whose max cell
-        // population grows by >25% while n stays fixed could still overflow it.
+        // Pruned-path-only (PruneTile and PruneSource share this table): size the
+        // per-tile shared-memory table from the max cell population. Computing this
+        // exactly requires a host-device sync (thrust::transform_reduce returns a
+        // host scalar), which would otherwise happen on EVERY call -- so it's cached
+        // in GpuState and only recomputed when n changes (the common case is repeated
+        // calls with the same n, e.g. a benchmark loop or successive simulation
+        // timesteps, where the sync is pure overhead unrelated to any actual change in
+        // cell populations). A 25% margin absorbs modest population drift between
+        // calls at the same n (e.g. particles moving slightly between timesteps)
+        // without needing to resync; this is a pragmatic bound, not a rigorous one --
+        // a dataset whose max cell population grows by >25% while n stays fixed could
+        // still overflow it.
         int pruned_max_tiles = 0;
         size_t pruned_shmem_bytes = 0;
-        if (gpu.use_pruning) {
+        if (gpu.strategy != GpuSrStrategy::Dense) {
             if (n != gpu.pruned_max_tiles_cache_n) {
                 NvtxRange pop_range("short_range/max_cell_pop");
                 const int max_pop = compute_max_cell_pop(d_cell_start, nc * nc * nc, gpu.stream);
@@ -1427,7 +1676,17 @@ static void short_range_gpu(
 
 #define DMK_SR_LAUNCH(TAG, WANTFORCE)                                                                                  \
     do {                                                                                                              \
-        if (gpu.use_pruning) {                                                                                        \
+        if (gpu.strategy == GpuSrStrategy::PruneSource) {                                                             \
+            auto *_k = short_range_kernel_pruned_source<TAG, WANTFORCE, Real>;                                        \
+            cudaError_t _attr_err =                                                                                   \
+                cudaFuncSetAttribute(_k, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)pruned_shmem_bytes);        \
+            if (_attr_err != cudaSuccess)                                                                             \
+                throw std::runtime_error(std::string("short_range_gpu: cudaFuncSetAttribute failed: ") +              \
+                                         cudaGetErrorString(_attr_err));                                              \
+            _k<<<nc * nc * nc, kPrunedBlockSize, pruned_shmem_bytes, gpu.stream>>>(                                    \
+                nc, n, out_dim, rsc, cen, r_c_sq, d_cell_start, d_xs, d_ys, d_zs, d_qs,                                \
+                gpu.d_nbc_tab, reinterpret_cast<const Real *>(gpu.d_off_tab), d_pg_sorted, pruned_max_tiles);          \
+        } else if (gpu.strategy == GpuSrStrategy::PruneTile) {                                                        \
             auto *_k = short_range_kernel_pruned<TAG, WANTFORCE, Real>;                                              \
             cudaError_t _attr_err =                                                                                   \
                 cudaFuncSetAttribute(_k, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)pruned_shmem_bytes);        \
@@ -1468,6 +1727,36 @@ static void short_range_gpu(
 
 #undef DMK_SR_CASCADE
 #undef DMK_SR_LAUNCH
+
+        if (gpu.strategy == GpuSrStrategy::PruneTile) {
+            unsigned long long tested = 0, evaluated = 0;
+            cudaMemcpyFromSymbolAsync(&tested, g_prune_tiles_tested, sizeof(tested), 0,
+                                       cudaMemcpyDeviceToHost, gpu.stream);
+            cudaMemcpyFromSymbolAsync(&evaluated, g_prune_tiles_evaluated, sizeof(evaluated), 0,
+                                       cudaMemcpyDeviceToHost, gpu.stream);
+            cudaStreamSynchronize(gpu.stream);
+            fprintf(stderr, "# prune diag: tiles_tested=%llu tiles_evaluated=%llu skip_frac=%.4f\n",
+                    tested, evaluated, tested ? 1.0 - double(evaluated) / double(tested) : 0.0);
+            const unsigned long long zero = 0;
+            cudaMemcpyToSymbolAsync(g_prune_tiles_tested, &zero, sizeof(zero), 0,
+                                     cudaMemcpyHostToDevice, gpu.stream);
+            cudaMemcpyToSymbolAsync(g_prune_tiles_evaluated, &zero, sizeof(zero), 0,
+                                     cudaMemcpyHostToDevice, gpu.stream);
+        } else if (gpu.strategy == GpuSrStrategy::PruneSource) {
+            unsigned long long tested = 0, evaluated = 0;
+            cudaMemcpyFromSymbolAsync(&tested, g_prune_points_tested, sizeof(tested), 0,
+                                       cudaMemcpyDeviceToHost, gpu.stream);
+            cudaMemcpyFromSymbolAsync(&evaluated, g_prune_points_evaluated, sizeof(evaluated), 0,
+                                       cudaMemcpyDeviceToHost, gpu.stream);
+            cudaStreamSynchronize(gpu.stream);
+            fprintf(stderr, "# prune diag: points_tested=%llu points_evaluated=%llu skip_frac=%.4f\n",
+                    tested, evaluated, tested ? 1.0 - double(evaluated) / double(tested) : 0.0);
+            const unsigned long long zero = 0;
+            cudaMemcpyToSymbolAsync(g_prune_points_tested, &zero, sizeof(zero), 0,
+                                     cudaMemcpyHostToDevice, gpu.stream);
+            cudaMemcpyToSymbolAsync(g_prune_points_evaluated, &zero, sizeof(zero), 0,
+                                     cudaMemcpyHostToDevice, gpu.stream);
+        }
     }
 
     {

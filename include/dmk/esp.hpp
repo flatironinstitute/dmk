@@ -53,18 +53,24 @@ PotForce<Real> esp_eval_short_range(EspPlan *plan, const std::vector<Vec3T<Real>
 template <typename Real>
 PotForce<Real> esp_eval_long_range(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges);
 
+// GPU short-range strategy, fixed at plan-creation time (create multiple
+// plans to compare strategies): Dense evaluates all 27 neighbor cells
+// directly; PruneTile does tile-vs-tile (AABB-vs-AABB) culling -- measured to
+// skip only ~10% of tile pairs when cell width ~= r_c (the common case, since
+// nc = floor(L/r_c) is chosen to make it so), not enough to pay for its own
+// overhead; PruneSource does box-vs-point culling (each source point tested
+// individually against the target tile's box, then warp-compacted before
+// evaluation) -- much finer-grained, expected to prune substantially more.
+enum class GpuSrStrategy : int { Dense = 0, PruneTile = 1, PruneSource = 2 };
+
 #ifdef DMK_GPU_OFFLOAD
 // GPU plan — a separate, independent object that owns all CUDA resources.
 // Create one alongside (or instead of) an EspPlan; destroy when done.
 // use_float selects the ONE Real this plan is created for (its cuFFT/cuFINUFFT
 // plans and long-range buffers only exist for that precision) -- every
 // esp_eval_gpu*<Real> call on the returned GpuState must match it.
-// use_pruning selects the short-range strategy: false (default) is the dense
-// all-27-neighbor-cells kernel, true is the sorted+geometrically-pruned one
-// (tile-vs-tile AABB culling). Also fixed at plan-creation time -- create two
-// plans to compare both strategies.
 struct GpuState;
-GpuState *esp_create_gpu_plan(EspPlan *plan, bool use_float, bool use_pruning = false);
+GpuState *esp_create_gpu_plan(EspPlan *plan, bool use_float, GpuSrStrategy strategy = GpuSrStrategy::Dense);
 void      esp_destroy_gpu_plan(GpuState *gpu);
 
 // GPU evaluation — same semantics as esp_eval but runs on GPU.
