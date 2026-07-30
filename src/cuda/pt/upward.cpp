@@ -82,19 +82,15 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
                               {"J_TILE", p.at("J_TILE")},
                               {"K_TILE", p.at("K_TILE")},
                               {"BLOCK_SIZE", p.at("BLOCK_SIZE")}};
-                const std::string source = make_stage_source("pt/charge2proxy.cu", key, "", "PtCharge2Proxy");
-                auto kernel = cache.get_kernel_from_source(key, source);
+                auto kernel = cache.get_kernel_from_source(
+                    key, [&] { return make_stage_source("pt/charge2proxy.cu", key, "", "PtCharge2Proxy"); });
                 const std::size_t shared = c2p_shared_bytes(a.n_order, a.n_charge_dim, p.at("CHUNK"), sizeof(Real));
                 set_max_dynamic_smem(*kernel, shared);
                 kernel->launch(dim3(n_launch, 1, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, a, group_perm);
             };
 
-            int device = 0;
-            cudaGetDevice(&device);
-            cudaDeviceProp prop{};
-            cudaGetDeviceProperties(&prop, device);
-            const std::size_t max_shared = prop.sharedMemPerBlockOptin > 0 ? std::size_t(prop.sharedMemPerBlockOptin)
-                                                                           : std::size_t(prop.sharedMemPerBlock);
+            const cudaDeviceProp &prop = device_prop();
+            const std::size_t max_shared = device_max_shared_bytes();
             const int n_order = f.n_order;
             const int n_charge_dim = a.n_charge_dim;
 

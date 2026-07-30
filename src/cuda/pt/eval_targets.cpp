@@ -57,19 +57,15 @@ void launch_eval_side(JitCache &cache, dmk::cuda::EvalTargetsArgs<Real> args, in
                       {"N_ORDER", n_order},
                       {"BLOCK_SIZE", p.at("BLOCK_SIZE")},
                       {"TARGETS_PER_THREAD", p.at("TARGETS_PER_THREAD")}};
-        const std::string source = make_stage_source("pt/eval_targets.cu", key, "", "PtEvalTargets");
-        auto kernel = cache.get_kernel_from_source(key, source);
+        auto kernel = cache.get_kernel_from_source(
+            key, [&] { return make_stage_source("pt/eval_targets.cu", key, "", "PtEvalTargets"); });
         const std::size_t shared = eval_shared_bytes(DIM, n_order, sizeof(Real));
         set_max_dynamic_smem(*kernel, shared);
         kernel->launch(dim3(args.n_eval_boxes, 1, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, args);
     };
 
-    int device = 0;
-    cudaGetDevice(&device);
-    cudaDeviceProp prop{};
-    cudaGetDeviceProperties(&prop, device);
-    const std::size_t max_shared = prop.sharedMemPerBlockOptin > 0 ? std::size_t(prop.sharedMemPerBlockOptin)
-                                                                   : std::size_t(prop.sharedMemPerBlock);
+    const cudaDeviceProp &prop = device_prop();
+    const std::size_t max_shared = device_max_shared_bytes();
 
     const std::vector<TuningParameter> space{{"BLOCK_SIZE", {128, 256, 512}}, {"TARGETS_PER_THREAD", {1, 2, 3, 4}}};
     const TuningParams defaults{{"BLOCK_SIZE", 256}, {"TARGETS_PER_THREAD", 1}};
@@ -98,8 +94,8 @@ void launch_self_correction(JitCache &cache, const dmk::cuda::SelfCorrectionArgs
     key.real = jit_real_name<Real>();
     key.sm_major = cache.sm_major();
     key.sm_minor = cache.sm_minor();
-    const std::string source = make_stage_source("pt/self_correction.cu", key, "", "PtSelfCorrection");
-    auto kernel = cache.get_kernel_from_source(key, source);
+    auto kernel = cache.get_kernel_from_source(
+        key, [&] { return make_stage_source("pt/self_correction.cu", key, "", "PtSelfCorrection"); });
     dmk::cuda::SelfCorrectionArgs<Real> a = args;
     kernel->launch(dim3(a.n_direct_work, 1, 1), dim3(BLOCK, 1, 1), 0, stream, a);
 }

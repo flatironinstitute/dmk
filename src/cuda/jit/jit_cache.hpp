@@ -6,6 +6,7 @@
 #include "jit_compiler.hpp"
 #include "jit_kernel.hpp"
 #include "jit_types.hpp"
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -21,6 +22,11 @@ class JitCache {
     std::shared_ptr<JitKernel> get_kernel(const JitKey &key);
 
     std::shared_ptr<JitKernel> get_kernel_from_source(const JitKey &key, const std::string &source,
+                                                      const std::string &name_expression = {});
+
+    /// Lazy variant: `source_fn` is invoked only on a cache miss, so callers can
+    /// keep source assembly off the hot (cache-hit) launch path.
+    std::shared_ptr<JitKernel> get_kernel_from_source(const JitKey &key, const std::function<std::string()> &source_fn,
                                                       const std::string &name_expression = {});
     int sm_major() const { return sm_major_; }
     int sm_minor() const { return sm_minor_; }

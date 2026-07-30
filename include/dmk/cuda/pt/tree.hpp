@@ -5,9 +5,9 @@
 /// only for host precompute (build_tree_for_gpu / generate_metadata_for_gpu)
 /// and charge sorting, then runs its own device pipeline over a `pt::State`.
 ///
-/// Scaffold stage: `eval()` still delegates to the owned tree's V1 GPU pipeline
-/// (kept as a live in-binary oracle). The V2 `pt::State` is built alongside and
-/// validated against V1; the passes replace the delegation stage by stage.
+/// With DMK_GPU_V2_CHECK set, the owned tree's V1 GPU pipeline is also run as an
+/// in-binary oracle and every stage is diffed against the V2 result. Both the
+/// oracle and the checks are removed at cutover.
 
 #include <memory>
 

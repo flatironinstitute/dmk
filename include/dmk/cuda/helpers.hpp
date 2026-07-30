@@ -80,6 +80,17 @@ class DeviceBuffer {
         if (n)
             DMK_CHECK_CUDA(cudaMemcpyAsync(p_, src, n * sizeof(T), cudaMemcpyHostToDevice, stream));
     }
+    // Grow-only upload for reused scratch whose element count varies call-to-call
+    // (e.g. per-launch arg arrays): grows the allocation to fit but never shrinks,
+    // so a size that oscillates does not free/realloc every call. cudaFree
+    // synchronizes the whole device, so avoiding it off the hot path matters.
+    // size() reflects capacity after this, not the last upload's count.
+    void upload_async_grow(const T *src, std::size_t n, cudaStream_t stream) {
+        if (n > n_)
+            resize(n);
+        if (n)
+            DMK_CHECK_CUDA(cudaMemcpyAsync(p_, src, n * sizeof(T), cudaMemcpyHostToDevice, stream));
+    }
     void zero_async(cudaStream_t stream = 0) {
         if (n_)
             DMK_CHECK_CUDA(cudaMemsetAsync(p_, 0, n_ * sizeof(T), stream));

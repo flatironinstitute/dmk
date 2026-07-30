@@ -43,7 +43,7 @@ void launch_proxy2pw(std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, cudaStr
 
     static JitCache cache;
     static cuda_helpers::DeviceBuffer<dmk::cuda::Proxy2PwArgs<Real>> d_args;
-    d_args.upload_async(args_h.data(), args_h.size(), stream);
+    d_args.upload_async_grow(args_h.data(), args_h.size(), stream);
     const int n_args = static_cast<int>(args_h.size());
     const auto a0 = args_h[0];
 
@@ -62,8 +62,8 @@ void launch_proxy2pw(std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, cudaStr
                       {"PROXY2PW_I_TILE", p.at("I_TILE")},
                       {"PROXY2PW_M1_TILE", p.at("M1_TILE")},
                       {"PROXY2PW_M2_TILE", p.at("M2_TILE")}};
-        const std::string source = make_stage_source("pt/proxy2pw.cu", key, "", "PtProxy2Pw");
-        auto kernel = cache.get_kernel_from_source(key, source);
+        auto kernel = cache.get_kernel_from_source(
+            key, [&] { return make_stage_source("pt/proxy2pw.cu", key, "", "PtProxy2Pw"); });
         const std::size_t shared = p2pw_shared_bytes(max_n_order, max_n_pw, p.at("Z_TILE"), sizeof(Real));
         set_max_dynamic_smem(*kernel, shared);
         const dmk::cuda::Proxy2PwArgs<Real> *dev_args = d_args.data();
@@ -71,12 +71,8 @@ void launch_proxy2pw(std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, cudaStr
         kernel->launch(dim3(max_boxes, n_args, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, dev_args, n);
     };
 
-    int device = 0;
-    cudaGetDevice(&device);
-    cudaDeviceProp prop{};
-    cudaGetDeviceProperties(&prop, device);
-    const std::size_t max_shared = prop.sharedMemPerBlockOptin > 0 ? std::size_t(prop.sharedMemPerBlockOptin)
-                                                                   : std::size_t(prop.sharedMemPerBlock);
+    const cudaDeviceProp &prop = device_prop();
+    const std::size_t max_shared = device_max_shared_bytes();
 
     const std::vector<TuningParameter> space{{"BLOCK_SIZE", {64, 128, 256}},
                                              {"Z_TILE", {2, 4}},

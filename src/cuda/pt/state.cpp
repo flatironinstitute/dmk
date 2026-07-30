@@ -27,7 +27,7 @@ void up(DeviceBuffer<T> &d, const Src &s) {
 }
 
 // Non-owning span helpers over the tree's flat host arrays. `long` matches
-// sctl::Long's ABI (V1 uploads via the same reinterpret cast).
+// sctl::Long's ABI, so the reinterpret_cast in long_span is safe.
 template <typename Real, typename V>
 std::span<const Real> real_span(const V &v) {
     return v.Dim() ? std::span<const Real>(&v[0], v.Dim()) : std::span<const Real>();
@@ -283,7 +283,7 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
     }
     w.tp_offset[n_levels] = w.tp_parents.size();
 
-    // pw_eval per-level max is unused (dead in V1); discard it.
+    // pw_eval per-level max is unused; discard it.
     int pw_eval_max_discard = 0;
     build_per_level_box_list(
         tree, n_levels, w.pw_eval_box_offset, w.pw_eval_box_count, pw_eval_max_discard, w.pw_eval_box_flat,
@@ -305,7 +305,7 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
 
     // --- Scratch strides / sizes ---
     auto &sc = in.scratch;
-    sc.tensorprod_scratch_stride_reals = 2L * fou.n_order * fou.n_order * fou.n_order; // matches V1 (n_order^3)
+    sc.tensorprod_scratch_stride_reals = 2L * fou.n_order * fou.n_order * fou.n_order; // 2 * n_order^3 ping-pong slab
     sc.pw_in_stride_reals = 2L * fou.n_charge_dim * fou.n_pw_modes;
     sc.pw_form_stride_reals = part.is_stresslet ? 2L * fou.n_tables_up * fou.n_pw_modes : 0;
     sc.proxy_coeffs_upward_dim = tree.proxy_coeffs_upward.Dim();

@@ -49,6 +49,14 @@ TuningParams autotune_config(const std::string &tune_key, const std::string &ker
 /// static limit). Must be called before launching with that shared_bytes.
 void set_max_dynamic_smem(const jit::JitKernel &kernel, std::size_t shared_bytes);
 
+/// Properties of the current device, queried once and cached. Device-invariant,
+/// so launchers use this instead of re-querying cudaGetDeviceProperties on every
+/// (post-tune) launch. GPU eval is single-device (single rank).
+const cudaDeviceProp &device_prop();
+
+/// Max opt-in dynamic shared memory per block for the current device.
+std::size_t device_max_shared_bytes();
+
 /// Tune `launch_one` over `space` then run the winning config on `stream`.
 /// For additive kernels (whose re-runs corrupt their output), pass the output
 /// buffer base + element count so the tuner snapshots/restores it around each

@@ -128,12 +128,11 @@ template <typename Real, int DIM>
 Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const sctl::Vector<Real> &r_src,
                       const sctl::Vector<Real> &charge, const sctl::Vector<Real> &normal,
                       const sctl::Vector<Real> &r_trg) {
-    // The owned tree runs the GPU host precompute (and, for now, the V1 device
-    // state we validate against).
+    // The owned tree runs the GPU host precompute (and, under DMK_GPU_V2_CHECK,
+    // the V1 device pipeline used as the validation oracle).
     tree_ = std::make_unique<DMKPtTree<Real, DIM>>(comm, params, r_src, charge, normal, r_trg);
 
-    // Size pw_out / pw_out_offsets before the seam reads them (idempotent; the
-    // owned tree's later V1 downward call is a no-op).
+    // Size pw_out / pw_out_offsets before the seam reads them (idempotent).
     tree_->init_planewave_data();
 
     state_ = std::make_unique<State<Real, DIM>>(to_build_inputs(*tree_));

@@ -46,7 +46,7 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
 
     static JitCache cache;
     static cuda_helpers::DeviceBuffer<dmk::cuda::PwToProxyArgs<Real>> d_args;
-    d_args.upload_async(args_h.data(), args_h.size(), stream);
+    d_args.upload_async_grow(args_h.data(), args_h.size(), stream);
     const int n_args = static_cast<int>(args_h.size());
     const auto a0 = args_h[0];
 
@@ -65,8 +65,8 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
                       {"K3_TILE", p.at("K3_TILE")},
                       {"KR_TILE", p.at("KR_TILE")},
                       {"BLOCK_SIZE", p.at("BLOCK_SIZE")}};
-        const std::string source = make_stage_source("pt/pw2proxy.cu", key, "", "PtPwToProxy");
-        auto kernel = cache.get_kernel_from_source(key, source);
+        auto kernel = cache.get_kernel_from_source(
+            key, [&] { return make_stage_source("pt/pw2proxy.cu", key, "", "PtPwToProxy"); });
         const std::size_t shared = pw2proxy_shared_bytes(max_n_pw, max_n_order, p.at("K3_TILE"), sizeof(Real));
         set_max_dynamic_smem(*kernel, shared);
         const dmk::cuda::PwToProxyArgs<Real> *dev_args = d_args.data();
@@ -74,12 +74,8 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
         kernel->launch(dim3(max_boxes, n_args, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, dev_args, n);
     };
 
-    int device = 0;
-    cudaGetDevice(&device);
-    cudaDeviceProp prop{};
-    cudaGetDeviceProperties(&prop, device);
-    const std::size_t max_shared = prop.sharedMemPerBlockOptin > 0 ? std::size_t(prop.sharedMemPerBlockOptin)
-                                                                   : std::size_t(prop.sharedMemPerBlock);
+    const cudaDeviceProp &prop = device_prop();
+    const std::size_t max_shared = device_max_shared_bytes();
 
     const std::vector<TuningParameter> space{{"COL_REG", {1, 2}},
                                              {"K2_TILE", {2, 4}},

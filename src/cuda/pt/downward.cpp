@@ -42,7 +42,7 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
 
     static JitCache cache;
     static cuda_helpers::DeviceBuffer<dmk::cuda::ShiftPwArgs<Real>> d_args;
-    d_args.upload_async(args_h.data(), args_h.size(), stream);
+    d_args.upload_async_grow(args_h.data(), args_h.size(), stream);
     const int n_args = static_cast<int>(args_h.size());
     const auto a0 = args_h[0];
 
@@ -55,24 +55,23 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
         key.params = {{"N_PW_MODES", a0.n_pw_modes},
                       {"N_CHARGE_DIM", a0.n_charge_dim},
                       {"N_NEIGHBORS", a0.n_neighbors},
-                      {"BLOCK_SIZE", p.at("BLOCK_SIZE")}};
-        const std::string source = make_stage_source("pt/shiftpw.cu", key, "", "PtShiftPw");
-        auto kernel = cache.get_kernel_from_source(key, source);
+                      {"BLOCK_SIZE", p.at("BLOCK_SIZE")},
+                      {"NEIGHBOR_UNROLL", p.at("NEIGHBOR_UNROLL")}};
+        auto kernel =
+            cache.get_kernel_from_source(key, [&] { return make_stage_source("pt/shiftpw.cu", key, "", "PtShiftPw"); });
         const dmk::cuda::ShiftPwArgs<Real> *dev_args = d_args.data();
         int n = n_args;
         kernel->launch(dim3(max_boxes, n_args, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), 0, st, dev_args, n);
     };
 
-    int device = 0;
-    cudaGetDevice(&device);
-    cudaDeviceProp prop{};
-    cudaGetDeviceProperties(&prop, device);
+    const cudaDeviceProp &prop = device_prop();
 
-    const std::vector<TuningParameter> space{{"BLOCK_SIZE", {64, 128, 256, 512, 768}}};
-    const TuningParams defaults{{"BLOCK_SIZE", 256}};
+    const std::vector<TuningParameter> space{{"BLOCK_SIZE", {64, 128, 256, 512, 768}},
+                                             {"NEIGHBOR_UNROLL", {1, 3, 9, 27}}};
+    const TuningParams defaults{{"BLOCK_SIZE", 256}, {"NEIGHBOR_UNROLL", 9}};
     const auto constraint = [&](const TuningParams &p) {
         const int bs = p.at("BLOCK_SIZE");
-        return bs > 0 && bs <= prop.maxThreadsPerBlock && bs % 32 == 0;
+        return bs > 0 && bs <= prop.maxThreadsPerBlock && bs % 32 == 0 && p.at("NEIGHBOR_UNROLL") > 0;
     };
 
     std::ostringstream tune_key;

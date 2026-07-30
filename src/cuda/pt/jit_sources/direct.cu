@@ -4,7 +4,7 @@
 // BLOCK_SIZE / TARGETS_PER_THREAD constants. Coefficients are compile-time
 // literals folded straight into the FMAs (no runtime coeff buffer, no AOT).
 //
-// Step 2 scope: scalar potential kernels (Laplace, Sqrt-Laplace; 2D + 3D).
+// Scalar potential kernels (Laplace, Sqrt-Laplace; 2D + 3D).
 
 #include <dmk/cuda/direct_kernelargs.hpp>
 

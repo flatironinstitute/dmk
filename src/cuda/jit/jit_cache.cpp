@@ -92,6 +92,21 @@ std::shared_ptr<JitKernel> JitCache::get_kernel(const JitKey &key) {
     return kernel;
 }
 
+std::shared_ptr<JitKernel> JitCache::get_kernel_from_source(const JitKey &key,
+                                                            const std::function<std::string()> &source_fn,
+                                                            const std::string &name_expression) {
+    {
+        const std::string cache_key = key.to_string();
+        std::lock_guard<std::mutex> guard(mutex_);
+        auto it = cache_.find(cache_key);
+        if (it != cache_.end())
+            return it->second;
+    }
+    // Miss: build the source (outside the fast path) and compile via the eager
+    // overload, which re-checks the cache under lock to absorb a compile race.
+    return get_kernel_from_source(key, source_fn(), name_expression);
+}
+
 std::shared_ptr<JitKernel> JitCache::get_kernel_from_source(const JitKey &key, const std::string &source,
                                                             const std::string &name_expression) {
     const std::string cache_key = key.to_string();

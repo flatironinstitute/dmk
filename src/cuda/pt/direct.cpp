@@ -61,7 +61,7 @@ const char *evaluator_family(dmk_ikernel kernel, int dim) {
         return dim == 3 ? "LaplacePolyEvaluator3DCuda" : "LaplacePolyEvaluator2DCuda";
     if (kernel == DMK_SQRT_LAPLACE)
         return dim == 3 ? "SqrtLaplacePolyEvaluator3DCuda" : "SqrtLaplacePolyEvaluator2DCuda";
-    throw std::runtime_error("pt::direct: unsupported kernel (step 2: Laplace / Sqrt-Laplace potential only)");
+    throw std::runtime_error("pt::direct: unsupported kernel (Laplace / Sqrt-Laplace only)");
 }
 
 } // namespace
@@ -72,7 +72,7 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     if (n_work == 0)
         return;
 
-    // Scalar potential only for step 2: one input component, no normals.
+    // Scalar potential: one input component, no normals.
     const int values_per_source = DIM + 1; // SPATIAL_DIM + KERNEL_INPUT_DIM(1) + NORMAL_DIM(0)
 
     // Baked coefficient literals from the host generator (scale-free single poly
@@ -138,19 +138,15 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
         key.sm_major = cache.sm_major();
         key.sm_minor = cache.sm_minor();
         key.params = config;
-        const std::string source = make_stage_source("pt/direct.cu", key, prelude, "PtDirect");
-        auto kernel = cache.get_kernel_from_source(key, source);
+        auto kernel = cache.get_kernel_from_source(
+            key, [&] { return make_stage_source("pt/direct.cu", key, prelude, "PtDirect"); });
         const std::size_t shared_bytes = std::size_t(config.at("SRC_TILE")) * values_per_source * sizeof(Real);
         kernel->launch(dim3(args.n_work, 1, 1), dim3(config.at("BLOCK_SIZE"), 1, 1), shared_bytes, st, args);
     };
 
     // Autotune (src side is representative of the launch cost).
-    int device = 0;
-    cudaGetDevice(&device);
-    cudaDeviceProp prop{};
-    cudaGetDeviceProperties(&prop, device);
-    const std::size_t max_shared = prop.sharedMemPerBlockOptin > 0 ? std::size_t(prop.sharedMemPerBlockOptin)
-                                                                   : std::size_t(prop.sharedMemPerBlock);
+    const cudaDeviceProp &prop = device_prop();
+    const std::size_t max_shared = device_max_shared_bytes();
 
     const std::vector<TuningParameter> space{
         {"SRC_TILE", {16, 32, 64, 96, 128, 192, 256}},

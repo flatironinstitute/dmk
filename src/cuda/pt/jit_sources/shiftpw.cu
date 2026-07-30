@@ -1,8 +1,8 @@
 // V2 shift_pw (batched multilevel): translates each box's neighbors' outgoing
 // plane-wave fields into its own incoming field (per-level pw_in_pool slab).
 // The launcher prepends `using Real` + N_PW_MODES / N_CHARGE_DIM / N_NEIGHBORS /
-// BLOCK_SIZE. One launch covers all levels via a device array of per-level args.
-// Assigns (not additive) into pw_in_pool.
+// BLOCK_SIZE / NEIGHBOR_UNROLL. One launch covers all levels via a device array
+// of per-level args. Assigns (not additive) into pw_in_pool.
 
 #include <dmk/cuda/shift_pw_kernelargs.hpp>
 
@@ -55,7 +55,7 @@ __device__ __forceinline__ void ShiftPwBody(ShiftPwArgs<Real> a, int box_idx) {
                 acc[d] = complx<Real>{Real{0}, Real{0}};
         }
 
-#pragma unroll
+#pragma unroll(NEIGHBOR_UNROLL)
         for (int npos = 0; npos < n_neighbors; ++npos) {
             const int neighbor = box_neighbors[npos];
             if (neighbor < 0 || neighbor == box)

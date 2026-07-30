@@ -36,8 +36,8 @@ void launch_multiply_cd2p(JitCache &cache, const dmk::cuda::MultiplyCd2pArgs<Rea
     key.sm_major = cache.sm_major();
     key.sm_minor = cache.sm_minor();
     key.params = {{"BLOCK_SIZE", BLOCK}};
-    const std::string source = make_stage_source("pt/multiply.cu", key, "", "PtMultiply");
-    auto kernel = cache.get_kernel_from_source(key, source);
+    auto kernel =
+        cache.get_kernel_from_source(key, [&] { return make_stage_source("pt/multiply.cu", key, "", "PtMultiply"); });
     dmk::cuda::MultiplyCd2pArgs<Real> a = args;
     kernel->launch(dim3(a.n_boxes_at_level, 1, 1), dim3(BLOCK, 1, 1), 0, stream, a);
 }
@@ -50,7 +50,7 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
         throw std::runtime_error("pt::form_outgoing: long-range pipeline is 3D-only");
     } else {
         if (s.kernel != DMK_LAPLACE && s.kernel != DMK_SQRT_LAPLACE)
-            throw std::runtime_error("pt::form_outgoing: step 3b supports Laplace / Sqrt-Laplace only");
+            throw std::runtime_error("pt::form_outgoing: only Laplace / Sqrt-Laplace supported");
 
         auto &f = s.fourier;
         auto &w = s.worklists;

@@ -40,19 +40,15 @@ void launch_tensorprod(dmk::cuda::TensorprodArgs<Real> &args, std::size_t proxy_
         key.params = {{"N_ORDER", args.n_order},          {"N_CHARGE_DIM", args.n_charge_dim},
                       {"BLOCK_SIZE", p.at("BLOCK_SIZE")}, {"TENSOR_Z_TILE", p.at("Z_TILE")},
                       {"TENSOR_I_TILE", p.at("I_TILE")},  {"TENSOR_J_TILE", p.at("J_TILE")}};
-        const std::string source = make_stage_source("pt/tensorprod.cu", key, "", "PtTensorprod");
-        auto kernel = cache.get_kernel_from_source(key, source);
+        auto kernel = cache.get_kernel_from_source(
+            key, [&] { return make_stage_source("pt/tensorprod.cu", key, "", "PtTensorprod"); });
         const std::size_t shared = tp_shared_bytes(args.n_order, p.at("Z_TILE"), sizeof(Real));
         set_max_dynamic_smem(*kernel, shared);
         kernel->launch(dim3(args.n_pairs, 1, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, args);
     };
 
-    int device = 0;
-    cudaGetDevice(&device);
-    cudaDeviceProp prop{};
-    cudaGetDeviceProperties(&prop, device);
-    const std::size_t max_shared = prop.sharedMemPerBlockOptin > 0 ? std::size_t(prop.sharedMemPerBlockOptin)
-                                                                   : std::size_t(prop.sharedMemPerBlock);
+    const cudaDeviceProp &prop = device_prop();
+    const std::size_t max_shared = device_max_shared_bytes();
     const int n_order = args.n_order;
 
     const std::vector<TuningParameter> space{

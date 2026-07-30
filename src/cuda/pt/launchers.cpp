@@ -33,6 +33,22 @@ std::string make_stage_source(std::string_view filename, const JitKey &key, cons
     return ss.str();
 }
 
+const cudaDeviceProp &device_prop() {
+    static const cudaDeviceProp prop = [] {
+        int device = 0;
+        cudaGetDevice(&device);
+        cudaDeviceProp p{};
+        cudaGetDeviceProperties(&p, device);
+        return p;
+    }();
+    return prop;
+}
+
+std::size_t device_max_shared_bytes() {
+    const cudaDeviceProp &p = device_prop();
+    return p.sharedMemPerBlockOptin > 0 ? std::size_t(p.sharedMemPerBlockOptin) : std::size_t(p.sharedMemPerBlock);
+}
+
 void set_max_dynamic_smem(const jit::JitKernel &kernel, std::size_t shared_bytes) {
     if (shared_bytes <= 48 * 1024)
         return;
@@ -69,7 +85,13 @@ TuningParams autotune_config(const std::string &tune_key, const std::string &ker
     options.key = tune_key;
     options.benchmark = jit::CudaBenchmarkOptions{2, 5};
 
-    const jit::GridTuneDecision decision = jit::tune_grid(options, space, defaults, constraint, benchmark);
+    jit::GridTuneDecision decision = jit::tune_grid(options, space, defaults, constraint, benchmark);
+
+    // A persisted cache entry from an older, narrower tuning space can lack keys
+    // the current space defines; backfill them from defaults so a launcher's
+    // p.at(name) never throws map::at on a stale cache.
+    for (const auto &param : space)
+        decision.params.emplace(param.name, defaults.at(param.name));
 
     std::lock_guard<std::mutex> lock(mutex);
     cache[in_process_key] = decision.params;
