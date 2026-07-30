@@ -375,6 +375,7 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     fourier.n_pw2_win = fi.n_pw2_win;
     fourier.n_pw_modes_win = fi.n_pw_modes_win;
     fourier.hpw_win = fi.hpw_win;
+    fourier.hpw_per_level = fi.hpw_per_level;
     fourier.n_digits = fi.n_digits;
     fourier.beta = fi.beta;
     fourier.pw2poly_per_level_reals = fi.pw2poly_per_level_reals;

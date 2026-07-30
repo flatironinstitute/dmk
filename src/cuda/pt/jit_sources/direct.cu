@@ -4,7 +4,9 @@
 // BLOCK_SIZE / TARGETS_PER_THREAD constants. Coefficients are compile-time
 // literals folded straight into the FMAs (no runtime coeff buffer, no AOT).
 //
-// Scalar potential kernels (Laplace, Sqrt-Laplace; 2D + 3D).
+// Scalar potential kernels (Laplace, Sqrt-Laplace; 2D + 3D) and Stokeslet /
+// Stresslet velocity kernels (3D; two coeff packs diag+offdiag, Stresslet reads
+// per-source normals).
 
 #include <dmk/cuda/direct_kernelargs.hpp>
 
@@ -130,6 +132,82 @@ struct SqrtLaplacePolyEvaluator3DCuda {
     }
 };
 
+template <typename CoeffsDiag, typename CoeffsOffdiag>
+struct StokesletPolyEvaluator3DCuda {
+    static constexpr int SPATIAL_DIM = 3;
+    static constexpr int KERNEL_INPUT_DIM = 3;
+    static constexpr int KERNEL_OUTPUT_DIM = 3;
+    static constexpr int NORMAL_DIM = 0;
+    static constexpr Real scale_factor = Real{1};
+
+    Real thresh2;
+    Real d2max;
+    Real rsc;
+    Real cen;
+
+    __device__ inline void operator()(Real (&u)[3][3], const Real (&dX)[3]) const {
+        const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
+        const bool in_range = (R2 > thresh2) && (R2 < d2max);
+        if (!in_range) {
+            for (int j = 0; j < 3; ++j)
+                for (int i = 0; i < 3; ++i)
+                    u[j][i] = Real{0};
+            return;
+        }
+        const Real half = Real{0.5};
+        const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
+        const Real Rinv3 = Rinv * Rinv * Rinv;
+        const Real xtmp = (R2 * Rinv + cen) * rsc;
+        const Real fdiag = (half - horner_const<CoeffsDiag>(xtmp)) * Rinv;
+        const Real foffd = (half - horner_const<CoeffsOffdiag>(xtmp)) * Rinv3;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) {
+                Real val = foffd * dX[j] * dX[i];
+                if (i == j)
+                    val += fdiag;
+                u[i][j] = val;
+            }
+    }
+};
+
+template <typename CoeffsDiag, typename CoeffsOffdiag>
+struct StressletPolyEvaluator3DCuda {
+    static constexpr int SPATIAL_DIM = 3;
+    static constexpr int KERNEL_INPUT_DIM = 3;
+    static constexpr int KERNEL_OUTPUT_DIM = 3;
+    static constexpr int NORMAL_DIM = 3;
+    static constexpr Real scale_factor = Real{1};
+
+    Real thresh2;
+    Real d2max;
+    Real rsc;
+    Real cen;
+
+    __device__ inline void operator()(Real (&u)[3][3], const Real (&dX)[3], const Real (&ns)[3]) const {
+        const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
+        const bool in_range = (R2 > thresh2) && (R2 < d2max);
+        const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
+        const Real Rinv3 = Rinv * Rinv * Rinv;
+        const Real Rinv5 = Rinv3 * Rinv * Rinv;
+        const Real xtmp = (R2 * Rinv + cen) * rsc;
+        const Real Fdiag = -horner_const<CoeffsDiag>(xtmp) * Rinv3;
+        const Real Foffd = Real{6} * horner_const<CoeffsOffdiag>(xtmp) * Rinv5;
+        const Real rdotn = dX[0] * ns[0] + dX[1] * ns[1] + dX[2] * ns[2];
+        const Real Fdiag_rdotn = Fdiag * rdotn;
+        for (int j = 0; j < 3; ++j) {
+            const Real foffd_rj_rdotn = Foffd * dX[j] * rdotn;
+            const Real fdiag_nj = Fdiag * ns[j];
+            const Real fdiag_rj = Fdiag * dX[j];
+            for (int i = 0; i < 3; ++i) {
+                Real val = foffd_rj_rdotn * dX[i] + fdiag_nj * dX[i] + fdiag_rj * ns[i];
+                if (i == j)
+                    val += Fdiag_rdotn;
+                u[j][i] = in_range ? val : Real{0};
+            }
+        }
+    }
+};
+
 template <typename Eval>
 __device__ __forceinline__ void direct_eval_accumulate(const Eval &evaluator, Real (&vt)[Eval::KERNEL_OUTPUT_DIM],
                                                         const Real (&dX)[Eval::SPATIAL_DIM],
@@ -146,6 +224,61 @@ __device__ __forceinline__ void direct_eval_accumulate(const Eval &evaluator, Re
     }
 }
 
+template <typename CoeffsDiag, typename CoeffsOffdiag>
+__device__ __forceinline__ void
+direct_eval_accumulate(const StokesletPolyEvaluator3DCuda<CoeffsDiag, CoeffsOffdiag> &evaluator, Real (&vt)[3],
+                       const Real (&dX)[3], const Real (&vs)[3]) {
+    const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
+    const bool in_range = (R2 > evaluator.thresh2) && (R2 < evaluator.d2max);
+    if (!in_range)
+        return;
+
+    const Real half = Real{0.5};
+    const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
+    const Real Rinv3 = Rinv * Rinv * Rinv;
+    const Real xtmp = (R2 * Rinv + evaluator.cen) * evaluator.rsc;
+    const Real fdiag = (half - horner_const<CoeffsDiag>(xtmp)) * Rinv;
+    const Real foffd = (half - horner_const<CoeffsOffdiag>(xtmp)) * Rinv3;
+    const Real rdotv = dX[0] * vs[0] + dX[1] * vs[1] + dX[2] * vs[2];
+    const Real off = foffd * rdotv;
+
+#pragma unroll
+    for (int i = 0; i < 3; ++i) {
+        vt[i] = fma(fdiag, vs[i], vt[i]);
+        vt[i] = fma(off, dX[i], vt[i]);
+    }
+}
+
+template <typename CoeffsDiag, typename CoeffsOffdiag>
+__device__ __forceinline__ void
+direct_eval_accumulate(const StressletPolyEvaluator3DCuda<CoeffsDiag, CoeffsOffdiag> &evaluator, Real (&vt)[3],
+                       const Real (&dX)[3], const Real (&vs)[3], const Real (&ns)[3]) {
+    const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
+    const bool in_range = (R2 > evaluator.thresh2) && (R2 < evaluator.d2max);
+    if (!in_range)
+        return;
+
+    const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
+    const Real Rinv3 = Rinv * Rinv * Rinv;
+    const Real Rinv5 = Rinv3 * Rinv * Rinv;
+    const Real xtmp = (R2 * Rinv + evaluator.cen) * evaluator.rsc;
+    const Real Fdiag = -horner_const<CoeffsDiag>(xtmp) * Rinv3;
+    const Real Foffd = Real{6} * horner_const<CoeffsOffdiag>(xtmp) * Rinv5;
+    const Real rdotn = dX[0] * ns[0] + dX[1] * ns[1] + dX[2] * ns[2];
+    const Real rdotv = dX[0] * vs[0] + dX[1] * vs[1] + dX[2] * vs[2];
+    const Real ndotv = ns[0] * vs[0] + ns[1] * vs[1] + ns[2] * vs[2];
+    const Real r_scale = Foffd * rdotn * rdotv + Fdiag * ndotv;
+    const Real n_scale = Fdiag * rdotv;
+    const Real v_scale = Fdiag * rdotn;
+
+#pragma unroll
+    for (int i = 0; i < 3; ++i) {
+        vt[i] = fma(r_scale, dX[i], vt[i]);
+        vt[i] = fma(n_scale, ns[i], vt[i]);
+        vt[i] = fma(v_scale, vs[i], vt[i]);
+    }
+}
+
 template <typename Eval, int TILE, int TARGETS>
 __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real> a) {
     static_assert(TARGETS > 0, "TARGETS_PER_THREAD must be positive");
@@ -154,6 +287,7 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
     constexpr int SPATIAL_DIM = Eval::SPATIAL_DIM;
     constexpr int KERNEL_INPUT_DIM = Eval::KERNEL_INPUT_DIM;
     constexpr int KERNEL_OUTPUT_DIM = Eval::KERNEL_OUTPUT_DIM;
+    constexpr int NORMAL_DIM = Eval::NORMAL_DIM;
     constexpr Real scale_factor = Eval::scale_factor;
 
     extern __shared__ __align__(16) unsigned char smem_raw[];
@@ -164,6 +298,12 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
 
     Real *s_charge = smem;
     smem += TILE * KERNEL_INPUT_DIM;
+
+    Real *s_normal = nullptr;
+    if constexpr (NORMAL_DIM > 0) {
+        s_normal = smem;
+        smem += TILE * NORMAL_DIM;
+    }
 
     const int trg_box_idx = blockIdx.x;
     if (trg_box_idx >= a.n_work) {
@@ -234,6 +374,11 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
             const Real *__restrict__ r_src = a.r_src_flat + a.r_src_offsets[src_box];
             const Real *__restrict__ charge = a.charge_flat + a.charge_offsets[src_box];
 
+            const Real *__restrict__ normals = nullptr;
+            if constexpr (NORMAL_DIM > 0) {
+                normals = a.normal_flat + a.normal_offsets[src_box];
+            }
+
             const Real rsc = a.direct_rsc[src_level];
             const Real cen = a.direct_cen[src_level];
             const Real d2max = a.direct_d2max[src_level];
@@ -255,6 +400,14 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
                     s_charge[ss * KERNEL_INPUT_DIM + k] = charge[(tile0 + ss) * KERNEL_INPUT_DIM + k];
                 }
 
+                if constexpr (NORMAL_DIM > 0) {
+                    for (int idx = threadIdx.x; idx < tile_count * NORMAL_DIM; idx += blockDim.x) {
+                        const int ss = idx / NORMAL_DIM;
+                        const int k = idx - ss * NORMAL_DIM;
+                        s_normal[ss * NORMAL_DIM + k] = normals[(tile0 + ss) * NORMAL_DIM + k];
+                    }
+                }
+
                 __syncthreads();
 
                 if (any_active_target) {
@@ -273,14 +426,32 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
                         }
 
                         Real dX[SPATIAL_DIM];
+                        if constexpr (NORMAL_DIM > 0) {
+                            Real ns[NORMAL_DIM];
 #pragma unroll
-                        for (int q = 0; q < TARGETS; ++q) {
-                            if (active_target[q]) {
+                            for (int k = 0; k < NORMAL_DIM; ++k) {
+                                ns[k] = s_normal[ss * NORMAL_DIM + k];
+                            }
 #pragma unroll
-                                for (int k = 0; k < SPATIAL_DIM; ++k) {
-                                    dX[k] = xt[q][k] - xs[k];
+                            for (int q = 0; q < TARGETS; ++q) {
+                                if (active_target[q]) {
+#pragma unroll
+                                    for (int k = 0; k < SPATIAL_DIM; ++k) {
+                                        dX[k] = xt[q][k] - xs[k];
+                                    }
+                                    direct_eval_accumulate(evaluator, vt[q], dX, vs, ns);
                                 }
-                                direct_eval_accumulate(evaluator, vt[q], dX, vs);
+                            }
+                        } else {
+#pragma unroll
+                            for (int q = 0; q < TARGETS; ++q) {
+                                if (active_target[q]) {
+#pragma unroll
+                                    for (int k = 0; k < SPATIAL_DIM; ++k) {
+                                        dX[k] = xt[q][k] - xs[k];
+                                    }
+                                    direct_eval_accumulate(evaluator, vt[q], dX, vs);
+                                }
                             }
                         }
                     }

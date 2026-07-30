@@ -246,6 +246,7 @@ struct State {
         DeviceBuffer<Real> d_direct_rsc;      ///< per-level direct coord rescale (direct)
         DeviceBuffer<Real> d_direct_cen;      ///< per-level direct center scale (direct)
         DeviceBuffer<Real> d_direct_d2max;    ///< per-level direct cutoff radius^2 (direct)
+        std::vector<Real> hpw_per_level;      ///< [n_levels] hpw_diff/boxsize, host (Stokeslet/Stresslet multiply)
 
         /// Per-level base pointers into the flat transform buffers. Single
         /// source of truth for the level*stride arithmetic.

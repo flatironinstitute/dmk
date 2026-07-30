@@ -61,7 +61,11 @@ const char *evaluator_family(dmk_ikernel kernel, int dim) {
         return dim == 3 ? "LaplacePolyEvaluator3DCuda" : "LaplacePolyEvaluator2DCuda";
     if (kernel == DMK_SQRT_LAPLACE)
         return dim == 3 ? "SqrtLaplacePolyEvaluator3DCuda" : "SqrtLaplacePolyEvaluator2DCuda";
-    throw std::runtime_error("pt::direct: unsupported kernel (Laplace / Sqrt-Laplace only)");
+    if (kernel == DMK_STOKESLET && dim == 3)
+        return "StokesletPolyEvaluator3DCuda";
+    if (kernel == DMK_STRESSLET && dim == 3)
+        return "StressletPolyEvaluator3DCuda";
+    throw std::runtime_error("pt::direct: unsupported kernel");
 }
 
 } // namespace
@@ -72,17 +76,27 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     if (n_work == 0)
         return;
 
-    // Scalar potential: one input component, no normals.
-    const int values_per_source = DIM + 1; // SPATIAL_DIM + KERNEL_INPUT_DIM(1) + NORMAL_DIM(0)
+    // Shared-tile stride: SPATIAL_DIM + KERNEL_INPUT_DIM + NORMAL_DIM. Scalar
+    // kernels have one charge and no normal; Stokeslet a 3-vector charge; the
+    // Stresslet additionally reads a per-source normal.
+    const int input_dim = get_kernel_input_dim(DIM, s.kernel);
+    const int normal_dim = (s.kernel == DMK_STRESSLET) ? DIM : 0;
+    const int values_per_source = DIM + input_dim + normal_dim;
 
-    // Baked coefficient literals from the host generator (scale-free single poly
-    // for the scalar kernels).
+    // Baked coefficient literals from the host generator: one poly for the
+    // scalar kernels, {diag, offdiag} for the velocity kernels.
     const auto coeffs = get_local_correction_coeffs<Real>(s.kernel, DIM, s.fourier.n_digits, s.fourier.beta);
     if (coeffs.empty())
         throw std::runtime_error("pt::direct: empty coefficient set");
 
-    const std::string coeff_struct = emit_coeff_struct<Real>("Coeff0", coeffs[0]);
-    const std::string evaluator_expr = std::string(evaluator_family(s.kernel, DIM)) + "<Coeff0>";
+    std::string coeff_struct;
+    std::string coeff_args;
+    for (std::size_t i = 0; i < coeffs.size(); ++i) {
+        const std::string name = "Coeff" + std::to_string(i);
+        coeff_struct += emit_coeff_struct<Real>(name.c_str(), coeffs[i]);
+        coeff_args += (i ? ", " : "") + name;
+    }
+    const std::string evaluator_expr = std::string(evaluator_family(s.kernel, DIM)) + "<" + coeff_args + ">";
     const std::string kernel_name =
         "PtDirectKernel_" + fnv1a_hex(std::string(jit_real_name<Real>()) + "|" + evaluator_expr + "|" + coeff_struct);
 
@@ -111,6 +125,10 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     base.src_counts = s.particles.d_src_counts.data();
     base.charge_flat = s.particles.d_charge.data();
     base.charge_offsets = s.particles.d_charge_offsets.data();
+    if (normal_dim > 0) {
+        base.normal_flat = s.particles.d_normal.data();
+        base.normal_offsets = s.particles.d_normal_offsets.data();
+    }
 
     dmk::cuda::DirectByBoxArgs<Real> a_src = base;
     a_src.r_target_flat = s.particles.d_r_src.data();
