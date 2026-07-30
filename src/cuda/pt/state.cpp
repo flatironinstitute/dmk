@@ -300,6 +300,9 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
         total_slots += w.pw_eval_box_count[L];
     }
 
+    w.eval_targets_box_list = tree.eval_targets_box_list;
+    w.self_correction_work = tree.self_correction_work;
+
     // --- Scratch strides / sizes ---
     auto &sc = in.scratch;
     sc.tensorprod_scratch_stride_reals = 2L * fou.n_order * fou.n_order * fou.n_order; // matches V1 (n_order^3)
@@ -411,6 +414,9 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     up(worklists.d_tp_up_octants, wi.tp_up_octants);
     up(worklists.d_pw_eval_box_flat, wi.pw_eval_box_flat);
     up(worklists.d_pw_form_box_flat, wi.pw_form_box_flat);
+    worklists.n_eval_boxes = static_cast<int>(wi.eval_targets_box_list.size());
+    up(worklists.d_eval_targets_box_list, wi.eval_targets_box_list);
+    up(worklists.d_self_correction_work, wi.self_correction_work);
     worklists.pw_in_pool_base_h = wi.pw_in_pool_base;
     worklists.tp_offset_h = wi.tp_offset;
     worklists.tp_count_h = wi.tp_count;
@@ -471,6 +477,8 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     up(outputs.d_pot_trg_offsets, in.outputs.pot_trg_offsets);
     outputs.d_pot_direct_src.resize(outputs.pot_src_size);
     outputs.d_pot_direct_trg.resize(outputs.pot_trg_size);
+    outputs.d_pot_eval_src.resize(outputs.pot_src_size);
+    outputs.d_pot_eval_trg.resize(outputs.pot_trg_size);
     outputs.d_pot_src_final.resize(outputs.pot_src_size);
     outputs.d_pot_trg_final.resize(outputs.pot_trg_size);
 
@@ -499,6 +507,30 @@ void State<Real, DIM>::upload_and_sort_charges(const Real *charges, const Real *
                                                n_src, DIM, direct_stream.get());
         direct_stream.sync();
         return;
+    }
+    direct_stream.sync();
+}
+
+template <typename Real, int DIM>
+void State<Real, DIM>::finalize() {
+    // direct_stream must see the eval-side writes (queued on downward_stream)
+    // before the accumulate; direct_stream is already serial with the direct
+    // pass's own writes to d_pot_direct_*.
+    auto eval_done = cuda_helpers::DeviceEvent::disable_timing();
+    DMK_CHECK_CUDA(cudaEventRecord(eval_done, downward_stream.get()));
+    DMK_CHECK_CUDA(cudaStreamWaitEvent(direct_stream.get(), eval_done, 0));
+
+    if (outputs.pot_src_size) {
+        const long n = static_cast<long>(outputs.pot_src_size / outputs.pot_src_dof);
+        cuda::launch_accumulate_and_scatter<Real>(outputs.d_pot_src_final.data(), outputs.d_pot_eval_src.data(),
+                                                  outputs.d_pot_direct_src.data(), particles.d_scatter_index_src.data(),
+                                                  outputs.pot_src_dof, n, direct_stream.get());
+    }
+    if (outputs.pot_trg_size) {
+        const long n = static_cast<long>(outputs.pot_trg_size / outputs.pot_trg_dof);
+        cuda::launch_accumulate_and_scatter<Real>(outputs.d_pot_trg_final.data(), outputs.d_pot_eval_trg.data(),
+                                                  outputs.d_pot_direct_trg.data(), particles.d_scatter_index_trg.data(),
+                                                  outputs.pot_trg_dof, n, direct_stream.get());
     }
     direct_stream.sync();
 }

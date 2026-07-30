@@ -33,4 +33,10 @@ void form_outgoing(State<Real, DIM> &state, cudaStream_t stream);
 template <typename Real, int DIM>
 void downward(State<Real, DIM> &state, cudaStream_t stream);
 
+/// Eval-targets pass: evaluates the downward proxy at each eval box's sources
+/// and targets (+ self-correction on the source side). Writes the far-field
+/// contribution into d_pot_eval_{src,trg} on `stream`.
+template <typename Real, int DIM>
+void eval_targets(State<Real, DIM> &state, cudaStream_t stream);
+
 } // namespace dmk::cuda::pt

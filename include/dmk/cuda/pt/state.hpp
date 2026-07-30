@@ -133,6 +133,8 @@ struct BuildInputs {
         std::vector<int> pw_form_box_offset;        ///< [n_levels+1] into pw_form_box_flat
         std::vector<int> pw_form_box_count;         ///< [n_levels] boxes per level
         std::vector<long> pw_in_pool_base;          ///< [n_levels] pw_in slab base (prefix sum of pw_eval_box_count)
+        std::vector<int> eval_targets_box_list;     ///< leaf-of-eval boxes (eval_targets)
+        std::vector<Real> self_correction_work; ///< [n_direct_work] per-box self-correction factor (self_correction)
     } worklists;
 
     /// Pipeline scratch/intermediate buffers and their strides.
@@ -279,6 +281,9 @@ struct State {
         DeviceBuffer<int> d_tp_up_octants;             ///< upward tensorprod octant (c2p slab)
         DeviceBuffer<int> d_pw_eval_box_flat;          ///< per-level PW-work boxes (downward)
         DeviceBuffer<int> d_pw_form_box_flat;          ///< per-level proxy2pw boxes (form_outgoing)
+        int n_eval_boxes = 0;                          ///< |eval_targets_box_list| (eval_targets)
+        DeviceBuffer<int> d_eval_targets_box_list;     ///< leaf-of-eval boxes (eval_targets)
+        DeviceBuffer<Real> d_self_correction_work;     ///< [n_direct_work] self-correction factors (self_correction)
 
         // Per-level prefix sums that drive kernel launches (host-resident).
         std::vector<long> pw_in_pool_base_h;   ///< [n_levels] pw_in slab base per level
@@ -324,6 +329,8 @@ struct State {
         DeviceBuffer<long> d_pot_trg_offsets;   ///< per-box offsets into target pot
         DeviceBuffer<Real> d_pot_direct_src;    ///< near-field src pot, sorted order (direct pass)
         DeviceBuffer<Real> d_pot_direct_trg;    ///< near-field trg pot, sorted order (direct pass)
+        DeviceBuffer<Real> d_pot_eval_src;      ///< far-field src pot, sorted order (eval_targets + self_correction)
+        DeviceBuffer<Real> d_pot_eval_trg;      ///< far-field trg pot, sorted order (eval_targets)
         DeviceBuffer<Real> d_pot_src_final;     ///< descattered user-order source pot (finalize->desort)
         DeviceBuffer<Real> d_pot_trg_final;     ///< descattered user-order target pot (finalize->desort)
     } outputs;
@@ -335,6 +342,11 @@ struct State {
 
     /// Upload raw (user-order) charges/normals and sort them onto the tree.
     void upload_and_sort_charges(const Real *charges, const Real *normals, long n_src);
+
+    /// Merge the direct (near) + eval (far) sorted potentials and descatter into
+    /// user order (d_pot_*_final). direct_stream waits on the eval writes queued
+    /// on downward_stream, runs the accumulate+scatter, and syncs.
+    void finalize();
 
     /// Dump device-resident buffers into "gpu_v2/" for offline diffing.
     void dump(DMKPtTree<Real, DIM> &tree);

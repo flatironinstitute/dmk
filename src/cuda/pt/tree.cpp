@@ -1,6 +1,7 @@
 #include <dmk/cuda/pt/tree.hpp>
 
 #include <dmk/cuda/direct.hpp>
+#include <dmk/cuda/helpers.hpp>
 #include <dmk/cuda/pt/passes.hpp>
 #include <dmk/cuda/shared_state.hpp>
 #include <dmk/util.hpp>
@@ -8,7 +9,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <exception>
 #include <vector>
 
 namespace dmk::cuda::pt {
@@ -148,63 +148,67 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
 
 template <typename Real, int DIM>
 void Tree<Real, DIM>::eval() {
-    // Scaffold: delegate to the owned V1 pipeline. Replaced pass by pass.
-    tree_->eval();
+    const bool check = util::env_is_set("DMK_GPU_V2_CHECK") && tree_->cuda_shared_state_;
 
-    // Transitional parity gate (removed at cutover): run the V2 direct pass and
-    // compare its near-field output to the V1 direct oracle (already validated
-    // == CPU). V1 direct output is live in cuda_direct_ctx_ after eval().
-    if (util::env_is_set("DMK_GPU_V2_CHECK") && tree_->cuda_direct_ctx_) {
-        pt::direct(*state_, state_->direct_stream.get());
-        state_->direct_stream.sync();
-        const double e_src = dev_rel_l2<Real>(state_->outputs.d_pot_direct_src.data(),
-                                              tree_->cuda_direct_ctx_->device_pot_src(), state_->outputs.pot_src_size);
-        const double e_trg = dev_rel_l2<Real>(state_->outputs.d_pot_direct_trg.data(),
-                                              tree_->cuda_direct_ctx_->device_pot_trg(), state_->outputs.pot_trg_size);
-        std::fprintf(stderr, "[GPU_V2] direct parity vs V1: rel_l2 src=%.3e trg=%.3e\n", e_src, e_trg);
-    }
+    // Optional oracle: run the V1 GPU pipeline first so its device buffers stay
+    // live for the parity comparison below (removed at cutover).
+    if (check)
+        tree_->eval();
 
-    // Long-range parity vs the V1 oracle. The passes chain on one stream
-    // (form_outgoing reads the V2 upward proxy, downward reads its pw_out), so
-    // each is run + synced + reported in turn; a throw is printed here rather
-    // than swallowed by the C-API guard, and the passes that already completed
-    // still report their rel_l2.
-    if (util::env_is_set("DMK_GPU_V2_CHECK") && tree_->cuda_shared_state_) {
+    // V2 pipeline. The near-field `direct` runs concurrently on direct_stream
+    // with the upward -> form_outgoing -> downward -> eval_targets chain on
+    // downward_stream; `finalize` joins them (direct_stream waits on the
+    // downward-stream eval writes), sums the near+far potentials, descatters to
+    // user order in d_pot_*_final, and syncs.
+    const auto ds = state_->direct_stream.get();
+    const auto ws = state_->downward_stream.get();
+    pt::direct(*state_, ds);
+    pt::upward(*state_, ws);
+    pt::form_outgoing(*state_, ws);
+    pt::downward(*state_, ws);
+    pt::eval_targets(*state_, ws);
+    state_->finalize();
+
+    if (check) {
         auto &v1 = *tree_->cuda_shared_state_;
-        const auto stream = state_->downward_stream.get();
-        try {
-            pt::upward(*state_, stream);
-            state_->downward_stream.sync();
-            std::fprintf(stderr, "[GPU_V2] upward parity vs V1: rel_l2 proxy_up=%.3e\n",
-                         dev_rel_l2<Real>(state_->scratch.d_proxy_coeffs_upward.data(), v1.d_proxy_coeffs_upward.data(),
-                                          state_->scratch.d_proxy_coeffs_upward.size()));
-
-            pt::form_outgoing(*state_, stream);
-            state_->downward_stream.sync();
-            std::fprintf(
-                stderr, "[GPU_V2] form_outgoing parity vs V1: rel_l2 pw_out=%.3e\n",
-                dev_rel_l2<Real>(state_->scratch.d_pw_out.data(), v1.d_pw_out.data(), state_->scratch.d_pw_out.size()));
-
-            pt::downward(*state_, stream);
-            state_->downward_stream.sync();
-            std::fprintf(stderr, "[GPU_V2] downward parity vs V1: rel_l2 proxy_down=%.3e\n",
-                         dev_rel_l2<Real>(state_->scratch.d_proxy_coeffs_downward.data(),
-                                          v1.d_proxy_coeffs_downward.data(),
-                                          state_->scratch.d_proxy_coeffs_downward.size()));
-        } catch (const std::exception &e) {
-            std::fprintf(stderr, "[GPU_V2] long-range parity aborted: %s\n", e.what());
-        }
+        auto &d1 = *tree_->cuda_direct_ctx_;
+        const auto &o = state_->outputs;
+        const auto &sc = state_->scratch;
+        std::fprintf(stderr, "[GPU_V2] direct parity vs V1: rel_l2 src=%.3e trg=%.3e\n",
+                     dev_rel_l2<Real>(o.d_pot_direct_src.data(), d1.device_pot_src(), o.pot_src_size),
+                     dev_rel_l2<Real>(o.d_pot_direct_trg.data(), d1.device_pot_trg(), o.pot_trg_size));
+        std::fprintf(stderr, "[GPU_V2] upward parity vs V1: rel_l2 proxy_up=%.3e\n",
+                     dev_rel_l2<Real>(sc.d_proxy_coeffs_upward.data(), v1.d_proxy_coeffs_upward.data(),
+                                      sc.d_proxy_coeffs_upward.size()));
+        std::fprintf(stderr, "[GPU_V2] form_outgoing parity vs V1: rel_l2 pw_out=%.3e\n",
+                     dev_rel_l2<Real>(sc.d_pw_out.data(), v1.d_pw_out.data(), sc.d_pw_out.size()));
+        std::fprintf(stderr, "[GPU_V2] downward parity vs V1: rel_l2 proxy_down=%.3e\n",
+                     dev_rel_l2<Real>(sc.d_proxy_coeffs_downward.data(), v1.d_proxy_coeffs_downward.data(),
+                                      sc.d_proxy_coeffs_downward.size()));
+        std::fprintf(stderr, "[GPU_V2] final parity vs V1: rel_l2 src=%.3e trg=%.3e\n",
+                     dev_rel_l2<Real>(o.d_pot_src_final.data(), v1.d_pot_src_final.data(), o.pot_src_size),
+                     dev_rel_l2<Real>(o.d_pot_trg_final.data(), v1.d_pot_trg_final.data(), o.pot_trg_size));
     }
 }
 
 template <typename Real, int DIM>
 void Tree<Real, DIM>::desort_potentials(Real *pot_src, Real *pot_trg) {
-    tree_->desort_potentials(pot_src, pot_trg);
+    // finalize wrote the descattered (user-order) result into d_pot_*_final and
+    // synced; one D2H per side.
+    const auto &o = state_->outputs;
+    if (o.pot_src_size)
+        DMK_CHECK_CUDA(
+            cudaMemcpy(pot_src, o.d_pot_src_final.data(), o.pot_src_size * sizeof(Real), cudaMemcpyDeviceToHost));
+    if (o.pot_trg_size)
+        DMK_CHECK_CUDA(
+            cudaMemcpy(pot_trg, o.d_pot_trg_final.data(), o.pot_trg_size * sizeof(Real), cudaMemcpyDeviceToHost));
 }
 
 template <typename Real, int DIM>
 void Tree<Real, DIM>::update_charges(const Real *charge, const Real *normal) {
-    tree_->update_charges(charge, normal);
+    // Refresh the V1 oracle only when validating; V2 needs just the re-sort.
+    if (util::env_is_set("DMK_GPU_V2_CHECK"))
+        tree_->update_charges(charge, normal);
     state_->upload_and_sort_charges(charge, normal, tree_->r_src_sorted_owned.Dim() / DIM);
 }
 

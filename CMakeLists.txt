@@ -264,6 +264,7 @@ if (DMK_GPU_OFFLOAD)
               src/cuda/pt/tensorprod.cpp
               src/cuda/pt/form_outgoing.cpp
               src/cuda/pt/downward.cpp
+              src/cuda/pt/eval_targets.cpp
               src/cuda/pt/proxy2pw.cpp
               src/cuda/pt/pw2proxy.cpp
               src/cuda/pt/launchers.cpp
