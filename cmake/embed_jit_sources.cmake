@@ -21,8 +21,17 @@ string(APPEND out "    static const std::unordered_map<std::string_view, std::st
 
 foreach(path ${cu_sources})
     get_filename_component(name "${path}" NAME)
+    # Sources under an evaluator subdirectory (e.g. src/cuda/pt/jit_sources) are
+    # keyed as "<subdir>/<name>" so their bare filenames don't collide with the
+    # flat V1 sources; V1 sources keep their basename key. EMBED_ROOT is src/cuda.
+    file(RELATIVE_PATH rel "${EMBED_ROOT}" "${path}")
+    if (rel MATCHES "^([^/]+)/jit_sources/")
+        set(key "${CMAKE_MATCH_1}/${name}")
+    else()
+        set(key "${name}")
+    endif()
     file(READ "${path}" contents)
-    string(APPEND out "        {\"${name}\", std::string_view(R\"DMKJITSRC(${contents})DMKJITSRC\")},\n")
+    string(APPEND out "        {\"${key}\", std::string_view(R\"DMKJITSRC(${contents})DMKJITSRC\")},\n")
 endforeach()
 
 string(APPEND out "    };\n\n")

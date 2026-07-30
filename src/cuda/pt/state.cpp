@@ -307,6 +307,7 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
     sc.pw_form_stride_reals = part.is_stresslet ? 2L * fou.n_tables_up * fou.n_pw_modes : 0;
     sc.proxy_coeffs_upward_dim = tree.proxy_coeffs_upward.Dim();
     sc.proxy_coeffs_downward_dim = tree.proxy_coeffs_downward.Dim();
+    sc.pw_out_dim = tree.pw_out.Dim(); // sized by init_planewave_data (called before to_build_inputs)
     sc.proxy_offsets_upward = long_span(tree.proxy_coeffs_offsets);
     sc.proxy_offsets_downward = long_span(tree.proxy_coeffs_offsets_downward);
     sc.pw_out_offsets = long_span(tree.pw_out_offsets);
@@ -436,6 +437,7 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     up(scratch.d_proxy_offsets_upward, si.proxy_offsets_upward);
     up(scratch.d_proxy_offsets_downward, si.proxy_offsets_downward);
     up(scratch.d_pw_out_offsets, si.pw_out_offsets);
+    scratch.d_pw_out.resize(2 * si.pw_out_dim); // zeroed by form_outgoing each eval
 
     const int max_tp_any = std::max(wi.max_tp_per_level, wi.max_tp_up_per_level);
     if (max_tp_any && scratch.tensorprod_scratch_stride_reals)

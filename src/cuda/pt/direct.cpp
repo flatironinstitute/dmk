@@ -40,7 +40,7 @@ std::string fnv1a_hex(const std::string &text) {
 }
 
 // Emit a compile-time coefficient struct matching the horner_const<Coeffs>
-// contract in pt_direct.cu (size + __device__ constexpr at(i)).
+// contract in pt/direct.cu (size + __device__ constexpr at(i)).
 template <typename Real>
 std::string emit_coeff_struct(const char *name, const std::vector<Real> &coeffs) {
     std::ostringstream ss;
@@ -87,8 +87,7 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
         "PtDirectKernel_" + fnv1a_hex(std::string(jit_real_name<Real>()) + "|" + evaluator_expr + "|" + coeff_struct);
 
     std::ostringstream prelude_ss;
-    prelude_ss << "using Real = " << jit_real_name<Real>() << ";\n";
-    prelude_ss << "#define DMK_DIRECT_KERNEL_NAME " << kernel_name << "\n\n";
+    prelude_ss << "#define DMK_DIRECT_KERNEL_NAME " << kernel_name << "\n\n"; // Real provided by make_stage_source
     prelude_ss << coeff_struct;
     prelude_ss << "#define DMK_DIRECT_EVALUATOR " << evaluator_expr << "\n\n";
     const std::string prelude = prelude_ss.str();
@@ -139,7 +138,7 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
         key.sm_major = cache.sm_major();
         key.sm_minor = cache.sm_minor();
         key.params = config;
-        const std::string source = make_stage_source("pt_direct.cu", key, prelude, "PtDirect");
+        const std::string source = make_stage_source("pt/direct.cu", key, prelude, "PtDirect");
         auto kernel = cache.get_kernel_from_source(key, source);
         const std::size_t shared_bytes = std::size_t(config.at("SRC_TILE")) * values_per_source * sizeof(Real);
         kernel->launch(dim3(args.n_work, 1, 1), dim3(config.at("BLOCK_SIZE"), 1, 1), shared_bytes, st, args);

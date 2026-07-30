@@ -142,6 +142,7 @@ struct BuildInputs {
         long pw_form_stride_reals = 0;                ///< stresslet: 2*n_tables_up*n_pw_modes per slot
         std::size_t proxy_coeffs_upward_dim = 0;      ///< upward proxy buffer size (reals)
         std::size_t proxy_coeffs_downward_dim = 0;    ///< downward proxy buffer size (reals)
+        std::size_t pw_out_dim = 0;                   ///< pw_out complex count (d_pw_out reals = 2x)
         std::span<const long> proxy_offsets_upward;   ///< [n_boxes] into d_proxy_coeffs_upward
         std::span<const long> proxy_offsets_downward; ///< [n_boxes] into d_proxy_coeffs_downward
         std::span<const long> pw_out_offsets;         ///< [n_boxes] into d_pw_out, -1 = none

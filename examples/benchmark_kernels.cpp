@@ -333,12 +333,17 @@ double run_dmk(pdmk_tree tree, std::vector<Real> &pot_src, std::vector<Real> &po
 
     Real *pot_trg_ptr = n_trg_per_rank > 0 ? pot_trg.data() : nullptr;
     double st = MY_OMP_GET_WTIME();
+    int rc;
     if constexpr (std::is_same_v<Real, float>)
-        pdmk_tree_evalf(tree, pot_src.data(), pot_trg_ptr);
+        rc = pdmk_tree_evalf(tree, pot_src.data(), pot_trg_ptr);
     else
-        pdmk_tree_eval(tree, pot_src.data(), pot_trg_ptr);
+        rc = pdmk_tree_eval(tree, pot_src.data(), pot_trg_ptr);
     double ft = MY_OMP_GET_WTIME();
 
+    if (rc != 0) {
+        std::cerr << "pdmk_tree_eval failed with rc=" << rc << ": " << pdmk_last_error_message() << "\n";
+        std::exit(1);
+    }
     return ft - st;
 }
 
@@ -357,7 +362,7 @@ double run_update_charges(pdmk_tree tree, const std::vector<Real> &charges, cons
     double ft = omp_get_wtime();
 
     if (rc != 0) {
-        std::cerr << "pdmk_tree_update_charges failed with rc=" << rc << "\n";
+        std::cerr << "pdmk_tree_update_charges failed with rc=" << rc << ": " << pdmk_last_error_message() << "\n";
         std::exit(1);
     }
     return ft - st;

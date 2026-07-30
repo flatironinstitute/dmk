@@ -8,11 +8,15 @@
 //   - autotune_config:   grid tune (shared tune_grid) + in-process cache
 
 #include "../jit/autotune.hpp"
+#include "../jit/jit_kernel.hpp"
 #include "../jit/jit_types.hpp"
+
+#include <cuda_runtime.h>
 
 #include <functional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace dmk::cuda::pt {
@@ -40,5 +44,39 @@ TuningParams autotune_config(const std::string &tune_key, const std::string &ker
                              const std::vector<TuningParameter> &space, const TuningParams &defaults,
                              const std::function<bool(const TuningParams &)> &constraint,
                              const std::function<double(const TuningParams &)> &benchmark);
+
+/// Opt in to >48KB dynamic shared memory for a compiled kernel (no-op below the
+/// static limit). Must be called before launching with that shared_bytes.
+void set_max_dynamic_smem(const jit::JitKernel &kernel, std::size_t shared_bytes);
+
+/// Tune `launch_one` over `space` then run the winning config on `stream`.
+/// For additive kernels (whose re-runs corrupt their output), pass the output
+/// buffer base + element count so the tuner snapshots/restores it around each
+/// timed run; pass `snapshot_base == nullptr` for idempotent kernels. The final
+/// launch runs on the pre-tune buffer state, so the caller sets that state
+/// (e.g. zero / prior-stage result) before calling.
+template <typename Real, typename LaunchOne>
+void autotuned_launch(const std::string &tune_key, const std::string &kernel_label,
+                      const std::vector<TuningParameter> &space, const TuningParams &defaults,
+                      const std::function<bool(const TuningParams &)> &constraint, LaunchOne &&launch_one,
+                      Real *snapshot_base, std::size_t snapshot_count, cudaStream_t stream) {
+    jit::AutotuneDeviceRangeSnapshots<Real> snap;
+    bool have_snap = false;
+    const std::function<double(const TuningParams &)> benchmark = [&](const TuningParams &p) -> double {
+        if (snapshot_base && !have_snap) {
+            std::vector<std::pair<Real *, long>> ranges{{snapshot_base, 0}};
+            snap = jit::make_device_range_snapshots<Real>(std::move(ranges), snapshot_count, stream);
+            have_snap = true;
+        }
+        if (have_snap)
+            jit::restore_device_range_snapshots(snap, stream);
+        return jit::benchmark_cuda_ms(stream, jit::CudaBenchmarkOptions{2, 5},
+                                      [&](cudaStream_t s) { launch_one(p, s); });
+    };
+    const TuningParams config = autotune_config(tune_key, kernel_label, space, defaults, constraint, benchmark);
+    if (have_snap)
+        jit::restore_device_range_snapshots(snap, stream);
+    launch_one(config, stream);
+}
 
 } // namespace dmk::cuda::pt

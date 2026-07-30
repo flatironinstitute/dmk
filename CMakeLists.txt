@@ -105,6 +105,7 @@ if (DMK_GPU_OFFLOAD)
       -DEMBED_OUTPUT=${DMK_JIT_EMBEDDED_SOURCES}
       -DEMBED_CU=${DMK_JIT_CU_SOURCES_ARG}
       -DEMBED_HEADERS=${DMK_JIT_EMBED_HEADERS_ARG}
+      -DEMBED_ROOT=${PROJECT_SOURCE_DIR}/src/cuda
       -P ${PROJECT_SOURCE_DIR}/cmake/embed_jit_sources.cmake
     DEPENDS ${DMK_JIT_CU_SOURCES} ${DMK_JIT_HEADER_FILES}
       ${PROJECT_SOURCE_DIR}/cmake/embed_jit_sources.cmake
@@ -259,6 +260,12 @@ if (DMK_GPU_OFFLOAD)
               src/cuda/pt/state.cpp
               src/cuda/pt/tree.cpp
               src/cuda/pt/direct.cpp
+              src/cuda/pt/upward.cpp
+              src/cuda/pt/tensorprod.cpp
+              src/cuda/pt/form_outgoing.cpp
+              src/cuda/pt/downward.cpp
+              src/cuda/pt/proxy2pw.cpp
+              src/cuda/pt/pw2proxy.cpp
               src/cuda/pt/launchers.cpp
               ${DMK_CUDA_JIT_SRC}
               )

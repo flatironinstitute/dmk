@@ -2,11 +2,13 @@
 
 #include "../jit/jit_source_utils.hpp"
 
+#include <cuda.h>
 #include <cuda_runtime.h>
 
 #include <map>
 #include <mutex>
 #include <sstream>
+#include <stdexcept>
 
 namespace dmk::cuda::pt {
 
@@ -23,11 +25,25 @@ std::string make_stage_source(std::string_view filename, const JitKey &key, cons
                               std::string_view label) {
     const jit::SplitSource split = jit::load_split_jit_source(filename, label);
     std::ostringstream ss;
+    ss << "using Real = " << key.real << ";\n\n";
     ss << prelude;
     ss << emit_params(key);
     ss << split.header << "\n";
     ss << split.kernel << "\n";
     return ss.str();
+}
+
+void set_max_dynamic_smem(const jit::JitKernel &kernel, std::size_t shared_bytes) {
+    if (shared_bytes <= 48 * 1024)
+        return;
+    const CUresult res = cuFuncSetAttribute(kernel.function(), CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+                                            static_cast<int>(shared_bytes));
+    if (res != CUDA_SUCCESS) {
+        const char *name = nullptr;
+        cuGetErrorName(res, &name);
+        throw std::runtime_error(std::string("set_max_dynamic_smem: cuFuncSetAttribute failed: ") +
+                                 (name ? name : "<unknown>") + " (" + std::to_string(shared_bytes) + " bytes)");
+    }
 }
 
 TuningParams autotune_config(const std::string &tune_key, const std::string &kernel_label,

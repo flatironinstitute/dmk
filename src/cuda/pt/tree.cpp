@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <vector>
 
 namespace dmk::cuda::pt {
@@ -106,7 +107,9 @@ void seam_self_check(State<Real, DIM> &s, CudaSharedDeviceState<Real, DIM> &v1) 
     ck("pw_form_box_flat", s.worklists.d_pw_form_box_flat, v1.d_pw_form_box_flat);
     ck("proxy_offsets_upward", s.scratch.d_proxy_offsets_upward, v1.d_proxy_offsets_upward);
     ck("proxy_offsets_downward", s.scratch.d_proxy_offsets_downward, v1.d_proxy_offsets_downward);
-    ck("pw_out_offsets", s.scratch.d_pw_out_offsets, v1.d_pw_out_offsets);
+    // d_pw_out_offsets is intentionally not checked here: V1 uploads it lazily at
+    // eval time (allocate_pw_out), so it is empty at ctor while V2 fills it early
+    // from init_planewave_data. Its correctness is covered by the pw_out parity.
     ck("pot_src_offsets", s.outputs.d_pot_src_offsets, v1.d_pot_src_offsets);
     ck("pot_trg_offsets", s.outputs.d_pot_trg_offsets, v1.d_pot_trg_offsets);
     ck("charge", s.particles.d_charge, v1.d_charge);
@@ -128,6 +131,10 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
     // The owned tree runs the GPU host precompute (and, for now, the V1 device
     // state we validate against).
     tree_ = std::make_unique<DMKPtTree<Real, DIM>>(comm, params, r_src, charge, normal, r_trg);
+
+    // Size pw_out / pw_out_offsets before the seam reads them (idempotent; the
+    // owned tree's later V1 downward call is a no-op).
+    tree_->init_planewave_data();
 
     state_ = std::make_unique<State<Real, DIM>>(to_build_inputs(*tree_));
     const long n_src = r_src.Dim() / DIM;
@@ -155,6 +162,38 @@ void Tree<Real, DIM>::eval() {
         const double e_trg = dev_rel_l2<Real>(state_->outputs.d_pot_direct_trg.data(),
                                               tree_->cuda_direct_ctx_->device_pot_trg(), state_->outputs.pot_trg_size);
         std::fprintf(stderr, "[GPU_V2] direct parity vs V1: rel_l2 src=%.3e trg=%.3e\n", e_src, e_trg);
+    }
+
+    // Long-range parity vs the V1 oracle. The passes chain on one stream
+    // (form_outgoing reads the V2 upward proxy, downward reads its pw_out), so
+    // each is run + synced + reported in turn; a throw is printed here rather
+    // than swallowed by the C-API guard, and the passes that already completed
+    // still report their rel_l2.
+    if (util::env_is_set("DMK_GPU_V2_CHECK") && tree_->cuda_shared_state_) {
+        auto &v1 = *tree_->cuda_shared_state_;
+        const auto stream = state_->downward_stream.get();
+        try {
+            pt::upward(*state_, stream);
+            state_->downward_stream.sync();
+            std::fprintf(stderr, "[GPU_V2] upward parity vs V1: rel_l2 proxy_up=%.3e\n",
+                         dev_rel_l2<Real>(state_->scratch.d_proxy_coeffs_upward.data(), v1.d_proxy_coeffs_upward.data(),
+                                          state_->scratch.d_proxy_coeffs_upward.size()));
+
+            pt::form_outgoing(*state_, stream);
+            state_->downward_stream.sync();
+            std::fprintf(
+                stderr, "[GPU_V2] form_outgoing parity vs V1: rel_l2 pw_out=%.3e\n",
+                dev_rel_l2<Real>(state_->scratch.d_pw_out.data(), v1.d_pw_out.data(), state_->scratch.d_pw_out.size()));
+
+            pt::downward(*state_, stream);
+            state_->downward_stream.sync();
+            std::fprintf(stderr, "[GPU_V2] downward parity vs V1: rel_l2 proxy_down=%.3e\n",
+                         dev_rel_l2<Real>(state_->scratch.d_proxy_coeffs_downward.data(),
+                                          v1.d_proxy_coeffs_downward.data(),
+                                          state_->scratch.d_proxy_coeffs_downward.size()));
+        } catch (const std::exception &e) {
+            std::fprintf(stderr, "[GPU_V2] long-range parity aborted: %s\n", e.what());
+        }
     }
 }
 
