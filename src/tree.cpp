@@ -267,15 +267,10 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
         logger->debug("Ignoring direct interactions");
     if (params.eval_path == DMK_EVAL_PATH_GPU) {
 #ifdef DMK_GPU_OFFLOAD
+        // Host precompute only; the device pipeline lives in dmk::cuda::pt::Tree,
+        // which owns this tree and sorts charges onto the device itself.
         build_tree_for_gpu(r_src, r_trg);
         generate_metadata_for_gpu();
-        gpu_init_state();
-        if (cuda_shared_state_) {
-            const long n_src = r_src.Dim() / DIM;
-            const Real *normal_ptr = (params.kernel == DMK_STRESSLET && normal.Dim()) ? &normal[0] : nullptr;
-            const Real *charge_ptr = charge.Dim() ? &charge[0] : nullptr;
-            cuda_shared_state_->upload_and_sort_charges(params.kernel, charge_ptr, normal_ptr, n_src);
-        }
 #else
         throw std::runtime_error("DMK was built without DMK_GPU_OFFLOAD; only DMK_EVAL_PATH_CPU is available");
 #endif
@@ -292,14 +287,6 @@ void DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal
     logger->info("update_charges started");
 
     const int n_src = r_src_sorted_owned.Dim() / DIM;
-
-#ifdef DMK_GPU_OFFLOAD
-    if (params.eval_path == DMK_EVAL_PATH_GPU && cuda_shared_state_) {
-        cuda_shared_state_->upload_and_sort_charges(params.kernel, charge, normal, n_src);
-        logger->info("update_charges completed (gpu)");
-        return;
-    }
-#endif
 
     // Delete the old data and re-register with the new values. The PtTree
     // already knows the sort permutation from the "pdmk_src" particle set,
@@ -1083,62 +1070,15 @@ void DMKPtTree<Real, DIM>::upward_pass() {
     nvtxRangePush("upward_pass");
     logger->info("upward pass started");
 
-#ifdef DMK_GPU_OFFLOAD
-    if (cuda_upward_ctx_)
-        gpu_upward_pass();
-    const bool run_cpu = params.eval_path == DMK_EVAL_PATH_CPU;
-#else
     if (params.eval_path != DMK_EVAL_PATH_CPU)
-        throw std::runtime_error("DMK was built without DMK_GPU_OFFLOAD; only DMK_EVAL_PATH_CPU is available");
-    constexpr bool run_cpu = true;
-#endif
+        throw std::runtime_error(
+            "DMKPtTree::eval runs the CPU path only; GPU evaluation goes through dmk::cuda::pt::Tree");
 
-    if (run_cpu)
-        cpu_upward_pass();
+    cpu_upward_pass();
 
     logger->info("upward pass finished");
     nvtxRangePop();
 }
-
-#ifdef DMK_GPU_OFFLOAD
-template <typename Real, int DIM>
-void DMKPtTree<Real, DIM>::gpu_init_state() {
-    nvtxRangePush("device_reset");
-    cuda_eval_targets_ctx_.reset();
-    cuda_direct_ctx_.reset();
-    cuda_downward_ctx_.reset();
-    cuda_form_outgoing_ctx_.reset();
-    cuda_upward_ctx_.reset();
-    cuda_shared_state_.reset();
-    nvtxRangePop();
-
-    const bool want_gpu = params.eval_path == DMK_EVAL_PATH_GPU;
-    if (!want_gpu)
-        return;
-
-    nvtxRangePush("device_init");
-    cuda_shared_state_ = std::make_unique<CudaSharedDeviceState<Real, DIM>>(*this);
-    cuda_direct_ctx_ = std::make_unique<CudaDirectContext<Real, DIM>>(*this, *cuda_shared_state_);
-    cuda_eval_targets_ctx_ = std::make_unique<CudaEvalTargetsContext<Real, DIM>>(*this, *cuda_shared_state_);
-    cuda_downward_ctx_ = std::make_unique<CudaDownwardContext<Real, DIM>>(*this, *cuda_shared_state_);
-    cuda_form_outgoing_ctx_ = std::make_unique<CudaFormOutgoingContext<Real, DIM>>(*this, *cuda_shared_state_);
-    cuda_upward_ctx_ = std::make_unique<CudaUpwardContext<Real, DIM>>(*this, *cuda_shared_state_);
-    nvtxRangePop();
-}
-
-template <typename Real, int DIM>
-void DMKPtTree<Real, DIM>::gpu_upward_pass() {
-    // charge2proxy + per-level tensorprod on shared.downward_stream; downward
-    // kernels chain naturally on the same stream, so no extra sync needed.
-    sctl::Profile::Scoped p("cuda_upward", &comm_);
-    nvtxRangePush("cuda_upward");
-    nvtxRangePush("residual_direct");
-    cuda_direct_ctx_->launch();
-    nvtxRangePop();
-    cuda_upward_ctx_->run();
-    nvtxRangePop();
-}
-#endif
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::cpu_upward_pass() {
@@ -1462,8 +1402,6 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
                 }
             }
 
-            // form_eval_expansions only runs on the CPU path; the GPU path
-            // uses CudaEvalTargetsContext after the per-level kernels complete.
             if (iftensprodeval[box]) {
                 if (src_counts_owned[box]) {
                     if (need_grad_src)
@@ -1741,40 +1679,10 @@ void DMKPtTree<Real, DIM>::downward_pass() {
     init_planewave_data();
     sctl::Profile::Toc();
 
-    const bool run_cpu = params.eval_path == DMK_EVAL_PATH_CPU;
-    const bool run_gpu = params.eval_path == DMK_EVAL_PATH_GPU;
-
-#ifdef DMK_GPU_OFFLOAD
-    // Launches GPU kernels async on shared.downward_stream; GPU-only mode syncs at the
-    // end of gpu_downward_pass so host pot is populated before we return.
-    if (run_gpu) {
-        // The GPU descatter in finalize_pot only does the local permutation
-        // (no MPI Alltoallv). Multi-rank GPU is not currently supported.
-        SCTL_ASSERT(comm_.Size() == 1 && "GPU eval_path requires a single rank");
-        gpu_downward_pass();
-        sctl::Profile::Scoped p("cuda_merge", &comm_);
-        cuda_shared_state_->finalize_pot(cuda_eval_targets_ctx_->stream(), cuda_eval_targets_ctx_->device_pot_src(),
-                                         cuda_eval_targets_ctx_->device_pot_trg(), cuda_direct_ctx_->device_pot_src(),
-                                         cuda_direct_ctx_->device_pot_trg());
-    }
-#endif
-
-    if (run_cpu) {
-        pot_src_sorted.SetZero();
-        pot_trg_sorted.SetZero();
-
-        cpu_downward_pass();
-    }
-
-    if (run_cpu)
-        correct_for_self_interactions();
-
-#ifdef DMK_GPU_OFFLOAD
-    // GPU dump (into "gpu/") must run before teardown so the device buffers
-    // are still alive; the CPU-side dump (below) writes to cwd.
-    if (debug_dump_tree && cuda_shared_state_)
-        cuda_shared_state_->dump(*this);
-#endif
+    pot_src_sorted.SetZero();
+    pot_trg_sorted.SetZero();
+    cpu_downward_pass();
+    correct_for_self_interactions();
 
     logger->info("downward pass completed");
     if (debug_dump_tree)
@@ -1787,21 +1695,6 @@ void DMKPtTree<Real, DIM>::downward_pass() {
 #endif
     nvtxRangePop();
 }
-
-#ifdef DMK_GPU_OFFLOAD
-template <typename Real, int DIM>
-void DMKPtTree<Real, DIM>::gpu_downward_pass() {
-    if (!debug_omit_pw) {
-        sctl::Profile::Scoped p("cuda_downward", &comm_);
-        cuda_form_outgoing_ctx_->run();
-        cuda_downward_ctx_->run();
-    }
-    {
-        sctl::Profile::Scoped p("cuda_eval_targets_launch", &comm_);
-        cuda_eval_targets_ctx_->launch();
-    }
-}
-#endif
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::cpu_downward_pass() {
@@ -1851,25 +1744,6 @@ void DMKPtTree<Real, DIM>::desort_potentials(Real *pot_src, Real *pot_trg) {
     logger->info("De-sorting potentials into user arrays");
     sctl::Profile::Tic("pdmk_tree_eval_sync", &comm_);
     nvtxRangePush("pdmk_tree_eval_sync");
-
-#ifdef DMK_GPU_OFFLOAD
-    if (params.eval_path == DMK_EVAL_PATH_GPU && cuda_shared_state_) {
-        // finalize_pot wrote the descattered (user-order) result into
-        // d_pot_*_final and synchronized its stream; one D2H per side and
-        // we're done.
-        auto &s = *cuda_shared_state_;
-        if (s.pot_src_size)
-            DMK_CHECK_CUDA(
-                cudaMemcpy(pot_src, s.d_pot_src_final.data(), s.pot_src_size * sizeof(Real), cudaMemcpyDeviceToHost));
-        if (s.pot_trg_size)
-            DMK_CHECK_CUDA(
-                cudaMemcpy(pot_trg, s.d_pot_trg_final.data(), s.pot_trg_size * sizeof(Real), cudaMemcpyDeviceToHost));
-        sctl::Profile::Toc();
-        nvtxRangePop();
-        logger->info("De-sort complete");
-        return;
-    }
-#endif
 
     sctl::Vector<Real> res_src, res_trg;
     this->GetParticleData(res_src, "pdmk_pot_src");

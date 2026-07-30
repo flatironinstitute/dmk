@@ -1,8 +1,12 @@
 #include <dmk/cuda/pt/state.hpp>
 
+#include "../jit/jit_cache.hpp"
+#include "../jit/jit_kernel.hpp"
+#include "../jit/jit_source_utils.hpp"
+#include "launchers.hpp"
+
 #include <dmk.h>
 #include <dmk/cuda/helpers.hpp>
-#include <dmk/cuda/shared_state_kernels.hpp>
 #include <dmk/direct.hpp>
 #include <dmk/tree.hpp>
 
@@ -17,6 +21,71 @@
 namespace dmk::cuda::pt {
 
 namespace {
+
+using jit::jit_real_name;
+using jit::JitCache;
+using jit::JitKey;
+
+// Charge/potential scatter helpers, JIT-compiled from pt/shared_state.cu. Fixed
+// block, one launch each.
+template <typename Real>
+void launch_scatter_forward(const Real *in, Real *out, const long *scatter_index, long n_particles, int dof,
+                            cudaStream_t stream) {
+    if (n_particles == 0)
+        return;
+    constexpr int BLOCK = 256;
+    static JitCache cache;
+    JitKey key;
+    key.name = "PtScatterForwardKernel";
+    key.real = jit_real_name<Real>();
+    key.sm_major = cache.sm_major();
+    key.sm_minor = cache.sm_minor();
+    key.params = {{"BLOCK_SIZE", BLOCK}};
+    auto kernel = cache.get_kernel_from_source(
+        key, [&] { return make_stage_source("pt/shared_state.cu", key, "", "SharedState"); });
+    const long grid = (n_particles + BLOCK - 1) / BLOCK;
+    kernel->launch(dim3(grid, 1, 1), dim3(BLOCK, 1, 1), 0, stream, in, out, scatter_index, n_particles, dof);
+}
+
+template <typename Real>
+void launch_scatter_forward_stresslet(const Real *densities, const Real *normals, Real *out, const long *scatter_index,
+                                      long n_particles, int dim, cudaStream_t stream) {
+    if (n_particles == 0)
+        return;
+    constexpr int BLOCK = 256;
+    static JitCache cache;
+    JitKey key;
+    key.name = "PtScatterForwardStressletKernel";
+    key.real = jit_real_name<Real>();
+    key.sm_major = cache.sm_major();
+    key.sm_minor = cache.sm_minor();
+    key.params = {{"BLOCK_SIZE", BLOCK}};
+    auto kernel = cache.get_kernel_from_source(
+        key, [&] { return make_stage_source("pt/shared_state.cu", key, "", "SharedState"); });
+    const long grid = (n_particles + BLOCK - 1) / BLOCK;
+    kernel->launch(dim3(grid, 1, 1), dim3(BLOCK, 1, 1), 0, stream, densities, normals, out, scatter_index, n_particles,
+                   dim);
+}
+
+template <typename Real>
+void launch_accumulate_and_scatter(Real *out, const Real *pot_eval, const Real *pot_extra, const long *scatter_index,
+                                   int dof, long n_particles, cudaStream_t stream) {
+    if (n_particles == 0)
+        return;
+    constexpr int BLOCK = 256;
+    static JitCache cache;
+    JitKey key;
+    key.name = "PtAccumulateAndScatterKernel";
+    key.real = jit_real_name<Real>();
+    key.sm_major = cache.sm_major();
+    key.sm_minor = cache.sm_minor();
+    key.params = {{"BLOCK_SIZE", BLOCK}};
+    auto kernel = cache.get_kernel_from_source(
+        key, [&] { return make_stage_source("pt/shared_state.cu", key, "", "SharedState"); });
+    const long grid = (n_particles + BLOCK - 1) / BLOCK;
+    kernel->launch(dim3(grid, 1, 1), dim3(BLOCK, 1, 1), 0, stream, out, pot_eval, pot_extra, scatter_index, dof,
+                   n_particles);
+}
 
 // Upload any host container (std::vector or std::span) to a device buffer.
 // Empty sources leave the buffer unallocated.
@@ -493,19 +562,18 @@ void State<Real, DIM>::upload_and_sort_charges(const Real *charges, const Real *
     DeviceBuffer<Real> d_charge_input;
     d_charge_input.upload_async(charges, n_src * charge_dof, direct_stream.get());
     particles.d_charge.resize(n_src * charge_dof);
-    cuda::launch_scatter_forward(d_charge_input.data(), particles.d_charge.data(), particles.d_scatter_index_src.data(),
-                                 n_src, charge_dof, direct_stream.get());
+    launch_scatter_forward(d_charge_input.data(), particles.d_charge.data(), particles.d_scatter_index_src.data(),
+                           n_src, charge_dof, direct_stream.get());
 
     if (kernel == DMK_STRESSLET) {
         DeviceBuffer<Real> d_normal_input;
         d_normal_input.upload_async(normals, n_src * DIM, direct_stream.get());
         particles.d_normal.resize(n_src * DIM);
-        cuda::launch_scatter_forward(d_normal_input.data(), particles.d_normal.data(),
-                                     particles.d_scatter_index_src.data(), n_src, DIM, direct_stream.get());
+        launch_scatter_forward(d_normal_input.data(), particles.d_normal.data(), particles.d_scatter_index_src.data(),
+                               n_src, DIM, direct_stream.get());
         particles.d_charge_outer.resize(n_src * DIM * DIM);
-        cuda::launch_scatter_forward_stresslet(d_charge_input.data(), d_normal_input.data(),
-                                               particles.d_charge_outer.data(), particles.d_scatter_index_src.data(),
-                                               n_src, DIM, direct_stream.get());
+        launch_scatter_forward_stresslet(d_charge_input.data(), d_normal_input.data(), particles.d_charge_outer.data(),
+                                         particles.d_scatter_index_src.data(), n_src, DIM, direct_stream.get());
         direct_stream.sync();
         return;
     }
@@ -523,15 +591,15 @@ void State<Real, DIM>::finalize() {
 
     if (outputs.pot_src_size) {
         const long n = static_cast<long>(outputs.pot_src_size / outputs.pot_src_dof);
-        cuda::launch_accumulate_and_scatter<Real>(outputs.d_pot_src_final.data(), outputs.d_pot_eval_src.data(),
-                                                  outputs.d_pot_direct_src.data(), particles.d_scatter_index_src.data(),
-                                                  outputs.pot_src_dof, n, direct_stream.get());
+        launch_accumulate_and_scatter<Real>(outputs.d_pot_src_final.data(), outputs.d_pot_eval_src.data(),
+                                            outputs.d_pot_direct_src.data(), particles.d_scatter_index_src.data(),
+                                            outputs.pot_src_dof, n, direct_stream.get());
     }
     if (outputs.pot_trg_size) {
         const long n = static_cast<long>(outputs.pot_trg_size / outputs.pot_trg_dof);
-        cuda::launch_accumulate_and_scatter<Real>(outputs.d_pot_trg_final.data(), outputs.d_pot_eval_trg.data(),
-                                                  outputs.d_pot_direct_trg.data(), particles.d_scatter_index_trg.data(),
-                                                  outputs.pot_trg_dof, n, direct_stream.get());
+        launch_accumulate_and_scatter<Real>(outputs.d_pot_trg_final.data(), outputs.d_pot_eval_trg.data(),
+                                            outputs.d_pot_direct_trg.data(), particles.d_scatter_index_trg.data(),
+                                            outputs.pot_trg_dof, n, direct_stream.get());
     }
     direct_stream.sync();
 }

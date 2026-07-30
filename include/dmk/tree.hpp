@@ -8,20 +8,11 @@
 #include <dmk/logger.h>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
+#include <memory>
 #include <nda/nda.hpp>
 #include <sctl.hpp>
 #include <span>
 #include <stdexcept>
-
-#ifdef DMK_GPU_OFFLOAD
-#include <dmk/cuda/direct.hpp>
-#include <dmk/cuda/downward.hpp>
-#include <dmk/cuda/eval_targets.hpp>
-#include <dmk/cuda/form_outgoing.hpp>
-#include <dmk/cuda/shared_state.hpp>
-#include <dmk/cuda/upward.hpp>
-#include <memory>
-#endif
 
 namespace dmk {
 
@@ -877,35 +868,12 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void downward_pass();
     void desort_potentials(Real *pot_src, Real *pot_trg);
 
-#ifdef DMK_GPU_OFFLOAD
-    // GPU offload state. Constructed at the start of upward_pass() and
-    // consumed at the end of downward_pass(). Shared state holds the
-    // device-side inputs/topology used by every per-operation context;
-    // contexts borrow pointers from it.
-    std::unique_ptr<CudaSharedDeviceState<Real, DIM>> cuda_shared_state_;
-    std::unique_ptr<CudaDirectContext<Real, DIM>> cuda_direct_ctx_;
-    std::unique_ptr<CudaEvalTargetsContext<Real, DIM>> cuda_eval_targets_ctx_;
-    std::unique_ptr<CudaDownwardContext<Real, DIM>> cuda_downward_ctx_;
-    std::unique_ptr<CudaFormOutgoingContext<Real, DIM>> cuda_form_outgoing_ctx_;
-    std::unique_ptr<CudaUpwardContext<Real, DIM>> cuda_upward_ctx_;
-#endif
-
   private:
     // Path-specific pieces of upward_pass / downward_pass. The public
     // upward_pass / downward_pass methods are dispatchers that call into
     // these based on params.eval_path
     void cpu_upward_pass();
     void cpu_downward_pass();
-#ifdef DMK_GPU_OFFLOAD
-    // Build the cuda_*_ctx_ unique_ptrs once at tree construction. After this
-    // returns, cuda_shared_state_ is non-null iff the GPU is actually going to
-    // run for evals on this tree (params.eval_path != CPU and no debug flag
-    // disables it). All device buffers and topology uploads happen here; per
-    // eval the contexts only re-launch kernels and re-zero output buffers.
-    void gpu_init_state();
-    void gpu_upward_pass();
-    void gpu_downward_pass();
-#endif
 
     static constexpr int nlist1_max_ = sctl::pow<DIM>(4) - sctl::pow<DIM>(2) + 1;
     // list1 contains boxes that are neighbors for direct interaction

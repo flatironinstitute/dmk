@@ -1,13 +1,10 @@
 #pragma once
 
 /// @file
-/// V2 point-tree GPU evaluator. `pt::Tree` owns a private CPU `DMKPtTree` used
-/// only for host precompute (build_tree_for_gpu / generate_metadata_for_gpu)
-/// and charge sorting, then runs its own device pipeline over a `pt::State`.
-///
-/// With DMK_GPU_V2_CHECK set, the owned tree's V1 GPU pipeline is also run as an
-/// in-binary oracle and every stage is diffed against the V2 result. Both the
-/// oracle and the checks are removed at cutover.
+/// Point-tree GPU evaluator. `pt::Tree` owns a private CPU `DMKPtTree` used only
+/// for host precompute (build_tree_for_gpu / generate_metadata_for_gpu /
+/// init_planewave_data) and charge sorting, then runs its own device pipeline
+/// over a `pt::State`.
 
 #include <memory>
 

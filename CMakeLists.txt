@@ -85,7 +85,6 @@ if (DMK_GPU_OFFLOAD)
   )
 
   file(GLOB DMK_JIT_CU_SOURCES CONFIGURE_DEPENDS
-    "${PROJECT_SOURCE_DIR}/src/cuda/jit_sources/*.cu"
     "${PROJECT_SOURCE_DIR}/src/cuda/pt/jit_sources/*.cu")
   file(GLOB DMK_JIT_HEADER_FILES CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/include/dmk/cuda/*_kernelargs.hpp")
@@ -123,15 +122,6 @@ set(DMK_CUDA_JIT_SRC
   src/cuda/jit/jit_compiler.cpp
   src/cuda/jit/jit_kernel.cpp
   src/cuda/jit/jit_source_utils.cpp
-  src/cuda/jit/charge2proxy_launcher.cpp
-  src/cuda/jit/tensorprod_launcher.cpp
-  src/cuda/jit/proxy2pw_launcher.cpp
-  src/cuda/jit/pw2proxy_launcher.cpp
-  src/cuda/jit/shift_pw_launcher.cpp
-  src/cuda/jit/eval_targets_launcher.cpp
-  src/cuda/jit/multiply_kernelft_launcher.cpp
-  src/cuda/jit/shared_state_launcher.cpp
-  src/cuda/jit/direct_source_registry.cpp
 )
 
 find_package(BLAS REQUIRED)
@@ -252,11 +242,7 @@ add_library(dmk_bootstrap STATIC)
 target_link_libraries(dmk_bootstrap PUBLIC DMKOBJS_BOOTSTRAP)
 
 if (DMK_GPU_OFFLOAD)
-  add_library(DMKOBJS_CUDA OBJECT src/cuda/aot_kernels.cu src/cuda/direct.cpp src/cuda/shared_state.cpp
-              src/cuda/eval_targets.cpp
-              src/cuda/downward.cpp
-              src/cuda/form_outgoing.cpp
-              src/cuda/upward.cpp
+  add_library(DMKOBJS_CUDA OBJECT
               src/cuda/pt/state.cpp
               src/cuda/pt/tree.cpp
               src/cuda/pt/direct.cpp

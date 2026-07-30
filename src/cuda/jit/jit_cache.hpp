@@ -19,8 +19,6 @@ class JitCache {
     JitCache();
     explicit JitCache(std::vector<std::string> include_dirs);
 
-    std::shared_ptr<JitKernel> get_kernel(const JitKey &key);
-
     std::shared_ptr<JitKernel> get_kernel_from_source(const JitKey &key, const std::string &source,
                                                       const std::string &name_expression = {});
 
@@ -32,10 +30,6 @@ class JitCache {
     int sm_minor() const { return sm_minor_; }
 
   private:
-    std::shared_ptr<JitKernel> compile_and_load(const JitKey &key);
-
-    std::string make_source(const JitKey &key) const;
-
     std::vector<std::string> make_nvrtc_options() const;
 
     std::mutex mutex_;

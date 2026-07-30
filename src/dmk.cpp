@@ -25,8 +25,8 @@
 
 #ifdef DMK_GPU_OFFLOAD
 #include <dmk/cuda/pt/tree.hpp>
-// V2 GPU point-tree evaluators join the handle variant, selected at create by
-// the DMK_GPU_V2 env var. Deleted with the rest of V1 at cutover.
+// GPU point-tree evaluators join the handle variant; selected at create when
+// eval_path == DMK_EVAL_PATH_GPU.
 using pdmk_tree_impl =
     std::variant<std::unique_ptr<dmk::DMKPtTree<float, 2>>, std::unique_ptr<dmk::DMKPtTree<float, 3>>,
                  std::unique_ptr<dmk::DMKPtTree<double, 2>>, std::unique_ptr<dmk::DMKPtTree<double, 3>>,
@@ -917,7 +917,7 @@ inline pdmk_tree pdmk_tree_create(dmk_communicator comm, const pdmk_params &para
         throw api_error(DMK_ERR_INVALID_ARGUMENT, "Invalid dimension: " + std::to_string(params.n_dim));
 
 #ifdef DMK_GPU_OFFLOAD
-    if (params.eval_path == DMK_EVAL_PATH_GPU && util::env_is_set("DMK_GPU_V2")) {
+    if (params.eval_path == DMK_EVAL_PATH_GPU) {
         if (params.n_dim == 2)
             return new pdmk_tree_impl(std::make_unique<dmk::cuda::pt::Tree<Real, 2>>(
                 sctl_comm, params, r_src_vec, charge_vec, normal_vec, r_trg_vec));
