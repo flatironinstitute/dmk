@@ -47,6 +47,16 @@ void launch_tensorprod(dmk::cuda::TensorprodArgs<Real> &args, std::size_t proxy_
         kernel->launch(dim3(args.n_pairs, 1, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, args);
     };
 
+    std::ostringstream tune_key;
+    tune_key << "PtTensorprod|real=" << jit_real_name<Real>() << "|n_order=" << args.n_order
+             << "|n_charge_dim=" << args.n_charge_dim;
+    const std::string tk = tune_key.str();
+
+    if (auto cfg = autotune_cached(tk)) {
+        launch_one(*cfg, stream);
+        return;
+    }
+
     const cudaDeviceProp &prop = device_prop();
     const std::size_t max_shared = device_max_shared_bytes();
     const int n_order = args.n_order;
@@ -66,12 +76,8 @@ void launch_tensorprod(dmk::cuda::TensorprodArgs<Real> &args, std::size_t proxy_
         return tp_shared_bytes(n_order, z, sizeof(Real)) <= max_shared;
     };
 
-    std::ostringstream tune_key;
-    tune_key << "PtTensorprod|real=" << jit_real_name<Real>() << "|n_order=" << args.n_order
-             << "|n_charge_dim=" << args.n_charge_dim;
-
-    autotuned_launch<Real>(tune_key.str(), "PtTensorprodKernel", space, defaults, constraint, launch_one,
-                           args.proxy_flat, proxy_count, stream);
+    autotuned_launch<Real>(tk, "PtTensorprodKernel", space, defaults, constraint, launch_one, args.proxy_flat,
+                           proxy_count, stream);
 }
 
 template void launch_tensorprod<float>(dmk::cuda::TensorprodArgs<float> &, std::size_t, cudaStream_t);

@@ -64,6 +64,16 @@ void launch_eval_side(JitCache &cache, dmk::cuda::EvalTargetsArgs<Real> args, in
         kernel->launch(dim3(args.n_eval_boxes, 1, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, args);
     };
 
+    std::ostringstream tune_key;
+    tune_key << "PtEvalTargets|real=" << jit_real_name<Real>() << "|dim=" << DIM << "|eval_level=" << eval_level
+             << "|n_charge_dim=" << n_charge_dim << "|n_order=" << n_order;
+    const std::string tk = tune_key.str();
+
+    if (auto cfg = autotune_cached(tk)) {
+        launch_one(*cfg, stream);
+        return;
+    }
+
     const cudaDeviceProp &prop = device_prop();
     const std::size_t max_shared = device_max_shared_bytes();
 
@@ -76,12 +86,8 @@ void launch_eval_side(JitCache &cache, dmk::cuda::EvalTargetsArgs<Real> args, in
         return eval_shared_bytes(DIM, n_order, sizeof(Real)) <= max_shared;
     };
 
-    std::ostringstream tune_key;
-    tune_key << "PtEvalTargets|real=" << jit_real_name<Real>() << "|dim=" << DIM << "|eval_level=" << eval_level
-             << "|n_charge_dim=" << n_charge_dim << "|n_order=" << n_order;
-
-    autotuned_launch<Real>(tune_key.str(), "PtEvalTargetsByBoxKernel", space, defaults, constraint, launch_one,
-                           pot_flat, pot_size, stream);
+    autotuned_launch<Real>(tk, "PtEvalTargetsByBoxKernel", space, defaults, constraint, launch_one, pot_flat, pot_size,
+                           stream);
 }
 
 template <typename Real>

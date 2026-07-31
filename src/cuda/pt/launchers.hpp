@@ -14,6 +14,7 @@
 #include <cuda_runtime.h>
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -35,6 +36,10 @@ std::string emit_params(const JitKey &key);
 std::string make_stage_source(std::string_view filename, const JitKey &key, const std::string &prelude,
                               std::string_view label);
 
+/// In-process lookup of an already-tuned config for `tune_key` (the same cache
+/// autotune_config populates). Returns nullopt on first encounter.
+std::optional<TuningParams> autotune_cached(const std::string &tune_key);
+
 /// Grid-tune over `space` and return the winning params. Wraps the shared
 /// tune_grid (persistent JSON cache + DMK_JIT_AUTOTUNE_* env controls) with an
 /// in-process cache keyed by device + `tune_key` so repeat evals don't re-tune.
@@ -49,9 +54,8 @@ TuningParams autotune_config(const std::string &tune_key, const std::string &ker
 /// static limit). Must be called before launching with that shared_bytes.
 void set_max_dynamic_smem(const jit::JitKernel &kernel, std::size_t shared_bytes);
 
-/// Properties of the current device, queried once and cached. Device-invariant,
-/// so launchers use this instead of re-querying cudaGetDeviceProperties on every
-/// (post-tune) launch. GPU eval is single-device (single rank).
+/// Properties of the current device, queried once and cached. GPU eval is
+/// single-device (single rank).
 const cudaDeviceProp &device_prop();
 
 /// Max opt-in dynamic shared memory per block for the current device.

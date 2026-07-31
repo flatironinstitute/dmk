@@ -233,7 +233,7 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
             pa.dst_offsets = nullptr;
             pa.dst_stride_complex = window_in_stride_complex;
         }
-        launch_proxy2pw<Real>(root_pa, stream);
+        launch_proxy2pw<Real>(root_pa, stream, "root");
 
         const long window_out_stride_complex = static_cast<long>(f.n_charge_dim) * f.n_pw_modes_win;
         multiply_at(1, f.n_pw_win, f.n_pw_modes_win, f.hpw_win, /*windowed=*/true, sc.d_box0_id.data(),
@@ -257,7 +257,8 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
             pp.proxy_flat = sc.d_proxy_coeffs_downward.data();
             pp.proxy_offsets = sc.d_proxy_offsets_downward.data();
         }
-        launch_pw2proxy<Real>(root_pp, sc.d_proxy_coeffs_downward.data(), sc.d_proxy_coeffs_downward.size(), stream);
+        launch_pw2proxy<Real>(root_pp, sc.d_proxy_coeffs_downward.data(), sc.d_proxy_coeffs_downward.size(), stream,
+                              "root");
     }
 }
 

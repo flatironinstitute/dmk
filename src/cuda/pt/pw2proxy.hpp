@@ -6,6 +6,7 @@
 // reals) around each timed run.
 
 #include <cstddef>
+#include <string_view>
 #include <vector>
 
 #include <cuda_runtime.h>
@@ -13,8 +14,11 @@
 
 namespace dmk::cuda::pt {
 
+// `variant` separates the autotune entry of the single-box windowed root from
+// the many-box per-level batch (they share n_order/n_pw/n_charge_dim but want
+// different tuned configs).
 template <typename Real>
 void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *proxy_flat, std::size_t proxy_count,
-                     cudaStream_t stream);
+                     cudaStream_t stream, std::string_view variant = "");
 
 } // namespace dmk::cuda::pt

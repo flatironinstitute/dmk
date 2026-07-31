@@ -260,8 +260,7 @@ std::string current_cuda_device_key() {
     check_cuda(cudaGetDeviceProperties(&prop, device), "cudaGetDeviceProperties");
 
     std::ostringstream os;
-    os << "device=" << device << "|name=" << prop.name << "|sm=" << prop.major << prop.minor
-       << "|sms=" << prop.multiProcessorCount;
+    os << "sm=" << prop.major << prop.minor << "|sms=" << prop.multiProcessorCount;
     return os.str();
 }
 

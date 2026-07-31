@@ -89,37 +89,42 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
                 kernel->launch(dim3(n_launch, 1, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, a, group_perm);
             };
 
-            const cudaDeviceProp &prop = device_prop();
-            const std::size_t max_shared = device_max_shared_bytes();
-            const int n_order = f.n_order;
-            const int n_charge_dim = a.n_charge_dim;
-
-            const std::vector<TuningParameter> space{{"CHUNK", {64, 128}},
-                                                     {"I_TILE", {2, 3, 4}},
-                                                     {"J_TILE", {2, 3, 4}},
-                                                     {"K_TILE", {2, 4}},
-                                                     {"BLOCK_SIZE", {128, 256}}};
-            const TuningParams defaults{
-                {"CHUNK", 128}, {"I_TILE", 3}, {"J_TILE", 3}, {"K_TILE", 4}, {"BLOCK_SIZE", 128}};
-
-            const auto constraint = [&, n_order, n_charge_dim](const TuningParams &p) {
-                const int ch = p.at("CHUNK"), it = p.at("I_TILE"), jt = p.at("J_TILE"), kt = p.at("K_TILE"),
-                          bs = p.at("BLOCK_SIZE");
-                if (bs <= 0 || bs > prop.maxThreadsPerBlock || bs % 32 != 0)
-                    return false;
-                if (ch <= 0 || it <= 0 || it > n_order || jt <= 0 || jt > n_order || kt <= 0 || kt > n_order)
-                    return false;
-                if (it * jt * kt > 48)
-                    return false;
-                return c2p_shared_bytes(n_order, n_charge_dim, ch, sizeof(Real)) <= max_shared;
-            };
-
             std::ostringstream tune_key;
             tune_key << "PtCharge2Proxy|real=" << jit_real_name<Real>() << "|n_order=" << a.n_order
                      << "|n_charge_dim=" << a.n_charge_dim;
+            const std::string tk = tune_key.str();
 
-            autotuned_launch<Real>(tune_key.str(), "PtCharge2ProxyKernel", space, defaults, constraint, launch_one,
-                                   s.scratch.d_proxy_coeffs_upward.data(), proxy_count, stream);
+            if (auto cfg = autotune_cached(tk)) {
+                launch_one(*cfg, stream);
+            } else {
+                const cudaDeviceProp &prop = device_prop();
+                const std::size_t max_shared = device_max_shared_bytes();
+                const int n_order = f.n_order;
+                const int n_charge_dim = a.n_charge_dim;
+
+                const std::vector<TuningParameter> space{{"CHUNK", {64, 128}},
+                                                         {"I_TILE", {2, 3, 4}},
+                                                         {"J_TILE", {2, 3, 4}},
+                                                         {"K_TILE", {2, 4}},
+                                                         {"BLOCK_SIZE", {128, 256}}};
+                const TuningParams defaults{
+                    {"CHUNK", 128}, {"I_TILE", 3}, {"J_TILE", 3}, {"K_TILE", 4}, {"BLOCK_SIZE", 128}};
+
+                const auto constraint = [&, n_order, n_charge_dim](const TuningParams &p) {
+                    const int ch = p.at("CHUNK"), it = p.at("I_TILE"), jt = p.at("J_TILE"), kt = p.at("K_TILE"),
+                              bs = p.at("BLOCK_SIZE");
+                    if (bs <= 0 || bs > prop.maxThreadsPerBlock || bs % 32 != 0)
+                        return false;
+                    if (ch <= 0 || it <= 0 || it > n_order || jt <= 0 || jt > n_order || kt <= 0 || kt > n_order)
+                        return false;
+                    if (it * jt * kt > 48)
+                        return false;
+                    return c2p_shared_bytes(n_order, n_charge_dim, ch, sizeof(Real)) <= max_shared;
+                };
+
+                autotuned_launch<Real>(tk, "PtCharge2ProxyKernel", space, defaults, constraint, launch_one,
+                                       s.scratch.d_proxy_coeffs_upward.data(), proxy_count, stream);
+            }
         }
 
         // ---- per-level upward tensorprod (deepest level first, additive) ----

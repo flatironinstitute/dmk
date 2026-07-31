@@ -7,10 +7,24 @@
 
 #include <map>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 
 namespace dmk::cuda::pt {
+
+namespace {
+
+std::mutex &tune_cache_mutex() {
+    static std::mutex m;
+    return m;
+}
+std::map<std::string, TuningParams> &tune_cache() {
+    static std::map<std::string, TuningParams> c;
+    return c;
+}
+
+} // namespace
 
 std::string emit_params(const JitKey &key) {
     std::ostringstream ss;
@@ -62,20 +76,22 @@ void set_max_dynamic_smem(const jit::JitKernel &kernel, std::size_t shared_bytes
     }
 }
 
+std::optional<TuningParams> autotune_cached(const std::string &tune_key) {
+    std::lock_guard<std::mutex> lock(tune_cache_mutex());
+    const auto it = tune_cache().find(tune_key);
+    if (it == tune_cache().end())
+        return std::nullopt;
+    return it->second;
+}
+
 TuningParams autotune_config(const std::string &tune_key, const std::string &kernel_label,
                              const std::vector<TuningParameter> &space, const TuningParams &defaults,
                              const std::function<bool(const TuningParams &)> &constraint,
                              const std::function<double(const TuningParams &)> &benchmark) {
-    static std::mutex mutex;
-    static std::map<std::string, TuningParams> cache;
-
-    int device = 0;
-    cudaGetDevice(&device);
-    const std::string in_process_key = std::to_string(device) + "|" + tune_key;
     {
-        std::lock_guard<std::mutex> lock(mutex);
-        const auto it = cache.find(in_process_key);
-        if (it != cache.end()) {
+        std::lock_guard<std::mutex> lock(tune_cache_mutex());
+        const auto it = tune_cache().find(tune_key);
+        if (it != tune_cache().end()) {
             return it->second;
         }
     }
@@ -93,8 +109,8 @@ TuningParams autotune_config(const std::string &tune_key, const std::string &ker
     for (const auto &param : space)
         decision.params.emplace(param.name, defaults.at(param.name));
 
-    std::lock_guard<std::mutex> lock(mutex);
-    cache[in_process_key] = decision.params;
+    std::lock_guard<std::mutex> lock(tune_cache_mutex());
+    tune_cache()[tune_key] = decision.params;
     return decision.params;
 }
 

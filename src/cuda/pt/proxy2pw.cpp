@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace dmk::cuda::pt {
@@ -29,7 +30,8 @@ std::size_t p2pw_shared_bytes(int n_order, int n_pw, int z_tile, std::size_t siz
 } // namespace
 
 template <typename Real>
-void launch_proxy2pw(std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, cudaStream_t stream) {
+void launch_proxy2pw(std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, cudaStream_t stream,
+                     std::string_view variant) {
     if (args_h.empty())
         return;
     int max_boxes = 0, max_n_order = 0, max_n_pw = 0;
@@ -71,13 +73,23 @@ void launch_proxy2pw(std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, cudaStr
         kernel->launch(dim3(max_boxes, n_args, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, dev_args, n);
     };
 
+    std::ostringstream tune_key;
+    tune_key << "PtProxy2Pw|real=" << jit_real_name<Real>() << "|n_order=" << a0.n_order << "|n_pw=" << a0.n_pw
+             << "|n_charge_dim=" << a0.n_charge_dim << "|variant=" << variant;
+    const std::string tk = tune_key.str();
+
+    if (auto cfg = autotune_cached(tk)) {
+        launch_one(*cfg, stream);
+        return;
+    }
+
     const cudaDeviceProp &prop = device_prop();
     const std::size_t max_shared = device_max_shared_bytes();
 
     const std::vector<TuningParameter> space{{"BLOCK_SIZE", {64, 128, 256}},
                                              {"Z_TILE", {2, 4}},
                                              {"I_TILE", {2, 4}},
-                                             {"M1_TILE", {2, 4}},
+                                             {"M1_TILE", {2, 4, 6}},
                                              {"M2_TILE", {2, 4}}};
     const TuningParams defaults{{"BLOCK_SIZE", 128}, {"Z_TILE", 4}, {"I_TILE", 4}, {"M1_TILE", 4}, {"M2_TILE", 4}};
 
@@ -90,15 +102,11 @@ void launch_proxy2pw(std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, cudaStr
         return p2pw_shared_bytes(max_n_order, max_n_pw, z, sizeof(Real)) <= max_shared;
     };
 
-    std::ostringstream tune_key;
-    tune_key << "PtProxy2Pw|real=" << jit_real_name<Real>() << "|n_order=" << a0.n_order << "|n_pw=" << a0.n_pw
-             << "|n_charge_dim=" << a0.n_charge_dim;
-
-    autotuned_launch<Real>(tune_key.str(), "PtProxy2PwMultiLevelKernel", space, defaults, constraint, launch_one,
+    autotuned_launch<Real>(tk, "PtProxy2PwMultiLevelKernel", space, defaults, constraint, launch_one,
                            /*snapshot_base=*/static_cast<Real *>(nullptr), 0, stream);
 }
 
-template void launch_proxy2pw<float>(std::vector<dmk::cuda::Proxy2PwArgs<float>> &, cudaStream_t);
-template void launch_proxy2pw<double>(std::vector<dmk::cuda::Proxy2PwArgs<double>> &, cudaStream_t);
+template void launch_proxy2pw<float>(std::vector<dmk::cuda::Proxy2PwArgs<float>> &, cudaStream_t, std::string_view);
+template void launch_proxy2pw<double>(std::vector<dmk::cuda::Proxy2PwArgs<double>> &, cudaStream_t, std::string_view);
 
 } // namespace dmk::cuda::pt

@@ -15,10 +15,13 @@
 #include <cstdint>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace dmk::cuda::pt {
@@ -83,29 +86,6 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     const int normal_dim = (s.kernel == DMK_STRESSLET) ? DIM : 0;
     const int values_per_source = DIM + input_dim + normal_dim;
 
-    // Baked coefficient literals from the host generator: one poly for the
-    // scalar kernels, {diag, offdiag} for the velocity kernels.
-    const auto coeffs = get_local_correction_coeffs<Real>(s.kernel, DIM, s.fourier.n_digits, s.fourier.beta);
-    if (coeffs.empty())
-        throw std::runtime_error("pt::direct: empty coefficient set");
-
-    std::string coeff_struct;
-    std::string coeff_args;
-    for (std::size_t i = 0; i < coeffs.size(); ++i) {
-        const std::string name = "Coeff" + std::to_string(i);
-        coeff_struct += emit_coeff_struct<Real>(name.c_str(), coeffs[i]);
-        coeff_args += (i ? ", " : "") + name;
-    }
-    const std::string evaluator_expr = std::string(evaluator_family(s.kernel, DIM)) + "<" + coeff_args + ">";
-    const std::string kernel_name =
-        "PtDirectKernel_" + fnv1a_hex(std::string(jit_real_name<Real>()) + "|" + evaluator_expr + "|" + coeff_struct);
-
-    std::ostringstream prelude_ss;
-    prelude_ss << "#define DMK_DIRECT_KERNEL_NAME " << kernel_name << "\n\n"; // Real provided by make_stage_source
-    prelude_ss << coeff_struct;
-    prelude_ss << "#define DMK_DIRECT_EVALUATOR " << evaluator_expr << "\n\n";
-    const std::string prelude = prelude_ss.str();
-
     // Common args; the src/trg sides differ only in the target/pot fields.
     dmk::cuda::DirectByBoxArgs<Real> base;
     base.n_work = n_work;
@@ -145,57 +125,102 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     a_trg.pot_offsets = s.outputs.d_pot_trg_offsets.data();
 
     static JitCache cache;
+    static std::mutex plan_mtx;
+    static std::map<std::string, std::pair<std::shared_ptr<jit::JitKernel>, TuningParams>> plans;
 
-    // Compile (cache-keyed) + launch one config.
-    auto launch_cfg = [&](dmk::cuda::DirectByBoxArgs<Real> args, const TuningParams &config, cudaStream_t st) {
+    std::ostringstream tune_key_ss;
+    tune_key_ss << "PtDirect|real=" << jit_real_name<Real>() << "|kernel=" << int(s.kernel) << "|dim=" << DIM
+                << "|vps=" << values_per_source << "|nlist1=" << s.topology.nlist1_stride;
+    const std::string tune_key = tune_key_ss.str();
+
+    auto launch_with = [&](const std::shared_ptr<jit::JitKernel> &kernel, const TuningParams &config,
+                           const dmk::cuda::DirectByBoxArgs<Real> &args, cudaStream_t st) {
         if (args.n_work == 0)
             return;
-        JitKey key;
-        key.name = kernel_name;
-        key.real = jit_real_name<Real>();
-        key.sm_major = cache.sm_major();
-        key.sm_minor = cache.sm_minor();
-        key.params = config;
-        auto kernel = cache.get_kernel_from_source(
-            key, [&] { return make_stage_source("pt/direct.cu", key, prelude, "PtDirect"); });
         const std::size_t shared_bytes = std::size_t(config.at("SRC_TILE")) * values_per_source * sizeof(Real);
         kernel->launch(dim3(args.n_work, 1, 1), dim3(config.at("BLOCK_SIZE"), 1, 1), shared_bytes, st, args);
     };
 
-    // Autotune (src side is representative of the launch cost).
-    const cudaDeviceProp &prop = device_prop();
-    const std::size_t max_shared = device_max_shared_bytes();
+    std::shared_ptr<jit::JitKernel> kernel;
+    TuningParams config;
+    {
+        std::lock_guard<std::mutex> lock(plan_mtx);
+        auto it = plans.find(tune_key);
+        if (it != plans.end()) {
+            kernel = it->second.first;
+            config = it->second.second;
+        }
+    }
 
-    const std::vector<TuningParameter> space{
-        {"SRC_TILE", {16, 32, 64, 96, 128, 192, 256}},
-        {"BLOCK_SIZE", {64, 128, 256, 512}},
-        {"TARGETS_PER_THREAD", {1, 2, 3, 4}},
-    };
-    const TuningParams defaults{{"SRC_TILE", 32}, {"BLOCK_SIZE", 128}, {"TARGETS_PER_THREAD", 1}};
+    if (!kernel) {
+        // Baked coefficient literals from the host generator: one poly for the
+        // scalar kernels, {diag, offdiag} for the velocity kernels.
+        const auto coeffs = get_local_correction_coeffs<Real>(s.kernel, DIM, s.fourier.n_digits, s.fourier.beta);
+        if (coeffs.empty())
+            throw std::runtime_error("pt::direct: empty coefficient set");
 
-    const auto constraint = [&](const TuningParams &p) {
-        const int st = p.at("SRC_TILE"), bs = p.at("BLOCK_SIZE"), tg = p.at("TARGETS_PER_THREAD");
-        if (st <= 0 || bs <= 0 || bs > prop.maxThreadsPerBlock || bs % 32 != 0 || tg < 1 || tg > 4)
-            return false;
-        return std::size_t(st) * values_per_source * sizeof(Real) <= max_shared;
-    };
-    const auto benchmark = [&](const TuningParams &p) {
-        return jit::benchmark_cuda_ms(stream, jit::CudaBenchmarkOptions{2, 5},
-                                      [&](cudaStream_t bs) { launch_cfg(a_src, p, bs); });
-    };
+        std::string coeff_struct;
+        std::string coeff_args;
+        for (std::size_t i = 0; i < coeffs.size(); ++i) {
+            const std::string name = "Coeff" + std::to_string(i);
+            coeff_struct += emit_coeff_struct<Real>(name.c_str(), coeffs[i]);
+            coeff_args += (i ? ", " : "") + name;
+        }
+        const std::string evaluator_expr = std::string(evaluator_family(s.kernel, DIM)) + "<" + coeff_args + ">";
+        const std::string kernel_name = "PtDirectKernel_" + fnv1a_hex(std::string(jit_real_name<Real>()) + "|" +
+                                                                      evaluator_expr + "|" + coeff_struct);
 
-    std::ostringstream tune_key;
-    tune_key << "PtDirect|real=" << jit_real_name<Real>() << "|kernel=" << int(s.kernel) << "|dim=" << DIM
-             << "|vps=" << values_per_source << "|nlist1=" << s.topology.nlist1_stride;
+        std::ostringstream prelude_ss;
+        prelude_ss << "#define DMK_DIRECT_KERNEL_NAME " << kernel_name << "\n\n"; // Real provided by make_stage_source
+        prelude_ss << coeff_struct;
+        prelude_ss << "#define DMK_DIRECT_EVALUATOR " << evaluator_expr << "\n\n";
+        const std::string prelude = prelude_ss.str();
 
-    const TuningParams config =
-        autotune_config(tune_key.str(), "PtDirectKernel", space, defaults, constraint, benchmark);
+        auto get_kernel = [&](const TuningParams &cfg) {
+            JitKey key;
+            key.name = kernel_name;
+            key.real = jit_real_name<Real>();
+            key.sm_major = cache.sm_major();
+            key.sm_minor = cache.sm_minor();
+            key.params = cfg;
+            return cache.get_kernel_from_source(
+                key, [&] { return make_stage_source("pt/direct.cu", key, prelude, "PtDirect"); });
+        };
+
+        const cudaDeviceProp &prop = device_prop();
+        const std::size_t max_shared = device_max_shared_bytes();
+
+        const std::vector<TuningParameter> space{
+            {"SRC_TILE", {16, 32, 64, 96, 128, 192, 256}},
+            {"BLOCK_SIZE", {64, 128, 256, 512}},
+            {"TARGETS_PER_THREAD", {1, 2, 3, 4}},
+        };
+        const TuningParams defaults{{"SRC_TILE", 32}, {"BLOCK_SIZE", 128}, {"TARGETS_PER_THREAD", 1}};
+
+        const auto constraint = [&](const TuningParams &p) {
+            const int st = p.at("SRC_TILE"), bs = p.at("BLOCK_SIZE"), tg = p.at("TARGETS_PER_THREAD");
+            if (st <= 0 || bs <= 0 || bs > prop.maxThreadsPerBlock || bs % 32 != 0 || tg < 1 || tg > 4)
+                return false;
+            return std::size_t(st) * values_per_source * sizeof(Real) <= max_shared;
+        };
+        // Autotune (src side is representative of the launch cost).
+        const auto benchmark = [&](const TuningParams &p) {
+            return jit::benchmark_cuda_ms(stream, jit::CudaBenchmarkOptions{2, 5},
+                                          [&](cudaStream_t bs) { launch_with(get_kernel(p), p, a_src, bs); });
+        };
+
+        config = autotune_config(tune_key, "PtDirectKernel", space, defaults, constraint, benchmark);
+        kernel = get_kernel(config);
+
+        std::lock_guard<std::mutex> lock(plan_mtx);
+        plans[tune_key] = {kernel, config};
+    }
 
     // Boxes without near-field work keep their zeroed pot region.
     s.outputs.d_pot_direct_src.zero_async(stream);
     s.outputs.d_pot_direct_trg.zero_async(stream);
-    launch_cfg(a_src, config, stream);
-    launch_cfg(a_trg, config, stream);
+    launch_with(kernel, config, a_src, stream);
+    launch_with(kernel, config, a_trg, stream);
 }
 
 template void direct<float, 2>(State<float, 2> &, cudaStream_t);

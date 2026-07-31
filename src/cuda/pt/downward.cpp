@@ -64,6 +64,16 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
         kernel->launch(dim3(max_boxes, n_args, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), 0, st, dev_args, n);
     };
 
+    std::ostringstream tune_key;
+    tune_key << "PtShiftPw|real=" << jit_real_name<Real>() << "|n_pw_modes=" << a0.n_pw_modes
+             << "|n_charge_dim=" << a0.n_charge_dim << "|n_neighbors=" << a0.n_neighbors;
+    const std::string tk = tune_key.str();
+
+    if (auto cfg = autotune_cached(tk)) {
+        launch_one(*cfg, stream);
+        return;
+    }
+
     const cudaDeviceProp &prop = device_prop();
 
     const std::vector<TuningParameter> space{{"BLOCK_SIZE", {64, 128, 256, 512, 768}},
@@ -74,11 +84,7 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
         return bs > 0 && bs <= prop.maxThreadsPerBlock && bs % 32 == 0 && p.at("NEIGHBOR_UNROLL") > 0;
     };
 
-    std::ostringstream tune_key;
-    tune_key << "PtShiftPw|real=" << jit_real_name<Real>() << "|n_pw_modes=" << a0.n_pw_modes
-             << "|n_charge_dim=" << a0.n_charge_dim << "|n_neighbors=" << a0.n_neighbors;
-
-    autotuned_launch<Real>(tune_key.str(), "PtShiftPwKernel", space, defaults, constraint, launch_one,
+    autotuned_launch<Real>(tk, "PtShiftPwKernel", space, defaults, constraint, launch_one,
                            /*snapshot_base=*/static_cast<Real *>(nullptr), 0, stream);
 }
 

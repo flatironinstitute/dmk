@@ -1,19 +1,24 @@
 #include "jit_cache.hpp"
 #include <dmk_jit_config.hpp>
-#include <sstream>
 
 namespace dmk::cuda::jit {
 
 std::string JitKey::to_string() const {
-    std::ostringstream os;
-
-    os << name << "|real=" << real << "|sm=" << sm_major << sm_minor;
-
+    std::string s;
+    s.reserve(name.size() + real.size() + 24 + params.size() * 16);
+    s += name;
+    s += "|real=";
+    s += real;
+    s += "|sm=";
+    s += std::to_string(sm_major);
+    s += std::to_string(sm_minor);
     for (const auto &[k, v] : params) {
-        os << "|" << k << "=" << v;
+        s += '|';
+        s += k;
+        s += '=';
+        s += std::to_string(v);
     }
-
-    return os.str();
+    return s;
 }
 
 JitCache::JitCache() {
