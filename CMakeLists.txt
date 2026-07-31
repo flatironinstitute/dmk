@@ -57,9 +57,11 @@ if (DMK_HAVE_OPENMP)
   find_package(OpenMP REQUIRED)
   set(DMK_OPENMP_TARGET OpenMP::OpenMP_CXX)
   list(APPEND DMK_CXX_FLAGS "-DDMK_HAVE_OPENMP")
-  set(OpenMPSupport ON CACHE BOOL "" FORCE)
+  set(OpenMPSupport ON CACHE BOOL "" FORCE) # extern/nda's own option name
+  set(FINUFFT_USE_OPENMP ON CACHE BOOL "" FORCE)
 else()
   set(OpenMPSupport OFF CACHE BOOL "" FORCE)
+  set(FINUFFT_USE_OPENMP OFF CACHE BOOL "" FORCE)
 endif()
 
 set(DMK_MPI_TARGET "")

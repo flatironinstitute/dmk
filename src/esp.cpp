@@ -21,6 +21,12 @@
 #include <dmk/direct.hpp>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
+#ifdef __linux__
+// For the ducc0 pool-creation affinity workaround in ensure_ducc0_pool_size.
+#include <pthread.h>
+#include <sched.h>
+#include <unistd.h>
+#endif
 
 using Vec3 = std::array<double, 3>;
 using CGrid = std::vector<std::complex<double>>;
@@ -28,32 +34,86 @@ using DGrid = std::vector<double>;
 
 static inline int grid_idx(int ix, int iy, int iz, int n_f) { return ix * n_f * n_f + iy * n_f + iz; }
 
-// ducc0's own thread-count auto-detection (used to size its lazily-constructed
-// global pool) reads the calling thread's OWN pthread affinity mask, not the
-// system's core count -- under OMP_PROC_BIND=true, libgomp pins the master
-// thread to a single core as soon as the OpenMP runtime initializes, so ducc0
-// sees "1 CPU available" and permanently clamps its pool to 1 thread the first
-// time any ducc0 FFT runs (during warmup), regardless of the nthreads argument
-// passed to later c2c() calls. Force the pool up to the size we actually want.
+// ducc0 sizes its lazily-constructed global thread pool from the CALLING
+// thread's own pthread affinity mask, not the system core count. Under
+// OMP_PROC_BIND=true libgomp pins the master thread to a single core as soon as
+// the OpenMP runtime initializes, so ducc0 sees "1 CPU available" and clamps its
+// pool to 1 thread on the first FFT -- permanently, since the pool is a
+// function-local static.
+//
+// Fixing that needs TWO things, and the second is easy to miss:
+//   1. the pool's SIZE must be forced up (resize_thread_pool), and
+//   2. the new workers must not inherit a single-core affinity mask.
+// (2) matters because resize_thread_pool spawns its workers from whichever
+// thread calls it, and Linux pthread children inherit the creator's mask. Doing
+// only (1) yields N threads all timesharing one core: examples/benchmark_ducc0_fft
+// under `taskset -c 0` reports pool_size=N and adjust_nthreads=N while measured
+// speedup stays 1.00x. So widen this thread's mask just for the duration of pool
+// creation, then restore the original pin -- OpenMP's own thread placement is
+// untouched, so FINUFFT's spread/interp keep the benefit of OMP_PROC_BIND.
 static void ensure_ducc0_pool_size(size_t nthreads) {
-    if (ducc0::thread_pool_size() < nthreads)
-        ducc0::resize_thread_pool(nthreads - 1);
+    // resize_thread_pool(X) itself spawns X-1 workers (the calling thread is the
+    // Xth), so pass the desired TOTAL -- passing nthreads-1 here would leave the
+    // pool one thread short of what c2c is then asked to use.
+    if (ducc0::thread_pool_size() >= nthreads)
+        return;
+
+#ifdef __linux__
+    cpu_set_t saved;
+    CPU_ZERO(&saved);
+    const bool have_saved = (pthread_getaffinity_np(pthread_self(), sizeof(saved), &saved) == 0);
+    if (have_saved) {
+        cpu_set_t wide;
+        CPU_ZERO(&wide);
+        const long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+        for (long c = 0; c < ncpu && c < CPU_SETSIZE; ++c)
+            CPU_SET(c, &wide);
+        // Linux intersects the requested mask with what the cpuset/cgroup permits
+        // and only fails outright if the intersection is empty -- which cannot
+        // happen here, since `wide` is a superset of the current mask. A failure
+        // is therefore non-fatal: we simply end up with the old behaviour.
+        pthread_setaffinity_np(pthread_self(), sizeof(wide), &wide);
+    }
+#endif
+
+    ducc0::resize_thread_pool(nthreads);
+
+#ifdef __linux__
+    if (have_saved)
+        pthread_setaffinity_np(pthread_self(), sizeof(saved), &saved);
+#endif
 }
 
+// Both transforms are OUT-OF-PLACE: c2c reads `in` and writes `out` directly,
+// rather than copying in->out first and transforming in place. ducc0 documents
+// this explicitly ("in and out must have identical shapes; they MAY point to
+// the same memory"), and it matters a lot here -- the old `out = in` was a
+// single-threaded ~30 MB std::vector assignment (nf=126) that never scaled,
+// while the transform around it does. Measured with examples/benchmark_ducc0_fft
+// at nf=126: the copy was 10.6% of fftn_3d at 1 thread but 49% at 64, capping
+// the routine at ~10.6x speedup however well c2c itself scaled (it reaches
+// 9.2x alone). The transform's first axis pass has to read `in` and write `out`
+// regardless, so dropping the copy removes that traffic rather than moving it.
 static void fftn_3d(const CGrid &in, CGrid &out, int n) {
-    out = in;
-    ducc0::vfmav<std::complex<double>> v(out.data(), {(size_t)n, (size_t)n, (size_t)n});
+    const size_t nf = (size_t)n, ntot = nf * nf * nf;
+    if (out.size() != ntot) // every current call site pre-sizes; defensive only
+        out.resize(ntot);
+    ducc0::cfmav<std::complex<double>> vin(in.data(), {nf, nf, nf});
+    ducc0::vfmav<std::complex<double>> vout(out.data(), {nf, nf, nf});
     size_t nthreads = (size_t)omp_get_max_threads();
     ensure_ducc0_pool_size(nthreads);
-    ducc0::c2c(v, v, {0, 1, 2}, true, 1.0, nthreads);
+    ducc0::c2c(vin, vout, {0, 1, 2}, true, 1.0, nthreads);
 }
 
 static void ifftn_3d(const CGrid &in, CGrid &out, int n) {
-    out = in;
-    ducc0::vfmav<std::complex<double>> v(out.data(), {(size_t)n, (size_t)n, (size_t)n});
+    const size_t nf = (size_t)n, ntot = nf * nf * nf;
+    if (out.size() != ntot)
+        out.resize(ntot);
+    ducc0::cfmav<std::complex<double>> vin(in.data(), {nf, nf, nf});
+    ducc0::vfmav<std::complex<double>> vout(out.data(), {nf, nf, nf});
     size_t nthreads = (size_t)omp_get_max_threads();
     ensure_ducc0_pool_size(nthreads);
-    ducc0::c2c(v, v, {0, 1, 2}, false, 1.0 / ((double)n * n * n), nthreads);
+    ducc0::c2c(vin, vout, {0, 1, 2}, false, 1.0 / ((double)n * n * n), nthreads);
 }
 
 namespace dmk {
@@ -461,11 +521,31 @@ static DGrid precompute_scaling_coefficients_es(const PSWFKernel &pswf, const ES
     return p;
 }
 
+// Reusable nf^3 grid scratch for long_range, owned by EspPlan (see below) so the
+// serial value-initialization and first-touch page faults are paid once per plan
+// rather than once per eval -- measured at ~2.7 ms per eval for nf=126, and
+// inherently unscalable (it is a single-threaded memset by definition, which is
+// why the `alloc` phase is flat in the strong-scaling plots).
+//
+// Always complex<double> regardless of esp_eval's Real: long_range does its
+// spreading/FFT work in double either way, so one scratch serves both the float
+// and double instantiations.
+//
+// Sharing these across calls means two concurrent evals on the SAME plan would
+// race -- but that already holds for the plan's dbl_buf/flt_buf output
+// workspace, so one-eval-at-a-time per plan is a pre-existing assumption here,
+// not a new constraint.
+struct LongRangeScratch {
+    CGrid b;     // spread output, then recycled as every inverse-FFT output grid
+    CGrid b_hat; // forward-FFT output, scaled in place into the potential spectrum
+    CGrid f_hat; // force spectrum, one axis at a time (force path only)
+};
+
 // Long-range contribution via FINUFFT spreading/interpolation
 template <typename Real>
 static void long_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
                        const PSWFKernel &pswf, const ESPParams &params, const DGrid &scaling_coeffs,
-                       dmk_eval_type eval_type,
+                       dmk_eval_type eval_type, LongRangeScratch &scratch,
                        std::span<Real> pot, std::span<Real> fx, std::span<Real> fy, std::span<Real> fz) {
     const bool want_force = (eval_type >= DMK_POTENTIAL_GRAD);
     int n = params.n;
@@ -492,9 +572,28 @@ static void long_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<
     opts.upsampfac = params.sigma;
     double tol = pswf.eps;
 
+    // Grid buffers come from the plan's reusable scratch, so the serial zero-fill
+    // and first-touch page faults are paid on the first eval only; later evals with
+    // the same nf find them already sized and allocate nothing. Only two grids are
+    // live at once for the potential path:
+    //   b     -- spread output, then recycled as every inverse-FFT output grid
+    //            (dead the moment fftn_3d has read it)
+    //   b_hat -- forward-FFT output, scaled in place into the potential spectrum;
+    //            must survive to the force path, which ifftn_3d's out-of-place
+    //            signature guarantees
+    // Neither needs clearing between evals: FINUFFT's spreader zeroes b itself,
+    // and b_hat is fully overwritten by the forward transform. Not profiled --
+    // it costs nothing on every eval after the first, so a phase timer around it
+    // reports only a one-off startup cost and invites misreading it as recurring.
+    if (static_cast<int>(scratch.b.size()) != ntot)
+        scratch.b.resize(ntot);
+    if (static_cast<int>(scratch.b_hat.size()) != ntot)
+        scratch.b_hat.resize(ntot);
+    CGrid &b = scratch.b;
+    CGrid &b_hat = scratch.b_hat;
+
     // 1. Spread: NU points -> uniform grid (type 1)
     sctl::Profile::Tic("spread", nullptr);
-    std::vector<std::complex<double>> b(ntot, 0.0);
     int ier = finufft3d1(n, x.data(), y.data(), z.data(), c.data(), +1, tol, nf, nf, nf, b.data(), &opts);
     if (ier > 1)
         throw std::runtime_error("finufft3d1 spread failed, ier=" + std::to_string(ier));
@@ -502,28 +601,28 @@ static void long_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<
 
     // 2. Forward FFT
     sctl::Profile::Tic("fft_fwd", nullptr);
-    CGrid b_hat(ntot);
     fftn_3d(b, b_hat, nf);
     sctl::Profile::Toc();
 
-    // 3. Diagonal scaling (precomputed in plan)
+    // 3. Diagonal scaling (precomputed in plan), IN PLACE: b_hat becomes the
+    // potential spectrum. Also spares the force path below a second pass over
+    // scaling_coeffs, since it can now read the already-scaled b_hat directly.
     sctl::Profile::Tic("diagonal", nullptr);
-    CGrid pot_hat(ntot);
 #pragma omp parallel for
     for (int idx = 0; idx < ntot; ++idx)
-        pot_hat[idx] = b_hat[idx] * scaling_coeffs[idx];
+        b_hat[idx] *= scaling_coeffs[idx];
     sctl::Profile::Toc();
 
-    // 4. Inverse FFT
+    // 4. Inverse FFT -- into b, which has been dead since fft_fwd consumed it.
+    // (ifftn_3d is out-of-place, so b_hat survives for the force path.)
     sctl::Profile::Tic("fft_inv", nullptr);
-    CGrid grid_pot(ntot);
-    ifftn_3d(pot_hat, grid_pot, nf);
+    ifftn_3d(b_hat, b, nf);
     sctl::Profile::Toc();
 
     // 5. Interpolate: uniform grid -> NU points (type 2)
     sctl::Profile::Tic("interp", nullptr);
     std::vector<std::complex<double>> pot_c(n);
-    ier = finufft3d2(n, x.data(), y.data(), z.data(), pot_c.data(), +1, tol, nf, nf, nf, grid_pot.data(), &opts);
+    ier = finufft3d2(n, x.data(), y.data(), z.data(), pot_c.data(), +1, tol, nf, nf, nf, b.data(), &opts);
     if (ier > 1)
         throw std::runtime_error("finufft3d2 interp failed, ier=" + std::to_string(ier));
     sctl::Profile::Toc();
@@ -539,49 +638,49 @@ static void long_range(const std::vector<Vec3T<Real>> &r_src, const std::vector<
     for (int i = 0; i < nf; ++i)
         k_idx[i] = (i <= nf / 2) ? i : i - nf;
 
-    // ik method: F = -q*grad(u), and grad(u)_hat_k = i*k*u_hat_k, so the force spectrum is
-    // obtained from the potential spectrum (b_hat * scaling_coeffs, i.e. pot_hat) by multiplying
-    // by -i*k component-wise.
+    // ik method: F = -q*grad(u), and grad(u)_hat_k = i*k*u_hat_k, so the force
+    // spectrum comes from the potential spectrum (b_hat, already scaled in step 3)
+    // by multiplying by -i*k component-wise.
+    //
+    // One axis at a time, reusing a single f_hat scratch and recycling b again as
+    // the inverse-FFT output. The previous version held three f_hat grids plus
+    // three grid_force grids live simultaneously -- six nf^3 arrays whose serial
+    // zero-fills cost more than the extra passes over b_hat this loop trades for
+    // them, and whose ~192 MB working set (nf=126) is itself a drag on a pipeline
+    // already limited by memory bandwidth. Each axis's grid is only needed until
+    // its own interp, so none of them had to coexist.
     std::complex<double> coeff_grad = std::complex<double>(0, 1) * (2.0 * M_PI / params.L);
-    CGrid f_hat_x(ntot), f_hat_y(ntot), f_hat_z(ntot);
+    // Also from the plan's scratch; allocated on the first force eval only. Left
+    // uncleared deliberately -- the axis loop below writes every element before
+    // reading any. A DMK_POTENTIAL-only plan never touches this, so it stays empty.
+    if (static_cast<int>(scratch.f_hat.size()) != ntot)
+        scratch.f_hat.resize(ntot);
+    CGrid &f_hat = scratch.f_hat;
+    std::vector<std::complex<double>> force_c(n);
+    std::span<Real> f_out[3] = {fx, fy, fz};
+
+    for (int d = 0; d < 3; ++d) {
 #pragma omp parallel for collapse(3)
-    for (int ix = 0; ix < nf; ++ix)
-        for (int iy = 0; iy < nf; ++iy)
-            for (int iz = 0; iz < nf; ++iz) {
-                const int idx = grid_idx(ix, iy, iz, nf);
-                const std::complex<double> scaled = b_hat[idx] * scaling_coeffs[idx];
-                // DMK's grid_idx (row-major, z fastest) and FINUFFT's internal grid storage
-                // (column-major, x fastest) disagree on which loop variable is which physical axis;
-                // ix here lines up with FINUFFT's z slot and iz lines up with its x slot
-                f_hat_x[idx] = scaled * coeff_grad * double(k_idx[iz]);
-                f_hat_y[idx] = scaled * coeff_grad * double(k_idx[iy]);
-                f_hat_z[idx] = scaled * coeff_grad * double(k_idx[ix]);
-            }
+        for (int ix = 0; ix < nf; ++ix)
+            for (int iy = 0; iy < nf; ++iy)
+                for (int iz = 0; iz < nf; ++iz) {
+                    const int idx = grid_idx(ix, iy, iz, nf);
+                    // DMK's grid_idx (row-major, z fastest) and FINUFFT's internal grid storage
+                    // (column-major, x fastest) disagree on which loop variable is which physical
+                    // axis, so the axes run in reverse: d=0 (x) takes iz, d=1 (y) iy, d=2 (z) ix.
+                    const int ijk[3] = {ix, iy, iz};
+                    f_hat[idx] = b_hat[idx] * coeff_grad * double(k_idx[ijk[2 - d]]);
+                }
 
-    CGrid grid_force_x(ntot), grid_force_y(ntot), grid_force_z(ntot);
-    ifftn_3d(f_hat_x, grid_force_x, nf);
-    ifftn_3d(f_hat_y, grid_force_y, nf);
-    ifftn_3d(f_hat_z, grid_force_z, nf);
+        ifftn_3d(f_hat, b, nf);
 
-    std::vector<std::complex<double>> force_x_c(n), force_y_c(n), force_z_c(n);
-    ier =
-        finufft3d2(n, x.data(), y.data(), z.data(), force_x_c.data(), +1, tol, nf, nf, nf, grid_force_x.data(), &opts);
-    if (ier > 1)
-        throw std::runtime_error("finufft3d2 interp failed, ier=" + std::to_string(ier));
-    ier =
-        finufft3d2(n, x.data(), y.data(), z.data(), force_y_c.data(), +1, tol, nf, nf, nf, grid_force_y.data(), &opts);
-    if (ier > 1)
-        throw std::runtime_error("finufft3d2 interp failed, ier=" + std::to_string(ier));
-    ier =
-        finufft3d2(n, x.data(), y.data(), z.data(), force_z_c.data(), +1, tol, nf, nf, nf, grid_force_z.data(), &opts);
-    if (ier > 1)
-        throw std::runtime_error("finufft3d2 interp failed, ier=" + std::to_string(ier));
+        ier = finufft3d2(n, x.data(), y.data(), z.data(), force_c.data(), +1, tol, nf, nf, nf, b.data(), &opts);
+        if (ier > 1)
+            throw std::runtime_error("finufft3d2 interp failed, ier=" + std::to_string(ier));
 
 #pragma omp parallel for
-    for (int j = 0; j < n; j++) {
-        fx[j] += -charges[j] * Real(force_x_c[j].real());
-        fy[j] += -charges[j] * Real(force_y_c[j].real());
-        fz[j] += -charges[j] * Real(force_z_c[j].real());
+        for (int j = 0; j < n; j++)
+            f_out[d][j] += -charges[j] * Real(force_c[j].real());
     }
 }
 
@@ -604,6 +703,7 @@ struct EspPlan {
     dmk_eval_type eval_type; // baked in at creation; DMK_POTENTIAL skips all force computation
     std::vector<double> dbl_buf; // reused output workspace for esp_eval<double>
     std::vector<float>  flt_buf; // reused output workspace for esp_eval<float>
+    LongRangeScratch    lr_scratch; // reused nf³ grids for long_range; sized on first eval
 
     EspPlan(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type_)
         : n_digits(esp_digits_from_eps(eps)), eval_type(eval_type_) {
@@ -623,7 +723,7 @@ EspPlan *esp_create_plan(double L, double r_c, double eps, double sigma, dmk_eva
 void esp_destroy_plan(EspPlan *plan) { delete plan; }
 
 #ifdef DMK_GPU_OFFLOAD
-GpuState *esp_create_gpu_plan(EspPlan *plan, bool use_float, GpuSrStrategy strategy) {
+GpuState *esp_create_gpu_plan(EspPlan *plan, bool use_float, GpuSrStrategy strategy, GpuSortMode sort_mode) {
     const double tol = std::pow(10.0, -double(plan->n_digits));
     const double sf  = plan->pswf(0.0) / (plan->params_base.r_c * 4.0 * M_PI * plan->params_base.c0); //self-interaction factor
     // GPU spreads with cuFINUFFT's native ES kernel, not the PSWF, so it needs its
@@ -635,7 +735,7 @@ GpuState *esp_create_gpu_plan(EspPlan *plan, bool use_float, GpuSrStrategy strat
         plan->params_base.n_f, plan->n_digits,
         plan->params_base.L,   plan->params_base.r_c,
         GPU_SPREADER_UPSAMPFAC, tol,
-        sf, float(sf), plan->eval_type, use_float, strategy,
+        sf, float(sf), plan->eval_type, use_float, strategy, sort_mode,
         plan->scaling_coeffs_es.data());
 }
 
@@ -671,7 +771,7 @@ PotForce<Real> esp_eval(EspPlan *plan, const std::vector<Vec3T<Real>> &r_src, co
 
     sctl::Profile::Tic("long_range", nullptr);
     long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs, plan->eval_type,
-                     pot_sp, fx_sp, fy_sp, fz_sp);
+                     plan->lr_scratch, pot_sp, fx_sp, fy_sp, fz_sp);
     sctl::Profile::Toc();
 
     sctl::Profile::Tic("self_interaction", nullptr);
@@ -719,7 +819,8 @@ PotForce<Real> esp_eval_long_range(EspPlan *plan, const std::vector<Vec3T<Real>>
     ESPParams params = plan->params_base;
     params.n = n;
     auto [pot, fx, fy, fz] = make_buf_spans<Real>(plan, n);
-    long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs, plan->eval_type, pot, fx, fy, fz);
+    long_range<Real>(r_src, charges, plan->pswf, params, plan->scaling_coeffs, plan->eval_type, plan->lr_scratch, pot,
+                     fx, fy, fz);
     return {pot, fx, fy, fz};
 }
 

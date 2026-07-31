@@ -19,6 +19,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <type_traits>
 #include <vector>
@@ -64,6 +65,9 @@ struct GpuState {
     // Short-range strategy (see GpuSrStrategy in esp.hpp). Fixed at plan-creation
     // time (esp_create_gpu_plan's strategy arg), read in short_range_gpu.
     GpuSrStrategy strategy = GpuSrStrategy::Dense;
+    // Within-cell sort (see GpuSortMode in esp.hpp), independent of strategy.
+    // Fixed at plan-creation time, read in build_cell_list_gpu.
+    GpuSortMode   sort_mode = GpuSortMode::Bins;
     // Cache for short_range_kernel_pruned/short_range_kernel_pruned_source's
     // shared-memory sizing (see compute_max_cell_pop / short_range_gpu):
     // computing the exact max cell population requires a host-device sync
@@ -164,7 +168,7 @@ GpuState *gpu_create_state(
     int nf, int n_digits,
     double L, double r_c, double gpu_upsampfac, double tol,
     double self_factor_d, float self_factor_f,
-    dmk_eval_type eval_type, bool use_float, GpuSrStrategy strategy,
+    dmk_eval_type eval_type, bool use_float, GpuSrStrategy strategy, GpuSortMode sort_mode,
     const double *h_scaling_coeffs)
 {
     auto *gpu = new GpuState;
@@ -179,6 +183,7 @@ GpuState *gpu_create_state(
     gpu->eval_type     = eval_type;
     gpu->use_float     = use_float;
     gpu->strategy      = strategy;
+    gpu->sort_mode     = sort_mode;
 
     const size_t real_sz    = use_float ? sizeof(float) : sizeof(double);
     const size_t complex_sz = use_float ? sizeof(cuFloatComplex) : sizeof(cuDoubleComplex);
@@ -387,6 +392,93 @@ __global__ void cell_index_kernel(const Real *d_pos_aos, int n, Real L, int nc, 
 }
 
 // ---------------------------------------------------------------------------
+// cell_index_kernel_morton — flat (cell, Morton-code) composite key per
+// particle. Mirrors CPU's sort_cell_morton (read from the ewald-esp branch),
+// but as ONE global composite-key sort instead of many small per-cell radix
+// sorts, for the same reason cell_index_kernel above already does the bins
+// classification as one global sort: many small independent per-cell sorts
+// don't map onto GPU parallelism the way a plain OpenMP-over-cells loop does
+// on CPU. Sorting by (cell_index, morton_code) gives the identical relative
+// ordering within each cell's range that sorting each cell's particles by
+// Morton code independently would.
+//
+// part1by2_64 is a direct port of the CPU function of the same name (plain
+// shift/mask chain) -- CPU also has a byte-chunk lookup-table variant
+// (kSpread3) to avoid a dependent shift chain in a tight scalar loop, but
+// that's a CPU-scalar micro-optimization with nothing to offer one GPU thread
+// per particle, so it's not ported.
+//
+// kMortonBits = 16/DIM = 5 for DIM=3 (this branch is always 3D), matching
+// CPU exactly: each axis is quantized to a 32-level (2^5) grid within the
+// particle's own cell, and the 3 axes interleave into a 15-bit code.
+// kMortonBuckets = 2^15 is therefore the per-cell key space the Morton code
+// ranges over -- the composite key is cell_lin*kMortonBuckets + morton_code,
+// analogous to cell_index_kernel's cell_lin*kEspNbuckets + bin_lin, just at
+// finer resolution. Unlike that key (safely int-sized, kEspNbuckets=8), this
+// one needs 64 bits: cell_lin can be large enough that cell_lin*32768
+// overflows int32 for finer r_c / larger domains, so build_cell_list_gpu
+// gives this path its own unsigned long long key buffer and 64-bit sort.
+// ---------------------------------------------------------------------------
+__device__ __forceinline__ uint64_t part1by2_64(uint64_t x) {
+    x &= 0x1fffffull;
+    x = (x | x << 32) & 0x1f00000000ffffull;
+    x = (x | x << 16) & 0x1f0000ff0000ffull;
+    x = (x | x << 8)  & 0x100f00f00f00f00full;
+    x = (x | x << 4)  & 0x10c30c30c30c30c3ull;
+    x = (x | x << 2)  & 0x1249249249249249ull;
+    return x;
+}
+__device__ __forceinline__ uint64_t morton3(uint64_t cx, uint64_t cy, uint64_t cz) {
+    return (part1by2_64(cx) << 2) | (part1by2_64(cy) << 1) | part1by2_64(cz);
+}
+
+constexpr int kMortonBits = 5; // 16/DIM for DIM=3, matches CPU's sort_cell_morton
+constexpr unsigned long long kMortonBuckets = 1ull << (3 * kMortonBits); // 32768
+
+// Mirrors MulByEspNbuckets, widened to 64-bit for the Morton composite key.
+struct MulByMortonBuckets {
+    __host__ __device__ unsigned long long operator()(int c) const {
+        return (unsigned long long)c * kMortonBuckets;
+    }
+};
+
+template <typename Real>
+__global__ void cell_index_kernel_morton(const Real *d_pos_aos, int n, Real L, int nc,
+                                         unsigned long long *d_cell_idx)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    const Real cell_size = L / Real(nc);
+
+    // Same wrapped-cell-coordinate logic as cell_index_kernel, but returns the
+    // continuous within-cell fraction (0..1) instead of a coarse bin index --
+    // Morton needs kMortonBits levels of resolution, not just 1.
+    auto cell_coord_and_frac = [&](Real x, Real &frac_out) {
+        const Real u = (x + L / Real(2)) / cell_size;
+        int c = static_cast<int>(floor(u));
+        frac_out = u - floor(u);
+        c = (c >= nc) ? c - nc : c;
+        c = (c < 0)   ? c + nc : c;
+        return c;
+    };
+
+    Real fx, fy, fz;
+    const int cx = cell_coord_and_frac(d_pos_aos[3 * i + 0], fx);
+    const int cy = cell_coord_and_frac(d_pos_aos[3 * i + 1], fy);
+    const int cz = cell_coord_and_frac(d_pos_aos[3 * i + 2], fz);
+
+    constexpr int kMax = (1 << kMortonBits) - 1;
+    auto quantize = [&](Real frac) {
+        int q = static_cast<int>(frac * Real(1 << kMortonBits));
+        return (uint64_t)((q < 0) ? 0 : (q > kMax ? kMax : q));
+    };
+    const uint64_t code = morton3(quantize(fx), quantize(fy), quantize(fz));
+
+    const int cell_lin = (cx * nc + cy) * nc + cz;
+    d_cell_idx[i] = (unsigned long long)cell_lin * kMortonBuckets + code;
+}
+
+// ---------------------------------------------------------------------------
 // gather_sorted_kernel — apply the cell-sort permutation to positions/charges.
 // ---------------------------------------------------------------------------
 template <typename Real>
@@ -423,38 +515,73 @@ static void build_cell_list_gpu(
     const int ncells = nc * nc * nc;
     const auto policy = thrust::cuda::par.on(gpu.stream);
 
-    // d_cell_idx is transient (dead after the sort below); d_orig is this function's real
-    // output, needed by the caller through scatter_kernel. Both int, share one persistent
-    // 2n-int scratch buffer via sub-offsets.
-    ensure_capacity(gpu.d_scratch_idx, gpu.scratch_idx_cap, 2 * (size_t)n * sizeof(int));
-    int *d_cell_idx = reinterpret_cast<int *>(gpu.d_scratch_idx);
-    int *d_orig     = d_cell_idx + n;
+    int *d_orig = nullptr;
 
-    {
-        NvtxRange range("short_range/cell_index");
-        const int threads = 256, blocks = (n + threads - 1) / threads;
-        cell_index_kernel<Real><<<blocks, threads, 0, gpu.stream>>>(d_pos_aos, n, L, nc, d_cell_idx); //computes each particle's (cell,bin) composite key
-    }
+    if (gpu.sort_mode == GpuSortMode::Morton) {
+        // d_cell_idx (unsigned long long, transient) is dead after the sort below; d_orig
+        // is this function's real output, needed by the caller through scatter_kernel. The
+        // 8-byte keys give this path a different layout than the Bins path below, so it
+        // sizes the same persistent scratch buffer differently rather than sharing offsets.
+        ensure_capacity(gpu.d_scratch_idx, gpu.scratch_idx_cap,
+                       (size_t)n * sizeof(unsigned long long) + (size_t)n * sizeof(int));
+        unsigned long long *d_cell_idx = reinterpret_cast<unsigned long long *>(gpu.d_scratch_idx);
+        d_orig = reinterpret_cast<int *>(d_cell_idx + n);
 
-    {
-        NvtxRange range("short_range/cell_sort");
-        thrust::device_ptr<int> cell_idx_ptr(d_cell_idx); //keys for sort_by_key (composite cell*kEspNbuckets+bin)
-        thrust::device_ptr<int> orig_ptr(d_orig);
-        thrust::sequence(policy, orig_ptr, orig_ptr + n);
-        thrust::sort_by_key(policy, cell_idx_ptr, cell_idx_ptr + n, orig_ptr); //sort particles by composite key; also sort their original indices
+        {
+            NvtxRange range("short_range/cell_index_morton");
+            const int threads = 256, blocks = (n + threads - 1) / threads;
+            cell_index_kernel_morton<Real><<<blocks, threads, 0, gpu.stream>>>(d_pos_aos, n, L, nc, d_cell_idx); //computes each particle's (cell,morton) composite key
+        }
 
-        // d_cell_start is plan-level (gpu_create_state): size ncells+1 is fixed by nc. Search for
-        // c*kEspNbuckets (not c) since the sort key is now the composite cell*kEspNbuckets+bin --
-        // cell_start[c] is still exactly "first sorted position belonging to cell c" either way,
-        // the bin part is transparent to it (bin_lin is always < kEspNbuckets, so it never pushes
-        // a particle across a cell boundary).
-        thrust::device_ptr<int> cell_start_ptr(gpu.d_cell_start);
-        auto search_begin = thrust::make_transform_iterator(thrust::counting_iterator<int>(0),
-                                                            MulByEspNbuckets{});
-        // cell_start[c] = first sorted position with composite key >= c*kEspNbuckets; standard
-        // sort+lower_bound bucketing idiom, giving the same CSR boundaries as an explicit counting sort.
-        thrust::lower_bound(policy, cell_idx_ptr, cell_idx_ptr + n, search_begin, search_begin + ncells + 1,
-                            cell_start_ptr);
+        {
+            NvtxRange range("short_range/cell_sort_morton");
+            thrust::device_ptr<unsigned long long> cell_idx_ptr(d_cell_idx); //keys for sort_by_key (composite cell*kMortonBuckets+morton_code)
+            thrust::device_ptr<int> orig_ptr(d_orig);
+            thrust::sequence(policy, orig_ptr, orig_ptr + n);
+            thrust::sort_by_key(policy, cell_idx_ptr, cell_idx_ptr + n, orig_ptr); //sort particles by composite key; also sort their original indices
+
+            // Same sort+lower_bound bucketing idiom as the Bins path, just with the
+            // Morton composite key's own bucket width (MulByMortonBuckets).
+            thrust::device_ptr<int> cell_start_ptr(gpu.d_cell_start);
+            auto search_begin = thrust::make_transform_iterator(thrust::counting_iterator<int>(0),
+                                                                MulByMortonBuckets{});
+            thrust::lower_bound(policy, cell_idx_ptr, cell_idx_ptr + n, search_begin, search_begin + ncells + 1,
+                                cell_start_ptr);
+        }
+    } else {
+        // d_cell_idx is transient (dead after the sort below); d_orig is this function's real
+        // output, needed by the caller through scatter_kernel. Both int, share one persistent
+        // 2n-int scratch buffer via sub-offsets.
+        ensure_capacity(gpu.d_scratch_idx, gpu.scratch_idx_cap, 2 * (size_t)n * sizeof(int));
+        int *d_cell_idx = reinterpret_cast<int *>(gpu.d_scratch_idx);
+        d_orig          = d_cell_idx + n;
+
+        {
+            NvtxRange range("short_range/cell_index");
+            const int threads = 256, blocks = (n + threads - 1) / threads;
+            cell_index_kernel<Real><<<blocks, threads, 0, gpu.stream>>>(d_pos_aos, n, L, nc, d_cell_idx); //computes each particle's (cell,bin) composite key
+        }
+
+        {
+            NvtxRange range("short_range/cell_sort");
+            thrust::device_ptr<int> cell_idx_ptr(d_cell_idx); //keys for sort_by_key (composite cell*kEspNbuckets+bin)
+            thrust::device_ptr<int> orig_ptr(d_orig);
+            thrust::sequence(policy, orig_ptr, orig_ptr + n);
+            thrust::sort_by_key(policy, cell_idx_ptr, cell_idx_ptr + n, orig_ptr); //sort particles by composite key; also sort their original indices
+
+            // d_cell_start is plan-level (gpu_create_state): size ncells+1 is fixed by nc. Search for
+            // c*kEspNbuckets (not c) since the sort key is now the composite cell*kEspNbuckets+bin --
+            // cell_start[c] is still exactly "first sorted position belonging to cell c" either way,
+            // the bin part is transparent to it (bin_lin is always < kEspNbuckets, so it never pushes
+            // a particle across a cell boundary).
+            thrust::device_ptr<int> cell_start_ptr(gpu.d_cell_start);
+            auto search_begin = thrust::make_transform_iterator(thrust::counting_iterator<int>(0),
+                                                                MulByEspNbuckets{});
+            // cell_start[c] = first sorted position with composite key >= c*kEspNbuckets; standard
+            // sort+lower_bound bucketing idiom, giving the same CSR boundaries as an explicit counting sort.
+            thrust::lower_bound(policy, cell_idx_ptr, cell_idx_ptr + n, search_begin, search_begin + ncells + 1,
+                                cell_start_ptr);
+        }
     }
 
     // xs/ys/zs/qs are this function's other output, always used together downstream --

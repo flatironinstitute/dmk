@@ -63,6 +63,13 @@ PotForce<Real> esp_eval_long_range(EspPlan *plan, const std::vector<Vec3T<Real>>
 // evaluation) -- much finer-grained, expected to prune substantially more.
 enum class GpuSrStrategy : int { Dense = 0, PruneTile = 1, PruneSource = 2 };
 
+// Within-cell sort used to build tiles, independent of GpuSrStrategy (any
+// strategy can run with either sort): Bins classifies each particle into one
+// of 8 octant sub-bins per cell (cheap, loose tiles); Morton instead sorts by
+// a Z-order code over a finer per-axis quantization (pricier, tighter tiles).
+// Mirrors the CPU reference's sort_cell_bins / sort_cell_morton.
+enum class GpuSortMode : int { Bins = 0, Morton = 1 };
+
 #ifdef DMK_GPU_OFFLOAD
 // GPU plan — a separate, independent object that owns all CUDA resources.
 // Create one alongside (or instead of) an EspPlan; destroy when done.
@@ -70,7 +77,8 @@ enum class GpuSrStrategy : int { Dense = 0, PruneTile = 1, PruneSource = 2 };
 // plans and long-range buffers only exist for that precision) -- every
 // esp_eval_gpu*<Real> call on the returned GpuState must match it.
 struct GpuState;
-GpuState *esp_create_gpu_plan(EspPlan *plan, bool use_float, GpuSrStrategy strategy = GpuSrStrategy::Dense);
+GpuState *esp_create_gpu_plan(EspPlan *plan, bool use_float, GpuSrStrategy strategy = GpuSrStrategy::Dense,
+                              GpuSortMode sort_mode = GpuSortMode::Bins);
 void      esp_destroy_gpu_plan(GpuState *gpu);
 
 // GPU evaluation — same semantics as esp_eval but runs on GPU.

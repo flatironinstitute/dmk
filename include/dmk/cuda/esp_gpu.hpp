@@ -27,11 +27,14 @@ struct GpuState; // full definition lives in esp_cuda.cu
 // strategy: selects which short-range kernel this plan's short_range_gpu
 // calls will use -- see GpuSrStrategy in esp.hpp. Fixed at plan-creation
 // time, like use_float; create multiple GpuStates to compare strategies.
+// sort_mode: selects the within-cell sort build_cell_list_gpu uses -- see
+// GpuSortMode in esp.hpp. Independent of strategy; also fixed at
+// plan-creation time.
 GpuState *gpu_create_state(
     int nf, int n_digits,
     double L, double r_c, double gpu_upsampfac, double tol,
     double self_factor_d, float self_factor_f,
-    dmk_eval_type eval_type, bool use_float, GpuSrStrategy strategy,
+    dmk_eval_type eval_type, bool use_float, GpuSrStrategy strategy, GpuSortMode sort_mode,
     const double *h_scaling_coeffs);
 
 // Called from esp_destroy_gpu_plan in esp.cpp.
