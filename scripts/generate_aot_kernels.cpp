@@ -1,9 +1,17 @@
 // generate_aot_kernels.cpp
 //
-// Builds and runs as part of the build process. Generates aot_kernels.cpp
-// with all coefficient tables and kernel dispatch functions.
+// Builds and runs as part of the build process. Generates one of:
+//   * src/aot_kernels.cpp  (host AOT, default; --target=cpu)
+//   * src/cuda/kernels.cu  (CUDA AOT;        --target=cuda)
 //
-// Usage: ./generate_aot_kernels > src/aot_kernels.cpp
+// Both outputs are independent of CMake's DMK_GPU_OFFLOAD: the CUDA file is
+// always generatable, the build just doesn't compile it unless the option is
+// set.
+//
+// Usage:
+//   ./generate_aot_kernels                    > src/aot_kernels.cpp
+//   ./generate_aot_kernels --target=cpu       > src/aot_kernels.cpp
+//   ./generate_aot_kernels --target=cuda      > src/cuda/aot_kernels.cu
 
 #include <cmath>
 #include <dmk.h>
@@ -13,7 +21,10 @@
 #include <format>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
+
+enum class Target { CPU, CUDA };
 
 struct KernelDef {
     dmk_ikernel kernel;
@@ -59,8 +70,9 @@ constexpr int max_digits = 12;
 struct CoeffsInfo {
     int digits;
     double beta;
-    std::vector<size_t> sub_sizes; // size of each sub-array
-    size_t total_size;             // sum of sub_sizes
+    std::vector<size_t> sub_sizes;           // size of each sub-array
+    size_t total_size;                       // sum of sub_sizes
+    std::vector<std::vector<double>> values; // per-sub-array coefficients (used by CUDA tag emission)
     dmk_eval_type eval_level;
 };
 
@@ -100,6 +112,10 @@ void emit_coeffs_array(const std::string &name, const std::vector<std::vector<do
 std::string coeff_name(const KernelDef &k, int digits, dmk_eval_type el) {
     return std::format("{}_{}d_{}_{}", base_name(k), k.dim, dmk::util::to_string(el), digits);
 }
+
+// =====================================================================
+// CPU (host AOT) emission
+// =====================================================================
 
 void emit_getter_branch_for_level(const KernelDef &k, dmk_eval_type el, const std::vector<CoeffsInfo> &infos) {
     for (const auto &info : infos) {
@@ -301,7 +317,243 @@ void emit_getter_yukawa(const KernelDef &k, bool ranges) {
               << "}\n";
 }
 
-int main() {
+// =====================================================================
+// CUDA AOT emission. Coefficients ride into the kernel as compile-time
+// *types* — one tag struct per (kernel, digits, sub-array, precision)
+// exposing `value_type`, `size`, and `data[size]`. Each getter selects
+// the matching tag by Real via pack_for<> and passes it as a type-template
+// argument to the launcher.
+// =====================================================================
+
+// C enum spelling for a kernel, for generated dispatch conditions.
+std::string kernel_enum_name(dmk_ikernel kernel) {
+    switch (kernel) {
+    case DMK_YUKAWA:
+        return "DMK_YUKAWA";
+    case DMK_LAPLACE:
+        return "DMK_LAPLACE";
+    case DMK_SQRT_LAPLACE:
+        return "DMK_SQRT_LAPLACE";
+    case DMK_STOKESLET:
+        return "DMK_STOKESLET";
+    case DMK_STRESSLET:
+        return "DMK_STRESSLET";
+    case DMK_LAPLACE_DIPOLE:
+        return "DMK_LAPLACE_DIPOLE";
+    }
+    return "DMK_LAPLACE";
+}
+
+// Sub-array semantic name (for stokeslet/stresslet which have diag + offdiag).
+// For single-array kernels returns empty string.
+std::string sub_label(const KernelDef &k, std::size_t sub_idx) {
+    if (k.kernel == DMK_STOKESLET || k.kernel == DMK_STRESSLET)
+        return sub_idx == 0 ? "diag" : "offdiag";
+    return "";
+}
+
+// Tag names thread the eval_level (via coeff_name) so per-eval-level tables stay
+// distinct. The CUDA device kernels are potential/velocity-only today, so the
+// emitters below only materialize the primary eval_level; GPU grad is a follow-up
+// once the device kernels gain an eval_level parameter.
+std::string tag_name(const KernelDef &k, int digits, dmk_eval_type el, std::size_t sub_idx, char prec) {
+    auto label = sub_label(k, sub_idx);
+    if (label.empty())
+        return std::format("{}_{}", coeff_name(k, digits, el), prec);
+    return std::format("{}_{}_{}", coeff_name(k, digits, el), label, prec);
+}
+
+void emit_tag(const std::string &name, const std::vector<double> &vals, char prec) {
+    const char *type = (prec == 'f') ? "float" : "double";
+    std::cout << std::format("struct {} {{\n", name);
+    std::cout << std::format("    using value_type = {};\n", type);
+    std::cout << std::format("    static constexpr std::size_t size = {};\n", vals.size());
+    std::cout << std::format("    __host__ __device__ static constexpr {} at(std::size_t i) {{\n", type);
+    std::cout << std::format("        constexpr {} v[{}] = {{", type, vals.size());
+    for (std::size_t i = 0; i < vals.size(); ++i) {
+        if (i > 0)
+            std::cout << ",";
+        if (i % 4 == 0)
+            std::cout << "\n            ";
+        std::cout << std::format(" {:.17e}", vals[i]);
+        if (prec == 'f')
+            std::cout << "f";
+    }
+    std::cout << "};\n";
+    std::cout << "        return v[i];\n";
+    std::cout << "    }\n};\n";
+}
+
+// Map a kernel/dim back to its CUDA evaluator class name.
+std::string cuda_evaluator_class(const KernelDef &k) {
+    switch (k.kernel) {
+    case DMK_LAPLACE:
+        return k.dim == 2 ? "LaplacePolyEvaluator2DCuda" : "LaplacePolyEvaluator3DCuda";
+    case DMK_SQRT_LAPLACE:
+        return k.dim == 2 ? "SqrtLaplacePolyEvaluator2DCuda" : "SqrtLaplacePolyEvaluator3DCuda";
+    case DMK_STOKESLET:
+        return "StokesletPolyEvaluator3DCuda";
+    case DMK_STRESSLET:
+        return "StressletPolyEvaluator3DCuda";
+    case DMK_LAPLACE_DIPOLE:
+        return "LaplaceDipolePolyEvaluator3DCuda";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+void emit_direct_dispatch_block(const KernelDef &k, const std::vector<CoeffsInfo> &infos) {
+    std::cout << std::format("    if (kernel == {} && dim == {}) {{\n", kernel_enum_name(k.kernel), k.dim);
+    const dmk_eval_type el = k.eval_levels.front();
+    for (const auto &info : infos) {
+        if (info.eval_level != el)
+            continue;
+        std::string using_decls;
+        std::string tparams;
+        for (std::size_t i = 0; i < info.sub_sizes.size(); ++i) {
+            const auto td = tag_name(k, info.digits, el, i, 'd');
+            const auto tf = tag_name(k, info.digits, el, i, 'f');
+            using_decls += std::format("            using Coeffs{} = "
+                                       "cuda_aot::pack_for<Real, cuda_aot::{}, cuda_aot::{}>;\n",
+                                       i, td, tf);
+            if (i > 0)
+                tparams += ", ";
+            tparams += std::format("Coeffs{}", i);
+        }
+        std::cout << std::format("        if (n_digits <= {}) {{\n"
+                                 "{}"
+                                 "            cuda::launch_direct_by_box<cuda::{}<{}>>(args, stream);\n"
+                                 "            return;\n"
+                                 "        }}\n",
+                                 info.digits, using_decls, cuda_evaluator_class(k), tparams);
+    }
+    std::cout << std::format("        throw std::runtime_error(\"launch_direct_by_box_dispatch: unsupported "
+                             "n_digits=\" + std::to_string(n_digits) + \" for {} dim={}\");\n"
+                             "    }}\n",
+                             kernel_enum_name(k.kernel), k.dim);
+}
+
+void emit_direct_dispatch_cuda(const std::vector<std::pair<KernelDef, std::vector<CoeffsInfo>>> &kernels) {
+    std::cout << "\n// Per-box direct-residual dispatch.\n";
+    std::cout << "template <typename Real>\n"
+                 "void cuda::launch_direct_by_box_dispatch(dmk_ikernel kernel, int dim, int n_digits,\n"
+                 "                                          const cuda::DirectByBoxArgs<Real> &args,\n"
+                 "                                          cudaStream_t stream) {\n";
+    for (const auto &[k, infos] : kernels)
+        emit_direct_dispatch_block(k, infos);
+    std::cout << "    throw std::runtime_error(\"launch_direct_by_box_dispatch: unsupported (kernel,dim)\");\n"
+                 "}\n\n";
+    std::cout << "template void cuda::launch_direct_by_box_dispatch<float>(dmk_ikernel, int, int, "
+                 "const cuda::DirectByBoxArgs<float> &, cudaStream_t);\n";
+    std::cout << "template void cuda::launch_direct_by_box_dispatch<double>(dmk_ikernel, int, int, "
+                 "const cuda::DirectByBoxArgs<double> &, cudaStream_t);\n";
+}
+
+void emit_cuda_file(const std::vector<std::pair<KernelDef, std::vector<CoeffsInfo>>> &kernels) {
+    std::cout << R"(// Auto-generated by generate_aot_kernels. Do not edit.
+#include <dmk.h>
+#include <dmk/cuda/direct_kernels.cuh>
+#include <dmk/types.hpp>
+
+#include <cstddef>
+#include <stdexcept>
+#include <string>
+#include <type_traits>
+
+namespace dmk {
+
+namespace cuda_aot {
+
+template <typename Real, typename TagD, typename TagF>
+using pack_for = std::conditional_t<std::is_same_v<Real, double>, TagD, TagF>;
+
+)";
+
+    // Per-kernel/per-digit tag struct definitions, both precisions. Potential
+    // (primary eval_level) only for now; see tag_name.
+    for (const auto &[k, infos] : kernels) {
+        const dmk_eval_type el = k.eval_levels.front();
+        for (const auto &info : infos) {
+            if (info.eval_level != el)
+                continue;
+            std::cout << std::format("// {} digits={} (beta={})\n", getter_name(k), info.digits, info.beta);
+            for (std::size_t i = 0; i < info.values.size(); ++i) {
+                emit_tag(tag_name(k, info.digits, el, i, 'd'), info.values[i], 'd');
+                emit_tag(tag_name(k, info.digits, el, i, 'f'), info.values[i], 'f');
+            }
+            std::cout << "\n";
+        }
+    }
+
+    std::cout << "} // namespace cuda_aot\n";
+
+    emit_direct_dispatch_cuda(kernels);
+
+    std::cout << "\n} // namespace dmk\n";
+}
+
+// =====================================================================
+// Driver
+// =====================================================================
+
+int main(int argc, char **argv) {
+    Target target = Target::CPU;
+    for (int i = 1; i < argc; ++i) {
+        std::string_view arg = argv[i];
+        if (arg == "--target=cpu")
+            target = Target::CPU;
+        else if (arg == "--target=cuda")
+            target = Target::CUDA;
+        else {
+            std::cerr << std::format("Unknown argument: {}\n", arg);
+            std::cerr << "Usage: generate_aot_kernels [--target=cpu|cuda]\n";
+            return 1;
+        }
+    }
+
+    // CUDA path: coefficients ride into the kernel as compile-time type tags
+    // (not runtime arrays), so collect every kernel first and emit in one pass.
+    if (target == Target::CUDA) {
+        std::vector<std::pair<KernelDef, std::vector<CoeffsInfo>>> kernels;
+        for (auto &k : all_kernels) {
+            std::vector<CoeffsInfo> infos;
+            for (auto el : k.eval_levels) {
+                for (int digits = min_digits; digits <= max_digits; ++digits) {
+                    try {
+                        pdmk_params p;
+                        p.kernel = k.kernel;
+                        p.n_dim = k.dim;
+                        p.eps = std::pow(10, -digits);
+                        p.eval_src = el;
+                        p.eval_trg = el;
+                        p.debug_flags = 0;
+                        const double beta = dmk::util::calc_bandlimiting(p);
+                        auto coeffs = dmk::get_local_correction_coeffs<double>(k.kernel, k.dim, digits, beta);
+
+                        CoeffsInfo info;
+                        info.digits = digits;
+                        info.beta = beta;
+                        info.total_size = 0;
+                        info.eval_level = el;
+                        for (const auto &cvec : coeffs) {
+                            info.sub_sizes.push_back(cvec.size());
+                            info.total_size += cvec.size();
+                        }
+                        info.values = std::move(coeffs);
+                        infos.push_back(std::move(info));
+                    } catch (std::exception &e) {
+                        std::cerr << std::format("// Skipped {} digits={} eval_level={}: {}\n", getter_name(k), digits,
+                                                 dmk::util::to_string(el), e.what());
+                    }
+                }
+            }
+            kernels.emplace_back(k, std::move(infos));
+        }
+        emit_cuda_file(kernels);
+        return 0;
+    }
+
+    // CPU (host AOT) file.
     std::cout << R"(// Auto-generated by generate_aot_kernels. Do not edit.
 #include <dmk.h>
 #include <dmk/types.hpp>
@@ -317,7 +569,6 @@ constexpr int unroll_factor = 3;
 
     for (auto &k : all_kernels) {
         std::vector<CoeffsInfo> infos;
-
         for (auto el : k.eval_levels) {
             for (int digits = min_digits; digits <= max_digits; ++digits) {
                 try {
@@ -349,7 +600,6 @@ constexpr int unroll_factor = 3;
                 }
             }
         }
-
         emit_getter(k, infos);
     }
 

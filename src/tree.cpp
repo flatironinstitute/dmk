@@ -17,21 +17,28 @@
 #include <dmk/tree.hpp>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
+#include <filesystem>
 #include <fstream>
 #include <omp.h>
 #include <sctl/profile.hpp>
 #include <unistd.h>
 
+#include <dmk/nvtx_wrapper.h>
 #include <dmk/omp_wrapper.hpp>
 
 namespace dmk {
 
 template <typename Real, int DIM>
-void DMKPtTree<Real, DIM>::dump() const {
-    rank_logger->info("Dumping DMKPtTree data on rank {} of comm size {}", comm_.Rank(), comm_.Size());
+void DMKPtTree<Real, DIM>::dump(const std::string &prefix) const {
+    rank_logger->info("Dumping DMKPtTree data on rank {} of comm size {} (prefix='{}')", comm_.Rank(), comm_.Size(),
+                      prefix);
 
-    auto dumper = [this](const std::string &name, const auto &data) {
-        std::string filename = name + "." + std::to_string(comm_.Size()) + "." + std::to_string(comm_.Rank()) + ".dat";
+    if (!prefix.empty())
+        std::filesystem::create_directories(prefix);
+
+    auto dumper = [this, &prefix](const std::string &name, const auto &data) {
+        std::string filename =
+            prefix + name + "." + std::to_string(comm_.Size()) + "." + std::to_string(comm_.Rank()) + ".dat";
         if constexpr (requires { data.Write(filename.c_str()); })
             data.Write(filename.c_str());
         else {
@@ -61,7 +68,7 @@ void DMKPtTree<Real, DIM>::dump() const {
         morton_ids[i] = node_mid[i];
 
     if (comm_.Rank() == 0) {
-        std::string params_filename = "dmk_params." + std::to_string(comm_.Size()) + ".dat";
+        std::string params_filename = prefix + "dmk_params." + std::to_string(comm_.Size()) + ".dat";
         struct ParamsData {
             int n_dim;
             int n_order;
@@ -213,6 +220,31 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
 }
 
 template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::build_tree_for_gpu(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &r_trg) {
+    sctl::Profile::Scoped profile("build_tree_for_gpu", &comm_);
+    logger->info("gpu tree build started");
+
+    constexpr bool balance21 = true;
+    constexpr int halo = 0;
+
+    sctl::Profile::Tic("add_particles", &comm_);
+    this->AddParticles("pdmk_src", r_src);
+    this->AddParticles("pdmk_trg", r_trg);
+    sctl::Profile::Toc();
+
+    sctl::Profile::Tic("update_refinement", &comm_);
+    this->UpdateRefinement(r_src, params.n_per_leaf, balance21, params.use_periodic, halo);
+    sctl::Profile::Toc();
+
+    sctl::Profile::Tic("get_non_halo", &comm_);
+    this->GetData(r_src_sorted_owned, r_src_cnt_owned, "pdmk_src");
+    this->GetData(r_trg_sorted_owned, r_trg_cnt_owned, "pdmk_trg");
+    sctl::Profile::Toc();
+
+    logger->debug("gpu tree build completed");
+}
+
+template <typename Real, int DIM>
 DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, const sctl::Vector<Real> &r_src,
                                 const sctl::Vector<Real> &charge, const sctl::Vector<Real> &normal,
                                 const sctl::Vector<Real> &r_trg)
@@ -224,7 +256,6 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
       n_tables_up(get_table_count_up<DIM>(params.kernel)), n_tables_down(get_table_count_down<DIM>(params.kernel)),
       n_digits(std::round(log10(1.0 / params_.eps) - 0.1)), expansion_constants(params),
       logger(dmk::get_logger(comm, params.log_level)), rank_logger(dmk::get_rank_logger(comm, params.log_level)) {
-    sctl::Profile::Scoped profile("DMKPtTree::DMKPtTree", &comm_);
     debug_omit_pw = (params.debug_flags & DMK_DEBUG_OMIT_PW) || util::env_is_set("DMK_DEBUG_OMIT_PW");
     debug_omit_direct = (params.debug_flags & DMK_DEBUG_OMIT_DIRECT) || util::env_is_set("DMK_DEBUG_OMIT_DIRECT");
     debug_dump_tree = (params.debug_flags & DMK_DEBUG_DUMP_TREE) || util::env_is_set("DMK_DEBUG_DUMP_TREE");
@@ -234,8 +265,19 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
         logger->debug("Ignoring PW interactions");
     if (debug_omit_direct)
         logger->debug("Ignoring direct interactions");
-    build_tree(r_src, charge, normal, r_trg);
-    generate_metadata();
+    if (params.eval_path == DMK_EVAL_PATH_GPU) {
+#ifdef DMK_GPU_OFFLOAD
+        // Host precompute only; the device pipeline lives in dmk::cuda::pt::Tree,
+        // which owns this tree and sorts charges onto the device itself.
+        build_tree_for_gpu(r_src, r_trg);
+        generate_metadata_for_gpu();
+#else
+        throw std::runtime_error("DMK was built without DMK_GPU_OFFLOAD; only DMK_EVAL_PATH_CPU is available");
+#endif
+    } else {
+        build_tree(r_src, charge, normal, r_trg);
+        generate_metadata();
+    }
     logger->info("tree build completed");
 }
 
@@ -818,6 +860,61 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
     // A leaf with a planewave expansion takes its residual one level finer than its
     // own depth, so the level index reaches n_levels().
     const int n_lvl = n_levels() + 1;
+    direct_rsc.ReInit(n_lvl);
+    direct_cen.ReInit(n_lvl);
+    direct_d2max.ReInit(n_lvl);
+    for (int lvl = 0; lvl < n_lvl; ++lvl) {
+        const Real bsize = boxsize[lvl];
+        const Real bsizeinv = Real{1} / bsize;
+        Real rsc = Real{2} * bsizeinv;
+        Real cen = -bsize / Real{2};
+        if ((params.kernel == DMK_SQRT_LAPLACE && DIM == 3) || (params.kernel == DMK_LAPLACE && DIM == 2) ||
+            (params.kernel == DMK_LAPLACE_DIPOLE && DIM == 2) || (params.kernel == DMK_YUKAWA && DIM == 2)) {
+            rsc = Real{2} * bsizeinv * bsizeinv;
+            cen = Real{-1.0};
+        } else if (params.kernel == DMK_YUKAWA) {
+            cen = Real{-1.0};
+        }
+        direct_rsc[lvl] = rsc;
+        direct_cen[lvl] = cen;
+        direct_d2max[lvl] = bsize * bsize;
+    }
+
+    eval_targets_box_list.clear();
+    eval_targets_box_list.reserve(n_boxes());
+    for (int b = 0; b < n_boxes(); ++b)
+        if (iftensprodeval[b])
+            eval_targets_box_list.push_back(b);
+
+    // Per-level tensorprod pairs. Mirrors form_eval_expansions's CPU loop
+    // gating: parent must do PW work (ifpwexp && nboxpts) and not be an
+    // iftensprodeval leaf; child must be a real, non-empty box.
+    {
+        constexpr int n_children = 1u << DIM;
+        const auto &node_mid_local = this->GetNodeMID();
+        const auto &node_lists_local = this->GetNodeLists();
+        tensorprod_pairs_per_level.assign(n_levels(), {});
+        for (int b = 0; b < n_boxes(); ++b) {
+            const int nboxpts = src_counts_owned[b] + trg_counts_owned[b];
+            if (!ifpwexp[b] || !nboxpts || iftensprodeval[b])
+                continue;
+            const int level = node_mid_local[b].Depth();
+            for (int i_child = 0; i_child < n_children; ++i_child) {
+                const int child = node_lists_local[b].child[i_child];
+                if (child < 0)
+                    continue;
+                if (!(src_counts_owned[child] + trg_counts_owned[child]))
+                    continue;
+                tensorprod_pairs_per_level[level].push_back({b, child, i_child});
+            }
+        }
+    }
+
+    // CPU evaluator lambdas — direct.cpp consumes these. The GPU direct path
+    // has its own kernels and ignores evaluator_by_level_*.
+    if (params.eval_path == DMK_EVAL_PATH_GPU)
+        return;
+
     // YUKAWA has no AOT/JIT residual evaluator; it builds its own per-level
     // evaluators in the block below. Every other kernel requires a working
     // AOT/JIT evaluator, so a failure there is fatal (an empty evaluator array
@@ -860,6 +957,40 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
     }
 }
 
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::build_self_correction_work_list() {
+    const auto &node_mid = this->GetNodeMID();
+    const int n_lvl = n_levels() + 1;
+    std::vector<Real> w0(n_lvl);
+    for (int i = 0; i < n_lvl; ++i)
+        w0[i] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i, boxsize[i]);
+
+    // The dipole factor is a gradient correction applied at component offset 1, and is
+    // read only by the GPU path -- correct_for_self_interactions recomputes its own.
+    const bool dipole_grad = params.kernel == DMK_LAPLACE_DIPOLE && params.eval_src >= DMK_POTENTIAL_GRAD;
+    std::vector<Real> w0_grad(n_lvl);
+    if (dipole_grad)
+        for (int i = 0; i < n_lvl; ++i)
+            w0_grad[i] = get_dipole_grad_self_constant<Real, DIM>(fourier_data, params.kernel, i, boxsize[i]);
+
+    self_correction_work.resize(direct_work.size());
+#pragma omp parallel for schedule(static)
+    for (int idx = 0; idx < direct_work.size(); ++idx) {
+        const int box = direct_work[idx];
+        if (params.kernel == DMK_LAPLACE_DIPOLE) {
+            self_correction_work[idx] = dipole_grad ? w0_grad[node_mid[box].Depth() + ifpwexp[box]] : Real{0};
+            continue;
+        }
+        // STRESSLET has no scalar self-correction.
+        if (params.kernel == DMK_STRESSLET) {
+            self_correction_work[idx] = Real{0};
+            continue;
+        }
+        // Must match the level the direct residual uses.
+        self_correction_work[idx] = w0[node_mid[box].Depth() + ifpwexp[box]];
+    }
+}
+
 /// @brief Build any bookkeeping data associated with the tree
 ///
 /// @tparam T Floating point format to use (float, double)
@@ -888,8 +1019,53 @@ void DMKPtTree<Real, DIM>::generate_metadata() {
                                      expansion_constants.n_pw_diff, params.fparam, expansion_constants.beta, boxsize);
     precompute_window_difference_data();
     build_evaluators();
+    build_self_correction_work_list();
 
     logger->debug("done generating tree traversal metadata and other constants");
+}
+
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::generate_metadata_for_gpu() {
+    sctl::Profile::Scoped profile("generate_metadata_for_gpu", &comm_);
+    logger->debug("generating GPU tree traversal metadata");
+    assert(
+        charge_sorted_owned.Dim() == 0 && pot_src_sorted.Dim() == 0 &&
+        "generate_metadata_for_gpu expects build_tree_for_gpu (positions only) — host charge/pot arrays must be empty");
+
+    // The CPU build registers charge/normal/density/pot particle data with
+    // PtTree, which populates these per-box count vectors via GetData. The
+    // GPU build skips those registrations (the data lives on the device), so
+    // mirror the per-box source/target counts here. Single-rank: no halo
+    // exchange, so "with_halo" counts equal "owned".
+    r_src_cnt_with_halo = r_src_cnt_owned;
+    charge_cnt_owned = r_src_cnt_owned;
+    charge_cnt_with_halo = r_src_cnt_owned;
+    pot_src_cnt = r_src_cnt_owned;
+    pot_trg_cnt = r_trg_cnt_owned;
+    if (params.kernel == DMK_STRESSLET) {
+        normal_cnt_with_halo = r_src_cnt_owned;
+        density_cnt_with_halo = r_src_cnt_owned;
+    }
+
+    compute_data_offsets();
+    compute_level_indices_and_boxsizes();
+    compute_box_centers();
+    accumulate_subtree_counts();
+    broadcast_global_leaf_status();
+    compute_proxy_expansion_flags();
+    compute_proxy_evaluation_flags();
+    build_direct_interaction_lists();
+    build_upward_pass_work_lists();
+    build_direct_work_lists();
+    allocate_proxy_coefficients();
+    std::tie(c2p, p2c) = dmk::chebyshev::get_c2p_p2c_matrices<Real>(DIM, expansion_constants.n_order);
+    fourier_data = FourierData<Real>(params.kernel, DIM, params.eps, expansion_constants.n_pw_win,
+                                     expansion_constants.n_pw_diff, params.fparam, expansion_constants.beta, boxsize);
+    precompute_window_difference_data();
+    build_evaluators();
+    build_self_correction_work_list();
+
+    logger->debug("done generating GPU tree traversal metadata");
 }
 
 /// @brief Fill out the proxy coefficients used in the upward pass
@@ -901,9 +1077,23 @@ void DMKPtTree<Real, DIM>::generate_metadata() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::upward_pass() {
     sctl::Profile::Scoped profile("upward_pass", &comm_);
+    nvtxRangePush("upward_pass");
+    logger->info("upward pass started");
+
+    if (params.eval_path != DMK_EVAL_PATH_CPU)
+        throw std::runtime_error(
+            "DMKPtTree::eval runs the CPU path only; GPU evaluation goes through dmk::cuda::pt::Tree");
+
+    cpu_upward_pass();
+
+    logger->info("upward pass finished");
+    nvtxRangePop();
+}
+
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::cpu_upward_pass() {
     sctl::Profile::Tic("upward_pass_init", &comm_);
     const std::size_t n_coeffs = n_tables_up * sctl::pow<DIM>(expansion_constants.n_order);
-    logger->info("upward pass started");
 #pragma omp parallel
 #pragma omp single
     workspaces_.ReInit(MY_OMP_GET_NUM_THREADS());
@@ -914,10 +1104,8 @@ void DMKPtTree<Real, DIM>::upward_pass() {
 
     constexpr int n_children = 1u << DIM;
     const auto &node_lists = this->GetNodeLists();
-    const auto &node_attr = this->GetNodeAttr();
-    const auto &node_mid = this->GetNodeMID();
-
     sctl::Profile::Toc();
+
     {
         sctl::Profile::Scoped profile("charge2proxy", &comm_);
         sctl::Profile::Tic("charge2proxy", &comm_);
@@ -974,9 +1162,9 @@ void DMKPtTree<Real, DIM>::upward_pass() {
 #endif
     }
 
-    sctl::Profile::Tic("broadcast_proxy_coeffs", &comm_);
     logger->debug("Finished building proxy charges");
 
+    sctl::Profile::Tic("broadcast_proxy_coeffs", &comm_);
     this->template ReduceBroadcast<Real>("proxy_coeffs");
     this->GetData(proxy_coeffs_upward, counts, "proxy_coeffs");
     long last_offset = 0;
@@ -989,7 +1177,6 @@ void DMKPtTree<Real, DIM>::upward_pass() {
     }
     sctl::Profile::Toc();
     logger->debug("proxy: finished broadcasting proxy charges");
-    logger->info("upward pass finished");
 }
 
 template <typename Real, int DIM>
@@ -1256,20 +1443,62 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
 }
 
 template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::correct_for_self_interactions() {
+    sctl::Profile::Scoped profile("correct_for_self");
+
+    // LAPLACE_DIPOLE has a gradient self-correction (w0_grad on the grad
+    // components) rather than the scalar potential correction the other kernels
+    // use, so it takes a separate path and recomputes w0_grad locally.
+    if (params.kernel == DMK_LAPLACE_DIPOLE) {
+        if (params.eval_src < DMK_POTENTIAL_GRAD)
+            return;
+        const auto &node_mid = this->GetNodeMID();
+        const int n_lvl = n_levels() + 1;
+        std::vector<Real> w0_grad(n_lvl);
+        for (int i = 0; i < n_lvl; ++i)
+            w0_grad[i] = get_dipole_grad_self_constant<Real, DIM>(fourier_data, params.kernel, i, boxsize[i]);
+#pragma omp for schedule(dynamic)
+        for (int idx = 0; idx < direct_work.size(); ++idx) {
+            const int trg_box = direct_work[idx];
+            if (!src_counts_owned[trg_box])
+                continue;
+            const Real c_grad = w0_grad[node_mid[trg_box].Depth() + ifpwexp[trg_box]];
+            auto pot = pot_src_view(trg_box);
+            auto dip = charge_with_halo_view(trg_box);
+            for (int i_src = 0; i_src < r_src_cnt_with_halo[trg_box]; ++i_src)
+                for (int i = 0; i < DIM; ++i)
+                    pot(1 + i, i_src) -= c_grad * dip(i, i_src);
+        }
+        return;
+    }
+
+#pragma omp for schedule(dynamic)
+    for (int idx = 0; idx < direct_work.size(); ++idx) {
+        const Real correction_factor = self_correction_work[idx];
+        if (correction_factor == Real{0})
+            continue;
+        const int trg_box = direct_work[idx];
+        if (!src_counts_owned[trg_box])
+            continue;
+
+        // FIXME: This needs to deal with correction factors where
+        // kernel_input_dim != kernel_output_dim (like grad, which
+        // needs only a correction factor on the potential, not
+        // the gradient. That's why kernel_input_dim here works)
+        auto pot = pot_src_view(trg_box);
+        auto charge = charge_with_halo_view(trg_box);
+        for (int i_src = 0; i_src < r_src_cnt_with_halo[trg_box]; ++i_src)
+            for (int i = 0; i < kernel_input_dim; ++i)
+                pot(i, i_src) -= correction_factor * charge(i, i_src);
+    }
+}
+
+template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
     sctl::Profile::Scoped profile("evaluate_direct_interactions", &comm_);
     const auto &node_attr = this->GetNodeAttr();
     const auto &node_mid = this->GetNodeMID();
     const auto &node_lists = this->GetNodeLists();
-
-    Real w0[SCTL_MAX_DEPTH];
-    Real w0_grad[SCTL_MAX_DEPTH] = {};
-    // Fill for n_levels+1, note boxsize is already n_levels+1 in size
-    for (int i_level = 0; i_level < std::min(SCTL_MAX_DEPTH, n_levels() + 1); ++i_level) {
-        w0[i_level] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
-        w0_grad[i_level] =
-            get_dipole_grad_self_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
-    }
 
     // For PBC: precompute the periodic shift for each (trg_box, nbr_index) pair.
     // The nbr array index k encodes a direction (dx,dy,dz) ∈ {-1,0,+1}^DIM.
@@ -1319,21 +1548,10 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                 } else if (src_level < trg_level) {
                     src_level = trg_level;
                 }
-                const Real bsize = boxsize[src_level];
 
-                const Real d2max = bsize * bsize;
-                const Real bsizeinv = Real{1} / bsize;
-
-                Real rsc = 2 * bsizeinv;
-                Real cen = -bsize / Real{2};
-
-                if ((params.kernel == DMK_SQRT_LAPLACE && DIM == 3) || (params.kernel == DMK_LAPLACE && DIM == 2) ||
-                    (params.kernel == DMK_LAPLACE_DIPOLE && DIM == 2) || (params.kernel == DMK_YUKAWA && DIM == 2)) {
-                    // Poly in r^2 (2D log-split Yukawa uses the 2D-Laplace mapping).
-                    rsc = 2 * bsizeinv * bsizeinv;
-                    cen = Real{-1.0};
-                } else if (params.kernel == DMK_YUKAWA)
-                    cen = Real{-1.0}; // 3D Yukawa: poly in r (linear), rsc = 2/bsize
+                const Real rsc = direct_rsc[src_level];
+                const Real cen = direct_cen[src_level];
+                const Real d2max = direct_d2max[src_level];
 
                 // Determine if we should filter, and on which side
                 const bool src_larger = node_mid[src_box].Depth() < node_mid[trg_box].Depth();
@@ -1437,40 +1655,6 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                     }
                 }
             }
-
-            if (!src_counts_owned[trg_box])
-                continue;
-
-            if (params.kernel == DMK_STRESSLET)
-                continue;
-
-            // FIXME: The self correction logic should be merged to one loop
-            if (params.kernel == DMK_LAPLACE_DIPOLE) {
-                if (params.eval_src >= DMK_POTENTIAL_GRAD) {
-                    const auto depth = node_mid[trg_box].Depth() + ifpwexp[trg_box];
-                    const Real c_grad = w0_grad[depth];
-                    auto pot = pot_src_view(trg_box);
-                    auto dip = charge_with_halo_view(trg_box);
-                    for (int i_src = 0; i_src < r_src_cnt_with_halo[trg_box]; ++i_src)
-                        for (int i = 0; i < DIM; ++i)
-                            pot(1 + i, i_src) -= c_grad * dip(i, i_src);
-                }
-                continue;
-            }
-
-            // Correct for self-evaluations
-            auto pot = pot_src_view(trg_box);
-            auto charge = charge_with_halo_view(trg_box);
-            // Must match the level the direct residual uses.
-            const Real correction_factor = w0[node_mid[trg_box].Depth() + ifpwexp[trg_box]];
-
-            // FIXME: This needs to deal with correction factors where
-            // kernel_input_dim != kernel_output_dim (like grad, which
-            // needs only a correction factor on the potential, not
-            // the gradient. That's why kernel_input_dim here works)
-            for (int i_src = 0; i_src < r_src_cnt_with_halo[trg_box]; ++i_src)
-                for (int i = 0; i < kernel_input_dim; ++i)
-                    pot(i, i_src) -= correction_factor * charge(i, i_src);
         }
     }
 }
@@ -1484,32 +1668,17 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::downward_pass() {
     sctl::Profile::Scoped prof("downward_pass", &comm_);
+    nvtxRangePush("downward_pass");
     sctl::Profile::Tic("downward_pass_init", &comm_);
     logger->info("downward pass started");
-
-    pot_src_sorted.SetZero();
-    pot_trg_sorted.SetZero();
 
     init_planewave_data();
     sctl::Profile::Toc();
 
-    sctl::Profile::Tic("expansion_propagation_and_eval", &comm_);
-    std::fill(proxy_down_zeroed.begin(), proxy_down_zeroed.end(), 0);
-    form_outgoing_expansions();
-
-    const int n_pw = expansion_constants.n_pw_diff;
-    for (int i_level = 0; i_level < n_levels(); ++i_level) {
-        auto &dfd = difference_fourier_data[i_level];
-        const ndview<std::complex<Real>, 2> p2pw({n_pw, n_order}, &dfd.poly2pw[0]);
-        const ndview<std::complex<Real>, 2> pw2p({n_pw, n_order}, &dfd.pw2poly[0]);
-
-        if (!debug_omit_pw)
-            form_eval_expansions(level_indices[i_level], dfd.wpwshift, boxsize[i_level], pw2p, p2c);
-    }
-    sctl::Profile::Toc();
-
-    if (!debug_omit_direct)
-        evaluate_direct_interactions();
+    pot_src_sorted.SetZero();
+    pot_trg_sorted.SetZero();
+    cpu_downward_pass();
+    correct_for_self_interactions();
 
     logger->info("downward pass completed");
     if (debug_dump_tree)
@@ -1520,6 +1689,35 @@ void DMKPtTree<Real, DIM>::downward_pass() {
     comm_.Barrier();
     sctl::Profile::Toc();
 #endif
+    nvtxRangePop();
+}
+
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::cpu_downward_pass() {
+    sctl::Profile::Tic("downward_pass_init", &comm_);
+
+    pot_src_sorted.SetZero();
+    pot_trg_sorted.SetZero();
+
+    init_planewave_data();
+    sctl::Profile::Toc();
+
+    sctl::Profile::Tic("expansion_propagation_and_eval", &comm_);
+    std::fill(proxy_down_zeroed.begin(), proxy_down_zeroed.end(), 0);
+    form_outgoing_expansions();
+    if (!debug_omit_pw) {
+        const int n_pw = expansion_constants.n_pw_diff;
+        for (int i_level = 0; i_level < n_levels(); ++i_level) {
+            auto &dfd = difference_fourier_data[i_level];
+            const ndview<std::complex<Real>, 2> p2pw({n_pw, n_order}, &dfd.poly2pw[0]);
+            const ndview<std::complex<Real>, 2> pw2p({n_pw, n_order}, &dfd.pw2poly[0]);
+            form_eval_expansions(level_indices[i_level], dfd.wpwshift, boxsize[i_level], pw2p, p2c);
+        }
+    }
+    sctl::Profile::Toc();
+
+    if (!debug_omit_direct)
+        evaluate_direct_interactions();
 }
 
 /// @brief Evaluate using the standard OpenMP pathway
@@ -1541,12 +1739,15 @@ template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::desort_potentials(Real *pot_src, Real *pot_trg) {
     logger->info("De-sorting potentials into user arrays");
     sctl::Profile::Tic("pdmk_tree_eval_sync", &comm_);
-    sctl::Vector<Real> res;
-    this->GetParticleData(res, "pdmk_pot_src");
-    sctl::Vector<Real>(res.Dim(), pot_src, false) = res;
-    this->GetParticleData(res, "pdmk_pot_trg");
-    sctl::Vector<Real>(res.Dim(), pot_trg, false) = res;
+    nvtxRangePush("pdmk_tree_eval_sync");
+
+    sctl::Vector<Real> res_src, res_trg;
+    this->GetParticleData(res_src, "pdmk_pot_src");
+    sctl::Vector<Real>(res_src.Dim(), pot_src, false) = res_src;
+    this->GetParticleData(res_trg, "pdmk_pot_trg");
+    sctl::Vector<Real>(res_trg.Dim(), pot_trg, false) = res_trg;
     sctl::Profile::Toc();
+    nvtxRangePop();
     logger->info("De-sort complete");
 }
 

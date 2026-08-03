@@ -1,23 +1,43 @@
 properties([
-  disableConcurrentBuilds(),
-  buildDiscarder(logRotator(numToKeepStr: '8', daysToKeepStr: '20'))
+  disableConcurrentBuilds(abortPrevious: true),
+  buildDiscarder(logRotator(numToKeepStr: '20', daysToKeepStr: '30'))
 ])
-
 try {
-  timeout(time: 1, unit: 'HOURS') {
-    buildPod(context: 'ci') {
-      stage('main') {
-        withEnv([
-          "HOME=${WORKSPACE}",
-          "LC_ALL=C",
-          "OMP_NUM_THREADS=2",
-          "OPENBLAS_NUM_THREADS=1"
-        ]) {
-          sh 'which mpicxx'
-          sh 'git submodule update --init --recursive'
-          sh 'cmake -B build . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/build/install -DCMAKE_CXX_COMPILER=g++'
-          sh 'cd build && make -j$PARALLEL'
-          sh 'mpirun -n 2 --bind-to none ./build/test/test_all -nc'
+  timeout(time: 90, unit: 'MINUTES') {
+    buildImage(context: 'ci')
+    parallel cpu: {
+      runPod(cpus: 8) {
+        stage('cpu') {
+          withEnv([
+            "HOME=${WORKSPACE}",
+            "LC_ALL=C",
+            "OMP_NUM_THREADS=4",
+            "OPENBLAS_NUM_THREADS=1"
+          ]) {
+            sh 'which mpicxx'
+            sh 'git submodule update --init --recursive'
+            sh 'cmake -B build . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/build/install -DCMAKE_CXX_COMPILER=g++'
+            sh 'cd build && make -j$PARALLEL'
+            sh 'mpirun -n 2 --bind-to none ./build/test/test_all -nc'
+          }
+        }
+      }
+    },
+      gpu: {
+      runPod(cpus: 8, gpus: 1, gpuType: 'a100') {
+        stage('gpu') {
+          withEnv([
+            "HOME=${WORKSPACE}",
+            "LC_ALL=C",
+            "OMP_NUM_THREADS=8",
+            "OPENBLAS_NUM_THREADS=1"
+          ]) {
+            sh 'which nvcc'
+            sh 'git submodule update --init --recursive'
+            sh 'cmake -B build . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/build/install -DCMAKE_CXX_COMPILER=g++ -DDMK_GPU_OFFLOAD=on -DDMK_HAVE_MPI=off -DCMAKE_CUDA_ARCHITECTURES=80'
+            sh 'cd build && make -j$PARALLEL'
+            sh './build/test/test_all -nc'
+          }
         }
       }
     }

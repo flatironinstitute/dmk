@@ -18,13 +18,20 @@ typedef enum : int {
     DMK_LAPLACE_DIPOLE = 5,
 } dmk_ikernel;
 
-typedef enum : int {
+typedef enum {
     DMK_POTENTIAL = 1,
     DMK_POTENTIAL_GRAD = 2,
     DMK_POTENTIAL_GRAD_HESSIAN = 3,
     DMK_VELOCITY = 4,
     DMK_VELOCITY_PRESSURE = 5,
 } dmk_eval_type;
+
+// Selects which compute path eval() uses. The CPU path is always available.
+// GPU requires the library to be built with -DDMK_GPU_OFFLOAD=ON
+typedef enum : int {
+    DMK_EVAL_PATH_CPU = 0,
+    DMK_EVAL_PATH_GPU = 1,
+} dmk_eval_path;
 
 typedef enum : int {
     DMK_SUCCESS = 0,              ///< no error
@@ -59,6 +66,7 @@ enum {
 };
 
 typedef void *pdmk_tree;
+
 #ifdef DMK_HAVE_MPI
 #include <mpi.h>
 typedef MPI_Comm dmk_communicator;
@@ -66,6 +74,7 @@ typedef MPI_Comm dmk_communicator;
 typedef void *dmk_communicator;
 #endif
 
+// clang-format off
 typedef struct pdmk_params {
     int n_dim DMK_DEFAULT(0);                   ///< dimension of system
     double eps DMK_DEFAULT(1e-3);               ///< target precision
@@ -80,7 +89,9 @@ typedef struct pdmk_params {
     int log_level DMK_DEFAULT(6);            ///< 0: trace, 1: debug, 2: info, 3: warn, 4: err, 5: critical, 6: off
     uint32_t debug_flags DMK_DEFAULT(0);     ///< Debug params bit field, see above
     double debug_params[8] DMK_DEFAULT({0}); ///< 0: beta, 1: order, rest: placeholders
+    dmk_eval_path eval_path DMK_DEFAULT(DMK_EVAL_PATH_CPU); ///< CPU / GPU
 } pdmk_params;
+// clang-format on
 
 #ifdef __cplusplus
 extern "C" {
