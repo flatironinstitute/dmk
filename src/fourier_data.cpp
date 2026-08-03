@@ -59,6 +59,14 @@ inline std::tuple<double, double, double> get_PSWF_windowed_kernel_pwterms(int d
     throw std::runtime_error("Invalid dimension " + std::to_string(dim) + " provided");
 }
 
+// (1 - exp(-x)*(1+x))/x^2, via its series where it cancels. g(0) = 1/2.
+inline double truncated_yukawa_zero_mode(double x) {
+    if (x < 0.1)
+        return 0.5 + x * (-1.0 / 3 + x * (1.0 / 8 + x * (-1.0 / 30 + x / 144)));
+    return (1 - std::exp(-x) * (1 + x)) / (x * x);
+}
+
+// Kernel truncated at r = rl, keeping the lattice sum free of periodic images.
 template <typename Real, int DIM>
 void yukawa_windowed_kernel_ft(const double *params, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
                                sctl::Vector<Real> &windowed_ft) {
@@ -69,20 +77,13 @@ void yukawa_windowed_kernel_ft(const double *params, Real beta, int npw, Real bo
     const Real lambda = params[0];
     const Real lambda2 = lambda * lambda;
 
-    // determine whether one needs to smooth out the 1/(k^2+lambda^2) factor at the origin.
-    // needed in the calculation of kernel-smoothing when there is low-frequency breakdown
-    // FIXME: this gives 12 digits for my tested lambdas, so doesn't use beta dependence.
-    // Original was beta dependent but thresholded poorly
-    const bool near_correction = DIM == 2 ? lambda < 5 : false;
-    Real bessk0_Llambda, bessk1_Llambda, exp_Llambda;
-    if (near_correction) {
-        Real arg = L * lambda;
-        if constexpr (DIM == 2) {
-            bessk0_Llambda = util::cyl_bessel_k(0, arg);
-            bessk1_Llambda = util::cyl_bessel_k(1, arg);
-        } else if constexpr (DIM == 3)
-            exp_Llambda = std::exp(-arg);
-    }
+    const Real arg = L * lambda;
+    Real bessk0_Llambda = 0, bessk1_Llambda = 0, exp_Llambda = 0;
+    if constexpr (DIM == 2) {
+        bessk0_Llambda = util::cyl_bessel_k(0, arg);
+        bessk1_Llambda = util::cyl_bessel_k(1, arg);
+    } else
+        exp_Llambda = std::exp(-arg);
 
     const Real psi0 = pf.eval_val(0);
     const Real factor = ws / psi0;
@@ -92,20 +93,17 @@ void yukawa_windowed_kernel_ft(const double *params, Real beta, int npw, Real bo
         const Real xi = sqrt(xi2);
         const Real xval = xi * boxsize / beta;
         const Real fval = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
+        const Real xsc = L * k;
 
-        windowed_ft[i] = factor * fval / xi2;
-
-        if (near_correction) {
-            const Real xsc = L * k;
-            if constexpr (DIM == 2) {
-                using util::cyl_bessel_j;
-                windowed_ft[i] *= -L * lambda * cyl_bessel_j(0, xsc) * bessk1_Llambda + Real{1.0} +
-                                  xsc * cyl_bessel_j(1, xsc) * bessk0_Llambda;
-            } else if constexpr (DIM == 3) {
-                const Real sin_over_k = (k > Real{0}) ? sin(xsc) / k : L;
-                windowed_ft[i] *= Real{1} - exp_Llambda * (cos(xsc) + lambda * sin_over_k);
-            }
-        }
+        if constexpr (DIM == 2) {
+            using util::cyl_bessel_j;
+            windowed_ft[i] = factor * fval / xi2 *
+                             (-L * lambda * cyl_bessel_j(0, xsc) * bessk1_Llambda + Real{1.0} +
+                              xsc * cyl_bessel_j(1, xsc) * bessk0_Llambda);
+        } else if (i == 0)
+            windowed_ft[0] = factor * fval * L * L * truncated_yukawa_zero_mode(arg);
+        else
+            windowed_ft[i] = factor * fval / xi2 * (Real{1} - exp_Llambda * (cos(xsc) + lambda * sin(xsc) / k));
     }
 }
 
@@ -1288,15 +1286,12 @@ Real yukawa_windowed_kernel_value_at_zero(int n_dim, Real rlambda, Real beta, Re
     constexpr Real two_over_pi = 2.0 / M_PI;
     const Real rlambda2 = rlambda * rlambda;
 
-    const bool near_correction = (rlambda * boxsize / beta) < 1.0E-2;
-    Real dk0, dk1, delam;
-    if (near_correction) {
-        if (n_dim == 2) {
-            dk0 = util::cyl_bessel_k(0, rl * rlambda);
-            dk1 = util::cyl_bessel_k(1, rl * rlambda);
-        } else if (n_dim == 3)
-            delam = std::exp(-rl * rlambda);
-    }
+    Real dk0 = 0, dk1 = 0, delam = 0;
+    if (n_dim == 2) {
+        dk0 = util::cyl_bessel_k(0, rl * rlambda);
+        dk1 = util::cyl_bessel_k(1, rl * rlambda);
+    } else
+        delam = std::exp(-rl * rlambda);
 
     const Real psi0 = pf.eval_val(0.0);
     const Real fone = pf.eval_val(1.0);
@@ -1318,13 +1313,11 @@ Real yukawa_windowed_kernel_value_at_zero(int n_dim, Real rlambda, Real beta, Re
         const Real fval0 = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
 
         Real fhat = fval0 / psi0 / xi2;
-        if (near_correction) {
-            const Real xsc = rl * xs[i];
-            if (n_dim == 2)
-                fhat *= -rl * rlambda * util::cyl_bessel_j(0, xsc) * dk1 + 1 + xsc * util::cyl_bessel_j(1, xsc) * dk0;
-            else if (n_dim == 3)
-                fhat *= 1 - delam * (std::cos(xsc) + rlambda / xs[i] * std::sin(xsc));
-        }
+        const Real xsc = rl * xs[i];
+        if (n_dim == 2)
+            fhat *= -rl * rlambda * util::cyl_bessel_j(0, xsc) * dk1 + 1 + xsc * util::cyl_bessel_j(1, xsc) * dk0;
+        else
+            fhat *= 1 - delam * (std::cos(xsc) + rlambda / xs[i] * std::sin(xsc));
 
         if (n_dim == 2)
             fval += fhat * whts[i] * xs[i];
@@ -1402,17 +1395,14 @@ typename FourierData<Real>::LocalCorrectionCoeffs FourierData<Real>::local_corre
         whts[i] = scale_factor * whts_base[i];
     }
 
-    const bool near_correction = rlambda * bsize / beta_ < 1E-2;
-    Real dk0, dk1, delam;
-    const Real rl = difference_kernels_[std::max(i_level, 0)].rl;
-    if (near_correction) {
-        Real arg = rl * rlambda;
-        if (n_dim_ == 2) {
-            dk0 = util::cyl_bessel_k(0, arg);
-            dk1 = util::cyl_bessel_k(1, arg);
-        } else
-            delam = std::exp(-arg);
-    }
+    const double rl = difference_kernels_[std::max(i_level, 0)].rl;
+    const double arg = rl * rlambda;
+    double dk0 = 0, dk1 = 0, delam = 0;
+    if (n_dim_ == 2) {
+        dk0 = util::cyl_bessel_k(0, arg);
+        dk1 = util::cyl_bessel_k(1, arg);
+    } else
+        delam = std::exp(-arg);
 
     for (int i = 0; i < n_quad; ++i) {
         const Real xi2 = xs[i] * xs[i] + rlambda2;
@@ -1425,14 +1415,11 @@ typename FourierData<Real>::LocalCorrectionCoeffs FourierData<Real>::local_corre
         }
         fhat[i] *= (n_dim_ == 2) ? whts[i] * xs[i] : whts[i] * xs[i] * xs[i] * two_over_pi;
 
-        if (near_correction) {
-            Real xsc = rl * xs[i];
-            if (n_dim_ == 2)
-                fhat[i] *=
-                    -rl * rlambda * util::cyl_bessel_j(0, xsc) * dk1 + 1 + xsc * util::cyl_bessel_j(1, xsc) * dk0;
-            else
-                fhat[i] *= 1 - delam * (std::cos(xsc) + rlambda / xs[i] * std::sin(xsc));
-        }
+        const double xsc = rl * xs[i];
+        if (n_dim_ == 2)
+            fhat[i] *= -rl * rlambda * util::cyl_bessel_j(0, xsc) * dk1 + 1 + xsc * util::cyl_bessel_j(1, xsc) * dk0;
+        else
+            fhat[i] *= 1 - delam * (std::cos(xsc) + rlambda / xs[i] * std::sin(xsc));
     }
 
     if (n_dim_ == 3) {
