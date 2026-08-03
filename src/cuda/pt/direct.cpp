@@ -104,7 +104,6 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     // Common args; the src/trg sides differ only in the target/pot fields.
     dmk::cuda::DirectByBoxArgs<Real> base;
     base.n_work = n_work;
-    base.n_levels = s.n_levels;
     base.nlist1_stride = s.topology.nlist1_stride;
     base.thresh2 = Real{1e-30};
     base.direct_work = s.topology.d_direct_work.data();

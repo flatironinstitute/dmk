@@ -857,7 +857,9 @@ void DMKPtTree<Real, DIM>::build_direct_work_lists() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_evaluators() {
     sctl::Profile::Scoped profile("build_evaluators", &comm_);
-    const int n_lvl = n_levels();
+    // A leaf with a planewave expansion takes its residual one level finer than its
+    // own depth, so the level index reaches n_levels().
+    const int n_lvl = n_levels() + 1;
     direct_rsc.ReInit(n_lvl);
     direct_cen.ReInit(n_lvl);
     direct_d2max.ReInit(n_lvl);
@@ -929,10 +931,10 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
         }
 #endif
         // FIXME: assumes the same src/trg output configuration
-        evaluator_by_level_src.assign(n_levels(), src_eval);
-        evaluator_by_level_trg.assign(n_levels(), trg_eval);
+        evaluator_by_level_src.assign(n_lvl, src_eval);
+        evaluator_by_level_trg.assign(n_lvl, trg_eval);
     } else {
-        for (int level = 0; level < n_levels(); ++level) {
+        for (int level = 0; level < n_lvl; ++level) {
             auto coeffs = fourier_data.local_correction_coeffs(level, n_digits);
 
             if constexpr (DIM == 3) {
@@ -984,11 +986,8 @@ void DMKPtTree<Real, DIM>::build_self_correction_work_list() {
             self_correction_work[idx] = Real{0};
             continue;
         }
-        const int depth = node_mid[box].Depth();
-        if (params.kernel == DMK_STOKESLET)
-            self_correction_work[idx] = ifpwexp[box] ? 2 * w0[depth] : w0[depth];
-        else
-            self_correction_work[idx] = w0[depth + ifpwexp[box]];
+        // Must match the level the direct residual uses.
+        self_correction_work[idx] = w0[node_mid[box].Depth() + ifpwexp[box]];
     }
 }
 
@@ -1558,10 +1557,6 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                 } else if (src_level < trg_level) {
                     src_level = trg_level;
                 }
-
-                // evaluator_by_level_src is sized n_levels()
-                // This fix is essentially for when there is *only* a root box.
-                src_level = std::min(src_level, n_levels() - 1);
 
                 const Real rsc = direct_rsc[src_level];
                 const Real cen = direct_cen[src_level];

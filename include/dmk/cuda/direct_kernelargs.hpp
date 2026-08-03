@@ -5,7 +5,6 @@ namespace dmk::cuda {
 template <typename Real>
 struct DirectByBoxArgs {
     int n_work = 0;
-    int n_levels = 0;
     int nlist1_stride = 0;
 
     Real thresh2 = Real{0};

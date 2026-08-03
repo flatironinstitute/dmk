@@ -509,9 +509,6 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
             } else if (src_level < trg_level) {
                 src_level = trg_level;
             }
-            if (src_level >= a.n_levels) {
-                src_level = a.n_levels - 1;
-            }
 
             const int n_src = a.src_counts[src_box];
             const Real *__restrict__ r_src = a.r_src_flat + a.r_src_offsets[src_box];
