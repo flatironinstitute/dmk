@@ -64,6 +64,8 @@ const char *evaluator_family(dmk_ikernel kernel, int dim) {
         return dim == 3 ? "LaplacePolyEvaluator3DCuda" : "LaplacePolyEvaluator2DCuda";
     if (kernel == DMK_SQRT_LAPLACE)
         return dim == 3 ? "SqrtLaplacePolyEvaluator3DCuda" : "SqrtLaplacePolyEvaluator2DCuda";
+    if (kernel == DMK_YUKAWA && dim == 3)
+        return "YukawaLevelsCuda";
     if (kernel == DMK_LAPLACE_DIPOLE && dim == 3)
         return "LaplaceDipolePolyEvaluator3DCuda";
     if (kernel == DMK_STOKESLET && dim == 3)
@@ -73,7 +75,8 @@ const char *evaluator_family(dmk_ikernel kernel, int dim) {
     throw std::runtime_error("pt::direct: unsupported kernel");
 }
 
-// Evaluators taking a trailing EVAL_LEVEL template argument.
+// Evaluators taking a trailing EVAL_LEVEL template argument. Yukawa is excluded: its
+// pack list must come last, so it emits EVAL_LEVEL first instead.
 bool takes_eval_level(dmk_ikernel kernel) {
     return kernel == DMK_LAPLACE || kernel == DMK_SQRT_LAPLACE || kernel == DMK_LAPLACE_DIPOLE;
 }
@@ -161,6 +164,10 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
         std::ostringstream tune_key_ss;
         tune_key_ss << "PtDirect|real=" << jit_real_name<Real>() << "|kernel=" << int(s.kernel) << "|dim=" << DIM
                     << "|vps=" << values_per_source << "|nlist1=" << s.topology.nlist1_stride << "|el=" << eval_level;
+        // Pack degrees change the unrolled Horner's register profile, so they need
+        // their own tuning entry.
+        for (const auto &pack : s.fourier.direct_coeffs_by_level)
+            tune_key_ss << "|nc=" << pack.size();
         const std::string tune_key = tune_key_ss.str();
 
         // `plans` is process-wide and hits before coefficients are generated, so its
@@ -168,7 +175,7 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
         std::ostringstream plan_key_ss;
         plan_key_ss << std::setprecision(std::numeric_limits<double>::max_digits10);
         plan_key_ss << tune_key << "|nd=" << s.fourier.n_digits << "|beta=" << s.fourier.beta
-                    << "|fp=" << s.fourier.fparam << "|nlev=" << s.n_levels;
+                    << "|fp=" << s.fourier.fparam << "|nlev=" << s.n_levels << "|l0=" << s.fourier.direct_coeffs_level0;
         const std::string plan_key = plan_key_ss.str();
         {
             std::lock_guard<std::mutex> lock(plan_mtx);
@@ -177,20 +184,30 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
                 return it->second;
         }
 
-        const auto coeffs = get_local_correction_coeffs<Real>(s.kernel, DIM, s.fourier.n_digits, s.fourier.beta);
+        const std::vector<std::vector<Real>> coeffs =
+            (s.kernel == DMK_YUKAWA)
+                ? s.fourier.direct_coeffs_by_level
+                : get_local_correction_coeffs<Real>(s.kernel, DIM, s.fourier.n_digits, s.fourier.beta);
         if (coeffs.empty())
             throw std::runtime_error("pt::direct: empty coefficient set");
 
         std::string coeff_struct;
-        std::string coeff_args;
+        std::vector<std::string> targs;
+        if (s.kernel == DMK_YUKAWA) {
+            targs.push_back(std::to_string(eval_level));
+            targs.push_back(std::to_string(s.fourier.direct_coeffs_level0));
+        }
         for (std::size_t i = 0; i < coeffs.size(); ++i) {
             const std::string name = "Coeff" + std::to_string(i);
             coeff_struct += emit_coeff_struct<Real>(name.c_str(), coeffs[i]);
-            coeff_args += (i ? ", " : "") + name;
+            targs.push_back(name);
         }
-        std::string evaluator_expr = std::string(evaluator_family(s.kernel, DIM)) + "<" + coeff_args;
         if (takes_eval_level(s.kernel))
-            evaluator_expr += ", " + std::to_string(eval_level);
+            targs.push_back(std::to_string(eval_level));
+
+        std::string evaluator_expr = std::string(evaluator_family(s.kernel, DIM)) + "<";
+        for (std::size_t i = 0; i < targs.size(); ++i)
+            evaluator_expr += (i ? ", " : "") + targs[i];
         evaluator_expr += ">";
         const std::string kernel_name = "PtDirectKernel_" + fnv1a_hex(std::string(jit_real_name<Real>()) + "|" +
                                                                       evaluator_expr + "|" + coeff_struct);

@@ -164,11 +164,11 @@ void check_accuracy(dmk_ikernel kernel, dmk_eval_type eval, double eps, double f
 
 // eps doubles as the tolerance. Some cases overshoot it on the CPU too (Stresslet at 3
 // digits runs ~1.3x); those are accuracy-curve work, not a GPU defect.
-void parity_subcases(dmk_ikernel kernel, dmk_eval_type eval, const std::string &label) {
+void parity_subcases(dmk_ikernel kernel, dmk_eval_type eval, const std::string &label, double fparam) {
     const std::string label_d = label + " double";
     const std::string label_f = label + " float";
-    SUBCASE(label_d.c_str()) { check_accuracy<double>(kernel, eval, 1e-6); }
-    SUBCASE(label_f.c_str()) { check_accuracy<float>(kernel, eval, 1e-3); }
+    SUBCASE(label_d.c_str()) { check_accuracy<double>(kernel, eval, 1e-6, fparam); }
+    SUBCASE(label_f.c_str()) { check_accuracy<float>(kernel, eval, 1e-3, fparam); }
 }
 
 } // namespace
@@ -178,21 +178,30 @@ TEST_CASE_GENERIC("[GPU] 3d scalar kernels parity", 1) {
         for (auto eval : {DMK_POTENTIAL, DMK_POTENTIAL_GRAD}) {
             const std::string label =
                 std::string(dmk::util::to_string(kernel)) + (eval == DMK_POTENTIAL ? " pot" : " pot+grad");
-            parity_subcases(kernel, eval, label);
+            parity_subcases(kernel, eval, label, 0.0);
         }
     }
 }
 
 TEST_CASE_GENERIC("[GPU] 3d Laplace-dipole parity", 1) {
     for (auto eval : {DMK_POTENTIAL, DMK_POTENTIAL_GRAD})
-        parity_subcases(DMK_LAPLACE_DIPOLE, eval, eval == DMK_POTENTIAL ? "pot" : "pot+grad");
+        parity_subcases(DMK_LAPLACE_DIPOLE, eval, eval == DMK_POTENTIAL ? "pot" : "pot+grad", 0.0);
 }
 
 TEST_CASE_GENERIC("[GPU] 3d velocity kernels parity", 1) {
     for (auto kernel : {DMK_STOKESLET, DMK_STRESSLET})
-        parity_subcases(kernel, DMK_VELOCITY, std::string(dmk::util::to_string(kernel)));
+        parity_subcases(kernel, DMK_VELOCITY, std::string(dmk::util::to_string(kernel)), 0.0);
 }
 
-// Yukawa is not yet on the GPU (rejected in validate_create_args); enable with Phase 3.
+// Sweeping lambda is what exercises the per-level coefficient packs.
+TEST_CASE_GENERIC("[GPU] 3d Yukawa parity", 1) {
+    for (auto eval : {DMK_POTENTIAL, DMK_POTENTIAL_GRAD}) {
+        for (double lambda : {1.0, 6.0, 30.0}) {
+            const std::string label =
+                std::string(eval == DMK_POTENTIAL ? "pot" : "pot+grad") + " lambda=" + std::to_string(int(lambda));
+            parity_subcases(DMK_YUKAWA, eval, label, lambda);
+        }
+    }
+}
 
 #endif // DMK_GPU_OFFLOAD

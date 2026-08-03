@@ -108,8 +108,8 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
         throw std::runtime_error("pt::form_outgoing: long-range pipeline is 3D-only");
     } else {
         const dmk_ikernel kernel = s.kernel;
-        if (kernel != DMK_LAPLACE && kernel != DMK_SQRT_LAPLACE && kernel != DMK_STOKESLET && kernel != DMK_STRESSLET &&
-            kernel != DMK_LAPLACE_DIPOLE)
+        if (kernel != DMK_LAPLACE && kernel != DMK_SQRT_LAPLACE && kernel != DMK_YUKAWA && kernel != DMK_STOKESLET &&
+            kernel != DMK_STRESSLET && kernel != DMK_LAPLACE_DIPOLE)
             throw std::runtime_error("pt::form_outgoing: unsupported kernel");
         // Differing up/down table counts cannot multiply in place: the PW field is
         // formed per level into d_pw_form_pool. Stresslet is 9->3, dipole 3->1.
@@ -129,7 +129,7 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
         auto multiply_at = [&](int n_box, int n_pw_local, int n_pw_modes_local, Real hpw_local, bool windowed,
                                const int *box_ids, const Real *radialft, Real *src, const long *src_offsets,
                                long src_stride_complex, Real *dst, const long *dst_offsets, long dst_stride_complex) {
-            if (kernel == DMK_LAPLACE || kernel == DMK_SQRT_LAPLACE) {
+            if (kernel == DMK_LAPLACE || kernel == DMK_SQRT_LAPLACE || kernel == DMK_YUKAWA) {
                 dmk::cuda::MultiplyCd2pArgs<Real> ma;
                 ma.n_boxes_at_level = n_box;
                 ma.n_charge_dim = f.n_charge_dim;

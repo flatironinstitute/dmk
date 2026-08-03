@@ -297,6 +297,21 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
     fou.direct_cen = real_span<Real>(tree.direct_cen);
     fou.direct_d2max = real_span<Real>(tree.direct_d2max);
 
+    // Yukawa's residual fit depends on lambda*boxsize, so it needs one polynomial per
+    // level rather than a single scale-invariant pack. src_level spans [min target-box
+    // depth, n_levels]; skipping shallower levels also avoids a fit that would throw
+    // at large lambda.
+    if (tree.params.kernel == DMK_YUKAWA) {
+        int level0 = n_levels;
+        for (int b : topo.direct_work)
+            level0 = std::min(level0, topo.box_levels[b]);
+        fou.direct_coeffs_level0 = level0;
+        for (int L = level0; L <= n_levels; ++L) {
+            const auto c = tree.fourier_data.local_correction_coeffs(L, tree.n_digits);
+            fou.direct_coeffs_by_level.emplace_back(c.reg_poly.begin(), c.reg_poly.end());
+        }
+    }
+
     fou.pw2poly_per_level_reals = 2 * fou.n_pw * fou.n_order;
     fou.poly2pw_per_level_reals = 2 * fou.n_pw * fou.n_order;
     fou.radialft_per_level_reals = fou.n_pw_modes;
@@ -446,6 +461,8 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     fourier.n_pw_modes_win = fi.n_pw_modes_win;
     fourier.hpw_win = fi.hpw_win;
     fourier.hpw_per_level = fi.hpw_per_level;
+    fourier.direct_coeffs_by_level = fi.direct_coeffs_by_level;
+    fourier.direct_coeffs_level0 = fi.direct_coeffs_level0;
     fourier.n_digits = fi.n_digits;
     fourier.beta = fi.beta;
     fourier.fparam = fi.fparam;

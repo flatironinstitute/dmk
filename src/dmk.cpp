@@ -93,8 +93,6 @@ void validate_create_args(const pdmk_params &params, int n_src, const Real *r_sr
             fail("eval_path=GPU is only supported in 3D (the plane-wave pipeline is 3D-only)");
         if (params.use_periodic)
             fail("eval_path=GPU does not support periodic boundary conditions");
-        if (params.kernel == DMK_YUKAWA)
-            fail("kernel " + std::string(util::to_string(params.kernel)) + " is not supported on eval_path=GPU");
 #endif
     }
 

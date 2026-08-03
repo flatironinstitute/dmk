@@ -72,7 +72,7 @@ CompiledBinary JitCompiler::compile(const std::string &source, const std::string
 
     std::vector<std::string> options_storage;
 
-    options_storage.push_back("--std=c++17");
+    options_storage.push_back("--std=c++20");
     options_storage.push_back("--gpu-architecture=sm_" + std::to_string(sm_major) + std::to_string(sm_minor));
     options_storage.push_back("-lineinfo");
 

@@ -220,6 +220,57 @@ struct SqrtLaplacePolyEvaluator3DCuda {
     }
 };
 
+// exp(-lambda*r) is folded into the fit, so there is no runtime exp. Differs from
+// Laplace 3D only in the argument mapping: cen is -1 here.
+template <typename Coeffs, int EVAL_LEVEL>
+struct YukawaPolyEvaluator3DCuda {
+    static constexpr int SPATIAL_DIM = 3;
+    static constexpr int KERNEL_INPUT_DIM = 1;
+    static constexpr int KERNEL_OUTPUT_DIM = EVAL_LEVEL == 1 ? 1 : SPATIAL_DIM + 1;
+    static constexpr int NORMAL_DIM = 0;
+    static constexpr Real scale_factor = Real{1};
+
+    Real thresh2;
+    Real d2max;
+    Real rsc;
+    Real cen;
+
+    __device__ inline void operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[3]) const {
+        const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
+        const bool in_range = (R2 > thresh2) && (R2 < d2max);
+        if (!in_range) {
+#pragma unroll
+            for (int k = 0; k < KERNEL_OUTPUT_DIM; ++k)
+                u[0][k] = Real{0};
+            return;
+        }
+        const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
+        const Real xmapped = fma(R2 * Rinv, rsc, cen);
+        if constexpr (KERNEL_OUTPUT_DIM == 1) {
+            u[0][0] = horner_const<Coeffs>(xmapped) * Rinv;
+        } else {
+            Real P, dP;
+            horner_val_deriv<Coeffs>(xmapped, P, dP);
+            u[0][0] = P * Rinv;
+            const Real df_dR2 = Rinv * Rinv * (dP * rsc - P * Rinv);
+#pragma unroll
+            for (int i = 0; i < 3; ++i)
+                u[0][1 + i] = dX[i] * df_dR2;
+        }
+    }
+};
+
+// Packs cover levels [LEVEL0, LEVEL0 + sizeof...(Rest) + 1).
+template <int EVAL_LEVEL, int LEVEL0, typename C0, typename... Rest>
+struct YukawaLevelsCuda {
+    using First = YukawaPolyEvaluator3DCuda<C0, EVAL_LEVEL>;
+    static constexpr int SPATIAL_DIM = First::SPATIAL_DIM;
+    static constexpr int KERNEL_INPUT_DIM = First::KERNEL_INPUT_DIM;
+    static constexpr int KERNEL_OUTPUT_DIM = First::KERNEL_OUTPUT_DIM;
+    static constexpr int NORMAL_DIM = First::NORMAL_DIM;
+    static constexpr Real scale_factor = First::scale_factor;
+};
+
 // u[k][j] is the response of output j to dipole strength component k.
 template <typename Coeffs, int EVAL_LEVEL>
 struct LaplaceDipolePolyEvaluator3DCuda {
@@ -422,6 +473,36 @@ direct_eval_accumulate(const StressletPolyEvaluator3DCuda<CoeffsDiag, CoeffsOffd
     }
 }
 
+template <int EVAL_LEVEL, int I, typename C0, typename... Rest, typename F>
+__device__ __forceinline__ void bind_yukawa_level(int idx, Real thresh2, Real d2max, Real rsc, Real cen, F &&f) {
+    using Eval = YukawaPolyEvaluator3DCuda<C0, EVAL_LEVEL>;
+    if constexpr (sizeof...(Rest) == 0) {
+        f(Eval{thresh2, d2max, rsc, cen});
+    } else if (idx == I) {
+        f(Eval{thresh2, d2max, rsc, cen});
+    } else {
+        bind_yukawa_level<EVAL_LEVEL, I + 1, Rest...>(idx, thresh2, d2max, rsc, cen, (F &&)f);
+    }
+}
+
+// Hands `f` the evaluator for a source box's level. Coefficients live in the evaluator
+// type, so binding here keeps the level selection out of the per-pair inner loop.
+template <typename Eval>
+struct LevelBinder {
+    template <typename F>
+    __device__ __forceinline__ static void bind(int, Real thresh2, Real d2max, Real rsc, Real cen, F &&f) {
+        f(Eval{thresh2, d2max, rsc, cen});
+    }
+};
+
+template <int EVAL_LEVEL, int LEVEL0, typename C0, typename... Rest>
+struct LevelBinder<YukawaLevelsCuda<EVAL_LEVEL, LEVEL0, C0, Rest...>> {
+    template <typename F>
+    __device__ __forceinline__ static void bind(int level, Real thresh2, Real d2max, Real rsc, Real cen, F &&f) {
+        bind_yukawa_level<EVAL_LEVEL, 0, C0, Rest...>(level - LEVEL0, thresh2, d2max, rsc, cen, (F &&)f);
+    }
+};
+
 template <typename Eval, int TILE, int TARGETS>
 __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real> a) {
     static_assert(TARGETS > 0, "TARGETS_PER_THREAD must be positive");
@@ -523,82 +604,82 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
             const Real cen = a.direct_cen[src_level];
             const Real d2max = a.direct_d2max[src_level];
 
-            Eval evaluator{a.thresh2, d2max, rsc, cen};
+            LevelBinder<Eval>::bind(src_level, a.thresh2, d2max, rsc, cen, [&](const auto &evaluator) {
+                for (int tile0 = 0; tile0 < n_src; tile0 += TILE) {
+                    const int rem = n_src - tile0;
+                    const int tile_count = rem < TILE ? rem : TILE;
 
-            for (int tile0 = 0; tile0 < n_src; tile0 += TILE) {
-                const int rem = n_src - tile0;
-                const int tile_count = rem < TILE ? rem : TILE;
-
-                for (int idx = threadIdx.x; idx < tile_count * SPATIAL_DIM; idx += blockDim.x) {
-                    const int ss = idx / SPATIAL_DIM;
-                    const int k = idx - ss * SPATIAL_DIM;
-                    s_r_src[ss * SPATIAL_DIM + k] = r_src[(tile0 + ss) * SPATIAL_DIM + k];
-                }
-                for (int idx = threadIdx.x; idx < tile_count * KERNEL_INPUT_DIM; idx += blockDim.x) {
-                    const int ss = idx / KERNEL_INPUT_DIM;
-                    const int k = idx - ss * KERNEL_INPUT_DIM;
-                    s_charge[ss * KERNEL_INPUT_DIM + k] = charge[(tile0 + ss) * KERNEL_INPUT_DIM + k];
-                }
-
-                if constexpr (NORMAL_DIM > 0) {
-                    for (int idx = threadIdx.x; idx < tile_count * NORMAL_DIM; idx += blockDim.x) {
-                        const int ss = idx / NORMAL_DIM;
-                        const int k = idx - ss * NORMAL_DIM;
-                        s_normal[ss * NORMAL_DIM + k] = normals[(tile0 + ss) * NORMAL_DIM + k];
+                    for (int idx = threadIdx.x; idx < tile_count * SPATIAL_DIM; idx += blockDim.x) {
+                        const int ss = idx / SPATIAL_DIM;
+                        const int k = idx - ss * SPATIAL_DIM;
+                        s_r_src[ss * SPATIAL_DIM + k] = r_src[(tile0 + ss) * SPATIAL_DIM + k];
                     }
-                }
+                    for (int idx = threadIdx.x; idx < tile_count * KERNEL_INPUT_DIM; idx += blockDim.x) {
+                        const int ss = idx / KERNEL_INPUT_DIM;
+                        const int k = idx - ss * KERNEL_INPUT_DIM;
+                        s_charge[ss * KERNEL_INPUT_DIM + k] = charge[(tile0 + ss) * KERNEL_INPUT_DIM + k];
+                    }
 
-                __syncthreads();
+                    if constexpr (NORMAL_DIM > 0) {
+                        for (int idx = threadIdx.x; idx < tile_count * NORMAL_DIM; idx += blockDim.x) {
+                            const int ss = idx / NORMAL_DIM;
+                            const int k = idx - ss * NORMAL_DIM;
+                            s_normal[ss * NORMAL_DIM + k] = normals[(tile0 + ss) * NORMAL_DIM + k];
+                        }
+                    }
 
-                if (any_active_target) {
+                    __syncthreads();
+
+                    if (any_active_target) {
 #pragma unroll 4
-                    for (int ss = 0; ss < tile_count; ++ss) {
-                        Real xs[SPATIAL_DIM];
+                        for (int ss = 0; ss < tile_count; ++ss) {
+                            Real xs[SPATIAL_DIM];
 #pragma unroll
-                        for (int k = 0; k < SPATIAL_DIM; ++k) {
-                            xs[k] = s_r_src[ss * SPATIAL_DIM + k];
-                        }
-
-                        Real vs[KERNEL_INPUT_DIM];
-#pragma unroll
-                        for (int k = 0; k < KERNEL_INPUT_DIM; ++k) {
-                            vs[k] = s_charge[ss * KERNEL_INPUT_DIM + k];
-                        }
-
-                        Real dX[SPATIAL_DIM];
-                        if constexpr (NORMAL_DIM > 0) {
-                            Real ns[NORMAL_DIM];
-#pragma unroll
-                            for (int k = 0; k < NORMAL_DIM; ++k) {
-                                ns[k] = s_normal[ss * NORMAL_DIM + k];
+                            for (int k = 0; k < SPATIAL_DIM; ++k) {
+                                xs[k] = s_r_src[ss * SPATIAL_DIM + k];
                             }
+
+                            Real vs[KERNEL_INPUT_DIM];
 #pragma unroll
-                            for (int q = 0; q < TARGETS; ++q) {
-                                if (active_target[q]) {
+                            for (int k = 0; k < KERNEL_INPUT_DIM; ++k) {
+                                vs[k] = s_charge[ss * KERNEL_INPUT_DIM + k];
+                            }
+
+                            Real dX[SPATIAL_DIM];
+                            if constexpr (NORMAL_DIM > 0) {
+                                Real ns[NORMAL_DIM];
 #pragma unroll
-                                    for (int k = 0; k < SPATIAL_DIM; ++k) {
-                                        dX[k] = xt[q][k] - xs[k];
-                                    }
-                                    direct_eval_accumulate(evaluator, vt[q], dX, vs, ns);
+                                for (int k = 0; k < NORMAL_DIM; ++k) {
+                                    ns[k] = s_normal[ss * NORMAL_DIM + k];
                                 }
-                            }
-                        } else {
 #pragma unroll
-                            for (int q = 0; q < TARGETS; ++q) {
-                                if (active_target[q]) {
+                                for (int q = 0; q < TARGETS; ++q) {
+                                    if (active_target[q]) {
 #pragma unroll
-                                    for (int k = 0; k < SPATIAL_DIM; ++k) {
-                                        dX[k] = xt[q][k] - xs[k];
+                                        for (int k = 0; k < SPATIAL_DIM; ++k) {
+                                            dX[k] = xt[q][k] - xs[k];
+                                        }
+                                        direct_eval_accumulate(evaluator, vt[q], dX, vs, ns);
                                     }
-                                    direct_eval_accumulate(evaluator, vt[q], dX, vs);
+                                }
+                            } else {
+#pragma unroll
+                                for (int q = 0; q < TARGETS; ++q) {
+                                    if (active_target[q]) {
+#pragma unroll
+                                        for (int k = 0; k < SPATIAL_DIM; ++k) {
+                                            dX[k] = xt[q][k] - xs[k];
+                                        }
+                                        direct_eval_accumulate(evaluator, vt[q], dX, vs);
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                __syncthreads();
-            }
+                    __syncthreads();
+                }
+            });
         }
 
 #pragma unroll
