@@ -45,6 +45,9 @@ void launch_eval_side(JitCache &cache, dmk::cuda::EvalTargetsArgs<Real> args, in
         return;
     const int n_order = args.n_order;
 
+    const std::size_t smem_bytes = eval_shared_bytes(DIM, n_order, sizeof(Real));
+    const int smem_coeffs = smem_bytes <= device_max_shared_bytes() ? 1 : 0;
+
     auto launch_one = [&](const TuningParams &p, cudaStream_t st) {
         JitKey key;
         key.name = "PtEvalTargetsByBoxKernel";
@@ -55,18 +58,19 @@ void launch_eval_side(JitCache &cache, dmk::cuda::EvalTargetsArgs<Real> args, in
                       {"EVAL_LEVEL", eval_level},
                       {"N_CHARGE_DIM", n_charge_dim},
                       {"N_ORDER", n_order},
+                      {"SMEM_COEFFS", smem_coeffs},
                       {"BLOCK_SIZE", p.at("BLOCK_SIZE")},
                       {"TARGETS_PER_THREAD", p.at("TARGETS_PER_THREAD")}};
         auto kernel = cache.get_kernel_from_source(
             key, [&] { return make_stage_source("pt/eval_targets.cu", key, "", "PtEvalTargets"); });
-        const std::size_t shared = eval_shared_bytes(DIM, n_order, sizeof(Real));
+        const std::size_t shared = smem_coeffs ? smem_bytes : 0;
         set_max_dynamic_smem(*kernel, shared);
         kernel->launch(dim3(args.n_eval_boxes, 1, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, args);
     };
 
     std::ostringstream tune_key;
     tune_key << "PtEvalTargets|real=" << jit_real_name<Real>() << "|dim=" << DIM << "|eval_level=" << eval_level
-             << "|n_charge_dim=" << n_charge_dim << "|n_order=" << n_order;
+             << "|n_charge_dim=" << n_charge_dim << "|n_order=" << n_order << "|smem=" << smem_coeffs;
     const std::string tk = tune_key.str();
 
     if (auto cfg = autotune_cached(tk)) {
@@ -75,15 +79,12 @@ void launch_eval_side(JitCache &cache, dmk::cuda::EvalTargetsArgs<Real> args, in
     }
 
     const cudaDeviceProp &prop = device_prop();
-    const std::size_t max_shared = device_max_shared_bytes();
 
     const std::vector<TuningParameter> space{{"BLOCK_SIZE", {128, 256, 512}}, {"TARGETS_PER_THREAD", {1, 2, 3, 4}}};
     const TuningParams defaults{{"BLOCK_SIZE", 256}, {"TARGETS_PER_THREAD", 1}};
     const auto constraint = [&](const TuningParams &p) {
         const int bs = p.at("BLOCK_SIZE");
-        if (bs <= 0 || bs > prop.maxThreadsPerBlock || bs % 32 != 0 || p.at("TARGETS_PER_THREAD") <= 0)
-            return false;
-        return eval_shared_bytes(DIM, n_order, sizeof(Real)) <= max_shared;
+        return bs > 0 && bs <= prop.maxThreadsPerBlock && bs % 32 == 0 && p.at("TARGETS_PER_THREAD") > 0;
     };
 
     autotuned_launch<Real>(tk, "PtEvalTargetsByBoxKernel", space, defaults, constraint, launch_one, pot_flat, pot_size,
@@ -165,6 +166,8 @@ void eval_targets(State<Real, DIM> &s, cudaStream_t stream) {
         sc.n_direct_work = static_cast<int>(s.topology.d_direct_work.size());
         sc.n_input_dim = get_kernel_input_dim(DIM, s.kernel);
         sc.pot_stride = o.pot_src_dof;
+        // Dipole corrects the DIM gradient components, not the potential.
+        sc.pot_output_offset = (s.kernel == DMK_LAPLACE_DIPOLE) ? 1 : 0;
         launch_self_correction<Real>(sc_cache, sc, stream);
     }
 }

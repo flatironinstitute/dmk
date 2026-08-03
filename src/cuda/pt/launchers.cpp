@@ -109,6 +109,13 @@ TuningParams autotune_config(const std::string &tune_key, const std::string &ker
     for (const auto &param : space)
         decision.params.emplace(param.name, defaults.at(param.name));
 
+    // tune_grid falls back to `defaults` when nothing passes `constraint`, and returns
+    // persisted entries unchecked, so an infeasible config can reach a launch.
+    if (!constraint(decision.params))
+        throw std::runtime_error(std::string("autotune_config: no feasible tuning config for ") + kernel_label +
+                                 " (key " + tune_key +
+                                 "); the tuning space likely cannot satisfy this device's shared-memory limit");
+
     std::lock_guard<std::mutex> lock(tune_cache_mutex());
     tune_cache()[tune_key] = decision.params;
     return decision.params;

@@ -4,8 +4,9 @@
 // BLOCK_SIZE / TARGETS_PER_THREAD constants. Coefficients are compile-time
 // literals folded straight into the FMAs (no runtime coeff buffer, no AOT).
 //
-// Scalar potential kernels (Laplace, Sqrt-Laplace; 2D + 3D) and Stokeslet /
-// Stresslet velocity kernels (3D; two coeff packs diag+offdiag, Stresslet reads
+// Scalar potential kernels (Laplace, Sqrt-Laplace; 2D + 3D), Laplace-dipole
+// (3D; 3-vector charge, scalar/gradient output) and Stokeslet / Stresslet
+// velocity kernels (3D; two coeff packs diag+offdiag, Stresslet reads
 // per-source normals).
 
 #include <dmk/cuda/direct_kernelargs.hpp>
@@ -25,11 +26,51 @@ __device__ __forceinline__ Real horner_const(Real x) {
     return horner_recurse<Coeffs, Coeffs::size - 1>(x, Real{Coeffs::at(Coeffs::size - 1)});
 }
 
+template <typename Coeffs, int I>
+__device__ __forceinline__ void horner_vd_recurse(Real x, Real &value, Real &deriv) {
+    if constexpr (I == Coeffs::size - 1) {
+        value = Real{Coeffs::at(I)};
+        deriv = Real{0};
+    } else {
+        horner_vd_recurse<Coeffs, I + 1>(x, value, deriv);
+        deriv = deriv * x + value;
+        value = value * x + Real{Coeffs::at(I)};
+    }
+}
+
 template <typename Coeffs>
+__device__ __forceinline__ void horner_val_deriv(Real x, Real &value, Real &deriv) {
+    static_assert(Coeffs::size > 0, "empty coefficient pack");
+    horner_vd_recurse<Coeffs, 0>(x, value, deriv);
+}
+
+// Each step consumes the previous iteration's deriv/value, so the assignment
+// order is load-bearing.
+template <typename Coeffs, int I>
+__device__ __forceinline__ void horner_vd2_recurse(Real x, Real &value, Real &deriv, Real &deriv2) {
+    if constexpr (I == Coeffs::size - 1) {
+        value = Real{Coeffs::at(I)};
+        deriv = Real{0};
+        deriv2 = Real{0};
+    } else {
+        horner_vd2_recurse<Coeffs, I + 1>(x, value, deriv, deriv2);
+        deriv2 = deriv2 * x + (deriv + deriv);
+        deriv = deriv * x + value;
+        value = value * x + Real{Coeffs::at(I)};
+    }
+}
+
+template <typename Coeffs>
+__device__ __forceinline__ void horner_val_deriv2(Real x, Real &value, Real &deriv, Real &deriv2) {
+    static_assert(Coeffs::size > 0, "empty coefficient pack");
+    horner_vd2_recurse<Coeffs, 0>(x, value, deriv, deriv2);
+}
+
+template <typename Coeffs, int EVAL_LEVEL>
 struct LaplacePolyEvaluator2DCuda {
     static constexpr int SPATIAL_DIM = 2;
     static constexpr int KERNEL_INPUT_DIM = 1;
-    static constexpr int KERNEL_OUTPUT_DIM = 1;
+    static constexpr int KERNEL_OUTPUT_DIM = EVAL_LEVEL == 1 ? 1 : SPATIAL_DIM + 1;
     static constexpr int NORMAL_DIM = 0;
     static constexpr Real scale_factor = Real{1};
 
@@ -38,25 +79,37 @@ struct LaplacePolyEvaluator2DCuda {
     Real rsc;
     Real cen;
 
-    __device__ inline void operator()(Real (&u)[1][1], const Real (&dX)[2]) const {
+    __device__ inline void operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[2]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1];
         const bool in_range = (R2 > thresh2) && (R2 < d2max);
         if (!in_range) {
-            u[0][0] = Real{0};
+#pragma unroll
+            for (int k = 0; k < KERNEL_OUTPUT_DIM; ++k)
+                u[0][k] = Real{0};
             return;
         }
         const Real R2sc = R2 * (Real{0.5} * rsc);
         const Real arg = rsc * R2 + cen;
-        const Real ptmp = horner_const<Coeffs>(arg);
-        u[0][0] = Real{0.5} * log(R2sc) + ptmp;
+        if constexpr (KERNEL_OUTPUT_DIM == 1) {
+            u[0][0] = Real{0.5} * log(R2sc) + horner_const<Coeffs>(arg);
+        } else {
+            Real P, dP;
+            horner_val_deriv<Coeffs>(arg, P, dP);
+            u[0][0] = Real{0.5} * log(R2sc) + P;
+            const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
+            const Real df_dR2 = Real{0.5} * (Rinv * Rinv) + rsc * dP;
+#pragma unroll
+            for (int i = 0; i < 2; ++i)
+                u[0][1 + i] = Real{2} * dX[i] * df_dR2;
+        }
     }
 };
 
-template <typename Coeffs>
+template <typename Coeffs, int EVAL_LEVEL>
 struct LaplacePolyEvaluator3DCuda {
     static constexpr int SPATIAL_DIM = 3;
     static constexpr int KERNEL_INPUT_DIM = 1;
-    static constexpr int KERNEL_OUTPUT_DIM = 1;
+    static constexpr int KERNEL_OUTPUT_DIM = EVAL_LEVEL == 1 ? 1 : SPATIAL_DIM + 1;
     static constexpr int NORMAL_DIM = 0;
     static constexpr Real scale_factor = Real{1};
 
@@ -65,25 +118,36 @@ struct LaplacePolyEvaluator3DCuda {
     Real rsc;
     Real cen;
 
-    __device__ inline void operator()(Real (&u)[1][1], const Real (&dX)[3]) const {
+    __device__ inline void operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[3]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
         const bool in_range = (R2 > thresh2) && (R2 < d2max);
         if (!in_range) {
-            u[0][0] = Real{0};
+#pragma unroll
+            for (int k = 0; k < KERNEL_OUTPUT_DIM; ++k)
+                u[0][k] = Real{0};
             return;
         }
         const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
         const Real xmapped = (R2 * Rinv + cen) * rsc;
-        const Real P = horner_const<Coeffs>(xmapped);
-        u[0][0] = P * Rinv;
+        if constexpr (KERNEL_OUTPUT_DIM == 1) {
+            u[0][0] = horner_const<Coeffs>(xmapped) * Rinv;
+        } else {
+            Real P, dP;
+            horner_val_deriv<Coeffs>(xmapped, P, dP);
+            u[0][0] = P * Rinv;
+            const Real df_dR2 = Rinv * Rinv * (dP * rsc - P * Rinv);
+#pragma unroll
+            for (int i = 0; i < 3; ++i)
+                u[0][1 + i] = dX[i] * df_dR2;
+        }
     }
 };
 
-template <typename Coeffs>
+template <typename Coeffs, int EVAL_LEVEL>
 struct SqrtLaplacePolyEvaluator2DCuda {
     static constexpr int SPATIAL_DIM = 2;
     static constexpr int KERNEL_INPUT_DIM = 1;
-    static constexpr int KERNEL_OUTPUT_DIM = 1;
+    static constexpr int KERNEL_OUTPUT_DIM = EVAL_LEVEL == 1 ? 1 : SPATIAL_DIM + 1;
     static constexpr int NORMAL_DIM = 0;
     static constexpr Real scale_factor = Real{1};
 
@@ -92,24 +156,36 @@ struct SqrtLaplacePolyEvaluator2DCuda {
     Real rsc;
     Real cen;
 
-    __device__ inline void operator()(Real (&u)[1][1], const Real (&dX)[2]) const {
+    __device__ inline void operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[2]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1];
         const bool in_range = (R2 > thresh2) && (R2 < d2max);
         if (!in_range) {
-            u[0][0] = Real{0};
+#pragma unroll
+            for (int k = 0; k < KERNEL_OUTPUT_DIM; ++k)
+                u[0][k] = Real{0};
             return;
         }
         const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
         const Real xmapped = (R2 * Rinv + cen) * rsc;
-        u[0][0] = horner_const<Coeffs>(xmapped) * Rinv;
+        if constexpr (KERNEL_OUTPUT_DIM == 1) {
+            u[0][0] = horner_const<Coeffs>(xmapped) * Rinv;
+        } else {
+            Real P, dP;
+            horner_val_deriv<Coeffs>(xmapped, P, dP);
+            u[0][0] = P * Rinv;
+            const Real df = Rinv * Rinv * (dP * rsc - P * Rinv);
+#pragma unroll
+            for (int i = 0; i < 2; ++i)
+                u[0][1 + i] = dX[i] * df;
+        }
     }
 };
 
-template <typename Coeffs>
+template <typename Coeffs, int EVAL_LEVEL>
 struct SqrtLaplacePolyEvaluator3DCuda {
     static constexpr int SPATIAL_DIM = 3;
     static constexpr int KERNEL_INPUT_DIM = 1;
-    static constexpr int KERNEL_OUTPUT_DIM = 1;
+    static constexpr int KERNEL_OUTPUT_DIM = EVAL_LEVEL == 1 ? 1 : SPATIAL_DIM + 1;
     static constexpr int NORMAL_DIM = 0;
     static constexpr Real scale_factor = Real{1};
 
@@ -118,17 +194,84 @@ struct SqrtLaplacePolyEvaluator3DCuda {
     Real rsc;
     Real cen;
 
-    __device__ inline void operator()(Real (&u)[1][1], const Real (&dX)[3]) const {
+    __device__ inline void operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[3]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
         const bool in_range = (R2 > thresh2) && (R2 < d2max);
         if (!in_range) {
-            u[0][0] = Real{0};
+#pragma unroll
+            for (int k = 0; k < KERNEL_OUTPUT_DIM; ++k)
+                u[0][k] = Real{0};
             return;
         }
         const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
         const Real R2inv = Rinv * Rinv;
         const Real arg = rsc * R2 + cen;
-        u[0][0] = R2inv * horner_const<Coeffs>(arg);
+        if constexpr (KERNEL_OUTPUT_DIM == 1) {
+            u[0][0] = R2inv * horner_const<Coeffs>(arg);
+        } else {
+            Real P, dP;
+            horner_val_deriv<Coeffs>(arg, P, dP);
+            u[0][0] = R2inv * P;
+            const Real df = Real{2} * R2inv * (dP * rsc - P * R2inv);
+#pragma unroll
+            for (int i = 0; i < 3; ++i)
+                u[0][1 + i] = dX[i] * df;
+        }
+    }
+};
+
+// u[k][j] is the response of output j to dipole strength component k.
+template <typename Coeffs, int EVAL_LEVEL>
+struct LaplaceDipolePolyEvaluator3DCuda {
+    static constexpr int SPATIAL_DIM = 3;
+    static constexpr int KERNEL_INPUT_DIM = 3;
+    static constexpr int KERNEL_OUTPUT_DIM = EVAL_LEVEL == 1 ? 1 : SPATIAL_DIM + 1;
+    static constexpr int NORMAL_DIM = 0;
+    static constexpr Real scale_factor = Real{1};
+
+    Real thresh2;
+    Real d2max;
+    Real rsc;
+    Real cen;
+
+    __device__ inline void operator()(Real (&u)[3][KERNEL_OUTPUT_DIM], const Real (&dX)[3]) const {
+        const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
+        const bool in_range = (R2 > thresh2) && (R2 < d2max);
+        if (!in_range) {
+#pragma unroll
+            for (int k = 0; k < 3; ++k) {
+#pragma unroll
+                for (int j = 0; j < KERNEL_OUTPUT_DIM; ++j)
+                    u[k][j] = Real{0};
+            }
+            return;
+        }
+        const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
+        const Real Rinv2 = Rinv * Rinv;
+        const Real Rinv3 = Rinv2 * Rinv;
+        const Real xmapped = (R2 * Rinv + cen) * rsc;
+        if constexpr (KERNEL_OUTPUT_DIM == 1) {
+            Real P, dP;
+            horner_val_deriv<Coeffs>(xmapped, P, dP);
+            const Real F = P * Rinv3 - dP * rsc * Rinv2;
+#pragma unroll
+            for (int k = 0; k < 3; ++k)
+                u[k][0] = dX[k] * F;
+        } else {
+            Real P, dP, ddP;
+            horner_val_deriv2<Coeffs>(xmapped, P, dP, ddP);
+            const Real Rinv4 = Rinv2 * Rinv2;
+            const Real Rinv5 = Rinv4 * Rinv;
+            const Real F = P * Rinv3 - dP * rsc * Rinv2;
+            const Real F_over_R = Real{3} * dP * rsc * Rinv4 - Real{3} * P * Rinv5 - ddP * rsc * rsc * Rinv3;
+#pragma unroll
+            for (int k = 0; k < 3; ++k) {
+                u[k][0] = dX[k] * F;
+#pragma unroll
+                for (int i = 0; i < 3; ++i)
+                    u[k][1 + i] = dX[k] * dX[i] * F_over_R + (i == k ? F : Real{0});
+            }
+        }
     }
 };
 

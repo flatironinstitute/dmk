@@ -2,12 +2,14 @@
 // do a per-box in-place multiply of each plane-wave mode by radialft[m];
 // Stokeslet applies the 3-vector projector f*(k^2 delta - kk) in place;
 // Stresslet contracts a 3x3 plane-wave tensor (9 src tables) into a 3-vector (3
-// dst tables). The launcher prepends `using Real` + BLOCK_SIZE (BLOCK_SIZE is
+// dst tables); Laplace-dipole contracts a 3-vector (3 src tables) into a scalar
+// (1 dst table). The launcher prepends `using Real` + BLOCK_SIZE (BLOCK_SIZE is
 // unused by the bodies but kept uniform with the thin-launcher contract).
 
 #include <dmk/cuda/multiply_kernelft_kernelargs.hpp>
 
 using dmk::cuda::MultiplyCd2pArgs;
+using dmk::cuda::MultiplyLaplaceDipole3DArgs;
 using dmk::cuda::MultiplyStokeslet3DArgs;
 using dmk::cuda::MultiplyStresslet3DArgs;
 
@@ -166,5 +168,43 @@ extern "C" __global__ void PtMultiplyStresslet3DByBoxKernel(MultiplyStresslet3DA
             dst[o] = f * ai;
             dst[o + 1] = -f * ar;
         }
+    }
+}
+
+// u(k) = -i f(k) (k . d): 3 dipole tables -> 1 potential table.
+extern "C" __global__ void PtMultiplyLaplaceDipole3DByBoxKernel(MultiplyLaplaceDipole3DArgs<Real> a) {
+    const int box_idx = blockIdx.x;
+    if (box_idx >= a.n_boxes_at_level)
+        return;
+    const int box = a.box_ids[box_idx];
+    const long src_off = a.src_offsets ? a.src_offsets[box] : box_idx * a.src_stride_complex;
+    const long dst_off = a.dst_offsets ? a.dst_offsets[box] : box_idx * a.dst_stride_complex;
+    if (src_off < 0 || dst_off < 0)
+        return;
+    const Real *src = a.src_flat + 2 * src_off;
+    Real *dst = a.dst_flat + 2 * dst_off;
+
+    const int n_pw = a.n_pw;
+    const int n_pw_modes = a.n_pw_modes;
+    const int npw_half = n_pw / 2;
+    const Real hpw = a.hpw;
+    auto ts = [&](int i) { return Real(i - npw_half) * hpw; };
+
+    for (int n_idx = threadIdx.x; n_idx < n_pw_modes; n_idx += blockDim.x) {
+        const int ix = n_idx % n_pw;
+        const int iy = (n_idx / n_pw) % n_pw;
+        const int iz = n_idx / (n_pw * n_pw);
+        const Real k[3] = {ts(ix), ts(iy), ts(iz)};
+        const Real f = a.radialft[n_idx];
+
+        Real dot_r = 0, dot_i = 0;
+        for (int i = 0; i < 3; ++i) {
+            const int o = 2 * (n_idx + n_pw_modes * i);
+            dot_r += k[i] * src[o];
+            dot_i += k[i] * src[o + 1];
+        }
+
+        dst[2 * n_idx] = f * dot_i;
+        dst[2 * n_idx + 1] = -f * dot_r;
     }
 }

@@ -288,6 +288,7 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
     fou.hpw_win = (Real)tree.expansion_constants.hpw_win;
     fou.n_digits = tree.n_digits;
     fou.beta = tree.expansion_constants.beta;
+    fou.fparam = tree.params.fparam;
 
     fou.p2c = real_span<Real>(tree.p2c);
     fou.c2p = real_span<Real>(tree.c2p);
@@ -376,7 +377,7 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
     auto &sc = in.scratch;
     sc.tensorprod_scratch_stride_reals = 2L * fou.n_order * fou.n_order * fou.n_order; // 2 * n_order^3 ping-pong slab
     sc.pw_in_stride_reals = 2L * fou.n_charge_dim * fou.n_pw_modes;
-    sc.pw_form_stride_reals = part.is_stresslet ? 2L * fou.n_tables_up * fou.n_pw_modes : 0;
+    sc.pw_form_stride_reals = (fou.n_tables_up != fou.n_charge_dim) ? 2L * fou.n_tables_up * fou.n_pw_modes : 0;
     sc.proxy_coeffs_upward_dim = tree.proxy_coeffs_upward.Dim();
     sc.proxy_coeffs_downward_dim = tree.proxy_coeffs_downward.Dim();
     sc.pw_out_dim = tree.pw_out.Dim(); // sized by init_planewave_data (called before to_build_inputs)
@@ -447,6 +448,7 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     fourier.hpw_per_level = fi.hpw_per_level;
     fourier.n_digits = fi.n_digits;
     fourier.beta = fi.beta;
+    fourier.fparam = fi.fparam;
     fourier.pw2poly_per_level_reals = fi.pw2poly_per_level_reals;
     fourier.poly2pw_per_level_reals = fi.poly2pw_per_level_reals;
     fourier.radialft_per_level_reals = fi.radialft_per_level_reals;
@@ -525,12 +527,13 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     if (total_slots && scratch.pw_in_stride_reals)
         scratch.d_pw_in_pool.resize((std::size_t)total_slots * scratch.pw_in_stride_reals);
 
-    if (pi.is_stresslet && wi.max_pw_form_per_level && scratch.pw_form_stride_reals)
+    const bool split_up_down = fourier.n_tables_up != fourier.n_charge_dim;
+    if (split_up_down && wi.max_pw_form_per_level && scratch.pw_form_stride_reals)
         scratch.d_pw_form_pool.resize((std::size_t)wi.max_pw_form_per_level * scratch.pw_form_stride_reals);
 
     if (fourier.n_pw_modes_win) {
         scratch.d_window_pw_form_in.resize(2 * (std::size_t)fourier.n_tables_up * fourier.n_pw_modes_win);
-        if (pi.is_stresslet)
+        if (split_up_down)
             scratch.d_window_pw_form_out.resize(2 * (std::size_t)fourier.n_charge_dim * fourier.n_pw_modes_win);
     }
     const int zero_int = 0;

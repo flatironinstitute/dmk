@@ -64,11 +64,26 @@ const char *evaluator_family(dmk_ikernel kernel, int dim) {
         return dim == 3 ? "LaplacePolyEvaluator3DCuda" : "LaplacePolyEvaluator2DCuda";
     if (kernel == DMK_SQRT_LAPLACE)
         return dim == 3 ? "SqrtLaplacePolyEvaluator3DCuda" : "SqrtLaplacePolyEvaluator2DCuda";
+    if (kernel == DMK_LAPLACE_DIPOLE && dim == 3)
+        return "LaplaceDipolePolyEvaluator3DCuda";
     if (kernel == DMK_STOKESLET && dim == 3)
         return "StokesletPolyEvaluator3DCuda";
     if (kernel == DMK_STRESSLET && dim == 3)
         return "StressletPolyEvaluator3DCuda";
     throw std::runtime_error("pt::direct: unsupported kernel");
+}
+
+// Evaluators taking a trailing EVAL_LEVEL template argument.
+bool takes_eval_level(dmk_ikernel kernel) {
+    return kernel == DMK_LAPLACE || kernel == DMK_SQRT_LAPLACE || kernel == DMK_LAPLACE_DIPOLE;
+}
+
+int eval_level_for(dmk_eval_type ev) {
+    if (ev == DMK_POTENTIAL || ev == DMK_VELOCITY)
+        return 1;
+    if (ev == DMK_POTENTIAL_GRAD)
+        return 2;
+    throw std::runtime_error("pt::direct: unsupported eval_type");
 }
 
 } // namespace
@@ -128,11 +143,6 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     static std::mutex plan_mtx;
     static std::map<std::string, std::pair<std::shared_ptr<jit::JitKernel>, TuningParams>> plans;
 
-    std::ostringstream tune_key_ss;
-    tune_key_ss << "PtDirect|real=" << jit_real_name<Real>() << "|kernel=" << int(s.kernel) << "|dim=" << DIM
-                << "|vps=" << values_per_source << "|nlist1=" << s.topology.nlist1_stride;
-    const std::string tune_key = tune_key_ss.str();
-
     auto launch_with = [&](const std::shared_ptr<jit::JitKernel> &kernel, const TuningParams &config,
                            const dmk::cuda::DirectByBoxArgs<Real> &args, cudaStream_t st) {
         if (args.n_work == 0)
@@ -141,20 +151,33 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
         kernel->launch(dim3(args.n_work, 1, 1), dim3(config.at("BLOCK_SIZE"), 1, 1), shared_bytes, st, args);
     };
 
-    std::shared_ptr<jit::JitKernel> kernel;
-    TuningParams config;
-    {
-        std::lock_guard<std::mutex> lock(plan_mtx);
-        auto it = plans.find(tune_key);
-        if (it != plans.end()) {
-            kernel = it->second.first;
-            config = it->second.second;
-        }
-    }
+    // Bake coefficients, tune, and compile for one eval level. `bench_args` supplies
+    // the tuning launch, so its pot buffer must match that level's output dim. One
+    // coefficient pack serves both levels: beta carries the gradient bandlimiting, so
+    // the gradient is the analytic derivative of the same polynomial.
+    auto resolve = [&](int eval_level, const dmk::cuda::DirectByBoxArgs<Real> &bench_args)
+        -> std::pair<std::shared_ptr<jit::JitKernel>, TuningParams> {
+        // Shape-only: the tuning optimum (and the persistent JSON key) depends on
+        // launch geometry, not on the coefficient values.
+        std::ostringstream tune_key_ss;
+        tune_key_ss << "PtDirect|real=" << jit_real_name<Real>() << "|kernel=" << int(s.kernel) << "|dim=" << DIM
+                    << "|vps=" << values_per_source << "|nlist1=" << s.topology.nlist1_stride << "|el=" << eval_level;
+        const std::string tune_key = tune_key_ss.str();
 
-    if (!kernel) {
-        // Baked coefficient literals from the host generator: one poly for the
-        // scalar kernels, {diag, offdiag} for the velocity kernels.
+        // `plans` is process-wide and hits before coefficients are generated, so its
+        // key must also carry everything the baked literals depend on.
+        std::ostringstream plan_key_ss;
+        plan_key_ss << std::setprecision(std::numeric_limits<double>::max_digits10);
+        plan_key_ss << tune_key << "|nd=" << s.fourier.n_digits << "|beta=" << s.fourier.beta
+                    << "|fp=" << s.fourier.fparam << "|nlev=" << s.n_levels;
+        const std::string plan_key = plan_key_ss.str();
+        {
+            std::lock_guard<std::mutex> lock(plan_mtx);
+            auto it = plans.find(plan_key);
+            if (it != plans.end())
+                return it->second;
+        }
+
         const auto coeffs = get_local_correction_coeffs<Real>(s.kernel, DIM, s.fourier.n_digits, s.fourier.beta);
         if (coeffs.empty())
             throw std::runtime_error("pt::direct: empty coefficient set");
@@ -166,7 +189,10 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
             coeff_struct += emit_coeff_struct<Real>(name.c_str(), coeffs[i]);
             coeff_args += (i ? ", " : "") + name;
         }
-        const std::string evaluator_expr = std::string(evaluator_family(s.kernel, DIM)) + "<" + coeff_args + ">";
+        std::string evaluator_expr = std::string(evaluator_family(s.kernel, DIM)) + "<" + coeff_args;
+        if (takes_eval_level(s.kernel))
+            evaluator_expr += ", " + std::to_string(eval_level);
+        evaluator_expr += ">";
         const std::string kernel_name = "PtDirectKernel_" + fnv1a_hex(std::string(jit_real_name<Real>()) + "|" +
                                                                       evaluator_expr + "|" + coeff_struct);
 
@@ -203,24 +229,29 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
                 return false;
             return std::size_t(st) * values_per_source * sizeof(Real) <= max_shared;
         };
-        // Autotune (src side is representative of the launch cost).
         const auto benchmark = [&](const TuningParams &p) {
             return jit::benchmark_cuda_ms(stream, jit::CudaBenchmarkOptions{2, 5},
-                                          [&](cudaStream_t bs) { launch_with(get_kernel(p), p, a_src, bs); });
+                                          [&](cudaStream_t bs) { launch_with(get_kernel(p), p, bench_args, bs); });
         };
 
-        config = autotune_config(tune_key, "PtDirectKernel", space, defaults, constraint, benchmark);
-        kernel = get_kernel(config);
+        const TuningParams config = autotune_config(tune_key, "PtDirectKernel", space, defaults, constraint, benchmark);
+        std::pair<std::shared_ptr<jit::JitKernel>, TuningParams> plan{get_kernel(config), config};
 
         std::lock_guard<std::mutex> lock(plan_mtx);
-        plans[tune_key] = {kernel, config};
-    }
+        plans[plan_key] = plan;
+        return plan;
+    };
+
+    const int el_src = eval_level_for(s.outputs.eval_src);
+    const int el_trg = eval_level_for(s.outputs.eval_trg);
+    const auto plan_src = resolve(el_src, a_src);
+    const auto plan_trg = (el_trg == el_src || s.outputs.pot_trg_size == 0) ? plan_src : resolve(el_trg, a_trg);
 
     // Boxes without near-field work keep their zeroed pot region.
     s.outputs.d_pot_direct_src.zero_async(stream);
     s.outputs.d_pot_direct_trg.zero_async(stream);
-    launch_with(kernel, config, a_src, stream);
-    launch_with(kernel, config, a_trg, stream);
+    launch_with(plan_src.first, plan_src.second, a_src, stream);
+    launch_with(plan_trg.first, plan_trg.second, a_trg, stream);
 }
 
 template void direct<float, 2>(State<float, 2> &, cudaStream_t);

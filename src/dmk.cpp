@@ -85,6 +85,19 @@ void validate_create_args(const pdmk_params &params, int n_src, const Real *r_sr
     if (needs_3d && params.n_dim != 3)
         fail("kernel " + std::string(util::to_string(params.kernel)) + " is only supported in 3D");
 
+    if (params.eval_path == DMK_EVAL_PATH_GPU) {
+#ifndef DMK_GPU_OFFLOAD
+        fail("eval_path=GPU requires the library to be built with -DDMK_GPU_OFFLOAD=ON");
+#else
+        if (params.n_dim != 3)
+            fail("eval_path=GPU is only supported in 3D (the plane-wave pipeline is 3D-only)");
+        if (params.use_periodic)
+            fail("eval_path=GPU does not support periodic boundary conditions");
+        if (params.kernel == DMK_YUKAWA)
+            fail("kernel " + std::string(util::to_string(params.kernel)) + " is not supported on eval_path=GPU");
+#endif
+    }
+
     // Reject unsupported kernel/eval-type combinations
     try {
         get_kernel_output_dim(params.n_dim, params.kernel, params.eval_src);

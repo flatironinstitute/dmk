@@ -27,5 +27,6 @@ extern "C" __global__ void PtSelfCorrectionKernel(SelfCorrectionArgs<Real> a) {
 
     for (int i_src = threadIdx.x; i_src < count; i_src += blockDim.x)
         for (int i = 0; i < a.n_input_dim; i++)
-            a.pot_src[pot_off + i_src * a.pot_stride + i] -= factor * a.charge[chg_off + i_src * a.n_input_dim + i];
+            a.pot_src[pot_off + i_src * a.pot_stride + a.pot_output_offset + i] -=
+                factor * a.charge[chg_off + i_src * a.n_input_dim + i];
 }

@@ -82,6 +82,24 @@ void launch_multiply_stresslet_3d(JitCache &cache, const dmk::cuda::MultiplyStre
     kernel->launch(dim3(a.n_boxes_at_level, 1, 1), dim3(BLOCK, 1, 1), 0, stream, a);
 }
 
+template <typename Real>
+void launch_multiply_laplace_dipole_3d(JitCache &cache, const dmk::cuda::MultiplyLaplaceDipole3DArgs<Real> &args,
+                                       cudaStream_t stream) {
+    if (args.n_boxes_at_level == 0)
+        return;
+    constexpr int BLOCK = 128;
+    JitKey key;
+    key.name = "PtMultiplyLaplaceDipole3DByBoxKernel";
+    key.real = jit_real_name<Real>();
+    key.sm_major = cache.sm_major();
+    key.sm_minor = cache.sm_minor();
+    key.params = {{"BLOCK_SIZE", BLOCK}};
+    auto kernel =
+        cache.get_kernel_from_source(key, [&] { return make_stage_source("pt/multiply.cu", key, "", "PtMultiply"); });
+    dmk::cuda::MultiplyLaplaceDipole3DArgs<Real> a = args;
+    kernel->launch(dim3(a.n_boxes_at_level, 1, 1), dim3(BLOCK, 1, 1), 0, stream, a);
+}
+
 } // namespace
 
 template <typename Real, int DIM>
@@ -90,9 +108,12 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
         throw std::runtime_error("pt::form_outgoing: long-range pipeline is 3D-only");
     } else {
         const dmk_ikernel kernel = s.kernel;
-        if (kernel != DMK_LAPLACE && kernel != DMK_SQRT_LAPLACE && kernel != DMK_STOKESLET && kernel != DMK_STRESSLET)
+        if (kernel != DMK_LAPLACE && kernel != DMK_SQRT_LAPLACE && kernel != DMK_STOKESLET && kernel != DMK_STRESSLET &&
+            kernel != DMK_LAPLACE_DIPOLE)
             throw std::runtime_error("pt::form_outgoing: unsupported kernel");
-        const bool is_stresslet = kernel == DMK_STRESSLET;
+        // Differing up/down table counts cannot multiply in place: the PW field is
+        // formed per level into d_pw_form_pool. Stresslet is 9->3, dipole 3->1.
+        const bool split_up_down = s.fourier.n_tables_up != s.fourier.n_charge_dim;
 
         auto &f = s.fourier;
         auto &w = s.worklists;
@@ -133,6 +154,21 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
                 ma.pw_offsets = src_offsets;
                 ma.pw_stride_complex = src_stride_complex;
                 launch_multiply_stokeslet_3d<Real>(multiply_cache, ma, stream);
+            } else if (kernel == DMK_LAPLACE_DIPOLE) {
+                dmk::cuda::MultiplyLaplaceDipole3DArgs<Real> ma;
+                ma.n_boxes_at_level = n_box;
+                ma.n_pw = n_pw_local;
+                ma.n_pw_modes = n_pw_modes_local;
+                ma.hpw = hpw_local;
+                ma.box_ids = box_ids;
+                ma.radialft = radialft;
+                ma.src_flat = src;
+                ma.src_offsets = src_offsets;
+                ma.src_stride_complex = src_stride_complex;
+                ma.dst_flat = dst;
+                ma.dst_offsets = dst_offsets;
+                ma.dst_stride_complex = dst_stride_complex;
+                launch_multiply_laplace_dipole_3d<Real>(multiply_cache, ma, stream);
             } else { // Stresslet
                 dmk::cuda::MultiplyStresslet3DArgs<Real> ma;
                 ma.n_boxes_at_level = n_box;
@@ -152,10 +188,10 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
             }
         };
 
-        // Non-stresslet: proxy2pw for all levels up front into d_pw_out. The
-        // Stresslet dim->dim^2->dim mapping needs proxy2pw done per level into
-        // d_pw_form_pool alongside the multiply (below).
-        if (!is_stresslet) {
+        // Matched table counts: proxy2pw for all levels up front into d_pw_out.
+        // Otherwise proxy2pw runs per level into d_pw_form_pool alongside the
+        // multiply (below).
+        if (!split_up_down) {
             std::vector<dmk::cuda::Proxy2PwArgs<Real>> pa_h;
             for (int L = 0; L < s.n_levels; ++L) {
                 const int n_box = w.pw_form_box_count_h[L];
@@ -180,7 +216,7 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
             launch_proxy2pw<Real>(pa_h, stream);
         }
 
-        // Per-level multiply (Stresslet first fills the 9-table pool per level).
+        // Per-level multiply (split_up_down first fills the form pool per level).
         for (int L = 0; L < s.n_levels; ++L) {
             const int n_box = w.pw_form_box_count_h[L];
             if (n_box == 0)
@@ -188,7 +224,7 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
             const int box_off = w.pw_form_box_offset_h[L];
             const int *box_ids = w.d_pw_form_box_flat.data() + box_off;
 
-            if (is_stresslet) {
+            if (split_up_down) {
                 std::vector<dmk::cuda::Proxy2PwArgs<Real>> pa_h(1);
                 auto &pa = pa_h[0];
                 pa.n_boxes_at_level = n_box;
@@ -206,9 +242,9 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
                 launch_proxy2pw<Real>(pa_h, stream);
             }
 
-            Real *src = is_stresslet ? sc.d_pw_form_pool.data() : sc.d_pw_out.data();
-            const long *src_offsets = is_stresslet ? nullptr : sc.d_pw_out_offsets.data();
-            const long src_stride = is_stresslet ? sc.pw_form_stride_reals / 2 : 0L;
+            Real *src = split_up_down ? sc.d_pw_form_pool.data() : sc.d_pw_out.data();
+            const long *src_offsets = split_up_down ? nullptr : sc.d_pw_out_offsets.data();
+            const long src_stride = split_up_down ? sc.pw_form_stride_reals / 2 : 0L;
             multiply_at(n_box, f.n_pw, f.n_pw_modes, f.hpw_per_level[L], /*windowed=*/false, box_ids,
                         f.slab(L).radialft, src, src_offsets, src_stride, sc.d_pw_out.data(),
                         sc.d_pw_out_offsets.data(), 0);
@@ -240,7 +276,7 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
                     f.d_window_radialft.data(), sc.d_window_pw_form_in.data(), nullptr, window_in_stride_complex,
                     sc.d_window_pw_form_out.data(), nullptr, window_out_stride_complex);
 
-        Real *pw_for_pw2proxy = is_stresslet ? sc.d_window_pw_form_out.data() : sc.d_window_pw_form_in.data();
+        Real *pw_for_pw2proxy = split_up_down ? sc.d_window_pw_form_out.data() : sc.d_window_pw_form_in.data();
 
         std::vector<dmk::cuda::PwToProxyArgs<Real>> root_pp(1);
         {

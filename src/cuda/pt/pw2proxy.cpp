@@ -90,7 +90,7 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
 
     const std::vector<TuningParameter> space{{"COL_REG", {1, 2}},
                                              {"K2_TILE", {2, 3, 4}},
-                                             {"K3_TILE", {2, 3, 4}},
+                                             {"K3_TILE", {1, 2, 3, 4}},
                                              {"KR_TILE", {3, 4, 8, 9}},
                                              {"BLOCK_SIZE", {128, 256}}};
     const TuningParams defaults{{"COL_REG", 1}, {"K2_TILE", 3}, {"K3_TILE", 3}, {"KR_TILE", 3}, {"BLOCK_SIZE", 256}};

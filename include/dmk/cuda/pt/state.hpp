@@ -82,6 +82,7 @@ struct BuildInputs {
         Real hpw_win = 0;                   ///< windowed plane-wave spacing
         int n_digits = 0;                   ///< requested accuracy digits (direct coeff generation)
         double beta = 0;                    ///< PSWF bandwidth (direct coeff generation)
+        double fparam = 0;                  ///< kernel param (Yukawa lambda); direct coeff cache key
         int pw2poly_per_level_reals = 0;    ///< = 2*n_pw*n_order
         int poly2pw_per_level_reals = 0;    ///< = 2*n_pw*n_order
         int radialft_per_level_reals = 0;   ///< = n_pw_modes
@@ -228,6 +229,7 @@ struct State {
         Real hpw_win = 0;                     ///< windowed PW spacing
         int n_digits = 0;                     ///< requested accuracy digits (direct coeff generation)
         double beta = 0;                      ///< PSWF bandwidth (direct coeff generation)
+        double fparam = 0;                    ///< kernel param (Yukawa lambda); direct coeff cache key
         int pw2poly_per_level_reals = 0;      ///< flat stride for d_pw2poly_flat
         int poly2pw_per_level_reals = 0;      ///< flat stride for d_poly2pw_flat
         int radialft_per_level_reals = 0;     ///< flat stride for d_radialft_flat

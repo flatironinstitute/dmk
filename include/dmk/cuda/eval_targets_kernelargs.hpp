@@ -36,8 +36,9 @@ struct SelfCorrectionArgs {
     Real *pot_src;                  // d_pot_src_eval, AoS stride = pot_stride
     const long *pot_src_offsets;    // [n_boxes]
     int n_direct_work;
-    int n_input_dim; // kernel_input_dim; also the charge AoS stride
-    int pot_stride;  // kernel_output_dim_src; the pot AoS stride
+    int n_input_dim;       // kernel_input_dim; also the charge AoS stride
+    int pot_stride;        // kernel_output_dim_src; the pot AoS stride
+    int pot_output_offset; // 0 for the potential term, 1 for the dipole gradient term
 };
 
 } // namespace dmk::cuda

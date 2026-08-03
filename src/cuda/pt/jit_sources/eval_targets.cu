@@ -107,8 +107,11 @@ extern "C" __global__ void PtEvalTargetsByBoxKernel(EvalTargetsArgs<Real> a) {
     for (int d = 0; d < N_CHARGE_DIM; ++d) {
         const Real *__restrict__ cd_g = coeffs + d * coeffs_stride_per_dim;
 
-        cooperative_load_16B(s_cd, cd_g, coeffs_stride_per_dim);
-        __syncthreads();
+        if constexpr (SMEM_COEFFS) {
+            cooperative_load_16B(s_cd, cd_g, coeffs_stride_per_dim);
+            __syncthreads();
+        }
+        const Real *__restrict__ c_src = SMEM_COEFFS ? s_cd : cd_g;
 
         const int target_stride = blockDim.x * TARGETS_PER_THREAD;
         for (int t_base = threadIdx.x; t_base < n_target; t_base += target_stride) {
@@ -174,7 +177,7 @@ extern "C" __global__ void PtEvalTargetsByBoxKernel(EvalTargetsArgs<Real> a) {
 
 #pragma unroll
                     for (int i = 0; i < N_ORDER; ++i) {
-                        const Real c = s_cd[i + j * N_ORDER];
+                        const Real c = c_src[i + j * N_ORDER];
 
 #pragma unroll
                         for (int q = 0; q < TARGETS_PER_THREAD; ++q) {
@@ -258,7 +261,7 @@ extern "C" __global__ void PtEvalTargetsByBoxKernel(EvalTargetsArgs<Real> a) {
 
 #pragma unroll
                         for (int i = 0; i < N_ORDER; ++i) {
-                            const Real c = s_cd[i + j * N_ORDER + k * n2];
+                            const Real c = c_src[i + j * N_ORDER + k * n2];
 
 #pragma unroll
                             for (int q = 0; q < TARGETS_PER_THREAD; ++q) {

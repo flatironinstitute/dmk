@@ -963,13 +963,24 @@ void DMKPtTree<Real, DIM>::build_self_correction_work_list() {
     for (int i = 0; i < n_lvl; ++i)
         w0[i] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i, boxsize[i]);
 
+    // The dipole factor is a gradient correction applied at component offset 1, and is
+    // read only by the GPU path -- correct_for_self_interactions recomputes its own.
+    const bool dipole_grad = params.kernel == DMK_LAPLACE_DIPOLE && params.eval_src >= DMK_POTENTIAL_GRAD;
+    std::vector<Real> w0_grad(n_lvl);
+    if (dipole_grad)
+        for (int i = 0; i < n_lvl; ++i)
+            w0_grad[i] = get_dipole_grad_self_constant<Real, DIM>(fourier_data, params.kernel, i, boxsize[i]);
+
     self_correction_work.resize(direct_work.size());
 #pragma omp parallel for schedule(static)
     for (int idx = 0; idx < direct_work.size(); ++idx) {
         const int box = direct_work[idx];
-        // STRESSLET has no scalar self-correction; LAPLACE_DIPOLE's is a
-        // gradient term applied separately in correct_for_self_interactions.
-        if (params.kernel == DMK_STRESSLET || params.kernel == DMK_LAPLACE_DIPOLE) {
+        if (params.kernel == DMK_LAPLACE_DIPOLE) {
+            self_correction_work[idx] = dipole_grad ? w0_grad[node_mid[box].Depth() + ifpwexp[box]] : Real{0};
+            continue;
+        }
+        // STRESSLET has no scalar self-correction.
+        if (params.kernel == DMK_STRESSLET) {
             self_correction_work[idx] = Real{0};
             continue;
         }
@@ -1438,8 +1449,7 @@ void DMKPtTree<Real, DIM>::correct_for_self_interactions() {
 
     // LAPLACE_DIPOLE has a gradient self-correction (w0_grad on the grad
     // components) rather than the scalar potential correction the other kernels
-    // use, so it takes a separate path (build_self_correction_work_list leaves
-    // its scalar factor zero).
+    // use, so it takes a separate path and recomputes w0_grad locally.
     if (params.kernel == DMK_LAPLACE_DIPOLE) {
         if (params.eval_src < DMK_POTENTIAL_GRAD)
             return;
