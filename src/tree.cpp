@@ -1500,15 +1500,6 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
     const auto &node_mid = this->GetNodeMID();
     const auto &node_lists = this->GetNodeLists();
 
-    Real w0[SCTL_MAX_DEPTH];
-    Real w0_grad[SCTL_MAX_DEPTH] = {};
-    // Fill for n_levels+1, note boxsize is already n_levels+1 in size
-    for (int i_level = 0; i_level < std::min(SCTL_MAX_DEPTH, n_levels() + 1); ++i_level) {
-        w0[i_level] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
-        w0_grad[i_level] =
-            get_dipole_grad_self_constant<Real, DIM>(fourier_data, params.kernel, i_level, boxsize[i_level]);
-    }
-
     // For PBC: precompute the periodic shift for each (trg_box, nbr_index) pair.
     // The nbr array index k encodes a direction (dx,dy,dz) ∈ {-1,0,+1}^DIM.
     // k = d0 + 3*d1 + 9*d2 where d ∈ {0,1,2} maps to offset {-1,0,+1}.
