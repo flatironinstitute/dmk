@@ -445,33 +445,34 @@ void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, 
 template <typename Real, int DIM>
 void yukawa_difference_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
                                  sctl::Vector<Real> &diff_kernel_ft) {
-    const Real bsizesmall = boxsize * 0.5;
-    const Real bsizebig = boxsize;
-    const Real rlambda = *rpars;
-    const Real rlambda2 = rlambda * rlambda;
-    const Real psi0 = pf.eval_val(0.0);
+    // Work in double regardless of Real type so that small lambda doesn't floor
+    const double bsizesmall = boxsize * 0.5;
+    const double bsizebig = boxsize;
+    const double rlambda = *rpars;
+    const double rlambda2 = rlambda * rlambda;
+    const double psi0 = pf.eval_val(0.0);
     const auto [hpw, ws] = get_PSWF_difference_kernel_pwterms<DIM>(npw, beta, boxsize);
     const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
     diff_kernel_ft.ReInit(n_fourier);
 
-    const Real inv_beta = 1.0 / beta;
+    const double inv_beta = 1.0 / beta;
     for (int i = 0; i < n_fourier; ++i) {
-        Real rk = sqrt((Real)i) * hpw;
-        Real xi2 = rk * rk + rlambda2;
-        Real xi = sqrt(xi2);
-        Real xval = xi * bsizesmall * inv_beta;
-        Real fval1 = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
+        const double rk = std::sqrt((double)i) * hpw;
+        const double xi2 = rk * rk + rlambda2;
+        const double xi = std::sqrt(xi2);
+        double xval = xi * bsizesmall * inv_beta;
+        const double fval1 = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
 
         xval = xi * bsizebig * inv_beta;
-        Real fval2 = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
+        const double fval2 = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
         diff_kernel_ft[i] = ws * (fval1 - fval2) / (psi0 * xi2);
     }
 
     // re-compute fhat[0] accurately when there is a low-frequency breakdown
     if (rlambda * bsizebig / beta < 1E-4) {
         const std::array<double, 4> c = pf.intvals(beta);
-        const Real bsizesmall2 = bsizesmall * bsizesmall;
-        const Real bsizebig2 = bsizebig * bsizebig;
+        const double bsizesmall2 = bsizesmall * bsizesmall;
+        const double bsizebig2 = bsizebig * bsizebig;
 
         diff_kernel_ft[0] = ws * c[2] * (bsizebig2 - bsizesmall2) / 2 +
                             ws * (bsizesmall2 * bsizesmall2 - bsizebig2 * bsizebig2) * rlambda2 * c[3] / (c[0] * 24);
