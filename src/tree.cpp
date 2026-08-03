@@ -815,6 +815,9 @@ void DMKPtTree<Real, DIM>::build_direct_work_lists() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_evaluators() {
     sctl::Profile::Scoped profile("build_evaluators", &comm_);
+    // A leaf with a planewave expansion takes its residual one level finer than its
+    // own depth, so the level index reaches n_levels().
+    const int n_lvl = n_levels() + 1;
     // YUKAWA has no AOT/JIT residual evaluator; it builds its own per-level
     // evaluators in the block below. Every other kernel requires a working
     // AOT/JIT evaluator, so a failure there is fatal (an empty evaluator array
@@ -831,10 +834,10 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
         }
 #endif
         // FIXME: assumes the same src/trg output configuration
-        evaluator_by_level_src.assign(n_levels(), src_eval);
-        evaluator_by_level_trg.assign(n_levels(), trg_eval);
+        evaluator_by_level_src.assign(n_lvl, src_eval);
+        evaluator_by_level_trg.assign(n_lvl, trg_eval);
     } else {
-        for (int level = 0; level < n_levels(); ++level) {
+        for (int level = 0; level < n_lvl; ++level) {
             auto coeffs = fourier_data.local_correction_coeffs(level, n_digits);
 
             if constexpr (DIM == 3) {
@@ -1318,10 +1321,6 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                 }
                 const Real bsize = boxsize[src_level];
 
-                // evaluator_by_level_src is sized n_levels()
-                // This fix is essentially for when there is *only* a root box.
-                src_level = std::min(src_level, n_levels() - 1);
-
                 const Real d2max = bsize * bsize;
                 const Real bsizeinv = Real{1} / bsize;
 
@@ -1462,14 +1461,8 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
             // Correct for self-evaluations
             auto pot = pot_src_view(trg_box);
             auto charge = charge_with_halo_view(trg_box);
-            const auto correction_factor = [&]() -> Real {
-                if (params.kernel == DMK_STOKESLET) {
-                    const auto depth = node_mid[trg_box].Depth();
-                    return ifpwexp[trg_box] ? 2 * w0[depth] : w0[depth];
-                }
-                const auto depth = node_mid[trg_box].Depth() + ifpwexp[trg_box];
-                return w0[depth];
-            }();
+            // Must match the level the direct residual uses.
+            const Real correction_factor = w0[node_mid[trg_box].Depth() + ifpwexp[trg_box]];
 
             // FIXME: This needs to deal with correction factors where
             // kernel_input_dim != kernel_output_dim (like grad, which
