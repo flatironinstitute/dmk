@@ -45,6 +45,7 @@ struct BuildInputs {
         std::span<const int> direct_work;          ///< target boxes with near-field work (direct)
         std::vector<int> list1_flat;               ///< [n_boxes*nlist1_stride] near source boxes, -1 pad (direct)
         std::vector<int> list1_count;              ///< [n_boxes] valid entries per row (direct)
+        std::vector<signed char> list1_shift_flat; ///< [n_boxes*nlist1_stride*DIM] PBC image shift, empty if aperiodic
         std::vector<int> box_levels;               ///< [n_boxes] depth per box (all passes)
         std::vector<int> neighbors;                ///< [n_boxes*n_neighbors] neighbor ids, -1 invalid (downward)
         std::vector<unsigned char> ifpwexp;        ///< [n_boxes] has-PW-expansion flag (upward/form_outgoing/downward)
@@ -193,6 +194,7 @@ struct State {
         DeviceBuffer<int> d_direct_work;              ///< target boxes with near-field work (direct)
         DeviceBuffer<int> d_list1_flat;               ///< near source boxes per box (direct)
         DeviceBuffer<int> d_list1_count;              ///< valid list1 entries per box (direct)
+        DeviceBuffer<signed char> d_list1_shift;      ///< PBC image shift per list1 entry, unallocated if aperiodic
         DeviceBuffer<int> d_box_levels;               ///< depth per box (all passes)
         DeviceBuffer<int> d_neighbors;                ///< neighbor box ids per box (downward)
         DeviceBuffer<unsigned char> d_ifpwexp;        ///< has-PW-expansion flag (upward/form_outgoing/downward)

@@ -604,6 +604,15 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
             const Real cen = a.direct_cen[src_level];
             const Real d2max = a.direct_d2max[src_level];
 
+            // PBC: a wrapped list1 entry names its own box, so the source coordinates must
+            // be translated into the target's image. Constant over the tile loop.
+            Real shift[SPATIAL_DIM] = {};
+            if constexpr (PERIODIC) {
+                const signed char *sh = a.list1_shift + (trg_box * a.nlist1_stride + li) * SPATIAL_DIM;
+                for (int k = 0; k < SPATIAL_DIM; ++k)
+                    shift[k] = sh[k];
+            }
+
             LevelBinder<Eval>::bind(src_level, a.thresh2, d2max, rsc, cen, [&](const auto &evaluator) {
                 for (int tile0 = 0; tile0 < n_src; tile0 += TILE) {
                     const int rem = n_src - tile0;
@@ -612,7 +621,10 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
                     for (int idx = threadIdx.x; idx < tile_count * SPATIAL_DIM; idx += blockDim.x) {
                         const int ss = idx / SPATIAL_DIM;
                         const int k = idx - ss * SPATIAL_DIM;
-                        s_r_src[ss * SPATIAL_DIM + k] = r_src[(tile0 + ss) * SPATIAL_DIM + k];
+                        Real x = r_src[(tile0 + ss) * SPATIAL_DIM + k];
+                        if constexpr (PERIODIC)
+                            x += shift[k];
+                        s_r_src[ss * SPATIAL_DIM + k] = x;
                     }
                     for (int idx = threadIdx.x; idx < tile_count * KERNEL_INPUT_DIM; idx += blockDim.x) {
                         const int ss = idx / KERNEL_INPUT_DIM;

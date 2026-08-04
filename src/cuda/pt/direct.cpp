@@ -104,6 +104,9 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     const int normal_dim = (s.kernel == DMK_STRESSLET) ? DIM : 0;
     const int values_per_source = DIM + input_dim + normal_dim;
 
+    // The shift table is only built for periodic trees, so its presence is the flag.
+    const bool periodic = s.topology.d_list1_shift.size() != 0;
+
     // Common args; the src/trg sides differ only in the target/pot fields.
     dmk::cuda::DirectByBoxArgs<Real> base;
     base.n_work = n_work;
@@ -112,6 +115,7 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     base.direct_work = s.topology.d_direct_work.data();
     base.list1_flat = s.topology.d_list1_flat.data();
     base.list1_count = s.topology.d_list1_count.data();
+    base.list1_shift = s.topology.d_list1_shift.data();
     base.box_levels = s.topology.d_box_levels.data();
     base.ifpwexp = s.topology.d_ifpwexp.data();
     base.direct_rsc = s.fourier.d_direct_rsc.data();
@@ -175,7 +179,8 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
         std::ostringstream plan_key_ss;
         plan_key_ss << std::setprecision(std::numeric_limits<double>::max_digits10);
         plan_key_ss << tune_key << "|nd=" << s.fourier.n_digits << "|beta=" << s.fourier.beta
-                    << "|fp=" << s.fourier.fparam << "|nlev=" << s.n_levels << "|l0=" << s.fourier.direct_coeffs_level0;
+                    << "|fp=" << s.fourier.fparam << "|nlev=" << s.n_levels << "|l0=" << s.fourier.direct_coeffs_level0
+                    << "|per=" << int(periodic);
         const std::string plan_key = plan_key_ss.str();
         {
             std::lock_guard<std::mutex> lock(plan_mtx);
@@ -225,6 +230,10 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
             key.sm_major = cache.sm_major();
             key.sm_minor = cache.sm_minor();
             key.params = cfg;
+            // Emitted into the source as `constexpr int PERIODIC` and folded into the
+            // module cache key, which the coefficient-derived kernel_name cannot
+            // distinguish: the two variants bake identical coefficients.
+            key.params["PERIODIC"] = periodic ? 1 : 0;
             return cache.get_kernel_from_source(
                 key, [&] { return make_stage_source("pt/direct.cu", key, prelude, "PtDirect"); });
         };

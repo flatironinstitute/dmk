@@ -746,6 +746,9 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     // Internal data accessors
     std::span<const int> list1(int i_box) const { return std::span<const int>(list1_[i_box].data(), nlist1_[i_box]); }
+    std::span<const std::array<int, DIM>> list1_shift(int i_box) const {
+        return std::span<const std::array<int, DIM>>(list1_shift_[i_box].data(), nlist1_[i_box]);
+    }
     std::span<const int> listpw(int i_box) const {
         return std::span<const int>(listpw_[i_box].data(), nlistpw_[i_box]);
     }

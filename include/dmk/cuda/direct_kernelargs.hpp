@@ -14,6 +14,7 @@ struct DirectByBoxArgs {
     const int *box_levels = nullptr;
     const int *list1_count = nullptr;
     const int *list1_flat = nullptr;
+    const signed char *list1_shift = nullptr;
 
     const unsigned char *ifpwexp = nullptr;
 

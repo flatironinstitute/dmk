@@ -91,8 +91,14 @@ void validate_create_args(const pdmk_params &params, int n_src, const Real *r_sr
 #else
         if (params.n_dim != 3)
             fail("eval_path=GPU is only supported in 3D (the plane-wave pipeline is 3D-only)");
-        if (params.use_periodic)
-            fail("eval_path=GPU does not support periodic boundary conditions");
+        // The periodic root kernel is scalar-only: get_periodic_windowed_kernel_ft throws
+        // for Stokeslet/Stresslet and the periodic root branch never routes to the dipole
+        // multiply, so these are unsupported on the CPU too.
+        const bool scalar_kernel =
+            params.kernel == DMK_LAPLACE || params.kernel == DMK_SQRT_LAPLACE || params.kernel == DMK_YUKAWA;
+        if (params.use_periodic && !scalar_kernel)
+            fail("eval_path=GPU does not support periodic boundary conditions for kernel " +
+                 std::string(util::to_string(params.kernel)));
 #endif
     }
 

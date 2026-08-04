@@ -35,6 +35,7 @@ struct Config {
     int n_dim = 3;
     double fparam = 6.0;
     dmk_eval_path eval_path = DMK_EVAL_PATH_CPU;
+    bool use_periodic = false;
     bool bench_build = false;
     bool bench_eval = true;
     bool bench_update_charges = false;
@@ -477,6 +478,7 @@ void run_benchmark(const Config &cfg) {
     params.log_level = cfg.log_level;
     params.kernel = cfg.kernel;
     params.eval_path = cfg.eval_path;
+    params.use_periodic = cfg.use_periodic;
     params.eval_src = get_eval_type(cfg.kernel, cfg.with_grad);
     params.eval_trg = params.eval_src;
     if (cfg.kernel == DMK_YUKAWA)
@@ -689,6 +691,7 @@ Config parse_args(int argc, char *argv[]) {
         {"bench-build", no_argument, nullptr, 1003},
         {"no-bench-eval", no_argument, nullptr, 1004},
         {"bench-update-charges", no_argument, nullptr, 1005},
+        {"periodic", no_argument, nullptr, 1006},
         {nullptr, 0, nullptr, 0},
     };
 
@@ -772,6 +775,9 @@ Config parse_args(int argc, char *argv[]) {
         case 1005:
             cfg.bench_update_charges = true;
             break;
+        case 1006:
+            cfg.use_periodic = true;
+            break;
         case 'h':
         case '?':
         default:
@@ -797,6 +803,7 @@ Config parse_args(int argc, char *argv[]) {
                 << "  --bench-build         Also benchmark tree build time\n"
                 << "  --no-bench-eval       Skip eval benchmark (build only)\n"
                 << "  --bench-update-charges  Also benchmark pdmk_tree_update_charges\n"
+                << "  --periodic            Periodic boundary conditions (--direct is free-space only)\n"
                 << "  -h                    Help\n";
             exit(0);
         }

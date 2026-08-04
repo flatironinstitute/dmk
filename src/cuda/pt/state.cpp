@@ -228,11 +228,22 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
 
     topo.list1_flat.assign((std::size_t)n_boxes * topo.nlist1_stride, -1);
     topo.list1_count.assign(n_boxes, 0);
+    // Under PBC a wrapped neighbor appears in list1 as its own box id, so the image shift
+    // is the only thing distinguishing the entries: a single-level tree has the root
+    // listed 3^DIM times with 3^DIM distinct shifts. boxsize[0] is 1, so shifts are +-1.
+    if (tree.params.use_periodic)
+        topo.list1_shift_flat.assign((std::size_t)n_boxes * topo.nlist1_stride * DIM, 0);
     for (int b = 0; b < n_boxes; ++b) {
         const auto sp = tree.list1(b);
         topo.list1_count[b] = sp.size();
         for (std::size_t k = 0; k < sp.size(); ++k)
             topo.list1_flat[(std::size_t)b * topo.nlist1_stride + k] = sp[k];
+        if (!topo.list1_shift_flat.empty()) {
+            const auto sh = tree.list1_shift(b);
+            for (std::size_t k = 0; k < sh.size(); ++k)
+                for (int d = 0; d < DIM; ++d)
+                    topo.list1_shift_flat[((std::size_t)b * topo.nlist1_stride + k) * DIM + d] = sh[k][d];
+        }
     }
 
     const auto &node_mid = tree.GetNodeMID();
@@ -279,7 +290,10 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
     fou.n_charge_dim = tree.n_tables_down;
     fou.n_tables_up = tree.n_tables_up;
     fou.n_order = tree.expansion_constants.n_order;
-    fou.n_pw_win = tree.expansion_constants.n_pw_win;
+    // Root plane-wave grid: the periodic root kernel lives on the reciprocal lattice and
+    // uses n_pw_periodic modes, so the `_win` fields carry whichever the tree built.
+    fou.n_pw_win =
+        tree.params.use_periodic ? tree.expansion_constants.n_pw_periodic : tree.expansion_constants.n_pw_win;
     fou.n_pw2_win = (fou.n_pw_win + 1) / 2;
     if constexpr (DIM == 3)
         fou.n_pw_modes_win = fou.n_pw_win * fou.n_pw_win * fou.n_pw2_win;
@@ -374,9 +388,12 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
         tree, n_levels, w.pw_eval_box_offset, w.pw_eval_box_count, pw_eval_max_discard, w.pw_eval_box_flat,
         [&](int b) { return tree.ifpwexp[b] && (tree.src_counts_owned[b] + tree.trg_counts_owned[b]) > 0; });
 
-    build_per_level_box_list(tree, n_levels, w.pw_form_box_offset, w.pw_form_box_count, w.max_pw_form_per_level,
-                             w.pw_form_box_flat,
-                             [&](int b) { return tree.ifpwexp[b] && tree.proxy_coeffs_offsets[b] != -1; });
+    // Under periodic the level-0 difference kernel is skipped: the periodic root kernel
+    // already contains W_0+D_0, so pw_out(0) must stay zero (form_outgoing zeroes it).
+    const bool skip_root_form = tree.params.use_periodic;
+    build_per_level_box_list(
+        tree, n_levels, w.pw_form_box_offset, w.pw_form_box_count, w.max_pw_form_per_level, w.pw_form_box_flat,
+        [&](int b) { return tree.ifpwexp[b] && tree.proxy_coeffs_offsets[b] != -1 && !(skip_root_form && b == 0); });
 
     w.pw_in_pool_base.assign(n_levels, 0);
     long total_slots = 0;
@@ -427,6 +444,7 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     up(topology.d_direct_work, in.topology.direct_work);
     up(topology.d_list1_flat, in.topology.list1_flat);
     up(topology.d_list1_count, in.topology.list1_count);
+    up(topology.d_list1_shift, in.topology.list1_shift_flat);
     up(topology.d_box_levels, in.topology.box_levels);
     up(topology.d_neighbors, in.topology.neighbors);
     up(topology.d_ifpwexp, in.topology.ifpwexp);
