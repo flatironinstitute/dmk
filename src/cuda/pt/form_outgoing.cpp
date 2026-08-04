@@ -120,9 +120,6 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
         auto &sc = s.scratch;
         static JitCache multiply_cache;
 
-        sc.d_pw_out.zero_async(stream);
-        sc.d_proxy_coeffs_downward.zero_async(stream);
-
         // Apply the kernel FT at a given PW size. Scalar/Stokeslet operate in
         // place on `src`; Stresslet reads 9 tables from `src` and writes 3 to
         // `dst`.

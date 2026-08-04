@@ -24,10 +24,8 @@
 #define MYCOMM nullptr
 #endif
 
-// Page-locks a caller-owned output buffer. pdmk_tree_eval takes a host pointer, so on the GPU
-// path the result leaves the device through whatever that pointer supports; pageable memory is
-// staged by the driver and runs at roughly half the achievable rate. Registering in place is
-// what a caller would do, so this measures the difference rather than hiding it.
+// Page-locks a caller-owned output buffer. pdmk_tree_eval takes a host pointer, so the GPU path's
+// result copy is staged by the driver unless the caller's memory is already page-locked.
 template <typename Real>
 bool pin_host_buffer([[maybe_unused]] std::vector<Real> &buf, bool enable) {
     if (!enable || buf.empty())
@@ -664,8 +662,8 @@ void run_benchmark(const Config &cfg) {
         out.have = true;
     };
 
-    // Allocated once and sized up front so page-locking survives every run; run_dmk's resize is
-    // then a no-op, which also keeps a reallocation out of each timed iteration.
+    // Allocated once and pre-sized: the page-locking has to outlive every run, and it keeps a
+    // reallocation out of each timed iteration.
     std::vector<Real> pot_dmk_src(size_t(n_src_per_rank) * pot_dim);
     std::vector<Real> pot_dmk_trg(size_t(n_trg_per_rank) * pot_dim);
     const bool pinned_src = pin_host_buffer(pot_dmk_src, cfg.pin_host);

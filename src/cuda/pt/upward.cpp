@@ -38,7 +38,7 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
         auto &w = s.worklists;
         auto &f = s.fourier;
 
-        s.scratch.d_proxy_coeffs_upward.zero_async(stream);
+        // d_proxy_coeffs_upward is zeroed by the caller, ahead of this chain.
         const std::size_t proxy_count = s.scratch.d_proxy_coeffs_upward.size();
         const bool is_stresslet = s.kernel == DMK_STRESSLET;
 

@@ -389,7 +389,7 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
         [&](int b) { return tree.ifpwexp[b] && (tree.src_counts_owned[b] + tree.trg_counts_owned[b]) > 0; });
 
     // Under periodic the level-0 difference kernel is skipped: the periodic root kernel
-    // already contains W_0+D_0, so pw_out(0) must stay zero (form_outgoing zeroes it).
+    // already contains W_0+D_0, so pw_out(0) must stay zero.
     const bool skip_root_form = tree.params.use_periodic;
     build_per_level_box_list(
         tree, n_levels, w.pw_form_box_offset, w.pw_form_box_count, w.max_pw_form_per_level, w.pw_form_box_flat,
@@ -550,7 +550,7 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     up(scratch.d_proxy_offsets_upward, si.proxy_offsets_upward);
     up(scratch.d_proxy_offsets_downward, si.proxy_offsets_downward);
     up(scratch.d_pw_out_offsets, si.pw_out_offsets);
-    scratch.d_pw_out.resize(2 * si.pw_out_dim); // zeroed by form_outgoing each eval
+    scratch.d_pw_out.resize(2 * si.pw_out_dim);
 
     const int max_tp_any = std::max(wi.max_tp_per_level, wi.max_tp_up_per_level);
     if (max_tp_any && scratch.tensorprod_scratch_stride_reals)
@@ -591,7 +591,15 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     outputs.d_pot_trg_final.resize(outputs.pot_trg_size);
 
     direct_stream = cuda_helpers::DeviceStream::non_blocking();
-    downward_stream = cuda_helpers::DeviceStream::non_blocking();
+    // The near-field kernel's blocks would otherwise hold every SM until they tail off, starving
+    // this chain for most of the eval even though it is enqueued at the same time.
+    downward_stream = cuda_helpers::DeviceStream::non_blocking_priority();
+
+    scratch.d_pw_out.zero_async(downward_stream.get());
+    outputs.d_pot_eval_src.zero_async(downward_stream.get());
+    outputs.d_pot_eval_trg.zero_async(downward_stream.get());
+    outputs.d_pot_direct_src.zero_async(direct_stream.get());
+    outputs.d_pot_direct_trg.zero_async(direct_stream.get());
 }
 
 template <typename Real, int DIM>

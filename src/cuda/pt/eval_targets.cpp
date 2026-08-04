@@ -36,11 +36,9 @@ std::size_t eval_shared_bytes(int dim, int n_order, std::size_t sizeof_real) {
     return (dim == 2 ? n2 : n2 * n_order) * sizeof_real;
 }
 
-// One eval-targets side (src or trg), autotuned. Additive into args.pot_flat, so
-// the tuner snapshots that buffer (`pot_size` reals).
 template <typename Real, int DIM>
 void launch_eval_side(JitCache &cache, dmk::cuda::EvalTargetsArgs<Real> args, int eval_level, int n_charge_dim,
-                      Real *pot_flat, std::size_t pot_size, cudaStream_t stream) {
+                      cudaStream_t stream) {
     if (args.n_eval_boxes == 0)
         return;
     const int n_order = args.n_order;
@@ -87,8 +85,7 @@ void launch_eval_side(JitCache &cache, dmk::cuda::EvalTargetsArgs<Real> args, in
         return bs > 0 && bs <= prop.maxThreadsPerBlock && bs % 32 == 0 && p.at("TARGETS_PER_THREAD") > 0;
     };
 
-    autotuned_launch<Real>(tk, "PtEvalTargetsByBoxKernel", space, defaults, constraint, launch_one, pot_flat, pot_size,
-                           stream);
+    autotuned_launch<Real>(tk, "PtEvalTargetsByBoxKernel", space, defaults, constraint, launch_one, nullptr, 0, stream);
 }
 
 template <typename Real>
@@ -115,8 +112,6 @@ void eval_targets(State<Real, DIM> &s, cudaStream_t stream) {
     auto &f = s.fourier;
     auto &w = s.worklists;
 
-    o.d_pot_eval_src.zero_async(stream);
-    o.d_pot_eval_trg.zero_async(stream);
     if (w.n_eval_boxes == 0)
         return;
 
@@ -139,8 +134,7 @@ void eval_targets(State<Real, DIM> &s, cudaStream_t stream) {
         args.target_counts = s.particles.d_src_counts.data();
         args.pot_flat = o.d_pot_eval_src.data();
         args.pot_offsets = o.d_pot_src_offsets.data();
-        launch_eval_side<Real, DIM>(eval_cache, args, eval_level_for(o.eval_src), f.n_charge_dim,
-                                    o.d_pot_eval_src.data(), o.pot_src_size, stream);
+        launch_eval_side<Real, DIM>(eval_cache, args, eval_level_for(o.eval_src), f.n_charge_dim, stream);
     }
 
     if (o.pot_trg_size) {
@@ -149,8 +143,7 @@ void eval_targets(State<Real, DIM> &s, cudaStream_t stream) {
         args.target_counts = s.particles.d_trg_counts.data();
         args.pot_flat = o.d_pot_eval_trg.data();
         args.pot_offsets = o.d_pot_trg_offsets.data();
-        launch_eval_side<Real, DIM>(eval_cache, args, eval_level_for(o.eval_trg), f.n_charge_dim,
-                                    o.d_pot_eval_trg.data(), o.pot_trg_size, stream);
+        launch_eval_side<Real, DIM>(eval_cache, args, eval_level_for(o.eval_trg), f.n_charge_dim, stream);
     }
 
     // Self-correction modifies the source eval potential in sorted layout.

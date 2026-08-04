@@ -11,6 +11,23 @@
 
 #include <dmk/cuda/direct_kernelargs.hpp>
 
+// Evaluator contract: operator() returns false for a pair outside the near-field annulus
+// and leaves `u` untouched, so the caller skips the accumulate entirely. thresh2 > 0, so
+// being in range already implies R2 > 0 and rsqrt needs no guard of its own.
+
+// rsqrtf() is already the approximate SFU instruction, but ptxas wraps it in a denormal
+// guard -- compare against FLT_MIN, scale by 2^24, MUFU.RSQ, scale back -- because it cannot
+// prove the argument is normal. Squared distances here sit above thresh2 = 1e-30, so take
+// the bare instruction: identical bits for any normal input, five instructions down to one.
+// fp64 keeps the library call, since rsqrt.approx.f64 only carries fp32-level accuracy.
+__device__ __forceinline__ float dmk_rsqrt(float x) {
+    float y;
+    asm("rsqrt.approx.ftz.f32 %0, %1;" : "=f"(y) : "f"(x));
+    return y;
+}
+
+__device__ __forceinline__ double dmk_rsqrt(double x) { return rsqrt(x); }
+
 template <typename Coeffs, int I>
 __device__ __forceinline__ Real horner_recurse(Real x, Real acc) {
     if constexpr (I == 0) {
@@ -79,29 +96,31 @@ struct LaplacePolyEvaluator2DCuda {
     Real rsc;
     Real cen;
 
-    __device__ inline void operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[2]) const {
+    template <bool CHECK_MIN>
+    __device__ inline bool operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[2]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1];
-        const bool in_range = (R2 > thresh2) && (R2 < d2max);
-        if (!in_range) {
-#pragma unroll
-            for (int k = 0; k < KERNEL_OUTPUT_DIM; ++k)
-                u[0][k] = Real{0};
-            return;
+        if constexpr (CHECK_MIN) {
+            if (!((R2 > thresh2) && (R2 < d2max)))
+                return false;
+        } else {
+            if (!(R2 < d2max))
+                return false;
         }
         const Real R2sc = R2 * (Real{0.5} * rsc);
-        const Real arg = rsc * R2 + cen;
+        const Real xmapped = rsc * R2 + cen;
         if constexpr (KERNEL_OUTPUT_DIM == 1) {
-            u[0][0] = Real{0.5} * log(R2sc) + horner_const<Coeffs>(arg);
+            u[0][0] = Real{0.5} * log(R2sc) + horner_const<Coeffs>(xmapped);
         } else {
             Real P, dP;
-            horner_val_deriv<Coeffs>(arg, P, dP);
+            horner_val_deriv<Coeffs>(xmapped, P, dP);
             u[0][0] = Real{0.5} * log(R2sc) + P;
-            const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
+            const Real Rinv = dmk_rsqrt(R2);
             const Real df_dR2 = Real{0.5} * (Rinv * Rinv) + rsc * dP;
 #pragma unroll
             for (int i = 0; i < 2; ++i)
                 u[0][1 + i] = Real{2} * dX[i] * df_dR2;
         }
+        return true;
     }
 };
 
@@ -118,20 +137,20 @@ struct LaplacePolyEvaluator3DCuda {
     Real rsc;
     Real cen;
 
-    __device__ inline void operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[3]) const {
+    template <bool CHECK_MIN>
+    __device__ inline bool operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[3]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
-        const bool in_range = (R2 > thresh2) && (R2 < d2max);
-        if (!in_range) {
-#pragma unroll
-            for (int k = 0; k < KERNEL_OUTPUT_DIM; ++k)
-                u[0][k] = Real{0};
-            return;
-        }
-        const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
-        const Real xmapped = (R2 * Rinv + cen) * rsc;
+        const bool in_range = CHECK_MIN ? ((R2 > thresh2) && (R2 < d2max)) : (R2 < d2max);
         if constexpr (KERNEL_OUTPUT_DIM == 1) {
-            u[0][0] = horner_const<Coeffs>(xmapped) * Rinv;
+            const Real Rinv = dmk_rsqrt(R2);
+            const Real xmapped = (R2 * Rinv + cen) * rsc;
+            u[0][0] = in_range ? horner_const<Coeffs>(xmapped) * Rinv : Real{0};
+            return true;
         } else {
+            if (!in_range)
+                return false;
+            const Real Rinv = dmk_rsqrt(R2);
+            const Real xmapped = (R2 * Rinv + cen) * rsc;
             Real P, dP;
             horner_val_deriv<Coeffs>(xmapped, P, dP);
             u[0][0] = P * Rinv;
@@ -139,6 +158,7 @@ struct LaplacePolyEvaluator3DCuda {
 #pragma unroll
             for (int i = 0; i < 3; ++i)
                 u[0][1 + i] = dX[i] * df_dR2;
+            return true;
         }
     }
 };
@@ -156,16 +176,17 @@ struct SqrtLaplacePolyEvaluator2DCuda {
     Real rsc;
     Real cen;
 
-    __device__ inline void operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[2]) const {
+    template <bool CHECK_MIN>
+    __device__ inline bool operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[2]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1];
-        const bool in_range = (R2 > thresh2) && (R2 < d2max);
-        if (!in_range) {
-#pragma unroll
-            for (int k = 0; k < KERNEL_OUTPUT_DIM; ++k)
-                u[0][k] = Real{0};
-            return;
+        if constexpr (CHECK_MIN) {
+            if (!((R2 > thresh2) && (R2 < d2max)))
+                return false;
+        } else {
+            if (!(R2 < d2max))
+                return false;
         }
-        const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
+        const Real Rinv = dmk_rsqrt(R2);
         const Real xmapped = (R2 * Rinv + cen) * rsc;
         if constexpr (KERNEL_OUTPUT_DIM == 1) {
             u[0][0] = horner_const<Coeffs>(xmapped) * Rinv;
@@ -178,6 +199,7 @@ struct SqrtLaplacePolyEvaluator2DCuda {
             for (int i = 0; i < 2; ++i)
                 u[0][1 + i] = dX[i] * df;
         }
+        return true;
     }
 };
 
@@ -194,29 +216,33 @@ struct SqrtLaplacePolyEvaluator3DCuda {
     Real rsc;
     Real cen;
 
-    __device__ inline void operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[3]) const {
+    template <bool CHECK_MIN>
+    __device__ inline bool operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[3]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
-        const bool in_range = (R2 > thresh2) && (R2 < d2max);
-        if (!in_range) {
-#pragma unroll
-            for (int k = 0; k < KERNEL_OUTPUT_DIM; ++k)
-                u[0][k] = Real{0};
-            return;
+        if constexpr (CHECK_MIN) {
+            if (!((R2 > thresh2) && (R2 < d2max)))
+                return false;
+        } else {
+            if (!(R2 < d2max))
+                return false;
         }
-        const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
+        // rsqrt-then-square, not 1/R2: nvrtc defaults to -prec-div=true, so a literal
+        // division expands to a full IEEE sequence.
+        const Real Rinv = dmk_rsqrt(R2);
         const Real R2inv = Rinv * Rinv;
-        const Real arg = rsc * R2 + cen;
+        const Real xmapped = rsc * R2 + cen;
         if constexpr (KERNEL_OUTPUT_DIM == 1) {
-            u[0][0] = R2inv * horner_const<Coeffs>(arg);
+            u[0][0] = R2inv * horner_const<Coeffs>(xmapped);
         } else {
             Real P, dP;
-            horner_val_deriv<Coeffs>(arg, P, dP);
+            horner_val_deriv<Coeffs>(xmapped, P, dP);
             u[0][0] = R2inv * P;
             const Real df = Real{2} * R2inv * (dP * rsc - P * R2inv);
 #pragma unroll
             for (int i = 0; i < 3; ++i)
                 u[0][1 + i] = dX[i] * df;
         }
+        return true;
     }
 };
 
@@ -235,16 +261,17 @@ struct YukawaPolyEvaluator3DCuda {
     Real rsc;
     Real cen;
 
-    __device__ inline void operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[3]) const {
+    template <bool CHECK_MIN>
+    __device__ inline bool operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[3]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
-        const bool in_range = (R2 > thresh2) && (R2 < d2max);
-        if (!in_range) {
-#pragma unroll
-            for (int k = 0; k < KERNEL_OUTPUT_DIM; ++k)
-                u[0][k] = Real{0};
-            return;
+        if constexpr (CHECK_MIN) {
+            if (!((R2 > thresh2) && (R2 < d2max)))
+                return false;
+        } else {
+            if (!(R2 < d2max))
+                return false;
         }
-        const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
+        const Real Rinv = dmk_rsqrt(R2);
         const Real xmapped = fma(R2 * Rinv, rsc, cen);
         if constexpr (KERNEL_OUTPUT_DIM == 1) {
             u[0][0] = horner_const<Coeffs>(xmapped) * Rinv;
@@ -257,6 +284,7 @@ struct YukawaPolyEvaluator3DCuda {
             for (int i = 0; i < 3; ++i)
                 u[0][1 + i] = dX[i] * df_dR2;
         }
+        return true;
     }
 };
 
@@ -285,19 +313,17 @@ struct LaplaceDipolePolyEvaluator3DCuda {
     Real rsc;
     Real cen;
 
-    __device__ inline void operator()(Real (&u)[3][KERNEL_OUTPUT_DIM], const Real (&dX)[3]) const {
+    template <bool CHECK_MIN>
+    __device__ inline bool operator()(Real (&u)[3][KERNEL_OUTPUT_DIM], const Real (&dX)[3]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
-        const bool in_range = (R2 > thresh2) && (R2 < d2max);
-        if (!in_range) {
-#pragma unroll
-            for (int k = 0; k < 3; ++k) {
-#pragma unroll
-                for (int j = 0; j < KERNEL_OUTPUT_DIM; ++j)
-                    u[k][j] = Real{0};
-            }
-            return;
+        if constexpr (CHECK_MIN) {
+            if (!((R2 > thresh2) && (R2 < d2max)))
+                return false;
+        } else {
+            if (!(R2 < d2max))
+                return false;
         }
-        const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
+        const Real Rinv = dmk_rsqrt(R2);
         const Real Rinv2 = Rinv * Rinv;
         const Real Rinv3 = Rinv2 * Rinv;
         const Real xmapped = (R2 * Rinv + cen) * rsc;
@@ -323,6 +349,7 @@ struct LaplaceDipolePolyEvaluator3DCuda {
                     u[k][1 + i] = dX[k] * dX[i] * F_over_R + (i == k ? F : Real{0});
             }
         }
+        return true;
     }
 };
 
@@ -339,21 +366,22 @@ struct StokesletPolyEvaluator3DCuda {
     Real rsc;
     Real cen;
 
-    __device__ inline void operator()(Real (&u)[3][3], const Real (&dX)[3]) const {
+    template <bool CHECK_MIN>
+    __device__ inline bool operator()(Real (&u)[3][3], const Real (&dX)[3]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
-        const bool in_range = (R2 > thresh2) && (R2 < d2max);
-        if (!in_range) {
-            for (int j = 0; j < 3; ++j)
-                for (int i = 0; i < 3; ++i)
-                    u[j][i] = Real{0};
-            return;
+        if constexpr (CHECK_MIN) {
+            if (!((R2 > thresh2) && (R2 < d2max)))
+                return false;
+        } else {
+            if (!(R2 < d2max))
+                return false;
         }
         const Real half = Real{0.5};
-        const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
+        const Real Rinv = dmk_rsqrt(R2);
         const Real Rinv3 = Rinv * Rinv * Rinv;
-        const Real xtmp = (R2 * Rinv + cen) * rsc;
-        const Real fdiag = (half - horner_const<CoeffsDiag>(xtmp)) * Rinv;
-        const Real foffd = (half - horner_const<CoeffsOffdiag>(xtmp)) * Rinv3;
+        const Real xmapped = (R2 * Rinv + cen) * rsc;
+        const Real fdiag = (half - horner_const<CoeffsDiag>(xmapped)) * Rinv;
+        const Real foffd = (half - horner_const<CoeffsOffdiag>(xmapped)) * Rinv3;
         for (int i = 0; i < 3; ++i)
             for (int j = 0; j < 3; ++j) {
                 Real val = foffd * dX[j] * dX[i];
@@ -361,6 +389,7 @@ struct StokesletPolyEvaluator3DCuda {
                     val += fdiag;
                 u[i][j] = val;
             }
+        return true;
     }
 };
 
@@ -377,15 +406,22 @@ struct StressletPolyEvaluator3DCuda {
     Real rsc;
     Real cen;
 
-    __device__ inline void operator()(Real (&u)[3][3], const Real (&dX)[3], const Real (&ns)[3]) const {
+    template <bool CHECK_MIN>
+    __device__ inline bool operator()(Real (&u)[3][3], const Real (&dX)[3], const Real (&ns)[3]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
-        const bool in_range = (R2 > thresh2) && (R2 < d2max);
-        const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
+        if constexpr (CHECK_MIN) {
+            if (!((R2 > thresh2) && (R2 < d2max)))
+                return false;
+        } else {
+            if (!(R2 < d2max))
+                return false;
+        }
+        const Real Rinv = dmk_rsqrt(R2);
         const Real Rinv3 = Rinv * Rinv * Rinv;
         const Real Rinv5 = Rinv3 * Rinv * Rinv;
-        const Real xtmp = (R2 * Rinv + cen) * rsc;
-        const Real Fdiag = -horner_const<CoeffsDiag>(xtmp) * Rinv3;
-        const Real Foffd = Real{6} * horner_const<CoeffsOffdiag>(xtmp) * Rinv5;
+        const Real xmapped = (R2 * Rinv + cen) * rsc;
+        const Real Fdiag = -horner_const<CoeffsDiag>(xmapped) * Rinv3;
+        const Real Foffd = Real{6} * horner_const<CoeffsOffdiag>(xmapped) * Rinv5;
         const Real rdotn = dX[0] * ns[0] + dX[1] * ns[1] + dX[2] * ns[2];
         const Real Fdiag_rdotn = Fdiag * rdotn;
         for (int j = 0; j < 3; ++j) {
@@ -396,18 +432,24 @@ struct StressletPolyEvaluator3DCuda {
                 Real val = foffd_rj_rdotn * dX[i] + fdiag_nj * dX[i] + fdiag_rj * ns[i];
                 if (i == j)
                     val += Fdiag_rdotn;
-                u[j][i] = in_range ? val : Real{0};
+                u[j][i] = val;
             }
         }
+        return true;
     }
 };
 
-template <typename Eval>
+// CHECK_MIN gates the lower cutoff. Only the self box can hold a source coincident with a
+// target, so elsewhere `R2 > thresh2` is dead; it must be compile-time, since zeroing a
+// runtime thresh2 would still leave the compare. Under PBC a wrapped entry names trg_box too
+// but with the coincidence shifted a whole period away, so the gate stays conservative.
+template <bool CHECK_MIN, typename Eval>
 __device__ __forceinline__ void direct_eval_accumulate(const Eval &evaluator, Real (&vt)[Eval::KERNEL_OUTPUT_DIM],
                                                         const Real (&dX)[Eval::SPATIAL_DIM],
                                                         const Real (&vs)[Eval::KERNEL_INPUT_DIM]) {
     Real U[Eval::KERNEL_INPUT_DIM][Eval::KERNEL_OUTPUT_DIM];
-    evaluator(U, dX);
+    if (!evaluator.template operator()<CHECK_MIN>(U, dX))
+        return;
 
 #pragma unroll
     for (int k0 = 0; k0 < Eval::KERNEL_INPUT_DIM; ++k0) {
@@ -418,21 +460,25 @@ __device__ __forceinline__ void direct_eval_accumulate(const Eval &evaluator, Re
     }
 }
 
-template <typename CoeffsDiag, typename CoeffsOffdiag>
+template <bool CHECK_MIN, typename CoeffsDiag, typename CoeffsOffdiag>
 __device__ __forceinline__ void
 direct_eval_accumulate(const StokesletPolyEvaluator3DCuda<CoeffsDiag, CoeffsOffdiag> &evaluator, Real (&vt)[3],
                        const Real (&dX)[3], const Real (&vs)[3]) {
     const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
-    const bool in_range = (R2 > evaluator.thresh2) && (R2 < evaluator.d2max);
-    if (!in_range)
-        return;
+    if constexpr (CHECK_MIN) {
+        if (!((R2 > evaluator.thresh2) && (R2 < evaluator.d2max)))
+            return;
+    } else {
+        if (!(R2 < evaluator.d2max))
+            return;
+    }
 
     const Real half = Real{0.5};
-    const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
+    const Real Rinv = dmk_rsqrt(R2);
     const Real Rinv3 = Rinv * Rinv * Rinv;
-    const Real xtmp = (R2 * Rinv + evaluator.cen) * evaluator.rsc;
-    const Real fdiag = (half - horner_const<CoeffsDiag>(xtmp)) * Rinv;
-    const Real foffd = (half - horner_const<CoeffsOffdiag>(xtmp)) * Rinv3;
+    const Real xmapped = (R2 * Rinv + evaluator.cen) * evaluator.rsc;
+    const Real fdiag = (half - horner_const<CoeffsDiag>(xmapped)) * Rinv;
+    const Real foffd = (half - horner_const<CoeffsOffdiag>(xmapped)) * Rinv3;
     const Real rdotv = dX[0] * vs[0] + dX[1] * vs[1] + dX[2] * vs[2];
     const Real off = foffd * rdotv;
 
@@ -443,21 +489,25 @@ direct_eval_accumulate(const StokesletPolyEvaluator3DCuda<CoeffsDiag, CoeffsOffd
     }
 }
 
-template <typename CoeffsDiag, typename CoeffsOffdiag>
+template <bool CHECK_MIN, typename CoeffsDiag, typename CoeffsOffdiag>
 __device__ __forceinline__ void
 direct_eval_accumulate(const StressletPolyEvaluator3DCuda<CoeffsDiag, CoeffsOffdiag> &evaluator, Real (&vt)[3],
                        const Real (&dX)[3], const Real (&vs)[3], const Real (&ns)[3]) {
     const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
-    const bool in_range = (R2 > evaluator.thresh2) && (R2 < evaluator.d2max);
-    if (!in_range)
-        return;
+    if constexpr (CHECK_MIN) {
+        if (!((R2 > evaluator.thresh2) && (R2 < evaluator.d2max)))
+            return;
+    } else {
+        if (!(R2 < evaluator.d2max))
+            return;
+    }
 
-    const Real Rinv = R2 > Real{0} ? rsqrt(R2) : Real{0};
+    const Real Rinv = dmk_rsqrt(R2);
     const Real Rinv3 = Rinv * Rinv * Rinv;
     const Real Rinv5 = Rinv3 * Rinv * Rinv;
-    const Real xtmp = (R2 * Rinv + evaluator.cen) * evaluator.rsc;
-    const Real Fdiag = -horner_const<CoeffsDiag>(xtmp) * Rinv3;
-    const Real Foffd = Real{6} * horner_const<CoeffsOffdiag>(xtmp) * Rinv5;
+    const Real xmapped = (R2 * Rinv + evaluator.cen) * evaluator.rsc;
+    const Real Fdiag = -horner_const<CoeffsDiag>(xmapped) * Rinv3;
+    const Real Foffd = Real{6} * horner_const<CoeffsOffdiag>(xmapped) * Rinv5;
     const Real rdotn = dX[0] * ns[0] + dX[1] * ns[1] + dX[2] * ns[2];
     const Real rdotv = dX[0] * vs[0] + dX[1] * vs[1] + dX[2] * vs[2];
     const Real ndotv = ns[0] * vs[0] + ns[1] * vs[1] + ns[2] * vs[2];
@@ -485,28 +535,82 @@ __device__ __forceinline__ void bind_yukawa_level(int idx, Real thresh2, Real d2
     }
 }
 
+// Carries CHECK_MIN into the eval nest, whose lambda is generic: a second `auto` parameter
+// instantiates the body once per value, at the cost of duplicating its SASS.
+template <bool B>
+struct BoolTag {
+    static constexpr bool value = B;
+};
+
 // Hands `f` the evaluator for a source box's level. Coefficients live in the evaluator
 // type, so binding here keeps the level selection out of the per-pair inner loop.
 template <typename Eval>
 struct LevelBinder {
     template <typename F>
-    __device__ __forceinline__ static void bind(int, Real thresh2, Real d2max, Real rsc, Real cen, F &&f) {
-        f(Eval{thresh2, d2max, rsc, cen});
+    __device__ __forceinline__ static void bind(int, bool check_min, Real thresh2, Real d2max, Real rsc, Real cen,
+                                               F &&f) {
+        if (check_min)
+            f(Eval{thresh2, d2max, rsc, cen}, BoolTag<true>{});
+        else
+            f(Eval{thresh2, d2max, rsc, cen}, BoolTag<false>{});
     }
 };
 
 template <int EVAL_LEVEL, int LEVEL0, typename C0, typename... Rest>
 struct LevelBinder<YukawaLevelsCuda<EVAL_LEVEL, LEVEL0, C0, Rest...>> {
     template <typename F>
-    __device__ __forceinline__ static void bind(int level, Real thresh2, Real d2max, Real rsc, Real cen, F &&f) {
-        bind_yukawa_level<EVAL_LEVEL, 0, C0, Rest...>(level - LEVEL0, thresh2, d2max, rsc, cen, (F &&)f);
+    __device__ __forceinline__ static void bind(int level, bool check_min, Real thresh2, Real d2max, Real rsc, Real cen,
+                                               F &&f) {
+        if (check_min)
+            bind_yukawa_level<EVAL_LEVEL, 0, C0, Rest...>(
+                level - LEVEL0, thresh2, d2max, rsc, cen,
+                [&](const auto &evaluator) { f(evaluator, BoolTag<true>{}); });
+        else
+            bind_yukawa_level<EVAL_LEVEL, 0, C0, Rest...>(
+                level - LEVEL0, thresh2, d2max, rsc, cen,
+                [&](const auto &evaluator) { f(evaluator, BoolTag<false>{}); });
     }
 };
 
-template <typename Eval, int TILE, int TARGETS>
+// Source pre-filtering (PREFILTER != 0).
+//
+// A warp evaluates one broadcast source against 32 targets in lockstep, so it pays a
+// full Horner whenever *any* lane is in range. The useful question is therefore per
+// target tile, not per pair: take the tight AABB of a CULL_TILE group of lanes'
+// targets, measure each source's squared distance to that box, and drop the sources no
+// lane in the group can reach. __ballot_sync + __popc compacts the survivors into
+// shared memory so the accumulate loop stays dense and unrolled. The evaluator's own
+// R2 < d2max mask remains the exact arbiter; this only removes work.
+__device__ __forceinline__ Real cull_min(Real a, Real b) { return a < b ? a : b; }
+__device__ __forceinline__ Real cull_max(Real a, Real b) { return a > b ? a : b; }
+
+// Inflating the cutoff keeps the surviving set a superset of what the evaluator would
+// accept even if nvrtc contracts the two R2 expressions differently, which is what
+// lets PREFILTER output stay bit-identical to PREFILTER=0. A pair dropped at the
+// boundary contributes below tolerance by construction, so this can go to zero.
+constexpr Real kCullSlack = Real{1e-5};
+
+// Stands in for +/-infinity when a lane holds no target: large enough to fail any
+// cutoff, small enough that its square stays finite in fp32.
+constexpr Real kCullFar = Real{1e18};
+
+constexpr unsigned kFullWarp = 0xffffffffu;
+
+// 16-byte load unit for the compacted source buffer, so a whole source arrives in one
+// LDS.128 instead of SPATIAL_DIM + KERNEL_INPUT_DIM separate scalar loads.
+struct alignas(16) CullVec {
+    Real v[16 / sizeof(Real)];
+};
+
+template <typename Eval, int TILE, int TARGETS, int PREFILTER, int CULL_TILE>
 __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real> a) {
     static_assert(TARGETS > 0, "TARGETS_PER_THREAD must be positive");
     static_assert(TARGETS <= 4, "TARGETS_PER_THREAD must be at most 4");
+    static_assert(CULL_TILE > 0 && CULL_TILE <= 32 && (32 % CULL_TILE) == 0,
+                  "CULL_TILE must be a power-of-two divisor of the warp size");
+
+    // Cull groups per warp. NSG == 1 is the warp-wide tile.
+    constexpr int NSG = 32 / CULL_TILE;
 
     constexpr int SPATIAL_DIM = Eval::SPATIAL_DIM;
     constexpr int KERNEL_INPUT_DIM = Eval::KERNEL_INPUT_DIM;
@@ -514,20 +618,65 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
     constexpr int NORMAL_DIM = Eval::NORMAL_DIM;
     constexpr Real scale_factor = Eval::scale_factor;
 
+    constexpr int VPS = SPATIAL_DIM + KERNEL_INPUT_DIM + NORMAL_DIM;
+    // Compacted sources are padded to a 16-byte multiple so one aligned vector load fetches a
+    // whole source: for 3D scalar kernels VPS is already exactly 4 floats (x,y,z,q), turning
+    // four scalar LDS in the innermost loop into a single LDS.128.
+    constexpr int VEC_N = 16 / sizeof(Real);
+    constexpr int VPS_PAD = ((VPS + VEC_N - 1) / VEC_N) * VEC_N;
+
     extern __shared__ __align__(16) unsigned char smem_raw[];
     Real *smem = reinterpret_cast<Real *>(smem_raw);
 
-    Real *s_r_src = smem;
-    smem += TILE * SPATIAL_DIM;
-
-    Real *s_charge = smem;
-    smem += TILE * KERNEL_INPUT_DIM;
-
-    Real *s_normal = nullptr;
-    if constexpr (NORMAL_DIM > 0) {
-        s_normal = smem;
-        smem += TILE * NORMAL_DIM;
+    // The compacted survivor buffer is carved first so it structurally inherits smem_raw's
+    // 16-byte alignment, which is what makes the vector load above legal -- ptxas cannot
+    // prove alignment of a dynamically offset pointer.
+    Real *s_cull_dat = nullptr;
+    int *s_cull_idx = nullptr;
+    if constexpr (PREFILTER == 3) {
+        s_cull_dat = smem;
+        smem += (blockDim.x / 32) * NSG * 32 * VPS_PAD;
+    } else if constexpr (PREFILTER != 0) {
+        s_cull_idx = reinterpret_cast<int *>(smem);
+        smem += ((blockDim.x / 32) * NSG * 32 * sizeof(int) + sizeof(Real) - 1) / sizeof(Real);
     }
+
+    // With data compaction each source is read once per warp per chunk, not once per target,
+    // so the staging tile no longer amortises anything a warp reads twice -- it only shares
+    // across the block's warps, which L1 does as well. Skipping it retires both
+    // __syncthreads() (the top warp stall) and frees the shared that caps occupancy. The
+    // other PREFILTER modes do re-read a source per target, so they always stage.
+    constexpr bool STAGE = (PREFILTER != 3) || (STAGE_SRC != 0);
+
+    Real *s_r_src = nullptr;
+    Real *s_charge = nullptr;
+    Real *s_normal = nullptr;
+    if constexpr (STAGE) {
+        s_r_src = smem;
+        smem += TILE * SPATIAL_DIM;
+
+        s_charge = smem;
+        smem += TILE * KERNEL_INPUT_DIM;
+
+        if constexpr (NORMAL_DIM > 0) {
+            s_normal = smem;
+            smem += TILE * NORMAL_DIM;
+        }
+    }
+
+    // Cull-group target boxes, [warp][q][group][centre..half_extent]. These live in shared
+    // rather than in registers because every lane reads the same box (a broadcast,
+    // conflict-free): the register version cost +9 registers per lane at CULL_TILE 32 and +25
+    // at 8, which is a larger occupancy loss than the cull saves.
+    Real *s_cull_box = nullptr;
+    if constexpr (PREFILTER != 0) {
+        s_cull_box = smem;
+        smem += (blockDim.x / 32) * TARGETS * NSG * 2 * SPATIAL_DIM;
+    }
+
+    const int lane = threadIdx.x & 31;
+    const int warp = threadIdx.x >> 5;
+    const int cull_group = lane / CULL_TILE;
 
     const int trg_box_idx = blockIdx.x;
     if (trg_box_idx >= a.n_work) {
@@ -569,6 +718,14 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
                 for (int k = 0; k < SPATIAL_DIM; ++k) {
                     xt[q][k] = r_targets[t * SPATIAL_DIM + k];
                 }
+            } else {
+                // The AABB reduce reads every lane's xt, so it must not be garbage.
+                if constexpr (PREFILTER != 0) {
+#pragma unroll
+                    for (int k = 0; k < SPATIAL_DIM; ++k) {
+                        xt[q][k] = Real{0};
+                    }
+                }
             }
         }
 
@@ -579,6 +736,38 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
             for (int k = 0; k < KERNEL_OUTPUT_DIM; ++k) {
                 vt[q][k] = Real{0};
             }
+        }
+
+        // Tight AABB of each cull group's targets, published to shared by the group leader.
+        // A lane with no target contributes +/-kCullFar so it cannot widen the box; a group
+        // that is entirely inactive collapses to an empty box that rejects every source.
+        // This belongs here rather than in the source loop: the boxes depend only on the
+        // target round, so publishing them per source chunk per list1 entry cost
+        // 2*SPATIAL_DIM shuffles thousands of times over.
+        //
+        // Centre and half-extent, so the per-source test is max(0, |x - c| - h) and the abs
+        // rides along as a source modifier. Rounding in c and h moves the effective box by
+        // ~1 ulp, far below kCullSlack, so survivors stay a superset.
+        if constexpr (PREFILTER != 0) {
+#pragma unroll
+            for (int q = 0; q < TARGETS; ++q) {
+                Real *box = s_cull_box + ((warp * TARGETS + q) * NSG + cull_group) * 2 * SPATIAL_DIM;
+#pragma unroll
+                for (int k = 0; k < SPATIAL_DIM; ++k) {
+                    Real vlo = active_target[q] ? xt[q][k] : kCullFar;
+                    Real vhi = active_target[q] ? xt[q][k] : -kCullFar;
+#pragma unroll
+                    for (int d = CULL_TILE >> 1; d > 0; d >>= 1) {
+                        vlo = cull_min(vlo, __shfl_xor_sync(kFullWarp, vlo, d));
+                        vhi = cull_max(vhi, __shfl_xor_sync(kFullWarp, vhi, d));
+                    }
+                    if (lane % CULL_TILE == 0) {
+                        box[k] = Real{0.5} * (vhi + vlo);
+                        box[SPATIAL_DIM + k] = Real{0.5} * (vhi - vlo);
+                    }
+                }
+            }
+            __syncwarp();
         }
 
         for (int li = 0; li < n_list1; ++li) {
@@ -613,83 +802,315 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
                     shift[k] = sh[k];
             }
 
-            LevelBinder<Eval>::bind(src_level, a.thresh2, d2max, rsc, cen, [&](const auto &evaluator) {
-                for (int tile0 = 0; tile0 < n_src; tile0 += TILE) {
+            LevelBinder<Eval>::bind(src_level, src_box == trg_box, a.thresh2, d2max, rsc, cen,
+                                    [&](const auto &evaluator, auto check_min) {
+                // Unstaged, the whole source list is one pass: nothing is shared between
+                // chunks, so there is no tile to size.
+                const int tile_step = STAGE ? TILE : n_src;
+                for (int tile0 = 0; tile0 < n_src; tile0 += tile_step) {
                     const int rem = n_src - tile0;
-                    const int tile_count = rem < TILE ? rem : TILE;
+                    const int tile_count = rem < tile_step ? rem : tile_step;
 
-                    for (int idx = threadIdx.x; idx < tile_count * SPATIAL_DIM; idx += blockDim.x) {
-                        const int ss = idx / SPATIAL_DIM;
-                        const int k = idx - ss * SPATIAL_DIM;
-                        Real x = r_src[(tile0 + ss) * SPATIAL_DIM + k];
-                        if constexpr (PERIODIC)
-                            x += shift[k];
-                        s_r_src[ss * SPATIAL_DIM + k] = x;
-                    }
-                    for (int idx = threadIdx.x; idx < tile_count * KERNEL_INPUT_DIM; idx += blockDim.x) {
-                        const int ss = idx / KERNEL_INPUT_DIM;
-                        const int k = idx - ss * KERNEL_INPUT_DIM;
-                        s_charge[ss * KERNEL_INPUT_DIM + k] = charge[(tile0 + ss) * KERNEL_INPUT_DIM + k];
-                    }
-
-                    if constexpr (NORMAL_DIM > 0) {
-                        for (int idx = threadIdx.x; idx < tile_count * NORMAL_DIM; idx += blockDim.x) {
-                            const int ss = idx / NORMAL_DIM;
-                            const int k = idx - ss * NORMAL_DIM;
-                            s_normal[ss * NORMAL_DIM + k] = normals[(tile0 + ss) * NORMAL_DIM + k];
+                    if constexpr (STAGE) {
+                        // The shared layout matches the global one, so staging is a contiguous
+                        // copy; only the periodic shift needs idx split into (source, component).
+                        if constexpr (PERIODIC) {
+                            for (int idx = threadIdx.x; idx < tile_count * SPATIAL_DIM; idx += blockDim.x)
+                                s_r_src[idx] = r_src[tile0 * SPATIAL_DIM + idx] + shift[idx % SPATIAL_DIM];
+                        } else {
+                            for (int idx = threadIdx.x; idx < tile_count * SPATIAL_DIM; idx += blockDim.x)
+                                s_r_src[idx] = r_src[tile0 * SPATIAL_DIM + idx];
                         }
+                        for (int idx = threadIdx.x; idx < tile_count * KERNEL_INPUT_DIM; idx += blockDim.x)
+                            s_charge[idx] = charge[tile0 * KERNEL_INPUT_DIM + idx];
+
+                        if constexpr (NORMAL_DIM > 0) {
+                            for (int idx = threadIdx.x; idx < tile_count * NORMAL_DIM; idx += blockDim.x)
+                                s_normal[idx] = normals[tile0 * NORMAL_DIM + idx];
+                        }
+
+                        __syncthreads();
                     }
 
-                    __syncthreads();
-
-                    if (any_active_target) {
+                    if constexpr (PREFILTER == 0) {
+                        if (any_active_target) {
 #pragma unroll 4
-                        for (int ss = 0; ss < tile_count; ++ss) {
-                            Real xs[SPATIAL_DIM];
+                            for (int ss = 0; ss < tile_count; ++ss) {
+                                Real xs[SPATIAL_DIM];
 #pragma unroll
-                            for (int k = 0; k < SPATIAL_DIM; ++k) {
-                                xs[k] = s_r_src[ss * SPATIAL_DIM + k];
-                            }
-
-                            Real vs[KERNEL_INPUT_DIM];
-#pragma unroll
-                            for (int k = 0; k < KERNEL_INPUT_DIM; ++k) {
-                                vs[k] = s_charge[ss * KERNEL_INPUT_DIM + k];
-                            }
-
-                            Real dX[SPATIAL_DIM];
-                            if constexpr (NORMAL_DIM > 0) {
-                                Real ns[NORMAL_DIM];
-#pragma unroll
-                                for (int k = 0; k < NORMAL_DIM; ++k) {
-                                    ns[k] = s_normal[ss * NORMAL_DIM + k];
+                                for (int k = 0; k < SPATIAL_DIM; ++k) {
+                                    xs[k] = s_r_src[ss * SPATIAL_DIM + k];
                                 }
+
+                                Real vs[KERNEL_INPUT_DIM];
 #pragma unroll
-                                for (int q = 0; q < TARGETS; ++q) {
-                                    if (active_target[q]) {
+                                for (int k = 0; k < KERNEL_INPUT_DIM; ++k) {
+                                    vs[k] = s_charge[ss * KERNEL_INPUT_DIM + k];
+                                }
+
+                                Real dX[SPATIAL_DIM];
+                                if constexpr (NORMAL_DIM > 0) {
+                                    Real ns[NORMAL_DIM];
 #pragma unroll
-                                        for (int k = 0; k < SPATIAL_DIM; ++k) {
-                                            dX[k] = xt[q][k] - xs[k];
-                                        }
-                                        direct_eval_accumulate(evaluator, vt[q], dX, vs, ns);
+                                    for (int k = 0; k < NORMAL_DIM; ++k) {
+                                        ns[k] = s_normal[ss * NORMAL_DIM + k];
                                     }
-                                }
-                            } else {
 #pragma unroll
-                                for (int q = 0; q < TARGETS; ++q) {
-                                    if (active_target[q]) {
+                                    for (int q = 0; q < TARGETS; ++q) {
+                                        if (active_target[q]) {
 #pragma unroll
-                                        for (int k = 0; k < SPATIAL_DIM; ++k) {
-                                            dX[k] = xt[q][k] - xs[k];
+                                            for (int k = 0; k < SPATIAL_DIM; ++k) {
+                                                dX[k] = xt[q][k] - xs[k];
+                                            }
+                                            direct_eval_accumulate<check_min.value>(evaluator, vt[q], dX, vs, ns);
                                         }
-                                        direct_eval_accumulate(evaluator, vt[q], dX, vs);
+                                    }
+                                } else {
+#pragma unroll
+                                    for (int q = 0; q < TARGETS; ++q) {
+                                        if (active_target[q]) {
+#pragma unroll
+                                            for (int k = 0; k < SPATIAL_DIM; ++k) {
+                                                dX[k] = xt[q][k] - xs[k];
+                                            }
+                                            direct_eval_accumulate<check_min.value>(evaluator, vt[q], dX, vs);
+                                        }
                                     }
                                 }
                             }
                         }
+                    } else {
+                        // Every lane must reach __ballot_sync, so there is no
+                        // any_active_target guard here: an idle lane still tests its
+                        // source and just skips the accumulate.
+                        // PREFILTER == 2 keeps every source by making the threshold
+                        // unreachable rather than by skipping the test, so the distance
+                        // computation stays live and the runtime delta against
+                        // PREFILTER == 0 is the cull overhead alone, output unchanged.
+                        // The bound is derived from a runtime value so it cannot be folded.
+                        const Real d2cull = (PREFILTER == 2) ? d2max * kCullFar : d2max * (Real{1} + kCullSlack);
+
+                        // Chunk outer, target inner: the source payload below depends only on
+                        // the chunk. The q loop is unrolled so xt/vt stay register-indexed.
+                        for (int chunk = 0; chunk < tile_count; chunk += 32) {
+                            const int s = chunk + lane;
+                            const bool in_tile = s < tile_count;
+
+                            // The source this lane culls, assembled in registers so the
+                            // compacting store below is one aligned vector write. Its leading
+                            // SPATIAL_DIM entries double as the cull coordinates. A survivor
+                            // travels cull_src -> s_cull_dat -> cull_dat.
+                            constexpr int CULL_SRC_N = (PREFILTER == 3) ? VPS_PAD : SPATIAL_DIM;
+                            alignas(16) Real cull_src[CULL_SRC_N];
+                            if (in_tile) {
+                                // Unstaged, the periodic shift rides here instead of on the
+                                // staging copy. `s` already indexes the whole list, since an
+                                // unstaged pass has a single tile.
+#pragma unroll
+                                for (int k = 0; k < SPATIAL_DIM; ++k) {
+                                    if constexpr (STAGE) {
+                                        cull_src[k] = s_r_src[s * SPATIAL_DIM + k];
+                                    } else if constexpr (PERIODIC) {
+                                        cull_src[k] = r_src[s * SPATIAL_DIM + k] + shift[k];
+                                    } else {
+                                        cull_src[k] = r_src[s * SPATIAL_DIM + k];
+                                    }
+                                }
+                                if constexpr (PREFILTER == 3) {
+#pragma unroll
+                                    for (int k = 0; k < KERNEL_INPUT_DIM; ++k)
+                                        cull_src[SPATIAL_DIM + k] =
+                                            STAGE ? s_charge[s * KERNEL_INPUT_DIM + k] : charge[s * KERNEL_INPUT_DIM + k];
+                                    if constexpr (NORMAL_DIM > 0) {
+#pragma unroll
+                                        for (int k = 0; k < NORMAL_DIM; ++k)
+                                            cull_src[SPATIAL_DIM + KERNEL_INPUT_DIM + k] =
+                                                STAGE ? s_normal[s * NORMAL_DIM + k] : normals[s * NORMAL_DIM + k];
+                                    }
+                                    // The vector store writes the padding too, so it must not
+                                    // be an uninitialised read.
+#pragma unroll
+                                    for (int k = VPS; k < CULL_SRC_N; ++k)
+                                        cull_src[k] = Real{0};
+                                }
+                            }
+
+#pragma unroll
+                            for (int q = 0; q < TARGETS; ++q) {
+                                // One ballot per cull group: the whole warp tests its own
+                                // source against group g's box, so every group gets its own
+                                // survivor list built 32 sources at a time.
+                                int my_count = 0;
+                                int work_count = 0;
+#pragma unroll
+                                for (int g = 0; g < NSG; ++g) {
+                                    const Real *box =
+                                        s_cull_box + ((warp * TARGETS + q) * NSG + g) * 2 * SPATIAL_DIM;
+                                    Real d2 = Real{0};
+                                    if (in_tile) {
+#pragma unroll
+                                        for (int k = 0; k < SPATIAL_DIM; ++k) {
+                                            const Real gap =
+                                                cull_max(Real{0}, fabs(cull_src[k] - box[k]) - box[SPATIAL_DIM + k]);
+                                            d2 = fma(gap, gap, d2);
+                                        }
+                                    }
+
+                                    const bool keep = in_tile && (d2 < d2cull);
+                                    const unsigned m = __ballot_sync(kFullWarp, keep);
+                                    if (keep) {
+                                        const int rank = __popc(m & ((1u << lane) - 1));
+                                        if constexpr (PREFILTER == 3) {
+                                            // Compact the source DATA, not its index, so the
+                                            // evaluation loop addresses off its own counter
+                                            // instead of chasing a shared index -- that is a
+                                            // dependent LDS -> LDS chain the unroll cannot hide.
+                                            Real *dst = s_cull_dat + ((warp * NSG + g) * 32 + rank) * VPS_PAD;
+#pragma unroll
+                                            for (int v = 0; v < VPS_PAD / VEC_N; ++v)
+                                                *reinterpret_cast<CullVec *>(dst + v * VEC_N) =
+                                                    *reinterpret_cast<const CullVec *>(&cull_src[v * VEC_N]);
+                                        } else {
+                                            s_cull_idx[(warp * NSG + g) * 32 + rank] = s;
+                                        }
+                                    }
+                                    const int count = __popc(m);
+                                    if (g == cull_group) {
+                                        my_count = count;
+                                    }
+
+                                    if constexpr (PREFILTER_STATS) {
+                                        // The warp iterates max-over-groups times, not
+                                        // mean-over-groups, so that max is the real work metric
+                                        // and the only thing comparable across CULL_TILE.
+                                        if (count > work_count)
+                                            work_count = count;
+                                        const unsigned m_in = __ballot_sync(kFullWarp, in_tile);
+                                        if (lane == 0) {
+                                            atomicAdd(&a.cull_stats[0], (unsigned long long)__popc(m_in));
+                                            atomicAdd(&a.cull_stats[1], (unsigned long long)count);
+                                        }
+                                    }
+                                }
+                                if constexpr (PREFILTER_STATS) {
+                                    if (lane == 0)
+                                        atomicAdd(&a.cull_stats[5], (unsigned long long)work_count);
+                                }
+                                __syncwarp();
+
+                                // What does the warp genuinely need? For each source, which
+                                // lanes actually have it in range: per cull group (the cull's
+                                // own ceiling), per warp (what the production kernel's per-pair
+                                // branch already skips for free), and per lane-pair (the floor
+                                // any granularity could ever reach).
+                                if constexpr (PREFILTER_STATS) {
+                                    for (int j = 0; j < 32; ++j) {
+                                        const int ss = chunk + j;
+                                        bool hit = false;
+                                        if (ss < tile_count && active_target[q]) {
+                                            Real d2 = Real{0};
+#pragma unroll
+                                            for (int k = 0; k < SPATIAL_DIM; ++k) {
+                                                Real xk = STAGE ? s_r_src[ss * SPATIAL_DIM + k]
+                                                                : r_src[ss * SPATIAL_DIM + k];
+                                                if constexpr (!STAGE && PERIODIC)
+                                                    xk += shift[k];
+                                                const Real dd = xt[q][k] - xk;
+                                                d2 = fma(dd, dd, d2);
+                                            }
+                                            hit = (d2 > a.thresh2) && (d2 < d2max);
+                                        }
+                                        const unsigned m_hit = __ballot_sync(kFullWarp, hit);
+                                        if (lane == 0 && ss < tile_count) {
+                                            // Per group, so this is directly comparable to
+                                            // cull_stats[1] at any CULL_TILE.
+                                            int needed_groups = 0;
+#pragma unroll
+                                            for (int g = 0; g < NSG; ++g) {
+                                                const unsigned gmask =
+                                                    (CULL_TILE == 32) ? kFullWarp
+                                                                      : (((1u << CULL_TILE) - 1u) << (g * CULL_TILE));
+                                                needed_groups += (m_hit & gmask) != 0u;
+                                            }
+                                            atomicAdd(&a.cull_stats[2], (unsigned long long)needed_groups);
+                                            atomicAdd(&a.cull_stats[3], (unsigned long long)__popc(m_hit));
+                                            if (m_hit != 0u)
+                                                atomicAdd(&a.cull_stats[4], 1ull);
+                                        }
+                                    }
+                                }
+
+                                // A divergent trip count is fine: each cull group reads only
+                                // its own list and there is no warp-collective op inside.
+                                if (active_target[q]) {
+#pragma unroll EVAL_UNROLL
+                                    for (int j = 0; j < my_count; ++j) {
+                                        Real xs[SPATIAL_DIM];
+                                        Real vs[KERNEL_INPUT_DIM];
+                                        [[maybe_unused]] Real ns[NORMAL_DIM > 0 ? NORMAL_DIM : 1];
+
+                                        if constexpr (PREFILTER == 3) {
+                                            const Real *sp =
+                                                s_cull_dat + ((warp * NSG + cull_group) * 32 + j) * VPS_PAD;
+                                            // Register copy of the shared survivor: aligned, so
+                                            // a 3D scalar kernel gets one LDS.128.
+                                            alignas(16) Real cull_dat[VPS_PAD];
+#pragma unroll
+                                            for (int v = 0; v < VPS_PAD / VEC_N; ++v)
+                                                *reinterpret_cast<CullVec *>(&cull_dat[v * VEC_N]) =
+                                                    *reinterpret_cast<const CullVec *>(sp + v * VEC_N);
+#pragma unroll
+                                            for (int k = 0; k < SPATIAL_DIM; ++k)
+                                                xs[k] = cull_dat[k];
+#pragma unroll
+                                            for (int k = 0; k < KERNEL_INPUT_DIM; ++k)
+                                                vs[k] = cull_dat[SPATIAL_DIM + k];
+                                            if constexpr (NORMAL_DIM > 0) {
+#pragma unroll
+                                                for (int k = 0; k < NORMAL_DIM; ++k)
+                                                    ns[k] = cull_dat[SPATIAL_DIM + KERNEL_INPUT_DIM + k];
+                                            }
+                                        } else {
+                                            const int ss = s_cull_idx[(warp * NSG + cull_group) * 32 + j];
+#pragma unroll
+                                            for (int k = 0; k < SPATIAL_DIM; ++k)
+                                                xs[k] = s_r_src[ss * SPATIAL_DIM + k];
+#pragma unroll
+                                            for (int k = 0; k < KERNEL_INPUT_DIM; ++k)
+                                                vs[k] = s_charge[ss * KERNEL_INPUT_DIM + k];
+                                            if constexpr (NORMAL_DIM > 0) {
+#pragma unroll
+                                                for (int k = 0; k < NORMAL_DIM; ++k)
+                                                    ns[k] = s_normal[ss * NORMAL_DIM + k];
+                                            }
+                                        }
+
+                                        Real dX[SPATIAL_DIM];
+#pragma unroll
+                                        for (int k = 0; k < SPATIAL_DIM; ++k)
+                                            dX[k] = xt[q][k] - xs[k];
+
+                                        if constexpr (NORMAL_DIM > 0) {
+                                            direct_eval_accumulate<check_min.value>(evaluator, vt[q], dX, vs, ns);
+                                        } else {
+                                            direct_eval_accumulate<check_min.value>(evaluator, vt[q], dX, vs);
+                                        }
+                                    }
+                                }
+
+                                // The survivor buffer is reused by the next chunk and the next
+                                // q, and a lane may write any cull group's slots while another
+                                // is still reading them. Independent thread scheduling does not
+                                // guarantee the loop above reconverges before those stores.
+                                __syncwarp();
+                            }
+                        }
                     }
 
-                    __syncthreads();
+                    // Guards the staged tile against the next iteration's overwrite; the
+                    // survivor buffers are per-warp and fenced by __syncwarp above.
+                    if constexpr (STAGE)
+                        __syncthreads();
                 }
             });
         }
@@ -711,6 +1132,6 @@ using DirectArgs = dmk::cuda::DirectByBoxArgs<Real>;
 
 // KERNEL_START
 
-extern "C" __global__ void DMK_DIRECT_KERNEL_NAME(DirectArgs a) {
-    DirectByBoxBody<Evaluator, SRC_TILE, TARGETS_PER_THREAD>(a);
+extern "C" __global__ void __launch_bounds__(BLOCK_SIZE) DMK_DIRECT_KERNEL_NAME(DirectArgs a) {
+    DirectByBoxBody<Evaluator, SRC_TILE, TARGETS_PER_THREAD, PREFILTER, CULL_TILE>(a);
 }

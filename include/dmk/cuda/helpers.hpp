@@ -133,6 +133,15 @@ class DeviceStream {
         return s;
     }
 
+    // Priority only biases which of the *ready* blocks the scheduler picks next; it never preempts.
+    static DeviceStream non_blocking_priority() {
+        DeviceStream s;
+        int least = 0, greatest = 0;
+        DMK_CHECK_CUDA(cudaDeviceGetStreamPriorityRange(&least, &greatest));
+        DMK_CHECK_CUDA(cudaStreamCreateWithPriority(&s.s_, cudaStreamNonBlocking, greatest));
+        return s;
+    }
+
     void sync() {
         if (s_)
             DMK_CHECK_CUDA(cudaStreamSynchronize(s_));

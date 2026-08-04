@@ -8,11 +8,14 @@
 
 #include <dmk.h>
 #include <dmk/cuda/direct_kernelargs.hpp>
+#include <dmk/cuda/helpers.hpp>
 #include <dmk/direct.hpp>
 
 #include <cuda_runtime.h>
 
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <iomanip>
 #include <limits>
 #include <map>
@@ -30,6 +33,21 @@ namespace {
 using jit::jit_real_name;
 using jit::JitCache;
 using jit::JitKey;
+
+// Dev knobs for the direct-pass source prefilter (see pt/direct.cu):
+//   DMK_DIRECT_PREFILTER  0 = off, 1 = cull compacting indices, 2 = run the cull machinery
+//                         but keep every source, which isolates its overhead and leaves
+//                         output unchanged, 3 = cull compacting source data (the default;
+//                         1 loses to 0 because an index list is a dependent LDS -> LDS chain)
+//   DMK_DIRECT_CULL_TILE  lanes per cull group; must be a power-of-two divisor of 32
+//   DMK_DIRECT_EVAL_UNROLL  unroll factor for the survivor loop. A knob and not a tuning
+//                         axis because the grid is exhaustive and compiles inside the benchmark
+int env_int(const char *name, int fallback) {
+    const char *value = std::getenv(name);
+    if (!value || !*value)
+        return fallback;
+    return std::atoi(value);
+}
 
 std::string fnv1a_hex(const std::string &text) {
     std::uint64_t h = 14695981039346656037ull;
@@ -107,6 +125,52 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     // The shift table is only built for periodic trees, so its presence is the flag.
     const bool periodic = s.topology.d_list1_shift.size() != 0;
 
+    const int prefilter = env_int("DMK_DIRECT_PREFILTER", 3);
+    const int cull_tile = env_int("DMK_DIRECT_CULL_TILE", 32);
+    const int eval_unroll = env_int("DMK_DIRECT_EVAL_UNROLL", 4);
+    const int prefilter_stats = (prefilter != 0) ? env_int("DMK_DIRECT_PREFILTER_STATS", 0) : 0;
+    // Only PREFILTER 3 can skip the staged source tile; the other modes re-read a source once
+    // per target, which is what a shared broadcast is for.
+    const int stage_src = (prefilter == 3) ? env_int("DMK_DIRECT_STAGE_SRC", 1) : 1;
+    if (prefilter < 0 || prefilter > 3)
+        throw std::runtime_error("DMK_DIRECT_PREFILTER must be 0, 1, 2 or 3");
+    if (cull_tile < 1 || cull_tile > 32 || 32 % cull_tile != 0)
+        throw std::runtime_error("DMK_DIRECT_CULL_TILE must be a power-of-two divisor of 32");
+    if (eval_unroll < 1)
+        throw std::runtime_error("DMK_DIRECT_EVAL_UNROLL must be positive");
+    const int n_cull_groups = 32 / cull_tile;
+
+    // Staged source tile, plus (when culling) the per-cull-group target boxes and one
+    // 32-entry survivor list per cull group per warp. The list holds source indices
+    // (PREFILTER 1/2) or the compacted source data (PREFILTER 3). Must match the carve-up
+    // in DirectByBoxBody exactly.
+    const auto shared_bytes_for = [&](int src_tile, int block_size, int targets) {
+        std::size_t bytes = stage_src ? std::size_t(src_tile) * values_per_source * sizeof(Real) : 0;
+        if (prefilter == 0)
+            return bytes;
+        const std::size_t warps = std::size_t(block_size / 32);
+        bytes += warps * targets * n_cull_groups * 2 * DIM * sizeof(Real);
+        const std::size_t slots = warps * n_cull_groups * 32;
+        // PREFILTER 3 pads each compacted source to a 16-byte multiple so the inner loop can
+        // fetch it with one aligned vector load; must match VPS_PAD in DirectByBoxBody.
+        const std::size_t vec_n = 16 / sizeof(Real);
+        const std::size_t vps_pad = ((values_per_source + vec_n - 1) / vec_n) * vec_n;
+        // The index array is rounded up to a whole Real because the device advances its
+        // shared cursor in Real units before carving the regions that follow it.
+        bytes += (prefilter == 3) ? slots * vps_pad * sizeof(Real)
+                                  : ((slots * sizeof(int) + sizeof(Real) - 1) / sizeof(Real)) * sizeof(Real);
+        return bytes;
+    };
+
+    // Selectivity counters live in a small static device buffer: this is a dev-only knob,
+    // so it is not worth a State member, and it forces a sync to read back.
+    constexpr int kCullStats = 6;
+    static unsigned long long *d_cull_stats = nullptr;
+    if (prefilter_stats && !d_cull_stats)
+        DMK_CHECK_CUDA(cudaMalloc(&d_cull_stats, kCullStats * sizeof(unsigned long long)));
+    if (prefilter_stats)
+        DMK_CHECK_CUDA(cudaMemsetAsync(d_cull_stats, 0, kCullStats * sizeof(unsigned long long), stream));
+
     // Common args; the src/trg sides differ only in the target/pot fields.
     dmk::cuda::DirectByBoxArgs<Real> base;
     base.n_work = n_work;
@@ -121,6 +185,7 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     base.direct_rsc = s.fourier.d_direct_rsc.data();
     base.direct_cen = s.fourier.d_direct_cen.data();
     base.direct_d2max = s.fourier.d_direct_d2max.data();
+    base.cull_stats = prefilter_stats ? d_cull_stats : nullptr;
     base.r_src_flat = s.particles.d_r_src.data();
     base.r_src_offsets = s.particles.d_r_src_offsets.data();
     base.src_counts = s.particles.d_src_counts.data();
@@ -153,7 +218,8 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
                            const dmk::cuda::DirectByBoxArgs<Real> &args, cudaStream_t st) {
         if (args.n_work == 0)
             return;
-        const std::size_t shared_bytes = std::size_t(config.at("SRC_TILE")) * values_per_source * sizeof(Real);
+        const std::size_t shared_bytes =
+            shared_bytes_for(config.at("SRC_TILE"), config.at("BLOCK_SIZE"), config.at("TARGETS_PER_THREAD"));
         kernel->launch(dim3(args.n_work, 1, 1), dim3(config.at("BLOCK_SIZE"), 1, 1), shared_bytes, st, args);
     };
 
@@ -168,10 +234,17 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
         std::ostringstream tune_key_ss;
         tune_key_ss << "PtDirect|real=" << jit_real_name<Real>() << "|kernel=" << int(s.kernel) << "|dim=" << DIM
                     << "|vps=" << values_per_source << "|nlist1=" << s.topology.nlist1_stride << "|el=" << eval_level;
-        // Pack degrees change the unrolled Horner's register profile, so they need
-        // their own tuning entry.
+        // Pack degrees change the unrolled Horner's register profile, so they need their own
+        // tuning entry. n_digits and beta determine the degrees; direct_coeffs_by_level is
+        // populated for Yukawa only and so cannot carry this alone.
+        tune_key_ss << "|nd=" << s.fourier.n_digits << "|beta=" << s.fourier.beta;
         for (const auto &pack : s.fourier.direct_coeffs_by_level)
             tune_key_ss << "|nc=" << pack.size();
+        // The prefilter changes the shared-memory budget and the inner loop, so it needs
+        // its own tuning entry; without this a config cached for one variant is silently
+        // reused for another and the comparison measures nothing.
+        tune_key_ss << "|pf=" << prefilter << "|ct=" << cull_tile << "|pfs=" << prefilter_stats << "|eu=" << eval_unroll
+                    << "|ss=" << stage_src;
         const std::string tune_key = tune_key_ss.str();
 
         // `plans` is process-wide and hits before coefficients are generated, so its
@@ -234,6 +307,11 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
             // module cache key, which the coefficient-derived kernel_name cannot
             // distinguish: the two variants bake identical coefficients.
             key.params["PERIODIC"] = periodic ? 1 : 0;
+            key.params["PREFILTER"] = prefilter;
+            key.params["CULL_TILE"] = cull_tile;
+            key.params["EVAL_UNROLL"] = eval_unroll;
+            key.params["PREFILTER_STATS"] = prefilter_stats;
+            key.params["STAGE_SRC"] = stage_src;
             return cache.get_kernel_from_source(
                 key, [&] { return make_stage_source("pt/direct.cu", key, prelude, "PtDirect"); });
         };
@@ -252,14 +330,23 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
             const int st = p.at("SRC_TILE"), bs = p.at("BLOCK_SIZE"), tg = p.at("TARGETS_PER_THREAD");
             if (st <= 0 || bs <= 0 || bs > prop.maxThreadsPerBlock || bs % 32 != 0 || tg < 1 || tg > 4)
                 return false;
-            return std::size_t(st) * values_per_source * sizeof(Real) <= max_shared;
+            // Unstaged, SRC_TILE reaches nothing, so collapse the axis instead of timing the
+            // same kernel seven times.
+            if (!stage_src && st != defaults.at("SRC_TILE"))
+                return false;
+            return shared_bytes_for(st, bs, tg) <= max_shared;
         };
         const auto benchmark = [&](const TuningParams &p) {
             return jit::benchmark_cuda_ms(stream, jit::CudaBenchmarkOptions{2, 5},
                                           [&](cudaStream_t bs) { launch_with(get_kernel(p), p, bench_args, bs); });
         };
 
-        const TuningParams config = autotune_config(tune_key, "PtDirectKernel", space, defaults, constraint, benchmark);
+        // The stats kernel recomputes every pair distance to measure what the cull *should*
+        // have kept, so it is far slower than the real one and nobody runs it for speed.
+        // Tuning it would JIT and benchmark the whole grid of a kernel that does not matter.
+        const TuningParams config =
+            prefilter_stats ? defaults
+                            : autotune_config(tune_key, "PtDirectKernel", space, defaults, constraint, benchmark);
         std::pair<std::shared_ptr<jit::JitKernel>, TuningParams> plan{get_kernel(config), config};
 
         std::lock_guard<std::mutex> lock(plan_mtx);
@@ -272,11 +359,36 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     const auto plan_src = resolve(el_src, a_src);
     const auto plan_trg = (el_trg == el_src || s.outputs.pot_trg_size == 0) ? plan_src : resolve(el_trg, a_trg);
 
-    // Boxes without near-field work keep their zeroed pot region.
-    s.outputs.d_pot_direct_src.zero_async(stream);
-    s.outputs.d_pot_direct_trg.zero_async(stream);
     launch_with(plan_src.first, plan_src.second, a_src, stream);
     launch_with(plan_trg.first, plan_trg.second, a_trg, stream);
+
+    if (prefilter_stats) {
+        unsigned long long h[kCullStats] = {};
+        DMK_CHECK_CUDA(cudaStreamSynchronize(stream));
+        DMK_CHECK_CUDA(cudaMemcpy(h, d_cull_stats, sizeof(h), cudaMemcpyDeviceToHost));
+        const double scanned = double(h[0]); // per (source, cull group)
+        const double sources = scanned / n_cull_groups;
+        const auto pct = [](double num, double den) { return den > 0 ? 100.0 * num / den : 0.0; };
+        // survived vs needed is the cull's own quality: the gap is pure AABB over-inclusion.
+        // warp_needed is what the per-pair branch already skips without any prefilter, so the
+        // cull only sells Horner reductions below that line -- above it, only discovery cost.
+        // `work` is the warp-iteration count: the warp runs max-over-groups times, not
+        // mean-over-groups, so it -- not survived% -- is what is comparable across CULL_TILE.
+        // At CULL_TILE=32 work% and survived% coincide by construction.
+        // Geometry is echoed because the counters depend on it: BLOCK_SIZE and
+        // TARGETS_PER_THREAD decide which targets share a warp (and so how tight a cull
+        // group's box is), and SRC_TILE sets the chunking. Stats runs use the defaults, not
+        // the tuned config, so these are not necessarily production's numbers.
+        const TuningParams &cfg = plan_src.second;
+        std::fprintf(stderr,
+                     "[dmk direct prefilter] pf=%d cull_tile=%d block=%d targets=%d src_tile=%d\n"
+                     "  per (src,group): scanned=%llu survived=%.1f%% needed=%.1f%% (aabb slack %.1f pts)\n"
+                     "  work=%.1f%% of src slots (max over groups; the cost metric) | "
+                     "warp_needed=%.1f%% | lane-pairs in range=%.2f%% (floor)\n",
+                     prefilter, cull_tile, cfg.at("BLOCK_SIZE"), cfg.at("TARGETS_PER_THREAD"), cfg.at("SRC_TILE"), h[0],
+                     pct(double(h[1]), scanned), pct(double(h[2]), scanned), pct(double(h[1]) - double(h[2]), scanned),
+                     pct(double(h[5]), sources), pct(double(h[4]), sources), pct(double(h[3]), sources * 32.0));
+    }
 }
 
 template void direct<float, 2>(State<float, 2> &, cudaStream_t);

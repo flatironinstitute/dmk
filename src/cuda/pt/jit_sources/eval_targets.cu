@@ -302,13 +302,13 @@ extern "C" __global__ void PtEvalTargetsByBoxKernel(EvalTargetsArgs<Real> a) {
                 const int base = d * OUT_DIM + target_idx[q] * POT_STRIDE;
 
                 if constexpr (EVAL_LEVEL == 1) {
-                    pot[base] += acc_pot[q];
+                    pot[base] = acc_pot[q];
                 } else {
-                    pot[base + 0] += acc_pot[q];
-                    pot[base + 1] += sc * acc_gx[q];
-                    pot[base + 2] += sc * acc_gy[q];
+                    pot[base + 0] = acc_pot[q];
+                    pot[base + 1] = sc * acc_gx[q];
+                    pot[base + 2] = sc * acc_gy[q];
                     if constexpr (DIM == 3)
-                        pot[base + 3] += sc * acc_gz[q];
+                        pot[base + 3] = sc * acc_gz[q];
                 }
             }
         }

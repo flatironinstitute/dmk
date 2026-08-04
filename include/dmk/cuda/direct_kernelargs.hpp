@@ -38,6 +38,13 @@ struct DirectByBoxArgs {
     const Real *direct_rsc = nullptr;
     const Real *direct_cen = nullptr;
     const Real *direct_d2max = nullptr;
+
+    // Prefilter selectivity counters, only written under PREFILTER_STATS. [0]-[2] are per
+    // (source, cull group) so they are directly comparable at any CULL_TILE:
+    // [0] scanned, [1] survived the cull, [2] genuinely needed (>=1 lane of the group in
+    // range), [3] in-range lane-pairs (the floor), [4] sources needed by the warp as a whole
+    // (what the per-pair branch already skips for free).
+    unsigned long long *cull_stats = nullptr;
 };
 
 } // namespace dmk::cuda

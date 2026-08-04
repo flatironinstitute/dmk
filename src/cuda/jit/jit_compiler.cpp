@@ -5,6 +5,7 @@
 #include <nvrtc.h>
 
 #include <cstdlib>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -80,6 +81,16 @@ CompiledBinary JitCompiler::compile(const std::string &source, const std::string
 
     for (const auto &opt : extra_options) {
         options_storage.push_back(opt);
+    }
+
+    // Space-separated nvrtc flags for precision/codegen experiments (e.g. "--use_fast_math")
+    // without a rebuild. Not part of any cache key, so pair it with DMK_JIT_AUTOTUNE_FORCE=1
+    // or a stale tuning entry will be reused for differently-compiled code.
+    if (const char *flags = std::getenv("DMK_JIT_NVRTC_FLAGS")) {
+        std::istringstream flag_stream(flags);
+        std::string flag;
+        while (flag_stream >> flag)
+            options_storage.push_back(flag);
     }
 
     std::vector<const char *> options;
