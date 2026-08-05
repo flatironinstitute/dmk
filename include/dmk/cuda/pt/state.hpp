@@ -336,9 +336,9 @@ struct State {
         std::size_t pot_trg_size = 0;           ///< total target pot reals
         DeviceBuffer<long> d_pot_src_offsets;   ///< per-box offsets into source pot
         DeviceBuffer<long> d_pot_trg_offsets;   ///< per-box offsets into target pot
-        DeviceBuffer<Real> d_pot_direct_src;    ///< near-field src pot, sorted order (direct pass)
+        DeviceBuffer<Real> d_pot_direct_src;    ///< near-field src pot, sorted order (direct + self_correction)
         DeviceBuffer<Real> d_pot_direct_trg;    ///< near-field trg pot, sorted order (direct pass)
-        DeviceBuffer<Real> d_pot_eval_src;      ///< far-field src pot, sorted order (eval_targets + self_correction)
+        DeviceBuffer<Real> d_pot_eval_src;      ///< far-field src pot, sorted order (eval_targets)
         DeviceBuffer<Real> d_pot_eval_trg;      ///< far-field trg pot, sorted order (eval_targets)
         DeviceBuffer<Real> d_pot_src_final;     ///< descattered user-order source pot (finalize->desort)
         DeviceBuffer<Real> d_pot_trg_final;     ///< descattered user-order target pot (finalize->desort)

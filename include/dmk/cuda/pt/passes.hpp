@@ -34,9 +34,15 @@ template <typename Real, int DIM>
 void downward(State<Real, DIM> &state, cudaStream_t stream);
 
 /// Eval-targets pass: evaluates the downward proxy at each eval box's sources
-/// and targets (+ self-correction on the source side). Writes the far-field
-/// contribution into d_pot_eval_{src,trg} on `stream`.
+/// and targets. Writes the far-field contribution into d_pot_eval_{src,trg} on
+/// `stream`.
 template <typename Real, int DIM>
 void eval_targets(State<Real, DIM> &state, cudaStream_t stream);
+
+/// Subtracts the on-particle self term from the source-side potential, over the
+/// direct work list. Reads and writes `state.outputs.d_pot_direct_src`, so it
+/// belongs on the direct stream after `direct`.
+template <typename Real, int DIM>
+void self_correction(State<Real, DIM> &state, cudaStream_t stream);
 
 } // namespace dmk::cuda::pt

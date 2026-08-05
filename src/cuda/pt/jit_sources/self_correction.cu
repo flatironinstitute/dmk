@@ -1,8 +1,8 @@
-// V2 self-correction: subtracts the on-particle self term from the eval-side
+// V2 self-correction: subtracts the on-particle self term from the direct-side
 // source potential (sorted layout). The launcher prepends only `using Real`;
 // all shapes are runtime args. One block per direct-work box.
 
-#include <dmk/cuda/eval_targets_kernelargs.hpp>
+#include <dmk/cuda/self_correction_kernelargs.hpp>
 
 using dmk::cuda::SelfCorrectionArgs;
 

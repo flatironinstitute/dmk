@@ -31,6 +31,7 @@ void Tree<Real, DIM>::eval() {
     const auto ds = state_->direct_stream.get();
     const auto ws = state_->downward_stream.get();
     pt::direct(*state_, ds);
+    pt::self_correction(*state_, ds);
     state_->scratch.d_proxy_coeffs_upward.zero_async(ws);
     state_->scratch.d_proxy_coeffs_downward.zero_async(ws);
     pt::upward(*state_, ws);

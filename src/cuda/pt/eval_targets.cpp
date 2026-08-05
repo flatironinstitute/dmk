@@ -7,7 +7,6 @@
 
 #include <dmk.h>
 #include <dmk/cuda/eval_targets_kernelargs.hpp>
-#include <dmk/direct.hpp>
 
 #include <cuda_runtime.h>
 
@@ -88,22 +87,6 @@ void launch_eval_side(JitCache &cache, dmk::cuda::EvalTargetsArgs<Real> args, in
     autotuned_launch<Real>(tk, "PtEvalTargetsByBoxKernel", space, defaults, constraint, launch_one, nullptr, 0, stream);
 }
 
-template <typename Real>
-void launch_self_correction(JitCache &cache, const dmk::cuda::SelfCorrectionArgs<Real> &args, cudaStream_t stream) {
-    if (args.n_direct_work == 0)
-        return;
-    constexpr int BLOCK = 128;
-    JitKey key;
-    key.name = "PtSelfCorrectionKernel";
-    key.real = jit_real_name<Real>();
-    key.sm_major = cache.sm_major();
-    key.sm_minor = cache.sm_minor();
-    auto kernel = cache.get_kernel_from_source(
-        key, [&] { return make_stage_source("pt/self_correction.cu", key, "", "PtSelfCorrection"); });
-    dmk::cuda::SelfCorrectionArgs<Real> a = args;
-    kernel->launch(dim3(a.n_direct_work, 1, 1), dim3(BLOCK, 1, 1), 0, stream, a);
-}
-
 } // namespace
 
 template <typename Real, int DIM>
@@ -116,7 +99,6 @@ void eval_targets(State<Real, DIM> &s, cudaStream_t stream) {
         return;
 
     static JitCache eval_cache;
-    static JitCache sc_cache;
 
     dmk::cuda::EvalTargetsArgs<Real> args;
     args.n_eval_boxes = w.n_eval_boxes;
@@ -144,24 +126,6 @@ void eval_targets(State<Real, DIM> &s, cudaStream_t stream) {
         args.pot_flat = o.d_pot_eval_trg.data();
         args.pot_offsets = o.d_pot_trg_offsets.data();
         launch_eval_side<Real, DIM>(eval_cache, args, eval_level_for(o.eval_trg), f.n_charge_dim, stream);
-    }
-
-    // Self-correction modifies the source eval potential in sorted layout.
-    if (o.pot_src_size && s.worklists.d_self_correction_work.size()) {
-        dmk::cuda::SelfCorrectionArgs<Real> sc;
-        sc.direct_work = s.topology.d_direct_work.data();
-        sc.correction_factors = w.d_self_correction_work.data();
-        sc.src_counts = s.particles.d_src_counts.data();
-        sc.charge = s.particles.d_charge.data();
-        sc.charge_offsets = s.particles.d_charge_offsets.data();
-        sc.pot_src = o.d_pot_eval_src.data();
-        sc.pot_src_offsets = o.d_pot_src_offsets.data();
-        sc.n_direct_work = static_cast<int>(s.topology.d_direct_work.size());
-        sc.n_input_dim = get_kernel_input_dim(DIM, s.kernel);
-        sc.pot_stride = o.pot_src_dof;
-        // Dipole corrects the DIM gradient components, not the potential.
-        sc.pot_output_offset = (s.kernel == DMK_LAPLACE_DIPOLE) ? 1 : 0;
-        launch_self_correction<Real>(sc_cache, sc, stream);
     }
 }
 
