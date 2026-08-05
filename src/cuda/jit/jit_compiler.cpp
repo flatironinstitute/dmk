@@ -47,7 +47,9 @@ CompiledBinary JitCompiler::compile(const std::string &source, const std::string
     std::vector<const char *> header_sources;
     std::vector<const char *> header_names;
 
-    if (!std::getenv("DMK_JIT_SOURCE_DIR")) {
+    // Reading from a source tree means its own #include lines resolve off disk, so the
+    // embedded copies must not shadow them.
+    if (!jit_source_override()) {
         const int n = embedded_jit_header_count();
 
         for (int i = 0; i < n; ++i) {

@@ -78,6 +78,9 @@ if (DMK_GPU_OFFLOAD)
   set(DMK_GPU_TARGET CUDA::cudart)
   set(DMK_CUDA_JIT_TARGETS CUDA::cuda_driver CUDA::nvrtc)
   set(DMK_CUDA_JIT_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  # Root that embedded JIT source keys are relative to; feeds both the embed script and
+  # DMK_JIT_SOURCE_DIR, which have to agree.
+  set(DMK_JIT_EMBED_ROOT "${PROJECT_SOURCE_DIR}/src/cuda")
   configure_file(
     ${PROJECT_SOURCE_DIR}/src/cuda/jit/dmk_jit_config.hpp.in
     ${DMK_CUDA_JIT_GENERATED_INCLUDE_DIR}/dmk_jit_config.hpp
@@ -104,7 +107,7 @@ if (DMK_GPU_OFFLOAD)
       -DEMBED_OUTPUT=${DMK_JIT_EMBEDDED_SOURCES}
       -DEMBED_CU=${DMK_JIT_CU_SOURCES_ARG}
       -DEMBED_HEADERS=${DMK_JIT_EMBED_HEADERS_ARG}
-      -DEMBED_ROOT=${PROJECT_SOURCE_DIR}/src/cuda
+      -DEMBED_ROOT=${DMK_JIT_EMBED_ROOT}
       -P ${PROJECT_SOURCE_DIR}/cmake/embed_jit_sources.cmake
     DEPENDS ${DMK_JIT_CU_SOURCES} ${DMK_JIT_HEADER_FILES}
       ${PROJECT_SOURCE_DIR}/cmake/embed_jit_sources.cmake

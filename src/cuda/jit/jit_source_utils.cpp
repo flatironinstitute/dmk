@@ -71,16 +71,34 @@ int required_int_param(const JitKey &key, const char *name, std::string_view lab
     return it->second;
 }
 
+const char *jit_source_override() {
+    const char *env = std::getenv("DMK_JIT_SOURCE_DIR");
+    return (env && *env) ? env : nullptr;
+}
+
 std::filesystem::path jit_source_root() {
-#ifdef DMK_JIT_SOURCE_DIR
-    return std::filesystem::path(DMK_JIT_SOURCE_DIR);
-#else
-    if (const char *env = std::getenv("DMK_JIT_SOURCE_DIR")) {
+    // Override before macro: the macro is always defined in a CUDA build, so testing it first
+    // would make the environment variable unreachable.
+    if (const char *env = jit_source_override()) {
         return std::filesystem::path(env);
     }
 
-    return std::filesystem::path("src/cuda/jit_sources");
+#ifdef DMK_JIT_SOURCE_DIR
+    return std::filesystem::path(DMK_JIT_SOURCE_DIR);
+#else
+    return std::filesystem::path("src/cuda");
 #endif
+}
+
+std::filesystem::path jit_source_path(std::string_view filename) {
+    const std::filesystem::path logical{filename};
+
+    // Flat keys (no stage component) name a file directly under the root.
+    if (!logical.has_parent_path()) {
+        return jit_source_root() / logical;
+    }
+
+    return jit_source_root() / logical.parent_path() / "jit_sources" / logical.filename();
 }
 
 std::string read_text_file(const std::filesystem::path &path, std::string_view label) {
@@ -110,10 +128,10 @@ SplitSource split_at_kernel_start(const std::string &source, std::string_view la
 }
 
 SplitSource load_split_jit_source(std::string_view filename, std::string_view label) {
-    const auto source_path = jit_source_root() / std::filesystem::path(std::string(filename));
+    const auto source_path = jit_source_path(filename);
 
     std::string source;
-    if (std::getenv("DMK_JIT_SOURCE_DIR")) {
+    if (jit_source_override()) {
         source = read_text_file(source_path, label);
     } else {
         const std::string_view *embedded = find_embedded_jit_source(filename);
@@ -127,6 +145,10 @@ SplitSource load_split_jit_source(std::string_view filename, std::string_view la
 
     SplitSource split = split_at_kernel_start(source, label);
 
+    // Path baked into the #line directives, which is how -lineinfo consumers like ncu locate
+    // the source. Absolute, because a profiler cannot reconstruct the process's working
+    // directory. Against the embedded copy it asserts the build tree still matches: edit a .cu
+    // without rebuilding and the line numbers no longer describe the text.
     constexpr const char *marker = "// KERNEL_START";
     const std::size_t marker_pos = source.find(marker);
     const std::filesystem::path profile_path = std::filesystem::absolute(source_path).lexically_normal();

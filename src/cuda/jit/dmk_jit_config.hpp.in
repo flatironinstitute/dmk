@@ -1,5 +1,7 @@
 #pragma once
 
-#define DMK_JIT_SOURCE_DIR "@PROJECT_SOURCE_DIR@/src/cuda/jit_sources"
+// Root that embedded source keys are relative to; jit_source_path() rebuilds on-disk paths
+// against it.
+#define DMK_JIT_SOURCE_DIR "@DMK_JIT_EMBED_ROOT@"
 #define DMK_JIT_INCLUDE_DIR "@PROJECT_SOURCE_DIR@/include"
 #define DMK_JIT_GENERATED_INCLUDE_DIR "@CMAKE_CURRENT_BINARY_DIR@/generated"
