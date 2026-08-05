@@ -14,6 +14,11 @@ endif()
 add_executable(benchmark_kernels benchmark_kernels.cpp)
 target_link_libraries(benchmark_kernels PRIVATE dmk)
 
+if (DMK_GPU_OFFLOAD)
+  target_compile_definitions(benchmark_kernels PRIVATE DMK_GPU_OFFLOAD)
+  target_link_libraries(benchmark_kernels PRIVATE ${DMK_GPU_TARGET})
+endif()
+
 add_executable(benchmark_esp benchmark_esp.cpp)
 target_link_libraries(benchmark_esp PRIVATE dmk)
 target_include_directories(benchmark_esp PRIVATE ${CMAKE_SOURCE_DIR}/test)

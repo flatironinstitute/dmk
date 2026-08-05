@@ -13,12 +13,43 @@
 #include <type_traits>
 #include <vector>
 
+#ifdef DMK_GPU_OFFLOAD
+#include <cuda_runtime.h>
+#endif
+
 #ifdef DMK_HAVE_MPI
 #include <mpi.h>
 #define MYCOMM MPI_COMM_WORLD
 #else
 #define MYCOMM nullptr
 #endif
+
+// Page-locks a caller-owned output buffer. pdmk_tree_eval takes a host pointer, so on the GPU
+// path the result leaves the device through whatever that pointer supports; pageable memory is
+// staged by the driver and runs at roughly half the achievable rate. Registering in place is
+// what a caller would do, so this measures the difference rather than hiding it.
+template <typename Real>
+bool pin_host_buffer([[maybe_unused]] std::vector<Real> &buf, bool enable) {
+    if (!enable || buf.empty())
+        return false;
+#ifdef DMK_GPU_OFFLOAD
+    const cudaError_t rc = cudaHostRegister(buf.data(), buf.size() * sizeof(Real), cudaHostRegisterDefault);
+    if (rc == cudaSuccess)
+        return true;
+    std::cerr << "warning: cudaHostRegister failed (" << cudaGetErrorString(rc) << "), continuing unpinned\n";
+#else
+    std::cerr << "warning: --pin needs a DMK_GPU_OFFLOAD build, continuing unpinned\n";
+#endif
+    return false;
+}
+
+template <typename Real>
+void unpin_host_buffer([[maybe_unused]] std::vector<Real> &buf, [[maybe_unused]] bool pinned) {
+#ifdef DMK_GPU_OFFLOAD
+    if (pinned)
+        cudaHostUnregister(buf.data());
+#endif
+}
 
 struct Config {
     int n_src = 1'000'000;
@@ -42,6 +73,7 @@ struct Config {
     bool with_grad = false;
     long seed = 0;
     int n_show_outliers = 0; // print top-N worst points per block to stderr (0 = off)
+    bool pin_host = false;
 };
 
 inline dmk_eval_type get_eval_type(dmk_ikernel kernel, bool with_grad) {
@@ -632,8 +664,14 @@ void run_benchmark(const Config &cfg) {
         out.have = true;
     };
 
+    // Allocated once and sized up front so page-locking survives every run; run_dmk's resize is
+    // then a no-op, which also keeps a reallocation out of each timed iteration.
+    std::vector<Real> pot_dmk_src(size_t(n_src_per_rank) * pot_dim);
+    std::vector<Real> pot_dmk_trg(size_t(n_trg_per_rank) * pot_dim);
+    const bool pinned_src = pin_host_buffer(pot_dmk_src, cfg.pin_host);
+    const bool pinned_trg = pin_host_buffer(pot_dmk_trg, cfg.pin_host);
+
     for (int run = 0; run < cfg.n_runs; ++run) {
-        std::vector<Real> pot_dmk_src, pot_dmk_trg;
         sctl::Profile::reset();
         double dt = run_dmk<Real>(tree, pot_dmk_src, pot_dmk_trg, n_src_per_rank, n_trg_per_rank, pot_dim, rank, np);
         TimingResult t = make_timing(dt, n_src + n_trg, n_src_per_rank + n_trg_per_rank, n_threads);
@@ -679,6 +717,9 @@ void run_benchmark(const Config &cfg) {
             std::cout << std::endl << std::flush;
     }
 
+    unpin_host_buffer(pot_dmk_src, pinned_src);
+    unpin_host_buffer(pot_dmk_trg, pinned_trg);
+
     pdmk_tree_destroy(tree);
 }
 
@@ -692,6 +733,7 @@ Config parse_args(int argc, char *argv[]) {
         {"no-bench-eval", no_argument, nullptr, 1004},
         {"bench-update-charges", no_argument, nullptr, 1005},
         {"periodic", no_argument, nullptr, 1006},
+        {"pin", no_argument, nullptr, 1007},
         {nullptr, 0, nullptr, 0},
     };
 
@@ -778,6 +820,9 @@ Config parse_args(int argc, char *argv[]) {
         case 1006:
             cfg.use_periodic = true;
             break;
+        case 1007:
+            cfg.pin_host = true;
+            break;
         case 'h':
         case '?':
         default:
@@ -804,6 +849,7 @@ Config parse_args(int argc, char *argv[]) {
                 << "  --no-bench-eval       Skip eval benchmark (build only)\n"
                 << "  --bench-update-charges  Also benchmark pdmk_tree_update_charges\n"
                 << "  --periodic            Periodic boundary conditions (--direct is free-space only)\n"
+                << "  --pin                 Page-lock the potential buffers (GPU path: unstaged D2H)\n"
                 << "  -h                    Help\n";
             exit(0);
         }
