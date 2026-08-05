@@ -8,10 +8,12 @@
 #include "pw2proxy.hpp"
 
 #include <dmk.h>
+#include <dmk/cuda/helpers.hpp>
 #include <dmk/cuda/multiply_kernelft_kernelargs.hpp>
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -23,23 +25,35 @@ using jit::jit_real_name;
 using jit::JitCache;
 using jit::JitKey;
 
-// Per-box in-place kernel-FT multiply (Laplace / Sqrt-Laplace). Fixed block
-// size, single launch (no autotune / no snapshot).
+// Per-box in-place kernel-FT multiply (Laplace / Sqrt-Laplace / Yukawa), batched over a
+// device array of per-level args. Fixed block size (no autotune / no snapshot).
 template <typename Real>
-void launch_multiply_cd2p(JitCache &cache, const dmk::cuda::MultiplyCd2pArgs<Real> &args, cudaStream_t stream) {
-    if (args.n_boxes_at_level == 0)
+void launch_multiply_cd2p(JitCache &cache, std::vector<dmk::cuda::MultiplyCd2pArgs<Real>> &args_h,
+                          cudaStream_t stream) {
+    if (args_h.empty())
         return;
+    int max_boxes = 0;
+    for (const auto &a : args_h)
+        max_boxes = std::max(max_boxes, a.n_boxes_at_level);
+    if (max_boxes == 0)
+        return;
+
     constexpr int BLOCK = 128;
+    static cuda_helpers::DeviceBuffer<dmk::cuda::MultiplyCd2pArgs<Real>> d_args;
+    d_args.upload_async_grow(args_h.data(), args_h.size(), stream);
+    const int n_args = static_cast<int>(args_h.size());
+
     JitKey key;
-    key.name = "PtMultiplyCd2pKernel";
+    key.name = "PtMultiplyCd2pMultiLevelKernel";
     key.real = jit_real_name<Real>();
     key.sm_major = cache.sm_major();
     key.sm_minor = cache.sm_minor();
     key.params = {{"BLOCK_SIZE", BLOCK}};
     auto kernel =
         cache.get_kernel_from_source(key, [&] { return make_stage_source("pt/multiply.cu", key, "", "PtMultiply"); });
-    dmk::cuda::MultiplyCd2pArgs<Real> a = args;
-    kernel->launch(dim3(a.n_boxes_at_level, 1, 1), dim3(BLOCK, 1, 1), 0, stream, a);
+    const dmk::cuda::MultiplyCd2pArgs<Real> *dev_args = d_args.data();
+    int n = n_args;
+    kernel->launch(dim3(max_boxes, n_args, 1), dim3(BLOCK, 1, 1), 0, stream, dev_args, n);
 }
 
 // Stokeslet far-field projector f*(k^2 delta - kk), in place on the 3-table PW
@@ -120,6 +134,15 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
         auto &sc = s.scratch;
         static JitCache multiply_cache;
 
+        // Scalar multiplies accumulate here and go out in one launch. Safe for every level at
+        // once because the Cd2p path implies !split_up_down (its kernels have
+        // n_tables_up == n_charge_dim), so no level shares the form pool with another.
+        std::vector<dmk::cuda::MultiplyCd2pArgs<Real>> cd2p_batch;
+        const auto flush_cd2p = [&] {
+            launch_multiply_cd2p<Real>(multiply_cache, cd2p_batch, stream);
+            cd2p_batch.clear();
+        };
+
         // Apply the kernel FT at a given PW size. Scalar/Stokeslet operate in
         // place on `src`; Stresslet reads 9 tables from `src` and writes 3 to
         // `dst`.
@@ -136,7 +159,7 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
                 ma.pw_flat = src;
                 ma.pw_offsets = src_offsets;
                 ma.pw_stride_complex = src_stride_complex;
-                launch_multiply_cd2p<Real>(multiply_cache, ma, stream);
+                cd2p_batch.push_back(ma);
             } else if (kernel == DMK_STOKESLET) {
                 dmk::cuda::MultiplyStokeslet3DArgs<Real> ma;
                 ma.n_boxes_at_level = n_box;
@@ -246,6 +269,7 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
                         f.slab(L).radialft, src, src_offsets, src_stride, sc.d_pw_out.data(),
                         sc.d_pw_out_offsets.data(), 0);
         }
+        flush_cd2p();
 
         // ---- windowed root -> d_proxy_coeffs_downward[0] ----
         const long window_in_stride_complex = static_cast<long>(f.n_tables_up) * f.n_pw_modes_win;
@@ -272,6 +296,8 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
         multiply_at(1, f.n_pw_win, f.n_pw_modes_win, f.hpw_win, /*windowed=*/true, sc.d_box0_id.data(),
                     f.d_window_radialft.data(), sc.d_window_pw_form_in.data(), nullptr, window_in_stride_complex,
                     sc.d_window_pw_form_out.data(), nullptr, window_out_stride_complex);
+        // The root's modes and radialft differ from any level's, so it is its own launch.
+        flush_cd2p();
 
         Real *pw_for_pw2proxy = split_up_down ? sc.d_window_pw_form_out.data() : sc.d_window_pw_form_in.data();
 

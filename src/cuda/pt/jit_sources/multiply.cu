@@ -13,10 +13,7 @@ using dmk::cuda::MultiplyLaplaceDipole3DArgs;
 using dmk::cuda::MultiplyStokeslet3DArgs;
 using dmk::cuda::MultiplyStresslet3DArgs;
 
-// KERNEL_START
-
-extern "C" __global__ void PtMultiplyCd2pKernel(MultiplyCd2pArgs<Real> a) {
-    const int box_idx = blockIdx.x;
+__device__ __forceinline__ void MultiplyCd2pBody(MultiplyCd2pArgs<Real> a, int box_idx) {
     if (box_idx >= a.n_boxes_at_level)
         return;
     const int box = a.box_ids[box_idx];
@@ -31,6 +28,18 @@ extern "C" __global__ void PtMultiplyCd2pKernel(MultiplyCd2pArgs<Real> a) {
         pw[2 * idx] *= f;
         pw[2 * idx + 1] *= f;
     }
+}
+
+// KERNEL_START
+
+// One launch for every level. The multiply is an in-place per-box scaling by that level's
+// own radialft, so nothing crosses levels; issued per level it was 12 launches whose small
+// ones (1, 8, 32, 56 blocks) cost far more in ramp than in work.
+extern "C" __global__ void PtMultiplyCd2pMultiLevelKernel(const MultiplyCd2pArgs<Real> *args, int n_args) {
+    const int arg_idx = blockIdx.y;
+    if (arg_idx >= n_args)
+        return;
+    MultiplyCd2pBody(args[arg_idx], blockIdx.x);
 }
 
 extern "C" __global__ void PtMultiplyStokeslet3DByBoxKernel(MultiplyStokeslet3DArgs<Real> a) {
