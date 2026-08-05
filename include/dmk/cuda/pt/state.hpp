@@ -21,6 +21,7 @@
 #include <cuda_runtime.h>
 #include <dmk.h>
 #include <dmk/cuda/helpers.hpp>
+#include <dmk/cuda/shift_pw_kernelargs.hpp>
 
 namespace dmk {
 
@@ -47,9 +48,11 @@ struct BuildInputs {
         std::vector<int> list1_count;              ///< [n_boxes] valid entries per row (direct)
         std::vector<signed char> list1_shift_flat; ///< [n_boxes*nlist1_stride*DIM] PBC image shift, empty if aperiodic
         std::vector<int> box_levels;               ///< [n_boxes] depth per box (all passes)
-        std::vector<int> neighbors;                ///< [n_boxes*n_neighbors] neighbor ids, -1 invalid (downward)
-        std::vector<unsigned char> ifpwexp;        ///< [n_boxes] has-PW-expansion flag (upward/form_outgoing/downward)
-        std::vector<unsigned char> is_global_leaf; ///< [n_boxes] leaf-of-eval flag (direct/eval_targets)
+        std::vector<int> neighbors;         ///< [n_boxes*n_neighbors] neighbor ids, -1 invalid (shift list build)
+        std::vector<unsigned char> ifpwexp; ///< [n_boxes] has-PW-expansion flag (upward/form_outgoing/downward)
+        std::vector<unsigned char> is_global_leaf; ///< [n_boxes] leaf-of-eval flag (shift list build)
+        std::vector<ShiftPwNeighbor> shift_nbr;    ///< surviving shift sources, CSR by box (downward)
+        std::vector<int> shift_nbr_offsets;        ///< [n_boxes+1] CSR offsets into shift_nbr (downward)
     } topology;
 
     /// Sorted source/target coordinates, charges, and the sort permutation.
@@ -189,16 +192,16 @@ struct State {
 
     /// Box structure and per-box gating flags.
     struct Topology {
-        int nlist1_stride = 0;                        ///< max near source boxes per box
-        int n_neighbors = 0;                          ///< 3^DIM neighbor slots per box
-        DeviceBuffer<int> d_direct_work;              ///< target boxes with near-field work (direct)
-        DeviceBuffer<int> d_list1_flat;               ///< near source boxes per box (direct)
-        DeviceBuffer<int> d_list1_count;              ///< valid list1 entries per box (direct)
-        DeviceBuffer<signed char> d_list1_shift;      ///< PBC image shift per list1 entry, unallocated if aperiodic
-        DeviceBuffer<int> d_box_levels;               ///< depth per box (all passes)
-        DeviceBuffer<int> d_neighbors;                ///< neighbor box ids per box (downward)
-        DeviceBuffer<unsigned char> d_ifpwexp;        ///< has-PW-expansion flag (upward/form_outgoing/downward)
-        DeviceBuffer<unsigned char> d_is_global_leaf; ///< leaf-of-eval flag (direct/eval_targets)
+        int nlist1_stride = 0;                     ///< max near source boxes per box
+        int n_neighbors = 0;                       ///< 3^DIM neighbor slots per box
+        DeviceBuffer<int> d_direct_work;           ///< target boxes with near-field work (direct)
+        DeviceBuffer<int> d_list1_flat;            ///< near source boxes per box (direct)
+        DeviceBuffer<int> d_list1_count;           ///< valid list1 entries per box (direct)
+        DeviceBuffer<signed char> d_list1_shift;   ///< PBC image shift per list1 entry, unallocated if aperiodic
+        DeviceBuffer<int> d_box_levels;            ///< depth per box (all passes)
+        DeviceBuffer<unsigned char> d_ifpwexp;     ///< has-PW-expansion flag (upward/form_outgoing/downward)
+        DeviceBuffer<ShiftPwNeighbor> d_shift_nbr; ///< pre-filtered shift sources, CSR by box (downward)
+        DeviceBuffer<int> d_shift_nbr_offsets;     ///< [n_boxes+1] CSR offsets into d_shift_nbr (downward)
     } topology;
 
     /// Sorted source/target coordinates, charges, and the sort permutation.

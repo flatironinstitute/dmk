@@ -260,6 +260,28 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
             topo.neighbors[(std::size_t)b * topo.n_neighbors + k] = node_lists[b].nbr[k];
     }
 
+    // Shift-list prefilter. shift_pw's neighbor loop rejected empty slots, self, leaf-leaf
+    // pairs, and neighbors without an outgoing expansion; all four depend only on the tree,
+    // so they are resolved once here and the device loop runs branch-free over survivors.
+    topo.shift_nbr_offsets.resize(n_boxes + 1);
+    topo.shift_nbr.clear();
+    for (int b = 0; b < n_boxes; ++b) {
+        topo.shift_nbr_offsets[b] = static_cast<int>(topo.shift_nbr.size());
+        const bool b_is_leaf = topo.is_global_leaf[b] != 0;
+        for (int k = 0; k < topo.n_neighbors; ++k) {
+            const int nbr = topo.neighbors[(std::size_t)b * topo.n_neighbors + k];
+            if (nbr < 0 || nbr == b)
+                continue;
+            if (b_is_leaf && topo.is_global_leaf[nbr])
+                continue;
+            const long pw_off = tree.pw_out_offsets[nbr];
+            if (pw_off < 0)
+                continue;
+            topo.shift_nbr.push_back({pw_off, topo.n_neighbors - 1 - k, 0});
+        }
+    }
+    topo.shift_nbr_offsets[n_boxes] = static_cast<int>(topo.shift_nbr.size());
+
     // --- Particles ---
     auto &part = in.particles;
     part.is_stresslet = tree.params.kernel == DMK_STRESSLET;
@@ -446,9 +468,9 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     up(topology.d_list1_count, in.topology.list1_count);
     up(topology.d_list1_shift, in.topology.list1_shift_flat);
     up(topology.d_box_levels, in.topology.box_levels);
-    up(topology.d_neighbors, in.topology.neighbors);
     up(topology.d_ifpwexp, in.topology.ifpwexp);
-    up(topology.d_is_global_leaf, in.topology.is_global_leaf);
+    up(topology.d_shift_nbr, in.topology.shift_nbr);
+    up(topology.d_shift_nbr_offsets, in.topology.shift_nbr_offsets);
 
     // --- Particles ---
     const auto &pi = in.particles;

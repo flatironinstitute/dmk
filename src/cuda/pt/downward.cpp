@@ -116,9 +116,9 @@ void downward(State<Real, DIM> &s, cudaStream_t stream) {
             sa.n_pw_modes = f.n_pw_modes;
             sa.pw_in_stride = sc.pw_in_stride_reals;
             sa.box_ids = w.d_pw_eval_box_flat.data() + box_off;
-            sa.neighbors = s.topology.d_neighbors.data();
             sa.pw_out_offsets = sc.d_pw_out_offsets.data();
-            sa.is_global_leaf = s.topology.d_is_global_leaf.data();
+            sa.shift_nbr = s.topology.d_shift_nbr.data();
+            sa.shift_nbr_offsets = s.topology.d_shift_nbr_offsets.data();
             sa.pw_out_flat = sc.d_pw_out.data();
             sa.wpwshift = f.slab(L).wpwshift;
             sa.pw_in_pool = level_pw_in;
