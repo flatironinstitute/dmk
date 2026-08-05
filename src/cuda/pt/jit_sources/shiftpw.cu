@@ -1,13 +1,15 @@
 // V2 shift_pw (batched multilevel): translates each box's neighbors' outgoing
 // plane-wave fields into its own incoming field (per-level pw_in_pool slab).
+// One block covers SHIFT_GROUP consecutive boxes of a level, whose source sets the
+// host has merged, so each source slab is fetched once for the whole group.
 // The launcher prepends `using Real` + N_PW_MODES / N_CHARGE_DIM / N_NEIGHBORS /
-// BLOCK_SIZE / NEIGHBOR_UNROLL. One launch covers all levels via a device array
-// of per-level args. Assigns (not additive) into pw_in_pool.
+// SHIFT_GROUP / BLOCK_SIZE / NEIGHBOR_UNROLL. One launch covers all levels via a
+// device array of per-level args. Assigns (not additive) into pw_in_pool.
 
 #include <dmk/cuda/shift_pw_kernelargs.hpp>
 
 using dmk::cuda::ShiftPwArgs;
-using dmk::cuda::ShiftPwNeighbor;
+using dmk::cuda::ShiftPwGroupSrc;
 
 template <typename Real>
 struct alignas(2 * sizeof(Real)) complx {
@@ -29,8 +31,8 @@ __device__ __forceinline__ complx<double> load_stream(const complx<double> *p) {
     return complx<double>{v.x, v.y};
 }
 
-__device__ __forceinline__ void ShiftPwBody(ShiftPwArgs<Real> a, int box_idx) {
-    if (box_idx >= a.n_boxes_at_level)
+__device__ __forceinline__ void ShiftPwBody(ShiftPwArgs<Real> a, int group) {
+    if (group >= a.n_groups_at_level)
         return;
 
     const int *__restrict__ box_ids = a.box_ids;
@@ -39,65 +41,86 @@ __device__ __forceinline__ void ShiftPwBody(ShiftPwArgs<Real> a, int box_idx) {
     const Real *__restrict__ wpwshift = a.wpwshift;
     Real *__restrict__ pw_in_pool = a.pw_in_pool;
 
-    const int box = box_ids[box_idx];
-
     constexpr int n_pw_modes = N_PW_MODES;
     constexpr int n_charge_dim = N_CHARGE_DIM;
+    constexpr int group_size = SHIFT_GROUP;
 
-    Real *__restrict__ pw_in_real = pw_in_pool + box_idx * a.pw_in_stride;
-    complx<Real> *__restrict__ pw_in = reinterpret_cast<complx<Real> *>(pw_in_real);
+    const int base = group * group_size;
+    const int rem = a.n_boxes_at_level - base;
+    const int n_mem = rem < group_size ? rem : group_size;
 
-    const long self_off = pw_out_offsets[box];
-    const complx<Real> *__restrict__ self_pw =
-        (self_off >= 0) ? reinterpret_cast<const complx<Real> *>(pw_out_flat + 2 * self_off) : nullptr;
+    // Self offsets go to shared rather than registers: group_size longs would cost
+    // 2*group_size registers held across the whole mode loop, which at group_size 8 is
+    // enough to cost a block of occupancy on top of what the accumulators already take.
+    __shared__ long s_self_off[group_size];
+    if (threadIdx.x < group_size)
+        s_self_off[threadIdx.x] = (threadIdx.x < n_mem) ? pw_out_offsets[box_ids[base + threadIdx.x]] : -1;
+    __syncthreads();
 
     // Every guard the neighbor loop used to carry -- empty slot, self, leaf-leaf pair,
     // neighbor without an outgoing expansion -- is tree-static, so the host resolved
-    // them once and this is a straight run over survivors. Branch-free is the point:
-    // with the guards in place ptxas could not hoist a payload load above the branch
-    // that decided whether to issue it, so NEIGHBOR_UNROLL widened the body without
-    // ever getting two loads in flight.
-    const int nbr_begin = a.shift_nbr_offsets[box];
-    const int n_nbr = a.shift_nbr_offsets[box + 1] - nbr_begin;
-    const ShiftPwNeighbor *__restrict__ nbr_list = a.shift_nbr + nbr_begin;
+    // them once. It also merged the group's members into one source list, so a source
+    // shared by several members is fetched once and applied to each. The payload load
+    // is unconditional; only the per-member shift is predicated, and that reads the
+    // wpwshift table, which stays in L1.
+    const int src_begin = a.group_offsets[group];
+    const int n_src = a.group_offsets[group + 1] - src_begin;
+    const ShiftPwGroupSrc *__restrict__ src_list = a.group_src + src_begin;
 
     for (int m = threadIdx.x; m < n_pw_modes; m += blockDim.x) {
-        complx<Real> acc[n_charge_dim];
+        complx<Real> acc[group_size][n_charge_dim];
 
 #pragma unroll
-        for (int d = 0; d < n_charge_dim; ++d) {
-            const int d_base = d * n_pw_modes;
-            if (self_pw)
-                acc[d] = self_pw[d_base + m];
-            else
-                acc[d] = complx<Real>{Real{0}, Real{0}};
+        for (int t = 0; t < group_size; ++t) {
+            const long self_off = s_self_off[t];
+#pragma unroll
+            for (int d = 0; d < n_charge_dim; ++d) {
+                if (self_off >= 0) {
+                    const complx<Real> *__restrict__ self_pw =
+                        reinterpret_cast<const complx<Real> *>(pw_out_flat + 2 * self_off);
+                    acc[t][d] = load_stream(&self_pw[d * n_pw_modes + m]);
+                } else {
+                    acc[t][d] = complx<Real>{Real{0}, Real{0}};
+                }
+            }
         }
 
 #pragma unroll(NEIGHBOR_UNROLL)
-        for (int e = 0; e < n_nbr; ++e) {
-            const ShiftPwNeighbor nb = nbr_list[e];
-
-            const Real *__restrict__ shift_r = wpwshift + nb.shift_ind * n_pw_modes * 2;
-            const Real *__restrict__ shift_i = shift_r + n_pw_modes;
-            const Real sr = shift_r[m];
-            const Real si = shift_i[m];
+        for (int e = 0; e < n_src; ++e) {
+            const ShiftPwGroupSrc s = src_list[e];
             const complx<Real> *__restrict__ nbr_pw =
-                reinterpret_cast<const complx<Real> *>(pw_out_flat + 2 * nb.pw_off);
+                reinterpret_cast<const complx<Real> *>(pw_out_flat + 2 * s.pw_off);
+
+            complx<Real> z[n_charge_dim];
+#pragma unroll
+            for (int d = 0; d < n_charge_dim; ++d)
+                z[d] = load_stream(&nbr_pw[d * n_pw_modes + m]);
 
 #pragma unroll
-            for (int d = 0; d < n_charge_dim; ++d) {
-                const int d_base = d * n_pw_modes;
-                const complx<Real> z = load_stream(&nbr_pw[d_base + m]);
-
-                acc[d].r += z.r * sr - z.i * si;
-                acc[d].i += z.r * si + z.i * sr;
+            for (int t = 0; t < group_size; ++t) {
+                const int ind = s.shift_ind[t];
+                if (ind < 0)
+                    continue;
+                const Real *__restrict__ shift_r = wpwshift + ind * n_pw_modes * 2;
+                const Real sr = shift_r[m];
+                const Real si = shift_r[n_pw_modes + m];
+#pragma unroll
+                for (int d = 0; d < n_charge_dim; ++d) {
+                    acc[t][d].r += z[d].r * sr - z[d].i * si;
+                    acc[t][d].i += z[d].r * si + z[d].i * sr;
+                }
             }
         }
 
 #pragma unroll
-        for (int d = 0; d < n_charge_dim; ++d) {
-            const int d_base = d * n_pw_modes;
-            pw_in[d_base + m] = acc[d];
+        for (int t = 0; t < group_size; ++t) {
+            if (t < n_mem) {
+                complx<Real> *__restrict__ pw_in =
+                    reinterpret_cast<complx<Real> *>(pw_in_pool + (base + t) * a.pw_in_stride);
+#pragma unroll
+                for (int d = 0; d < n_charge_dim; ++d)
+                    pw_in[d * n_pw_modes + m] = acc[t][d];
+            }
         }
     }
 }

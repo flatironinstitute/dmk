@@ -34,10 +34,10 @@ template <typename Real>
 void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStream_t stream) {
     if (args_h.empty())
         return;
-    int max_boxes = 0;
+    int max_groups = 0;
     for (const auto &a : args_h)
-        max_boxes = std::max(max_boxes, a.n_boxes_at_level);
-    if (max_boxes == 0)
+        max_groups = std::max(max_groups, a.n_groups_at_level);
+    if (max_groups == 0)
         return;
 
     static JitCache cache;
@@ -52,16 +52,14 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
         key.real = jit_real_name<Real>();
         key.sm_major = cache.sm_major();
         key.sm_minor = cache.sm_minor();
-        key.params = {{"N_PW_MODES", a0.n_pw_modes},
-                      {"N_CHARGE_DIM", a0.n_charge_dim},
-                      {"N_NEIGHBORS", a0.n_neighbors},
-                      {"BLOCK_SIZE", p.at("BLOCK_SIZE")},
-                      {"NEIGHBOR_UNROLL", p.at("NEIGHBOR_UNROLL")}};
+        key.params = {{"N_PW_MODES", a0.n_pw_modes},      {"N_CHARGE_DIM", a0.n_charge_dim},
+                      {"N_NEIGHBORS", a0.n_neighbors},    {"SHIFT_GROUP", dmk::cuda::kShiftGroup},
+                      {"BLOCK_SIZE", p.at("BLOCK_SIZE")}, {"NEIGHBOR_UNROLL", p.at("NEIGHBOR_UNROLL")}};
         auto kernel =
             cache.get_kernel_from_source(key, [&] { return make_stage_source("pt/shiftpw.cu", key, "", "PtShiftPw"); });
         const dmk::cuda::ShiftPwArgs<Real> *dev_args = d_args.data();
         int n = n_args;
-        kernel->launch(dim3(max_boxes, n_args, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), 0, st, dev_args, n);
+        kernel->launch(dim3(max_groups, n_args, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), 0, st, dev_args, n);
     };
 
     std::ostringstream tune_key;
@@ -76,9 +74,11 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
 
     const cudaDeviceProp &prop = device_prop();
 
+    // The source loop body now carries kShiftGroup applications per iteration, so the useful
+    // unroll factors are far smaller than when it was one.
     const std::vector<TuningParameter> space{{"BLOCK_SIZE", {64, 128, 256, 512, 768}},
-                                             {"NEIGHBOR_UNROLL", {1, 3, 9, 27}}};
-    const TuningParams defaults{{"BLOCK_SIZE", 256}, {"NEIGHBOR_UNROLL", 9}};
+                                             {"NEIGHBOR_UNROLL", {1, 2, 3, 4}}};
+    const TuningParams defaults{{"BLOCK_SIZE", 256}, {"NEIGHBOR_UNROLL", 2}};
     const auto constraint = [&](const TuningParams &p) {
         const int bs = p.at("BLOCK_SIZE");
         return bs > 0 && bs <= prop.maxThreadsPerBlock && bs % 32 == 0 && p.at("NEIGHBOR_UNROLL") > 0;
@@ -111,14 +111,15 @@ void downward(State<Real, DIM> &s, cudaStream_t stream) {
 
             dmk::cuda::ShiftPwArgs<Real> sa;
             sa.n_boxes_at_level = n_box;
+            sa.n_groups_at_level = (n_box + dmk::cuda::kShiftGroup - 1) / dmk::cuda::kShiftGroup;
             sa.n_neighbors = s.topology.n_neighbors;
             sa.n_charge_dim = f.n_charge_dim;
             sa.n_pw_modes = f.n_pw_modes;
             sa.pw_in_stride = sc.pw_in_stride_reals;
             sa.box_ids = w.d_pw_eval_box_flat.data() + box_off;
             sa.pw_out_offsets = sc.d_pw_out_offsets.data();
-            sa.shift_nbr = s.topology.d_shift_nbr.data();
-            sa.shift_nbr_offsets = s.topology.d_shift_nbr_offsets.data();
+            sa.group_src = w.d_shift_group_src.data();
+            sa.group_offsets = w.d_shift_group_offsets.data() + w.shift_group_base_h[L];
             sa.pw_out_flat = sc.d_pw_out.data();
             sa.wpwshift = f.slab(L).wpwshift;
             sa.pw_in_pool = level_pw_in;

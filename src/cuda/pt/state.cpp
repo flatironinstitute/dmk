@@ -417,6 +417,51 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
         tree, n_levels, w.pw_form_box_offset, w.pw_form_box_count, w.max_pw_form_per_level, w.pw_form_box_flat,
         [&](int b) { return tree.ifpwexp[b] && tree.proxy_coeffs_offsets[b] != -1 && !(skip_root_form && b == 0); });
 
+    // Merge each level's box list into groups of kShiftGroup and union their source sets.
+    // Consecutive entries are Morton-ordered, hence spatially adjacent, so their 3^DIM
+    // stencils overlap: a group of 8 spans a 4x4x4 region of sources instead of 8 separate
+    // 3x3x3 ones, and shift_pw fetches each source's plane-wave slab once rather than once
+    // per target. That slab traffic is the whole cost of the kernel.
+    w.shift_group_base.assign(n_levels, 0);
+    w.shift_group_offsets.clear();
+    w.shift_group_src.clear();
+    for (int L = 0; L < n_levels; ++L) {
+        w.shift_group_base[L] = static_cast<int>(w.shift_group_offsets.size());
+        const int n_box = w.pw_eval_box_count[L];
+        const int box_off = w.pw_eval_box_offset[L];
+        for (int g0 = 0; g0 < n_box; g0 += kShiftGroup) {
+            const int grp_begin = static_cast<int>(w.shift_group_src.size());
+            w.shift_group_offsets.push_back(grp_begin);
+            const int n_mem = std::min(kShiftGroup, n_box - g0);
+            for (int t = 0; t < n_mem; ++t) {
+                const int box = w.pw_eval_box_flat[box_off + g0 + t];
+                for (int e = topo.shift_nbr_offsets[box]; e < topo.shift_nbr_offsets[box + 1]; ++e) {
+                    const ShiftPwNeighbor &nb = topo.shift_nbr[e];
+                    // Linear over this group's entries only; the union is ~64 wide. Merging
+                    // requires the slot to be free for *this* member, not just to match the
+                    // source: under PBC one box wraps into several neighbor slots of the same
+                    // target with different shifts, and collapsing those would drop a term.
+                    int slot = -1;
+                    for (int q = grp_begin; q < static_cast<int>(w.shift_group_src.size()); ++q)
+                        if (w.shift_group_src[q].pw_off == nb.pw_off && w.shift_group_src[q].shift_ind[t] < 0) {
+                            slot = q;
+                            break;
+                        }
+                    if (slot < 0) {
+                        slot = static_cast<int>(w.shift_group_src.size());
+                        ShiftPwGroupSrc gs;
+                        gs.pw_off = nb.pw_off;
+                        for (int u = 0; u < kShiftGroup; ++u)
+                            gs.shift_ind[u] = -1;
+                        w.shift_group_src.push_back(gs);
+                    }
+                    w.shift_group_src[slot].shift_ind[t] = static_cast<signed char>(nb.shift_ind);
+                }
+            }
+        }
+    }
+    w.shift_group_offsets.push_back(static_cast<int>(w.shift_group_src.size()));
+
     w.pw_in_pool_base.assign(n_levels, 0);
     long total_slots = 0;
     for (int L = 0; L < n_levels; ++L) {
@@ -469,8 +514,6 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     up(topology.d_list1_shift, in.topology.list1_shift_flat);
     up(topology.d_box_levels, in.topology.box_levels);
     up(topology.d_ifpwexp, in.topology.ifpwexp);
-    up(topology.d_shift_nbr, in.topology.shift_nbr);
-    up(topology.d_shift_nbr_offsets, in.topology.shift_nbr_offsets);
 
     // --- Particles ---
     const auto &pi = in.particles;
@@ -542,6 +585,9 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     up(worklists.d_tp_up_dst_boxes, wi.tp_up_dst);
     up(worklists.d_tp_up_octants, wi.tp_up_octants);
     up(worklists.d_pw_eval_box_flat, wi.pw_eval_box_flat);
+    up(worklists.d_shift_group_src, wi.shift_group_src);
+    up(worklists.d_shift_group_offsets, wi.shift_group_offsets);
+    worklists.shift_group_base_h = wi.shift_group_base;
     up(worklists.d_pw_form_box_flat, wi.pw_form_box_flat);
     worklists.n_eval_boxes = static_cast<int>(wi.eval_targets_box_list.size());
     up(worklists.d_eval_targets_box_list, wi.eval_targets_box_list);

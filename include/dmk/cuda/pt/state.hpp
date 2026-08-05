@@ -51,8 +51,8 @@ struct BuildInputs {
         std::vector<int> neighbors;         ///< [n_boxes*n_neighbors] neighbor ids, -1 invalid (shift list build)
         std::vector<unsigned char> ifpwexp; ///< [n_boxes] has-PW-expansion flag (upward/form_outgoing/downward)
         std::vector<unsigned char> is_global_leaf; ///< [n_boxes] leaf-of-eval flag (shift list build)
-        std::vector<ShiftPwNeighbor> shift_nbr;    ///< surviving shift sources, CSR by box (downward)
-        std::vector<int> shift_nbr_offsets;        ///< [n_boxes+1] CSR offsets into shift_nbr (downward)
+        std::vector<ShiftPwNeighbor> shift_nbr;    ///< surviving shift sources, CSR by box (shift group build)
+        std::vector<int> shift_nbr_offsets;        ///< [n_boxes+1] CSR offsets into shift_nbr (shift group build)
     } topology;
 
     /// Sorted source/target coordinates, charges, and the sort permutation.
@@ -112,35 +112,38 @@ struct BuildInputs {
 
     /// Precomputed per-group / per-level work lists driving the pass launches.
     struct Worklists {
-        int n_c2p_groups = 0;                       ///< charge2proxy groups (all levels)
-        int n_c2p_active_groups = 0;                ///< groups with non-zero source work
-        int max_tp_per_level = 0;                   ///< max downward tensorprod pairs on any level
-        int max_tp_up_per_level = 0;                ///< max upward tensorprod pairs on any level
-        int max_pw_form_per_level = 0;              ///< max proxy2pw boxes on any level
-        std::vector<int> c2p_center_boxes;          ///< [n_c2p_groups] target box per group (upward)
-        std::vector<int> c2p_levels;                ///< [n_c2p_groups] level per group (upward)
-        std::vector<int> c2p_src_box_flat_offsets;  ///< [n_c2p_groups] into c2p_src_boxes_flat
-        std::vector<int> c2p_n_src_boxes_per_group; ///< [n_c2p_groups] source boxes per group
-        std::vector<int> c2p_src_boxes_flat;        ///< flattened source boxes (upward)
-        std::vector<int> c2p_group_perm;            ///< [n_c2p_groups] heaviest-work-first order
-        std::vector<int> tp_parents;                ///< downward tensorprod parent boxes
-        std::vector<int> tp_children;               ///< downward tensorprod child boxes
-        std::vector<int> tp_octants;                ///< downward tensorprod child octant (p2c slab)
-        std::vector<int> tp_offset;                 ///< [n_levels+1] into tp_* (downward)
-        std::vector<int> tp_count;                  ///< [n_levels] pairs per level (downward)
-        std::vector<int> tp_up_src;                 ///< upward tensorprod child boxes
-        std::vector<int> tp_up_dst;                 ///< upward tensorprod parent boxes
-        std::vector<int> tp_up_octants;             ///< upward tensorprod octant (c2p slab)
-        std::vector<int> tp_up_offset;              ///< [n_levels+1] into tp_up_* (upward)
-        std::vector<int> tp_up_count;               ///< [n_levels] pairs per level (upward)
-        std::vector<int> pw_eval_box_flat;          ///< per-level boxes doing PW work (downward)
-        std::vector<int> pw_eval_box_offset;        ///< [n_levels+1] into pw_eval_box_flat
-        std::vector<int> pw_eval_box_count;         ///< [n_levels] boxes per level
-        std::vector<int> pw_form_box_flat;          ///< per-level boxes doing proxy2pw (form_outgoing)
-        std::vector<int> pw_form_box_offset;        ///< [n_levels+1] into pw_form_box_flat
-        std::vector<int> pw_form_box_count;         ///< [n_levels] boxes per level
-        std::vector<long> pw_in_pool_base;          ///< [n_levels] pw_in slab base (prefix sum of pw_eval_box_count)
-        std::vector<int> eval_targets_box_list;     ///< leaf-of-eval boxes (eval_targets)
+        int n_c2p_groups = 0;                         ///< charge2proxy groups (all levels)
+        int n_c2p_active_groups = 0;                  ///< groups with non-zero source work
+        int max_tp_per_level = 0;                     ///< max downward tensorprod pairs on any level
+        int max_tp_up_per_level = 0;                  ///< max upward tensorprod pairs on any level
+        int max_pw_form_per_level = 0;                ///< max proxy2pw boxes on any level
+        std::vector<int> c2p_center_boxes;            ///< [n_c2p_groups] target box per group (upward)
+        std::vector<int> c2p_levels;                  ///< [n_c2p_groups] level per group (upward)
+        std::vector<int> c2p_src_box_flat_offsets;    ///< [n_c2p_groups] into c2p_src_boxes_flat
+        std::vector<int> c2p_n_src_boxes_per_group;   ///< [n_c2p_groups] source boxes per group
+        std::vector<int> c2p_src_boxes_flat;          ///< flattened source boxes (upward)
+        std::vector<int> c2p_group_perm;              ///< [n_c2p_groups] heaviest-work-first order
+        std::vector<int> tp_parents;                  ///< downward tensorprod parent boxes
+        std::vector<int> tp_children;                 ///< downward tensorprod child boxes
+        std::vector<int> tp_octants;                  ///< downward tensorprod child octant (p2c slab)
+        std::vector<int> tp_offset;                   ///< [n_levels+1] into tp_* (downward)
+        std::vector<int> tp_count;                    ///< [n_levels] pairs per level (downward)
+        std::vector<int> tp_up_src;                   ///< upward tensorprod child boxes
+        std::vector<int> tp_up_dst;                   ///< upward tensorprod parent boxes
+        std::vector<int> tp_up_octants;               ///< upward tensorprod octant (c2p slab)
+        std::vector<int> tp_up_offset;                ///< [n_levels+1] into tp_up_* (upward)
+        std::vector<int> tp_up_count;                 ///< [n_levels] pairs per level (upward)
+        std::vector<int> pw_eval_box_flat;            ///< per-level boxes doing PW work (downward)
+        std::vector<int> pw_eval_box_offset;          ///< [n_levels+1] into pw_eval_box_flat
+        std::vector<int> pw_eval_box_count;           ///< [n_levels] boxes per level
+        std::vector<ShiftPwGroupSrc> shift_group_src; ///< merged shift sources, CSR by group (downward)
+        std::vector<int> shift_group_offsets;         ///< [n_groups+1] CSR offsets into shift_group_src
+        std::vector<int> shift_group_base;            ///< [n_levels] first group id of each level
+        std::vector<int> pw_form_box_flat;            ///< per-level boxes doing proxy2pw (form_outgoing)
+        std::vector<int> pw_form_box_offset;          ///< [n_levels+1] into pw_form_box_flat
+        std::vector<int> pw_form_box_count;           ///< [n_levels] boxes per level
+        std::vector<long> pw_in_pool_base;            ///< [n_levels] pw_in slab base (prefix sum of pw_eval_box_count)
+        std::vector<int> eval_targets_box_list;       ///< leaf-of-eval boxes (eval_targets)
         std::vector<Real> self_correction_work; ///< [n_direct_work] per-box self-correction factor (self_correction)
     } worklists;
 
@@ -192,16 +195,14 @@ struct State {
 
     /// Box structure and per-box gating flags.
     struct Topology {
-        int nlist1_stride = 0;                     ///< max near source boxes per box
-        int n_neighbors = 0;                       ///< 3^DIM neighbor slots per box
-        DeviceBuffer<int> d_direct_work;           ///< target boxes with near-field work (direct)
-        DeviceBuffer<int> d_list1_flat;            ///< near source boxes per box (direct)
-        DeviceBuffer<int> d_list1_count;           ///< valid list1 entries per box (direct)
-        DeviceBuffer<signed char> d_list1_shift;   ///< PBC image shift per list1 entry, unallocated if aperiodic
-        DeviceBuffer<int> d_box_levels;            ///< depth per box (all passes)
-        DeviceBuffer<unsigned char> d_ifpwexp;     ///< has-PW-expansion flag (upward/form_outgoing/downward)
-        DeviceBuffer<ShiftPwNeighbor> d_shift_nbr; ///< pre-filtered shift sources, CSR by box (downward)
-        DeviceBuffer<int> d_shift_nbr_offsets;     ///< [n_boxes+1] CSR offsets into d_shift_nbr (downward)
+        int nlist1_stride = 0;                   ///< max near source boxes per box
+        int n_neighbors = 0;                     ///< 3^DIM neighbor slots per box
+        DeviceBuffer<int> d_direct_work;         ///< target boxes with near-field work (direct)
+        DeviceBuffer<int> d_list1_flat;          ///< near source boxes per box (direct)
+        DeviceBuffer<int> d_list1_count;         ///< valid list1 entries per box (direct)
+        DeviceBuffer<signed char> d_list1_shift; ///< PBC image shift per list1 entry, unallocated if aperiodic
+        DeviceBuffer<int> d_box_levels;          ///< depth per box (all passes)
+        DeviceBuffer<unsigned char> d_ifpwexp;   ///< has-PW-expansion flag (upward/form_outgoing/downward)
     } topology;
 
     /// Sorted source/target coordinates, charges, and the sort permutation.
@@ -277,25 +278,27 @@ struct State {
 
     /// Precomputed per-group / per-level work lists.
     struct Worklists {
-        int n_c2p_groups = 0;                          ///< charge2proxy groups
-        int n_c2p_active_groups = 0;                   ///< groups with non-zero work
-        DeviceBuffer<int> d_c2p_center_boxes;          ///< target box per group (upward)
-        DeviceBuffer<int> d_c2p_levels;                ///< level per group (upward)
-        DeviceBuffer<int> d_c2p_src_box_flat_offsets;  ///< into d_c2p_src_boxes_flat
-        DeviceBuffer<int> d_c2p_n_src_boxes_per_group; ///< source boxes per group
-        DeviceBuffer<int> d_c2p_src_boxes_flat;        ///< flattened source boxes (upward)
-        DeviceBuffer<int> d_c2p_group_perm;            ///< heaviest-work-first group order
-        DeviceBuffer<int> d_tp_parents;                ///< downward tensorprod parent boxes
-        DeviceBuffer<int> d_tp_children;               ///< downward tensorprod child boxes
-        DeviceBuffer<int> d_tp_octants;                ///< downward tensorprod octant (p2c slab)
-        DeviceBuffer<int> d_tp_up_src_boxes;           ///< upward tensorprod child boxes
-        DeviceBuffer<int> d_tp_up_dst_boxes;           ///< upward tensorprod parent boxes
-        DeviceBuffer<int> d_tp_up_octants;             ///< upward tensorprod octant (c2p slab)
-        DeviceBuffer<int> d_pw_eval_box_flat;          ///< per-level PW-work boxes (downward)
-        DeviceBuffer<int> d_pw_form_box_flat;          ///< per-level proxy2pw boxes (form_outgoing)
-        int n_eval_boxes = 0;                          ///< |eval_targets_box_list| (eval_targets)
-        DeviceBuffer<int> d_eval_targets_box_list;     ///< leaf-of-eval boxes (eval_targets)
-        DeviceBuffer<Real> d_self_correction_work;     ///< [n_direct_work] self-correction factors (self_correction)
+        int n_c2p_groups = 0;                            ///< charge2proxy groups
+        int n_c2p_active_groups = 0;                     ///< groups with non-zero work
+        DeviceBuffer<int> d_c2p_center_boxes;            ///< target box per group (upward)
+        DeviceBuffer<int> d_c2p_levels;                  ///< level per group (upward)
+        DeviceBuffer<int> d_c2p_src_box_flat_offsets;    ///< into d_c2p_src_boxes_flat
+        DeviceBuffer<int> d_c2p_n_src_boxes_per_group;   ///< source boxes per group
+        DeviceBuffer<int> d_c2p_src_boxes_flat;          ///< flattened source boxes (upward)
+        DeviceBuffer<int> d_c2p_group_perm;              ///< heaviest-work-first group order
+        DeviceBuffer<int> d_tp_parents;                  ///< downward tensorprod parent boxes
+        DeviceBuffer<int> d_tp_children;                 ///< downward tensorprod child boxes
+        DeviceBuffer<int> d_tp_octants;                  ///< downward tensorprod octant (p2c slab)
+        DeviceBuffer<int> d_tp_up_src_boxes;             ///< upward tensorprod child boxes
+        DeviceBuffer<int> d_tp_up_dst_boxes;             ///< upward tensorprod parent boxes
+        DeviceBuffer<int> d_tp_up_octants;               ///< upward tensorprod octant (c2p slab)
+        DeviceBuffer<int> d_pw_eval_box_flat;            ///< per-level PW-work boxes (downward)
+        DeviceBuffer<ShiftPwGroupSrc> d_shift_group_src; ///< merged shift sources, CSR by group (downward)
+        DeviceBuffer<int> d_shift_group_offsets;         ///< [n_groups+1] CSR offsets into d_shift_group_src
+        DeviceBuffer<int> d_pw_form_box_flat;            ///< per-level proxy2pw boxes (form_outgoing)
+        int n_eval_boxes = 0;                            ///< |eval_targets_box_list| (eval_targets)
+        DeviceBuffer<int> d_eval_targets_box_list;       ///< leaf-of-eval boxes (eval_targets)
+        DeviceBuffer<Real> d_self_correction_work;       ///< [n_direct_work] self-correction factors (self_correction)
 
         // Per-level prefix sums that drive kernel launches (host-resident).
         std::vector<long> pw_in_pool_base_h;   ///< [n_levels] pw_in slab base per level
@@ -305,6 +308,7 @@ struct State {
         std::vector<int> tp_up_count_h;        ///< [n_levels] pairs per level (upward)
         std::vector<int> pw_eval_box_offset_h; ///< [n_levels+1] into d_pw_eval_box_flat
         std::vector<int> pw_eval_box_count_h;  ///< [n_levels] boxes per level
+        std::vector<int> shift_group_base_h;   ///< [n_levels] first group id of each level (downward)
         std::vector<int> pw_form_box_offset_h; ///< [n_levels+1] into d_pw_form_box_flat
         std::vector<int> pw_form_box_count_h;  ///< [n_levels] boxes per level
     } worklists;
