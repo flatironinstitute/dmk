@@ -125,14 +125,10 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
                 const int n_order = f.n_order;
                 const int n_charge_dim = a.n_charge_dim;
 
-                // A chunk is one read-modify-write of the whole n_order^3 * n_charge_dim
-                // proxy region, so a bigger chunk cuts that traffic proportionally -- at
-                // the cost of shared, and so of blocks per SM. The constraint drops the
-                // sizes that do not fit the order in play.
-                const std::vector<TuningParameter> space{{"CHUNK", {64, 128, 256, 512}},
-                                                         {"I_TILE", {2, 3, 4}},
+                const std::vector<TuningParameter> space{{"CHUNK", {128, 256, 512}},
+                                                         {"I_TILE", {3, 4, 6, 9, n_order}},
                                                          {"J_TILE", {2, 3, 4}},
-                                                         {"K_TILE", {2, 4}},
+                                                         {"K_TILE", {2, 3, 4}},
                                                          {"BLOCK_SIZE", {128, 256}}};
                 const TuningParams defaults{
                     {"CHUNK", 128}, {"I_TILE", 3}, {"J_TILE", 3}, {"K_TILE", 4}, {"BLOCK_SIZE", 128}};
@@ -144,7 +140,7 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
                         return false;
                     if (ch <= 0 || it <= 0 || it > n_order || jt <= 0 || jt > n_order || kt <= 0 || kt > n_order)
                         return false;
-                    if (it * jt * kt > 48)
+                    if (it * jt * kt > 128)
                         return false;
                     return c2p_shared_bytes(n_order, n_charge_dim, ch, sizeof(Real)) <= max_shared;
                 };

@@ -77,7 +77,8 @@ void launch_eval_side(JitCache &cache, dmk::cuda::EvalTargetsArgs<Real> args, in
 
     const cudaDeviceProp &prop = device_prop();
 
-    const std::vector<TuningParameter> space{{"BLOCK_SIZE", {128, 256, 512}}, {"TARGETS_PER_THREAD", {1, 2, 3, 4}}};
+    const std::vector<TuningParameter> space{{"BLOCK_SIZE", {128, 256, 512}},
+                                             {"TARGETS_PER_THREAD", {1, 2, 3, 4, 6, 8}}};
     const TuningParams defaults{{"BLOCK_SIZE", 256}, {"TARGETS_PER_THREAD", 1}};
     const auto constraint = [&](const TuningParams &p) {
         const int bs = p.at("BLOCK_SIZE");

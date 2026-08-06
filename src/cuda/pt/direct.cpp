@@ -130,8 +130,10 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     const int eval_unroll = env_int("DMK_DIRECT_EVAL_UNROLL", 4);
     const int prefilter_stats = (prefilter != 0) ? env_int("DMK_DIRECT_PREFILTER_STATS", 0) : 0;
     // Only PREFILTER 3 can skip the staged source tile; the other modes re-read a source once
-    // per target, which is what a shared broadcast is for.
-    const int stage_src = (prefilter == 3) ? env_int("DMK_DIRECT_STAGE_SRC", 1) : 1;
+    // per target, which is what a shared broadcast is for. Off where it is optional: PREFILTER 3
+    // compacts source data into the survivor list, so staging holds a second copy and spends
+    // shared that occupancy would rather have.
+    const int stage_src = (prefilter == 3) ? env_int("DMK_DIRECT_STAGE_SRC", 0) : 1;
     if (prefilter < 0 || prefilter > 3)
         throw std::runtime_error("DMK_DIRECT_PREFILTER must be 0, 1, 2 or 3");
     if (cull_tile < 1 || cull_tile > 32 || 32 % cull_tile != 0)
