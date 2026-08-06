@@ -132,8 +132,15 @@ struct BuildInputs {
         std::vector<int> tp_up_src;                   ///< upward tensorprod child boxes
         std::vector<int> tp_up_dst;                   ///< upward tensorprod parent boxes
         std::vector<int> tp_up_octants;               ///< upward tensorprod octant (c2p slab)
+        std::vector<int> tp_up_assign;                ///< [n_pairs] pair is its parent's first writer
+        std::vector<int> proxy_zero_boxes;            ///< upward proxy slabs no writer touches
         std::vector<int> tp_up_offset;                ///< [n_levels+1] into tp_up_* (upward)
         std::vector<int> tp_up_count;                 ///< [n_levels] pairs per level (upward)
+        std::vector<int> tp_up_par;                   ///< upward tensorprod parents, one entry each
+        std::vector<int> tp_up_par_child_begin;       ///< [n_par] first child in tp_up_src
+        std::vector<int> tp_up_par_child_count;       ///< [n_par] children of that parent
+        std::vector<int> tp_up_par_offset;            ///< [n_levels+1] into tp_up_par_*
+        std::vector<int> tp_up_par_count;             ///< [n_levels] parents per level
         std::vector<int> pw_eval_box_flat;            ///< per-level boxes doing PW work (downward)
         std::vector<int> pw_eval_box_offset;          ///< [n_levels+1] into pw_eval_box_flat
         std::vector<int> pw_eval_box_count;           ///< [n_levels] boxes per level
@@ -279,21 +286,27 @@ struct State {
 
     /// Precomputed per-group / per-level work lists.
     struct Worklists {
-        int n_c2p_groups = 0;                            ///< charge2proxy groups
-        int n_c2p_active_groups = 0;                     ///< groups with non-zero work
-        DeviceBuffer<int> d_c2p_center_boxes;            ///< target box per group (upward)
-        DeviceBuffer<int> d_c2p_levels;                  ///< level per group (upward)
-        DeviceBuffer<int> d_c2p_src_box_flat_offsets;    ///< into d_c2p_src_boxes_flat
-        DeviceBuffer<int> d_c2p_n_src_boxes_per_group;   ///< source boxes per group
-        DeviceBuffer<int> d_c2p_src_boxes_flat;          ///< flattened source boxes (upward)
-        DeviceBuffer<int> d_c2p_group_perm;              ///< heaviest-work-first group order
-        DeviceBuffer<int> d_tp_parents;                  ///< downward tensorprod parent boxes
-        DeviceBuffer<int> d_tp_children;                 ///< downward tensorprod child boxes
-        DeviceBuffer<int> d_tp_octants;                  ///< downward tensorprod octant (p2c slab)
-        DeviceBuffer<int> d_tp_assign_dst;               ///< downward tensorprod: pair is child's first writer
-        DeviceBuffer<int> d_tp_up_src_boxes;             ///< upward tensorprod child boxes
-        DeviceBuffer<int> d_tp_up_dst_boxes;             ///< upward tensorprod parent boxes
-        DeviceBuffer<int> d_tp_up_octants;               ///< upward tensorprod octant (c2p slab)
+        int n_c2p_groups = 0;                          ///< charge2proxy groups
+        int n_c2p_active_groups = 0;                   ///< groups with non-zero work
+        DeviceBuffer<int> d_c2p_center_boxes;          ///< target box per group (upward)
+        DeviceBuffer<int> d_c2p_levels;                ///< level per group (upward)
+        DeviceBuffer<int> d_c2p_src_box_flat_offsets;  ///< into d_c2p_src_boxes_flat
+        DeviceBuffer<int> d_c2p_n_src_boxes_per_group; ///< source boxes per group
+        DeviceBuffer<int> d_c2p_src_boxes_flat;        ///< flattened source boxes (upward)
+        DeviceBuffer<int> d_c2p_group_perm;            ///< heaviest-work-first group order
+        DeviceBuffer<int> d_tp_parents;                ///< downward tensorprod parent boxes
+        DeviceBuffer<int> d_tp_children;               ///< downward tensorprod child boxes
+        DeviceBuffer<int> d_tp_octants;                ///< downward tensorprod octant (p2c slab)
+        DeviceBuffer<int> d_tp_assign_dst;             ///< downward tensorprod: pair is child's first writer
+        DeviceBuffer<int> d_tp_up_src_boxes;           ///< upward tensorprod child boxes
+        DeviceBuffer<int> d_tp_up_dst_boxes;           ///< upward tensorprod parent boxes
+        DeviceBuffer<int> d_tp_up_octants;             ///< upward tensorprod octant (c2p slab)
+        DeviceBuffer<int> d_tp_up_assign;              ///< [n_pairs] pair is its parent's first writer
+        DeviceBuffer<int> d_proxy_zero_boxes;          ///< upward proxy slabs no writer touches
+        int n_proxy_zero_boxes = 0;
+        DeviceBuffer<int> d_tp_up_par;                   ///< upward tensorprod parents, one entry each
+        DeviceBuffer<int> d_tp_up_par_child_begin;       ///< [n_par] first child in d_tp_up_src_boxes
+        DeviceBuffer<int> d_tp_up_par_child_count;       ///< [n_par] children of that parent
         DeviceBuffer<int> d_pw_eval_box_flat;            ///< per-level PW-work boxes (downward)
         DeviceBuffer<ShiftPwGroupSrc> d_shift_group_src; ///< merged shift sources, CSR by group (downward)
         DeviceBuffer<int> d_shift_group_offsets;         ///< [n_groups+1] CSR offsets into d_shift_group_src
@@ -308,6 +321,8 @@ struct State {
         std::vector<int> tp_count_h;           ///< [n_levels] pairs per level (downward)
         std::vector<int> tp_up_offset_h;       ///< [n_levels+1] into d_tp_up_* (upward)
         std::vector<int> tp_up_count_h;        ///< [n_levels] pairs per level (upward)
+        std::vector<int> tp_up_par_offset_h;   ///< [n_levels+1] into d_tp_up_par_*
+        std::vector<int> tp_up_par_count_h;    ///< [n_levels] parents per level
         std::vector<int> pw_eval_box_offset_h; ///< [n_levels+1] into d_pw_eval_box_flat
         std::vector<int> pw_eval_box_count_h;  ///< [n_levels] boxes per level
         std::vector<int> shift_group_base_h;   ///< [n_levels] first group id of each level (downward)

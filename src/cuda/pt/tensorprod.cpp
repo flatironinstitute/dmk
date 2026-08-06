@@ -26,8 +26,14 @@ std::size_t tp_shared_bytes(int n_order, int z_tile, std::size_t sizeof_real) {
 } // namespace
 
 template <typename Real>
-void launch_tensorprod(dmk::cuda::TensorprodArgs<Real> &args, std::size_t proxy_count, cudaStream_t stream) {
+void launch_tensorprod(dmk::cuda::TensorprodArgs<Real> &args, std::size_t proxy_count, cudaStream_t stream,
+                       bool tune_here) {
     if (args.n_pairs == 0)
+        return;
+    // Gather form drives the grid off the parent list instead of the pair list. gridDim.y is one
+    // block per charge dim of the destination.
+    const int grid = args.par_boxes ? args.n_par : args.n_pairs;
+    if (grid == 0)
         return;
     static JitCache cache;
 
@@ -44,26 +50,32 @@ void launch_tensorprod(dmk::cuda::TensorprodArgs<Real> &args, std::size_t proxy_
             key, [&] { return make_stage_source("pt/tensorprod.cu", key, "", "PtTensorprod"); });
         const std::size_t shared = tp_shared_bytes(args.n_order, p.at("Z_TILE"), sizeof(Real));
         set_max_dynamic_smem(*kernel, shared);
-        kernel->launch(dim3(args.n_pairs, 1, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, args);
+        kernel->launch(dim3(grid, args.n_charge_dim, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, args);
     };
 
     std::ostringstream tune_key;
     tune_key << "PtTensorprod|real=" << jit_real_name<Real>() << "|n_order=" << args.n_order
-             << "|n_charge_dim=" << args.n_charge_dim;
+             << "|n_charge_dim=" << args.n_charge_dim << "|gather=" << (args.par_boxes ? 1 : 0);
     const std::string tk = tune_key.str();
+
+    const std::vector<TuningParameter> space{
+        {"BLOCK_SIZE", {128, 256, 512}}, {"Z_TILE", {1, 2, 4}}, {"I_TILE", {1, 2, 3, 4}}, {"J_TILE", {2, 4, 6}}};
+    const TuningParams defaults{{"BLOCK_SIZE", 512}, {"Z_TILE", 2}, {"I_TILE", 2}, {"J_TILE", 4}};
 
     if (auto cfg = autotune_cached(tk)) {
         launch_one(*cfg, stream);
+        return;
+    }
+    // Measuring a level of a few blocks would pick a config for launch overhead rather than for
+    // throughput, and BLOCK_SIZE decides blocks per SM on a kernel that stalls mostly on barriers.
+    if (!tune_here) {
+        launch_one(defaults, stream);
         return;
     }
 
     const cudaDeviceProp &prop = device_prop();
     const std::size_t max_shared = device_max_shared_bytes();
     const int n_order = args.n_order;
-
-    const std::vector<TuningParameter> space{
-        {"BLOCK_SIZE", {128, 256, 512}}, {"Z_TILE", {1, 2, 4}}, {"I_TILE", {1, 2, 3, 4}}, {"J_TILE", {2, 4, 6}}};
-    const TuningParams defaults{{"BLOCK_SIZE", 512}, {"Z_TILE", 2}, {"I_TILE", 2}, {"J_TILE", 4}};
 
     const auto constraint = [&, n_order](const TuningParams &p) {
         const int bs = p.at("BLOCK_SIZE"), z = p.at("Z_TILE"), it = p.at("I_TILE"), jt = p.at("J_TILE");
@@ -80,7 +92,7 @@ void launch_tensorprod(dmk::cuda::TensorprodArgs<Real> &args, std::size_t proxy_
                            proxy_count, stream);
 }
 
-template void launch_tensorprod<float>(dmk::cuda::TensorprodArgs<float> &, std::size_t, cudaStream_t);
-template void launch_tensorprod<double>(dmk::cuda::TensorprodArgs<double> &, std::size_t, cudaStream_t);
+template void launch_tensorprod<float>(dmk::cuda::TensorprodArgs<float> &, std::size_t, cudaStream_t, bool);
+template void launch_tensorprod<double>(dmk::cuda::TensorprodArgs<double> &, std::size_t, cudaStream_t, bool);
 
 } // namespace dmk::cuda::pt

@@ -16,6 +16,16 @@ struct TensorprodArgs {
     // stores with `=`. A box has one parent, so at most one pair can claim it.
     const int *assign_dst = nullptr;
 
+    // Gather form: one block per parent, walking that parent's children, which are
+    // contiguous in src_boxes/child_octants. The block owns dst_box outright, so the
+    // adds are block-local and need no atomics. Leave par_boxes null for the per-pair
+    // form above, where dst_boxes drives the block. assign_dst still governs the store,
+    // so a parent that charge2proxy also writes must not be marked.
+    const int *par_boxes = nullptr;       // [n_par] parent box ids
+    const int *par_child_begin = nullptr; // [n_par] first child in src_boxes
+    const int *par_child_count = nullptr; // [n_par]
+    int n_par = 0;
+
     // Shared-state device pointers.
     Real *proxy_flat = nullptr;          // d_proxy_coeffs_(up|down)ward (read+write)
     const long *proxy_offsets = nullptr; // [n_boxes]
@@ -30,10 +40,6 @@ struct TensorprodArgs {
     // ff2 the next N3.
     Real *scratch = nullptr;
     long scratch_stride = 0; // reals; = 2 * n_order^3
-
-    // Set true when multiple pairs at the same launch can target the same
-    // dst_box (upward direction). Phase 3 then uses atomicAdd.
-    bool additive_atomic = false;
 };
 
 } // namespace dmk::cuda

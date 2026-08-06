@@ -149,6 +149,11 @@ void downward(State<Real, DIM> &s, cudaStream_t stream) {
         launch_pw2proxy<Real>(pw2p_h, sc.d_proxy_coeffs_downward.data(), sc.d_proxy_coeffs_downward.size(), stream);
 
         // ---- per-level downward tensorprod (parent->child, p2c, non-atomic add) ----
+        int tune_level = -1;
+        for (int L = 0; L < s.n_levels; ++L)
+            if (w.tp_count_h[L] && (tune_level < 0 || w.tp_count_h[L] > w.tp_count_h[tune_level]))
+                tune_level = L;
+
         for (int L = 0; L < s.n_levels; ++L) {
             const int n_pairs = w.tp_count_h[L];
             if (n_pairs == 0)
@@ -167,8 +172,7 @@ void downward(State<Real, DIM> &s, cudaStream_t stream) {
             ta.umat_flat = f.d_p2c.data();
             ta.scratch = sc.d_tensorprod_scratch.data();
             ta.scratch_stride = sc.tensorprod_scratch_stride_reals;
-            ta.additive_atomic = false;
-            launch_tensorprod<Real>(ta, sc.d_proxy_coeffs_downward.size(), stream);
+            launch_tensorprod<Real>(ta, sc.d_proxy_coeffs_downward.size(), stream, L == tune_level);
         }
     }
 }

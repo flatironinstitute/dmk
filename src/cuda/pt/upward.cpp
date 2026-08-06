@@ -28,6 +28,24 @@ std::size_t c2p_shared_bytes(int n_order, int n_charge_dim, int chunk, std::size
     return (std::size_t(3) * n_order * ld + std::size_t(n_charge_dim) * ld) * sizeof_real;
 }
 
+template <typename Real>
+void launch_zero_box_slabs(Real *flat, const long *offsets, const int *boxes, int n_boxes, int slab_reals,
+                           cudaStream_t stream) {
+    if (n_boxes == 0)
+        return;
+    constexpr int BLOCK = 256;
+    static JitCache cache;
+    JitKey key;
+    key.name = "PtZeroBoxSlabsKernel";
+    key.real = jit_real_name<Real>();
+    key.sm_major = cache.sm_major();
+    key.sm_minor = cache.sm_minor();
+    key.params = {{"BLOCK_SIZE", BLOCK}};
+    auto kernel = cache.get_kernel_from_source(
+        key, [&] { return make_stage_source("pt/shared_state.cu", key, "", "SharedState"); });
+    kernel->launch(dim3(n_boxes, 1, 1), dim3(BLOCK, 1, 1), 0, stream, flat, offsets, boxes, n_boxes, slab_reals);
+}
+
 } // namespace
 
 template <typename Real, int DIM>
@@ -38,9 +56,14 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
         auto &w = s.worklists;
         auto &f = s.fourier;
 
-        // d_proxy_coeffs_upward is zeroed by the caller, ahead of this chain.
         const std::size_t proxy_count = s.scratch.d_proxy_coeffs_upward.size();
         const bool is_stresslet = s.kernel == DMK_STRESSLET;
+
+        // Every box with owned sources is assigned by charge2proxy or by its first child below,
+        // so only the source-free boxes proxy2pw still reads need clearing.
+        launch_zero_box_slabs<Real>(s.scratch.d_proxy_coeffs_upward.data(), s.scratch.d_proxy_offsets_upward.data(),
+                                    w.d_proxy_zero_boxes.data(), w.n_proxy_zero_boxes,
+                                    f.n_order * f.n_order * f.n_order * f.n_tables_up, stream);
 
         // ---- charge2proxy (leaf sources -> center-box proxy coeffs) ----
         if (w.n_c2p_groups && w.n_c2p_active_groups) {
@@ -102,7 +125,11 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
                 const int n_order = f.n_order;
                 const int n_charge_dim = a.n_charge_dim;
 
-                const std::vector<TuningParameter> space{{"CHUNK", {64, 128}},
+                // A chunk is one read-modify-write of the whole n_order^3 * n_charge_dim
+                // proxy region, so a bigger chunk cuts that traffic proportionally -- at
+                // the cost of shared, and so of blocks per SM. The constraint drops the
+                // sizes that do not fit the order in play.
+                const std::vector<TuningParameter> space{{"CHUNK", {64, 128, 256, 512}},
                                                          {"I_TILE", {2, 3, 4}},
                                                          {"J_TILE", {2, 3, 4}},
                                                          {"K_TILE", {2, 4}},
@@ -127,12 +154,18 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
             }
         }
 
-        // ---- per-level upward tensorprod (deepest level first, additive) ----
+        // ---- per-level upward tensorprod (deepest level first, gathered by parent) ----
+        int tune_level = -1;
+        for (int L = 0; L < s.n_levels; ++L)
+            if (w.tp_up_count_h[L] && (tune_level < 0 || w.tp_up_par_count_h[L] > w.tp_up_par_count_h[tune_level]))
+                tune_level = L;
+
         for (int L = s.n_levels - 1; L >= 0; --L) {
             const int n_pairs = w.tp_up_count_h[L];
             if (n_pairs == 0)
                 continue;
             const int off = w.tp_up_offset_h[L];
+            const int par_off = w.tp_up_par_offset_h[L];
             dmk::cuda::TensorprodArgs<Real> ta;
             ta.n_pairs = n_pairs;
             ta.n_order = f.n_order;
@@ -140,13 +173,21 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
             ta.src_boxes = w.d_tp_up_src_boxes.data() + off;
             ta.dst_boxes = w.d_tp_up_dst_boxes.data() + off;
             ta.child_octants = w.d_tp_up_octants.data() + off;
+            // Marks the first child of each parent charge2proxy does not write, so that child
+            // assigns and the slab needs no pre-zeroing.
+            ta.assign_dst = w.d_tp_up_assign.data() + off;
+            // One block per parent walks that parent's children, so the accumulation is
+            // block-local and needs no atomics.
+            ta.par_boxes = w.d_tp_up_par.data() + par_off;
+            ta.par_child_begin = w.d_tp_up_par_child_begin.data() + par_off;
+            ta.par_child_count = w.d_tp_up_par_child_count.data() + par_off;
+            ta.n_par = w.tp_up_par_count_h[L];
             ta.proxy_flat = s.scratch.d_proxy_coeffs_upward.data();
             ta.proxy_offsets = s.scratch.d_proxy_offsets_upward.data();
             ta.umat_flat = f.d_c2p.data();
             ta.scratch = s.scratch.d_tensorprod_scratch.data();
             ta.scratch_stride = s.scratch.tensorprod_scratch_stride_reals;
-            ta.additive_atomic = true;
-            launch_tensorprod<Real>(ta, proxy_count, stream);
+            launch_tensorprod<Real>(ta, proxy_count, stream, L == tune_level);
         }
     }
 }

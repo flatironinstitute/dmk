@@ -45,3 +45,17 @@ extern "C" __global__ void PtScatterForwardStressletKernel(const Real *__restric
         for (int j = 0; j < dim; ++j)
             out[dst + k * dim + j] = densities[src + k] * normals[src + j];
 }
+
+// Clears the proxy slabs of boxes no upward writer touches, so the buffer as a whole never
+// needs a memset. One block per box; slab length is uniform.
+extern "C" __global__ void PtZeroBoxSlabsKernel(Real *__restrict__ flat, const long *__restrict__ offsets,
+                                                const int *__restrict__ boxes, int n_boxes, int slab_reals) {
+    if (blockIdx.x >= n_boxes)
+        return;
+    const long off = offsets[boxes[blockIdx.x]];
+    if (off < 0)
+        return;
+    Real *__restrict__ slab = flat + off;
+    for (int i = threadIdx.x; i < slab_reals; i += blockDim.x)
+        slab[i] = Real{0};
+}

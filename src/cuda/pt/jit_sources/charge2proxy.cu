@@ -176,6 +176,11 @@ extern "C" __global__ void PtCharge2ProxyKernel(dmk::cuda::Charge2ProxyArgs<Real
 
     Real *__restrict__ proxy = a.proxy_flat + a.proxy_offsets[center_box];
 
+    // This block is the only writer of center_box, and it runs before any tensorprod, so the
+    // first chunk to reach the store owns the slab and assigns. Uniform across the block: the
+    // loop bounds below depend only on the group, not the thread.
+    bool stored = false;
+
     for (int sbi = 0; sbi < n_src_boxes; ++sbi) {
         const int sb = a.src_boxes_flat[sb_off + sbi];
         const int n_src = a.src_counts[sb];
@@ -258,7 +263,14 @@ extern "C" __global__ void PtCharge2ProxyKernel(dmk::cuda::Charge2ProxyArgs<Real
                                 for (int c = 0; c < J_TILE; ++c) {
                                     const int j = j0 + c;
                                     if (j < N) {
-                                        proxy[i + j * N + k * N2 + d * N3] += acc[kk][r][c];
+                                        Real *__restrict__ out = proxy + i + j * N + k * N2 + d * N3;
+                                        // Unused-result atomicAdd lowers to a fire-and-forget RED
+                                        // that issues like a store; `*out +=` would stall on a
+                                        // dependent load of a value only this block ever writes.
+                                        if (stored)
+                                            atomicAdd(out, acc[kk][r][c]);
+                                        else
+                                            *out = acc[kk][r][c];
                                     }
                                 }
                             }
@@ -268,6 +280,7 @@ extern "C" __global__ void PtCharge2ProxyKernel(dmk::cuda::Charge2ProxyArgs<Real
             }
 
             __syncthreads();
+            stored = true;
         }
     }
 }

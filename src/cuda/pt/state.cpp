@@ -184,14 +184,24 @@ void build_tp_up_pair_lists(BuildInputs<Real, DIM> &in, DMKPtTree<Real, DIM> &tr
     const int n_levels = in.topology.n_levels;
     const auto &node_lists = tree.GetNodeLists();
     constexpr int n_children = 1 << DIM;
+
+    // build_charge2proxy_groups already ran, so take the centers from the groups that actually
+    // launch rather than re-deriving the predicate that produced them.
+    std::vector<char> is_c2p_center(tree.n_boxes(), 0);
+    for (int i = 0; i < w.n_c2p_active_groups; ++i)
+        is_c2p_center[w.c2p_center_boxes[w.c2p_group_perm[i]]] = 1;
     w.tp_up_offset.assign(n_levels + 1, 0);
     w.tp_up_count.assign(n_levels, 0);
+    w.tp_up_par_offset.assign(n_levels + 1, 0);
+    w.tp_up_par_count.assign(n_levels, 0);
     for (int L = 0; L < n_levels; ++L) {
         w.tp_up_offset[L] = w.tp_up_src.size();
+        w.tp_up_par_offset[L] = w.tp_up_par.size();
         for (int idx = 0; idx < tree.level_indices[L].Dim(); ++idx) {
             const int parent = tree.level_indices[L][idx];
             if (!(tree.src_counts_owned[parent] > 0 && tree.ifpwexp[parent]))
                 continue;
+            const int child_begin = static_cast<int>(w.tp_up_src.size());
             for (int ic = 0; ic < n_children; ++ic) {
                 const int child = node_lists[parent].child[ic];
                 if (child < 0)
@@ -201,12 +211,49 @@ void build_tp_up_pair_lists(BuildInputs<Real, DIM> &in, DMKPtTree<Real, DIM> &tr
                 w.tp_up_src.push_back(child);
                 w.tp_up_dst.push_back(parent);
                 w.tp_up_octants.push_back(ic);
+                w.tp_up_assign.push_back(0);
                 w.tp_up_count[L]++;
             }
+            // The children just pushed are contiguous, which is what lets one block own
+            // the parent and walk them without atomics.
+            const int n_child = static_cast<int>(w.tp_up_src.size()) - child_begin;
+            if (n_child == 0)
+                continue;
+            w.tp_up_par.push_back(parent);
+            // Level-relative, to match the level-offset src_boxes the launcher passes.
+            w.tp_up_par_child_begin.push_back(child_begin - w.tp_up_offset[L]);
+            w.tp_up_par_child_count.push_back(n_child);
+            w.tp_up_par_count[L]++;
+
+            // charge2proxy writes this box first if it has a group; where it does not, the first
+            // child owns the first write. Exactly one pair per parent may be marked -- a second
+            // would assign over the first child's contribution.
+            if (!is_c2p_center[parent])
+                w.tp_up_assign[child_begin] = 1;
         }
+        // Blocks carry 1..8 children, so order the level heaviest first and let the scheduler
+        // absorb the imbalance early. Only the parent entries move; the child arrays they index
+        // stay put. Matches what build_charge2proxy_groups does with its work permutation.
+        const int par_lo = w.tp_up_par_offset[L], par_hi = static_cast<int>(w.tp_up_par.size());
+        std::vector<int> order(par_hi - par_lo);
+        for (int i = 0; i < static_cast<int>(order.size()); ++i)
+            order[i] = par_lo + i;
+        std::stable_sort(order.begin(), order.end(),
+                         [&](int x, int y) { return w.tp_up_par_child_count[x] > w.tp_up_par_child_count[y]; });
+        std::vector<int> par(order.size()), beg(order.size()), cnt(order.size());
+        for (int i = 0; i < static_cast<int>(order.size()); ++i) {
+            par[i] = w.tp_up_par[order[i]];
+            beg[i] = w.tp_up_par_child_begin[order[i]];
+            cnt[i] = w.tp_up_par_child_count[order[i]];
+        }
+        std::copy(par.begin(), par.end(), w.tp_up_par.begin() + par_lo);
+        std::copy(beg.begin(), beg.end(), w.tp_up_par_child_begin.begin() + par_lo);
+        std::copy(cnt.begin(), cnt.end(), w.tp_up_par_child_count.begin() + par_lo);
+
         w.max_tp_up_per_level = std::max(w.max_tp_up_per_level, w.tp_up_count[L]);
     }
     w.tp_up_offset[n_levels] = w.tp_up_src.size();
+    w.tp_up_par_offset[n_levels] = w.tp_up_par.size();
 }
 
 } // namespace
@@ -420,6 +467,30 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
         tree, n_levels, w.pw_form_box_offset, w.pw_form_box_count, w.max_pw_form_per_level, w.pw_form_box_flat,
         [&](int b) { return tree.ifpwexp[b] && tree.proxy_coeffs_offsets[b] != -1 && !(skip_root_form && b == 0); });
 
+    // Nothing zeroes the upward buffer, so any box read without a writer that assigns first would
+    // carry the previous eval's values. Take the difference outright rather than re-deriving a
+    // predicate: read set is the proxy2pw list plus the root, which form_outgoing launches
+    // unconditionally and which the list omits under PBC. Written set is the launched
+    // charge2proxy centers plus every tensorprod parent. Expected to come out empty on the
+    // current tree, but it is the check that keeps that true.
+    {
+        std::vector<char> written(tree.n_boxes(), 0);
+        for (int i = 0; i < w.n_c2p_active_groups; ++i)
+            written[w.c2p_center_boxes[w.c2p_group_perm[i]]] = 1;
+        for (int b : w.tp_up_par)
+            written[b] = 1;
+
+        std::vector<char> read_set(tree.n_boxes(), 0);
+        for (int b : w.pw_form_box_flat)
+            read_set[b] = 1;
+        if (tree.proxy_coeffs_offsets[0] != -1)
+            read_set[0] = 1;
+
+        for (int b = 0; b < static_cast<int>(tree.n_boxes()); ++b)
+            if (read_set[b] && !written[b])
+                w.proxy_zero_boxes.push_back(b);
+    }
+
     // Merge each level's box list into groups and union their source sets. Consecutive
     // entries are Morton-ordered, hence spatially adjacent, so their 3^DIM stencils
     // overlap: a group of 8 spans a 4x4x4 region of sources instead of 8 separate 3x3x3
@@ -589,6 +660,12 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     up(worklists.d_tp_up_src_boxes, wi.tp_up_src);
     up(worklists.d_tp_up_dst_boxes, wi.tp_up_dst);
     up(worklists.d_tp_up_octants, wi.tp_up_octants);
+    up(worklists.d_tp_up_assign, wi.tp_up_assign);
+    up(worklists.d_proxy_zero_boxes, wi.proxy_zero_boxes);
+    worklists.n_proxy_zero_boxes = static_cast<int>(wi.proxy_zero_boxes.size());
+    up(worklists.d_tp_up_par, wi.tp_up_par);
+    up(worklists.d_tp_up_par_child_begin, wi.tp_up_par_child_begin);
+    up(worklists.d_tp_up_par_child_count, wi.tp_up_par_child_count);
     up(worklists.d_pw_eval_box_flat, wi.pw_eval_box_flat);
     up(worklists.d_shift_group_src, wi.shift_group_src);
     up(worklists.d_shift_group_offsets, wi.shift_group_offsets);
@@ -602,6 +679,8 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     worklists.tp_count_h = wi.tp_count;
     worklists.tp_up_offset_h = wi.tp_up_offset;
     worklists.tp_up_count_h = wi.tp_up_count;
+    worklists.tp_up_par_offset_h = wi.tp_up_par_offset;
+    worklists.tp_up_par_count_h = wi.tp_up_par_count;
     worklists.pw_eval_box_offset_h = wi.pw_eval_box_offset;
     worklists.pw_eval_box_count_h = wi.pw_eval_box_count;
     worklists.pw_form_box_offset_h = wi.pw_form_box_offset;
