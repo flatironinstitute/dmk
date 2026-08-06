@@ -2,8 +2,40 @@
 
 #include <dmk/cuda/helpers.hpp>
 #include <dmk/cuda/pt/passes.hpp>
+#include <dmk/nvtx_wrapper.h>
+
+#include <cstdlib>
 
 namespace dmk::cuda::pt {
+namespace {
+
+// A pass range that closes on its own device work. Pushed enqueue-side it would be
+// a few microseconds wide and every kernel would land under the join in `finalize`,
+// so DMK_NVTX_SYNC=1 syncs the pass's stream before the pop. That serializes the
+// pipeline -- it is a measurement mode, and the per-pass numbers it reports are
+// uncontended ones, not the times those passes take in a real eval.
+bool nvtx_sync() {
+    static const bool on = [] {
+        const char *v = std::getenv("DMK_NVTX_SYNC");
+        return v && std::atoi(v) != 0;
+    }();
+    return on;
+}
+
+struct NvtxPass {
+    NvtxPass(const char *name, cudaStream_t stream) : stream_(stream) { nvtxRangePush(name); }
+    ~NvtxPass() {
+        if (nvtx_sync() && stream_)
+            cudaStreamSynchronize(stream_);
+        nvtxRangePop();
+    }
+    NvtxPass(const NvtxPass &) = delete;
+    NvtxPass &operator=(const NvtxPass &) = delete;
+
+    cudaStream_t stream_;
+};
+
+} // namespace
 
 template <typename Real, int DIM>
 Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const sctl::Vector<Real> &r_src,
@@ -30,15 +62,39 @@ void Tree<Real, DIM>::eval() {
     // user order in d_pot_*_final, and syncs.
     const auto ds = state_->direct_stream.get();
     const auto ws = state_->downward_stream.get();
-    state_->scratch.d_proxy_coeffs_upward.zero_async(ws);
-    state_->scratch.d_proxy_coeffs_downward.zero_async(ws);
-    pt::upward(*state_, ws);
-    pt::form_outgoing(*state_, ws);
-    pt::downward(*state_, ws);
-    pt::eval_targets(*state_, ws);
-    pt::direct(*state_, ds);
-    pt::self_correction(*state_, ds);
-    state_->finalize();
+    {
+        NvtxPass r("pt_zero_proxy", ws);
+        state_->scratch.d_proxy_coeffs_upward.zero_async(ws);
+        state_->scratch.d_proxy_coeffs_downward.zero_async(ws);
+    }
+    {
+        NvtxPass r("pt_upward", ws);
+        pt::upward(*state_, ws);
+    }
+    {
+        NvtxPass r("pt_form_outgoing", ws);
+        pt::form_outgoing(*state_, ws);
+    }
+    {
+        NvtxPass r("pt_downward", ws);
+        pt::downward(*state_, ws);
+    }
+    {
+        NvtxPass r("pt_eval_targets", ws);
+        pt::eval_targets(*state_, ws);
+    }
+    {
+        NvtxPass r("pt_direct", ds);
+        pt::direct(*state_, ds);
+    }
+    {
+        NvtxPass r("pt_self_correction", ds);
+        pt::self_correction(*state_, ds);
+    }
+    {
+        NvtxPass r("pt_finalize", nullptr);
+        state_->finalize();
+    }
 }
 
 template <typename Real, int DIM>
