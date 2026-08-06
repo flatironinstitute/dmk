@@ -53,7 +53,7 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
         key.sm_major = cache.sm_major();
         key.sm_minor = cache.sm_minor();
         key.params = {{"N_PW_MODES", a0.n_pw_modes},      {"N_CHARGE_DIM", a0.n_charge_dim},
-                      {"N_NEIGHBORS", a0.n_neighbors},    {"SHIFT_GROUP", dmk::cuda::kShiftGroup},
+                      {"N_NEIGHBORS", a0.n_neighbors},    {"SHIFT_GROUP", dmk::cuda::shift_group_size(a0.n_charge_dim)},
                       {"BLOCK_SIZE", p.at("BLOCK_SIZE")}, {"NEIGHBOR_UNROLL", p.at("NEIGHBOR_UNROLL")}};
         auto kernel =
             cache.get_kernel_from_source(key, [&] { return make_stage_source("pt/shiftpw.cu", key, "", "PtShiftPw"); });
@@ -64,7 +64,8 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
 
     std::ostringstream tune_key;
     tune_key << "PtShiftPw|real=" << jit_real_name<Real>() << "|n_pw_modes=" << a0.n_pw_modes
-             << "|n_charge_dim=" << a0.n_charge_dim << "|n_neighbors=" << a0.n_neighbors;
+             << "|n_charge_dim=" << a0.n_charge_dim << "|n_neighbors=" << a0.n_neighbors
+             << "|shift_group=" << dmk::cuda::shift_group_size(a0.n_charge_dim);
     const std::string tk = tune_key.str();
 
     if (auto cfg = autotune_cached(tk)) {
@@ -74,8 +75,8 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
 
     const cudaDeviceProp &prop = device_prop();
 
-    // The source loop body now carries kShiftGroup applications per iteration, so the useful
-    // unroll factors are far smaller than when it was one.
+    // Each source loop iteration carries SHIFT_GROUP applications, so the useful unroll
+    // factors are small.
     const std::vector<TuningParameter> space{{"BLOCK_SIZE", {64, 128, 256, 512, 768}},
                                              {"NEIGHBOR_UNROLL", {1, 2, 3, 4}}};
     const TuningParams defaults{{"BLOCK_SIZE", 256}, {"NEIGHBOR_UNROLL", 2}};
@@ -100,6 +101,7 @@ void downward(State<Real, DIM> &s, cudaStream_t stream) {
         auto &sc = s.scratch;
 
         // ---- per-level shift_pw (-> pw_in_pool) + pw2proxy (-> proxy_downward) ----
+        const int shift_group = dmk::cuda::shift_group_size(f.n_charge_dim);
         std::vector<dmk::cuda::ShiftPwArgs<Real>> shift_h;
         std::vector<dmk::cuda::PwToProxyArgs<Real>> pw2p_h;
         for (int L = 0; L < s.n_levels; ++L) {
@@ -111,7 +113,7 @@ void downward(State<Real, DIM> &s, cudaStream_t stream) {
 
             dmk::cuda::ShiftPwArgs<Real> sa;
             sa.n_boxes_at_level = n_box;
-            sa.n_groups_at_level = (n_box + dmk::cuda::kShiftGroup - 1) / dmk::cuda::kShiftGroup;
+            sa.n_groups_at_level = (n_box + shift_group - 1) / shift_group;
             sa.n_neighbors = s.topology.n_neighbors;
             sa.n_charge_dim = f.n_charge_dim;
             sa.n_pw_modes = f.n_pw_modes;

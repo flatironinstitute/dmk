@@ -420,11 +420,12 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
         tree, n_levels, w.pw_form_box_offset, w.pw_form_box_count, w.max_pw_form_per_level, w.pw_form_box_flat,
         [&](int b) { return tree.ifpwexp[b] && tree.proxy_coeffs_offsets[b] != -1 && !(skip_root_form && b == 0); });
 
-    // Merge each level's box list into groups of kShiftGroup and union their source sets.
-    // Consecutive entries are Morton-ordered, hence spatially adjacent, so their 3^DIM
-    // stencils overlap: a group of 8 spans a 4x4x4 region of sources instead of 8 separate
-    // 3x3x3 ones, and shift_pw fetches each source's plane-wave slab once rather than once
-    // per target. That slab traffic is the whole cost of the kernel.
+    // Merge each level's box list into groups and union their source sets. Consecutive
+    // entries are Morton-ordered, hence spatially adjacent, so their 3^DIM stencils
+    // overlap: a group of 8 spans a 4x4x4 region of sources instead of 8 separate 3x3x3
+    // ones, and shift_pw fetches each source's plane-wave slab once rather than once per
+    // target. That slab traffic is the whole cost of the kernel.
+    const int shift_group = shift_group_size(fou.n_charge_dim);
     w.shift_group_base.assign(n_levels, 0);
     w.shift_group_offsets.clear();
     w.shift_group_src.clear();
@@ -432,10 +433,10 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
         w.shift_group_base[L] = static_cast<int>(w.shift_group_offsets.size());
         const int n_box = w.pw_eval_box_count[L];
         const int box_off = w.pw_eval_box_offset[L];
-        for (int g0 = 0; g0 < n_box; g0 += kShiftGroup) {
+        for (int g0 = 0; g0 < n_box; g0 += shift_group) {
             const int grp_begin = static_cast<int>(w.shift_group_src.size());
             w.shift_group_offsets.push_back(grp_begin);
-            const int n_mem = std::min(kShiftGroup, n_box - g0);
+            const int n_mem = std::min(shift_group, n_box - g0);
             for (int t = 0; t < n_mem; ++t) {
                 const int box = w.pw_eval_box_flat[box_off + g0 + t];
                 for (int e = topo.shift_nbr_offsets[box]; e < topo.shift_nbr_offsets[box + 1]; ++e) {
@@ -454,7 +455,7 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
                         slot = static_cast<int>(w.shift_group_src.size());
                         ShiftPwGroupSrc gs;
                         gs.pw_off = nb.pw_off;
-                        for (int u = 0; u < kShiftGroup; ++u)
+                        for (int u = 0; u < kShiftGroupMax; ++u)
                             gs.shift_ind[u] = -1;
                         w.shift_group_src.push_back(gs);
                     }

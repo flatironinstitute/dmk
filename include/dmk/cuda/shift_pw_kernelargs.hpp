@@ -1,12 +1,37 @@
 #pragma once
 
+#ifndef __CUDACC_RTC__
+#include <cstdlib>
+#endif
+
 namespace dmk::cuda {
 
-/// Target boxes per shift_pw block. A level's box list is Morton-ordered, so
-/// consecutive entries are spatial neighbours and their source sets overlap
-/// heavily: one block covering 8 of them visits each distinct source once
-/// instead of once per target. Set to 1 to recover the one-box-per-block kernel.
-constexpr int kShiftGroup = 8;
+/// Upper bound on targets per shift_pw block, and the capacity of
+/// ShiftPwGroupSrc::shift_ind. 8 keeps that struct at 16 bytes.
+constexpr int kShiftGroupMax = 8;
+
+/// Target boxes per shift_pw block; the merge loop in state.cpp covers the
+/// grouping itself. A bigger group cuts source-slab traffic but the block holds
+/// acc[group][n_charge_dim] complex accumulators, and capping that accumulator
+/// at 24 registers hits both measured optima: 8 for the scalar kernels, 4 for
+/// the 3-component ones. Powers of two only, since a group is a Morton run.
+/// DMK_SHIFT_GROUP overrides; 1 recovers the one-box-per-block kernel. Host-only,
+/// as NVRTC rejects unannotated functions and the kernel takes the chosen size as
+/// its SHIFT_GROUP define.
+#ifndef __CUDACC_RTC__
+inline int shift_group_size(int n_charge_dim) {
+    static const int forced = [] {
+        const char *v = std::getenv("DMK_SHIFT_GROUP");
+        return v ? std::atoi(v) : 0;
+    }();
+    if (forced > 0)
+        return forced < kShiftGroupMax ? forced : kShiftGroupMax;
+    int g = kShiftGroupMax;
+    while (g > 1 && 2 * g * n_charge_dim > 24)
+        g >>= 1;
+    return g;
+}
+#endif
 
 /// One surviving source box in a target box's shift list. `pw_off` is that box's
 /// entry in pw_out (complex units, as pw_out_offsets stores it) and `shift_ind`
@@ -19,10 +44,10 @@ struct alignas(16) ShiftPwNeighbor {
 
 /// One distinct source box for a whole group, with the shift index each group
 /// member needs for it; -1 where that member is not a neighbour of this source.
-/// 16 bytes at kShiftGroup == 8, so again one load per entry.
+/// 16 bytes, so again one load per entry. Entries past the group's size are unused.
 struct alignas(16) ShiftPwGroupSrc {
     long pw_off;
-    signed char shift_ind[kShiftGroup];
+    signed char shift_ind[kShiftGroupMax];
 };
 
 template <typename Real>
@@ -40,7 +65,7 @@ struct ShiftPwArgs {
 
     // Merged shift lists, CSR by level-local group index: group g owns entries
     // group_src[group_offsets[g] .. group_offsets[g + 1]). Group g's members are
-    // level-local boxes g*kShiftGroup .. +kShiftGroup, clipped to n_boxes_at_level.
+    // level-local boxes g*SHIFT_GROUP .. +SHIFT_GROUP, clipped to n_boxes_at_level.
     const ShiftPwGroupSrc *group_src = nullptr;
     const int *group_offsets = nullptr;
 
