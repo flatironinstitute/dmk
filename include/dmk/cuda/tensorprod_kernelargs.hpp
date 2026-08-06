@@ -12,6 +12,9 @@ struct TensorprodArgs {
     const int *src_boxes = nullptr;     // [n_pairs] box id read from
     const int *dst_boxes = nullptr;     // [n_pairs] box id written to (additive)
     const int *child_octants = nullptr; // [n_pairs] 0..(2^DIM - 1)
+    // [n_pairs] nonzero where this pair is the first writer of its dst_box; phase 3 then
+    // stores with `=`. A box has one parent, so at most one pair can claim it.
+    const int *assign_dst = nullptr;
 
     // Shared-state device pointers.
     Real *proxy_flat = nullptr;          // d_proxy_coeffs_(up|down)ward (read+write)

@@ -398,6 +398,9 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
             w.tp_parents.push_back(p.parent);
             w.tp_children.push_back(p.child);
             w.tp_octants.push_back(p.child_octant);
+            // pw2proxy covers a box iff ifpwexp && (src+trg) > 0, and the child already
+            // satisfies the latter here, so without ifpwexp this pair is its only writer.
+            w.tp_assign_dst.push_back(tree.ifpwexp[p.child] ? 0 : 1);
             w.tp_count[L]++;
         }
         w.max_tp_per_level = std::max(w.max_tp_per_level, w.tp_count[L]);
@@ -581,6 +584,7 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     up(worklists.d_tp_parents, wi.tp_parents);
     up(worklists.d_tp_children, wi.tp_children);
     up(worklists.d_tp_octants, wi.tp_octants);
+    up(worklists.d_tp_assign_dst, wi.tp_assign_dst);
     up(worklists.d_tp_up_src_boxes, wi.tp_up_src);
     up(worklists.d_tp_up_dst_boxes, wi.tp_up_dst);
     up(worklists.d_tp_up_octants, wi.tp_up_octants);

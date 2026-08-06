@@ -28,6 +28,7 @@ extern "C" __global__ void PtTensorprodKernel(dmk::cuda::TensorprodArgs<Real> a)
     const int src_box = a.src_boxes[pair_idx];
     const int dst_box = a.dst_boxes[pair_idx];
     const int oct = a.child_octants[pair_idx];
+    const bool assign_dst = a.assign_dst && a.assign_dst[pair_idx];
 
     const Real *umat_oct = a.umat_flat + oct * 3 * N2;
 
@@ -171,6 +172,8 @@ extern "C" __global__ void PtTensorprodKernel(dmk::cuda::TensorprodArgs<Real> a)
                         Real *__restrict__ out = fout + iout + jout * N + zout * N2;
                         if (a.additive_atomic)
                             atomicAdd(out, acc[r]);
+                        else if (assign_dst)
+                            *out = acc[r];
                         else
                             *out += acc[r];
                     }

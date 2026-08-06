@@ -18,6 +18,10 @@ struct PwToProxyArgs {
 
     Real *proxy_flat = nullptr;
     const long *proxy_offsets = nullptr;
+
+    /// Store with `=` instead of `+=`. Each element of a box is stored exactly once per
+    /// block, so this is a complete write wherever the launch is the box's first writer.
+    int assign = 0;
 };
 
 } // namespace dmk::cuda

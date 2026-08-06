@@ -63,9 +63,10 @@ void Tree<Real, DIM>::eval() {
     const auto ds = state_->direct_stream.get();
     const auto ws = state_->downward_stream.get();
     {
+        // Every box of the downward buffer has a first writer that assigns. Upward
+        // parents do not: the c2p tensorprod accumulates 8 children atomically.
         NvtxPass r("pt_zero_proxy", ws);
         state_->scratch.d_proxy_coeffs_upward.zero_async(ws);
-        state_->scratch.d_proxy_coeffs_downward.zero_async(ws);
     }
     {
         NvtxPass r("pt_upward", ws);

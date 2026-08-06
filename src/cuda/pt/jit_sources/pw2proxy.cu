@@ -59,6 +59,8 @@ extern "C" __global__ void PtPwToProxyMultiLevelKernel(const PwToProxyArgs<Real>
     if (proxy_off < 0)
         return;
 
+    const bool assign = a.assign != 0;
+
     const int n_pw = N_PW;
     const int n_pw2 = N_PW2;
     const int n_pw_half = n_pw / 2;
@@ -256,7 +258,10 @@ extern "C" __global__ void PtPwToProxyMultiLevelKernel(const PwToProxyArgs<Real>
                     const int k2 = k2_base + k2r;
                     if (k2 < n_order) {
                         Real *__restrict__ out = proxy_d + k1 + k2 * n_order + k3 * n_order2;
-                        *out += Real{2} * acc[k2r];
+                        if (assign)
+                            *out = Real{2} * acc[k2r];
+                        else
+                            *out += Real{2} * acc[k2r];
                     }
                 }
             }

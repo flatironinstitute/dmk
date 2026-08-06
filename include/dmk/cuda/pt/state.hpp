@@ -126,6 +126,7 @@ struct BuildInputs {
         std::vector<int> tp_parents;                  ///< downward tensorprod parent boxes
         std::vector<int> tp_children;                 ///< downward tensorprod child boxes
         std::vector<int> tp_octants;                  ///< downward tensorprod child octant (p2c slab)
+        std::vector<int> tp_assign_dst;               ///< downward tensorprod: pair is child's first writer
         std::vector<int> tp_offset;                   ///< [n_levels+1] into tp_* (downward)
         std::vector<int> tp_count;                    ///< [n_levels] pairs per level (downward)
         std::vector<int> tp_up_src;                   ///< upward tensorprod child boxes
@@ -289,6 +290,7 @@ struct State {
         DeviceBuffer<int> d_tp_parents;                  ///< downward tensorprod parent boxes
         DeviceBuffer<int> d_tp_children;                 ///< downward tensorprod child boxes
         DeviceBuffer<int> d_tp_octants;                  ///< downward tensorprod octant (p2c slab)
+        DeviceBuffer<int> d_tp_assign_dst;               ///< downward tensorprod: pair is child's first writer
         DeviceBuffer<int> d_tp_up_src_boxes;             ///< upward tensorprod child boxes
         DeviceBuffer<int> d_tp_up_dst_boxes;             ///< upward tensorprod parent boxes
         DeviceBuffer<int> d_tp_up_octants;               ///< upward tensorprod octant (c2p slab)

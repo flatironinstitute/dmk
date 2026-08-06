@@ -137,6 +137,9 @@ void downward(State<Real, DIM> &s, cudaStream_t stream) {
             pa.pw2poly = f.slab(L).pw2poly;
             pa.proxy_flat = sc.d_proxy_coeffs_downward.data();
             pa.proxy_offsets = sc.d_proxy_offsets_downward.data();
+            // Runs ahead of every p2c tensorprod below, so it is each box's first writer.
+            // Level 0 is box 0, already written by form_outgoing's windowed root.
+            pa.assign = (L == 0) ? 0 : 1;
             pw2p_h.push_back(pa);
         }
 
@@ -156,6 +159,7 @@ void downward(State<Real, DIM> &s, cudaStream_t stream) {
             ta.src_boxes = w.d_tp_parents.data() + off;
             ta.dst_boxes = w.d_tp_children.data() + off;
             ta.child_octants = w.d_tp_octants.data() + off;
+            ta.assign_dst = w.d_tp_assign_dst.data() + off;
             ta.proxy_flat = sc.d_proxy_coeffs_downward.data();
             ta.proxy_offsets = sc.d_proxy_offsets_downward.data();
             ta.umat_flat = f.d_p2c.data();

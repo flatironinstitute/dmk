@@ -315,6 +315,8 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
             pp.pw2poly = f.d_window_pw2poly.data();
             pp.proxy_flat = sc.d_proxy_coeffs_downward.data();
             pp.proxy_offsets = sc.d_proxy_offsets_downward.data();
+            // First writer of box 0 in the downward buffer.
+            pp.assign = 1;
         }
         launch_pw2proxy<Real>(root_pp, sc.d_proxy_coeffs_downward.data(), sc.d_proxy_coeffs_downward.size(), stream,
                               "root");
