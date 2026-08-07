@@ -56,6 +56,7 @@ void launch_tensorprod(dmk::cuda::TensorprodArgs<Real> &args, std::size_t proxy_
     std::ostringstream tune_key;
     tune_key << "PtTensorprod|real=" << jit_real_name<Real>() << "|n_order=" << args.n_order
              << "|n_charge_dim=" << args.n_charge_dim << "|gather=" << (args.par_boxes ? 1 : 0);
+    tune_key << "|src=" << jit::jit_source_hash("pt/tensorprod.cu");
     const std::string tk = tune_key.str();
 
     const std::vector<TuningParameter> space{

@@ -10,6 +10,7 @@
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 
 namespace dmk::cuda::pt {
 
@@ -96,9 +97,19 @@ TuningParams autotune_config(const std::string &tune_key, const std::string &ker
         }
     }
 
+    // The persisted key also carries the shape of the tuning space: widening a space or renaming
+    // a parameter leaves stale winners that the backfill below would silently accept.
+    std::ostringstream space_sig;
+    for (const auto &param : space) {
+        space_sig << param.name << '=';
+        for (int v : param.values)
+            space_sig << v << '.';
+        space_sig << ';';
+    }
+
     jit::GridTuneOptions options;
     options.kernel = kernel_label;
-    options.key = tune_key;
+    options.key = tune_key + "|sp=" + std::to_string(std::hash<std::string>{}(space_sig.str()));
     options.benchmark = jit::CudaBenchmarkOptions{2, 5};
 
     jit::GridTuneDecision decision = jit::tune_grid(options, space, defaults, constraint, benchmark);

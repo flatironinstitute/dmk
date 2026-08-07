@@ -70,6 +70,7 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
     tune_key << "PtShiftPw|real=" << jit_real_name<Real>() << "|n_pw_modes=" << a0.n_pw_modes
              << "|n_live=" << a0.n_pw_live << "|n_charge_dim=" << a0.n_charge_dim << "|n_neighbors=" << a0.n_neighbors
              << "|shift_group=" << dmk::cuda::shift_group_size(a0.n_charge_dim);
+    tune_key << "|src=" << jit::jit_source_hash("pt/shiftpw.cu");
     const std::string tk = tune_key.str();
 
     if (auto cfg = autotune_cached(tk)) {

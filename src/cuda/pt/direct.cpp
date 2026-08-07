@@ -247,6 +247,7 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
         // reused for another and the comparison measures nothing.
         tune_key_ss << "|pf=" << prefilter << "|ct=" << cull_tile << "|pfs=" << prefilter_stats << "|eu=" << eval_unroll
                     << "|ss=" << stage_src;
+        tune_key_ss << "|src=" << jit::jit_source_hash("pt/direct.cu");
         const std::string tune_key = tune_key_ss.str();
 
         // `plans` is process-wide and hits before coefficients are generated, so its

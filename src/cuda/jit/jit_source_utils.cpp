@@ -4,6 +4,8 @@
 
 #include <cstdlib>
 #include <fstream>
+#include <map>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -125,6 +127,24 @@ SplitSource split_at_kernel_start(const std::string &source, std::string_view la
     const std::size_t kernel_pos = first_kernel_source_pos(source, pos, std::string_view(marker).size());
 
     return SplitSource{source.substr(0, pos), source.substr(kernel_pos)};
+}
+
+std::size_t jit_source_hash(std::string_view filename) {
+    static std::map<std::string, std::size_t> cache;
+    static std::mutex mtx;
+    const std::string name(filename);
+    std::lock_guard<std::mutex> lock(mtx);
+    const auto it = cache.find(name);
+    if (it != cache.end())
+        return it->second;
+    const std::string text = read_text_file(jit_source_path(filename), filename);
+    std::size_t h = 1469598103934665603ULL;
+    for (unsigned char c : text) {
+        h ^= c;
+        h *= 1099511628211ULL;
+    }
+    cache.emplace(name, h);
+    return h;
 }
 
 SplitSource load_split_jit_source(std::string_view filename, std::string_view label) {

@@ -2,6 +2,7 @@
 
 #include "jit_types.hpp"
 
+#include <cstddef>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -55,5 +56,10 @@ std::string read_text_file(const std::filesystem::path &path, std::string_view l
 SplitSource split_at_kernel_start(const std::string &source, std::string_view label);
 
 SplitSource load_split_jit_source(std::string_view filename, std::string_view label);
+
+/// Hash of a JIT source file's text, memoized per path. Tuning results are persisted across
+/// runs, so a kernel edit that leaves the tune key alone would otherwise keep reusing a config
+/// chosen for the old code; folding this into the key retires those entries automatically.
+std::size_t jit_source_hash(std::string_view filename);
 
 } // namespace dmk::cuda::jit

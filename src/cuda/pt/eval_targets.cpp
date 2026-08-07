@@ -67,7 +67,8 @@ void launch_eval_side(JitCache &cache, dmk::cuda::EvalTargetsArgs<Real> args, in
 
     std::ostringstream tune_key;
     tune_key << "PtEvalTargets|real=" << jit_real_name<Real>() << "|dim=" << DIM << "|eval_level=" << eval_level
-             << "|n_charge_dim=" << n_charge_dim << "|n_order=" << n_order << "|smem=" << smem_coeffs;
+             << "|n_charge_dim=" << n_charge_dim << "|n_order=" << n_order << "|smem=" << smem_coeffs
+             << "|src=" << jit::jit_source_hash("pt/eval_targets.cu");
     const std::string tk = tune_key.str();
 
     if (auto cfg = autotune_cached(tk)) {

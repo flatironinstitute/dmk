@@ -259,6 +259,10 @@ extern "C" __global__ void PtEvalTargetsByBoxKernel(EvalTargetsArgs<Real> a) {
                         Real px_pot[TARGETS_PER_THREAD] = {};
                         Real px_gx[TARGETS_PER_THREAD] = {};
 
+                        // The ball truncation does not apply here: this block is tight enough that any
+                        // control flow to skip dead coefficients costs more than the arithmetic it
+                        // removes -- a runtime bound evicts Tx/dTx to local memory, and a branch either
+                        // inside or between blocks measured worse than doing the full range.
 #pragma unroll
                         for (int i = 0; i < N_ORDER; ++i) {
                             const Real c = c_src[i + j * N_ORDER + k * n2];

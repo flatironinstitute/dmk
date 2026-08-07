@@ -213,23 +213,34 @@ extern "C" __global__ void PtCharge2ProxyKernel(dmk::cuda::Charge2ProxyArgs<Real
 
             __syncthreads();
 
+            constexpr int S_TILES = I_TILES * J_TILES * K_TILES;
+
             for (int tile = threadIdx.x; tile < NTILES; tile += blockDim.x) {
-                int idx = tile;
+                const int s = tile % S_TILES;
+                const int d = tile / S_TILES;
+                int idx = kTileOrder[s];
                 const int it = idx % I_TILES;
                 idx /= I_TILES;
                 const int jt = idx % J_TILES;
                 idx /= J_TILES;
-                const int kt = idx % K_TILES;
-                idx /= K_TILES;
-                const int d = idx;
+                const int kt = idx;
 
                 const int i0 = it * I_TILE;
                 const int j0 = jt * J_TILE;
                 const int k0 = kt * K_TILE;
 
+                // The basis is radially compact to tolerance, so coefficients outside a ball in
+                // (i,j,k) carry nothing. kTileOrder puts the live tiles first, so this test is
+                // uniform across a warp; a dead tile skips the source accumulation but still
+                // stores, because the buffer has no memset and relies on every coefficient having
+                // a writer that assigns.
+                const bool tile_live = s < N_LIVE_SPATIAL_TILES;
+
                 Real acc[K_TILE][I_TILE][J_TILE] = {Real{0}};
 
-                if (n_in_chunk == CHUNK) {
+                if (!tile_live) {
+                    // fall through to the store with a zero accumulator
+                } else if (n_in_chunk == CHUNK) {
 #pragma unroll 4
                     for (int s = 0; s < CHUNK_PAIR_END; s += S_VEC) {
                         charge2proxy_accum_source_pair<Real, I_TILE, J_TILE, K_TILE, N, LD>(

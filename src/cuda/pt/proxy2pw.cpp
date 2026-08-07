@@ -76,6 +76,7 @@ void launch_proxy2pw(std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, cudaStr
     std::ostringstream tune_key;
     tune_key << "PtProxy2Pw|real=" << jit_real_name<Real>() << "|n_order=" << a0.n_order << "|n_pw=" << a0.n_pw
              << "|n_charge_dim=" << a0.n_charge_dim << "|variant=" << variant;
+    tune_key << "|src=" << jit::jit_source_hash("pt/proxy2pw.cu");
     const std::string tk = tune_key.str();
 
     if (auto cfg = autotune_cached(tk)) {

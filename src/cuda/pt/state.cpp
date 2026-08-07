@@ -502,6 +502,23 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
         }
     }
 
+    // The proxy basis is radially compact to tolerance, so like the plane-wave grid its tensor
+    // cube carries nothing in the corners. 110% of n_order-1 measured free (l2 unchanged to three
+    // figures) across laplace/yukawa/stokeslet/stresslet, eps 1e-3..1e-6, both precisions and
+    // n_order 9..21, while dropping ~35% of the coefficients at every one of those orders; 100%
+    // costs up to 50% more error. Only charge2proxy exploits it: eval_targets' inner block is
+    // tight enough that any control flow to skip dead coefficients costs more than it saves.
+    // DMK_PROXY_BALL overrides the percentage, 0 disables.
+    const int ball_pct = [] {
+        const char *v = std::getenv("DMK_PROXY_BALL");
+        return v ? std::atoi(v) : 110;
+    }();
+    fou.proxy_ball_r2 = 0;
+    if (ball_pct > 0 && fou.n_order > 0) {
+        const double r = (fou.n_order - 1) * ball_pct / 100.0;
+        fou.proxy_ball_r2 = (int)(r * r);
+    }
+
     if (fou.n_pw_win) {
         const auto &wfd = tree.window_fourier_data;
         const Real *pw2poly = reinterpret_cast<const Real *>(&wfd.pw2poly[0]);
@@ -712,6 +729,7 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     up(fourier.d_radialft_flat, fi.radialft_flat);
     up(fourier.d_wpwshift_flat, fi.wpwshift_flat);
     up(fourier.d_pencil_slots, fi.pencil_slots);
+    fourier.proxy_ball_r2 = fi.proxy_ball_r2;
     up(fourier.d_full_of_compact, fi.full_of_compact);
     fourier.n_pw_live = fi.n_pw_live;
     up(fourier.d_window_pw2poly, fi.window_pw2poly);

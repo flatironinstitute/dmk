@@ -23,6 +23,33 @@ using jit::jit_real_name;
 using jit::JitCache;
 using jit::JitKey;
 
+// Spatial tiles ordered live-first, as a device array baked into the JIT source. The order
+// depends on the tile shape, which is a tuning parameter, so it cannot be a single uploaded
+// table. Live-first makes the dead-tile test warp-uniform: threads take consecutive tiles, so
+// only the warps straddling the boundary diverge, where a per-tile test diverged everywhere.
+std::string c2p_tile_order_prelude(int n_order, int it, int jt, int kt, int ball_r2) {
+    const int ti = (n_order + it - 1) / it, tj = (n_order + jt - 1) / jt, tk = (n_order + kt - 1) / kt;
+    std::vector<int> live, dead;
+    for (int k = 0; k < tk; ++k)
+        for (int j = 0; j < tj; ++j)
+            for (int i = 0; i < ti; ++i) {
+                const int i0 = i * it, j0 = j * jt, k0 = k * kt;
+                const int flat = i + j * ti + k * ti * tj;
+                if (!ball_r2 || i0 * i0 + j0 * j0 + k0 * k0 <= ball_r2)
+                    live.push_back(flat);
+                else
+                    dead.push_back(flat);
+            }
+    std::ostringstream os;
+    os << "__device__ constexpr int kTileOrder[] = {";
+    for (int v : live)
+        os << v << ",";
+    for (int v : dead)
+        os << v << ",";
+    os << "};\nconstexpr int N_LIVE_SPATIAL_TILES = " << live.size() << ";\n\n";
+    return os.str();
+}
+
 std::size_t c2p_shared_bytes(int n_order, int n_charge_dim, int chunk, std::size_t sizeof_real) {
     const int ld = chunk + 2;
     return (std::size_t(3) * n_order * ld + std::size_t(n_charge_dim) * ld) * sizeof_real;
@@ -104,9 +131,12 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
                               {"I_TILE", p.at("I_TILE")},
                               {"J_TILE", p.at("J_TILE")},
                               {"K_TILE", p.at("K_TILE")},
-                              {"BLOCK_SIZE", p.at("BLOCK_SIZE")}};
+                              {"BLOCK_SIZE", p.at("BLOCK_SIZE")},
+                              {"PROXY_BALL_R2", f.proxy_ball_r2}};
+                const std::string prelude =
+                    c2p_tile_order_prelude(a.n_order, p.at("I_TILE"), p.at("J_TILE"), p.at("K_TILE"), f.proxy_ball_r2);
                 auto kernel = cache.get_kernel_from_source(
-                    key, [&] { return make_stage_source("pt/charge2proxy.cu", key, "", "PtCharge2Proxy"); });
+                    key, [&] { return make_stage_source("pt/charge2proxy.cu", key, prelude, "PtCharge2Proxy"); });
                 const std::size_t shared = c2p_shared_bytes(a.n_order, a.n_charge_dim, p.at("CHUNK"), sizeof(Real));
                 set_max_dynamic_smem(*kernel, shared);
                 kernel->launch(dim3(n_launch, 1, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, a, group_perm);
@@ -114,7 +144,8 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
 
             std::ostringstream tune_key;
             tune_key << "PtCharge2Proxy|real=" << jit_real_name<Real>() << "|n_order=" << a.n_order
-                     << "|n_charge_dim=" << a.n_charge_dim;
+                     << "|n_charge_dim=" << a.n_charge_dim << "|ball_r2=" << f.proxy_ball_r2;
+            tune_key << "|src=" << jit::jit_source_hash("pt/charge2proxy.cu");
             const std::string tk = tune_key.str();
 
             if (auto cfg = autotune_cached(tk)) {
