@@ -70,10 +70,16 @@ extern "C" __global__ void PtProxy2PwMultiLevelKernel(const Proxy2PwArgs<Real> *
     if (box_idx >= a.n_boxes_at_level)
         return;
 
+    // The fused Stokeslet projector mixes the charge dims at one mode, so it needs all of them
+    // live at the phase-3 store; that means a phase-2 output per dim. Every other mode keeps one.
+    constexpr int D_TILE = (P2PW_MULTIPLY == 2) ? N_CHARGE_DIM : 1;
+    static_assert(P2PW_MULTIPLY != 2 || N_CHARGE_DIM == 3, "the fused projector is the 3-vector Stokeslet");
+    constexpr int FF2_DIM = PROXY2PW_Z_TILE * N_ORDER * N_PW;
+
     extern __shared__ __align__(16) unsigned char shared_raw[];
     Complex *__restrict__ ff = reinterpret_cast<Complex *>(shared_raw);
     Complex *__restrict__ ff2 = ff + PROXY2PW_Z_TILE * N_ORDER * N_ORDER;
-    Complex *__restrict__ poly2pw_s = ff2 + PROXY2PW_Z_TILE * N_ORDER * N_PW;
+    Complex *__restrict__ poly2pw_s = ff2 + D_TILE * FF2_DIM;
 
     const int box = a.box_ids[box_idx];
 
@@ -102,102 +108,105 @@ extern "C" __global__ void PtProxy2PwMultiLevelKernel(const Proxy2PwArgs<Real> *
 
     __syncthreads();
 
-    for (int d = 0; d < N_CHARGE_DIM; ++d) {
-        const Real *proxy_d = proxy + d * n_order3;
-        Real *pw_d = pw_dst + 2 * d * n_pw_modes;
+    for (int m3_base = 0; m3_base < n_pw2; m3_base += PROXY2PW_Z_TILE) {
+        const int z_count = (m3_base + PROXY2PW_Z_TILE <= n_pw2) ? PROXY2PW_Z_TILE : (n_pw2 - m3_base);
 
-        for (int m3_base = 0; m3_base < n_pw2; m3_base += PROXY2PW_Z_TILE) {
-            const int z_count = (m3_base + PROXY2PW_Z_TILE <= n_pw2) ? PROXY2PW_Z_TILE : (n_pw2 - m3_base);
+        for (int d_base = 0; d_base < N_CHARGE_DIM; d_base += D_TILE) {
+            for (int dd = 0; dd < D_TILE; ++dd) {
+                const Real *proxy_d = proxy + (d_base + dd) * n_order3;
 
-            // Phase 1: ff(zr, i, j) = sum_k proxy(i, j, k, d) * poly2pw(m3_base + zr, k).
-            for (int ij = threadIdx.x; ij < n_order2; ij += blockDim.x) {
-                Complex acc[PROXY2PW_Z_TILE];
+                // Phase 1: ff(zr, i, j) = sum_k proxy(i, j, k, d) * poly2pw(m3_base + zr, k).
+                for (int ij = threadIdx.x; ij < n_order2; ij += blockDim.x) {
+                    Complex acc[PROXY2PW_Z_TILE];
 #pragma unroll
-                for (int zr = 0; zr < PROXY2PW_Z_TILE; ++zr)
-                    acc[zr] = p2pw_zero<Real>();
+                    for (int zr = 0; zr < PROXY2PW_Z_TILE; ++zr)
+                        acc[zr] = p2pw_zero<Real>();
 
-                for (int k = 0; k < n_order; ++k) {
-                    const Real p = proxy_d[ij + k * n_order2];
+                    for (int k = 0; k < n_order; ++k) {
+                        const Real p = proxy_d[ij + k * n_order2];
 #pragma unroll
-                    for (int zr = 0; zr < PROXY2PW_Z_TILE; ++zr) {
-                        if (zr < z_count) {
-                            const int m3 = m3_base + zr;
-                            const Complex b = poly2pw_s[k * n_pw + m3];
-                            p2pw_madd_real(acc[zr], p, b);
+                        for (int zr = 0; zr < PROXY2PW_Z_TILE; ++zr) {
+                            if (zr < z_count) {
+                                const int m3 = m3_base + zr;
+                                const Complex b = poly2pw_s[k * n_pw + m3];
+                                p2pw_madd_real(acc[zr], p, b);
+                            }
                         }
                     }
-                }
 
 #pragma unroll
-                for (int zr = 0; zr < PROXY2PW_Z_TILE; ++zr) {
-                    if (zr < z_count)
-                        ff[zr * n_order2 + ij] = acc[zr];
-                }
-            }
-
-            __syncthreads();
-
-            // Phase 2: ff2(zr, i, m2) = sum_j ff(zr, i, j) * poly2pw(m2, j).
-            constexpr int I_TILE = PROXY2PW_I_TILE;
-            constexpr int M2_TILE = PROXY2PW_M2_TILE;
-            const int i_tiles = (n_order + I_TILE - 1) / I_TILE;
-            const int m2_tiles = (n_pw + M2_TILE - 1) / M2_TILE;
-            const int phase2_tiles = z_count * i_tiles * m2_tiles;
-
-            for (int tile = threadIdx.x; tile < phase2_tiles; tile += blockDim.x) {
-                int x = tile;
-                const int m2_tile = x % m2_tiles;
-                x /= m2_tiles;
-                const int i_tile = x % i_tiles;
-                const int zr = x / i_tiles;
-                const int i_base = i_tile * I_TILE;
-                const int m2_base = m2_tile * M2_TILE;
-
-                Complex acc[I_TILE][M2_TILE];
-#pragma unroll
-                for (int ii = 0; ii < I_TILE; ++ii) {
-#pragma unroll
-                    for (int r = 0; r < M2_TILE; ++r)
-                        acc[ii][r] = p2pw_zero<Real>();
-                }
-
-#pragma unroll
-                for (int j = 0; j < N_ORDER; ++j) {
-                    Complex b[M2_TILE];
-#pragma unroll
-                    for (int r = 0; r < M2_TILE; ++r) {
-                        const int m2 = m2_base + r;
-                        b[r] = (m2 < n_pw) ? poly2pw_s[j * n_pw + m2] : p2pw_zero<Real>();
+                    for (int zr = 0; zr < PROXY2PW_Z_TILE; ++zr) {
+                        if (zr < z_count)
+                            ff[zr * n_order2 + ij] = acc[zr];
                     }
+                }
+
+                __syncthreads();
+
+                // Phase 2: ff2(dd, zr, i, m2) = sum_j ff(zr, i, j) * poly2pw(m2, j).
+                constexpr int I_TILE = PROXY2PW_I_TILE;
+                constexpr int M2_TILE = PROXY2PW_M2_TILE;
+                const int i_tiles = (n_order + I_TILE - 1) / I_TILE;
+                const int m2_tiles = (n_pw + M2_TILE - 1) / M2_TILE;
+                const int phase2_tiles = z_count * i_tiles * m2_tiles;
+                Complex *__restrict__ ff2_d = ff2 + dd * FF2_DIM;
+
+                for (int tile = threadIdx.x; tile < phase2_tiles; tile += blockDim.x) {
+                    int x = tile;
+                    const int m2_tile = x % m2_tiles;
+                    x /= m2_tiles;
+                    const int i_tile = x % i_tiles;
+                    const int zr = x / i_tiles;
+                    const int i_base = i_tile * I_TILE;
+                    const int m2_base = m2_tile * M2_TILE;
+
+                    Complex acc[I_TILE][M2_TILE];
+#pragma unroll
+                    for (int ii = 0; ii < I_TILE; ++ii) {
+#pragma unroll
+                        for (int r = 0; r < M2_TILE; ++r)
+                            acc[ii][r] = p2pw_zero<Real>();
+                    }
+
+#pragma unroll
+                    for (int j = 0; j < N_ORDER; ++j) {
+                        Complex b[M2_TILE];
+#pragma unroll
+                        for (int r = 0; r < M2_TILE; ++r) {
+                            const int m2 = m2_base + r;
+                            b[r] = (m2 < n_pw) ? poly2pw_s[j * n_pw + m2] : p2pw_zero<Real>();
+                        }
+#pragma unroll
+                        for (int ii = 0; ii < I_TILE; ++ii) {
+                            const int i = i_base + ii;
+                            if (i < n_order) {
+                                const Complex f = ff[zr * n_order2 + i + j * n_order];
+#pragma unroll
+                                for (int r = 0; r < M2_TILE; ++r)
+                                    p2pw_madd(acc[ii][r], f, b[r]);
+                            }
+                        }
+                    }
+
 #pragma unroll
                     for (int ii = 0; ii < I_TILE; ++ii) {
                         const int i = i_base + ii;
                         if (i < n_order) {
-                            const Complex f = ff[zr * n_order2 + i + j * n_order];
 #pragma unroll
-                            for (int r = 0; r < M2_TILE; ++r)
-                                p2pw_madd(acc[ii][r], f, b[r]);
+                            for (int r = 0; r < M2_TILE; ++r) {
+                                const int m2 = m2_base + r;
+                                if (m2 < n_pw)
+                                    ff2_d[zr * n_order * n_pw + i + m2 * n_order] = acc[ii][r];
+                            }
                         }
                     }
                 }
 
-#pragma unroll
-                for (int ii = 0; ii < I_TILE; ++ii) {
-                    const int i = i_base + ii;
-                    if (i < n_order) {
-#pragma unroll
-                        for (int r = 0; r < M2_TILE; ++r) {
-                            const int m2 = m2_base + r;
-                            if (m2 < n_pw)
-                                ff2[zr * n_order * n_pw + i + m2 * n_order] = acc[ii][r];
-                        }
-                    }
-                }
+                __syncthreads();
             }
 
-            __syncthreads();
-
-            // Phase 3: pw(m1, m2, m3, d) = sum_i ff2(zr, i, m2) * poly2pw(m1, i).
+            // Phase 3: pw(m1, m2, m3, d) = sum_i ff2(dd, zr, i, m2) * poly2pw(m1, i), then the
+            // kernel-FT multiply in registers (P2PW_MULTIPLY != 0) instead of a second pass.
             constexpr int M1_TILE = PROXY2PW_M1_TILE;
             constexpr int M2_OUT_TILE = PROXY2PW_M2_TILE;
             const int m1_tiles = (n_pw + M1_TILE - 1) / M1_TILE;
@@ -214,12 +223,15 @@ extern "C" __global__ void PtProxy2PwMultiLevelKernel(const Proxy2PwArgs<Real> *
                 const int m1_base = m1_tile * M1_TILE;
                 const int m2_base = m2_tile * M2_OUT_TILE;
 
-                Complex acc[M2_OUT_TILE][M1_TILE];
+                Complex acc[D_TILE][M2_OUT_TILE][M1_TILE];
 #pragma unroll
-                for (int c = 0; c < M2_OUT_TILE; ++c) {
+                for (int dd = 0; dd < D_TILE; ++dd) {
 #pragma unroll
-                    for (int r = 0; r < M1_TILE; ++r)
-                        acc[c][r] = p2pw_zero<Real>();
+                    for (int c = 0; c < M2_OUT_TILE; ++c) {
+#pragma unroll
+                        for (int r = 0; r < M1_TILE; ++r)
+                            acc[dd][c][r] = p2pw_zero<Real>();
+                    }
                 }
 
 #pragma unroll
@@ -234,10 +246,13 @@ extern "C" __global__ void PtProxy2PwMultiLevelKernel(const Proxy2PwArgs<Real> *
                     for (int c = 0; c < M2_OUT_TILE; ++c) {
                         const int m2 = m2_base + c;
                         if (m2 < n_pw) {
-                            const Complex f = ff2[zr * n_order * n_pw + i + m2 * n_order];
 #pragma unroll
-                            for (int r = 0; r < M1_TILE; ++r)
-                                p2pw_madd(acc[c][r], f, b[r]);
+                            for (int dd = 0; dd < D_TILE; ++dd) {
+                                const Complex f = ff2[dd * FF2_DIM + zr * n_order * n_pw + i + m2 * n_order];
+#pragma unroll
+                                for (int r = 0; r < M1_TILE; ++r)
+                                    p2pw_madd(acc[dd][c][r], f, b[r]);
+                            }
                         }
                     }
                 }
@@ -249,11 +264,58 @@ extern "C" __global__ void PtProxy2PwMultiLevelKernel(const Proxy2PwArgs<Real> *
 #pragma unroll
                         for (int r = 0; r < M1_TILE; ++r) {
                             const int m1 = m1_base + r;
-                            if (m1 < n_pw) {
-                                const int slot =
-                                    pencil_slot(pencil, m2 + m3 * n_pw, m1, m1 + m2 * n_pw + m3 * n_pw * n_pw);
-                                if (slot >= 0)
-                                    p2pw_store(pw_d, slot, acc[c][r]);
+                            if (m1 >= n_pw)
+                                continue;
+                            const int slot =
+                                pencil_slot(pencil, m2 + m3 * n_pw, m1, m1 + m2 * n_pw + m3 * n_pw * n_pw);
+                            if (slot < 0)
+                                continue;
+
+                            if constexpr (P2PW_MULTIPLY == 0) {
+#pragma unroll
+                                for (int dd = 0; dd < D_TILE; ++dd)
+                                    p2pw_store(pw_dst + 2 * (d_base + dd) * n_pw_modes, slot, acc[dd][c][r]);
+                            } else if constexpr (P2PW_MULTIPLY == 1) {
+                                const Real fk = a.radialft[slot];
+#pragma unroll
+                                for (int dd = 0; dd < D_TILE; ++dd) {
+                                    Complex v = acc[dd][c][r];
+                                    v.r *= fk;
+                                    v.i *= fk;
+                                    p2pw_store(pw_dst + 2 * (d_base + dd) * n_pw_modes, slot, v);
+                                }
+                            } else {
+                                const int npw_half = n_pw / 2;
+                                const Real kx = Real(m1 - npw_half) * a.hpw;
+                                const Real ky = Real(m2 - npw_half) * a.hpw;
+                                const Real kz = Real(m3 - npw_half) * a.hpw;
+                                const Real fk = a.radialft[slot];
+                                const Real ksq = (kx * kx + ky * ky + kz * kz) * fk;
+
+                                const Complex p0 = acc[0][c][r];
+                                const Complex p1 = acc[1][c][r];
+                                const Complex p2 = acc[2][c][r];
+                                const Real dr = p0.r * kx + p1.r * ky + p2.r * kz;
+                                const Real di = p0.i * kx + p1.i * ky + p2.i * kz;
+
+                                Complex o0{dr * (kx * fk) - p0.r * ksq, di * (kx * fk) - p0.i * ksq};
+                                Complex o1{dr * (ky * fk) - p1.r * ksq, di * (ky * fk) - p1.i * ksq};
+                                Complex o2{dr * (kz * fk) - p2.r * ksq, di * (kz * fk) - p2.i * ksq};
+
+                                // The windowed root keeps a share of the untransformed zero mode.
+                                if (a.is_windowed && m1 == npw_half && m2 == npw_half && m3 == npw_half) {
+                                    const Real cval = Real(1) / (Real(1.7320508075688772935) + Real(1));
+                                    o0.r += cval * p0.r;
+                                    o0.i += cval * p0.i;
+                                    o1.r += cval * p1.r;
+                                    o1.i += cval * p1.i;
+                                    o2.r += cval * p2.r;
+                                    o2.i += cval * p2.i;
+                                }
+
+                                p2pw_store(pw_dst, slot, o0);
+                                p2pw_store(pw_dst + 2 * n_pw_modes, slot, o1);
+                                p2pw_store(pw_dst + 2 * 2 * n_pw_modes, slot, o2);
                             }
                         }
                     }

@@ -14,6 +14,7 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -134,6 +135,28 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
         auto &sc = s.scratch;
         static JitCache multiply_cache;
 
+        // Applying the kernel FT at proxy2pw's phase-3 store, where the modes are already in
+        // registers, removes a whole read+write pass over the PW field. Scalar kernels just scale
+        // by radialft; Stokeslet mixes the three charge dims, so it also needs a phase-2 shared
+        // buffer per dim, which does not always fit. Stresslet (9->3) and Laplace-dipole (3->1)
+        // write a different table count than they read and stay unfused. DMK_FUSE_MULTIPLY=0 disables.
+        const int fuse_mode = [&] {
+            const char *v = std::getenv("DMK_FUSE_MULTIPLY");
+            if (v && std::atoi(v) == 0)
+                return 0;
+            if (kernel == DMK_LAPLACE || kernel == DMK_SQRT_LAPLACE || kernel == DMK_YUKAWA)
+                return 1;
+            if (kernel == DMK_STOKESLET)
+                return 2;
+            return 0;
+        }();
+        const int ff2_copies = (fuse_mode == 2) ? f.n_tables_up : 1;
+        const auto fits = [&](int n_pw) {
+            return proxy2pw_min_shared_bytes(f.n_order, n_pw, ff2_copies, sizeof(Real)) <= device_max_shared_bytes();
+        };
+        const int fuse_levels = (fuse_mode && fits(f.n_pw)) ? fuse_mode : 0;
+        const int fuse_root = (fuse_mode && fits(f.n_pw_win)) ? fuse_mode : 0;
+
         // Scalar multiplies accumulate here and go out in one launch. Safe for every level at
         // once because the Cd2p path implies !split_up_down (its kernels have
         // n_tables_up == n_charge_dim), so no level shares the form pool with another.
@@ -241,6 +264,9 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
                 pa.dst_offsets = sc.d_pw_out_offsets.data();
                 pa.dst_stride_complex = 0;
                 pa.pencil_slots = f.d_pencil_slots.data();
+                pa.multiply_mode = fuse_levels;
+                pa.radialft = f.slab(L).radialft;
+                pa.hpw = f.hpw_per_level[L];
                 pa_h.push_back(pa);
             }
             launch_proxy2pw<Real>(pa_h, stream);
@@ -273,6 +299,9 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
                 launch_proxy2pw<Real>(pa_h, stream);
             }
 
+            if (fuse_levels)
+                continue;
+
             Real *src = split_up_down ? sc.d_pw_form_pool.data() : sc.d_pw_out.data();
             const long *src_offsets = split_up_down ? nullptr : sc.d_pw_out_offsets.data();
             const long src_stride = split_up_down ? sc.pw_form_stride_reals / 2 : 0L;
@@ -300,16 +329,22 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
             pa.dst_flat = sc.d_window_pw_form_in.data();
             pa.dst_offsets = nullptr;
             pa.dst_stride_complex = window_in_stride_complex;
+            pa.multiply_mode = fuse_root;
+            pa.radialft = f.d_window_radialft.data();
+            pa.hpw = f.hpw_win;
+            pa.is_windowed = 1;
         }
         launch_proxy2pw<Real>(root_pa, stream, "root");
 
         const long window_out_stride_complex = static_cast<long>(f.n_charge_dim) * f.n_pw_modes_win;
-        multiply_at(1, f.n_pw_win, f.n_pw_modes_win, f.n_pw_modes_win, /*cube_of=*/nullptr, f.hpw_win,
-                    /*windowed=*/true, sc.d_box0_id.data(), f.d_window_radialft.data(), sc.d_window_pw_form_in.data(),
-                    nullptr, window_in_stride_complex, sc.d_window_pw_form_out.data(), nullptr,
-                    window_out_stride_complex);
-        // The root's modes and radialft differ from any level's, so it is its own launch.
-        flush_cd2p();
+        if (!fuse_root) {
+            multiply_at(1, f.n_pw_win, f.n_pw_modes_win, f.n_pw_modes_win, /*cube_of=*/nullptr, f.hpw_win,
+                        /*windowed=*/true, sc.d_box0_id.data(), f.d_window_radialft.data(),
+                        sc.d_window_pw_form_in.data(), nullptr, window_in_stride_complex,
+                        sc.d_window_pw_form_out.data(), nullptr, window_out_stride_complex);
+            // The root's modes and radialft differ from any level's, so it is its own launch.
+            flush_cd2p();
+        }
 
         Real *pw_for_pw2proxy = split_up_down ? sc.d_window_pw_form_out.data() : sc.d_window_pw_form_in.data();
 
