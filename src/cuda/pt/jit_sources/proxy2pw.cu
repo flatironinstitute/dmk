@@ -43,6 +43,17 @@ __device__ __forceinline__ void p2pw_madd(p2pw_complex<Real> &acc, p2pw_complex<
     acc.i = fma(a.i, b.r, acc.i);
 }
 
+// A pencil is the m1 run at fixed (m2, m3). `pencil_slots` holds the slot m1 == 0 would land on,
+// then the live m1 range as lo | hi<<16. A null table means the slab is in cube order.
+__device__ __forceinline__ int pencil_slot(const int *__restrict__ pencil, int p, int m1, int cube_flat) {
+    if (!pencil)
+        return cube_flat;
+    const int2 pv = reinterpret_cast<const int2 *>(pencil)[p];
+    const int lo = pv.y & 0xffff;
+    const int hi = pv.y >> 16;
+    return (m1 >= lo && m1 < hi) ? pv.x + m1 : -1;
+}
+
 // KERNEL_START
 
 extern "C" __global__ void PtProxy2PwMultiLevelKernel(const Proxy2PwArgs<Real> *__restrict__ a_multilevel, int n_args) {
@@ -82,6 +93,9 @@ extern "C" __global__ void PtProxy2PwMultiLevelKernel(const Proxy2PwArgs<Real> *
     const int n_pw = N_PW;
     const int n_pw2 = N_PW2;
     const int n_pw_modes = n_pw * n_pw * n_pw2;
+
+    // Live modes sit at the front of the slab, which keeps its full-cube stride.
+    const int *__restrict__ pencil = a.pencil_slots;
 
     for (int idx = threadIdx.x; idx < n_order * n_pw; idx += blockDim.x)
         poly2pw_s[idx] = p2pw_load(a.poly2pw, idx);
@@ -236,8 +250,10 @@ extern "C" __global__ void PtProxy2PwMultiLevelKernel(const Proxy2PwArgs<Real> *
                         for (int r = 0; r < M1_TILE; ++r) {
                             const int m1 = m1_base + r;
                             if (m1 < n_pw) {
-                                const int flat = m1 + m2 * n_pw + m3 * n_pw * n_pw;
-                                p2pw_store(pw_d, flat, acc[c][r]);
+                                const int slot =
+                                    pencil_slot(pencil, m2 + m3 * n_pw, m1, m1 + m2 * n_pw + m3 * n_pw * n_pw);
+                                if (slot >= 0)
+                                    p2pw_store(pw_d, slot, acc[c][r]);
                             }
                         }
                     }

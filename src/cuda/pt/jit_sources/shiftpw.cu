@@ -2,9 +2,9 @@
 // plane-wave fields into its own incoming field (per-level pw_in_pool slab).
 // One block covers SHIFT_GROUP consecutive boxes of a level, whose source sets the
 // host has merged, so each source slab is fetched once for the whole group.
-// The launcher prepends `using Real` + N_PW_MODES / N_CHARGE_DIM / N_NEIGHBORS /
-// SHIFT_GROUP / BLOCK_SIZE / NEIGHBOR_UNROLL. One launch covers all levels via a
-// device array of per-level args. Assigns (not additive) into pw_in_pool.
+// The launcher prepends `using Real` + N_PW_MODES / N_PW_LIVE / N_CHARGE_DIM /
+// N_NEIGHBORS / SHIFT_GROUP / BLOCK_SIZE / NEIGHBOR_UNROLL. One launch covers all
+// levels via a device array of per-level args. Assigns (not additive) into pw_in_pool.
 
 #include <dmk/cuda/shift_pw_kernelargs.hpp>
 
@@ -67,7 +67,9 @@ __device__ __forceinline__ void ShiftPwBody(ShiftPwArgs<Real> a, int group) {
     const int n_src = a.group_offsets[group + 1] - src_begin;
     const ShiftPwGroupSrc *__restrict__ src_list = a.group_src + src_begin;
 
-    for (int m = threadIdx.x; m < n_pw_modes; m += blockDim.x) {
+    // Live modes are the front of the slab, which keeps its original stride, so this is the
+    // full-slab loop over a shorter prefix. The dead tail is neither read nor written.
+    for (int m = threadIdx.x; m < N_PW_LIVE; m += blockDim.x) {
         complx<Real> acc[group_size][n_charge_dim];
 
 #pragma unroll

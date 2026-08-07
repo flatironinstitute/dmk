@@ -22,6 +22,9 @@ struct PwToProxyArgs {
     /// Store with `=` instead of `+=`. Each element of a box is stored exactly once per
     /// block, so this is a complete write wherever the launch is the box's first writer.
     int assign = 0;
+    // Per (m2,m3) pencil: the slot m1 == 0 would land on, then the live m1 range as lo | hi<<16.
+    // Null means the slab is in cube order.
+    const int *pencil_slots = nullptr;
 };
 
 } // namespace dmk::cuda

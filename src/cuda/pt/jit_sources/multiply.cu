@@ -21,12 +21,16 @@ __device__ __forceinline__ void MultiplyCd2pBody(MultiplyCd2pArgs<Real> a, int b
     if (off_complex < 0)
         return;
     Real *pw = a.pw_flat + 2 * off_complex;
-    const int total = a.n_pw_modes * a.n_charge_dim;
+    // Live modes are the front of each charge dim's slab, so walk (dim, live) and re-expand to
+    // the slab stride.
+    const int total = a.n_pw_live * a.n_charge_dim;
     for (int idx = threadIdx.x; idx < total; idx += blockDim.x) {
-        const int m = idx % a.n_pw_modes;
+        const int d = idx / a.n_pw_live;
+        const int m = idx - d * a.n_pw_live;
         const Real f = a.radialft[m];
-        pw[2 * idx] *= f;
-        pw[2 * idx + 1] *= f;
+        const int o = d * a.n_pw_modes + m;
+        pw[2 * o] *= f;
+        pw[2 * o + 1] *= f;
     }
 }
 
@@ -71,10 +75,13 @@ extern "C" __global__ void PtMultiplyStokeslet3DByBoxKernel(MultiplyStokeslet3DA
     }
     __syncthreads();
 
-    for (int n_idx = threadIdx.x; n_idx < n_pw_modes; n_idx += blockDim.x) {
-        const int ix = n_idx % n_pw;
-        const int iy = (n_idx / n_pw) % n_pw;
-        const int iz = n_idx / (n_pw * n_pw);
+    // n_idx is a slab slot; only the k vector needs the cube index it came from.
+    const int *__restrict__ cube_of = a.full_of_compact;
+    for (int n_idx = threadIdx.x; n_idx < a.n_pw_live; n_idx += blockDim.x) {
+        const int cube = cube_of ? cube_of[n_idx] : n_idx;
+        const int ix = cube % n_pw;
+        const int iy = (cube / n_pw) % n_pw;
+        const int iz = cube / (n_pw * n_pw);
         const Real kx = ts(ix);
         const Real ky = ts(iy);
         const Real kz = ts(iz);
@@ -129,10 +136,12 @@ extern "C" __global__ void PtMultiplyStresslet3DByBoxKernel(MultiplyStresslet3DA
     const Real hpw = a.hpw;
     auto ts = [&](int i) { return Real(i - npw_half) * hpw; };
 
-    for (int n_idx = threadIdx.x; n_idx < n_pw_modes; n_idx += blockDim.x) {
-        const int ix = n_idx % n_pw;
-        const int iy = (n_idx / n_pw) % n_pw;
-        const int iz = n_idx / (n_pw * n_pw);
+    const int *__restrict__ cube_of = a.full_of_compact;
+    for (int n_idx = threadIdx.x; n_idx < a.n_pw_live; n_idx += blockDim.x) {
+        const int cube = cube_of ? cube_of[n_idx] : n_idx;
+        const int ix = cube % n_pw;
+        const int iy = (cube / n_pw) % n_pw;
+        const int iz = cube / (n_pw * n_pw);
         const Real kx = ts(ix);
         const Real ky = ts(iy);
         const Real kz = ts(iz);
@@ -199,10 +208,12 @@ extern "C" __global__ void PtMultiplyLaplaceDipole3DByBoxKernel(MultiplyLaplaceD
     const Real hpw = a.hpw;
     auto ts = [&](int i) { return Real(i - npw_half) * hpw; };
 
-    for (int n_idx = threadIdx.x; n_idx < n_pw_modes; n_idx += blockDim.x) {
-        const int ix = n_idx % n_pw;
-        const int iy = (n_idx / n_pw) % n_pw;
-        const int iz = n_idx / (n_pw * n_pw);
+    const int *__restrict__ cube_of = a.full_of_compact;
+    for (int n_idx = threadIdx.x; n_idx < a.n_pw_live; n_idx += blockDim.x) {
+        const int cube = cube_of ? cube_of[n_idx] : n_idx;
+        const int ix = cube % n_pw;
+        const int iy = (cube / n_pw) % n_pw;
+        const int iz = cube / (n_pw * n_pw);
         const Real k[3] = {ts(ix), ts(iy), ts(iz)};
         const Real f = a.radialft[n_idx];
 

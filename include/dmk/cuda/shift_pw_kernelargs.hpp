@@ -12,9 +12,9 @@ constexpr int kShiftGroupMax = 8;
 
 /// Target boxes per shift_pw block; the merge loop in state.cpp covers the
 /// grouping itself. A bigger group cuts source-slab traffic but the block holds
-/// acc[group][n_charge_dim] complex accumulators, and capping that accumulator
-/// at 24 registers hits both measured optima: 8 for the scalar kernels, 4 for
-/// the 3-component ones. Powers of two only, since a group is a Morton run.
+/// acc[group][n_charge_dim] complex accumulators, and the kernel is latency-bound
+/// with occupancy limited by registers, so cap that accumulator at 16 registers.
+/// Powers of two only, since a group is a Morton run.
 /// DMK_SHIFT_GROUP overrides; 1 recovers the one-box-per-block kernel. Host-only,
 /// as NVRTC rejects unannotated functions and the kernel takes the chosen size as
 /// its SHIFT_GROUP define.
@@ -27,7 +27,7 @@ inline int shift_group_size(int n_charge_dim) {
     if (forced > 0)
         return forced < kShiftGroupMax ? forced : kShiftGroupMax;
     int g = kShiftGroupMax;
-    while (g > 1 && 2 * g * n_charge_dim > 24)
+    while (g > 1 && 2 * g * n_charge_dim > 16)
         g >>= 1;
     return g;
 }
@@ -57,6 +57,7 @@ struct ShiftPwArgs {
     int n_neighbors = 0;
     int n_charge_dim = 0;
     int n_pw_modes = 0;
+    int n_pw_live = 0;
 
     long pw_in_stride = 0;
 

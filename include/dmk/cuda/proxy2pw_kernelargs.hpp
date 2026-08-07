@@ -17,6 +17,9 @@ struct Proxy2PwArgs {
     Real *dst_flat = nullptr;          // interleaved complex
     const long *dst_offsets = nullptr; // in COMPLEX units
     long dst_stride_complex = 0;       // if dst_offsets is null, use box_idx * dst_stride_complex
+    // Per (m2,m3) pencil: the slot m1 == 0 would land on, then the live m1 range as lo | hi<<16.
+    // Null means the slab is in cube order.
+    const int *pencil_slots = nullptr;
 };
 
 } // namespace dmk::cuda

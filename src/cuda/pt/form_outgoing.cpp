@@ -146,14 +146,17 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
         // Apply the kernel FT at a given PW size. Scalar/Stokeslet operate in
         // place on `src`; Stresslet reads 9 tables from `src` and writes 3 to
         // `dst`.
-        auto multiply_at = [&](int n_box, int n_pw_local, int n_pw_modes_local, Real hpw_local, bool windowed,
-                               const int *box_ids, const Real *radialft, Real *src, const long *src_offsets,
-                               long src_stride_complex, Real *dst, const long *dst_offsets, long dst_stride_complex) {
+        auto multiply_at = [&](int n_box, int n_pw_local, int n_pw_modes_local, int n_pw_live_local, const int *cube_of,
+                               Real hpw_local, bool windowed, const int *box_ids, const Real *radialft, Real *src,
+                               const long *src_offsets, long src_stride_complex, Real *dst, const long *dst_offsets,
+                               long dst_stride_complex) {
             if (kernel == DMK_LAPLACE || kernel == DMK_SQRT_LAPLACE || kernel == DMK_YUKAWA) {
                 dmk::cuda::MultiplyCd2pArgs<Real> ma;
                 ma.n_boxes_at_level = n_box;
                 ma.n_charge_dim = f.n_charge_dim;
                 ma.n_pw_modes = n_pw_modes_local;
+                ma.n_pw_live = n_pw_live_local;
+                ma.full_of_compact = cube_of;
                 ma.box_ids = box_ids;
                 ma.radialft = radialft;
                 ma.pw_flat = src;
@@ -166,6 +169,8 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
                 ma.n_pw = n_pw_local;
                 ma.n_pw2 = (n_pw_local + 1) / 2;
                 ma.n_pw_modes = n_pw_modes_local;
+                ma.n_pw_live = n_pw_live_local;
+                ma.full_of_compact = cube_of;
                 ma.hpw = hpw_local;
                 ma.is_windowed = windowed;
                 ma.box_ids = box_ids;
@@ -179,6 +184,8 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
                 ma.n_boxes_at_level = n_box;
                 ma.n_pw = n_pw_local;
                 ma.n_pw_modes = n_pw_modes_local;
+                ma.n_pw_live = n_pw_live_local;
+                ma.full_of_compact = cube_of;
                 ma.hpw = hpw_local;
                 ma.box_ids = box_ids;
                 ma.radialft = radialft;
@@ -195,6 +202,8 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
                 ma.n_pw = n_pw_local;
                 ma.n_pw2 = (n_pw_local + 1) / 2;
                 ma.n_pw_modes = n_pw_modes_local;
+                ma.n_pw_live = n_pw_live_local;
+                ma.full_of_compact = cube_of;
                 ma.hpw = hpw_local;
                 ma.box_ids = box_ids;
                 ma.radialft = radialft;
@@ -231,6 +240,7 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
                 pa.dst_flat = sc.d_pw_out.data();
                 pa.dst_offsets = sc.d_pw_out_offsets.data();
                 pa.dst_stride_complex = 0;
+                pa.pencil_slots = f.d_pencil_slots.data();
                 pa_h.push_back(pa);
             }
             launch_proxy2pw<Real>(pa_h, stream);
@@ -259,15 +269,16 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
                 pa.dst_flat = sc.d_pw_form_pool.data();
                 pa.dst_offsets = nullptr;
                 pa.dst_stride_complex = sc.pw_form_stride_reals / 2;
+                pa.pencil_slots = f.d_pencil_slots.data();
                 launch_proxy2pw<Real>(pa_h, stream);
             }
 
             Real *src = split_up_down ? sc.d_pw_form_pool.data() : sc.d_pw_out.data();
             const long *src_offsets = split_up_down ? nullptr : sc.d_pw_out_offsets.data();
             const long src_stride = split_up_down ? sc.pw_form_stride_reals / 2 : 0L;
-            multiply_at(n_box, f.n_pw, f.n_pw_modes, f.hpw_per_level[L], /*windowed=*/false, box_ids,
-                        f.slab(L).radialft, src, src_offsets, src_stride, sc.d_pw_out.data(),
-                        sc.d_pw_out_offsets.data(), 0);
+            multiply_at(n_box, f.n_pw, f.n_pw_modes, f.n_pw_live, f.d_full_of_compact.data(), f.hpw_per_level[L],
+                        /*windowed=*/false, box_ids, f.slab(L).radialft, src, src_offsets, src_stride,
+                        sc.d_pw_out.data(), sc.d_pw_out_offsets.data(), 0);
         }
         flush_cd2p();
 
@@ -293,9 +304,10 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
         launch_proxy2pw<Real>(root_pa, stream, "root");
 
         const long window_out_stride_complex = static_cast<long>(f.n_charge_dim) * f.n_pw_modes_win;
-        multiply_at(1, f.n_pw_win, f.n_pw_modes_win, f.hpw_win, /*windowed=*/true, sc.d_box0_id.data(),
-                    f.d_window_radialft.data(), sc.d_window_pw_form_in.data(), nullptr, window_in_stride_complex,
-                    sc.d_window_pw_form_out.data(), nullptr, window_out_stride_complex);
+        multiply_at(1, f.n_pw_win, f.n_pw_modes_win, f.n_pw_modes_win, /*cube_of=*/nullptr, f.hpw_win,
+                    /*windowed=*/true, sc.d_box0_id.data(), f.d_window_radialft.data(), sc.d_window_pw_form_in.data(),
+                    nullptr, window_in_stride_complex, sc.d_window_pw_form_out.data(), nullptr,
+                    window_out_stride_complex);
         // The root's modes and radialft differ from any level's, so it is its own launch.
         flush_cd2p();
 

@@ -103,6 +103,9 @@ struct BuildInputs {
         std::vector<Real> poly2pw_flat;     ///< [n_levels] flat, proxy->PW (form_outgoing proxy2pw)
         std::vector<Real> radialft_flat;    ///< [n_levels] flat, per-mode kernel FT (form_outgoing)
         std::vector<Real> wpwshift_flat;    ///< [n_levels] flat, PW translation per neighbor (downward shift_pw)
+        int n_pw_live = 0;                  ///< live modes per slab; == n_pw_modes when nothing is prunable
+        std::vector<int> pencil_slots;      ///< [2*n_pw*n_pw2] per (m2,m3): slot-at-m1-zero, then lo | hi<<16
+        std::vector<int> full_of_compact;   ///< [n_pw_live] slab slot -> cube index; both empty when not pruning
         std::vector<Real> window_pw2poly;   ///< root windowed PW->proxy
         std::vector<Real> window_poly2pw;   ///< root windowed proxy->PW
         std::vector<Real> window_radialft;  ///< root windowed per-mode kernel FT
@@ -254,6 +257,9 @@ struct State {
         DeviceBuffer<Real> d_poly2pw_flat;    ///< per-level proxy->PW (form_outgoing proxy2pw)
         DeviceBuffer<Real> d_radialft_flat;   ///< per-level per-mode kernel FT (form_outgoing multiply)
         DeviceBuffer<Real> d_wpwshift_flat;   ///< per-level PW translation per neighbor (downward shift_pw)
+        DeviceBuffer<int> d_pencil_slots;     ///< per-(m2,m3) slot arithmetic for proxy2pw/pw2proxy
+        DeviceBuffer<int> d_full_of_compact;  ///< slab slot -> cube index (multiply, for its k vector)
+        int n_pw_live = 0;                    ///< live modes per slab; == n_pw_modes when nothing is prunable
         DeviceBuffer<Real> d_window_pw2poly;  ///< root windowed PW->proxy (downward)
         DeviceBuffer<Real> d_window_poly2pw;  ///< root windowed proxy->PW (form_outgoing)
         DeviceBuffer<Real> d_window_radialft; ///< root windowed per-mode kernel FT (form_outgoing)

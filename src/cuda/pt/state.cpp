@@ -14,6 +14,7 @@
 #include <sctl.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 #include <string>
 #include <utility>
 #include <vector>
@@ -423,6 +424,84 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
         fou.hpw_per_level[L] = (Real)tree.expansion_constants.hpw_diff / (Real)tree.boxsize[L];
     }
 
+    // The kernel FT is tabulated against integer radius j1^2+j2^2+j3^2 and gathered onto the mode
+    // cube, so modes past the band edge fall outside the prolate window's support and the multiply
+    // sets them to exactly zero. Taking the mask from the tabulated values rather than from the
+    // ball geometry means kernels that build the FT by quadrature, with no hard gate, keep every
+    // mode and simply see no pruning.
+    //
+    // Live modes move to the front of every slab so shift_pw and multiply walk a dense prefix.
+    // Slab size and every pw offset stay as the tree built them; only the order within a slab
+    // changes, and the dead tail is never read or written. DMK_PW_MASK=0 disables.
+    const bool prune = [] {
+        const char *v = std::getenv("DMK_PW_MASK");
+        return !v || std::atoi(v) != 0;
+    }();
+
+    std::vector<char> live(fou.n_pw_modes, !prune);
+    for (int m = 0; m < fou.n_pw_modes && prune; ++m)
+        for (int L = 0; L < n_levels && !live[m]; ++L)
+            live[m] = fou.radialft_flat[(std::size_t)L * fou.radialft_per_level_reals + m] != Real{0};
+
+    // For a radial mask the live m1 at fixed (m2, m3) form a single contiguous run, which lets
+    // proxy2pw and pw2proxy get a slot by arithmetic off an n_pw*n_pw2 table. Verify rather than
+    // assume it: a gap anywhere makes that arithmetic wrong, so fall back to no pruning.
+    const int n_pencil = fou.n_pw_modes / fou.n_pw;
+    fou.pencil_slots.assign(2 * (std::size_t)n_pencil, 0);
+    fou.full_of_compact.clear();
+    bool contiguous = true;
+    for (int p = 0; p < n_pencil && contiguous; ++p) {
+        const char *row = &live[(std::size_t)p * fou.n_pw];
+        int lo = 0;
+        while (lo < fou.n_pw && !row[lo])
+            ++lo;
+        int hi = lo;
+        while (hi < fou.n_pw && row[hi])
+            ++hi;
+        for (int i = hi; i < fou.n_pw; ++i)
+            contiguous = contiguous && !row[i];
+
+        fou.pencil_slots[2 * p] = (int)fou.full_of_compact.size() - lo;
+        fou.pencil_slots[2 * p + 1] = lo | (hi << 16);
+        for (int m1 = lo; m1 < hi; ++m1)
+            fou.full_of_compact.push_back(p * fou.n_pw + m1);
+    }
+
+    const int n_live = contiguous ? (int)fou.full_of_compact.size() : fou.n_pw_modes;
+    fou.n_pw_live = n_live;
+
+    if (n_live == fou.n_pw_modes) {
+        // Nothing to prune -- either the FT is nonzero everywhere, as for the quadrature-built
+        // kernels, or a pencil had a gap. Drop the tables so the kernels take their cube-order
+        // path; the permutation below would be a no-op.
+        fou.pencil_slots.clear();
+        fou.full_of_compact.clear();
+    } else {
+        // Permute the two per-mode tables into slab order. A wpwshift neighbour block is split
+        // real-then-imaginary, so each half gathers separately.
+        std::vector<Real> rad_new(fou.n_pw_modes);
+        std::vector<Real> ws_new(fou.wpwshift_per_level_reals);
+        for (int L = 0; L < n_levels; ++L) {
+            Real *rad = &fou.radialft_flat[(std::size_t)L * fou.radialft_per_level_reals];
+            std::fill(rad_new.begin(), rad_new.end(), Real{0});
+            for (int c = 0; c < n_live; ++c)
+                rad_new[c] = rad[fou.full_of_compact[c]];
+            std::copy(rad_new.begin(), rad_new.end(), rad);
+
+            Real *ws = &fou.wpwshift_flat[(std::size_t)L * fou.wpwshift_per_level_reals];
+            std::fill(ws_new.begin(), ws_new.end(), Real{0});
+            for (int ind = 0; ind < topo.n_neighbors; ++ind) {
+                const Real *src = ws + (std::size_t)ind * 2 * fou.n_pw_modes;
+                Real *dst = &ws_new[(std::size_t)ind * 2 * fou.n_pw_modes];
+                for (int c = 0; c < n_live; ++c) {
+                    dst[c] = src[fou.full_of_compact[c]];
+                    dst[fou.n_pw_modes + c] = src[fou.n_pw_modes + fou.full_of_compact[c]];
+                }
+            }
+            std::copy(ws_new.begin(), ws_new.end(), ws);
+        }
+    }
+
     if (fou.n_pw_win) {
         const auto &wfd = tree.window_fourier_data;
         const Real *pw2poly = reinterpret_cast<const Real *>(&wfd.pw2poly[0]);
@@ -632,6 +711,9 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     up(fourier.d_poly2pw_flat, fi.poly2pw_flat);
     up(fourier.d_radialft_flat, fi.radialft_flat);
     up(fourier.d_wpwshift_flat, fi.wpwshift_flat);
+    up(fourier.d_pencil_slots, fi.pencil_slots);
+    up(fourier.d_full_of_compact, fi.full_of_compact);
+    fourier.n_pw_live = fi.n_pw_live;
     up(fourier.d_window_pw2poly, fi.window_pw2poly);
     up(fourier.d_window_poly2pw, fi.window_poly2pw);
     up(fourier.d_window_radialft, fi.window_radialft);
@@ -748,6 +830,9 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     downward_stream = cuda_helpers::DeviceStream::non_blocking_priority();
 
     scratch.d_pw_out.zero_async(downward_stream.get());
+    // shift_pw writes only the live prefix of each slab, so the dead tail must read zero and stay
+    // that way: nothing else ever writes this pool.
+    scratch.d_pw_in_pool.zero_async(downward_stream.get());
     outputs.d_pot_eval_src.zero_async(downward_stream.get());
     outputs.d_pot_eval_trg.zero_async(downward_stream.get());
     outputs.d_pot_direct_src.zero_async(direct_stream.get());

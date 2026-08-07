@@ -39,6 +39,17 @@ __device__ __forceinline__ Real complx_real_madd(Real acc, const complx<Real> a,
     return acc;
 }
 
+// A pencil is the m1 run at fixed (m2, m3). `pencil_slots` holds the slot m1 == 0 would land on,
+// then the live m1 range as lo | hi<<16. A null table means the slab is in cube order.
+__device__ __forceinline__ int pencil_slot(const int *__restrict__ pencil, int p, int m1, int cube_flat) {
+    if (!pencil)
+        return cube_flat;
+    const int2 pv = reinterpret_cast<const int2 *>(pencil)[p];
+    const int lo = pv.y & 0xffff;
+    const int hi = pv.y >> 16;
+    return (m1 >= lo && m1 < hi) ? pv.x + m1 : -1;
+}
+
 // KERNEL_START
 
 extern "C" __global__ void PtPwToProxyMultiLevelKernel(const PwToProxyArgs<Real> *__restrict__ args, int n_args) {
@@ -68,6 +79,10 @@ extern "C" __global__ void PtPwToProxyMultiLevelKernel(const PwToProxyArgs<Real>
     const int n_order2 = n_order * n_order;
     const int n_order3 = n_order2 * n_order;
     const int n_pw_modes = n_pw * n_pw * n_pw2;
+
+    // Live modes sit at the front of the slab, which keeps its full-cube stride. A dead mode
+    // reads as zero, which is what its zero kernel FT would have produced.
+    const int *__restrict__ pencil = a.pencil_slots;
 
     const int k_pad = ((n_order + 3) / 4) * 4;
     const int phase1_cols = n_pw * n_pw;
@@ -116,14 +131,27 @@ extern "C" __global__ void PtPwToProxyMultiLevelKernel(const PwToProxyArgs<Real>
                         acc[k3r][cr] = complx_zero<Real>();
                 }
 
+                // Fixed across the m3 loop below.
+                int col_m1[COL_REG], col_m2[COL_REG];
+#pragma unroll
+                for (int cr = 0; cr < COL_REG; ++cr) {
+                    const int xy = xy_base + cr * blockDim.x;
+                    col_m1[cr] = xy % n_pw;
+                    col_m2[cr] = xy / n_pw;
+                }
+
                 for (int m3 = 0; m3 < n_pw2; ++m3) {
                     complx<Real> p[COL_REG];
                     const Real scale = (m3 >= n_pw_half) ? Real{0.5} : Real{1};
 #pragma unroll
                     for (int cr = 0; cr < COL_REG; ++cr) {
                         const int xy = xy_base + cr * blockDim.x;
-                        if (xy < phase1_cols) {
-                            p[cr] = complx_load(pw_in_d, xy + m3 * phase1_cols);
+                        const int slot =
+                            (xy < phase1_cols)
+                                ? pencil_slot(pencil, col_m2[cr] + m3 * n_pw, col_m1[cr], xy + m3 * phase1_cols)
+                                : -1;
+                        if (slot >= 0) {
+                            p[cr] = complx_load(pw_in_d, slot);
                             p[cr].r *= scale;
                             p[cr].i *= scale;
                         } else {

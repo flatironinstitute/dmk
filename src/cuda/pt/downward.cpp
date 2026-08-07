@@ -52,9 +52,13 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
         key.real = jit_real_name<Real>();
         key.sm_major = cache.sm_major();
         key.sm_minor = cache.sm_minor();
-        key.params = {{"N_PW_MODES", a0.n_pw_modes},      {"N_CHARGE_DIM", a0.n_charge_dim},
-                      {"N_NEIGHBORS", a0.n_neighbors},    {"SHIFT_GROUP", dmk::cuda::shift_group_size(a0.n_charge_dim)},
-                      {"BLOCK_SIZE", p.at("BLOCK_SIZE")}, {"NEIGHBOR_UNROLL", p.at("NEIGHBOR_UNROLL")}};
+        key.params = {{"N_PW_MODES", a0.n_pw_modes},
+                      {"N_PW_LIVE", a0.n_pw_live},
+                      {"N_CHARGE_DIM", a0.n_charge_dim},
+                      {"N_NEIGHBORS", a0.n_neighbors},
+                      {"SHIFT_GROUP", dmk::cuda::shift_group_size(a0.n_charge_dim)},
+                      {"BLOCK_SIZE", p.at("BLOCK_SIZE")},
+                      {"NEIGHBOR_UNROLL", p.at("NEIGHBOR_UNROLL")}};
         auto kernel =
             cache.get_kernel_from_source(key, [&] { return make_stage_source("pt/shiftpw.cu", key, "", "PtShiftPw"); });
         const dmk::cuda::ShiftPwArgs<Real> *dev_args = d_args.data();
@@ -64,7 +68,7 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
 
     std::ostringstream tune_key;
     tune_key << "PtShiftPw|real=" << jit_real_name<Real>() << "|n_pw_modes=" << a0.n_pw_modes
-             << "|n_charge_dim=" << a0.n_charge_dim << "|n_neighbors=" << a0.n_neighbors
+             << "|n_live=" << a0.n_pw_live << "|n_charge_dim=" << a0.n_charge_dim << "|n_neighbors=" << a0.n_neighbors
              << "|shift_group=" << dmk::cuda::shift_group_size(a0.n_charge_dim);
     const std::string tk = tune_key.str();
 
@@ -117,6 +121,7 @@ void downward(State<Real, DIM> &s, cudaStream_t stream) {
             sa.n_neighbors = s.topology.n_neighbors;
             sa.n_charge_dim = f.n_charge_dim;
             sa.n_pw_modes = f.n_pw_modes;
+            sa.n_pw_live = f.n_pw_live;
             sa.pw_in_stride = sc.pw_in_stride_reals;
             sa.box_ids = w.d_pw_eval_box_flat.data() + box_off;
             sa.pw_out_offsets = sc.d_pw_out_offsets.data();
@@ -137,6 +142,7 @@ void downward(State<Real, DIM> &s, cudaStream_t stream) {
             pa.box_ids = w.d_pw_eval_box_flat.data() + box_off;
             pa.pw_in_pool = level_pw_in;
             pa.pw2poly = f.slab(L).pw2poly;
+            pa.pencil_slots = f.d_pencil_slots.data();
             pa.proxy_flat = sc.d_proxy_coeffs_downward.data();
             pa.proxy_offsets = sc.d_proxy_offsets_downward.data();
             // Runs ahead of every p2c tensorprod below, so it is each box's first writer.
