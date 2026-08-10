@@ -60,15 +60,11 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
         key.real = jit_real_name<Real>();
         key.sm_major = cache.sm_major();
         key.sm_minor = cache.sm_minor();
-        key.params = {{"N_ORDER", a0.n_order},
-                      {"N_PW", a0.n_pw},
-                      {"N_PW2", a0.n_pw2},
-                      {"N_CHARGE_DIM", a0.n_charge_dim},
-                      {"COL_REG", p.at("COL_REG")},
-                      {"K2_TILE", p.at("K2_TILE")},
-                      {"K3_TILE", p.at("K3_TILE")},
-                      {"KR_TILE", p.at("KR_TILE")},
-                      {"BLOCK_SIZE", p.at("BLOCK_SIZE")}};
+        key.params = {{"N_ORDER", a0.n_order},      {"N_PW", a0.n_pw},
+                      {"N_PW2", a0.n_pw2},          {"N_CHARGE_DIM", a0.n_charge_dim},
+                      {"COL_REG", p.at("COL_REG")}, {"K1_TILE", p.at("K1_TILE")},
+                      {"K2_TILE", p.at("K2_TILE")}, {"K3_TILE", p.at("K3_TILE")},
+                      {"KR_TILE", p.at("KR_TILE")}, {"BLOCK_SIZE", p.at("BLOCK_SIZE")}};
         auto kernel = cache.get_kernel_from_source(
             key, [&] { return make_stage_source("pt/pw2proxy.cu", key, "", "PtPwToProxy"); });
         const std::size_t shared =
@@ -93,18 +89,18 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
     const cudaDeviceProp &prop = device_prop();
     const std::size_t max_shared = device_max_shared_bytes();
 
-    const std::vector<TuningParameter> space{{"COL_REG", {1, 2}},
-                                             {"K2_TILE", {2, 3, 4}},
-                                             {"K3_TILE", {1, 2, 3, 4}},
-                                             {"KR_TILE", {3, 4, 8, 9}},
-                                             {"BLOCK_SIZE", {128, 256}}};
-    const TuningParams defaults{{"COL_REG", 1}, {"K2_TILE", 3}, {"K3_TILE", 3}, {"KR_TILE", 3}, {"BLOCK_SIZE", 256}};
+    const std::vector<TuningParameter> space{{"COL_REG", {1, 2}},       {"K1_TILE", {1, 2, 3, 4}},
+                                             {"K2_TILE", {2, 3, 4}},    {"K3_TILE", {1, 2, 3, 4}},
+                                             {"KR_TILE", {3, 4, 8, 9}}, {"BLOCK_SIZE", {128, 256}}};
+    const TuningParams defaults{{"COL_REG", 1}, {"K1_TILE", 2}, {"K2_TILE", 3},
+                                {"K3_TILE", 3}, {"KR_TILE", 3}, {"BLOCK_SIZE", 256}};
 
     const auto constraint = [&](const TuningParams &p) {
         const int bs = p.at("BLOCK_SIZE");
         if (bs <= 0 || bs > prop.maxThreadsPerBlock || bs % 32 != 0)
             return false;
-        if (p.at("COL_REG") <= 0 || p.at("K2_TILE") <= 0 || p.at("K3_TILE") <= 0 || p.at("KR_TILE") <= 0)
+        if (p.at("COL_REG") <= 0 || p.at("K1_TILE") <= 0 || p.at("K2_TILE") <= 0 || p.at("K3_TILE") <= 0 ||
+            p.at("KR_TILE") <= 0)
             return false;
         return pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, p.at("K3_TILE"), sizeof(Real)) <= max_shared;
     };

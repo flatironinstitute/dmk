@@ -131,6 +131,7 @@ extern "C" __global__ void PtPwToProxyMultiLevelKernel(const PwToProxyArgs<Real>
 
     const int k2_tiles = (n_order + K2_TILE - 1) / K2_TILE;
     const int m1_tiles = (n_pw + KR_TILE - 1) / KR_TILE;
+    const int k1_tiles = (n_order + K1_TILE - 1) / K1_TILE;
 
     for (int d = 0; d < a.n_charge_dim; ++d) {
         const Real *__restrict__ pw_in_d = pw_in_box + 2 * d * n_pw_modes;
@@ -270,30 +271,47 @@ extern "C" __global__ void PtPwToProxyMultiLevelKernel(const PwToProxyArgs<Real>
             __syncthreads();
 
             // Phase 3: proxy(k1, k2, k3) += 2 * Re(sum_m1 s_G(k3r, k2, m1) * pw2poly(k1, m1)).
-            const int phase3_tiles = k3_count * k2_tiles * n_order;
+            const int phase3_tiles = k3_count * k2_tiles * k1_tiles;
 
             for (int tile = threadIdx.x; tile < phase3_tiles; tile += blockDim.x) {
                 int x = tile;
-                const int k1 = x % n_order;
-                x /= n_order;
+                const int k1_tile = x % k1_tiles;
+                x /= k1_tiles;
                 const int ktile = x % k2_tiles;
                 const int k3r = x / k2_tiles;
+                const int k1_base = k1_tile * K1_TILE;
                 const int k2_base = ktile * K2_TILE;
                 const int k3 = k3_base + k3r;
 
-                Real acc[K2_TILE];
+                bool k1_ok[K1_TILE];
 #pragma unroll
-                for (int k2r = 0; k2r < K2_TILE; ++k2r)
-                    acc[k2r] = Real{0};
+                for (int rr = 0; rr < K1_TILE; ++rr)
+                    k1_ok[rr] = (k1_base + rr) < n_order;
+
+                Real acc[K1_TILE][K2_TILE];
+#pragma unroll
+                for (int rr = 0; rr < K1_TILE; ++rr) {
+#pragma unroll
+                    for (int k2r = 0; k2r < K2_TILE; ++k2r)
+                        acc[rr][k2r] = Real{0};
+                }
 
                 for (int m1 = 0; m1 < n_pw; ++m1) {
-                    const complx<Real> a1 = s_A_T[m1 * k_pad + k1];
+                    // K1_TILE consecutive k1 share every g, so widening the tile trades shared
+                    // loads for registers in the phase that had by far the worst ratio of them.
+                    complx<Real> a1[K1_TILE];
+#pragma unroll
+                    for (int rr = 0; rr < K1_TILE; ++rr)
+                        a1[rr] = k1_ok[rr] ? s_A_T[m1 * k_pad + k1_base + rr] : complx_zero<Real>();
+
 #pragma unroll
                     for (int k2r = 0; k2r < K2_TILE; ++k2r) {
                         const int k2 = k2_base + k2r;
                         if (k2 < n_order) {
                             const complx<Real> g = s_G[(k3r * n_order + k2) * n_pw + m1];
-                            acc[k2r] = complx_real_madd(acc[k2r], g, a1);
+#pragma unroll
+                            for (int rr = 0; rr < K1_TILE; ++rr)
+                                acc[rr][k2r] = complx_real_madd(acc[rr][k2r], g, a1[rr]);
                         }
                     }
                 }
@@ -302,11 +320,16 @@ extern "C" __global__ void PtPwToProxyMultiLevelKernel(const PwToProxyArgs<Real>
                 for (int k2r = 0; k2r < K2_TILE; ++k2r) {
                     const int k2 = k2_base + k2r;
                     if (k2 < n_order) {
-                        Real *__restrict__ out = proxy_d + k1 + k2 * n_order + k3 * n_order2;
-                        if (assign)
-                            *out = Real{2} * acc[k2r];
-                        else
-                            *out += Real{2} * acc[k2r];
+#pragma unroll
+                        for (int rr = 0; rr < K1_TILE; ++rr) {
+                            if (k1_ok[rr]) {
+                                Real *__restrict__ out = proxy_d + k1_base + rr + k2 * n_order + k3 * n_order2;
+                                if (assign)
+                                    *out = Real{2} * acc[rr][k2r];
+                                else
+                                    *out += Real{2} * acc[rr][k2r];
+                            }
+                        }
                     }
                 }
             }
