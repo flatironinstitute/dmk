@@ -11,6 +11,7 @@
 
 #include <cuda_runtime.h>
 
+#include <cstdlib>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -22,6 +23,17 @@ namespace {
 using jit::jit_real_name;
 using jit::JitCache;
 using jit::JitKey;
+
+// DMK_C2P_SRC_UNROLL: unroll factor for charge2proxy's source loop. An env knob and not a
+// tuning axis, like DMK_DIRECT_EVAL_UNROLL -- the grid is exhaustive and compiles inside the
+// benchmark. The loop body carries n_charge_dim accumulators, so unrolling a multi-component
+// kernel costs that many more live registers than a scalar one.
+int c2p_src_unroll(int n_charge_dim) {
+    const char *value = std::getenv("DMK_C2P_SRC_UNROLL");
+    if (value && *value)
+        return std::atoi(value);
+    return n_charge_dim > 1 ? 2 : 4;
+}
 
 // Spatial tiles ordered live-first, as a device array baked into the JIT source. The order
 // depends on the tile shape, which is a tuning parameter, so it cannot be a single uploaded
@@ -132,6 +144,7 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
                               {"J_TILE", p.at("J_TILE")},
                               {"K_TILE", p.at("K_TILE")},
                               {"BLOCK_SIZE", p.at("BLOCK_SIZE")},
+                              {"SRC_UNROLL", c2p_src_unroll(a.n_charge_dim)},
                               {"PROXY_BALL_R2", f.proxy_ball_r2}};
                 const std::string prelude =
                     c2p_tile_order_prelude(a.n_order, p.at("I_TILE"), p.at("J_TILE"), p.at("K_TILE"), f.proxy_ball_r2);
@@ -144,7 +157,8 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
 
             std::ostringstream tune_key;
             tune_key << "PtCharge2Proxy|real=" << jit_real_name<Real>() << "|n_order=" << a.n_order
-                     << "|n_charge_dim=" << a.n_charge_dim << "|ball_r2=" << f.proxy_ball_r2;
+                     << "|n_charge_dim=" << a.n_charge_dim << "|ball_r2=" << f.proxy_ball_r2
+                     << "|su=" << c2p_src_unroll(a.n_charge_dim);
             tune_key << "|src=" << jit::jit_source_hash("pt/charge2proxy.cu");
             const std::string tk = tune_key.str();
 
@@ -156,13 +170,28 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
                 const int n_order = f.n_order;
                 const int n_charge_dim = a.n_charge_dim;
 
-                const std::vector<TuningParameter> space{{"CHUNK", {128, 256, 512}},
+                // Shared is LD*(3*n_order + n_charge_dim)*sizeof(Real) with LD = CHUNK+2, so
+                // CHUNK is the only knob on the shared-memory occupancy cap; it buys blocks at
+                // the cost of staging more often.
+                const std::vector<TuningParameter> space{{"CHUNK", {64, 128, 256, 512}},
                                                          {"I_TILE", {3, 4, 6, 9, n_order}},
                                                          {"J_TILE", {2, 3, 4}},
                                                          {"K_TILE", {2, 3, 4}},
-                                                         {"BLOCK_SIZE", {128, 256}}};
-                const TuningParams defaults{
-                    {"CHUNK", 128}, {"I_TILE", 3}, {"J_TILE", 3}, {"K_TILE", 4}, {"BLOCK_SIZE", 128}};
+                                                         // Staging repeats
+                                                         // ceil(S_TILES/BLOCK_SIZE) times, so a
+                                                         // block wide enough to hold every tile
+                                                         // stages once, while a narrow one buys
+                                                         // occupancy instead.
+                                                         {"BLOCK_SIZE", {64, 128, 256, 512}}};
+                // The accumulator is n_charge_dim deep, so the tile that fits a scalar kernel
+                // busts the register bound below at 9-component Stresslet -- and defaults are
+                // what launch when autotuning is disabled.
+                const bool wide = n_charge_dim >= 9;
+                const TuningParams defaults{{"CHUNK", 128},
+                                            {"I_TILE", 3},
+                                            {"J_TILE", wide ? 2 : 3},
+                                            {"K_TILE", wide ? 2 : 4},
+                                            {"BLOCK_SIZE", 128}};
 
                 const auto constraint = [&, n_order, n_charge_dim](const TuningParams &p) {
                     const int ch = p.at("CHUNK"), it = p.at("I_TILE"), jt = p.at("J_TILE"), kt = p.at("K_TILE"),
@@ -171,7 +200,10 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
                         return false;
                     if (ch <= 0 || it <= 0 || it > n_order || jt <= 0 || jt > n_order || kt <= 0 || kt > n_order)
                         return false;
-                    if (it * jt * kt > 128)
+                    // One thread carries an accumulator per charge component, so the register cost
+                    // of a tile is n_charge_dim times its volume. Cannot be tightened below 128:
+                    // at n_charge_dim=9 the smallest tile in the space is already 108.
+                    if (it * jt * kt * n_charge_dim > 128)
                         return false;
                     return c2p_shared_bytes(n_order, n_charge_dim, ch, sizeof(Real)) <= max_shared;
                 };

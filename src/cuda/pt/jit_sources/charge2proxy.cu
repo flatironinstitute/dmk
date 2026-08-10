@@ -15,14 +15,17 @@ __device__ __forceinline__ c2p_real2<Real> c2p_load2(const Real *__restrict__ p)
     return reinterpret_cast<const c2p_real2<Real> *>(p)[0];
 }
 
-template <typename Real, int IT, int JT, int KT, int N, int LD>
+// The x/y/z basis factors depend only on the spatial tile, so the NC charge components share
+// one set of loads and only the charge itself varies with `d`: IT+JT+KT+NC shared loads per
+// source pair for 2*NC*IT*JT*KT FMAs.
+template <typename Real, int NC, int IT, int JT, int KT, int N, int LD>
 __device__ __forceinline__ void
-charge2proxy_accum_source_pair(Real (&acc)[KT][IT][JT], const Real *__restrict__ poly_x,
+charge2proxy_accum_source_pair(Real (&acc)[NC][KT][IT][JT], const Real *__restrict__ poly_x,
                                const Real *__restrict__ poly_y, const Real *__restrict__ poly_z,
-                               const Real *__restrict__ charges_s, int i0, int j0, int k0, int d, int s) {
+                               const Real *__restrict__ charges_s, int i0, int j0, int k0, int s) {
     c2p_real2<Real> xreg[IT] = {};
     c2p_real2<Real> yreg[JT] = {};
-    c2p_real2<Real> zqreg[KT] = {};
+    c2p_real2<Real> zreg[KT] = {};
 
 #pragma unroll
     for (int r = 0; r < IT; ++r) {
@@ -38,44 +41,47 @@ charge2proxy_accum_source_pair(Real (&acc)[KT][IT][JT], const Real *__restrict__
             yreg[c] = c2p_load2<Real>(poly_y + j * LD + s);
     }
 
-    const c2p_real2<Real> q = c2p_load2<Real>(charges_s + d * LD + s);
-
 #pragma unroll
     for (int kk = 0; kk < KT; ++kk) {
         const int k = k0 + kk;
-        if (k < N) {
-            const c2p_real2<Real> z = c2p_load2<Real>(poly_z + k * LD + s);
-            zqreg[kk].lo = z.lo * q.lo;
-            zqreg[kk].hi = z.hi * q.hi;
-        }
+        if (k < N)
+            zreg[kk] = c2p_load2<Real>(poly_z + k * LD + s);
     }
 
 #pragma unroll
-    for (int kk = 0; kk < KT; ++kk) {
-#pragma unroll
-        for (int c = 0; c < JT; ++c) {
-            const Real yzq0 = yreg[c].lo * zqreg[kk].lo;
-            const Real yzq1 = yreg[c].hi * zqreg[kk].hi;
+    for (int d = 0; d < NC; ++d) {
+        const c2p_real2<Real> q = c2p_load2<Real>(charges_s + d * LD + s);
 
 #pragma unroll
-            for (int r = 0; r < IT; ++r) {
-                Real a = acc[kk][r][c];
-                a = fma(xreg[r].lo, yzq0, a);
-                a = fma(xreg[r].hi, yzq1, a);
-                acc[kk][r][c] = a;
+        for (int kk = 0; kk < KT; ++kk) {
+            const Real zq0 = zreg[kk].lo * q.lo;
+            const Real zq1 = zreg[kk].hi * q.hi;
+
+#pragma unroll
+            for (int c = 0; c < JT; ++c) {
+                const Real yzq0 = yreg[c].lo * zq0;
+                const Real yzq1 = yreg[c].hi * zq1;
+
+#pragma unroll
+                for (int r = 0; r < IT; ++r) {
+                    Real a = acc[d][kk][r][c];
+                    a = fma(xreg[r].lo, yzq0, a);
+                    a = fma(xreg[r].hi, yzq1, a);
+                    acc[d][kk][r][c] = a;
+                }
             }
         }
     }
 }
 
-template <typename Real, int IT, int JT, int KT, int N, int LD>
+template <typename Real, int NC, int IT, int JT, int KT, int N, int LD>
 __device__ __forceinline__ void
-charge2proxy_accum_source_scalar(Real (&acc)[KT][IT][JT], const Real *__restrict__ poly_x,
+charge2proxy_accum_source_scalar(Real (&acc)[NC][KT][IT][JT], const Real *__restrict__ poly_x,
                                  const Real *__restrict__ poly_y, const Real *__restrict__ poly_z,
-                                 const Real *__restrict__ charges_s, int i0, int j0, int k0, int d, int s) {
+                                 const Real *__restrict__ charges_s, int i0, int j0, int k0, int s) {
     Real xreg[IT] = {Real{0}};
     Real yreg[JT] = {Real{0}};
-    Real zqreg[KT] = {Real{0}};
+    Real zreg[KT] = {Real{0}};
 
 #pragma unroll
     for (int r = 0; r < IT; ++r) {
@@ -91,24 +97,29 @@ charge2proxy_accum_source_scalar(Real (&acc)[KT][IT][JT], const Real *__restrict
             yreg[c] = poly_y[j * LD + s];
     }
 
-    const Real q = charges_s[d * LD + s];
-
 #pragma unroll
     for (int kk = 0; kk < KT; ++kk) {
         const int k = k0 + kk;
         if (k < N)
-            zqreg[kk] = poly_z[k * LD + s] * q;
+            zreg[kk] = poly_z[k * LD + s];
     }
 
 #pragma unroll
-    for (int kk = 0; kk < KT; ++kk) {
-#pragma unroll
-        for (int c = 0; c < JT; ++c) {
-            const Real yzq = yreg[c] * zqreg[kk];
+    for (int d = 0; d < NC; ++d) {
+        const Real q = charges_s[d * LD + s];
 
 #pragma unroll
-            for (int r = 0; r < IT; ++r) {
-                acc[kk][r][c] = fma(xreg[r], yzq, acc[kk][r][c]);
+        for (int kk = 0; kk < KT; ++kk) {
+            const Real zq = zreg[kk] * q;
+
+#pragma unroll
+            for (int c = 0; c < JT; ++c) {
+                const Real yzq = yreg[c] * zq;
+
+#pragma unroll
+                for (int r = 0; r < IT; ++r) {
+                    acc[d][kk][r][c] = fma(xreg[r], yzq, acc[d][kk][r][c]);
+                }
             }
         }
     }
@@ -148,7 +159,7 @@ extern "C" __global__ void PtCharge2ProxyKernel(dmk::cuda::Charge2ProxyArgs<Real
     constexpr int J_TILES = (N + J_TILE - 1) / J_TILE;
     constexpr int K_TILES = (N + K_TILE - 1) / K_TILE;
 
-    constexpr int NTILES = I_TILES * J_TILES * K_TILES * NC;
+    constexpr int S_TILES = I_TILES * J_TILES * K_TILES;
 
     extern __shared__ __align__(16) unsigned char shared_raw[];
 
@@ -176,92 +187,107 @@ extern "C" __global__ void PtCharge2ProxyKernel(dmk::cuda::Charge2ProxyArgs<Real
 
     Real *__restrict__ proxy = a.proxy_flat + a.proxy_offsets[center_box];
 
-    // This block is the only writer of center_box, and it runs before any tensorprod, so the
-    // first chunk to reach the store owns the slab and assigns. Uniform across the block: the
-    // loop bounds below depend only on the group, not the thread.
-    bool stored = false;
+    // Tile rounds enclose the source loop, so an accumulator survives every chunk of every
+    // source box and a coefficient reaches global memory once, as a plain store. The buffers
+    // are re-staged per round, which is what that costs.
+    //
+    // The round count is uniform and compile-time, rather than the tile index being the loop
+    // variable, so every thread reaches the barriers below: one past the last tile still
+    // stages and still syncs, it just accumulates nothing.
+    constexpr int TILE_ROUNDS = (S_TILES + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-    for (int sbi = 0; sbi < n_src_boxes; ++sbi) {
-        const int sb = a.src_boxes_flat[sb_off + sbi];
-        const int n_src = a.src_counts[sb];
+    for (int round = 0; round < TILE_ROUNDS; ++round) {
+        const int tile = round * BLOCK_SIZE + threadIdx.x;
+        const bool has_tile = tile < S_TILES;
 
-        if (n_src == 0)
-            continue;
+        // The basis is radially compact to tolerance, so coefficients outside a ball in
+        // (i,j,k) carry nothing. kTileOrder puts the live tiles first, so this test is uniform
+        // across a warp; a dead tile skips the source accumulation but still stores, because
+        // the buffer has no memset and relies on every coefficient having a writer that assigns.
+        const bool tile_live = has_tile && tile < N_LIVE_SPATIAL_TILES;
 
-        const Real *__restrict__ r_src = a.r_src + a.r_src_offsets[sb];
-        const Real *__restrict__ charge = a.charge + a.charge_offsets[sb];
+        int idx = has_tile ? kTileOrder[tile] : 0;
+        const int it = idx % I_TILES;
+        idx /= I_TILES;
+        const int jt = idx % J_TILES;
+        idx /= J_TILES;
+        const int kt = idx;
 
-        for (int s_base = 0; s_base < n_src; s_base += CHUNK) {
-            const int n_in_chunk = (s_base + CHUNK > n_src) ? (n_src - s_base) : CHUNK;
+        const int i0 = it * I_TILE;
+        const int j0 = jt * J_TILE;
+        const int k0 = kt * K_TILE;
 
-            for (int s = threadIdx.x; s < n_in_chunk; s += blockDim.x) {
-                const int sp = s_base + s;
-                const Real x = (r_src[sp * DIM + 0] - cx) * scale;
-                const Real y = (r_src[sp * DIM + 1] - cy) * scale;
-                const Real z = (r_src[sp * DIM + 2] - cz) * scale;
-                chebyshev_fill_strided<Real>(x, poly_x + s, N, LD);
-                chebyshev_fill_strided<Real>(y, poly_y + s, N, LD);
-                chebyshev_fill_strided<Real>(z, poly_z + s, N, LD);
-            }
+        Real acc[NC][K_TILE][I_TILE][J_TILE] = {};
 
-            for (int t = threadIdx.x; t < NC * n_in_chunk; t += blockDim.x) {
-                const int s = t / NC;
-                const int d = t - s * NC;
-                const int sp = s_base + s;
-                charges_s[d * LD + s] = charge[d + sp * NC];
-            }
+        // Every bound here is group data, never the thread, so all threads run the same number
+        // of iterations and reach the barrier below the same number of times.
+        for (int sbi = 0; sbi < n_src_boxes; ++sbi) {
+            const int sb = a.src_boxes_flat[sb_off + sbi];
+            const int n_src = a.src_counts[sb];
 
-            __syncthreads();
+            if (n_src == 0)
+                continue;
 
-            constexpr int S_TILES = I_TILES * J_TILES * K_TILES;
+            const Real *__restrict__ r_src = a.r_src + a.r_src_offsets[sb];
+            const Real *__restrict__ charge = a.charge + a.charge_offsets[sb];
 
-            for (int tile = threadIdx.x; tile < NTILES; tile += blockDim.x) {
-                const int s = tile % S_TILES;
-                const int d = tile / S_TILES;
-                int idx = kTileOrder[s];
-                const int it = idx % I_TILES;
-                idx /= I_TILES;
-                const int jt = idx % J_TILES;
-                idx /= J_TILES;
-                const int kt = idx;
+            for (int s_base = 0; s_base < n_src; s_base += CHUNK) {
+                const int n_in_chunk = (s_base + CHUNK > n_src) ? (n_src - s_base) : CHUNK;
 
-                const int i0 = it * I_TILE;
-                const int j0 = jt * J_TILE;
-                const int k0 = kt * K_TILE;
+                for (int s = threadIdx.x; s < n_in_chunk; s += blockDim.x) {
+                    const int sp = s_base + s;
+                    const Real x = (r_src[sp * DIM + 0] - cx) * scale;
+                    const Real y = (r_src[sp * DIM + 1] - cy) * scale;
+                    const Real z = (r_src[sp * DIM + 2] - cz) * scale;
+                    chebyshev_fill_strided<Real>(x, poly_x + s, N, LD);
+                    chebyshev_fill_strided<Real>(y, poly_y + s, N, LD);
+                    chebyshev_fill_strided<Real>(z, poly_z + s, N, LD);
+                }
 
-                // The basis is radially compact to tolerance, so coefficients outside a ball in
-                // (i,j,k) carry nothing. kTileOrder puts the live tiles first, so this test is
-                // uniform across a warp; a dead tile skips the source accumulation but still
-                // stores, because the buffer has no memset and relies on every coefficient having
-                // a writer that assigns.
-                const bool tile_live = s < N_LIVE_SPATIAL_TILES;
+                for (int t = threadIdx.x; t < NC * n_in_chunk; t += blockDim.x) {
+                    const int s = t / NC;
+                    const int d = t - s * NC;
+                    const int sp = s_base + s;
+                    charges_s[d * LD + s] = charge[d + sp * NC];
+                }
 
-                Real acc[K_TILE][I_TILE][J_TILE] = {Real{0}};
+                __syncthreads();
 
-                if (!tile_live) {
-                    // fall through to the store with a zero accumulator
-                } else if (n_in_chunk == CHUNK) {
-#pragma unroll 4
-                    for (int s = 0; s < CHUNK_PAIR_END; s += S_VEC) {
-                        charge2proxy_accum_source_pair<Real, I_TILE, J_TILE, K_TILE, N, LD>(
-                            acc, poly_x, poly_y, poly_z, charges_s, i0, j0, k0, d, s);
-                    }
-                    if constexpr ((CHUNK % S_VEC) != 0) {
-                        charge2proxy_accum_source_scalar<Real, I_TILE, J_TILE, K_TILE, N, LD>(
-                            acc, poly_x, poly_y, poly_z, charges_s, i0, j0, k0, d, CHUNK_PAIR_END);
-                    }
-                } else {
-                    int s = 0;
-                    for (; s + 1 < n_in_chunk; s += S_VEC) {
-                        charge2proxy_accum_source_pair<Real, I_TILE, J_TILE, K_TILE, N, LD>(
-                            acc, poly_x, poly_y, poly_z, charges_s, i0, j0, k0, d, s);
-                    }
-                    if (s < n_in_chunk) {
-                        charge2proxy_accum_source_scalar<Real, I_TILE, J_TILE, K_TILE, N, LD>(
-                            acc, poly_x, poly_y, poly_z, charges_s, i0, j0, k0, d, s);
+                if (tile_live) {
+                    if (n_in_chunk == CHUNK) {
+#pragma unroll SRC_UNROLL
+                        for (int s = 0; s < CHUNK_PAIR_END; s += S_VEC) {
+                            charge2proxy_accum_source_pair<Real, NC, I_TILE, J_TILE, K_TILE, N, LD>(
+                                acc, poly_x, poly_y, poly_z, charges_s, i0, j0, k0, s);
+                        }
+                        if constexpr ((CHUNK % S_VEC) != 0) {
+                            charge2proxy_accum_source_scalar<Real, NC, I_TILE, J_TILE, K_TILE, N, LD>(
+                                acc, poly_x, poly_y, poly_z, charges_s, i0, j0, k0, CHUNK_PAIR_END);
+                        }
+                    } else {
+                        int s = 0;
+                        for (; s + 1 < n_in_chunk; s += S_VEC) {
+                            charge2proxy_accum_source_pair<Real, NC, I_TILE, J_TILE, K_TILE, N, LD>(
+                                acc, poly_x, poly_y, poly_z, charges_s, i0, j0, k0, s);
+                        }
+                        if (s < n_in_chunk) {
+                            charge2proxy_accum_source_scalar<Real, NC, I_TILE, J_TILE, K_TILE, N, LD>(
+                                acc, poly_x, poly_y, poly_z, charges_s, i0, j0, k0, s);
+                        }
                     }
                 }
 
+                // Guards the staged chunk against the next chunk's overwrite, and -- because it
+                // is the last shared access of the round -- against the next round's staging too.
+                __syncthreads();
+            }
+        }
+
+        // Exactly one writer per coefficient, so this assigns and the buffer needs no memset.
+        // A dead tile stores its zero accumulator for the same reason.
+        if (has_tile) {
+#pragma unroll
+            for (int d = 0; d < NC; ++d) {
 #pragma unroll
                 for (int kk = 0; kk < K_TILE; ++kk) {
                     const int k = k0 + kk;
@@ -273,25 +299,14 @@ extern "C" __global__ void PtCharge2ProxyKernel(dmk::cuda::Charge2ProxyArgs<Real
 #pragma unroll
                                 for (int c = 0; c < J_TILE; ++c) {
                                     const int j = j0 + c;
-                                    if (j < N) {
-                                        Real *__restrict__ out = proxy + i + j * N + k * N2 + d * N3;
-                                        // Unused-result atomicAdd lowers to a fire-and-forget RED
-                                        // that issues like a store; `*out +=` would stall on a
-                                        // dependent load of a value only this block ever writes.
-                                        if (stored)
-                                            atomicAdd(out, acc[kk][r][c]);
-                                        else
-                                            *out = acc[kk][r][c];
-                                    }
+                                    if (j < N)
+                                        proxy[i + j * N + k * N2 + d * N3] = acc[d][kk][r][c];
                                 }
                             }
                         }
                     }
                 }
             }
-
-            __syncthreads();
-            stored = true;
         }
     }
 }
