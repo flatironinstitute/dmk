@@ -833,7 +833,8 @@ void DMKPtTree<Real, DIM>::build_direct_work_lists() {
     direct_work.clear();
     direct_work.reserve(n_boxes());
     for (int i_box = 0; i_box < n_boxes(); ++i_box) {
-        if (is_global_leaf[i_box] && !node_attr[i_box].Ghost && nlist1_[i_box] > 0)
+        if (is_global_leaf[i_box] && !node_attr[i_box].Ghost && nlist1_[i_box] > 0 &&
+            src_counts_owned[i_box] + trg_counts_owned[i_box] > 0)
             direct_work.push_back(i_box);
     }
 
