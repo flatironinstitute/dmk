@@ -113,8 +113,7 @@ extern "C" __global__ void PtEvalTargetsByBoxKernel(EvalTargetsArgs<Real> a) {
         }
         const Real *__restrict__ c_src = SMEM_COEFFS ? s_cd : cd_g;
 
-        const int target_stride = blockDim.x * TARGETS_PER_THREAD;
-        for (int t_base = threadIdx.x; t_base < n_target; t_base += target_stride) {
+        for (int t_base = threadIdx.x; t_base * TARGETS_PER_THREAD < n_target; t_base += blockDim.x) {
             bool active[TARGETS_PER_THREAD];
             int target_idx[TARGETS_PER_THREAD];
             Real x[TARGETS_PER_THREAD];
@@ -124,7 +123,7 @@ extern "C" __global__ void PtEvalTargetsByBoxKernel(EvalTargetsArgs<Real> a) {
 
 #pragma unroll
             for (int q = 0; q < TARGETS_PER_THREAD; ++q) {
-                const int t = t_base + q * blockDim.x;
+                const int t = t_base * TARGETS_PER_THREAD + q;
                 active[q] = t < n_target;
                 target_idx[q] = t;
 
