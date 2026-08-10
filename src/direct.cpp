@@ -348,7 +348,16 @@ std::vector<std::vector<Real>> get_stokeslet_local_correction_coeffs(int dim, in
             1.0);
     };
 
-    return {coeffs_cache.get<Real>(n_digits, beta, fit_diag), coeffs_cache.get<Real>(n_digits, beta, fit_offd)};
+    // We actually evaluate 0.5 - P(x). Bake this into the polynomial
+    auto fold_half = [](std::vector<Real> c) {
+        for (auto &v : c)
+            v = -v;
+        c[0] += Real{0.5};
+        return c;
+    };
+
+    return {fold_half(coeffs_cache.get<Real>(n_digits, beta, fit_diag)),
+            fold_half(coeffs_cache.get<Real>(n_digits, beta, fit_offd))};
 }
 
 template <typename Real>

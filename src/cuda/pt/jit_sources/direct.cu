@@ -376,12 +376,11 @@ struct StokesletPolyEvaluator3DCuda {
             if (!(R2 < d2max))
                 return false;
         }
-        const Real half = Real{0.5};
         const Real Rinv = dmk_rsqrt(R2);
         const Real Rinv3 = Rinv * Rinv * Rinv;
         const Real xmapped = (R2 * Rinv + cen) * rsc;
-        const Real fdiag = (half - horner_const<CoeffsDiag>(xmapped)) * Rinv;
-        const Real foffd = (half - horner_const<CoeffsOffdiag>(xmapped)) * Rinv3;
+        const Real fdiag = horner_const<CoeffsDiag>(xmapped) * Rinv;
+        const Real foffd = horner_const<CoeffsOffdiag>(xmapped) * Rinv3;
         for (int i = 0; i < 3; ++i)
             for (int j = 0; j < 3; ++j) {
                 Real val = foffd * dX[j] * dX[i];
@@ -473,12 +472,11 @@ direct_eval_accumulate(const StokesletPolyEvaluator3DCuda<CoeffsDiag, CoeffsOffd
             return;
     }
 
-    const Real half = Real{0.5};
     const Real Rinv = dmk_rsqrt(R2);
     const Real Rinv3 = Rinv * Rinv * Rinv;
     const Real xmapped = (R2 * Rinv + evaluator.cen) * evaluator.rsc;
-    const Real fdiag = (half - horner_const<CoeffsDiag>(xmapped)) * Rinv;
-    const Real foffd = (half - horner_const<CoeffsOffdiag>(xmapped)) * Rinv3;
+    const Real fdiag = horner_const<CoeffsDiag>(xmapped) * Rinv;
+    const Real foffd = horner_const<CoeffsOffdiag>(xmapped) * Rinv3;
     const Real rdotv = dX[0] * vs[0] + dX[1] * vs[1] + dX[2] * vs[2];
     const Real off = foffd * rdotv;
 

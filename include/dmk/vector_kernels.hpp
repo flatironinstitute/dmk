@@ -1349,12 +1349,11 @@ struct StokesletPolyEvaluator3D {
                                       const vector_type (&dX)[SPATIAL_DIM]) const {
         const vector_type R2 = FMA(dX[0], dX[0], FMA(dX[1], dX[1], dX[2] * dX[2]));
         const auto mask = (R2 > thresh2_vec) & (R2 < d2max_vec);
-        const vector_type half = Real{0.5};
         const vector_type Rinv = my_approx_rsqrt(R2, n_digits);
         const vector_type Rinv3 = Rinv * Rinv * Rinv;
         const vector_type xtmp = FMA(R2, Rinv, cen_vec) * rsc_vec;
-        const vector_type fdiag = (half - horner(xtmp, coeffs_diag, n_coeffs_diag)) * Rinv;
-        const vector_type foffd = (half - horner(xtmp, coeffs_offdiag, n_coeffs_offdiag)) * Rinv3;
+        const vector_type fdiag = horner(xtmp, coeffs_diag, n_coeffs_diag) * Rinv;
+        const vector_type foffd = horner(xtmp, coeffs_offdiag, n_coeffs_offdiag) * Rinv3;
 
         for (int i = 0; i < KERNEL_INPUT_DIM; ++i) {
             for (int j = 0; j < KERNEL_OUTPUT_DIM; ++j) {
