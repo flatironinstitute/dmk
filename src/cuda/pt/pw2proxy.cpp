@@ -20,13 +20,15 @@ using jit::jit_real_name;
 using jit::JitCache;
 using jit::JitKey;
 
-std::size_t pw2proxy_shared_bytes(int max_n_pw, int max_n_order, int k3_tile, std::size_t sizeof_real) {
+std::size_t pw2proxy_shared_bytes(int max_n_pw, int max_n_pw2, int max_n_order, int k3_tile, std::size_t sizeof_real) {
     const int max_k_pad = ((max_n_order + 3) / 4) * 4;
     const int max_phase1_cols = max_n_pw * max_n_pw;
     const std::size_t complex_count = std::size_t(max_n_pw) * std::size_t(max_k_pad) +
                                       std::size_t(k3_tile) * std::size_t(max_phase1_cols) +
                                       std::size_t(k3_tile) * std::size_t(max_n_order) * std::size_t(max_n_pw);
-    return complex_count * (2 * sizeof_real);
+    // The unpacked pencil table leads the block, as int4 so it stays 16-byte aligned.
+    const std::size_t pencil_bytes = std::size_t(max_n_pw) * max_n_pw2 * 4 * sizeof(int);
+    return pencil_bytes + complex_count * (2 * sizeof_real);
 }
 
 } // namespace
@@ -36,11 +38,12 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
                      cudaStream_t stream, std::string_view variant) {
     if (args_h.empty())
         return;
-    int max_boxes = 0, max_n_order = 0, max_n_pw = 0;
+    int max_boxes = 0, max_n_order = 0, max_n_pw = 0, max_n_pw2 = 0;
     for (const auto &a : args_h) {
         max_boxes = std::max(max_boxes, a.n_boxes_at_level);
         max_n_order = std::max(max_n_order, a.n_order);
         max_n_pw = std::max(max_n_pw, a.n_pw);
+        max_n_pw2 = std::max(max_n_pw2, a.n_pw2);
     }
     if (max_boxes == 0)
         return;
@@ -68,7 +71,8 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
                       {"BLOCK_SIZE", p.at("BLOCK_SIZE")}};
         auto kernel = cache.get_kernel_from_source(
             key, [&] { return make_stage_source("pt/pw2proxy.cu", key, "", "PtPwToProxy"); });
-        const std::size_t shared = pw2proxy_shared_bytes(max_n_pw, max_n_order, p.at("K3_TILE"), sizeof(Real));
+        const std::size_t shared =
+            pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, p.at("K3_TILE"), sizeof(Real));
         set_max_dynamic_smem(*kernel, shared);
         const dmk::cuda::PwToProxyArgs<Real> *dev_args = d_args.data();
         int n = n_args;
@@ -102,7 +106,7 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
             return false;
         if (p.at("COL_REG") <= 0 || p.at("K2_TILE") <= 0 || p.at("K3_TILE") <= 0 || p.at("KR_TILE") <= 0)
             return false;
-        return pw2proxy_shared_bytes(max_n_pw, max_n_order, p.at("K3_TILE"), sizeof(Real)) <= max_shared;
+        return pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, p.at("K3_TILE"), sizeof(Real)) <= max_shared;
     };
 
     autotuned_launch<Real>(tk, "PtPwToProxyMultiLevelKernel", space, defaults, constraint, launch_one, proxy_flat,

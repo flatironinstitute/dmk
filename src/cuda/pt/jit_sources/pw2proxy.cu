@@ -39,17 +39,6 @@ __device__ __forceinline__ Real complx_real_madd(Real acc, const complx<Real> a,
     return acc;
 }
 
-// A pencil is the m1 run at fixed (m2, m3). `pencil_slots` holds the slot m1 == 0 would land on,
-// then the live m1 range as lo | hi<<16. A null table means the slab is in cube order.
-__device__ __forceinline__ int pencil_slot(const int *__restrict__ pencil, int p, int m1, int cube_flat) {
-    if (!pencil)
-        return cube_flat;
-    const int2 pv = reinterpret_cast<const int2 *>(pencil)[p];
-    const int lo = pv.y & 0xffff;
-    const int hi = pv.y >> 16;
-    return (m1 >= lo && m1 < hi) ? pv.x + m1 : -1;
-}
-
 // KERNEL_START
 
 extern "C" __global__ void PtPwToProxyMultiLevelKernel(const PwToProxyArgs<Real> *__restrict__ args, int n_args) {
@@ -89,7 +78,16 @@ extern "C" __global__ void PtPwToProxyMultiLevelKernel(const PwToProxyArgs<Real>
 
     extern __shared__ __align__(16) unsigned char shared_raw[];
 
-    complx<Real> *__restrict__ smem = reinterpret_cast<complx<Real> *>(shared_raw);
+    // The pencil table is decoded once per block into shared, already unpacked. In the m3 loop it
+    // was a *global* load whose result the data load's address depends on -- two dependent global
+    // round-trips per mode, which is what put the long-scoreboard stalls on the multiply -- plus a
+    // shift and a mask to unpack, recomputed on all 18 (charge dim, k3 tile) passes even though a
+    // column's slot never changes. Unpacked here, the chain is one shared load deep and the shift
+    // and mask are gone from the inner loop entirely.
+    const int n_pencil = n_pw * n_pw2;
+    int4 *__restrict__ s_pencil = reinterpret_cast<int4 *>(shared_raw);
+
+    complx<Real> *__restrict__ smem = reinterpret_cast<complx<Real> *>(s_pencil + n_pencil);
 
     complx<Real> *__restrict__ s_A_T = smem;
     complx<Real> *__restrict__ s_F = s_A_T + n_pw * k_pad;
@@ -104,6 +102,26 @@ extern "C" __global__ void PtPwToProxyMultiLevelKernel(const PwToProxyArgs<Real>
             z = complx_load(a.pw2poly, k * n_pw + m);
 
         s_A_T[idx] = z;
+    }
+
+    // A null table means cube order; writing that case out as an identity run keeps one code path
+    // in the inner loop.
+    for (int p = threadIdx.x; p < n_pencil; p += blockDim.x) {
+        int4 v;
+        if (pencil) {
+            const int2 pv = reinterpret_cast<const int2 *>(pencil)[p];
+            v.x = pv.x;
+            v.y = pv.y & 0xffff;
+            v.z = pv.y >> 16;
+        } else {
+            const int m2 = p % n_pw;
+            const int m3 = p / n_pw;
+            v.x = m2 * n_pw + m3 * phase1_cols;
+            v.y = 0;
+            v.z = n_pw;
+        }
+        v.w = 0;
+        s_pencil[p] = v;
     }
 
     __syncthreads();
@@ -146,10 +164,9 @@ extern "C" __global__ void PtPwToProxyMultiLevelKernel(const PwToProxyArgs<Real>
 #pragma unroll
                     for (int cr = 0; cr < COL_REG; ++cr) {
                         const int xy = xy_base + cr * blockDim.x;
-                        const int slot =
-                            (xy < phase1_cols)
-                                ? pencil_slot(pencil, col_m2[cr] + m3 * n_pw, col_m1[cr], xy + m3 * phase1_cols)
-                                : -1;
+                        const int4 pv = s_pencil[col_m2[cr] + m3 * n_pw];
+                        const int m1 = col_m1[cr];
+                        const int slot = (xy < phase1_cols && m1 >= pv.y && m1 < pv.z) ? pv.x + m1 : -1;
                         if (slot >= 0) {
                             p[cr] = complx_load(pw_in_d, slot);
                             p[cr].r *= scale;
