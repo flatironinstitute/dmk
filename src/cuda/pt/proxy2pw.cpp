@@ -58,6 +58,8 @@ void launch_proxy2pw(std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, cudaStr
     const int ff2_copies = (a0.multiply_mode == 2) ? a0.n_charge_dim : 1;
 
     auto launch_one = [&](const TuningParams &p, cudaStream_t st) {
+        const std::size_t shared = p2pw_shared_bytes(max_n_order, max_n_pw, p.at("Z_TILE"), ff2_copies, sizeof(Real));
+
         JitKey key;
         key.name = "PtProxy2PwMultiLevelKernel";
         key.real = jit_real_name<Real>();
@@ -72,10 +74,10 @@ void launch_proxy2pw(std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, cudaStr
                       {"PROXY2PW_Z_TILE", p.at("Z_TILE")},
                       {"PROXY2PW_I_TILE", p.at("I_TILE")},
                       {"PROXY2PW_M1_TILE", p.at("M1_TILE")},
-                      {"PROXY2PW_M2_TILE", p.at("M2_TILE")}};
+                      {"PROXY2PW_M2_TILE", p.at("M2_TILE")},
+                      {"MIN_BLOCKS", resident_blocks_per_sm(shared, p.at("BLOCK_SIZE"))}};
         auto kernel = cache.get_kernel_from_source(
             key, [&] { return make_stage_source("pt/proxy2pw.cu", key, "", "PtProxy2Pw"); });
-        const std::size_t shared = p2pw_shared_bytes(max_n_order, max_n_pw, p.at("Z_TILE"), ff2_copies, sizeof(Real));
         set_max_dynamic_smem(*kernel, shared);
         const dmk::cuda::Proxy2PwArgs<Real> *dev_args = d_args.data();
         int n = n_args;

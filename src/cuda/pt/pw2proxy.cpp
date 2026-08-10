@@ -55,6 +55,11 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
     const auto a0 = args_h[0];
 
     auto launch_one = [&](const TuningParams &p, cudaStream_t st) {
+        const std::size_t shared =
+            pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, p.at("K3_TILE"), sizeof(Real));
+
+        const int min_blocks = resident_blocks_per_sm(shared, p.at("BLOCK_SIZE"));
+
         JitKey key;
         key.name = "PtPwToProxyMultiLevelKernel";
         key.real = jit_real_name<Real>();
@@ -64,11 +69,10 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
                       {"N_PW2", a0.n_pw2},          {"N_CHARGE_DIM", a0.n_charge_dim},
                       {"COL_REG", p.at("COL_REG")}, {"K1_TILE", p.at("K1_TILE")},
                       {"K2_TILE", p.at("K2_TILE")}, {"K3_TILE", p.at("K3_TILE")},
-                      {"KR_TILE", p.at("KR_TILE")}, {"BLOCK_SIZE", p.at("BLOCK_SIZE")}};
+                      {"KR_TILE", p.at("KR_TILE")}, {"BLOCK_SIZE", p.at("BLOCK_SIZE")},
+                      {"MIN_BLOCKS", min_blocks}};
         auto kernel = cache.get_kernel_from_source(
             key, [&] { return make_stage_source("pt/pw2proxy.cu", key, "", "PtPwToProxy"); });
-        const std::size_t shared =
-            pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, p.at("K3_TILE"), sizeof(Real));
         set_max_dynamic_smem(*kernel, shared);
         const dmk::cuda::PwToProxyArgs<Real> *dev_args = d_args.data();
         int n = n_args;

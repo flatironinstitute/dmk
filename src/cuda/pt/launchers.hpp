@@ -61,6 +61,13 @@ const cudaDeviceProp &device_prop();
 /// Max opt-in dynamic shared memory per block for the current device.
 std::size_t device_max_shared_bytes();
 
+/// Blocks per SM a launch can reach given its shared-memory footprint and block
+/// size. Feed this to `__launch_bounds__` as a baked parameter on any kernel
+/// whose occupancy shared memory caps: left to itself ptxas budgets registers
+/// for an occupancy it will never get and pays for the shortfall by serializing
+/// loads.
+int resident_blocks_per_sm(std::size_t shared_bytes, int block_size);
+
 /// Tune `launch_one` over `space` then run the winning config on `stream`.
 /// For additive kernels (whose re-runs corrupt their output), pass the output
 /// buffer base + element count so the tuner snapshots/restores it around each

@@ -41,7 +41,8 @@ __device__ __forceinline__ Real complx_real_madd(Real acc, const complx<Real> a,
 
 // KERNEL_START
 
-extern "C" __global__ void PtPwToProxyMultiLevelKernel(const PwToProxyArgs<Real> *__restrict__ args, int n_args) {
+extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
+    PtPwToProxyMultiLevelKernel(const PwToProxyArgs<Real> *__restrict__ args, int n_args) {
     const int box_idx = blockIdx.x;
     const int arg_idx = blockIdx.y;
 
@@ -141,62 +142,75 @@ extern "C" __global__ void PtPwToProxyMultiLevelKernel(const PwToProxyArgs<Real>
             const int k3_count = (k3_base + K3_TILE <= n_order) ? K3_TILE : (n_order - k3_base);
 
             // Phase 1: s_F(k3r, m1, m2) = sum_m3 halve(m3) * pw(m1, m2, m3) * pw2poly(k3, m3).
-            for (int xy_base = threadIdx.x; xy_base < phase1_cols; xy_base += blockDim.x * COL_REG) {
-                complx<Real> acc[K3_TILE][COL_REG];
-#pragma unroll
-                for (int k3r = 0; k3r < K3_TILE; ++k3r) {
-#pragma unroll
-                    for (int cr = 0; cr < COL_REG; ++cr)
-                        acc[k3r][cr] = complx_zero<Real>();
-                }
+            //
+            // m3 runs outermost, over an accumulator that spans every column round a thread
+            // owns. The pw2poly column is block-uniform and column-independent, so hoisting it
+            // above the round loop fetches it once per m3 instead of once per m3 per round.
+            // The round count is uniform and compile-time, which is what lets the accumulator
+            // and the column indices stay in registers; a round past the last column still
+            // runs, it just contributes zero.
+            constexpr int P1_ROUNDS = (phase1_cols + BLOCK_SIZE * COL_REG - 1) / (BLOCK_SIZE * COL_REG);
 
-                // Fixed across the m3 loop below.
-                int col_m1[COL_REG], col_m2[COL_REG];
+            complx<Real> acc[P1_ROUNDS][K3_TILE][COL_REG];
+            int col_m1[P1_ROUNDS][COL_REG], col_m2[P1_ROUNDS][COL_REG];
+#pragma unroll
+            for (int rd = 0; rd < P1_ROUNDS; ++rd) {
 #pragma unroll
                 for (int cr = 0; cr < COL_REG; ++cr) {
-                    const int xy = xy_base + cr * blockDim.x;
-                    col_m1[cr] = xy % n_pw;
-                    col_m2[cr] = xy / n_pw;
+                    const int xy = threadIdx.x + rd * (BLOCK_SIZE * COL_REG) + cr * BLOCK_SIZE;
+                    col_m1[rd][cr] = xy % n_pw;
+                    // Clamped so a dead round cannot walk the pencil table off its end; its
+                    // column is masked out below regardless of which entry it read.
+                    col_m2[rd][cr] = min(xy / n_pw, n_pw - 1);
+#pragma unroll
+                    for (int k3r = 0; k3r < K3_TILE; ++k3r)
+                        acc[rd][k3r][cr] = complx_zero<Real>();
+                }
+            }
+
+            for (int m3 = 0; m3 < n_pw2; ++m3) {
+                const Real scale = (m3 >= n_pw_half) ? Real{0.5} : Real{1};
+
+                complx<Real> a3[K3_TILE];
+#pragma unroll
+                for (int k3r = 0; k3r < K3_TILE; ++k3r) {
+                    const int k3 = k3_base + k3r;
+                    a3[k3r] = (k3 < n_order) ? s_A_T[m3 * k_pad + k3] : complx_zero<Real>();
                 }
 
-                for (int m3 = 0; m3 < n_pw2; ++m3) {
-                    complx<Real> p[COL_REG];
-                    const Real scale = (m3 >= n_pw_half) ? Real{0.5} : Real{1};
+#pragma unroll
+                for (int rd = 0; rd < P1_ROUNDS; ++rd) {
 #pragma unroll
                     for (int cr = 0; cr < COL_REG; ++cr) {
-                        const int xy = xy_base + cr * blockDim.x;
-                        const int4 pv = s_pencil[col_m2[cr] + m3 * n_pw];
-                        const int m1 = col_m1[cr];
+                        const int xy = threadIdx.x + rd * (BLOCK_SIZE * COL_REG) + cr * BLOCK_SIZE;
+                        const int4 pv = s_pencil[col_m2[rd][cr] + m3 * n_pw];
+                        const int m1 = col_m1[rd][cr];
                         const int slot = (xy < phase1_cols && m1 >= pv.y && m1 < pv.z) ? pv.x + m1 : -1;
+
+                        complx<Real> p = complx_zero<Real>();
                         if (slot >= 0) {
-                            p[cr] = complx_load(pw_in_d, slot);
-                            p[cr].r *= scale;
-                            p[cr].i *= scale;
-                        } else {
-                            p[cr] = complx_zero<Real>();
+                            p = complx_load(pw_in_d, slot);
+                            p.r *= scale;
+                            p.i *= scale;
                         }
-                    }
 
 #pragma unroll
-                    for (int k3r = 0; k3r < K3_TILE; ++k3r) {
-                        const int k3 = k3_base + k3r;
-                        complx<Real> a3 = complx_zero<Real>();
-                        if (k3 < n_order)
-                            a3 = s_A_T[m3 * k_pad + k3];
-#pragma unroll
-                        for (int cr = 0; cr < COL_REG; ++cr)
-                            complx_madd(acc[k3r][cr], a3, p[cr]);
+                        for (int k3r = 0; k3r < K3_TILE; ++k3r)
+                            complx_madd(acc[rd][k3r][cr], a3[k3r], p);
                     }
                 }
+            }
 
+#pragma unroll
+            for (int rd = 0; rd < P1_ROUNDS; ++rd) {
 #pragma unroll
                 for (int k3r = 0; k3r < K3_TILE; ++k3r) {
                     if (k3r < k3_count) {
 #pragma unroll
                         for (int cr = 0; cr < COL_REG; ++cr) {
-                            const int xy = xy_base + cr * blockDim.x;
+                            const int xy = threadIdx.x + rd * (BLOCK_SIZE * COL_REG) + cr * BLOCK_SIZE;
                             if (xy < phase1_cols)
-                                s_F[k3r * phase1_cols + xy] = acc[k3r][cr];
+                                s_F[k3r * phase1_cols + xy] = acc[rd][k3r][cr];
                         }
                     }
                 }

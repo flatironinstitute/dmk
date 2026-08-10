@@ -5,6 +5,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -62,6 +63,13 @@ const cudaDeviceProp &device_prop() {
 std::size_t device_max_shared_bytes() {
     const cudaDeviceProp &p = device_prop();
     return p.sharedMemPerBlockOptin > 0 ? std::size_t(p.sharedMemPerBlockOptin) : std::size_t(p.sharedMemPerBlock);
+}
+
+int resident_blocks_per_sm(std::size_t shared_bytes, int block_size) {
+    const cudaDeviceProp &p = device_prop();
+    const int by_shared =
+        shared_bytes ? int(std::size_t(p.sharedMemPerMultiprocessor) / shared_bytes) : p.maxBlocksPerMultiProcessor;
+    return std::max(1, std::min(by_shared, p.maxThreadsPerMultiProcessor / block_size));
 }
 
 void set_max_dynamic_smem(const jit::JitKernel &kernel, std::size_t shared_bytes) {

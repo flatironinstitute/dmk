@@ -56,7 +56,8 @@ __device__ __forceinline__ int pencil_slot(const int *__restrict__ pencil, int p
 
 // KERNEL_START
 
-extern "C" __global__ void PtProxy2PwMultiLevelKernel(const Proxy2PwArgs<Real> *__restrict__ a_multilevel, int n_args) {
+extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
+    PtProxy2PwMultiLevelKernel(const Proxy2PwArgs<Real> *__restrict__ a_multilevel, int n_args) {
     using Complex = p2pw_complex<Real>;
 
     const int box_idx = blockIdx.x;
