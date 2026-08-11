@@ -1265,13 +1265,12 @@ struct PbcPrecision {
     double tol_pot;
     double tol_grad;
 };
-// 9 and 12 digits are omitted deliberately, not for convenience: the GPU proxy2pw kernel
-// has no feasible tuning config at the resulting n_order/n_pw (known high-precision
-// autotune limit), and it fails identically without periodic. Tolerances match the CPU
-// PBC cases above, which use the same kernels and the same references.
+
 const PbcPrecision pbc_precisions[] = {
     {3, 1e-3, 1e-2, 1e-1},
     {6, 1e-6, 1e-4, 1e-3},
+    {9, 1e-9, 1e-7, 1e-6},
+    {12, 1e-12, 1e-10, 1e-9},
 };
 
 // n_per_leaf > n_src collapses the tree to a single box, where list1 holds the root 3^DIM

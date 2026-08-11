@@ -426,8 +426,10 @@ std::vector<std::vector<Real>> get_local_correction_coeffs(dmk_ikernel kernel, i
         break;
     case DMK_STOKESLET:
         return get_stokeslet_local_correction_coeffs<Real>(n_dim, n_digits, beta);
-    case DMK_STRESSLET:
-        return get_stresslet_local_correction_coeffs<Real>(n_dim, n_digits, beta);
+    case DMK_STRESSLET: {
+        const int n_digits_eff = n_digits == 12 ? 12 : n_digits + 1;
+        return get_stresslet_local_correction_coeffs<Real>(n_dim, n_digits_eff, beta);
+    }
     default:
         break;
     }
