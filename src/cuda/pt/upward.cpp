@@ -131,7 +131,7 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
             const int *group_perm = w.d_c2p_group_perm.data();
             const int n_launch = w.n_c2p_active_groups;
 
-            auto launch_one = [&](const TuningParams &p, cudaStream_t st) {
+            auto launch_one = [&](const TuningParams &p, cudaStream_t st, bool compile_only) {
                 JitKey key;
                 key.name = "PtCharge2ProxyKernel";
                 key.real = jit_real_name<Real>();
@@ -152,6 +152,8 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
                     key, [&] { return make_stage_source("pt/charge2proxy.cu", key, prelude, "PtCharge2Proxy"); });
                 const std::size_t shared = c2p_shared_bytes(a.n_order, a.n_charge_dim, p.at("CHUNK"), sizeof(Real));
                 set_max_dynamic_smem(*kernel, shared);
+                if (compile_only)
+                    return;
                 kernel->launch(dim3(n_launch, 1, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, a, group_perm);
             };
 
@@ -163,7 +165,7 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
             const std::string tk = tune_key.str();
 
             if (auto cfg = autotune_cached(tk)) {
-                launch_one(*cfg, stream);
+                launch_one(*cfg, stream, false);
             } else {
                 const cudaDeviceProp &prop = device_prop();
                 const std::size_t max_shared = device_max_shared_bytes();
@@ -208,8 +210,12 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
                     return c2p_shared_bytes(n_order, n_charge_dim, ch, sizeof(Real)) <= max_shared;
                 };
 
+                const auto canonicalize = [&](TuningParams p) {
+                    return clamp_tiles(std::move(p), {{"I_TILE", n_order}, {"J_TILE", n_order}, {"K_TILE", n_order}});
+                };
+
                 autotuned_launch<Real>(tk, "PtCharge2ProxyKernel", space, defaults, constraint, launch_one,
-                                       s.scratch.d_proxy_coeffs_upward.data(), proxy_count, stream);
+                                       s.scratch.d_proxy_coeffs_upward.data(), proxy_count, stream, canonicalize);
             }
         }
 

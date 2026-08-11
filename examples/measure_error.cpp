@@ -48,6 +48,7 @@ struct Config {
     bool grad = false;
     double fparam = 6.0; // Yukawa lambda
     dmk_eval_path eval_path = DMK_EVAL_PATH_CPU;
+    int log_level = DMK_LOG_OFF;
 
     // Kernel/dim filtering (-1 = all)
     dmk_ikernel kernel_filter = static_cast<dmk_ikernel>(-1);
@@ -108,7 +109,7 @@ ErrorMetrics run_one(int n_dim, dmk_ikernel kernel, int n_digits, const Config &
     params.eps = eps;
     params.n_dim = n_dim;
     params.n_per_leaf = cfg.n_per_leaf;
-    params.log_level = DMK_LOG_OFF;
+    params.log_level = cfg.log_level;
     params.eval_src = eval_level;
     params.eval_trg = eval_level;
     params.kernel = kernel;
@@ -318,9 +319,13 @@ Config parse_args(int argc, char *argv[]) {
     Config cfg;
 
     static struct option long_opts[] = {
-        {"beta-sweep", no_argument, nullptr, 1001},     {"beta-min", required_argument, nullptr, 1002},
-        {"beta-max", required_argument, nullptr, 1003}, {"beta-step", required_argument, nullptr, 1004},
-        {"digits", required_argument, nullptr, 1005},   {nullptr, 0, nullptr, 0},
+        {"beta-sweep", no_argument, nullptr, 1001},
+        {"beta-min", required_argument, nullptr, 1002},
+        {"beta-max", required_argument, nullptr, 1003},
+        {"beta-step", required_argument, nullptr, 1004},
+        {"digits", required_argument, nullptr, 1005},
+        {"log-level", required_argument, nullptr, 1006},
+        {nullptr, 0, nullptr, 0},
     };
 
     int opt;
@@ -385,6 +390,9 @@ Config parse_args(int argc, char *argv[]) {
         case 1005:
             cfg.sweep_digits = std::atoi(optarg);
             break;
+        case 1006:
+            cfg.log_level = std::atoi(optarg);
+            break;
         case 'h':
         default:
             std::cout << "Usage: " << argv[0] << "\n"
@@ -403,7 +411,9 @@ Config parse_args(int argc, char *argv[]) {
                       << "  --beta-min val    Min beta (default: 3.0)\n"
                       << "  --beta-max val    Max beta (default: 40.0)\n"
                       << "  --beta-step val   Step size (default: 0.5)\n"
-                      << "  --digits val      Digits for sweep (default: 6)\n";
+                      << "  --digits val      Digits for sweep (default: 6)\n"
+                      << "  --log-level val   0=trace 1=debug .. 6=off (default: 6). JIT compile\n"
+                      << "                    timings are reported at debug.\n";
             exit(0);
         }
     }

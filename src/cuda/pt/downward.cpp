@@ -46,7 +46,7 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
     const int n_args = static_cast<int>(args_h.size());
     const auto a0 = args_h[0];
 
-    auto launch_one = [&](const TuningParams &p, cudaStream_t st) {
+    auto launch_one = [&](const TuningParams &p, cudaStream_t st, bool compile_only) {
         JitKey key;
         key.name = "PtShiftPwKernel";
         key.real = jit_real_name<Real>();
@@ -63,6 +63,8 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
             cache.get_kernel_from_source(key, [&] { return make_stage_source("pt/shiftpw.cu", key, "", "PtShiftPw"); });
         const dmk::cuda::ShiftPwArgs<Real> *dev_args = d_args.data();
         int n = n_args;
+        if (compile_only)
+            return;
         kernel->launch(dim3(max_groups, n_args, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), 0, st, dev_args, n);
     };
 
@@ -74,7 +76,7 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
     const std::string tk = tune_key.str();
 
     if (auto cfg = autotune_cached(tk)) {
-        launch_one(*cfg, stream);
+        launch_one(*cfg, stream, false);
         return;
     }
 
@@ -91,7 +93,7 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
     };
 
     autotuned_launch<Real>(tk, "PtShiftPwKernel", space, defaults, constraint, launch_one,
-                           /*snapshot_base=*/static_cast<Real *>(nullptr), 0, stream);
+                           /*snapshot_base=*/static_cast<Real *>(nullptr), 0, stream, {});
 }
 
 } // namespace

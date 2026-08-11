@@ -45,7 +45,7 @@ void launch_eval_side(JitCache &cache, dmk::cuda::EvalTargetsArgs<Real> args, in
     const std::size_t smem_bytes = eval_shared_bytes(DIM, n_order, sizeof(Real));
     const int smem_coeffs = smem_bytes <= device_max_shared_bytes() ? 1 : 0;
 
-    auto launch_one = [&](const TuningParams &p, cudaStream_t st) {
+    auto launch_one = [&](const TuningParams &p, cudaStream_t st, bool compile_only) {
         JitKey key;
         key.name = "PtEvalTargetsByBoxKernel";
         key.real = jit_real_name<Real>();
@@ -62,6 +62,8 @@ void launch_eval_side(JitCache &cache, dmk::cuda::EvalTargetsArgs<Real> args, in
             key, [&] { return make_stage_source("pt/eval_targets.cu", key, "", "PtEvalTargets"); });
         const std::size_t shared = smem_coeffs ? smem_bytes : 0;
         set_max_dynamic_smem(*kernel, shared);
+        if (compile_only)
+            return;
         kernel->launch(dim3(args.n_eval_boxes, 1, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, args);
     };
 
@@ -72,7 +74,7 @@ void launch_eval_side(JitCache &cache, dmk::cuda::EvalTargetsArgs<Real> args, in
     const std::string tk = tune_key.str();
 
     if (auto cfg = autotune_cached(tk)) {
-        launch_one(*cfg, stream);
+        launch_one(*cfg, stream, false);
         return;
     }
 
@@ -86,7 +88,8 @@ void launch_eval_side(JitCache &cache, dmk::cuda::EvalTargetsArgs<Real> args, in
         return bs > 0 && bs <= prop.maxThreadsPerBlock && bs % 32 == 0 && p.at("TARGETS_PER_THREAD") > 0;
     };
 
-    autotuned_launch<Real>(tk, "PtEvalTargetsByBoxKernel", space, defaults, constraint, launch_one, nullptr, 0, stream);
+    autotuned_launch<Real>(tk, "PtEvalTargetsByBoxKernel", space, defaults, constraint, launch_one, nullptr, 0, stream,
+                           {});
 }
 
 } // namespace

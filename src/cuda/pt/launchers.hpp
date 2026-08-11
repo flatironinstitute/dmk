@@ -48,7 +48,13 @@ std::optional<TuningParams> autotune_cached(const std::string &tune_key);
 TuningParams autotune_config(const std::string &tune_key, const std::string &kernel_label,
                              const std::vector<TuningParameter> &space, const TuningParams &defaults,
                              const std::function<bool(const TuningParams &)> &constraint,
-                             const std::function<double(const TuningParams &)> &benchmark);
+                             const std::function<double(const TuningParams &)> &benchmark,
+                             const std::function<void(const TuningParams &)> &precompile,
+                             const std::function<TuningParams(TuningParams)> &canonicalize);
+
+/// Clamp each tiling parameter to the extent it tiles, so tiles wider than their loop bound
+/// collapse onto it. Only valid where the extent is fixed at compile time.
+TuningParams clamp_tiles(TuningParams params, const std::vector<std::pair<const char *, int>> &tile_extents);
 
 /// Opt in to >48KB dynamic shared memory for a compiled kernel (no-op below the
 /// static limit). Must be called before launching with that shared_bytes.
@@ -78,7 +84,8 @@ template <typename Real, typename LaunchOne>
 void autotuned_launch(const std::string &tune_key, const std::string &kernel_label,
                       const std::vector<TuningParameter> &space, const TuningParams &defaults,
                       const std::function<bool(const TuningParams &)> &constraint, LaunchOne &&launch_one,
-                      Real *snapshot_base, std::size_t snapshot_count, cudaStream_t stream) {
+                      Real *snapshot_base, std::size_t snapshot_count, cudaStream_t stream,
+                      const std::function<TuningParams(TuningParams)> &canonicalize) {
     jit::AutotuneDeviceRangeSnapshots<Real> snap;
     bool have_snap = false;
     const std::function<double(const TuningParams &)> benchmark = [&](const TuningParams &p) -> double {
@@ -89,13 +96,17 @@ void autotuned_launch(const std::string &tune_key, const std::string &kernel_lab
         }
         if (have_snap)
             jit::restore_device_range_snapshots(snap, stream);
-        return jit::benchmark_cuda_ms(stream, jit::CudaBenchmarkOptions{2, 5},
-                                      [&](cudaStream_t s) { launch_one(p, s); });
+        return jit::benchmark_cuda_ms(stream, jit::CudaBenchmarkOptions{},
+                                      [&](cudaStream_t s) { launch_one(p, s, false); });
     };
-    const TuningParams config = autotune_config(tune_key, kernel_label, space, defaults, constraint, benchmark);
+    const std::function<void(const TuningParams &)> precompile = [&](const TuningParams &p) {
+        launch_one(p, cudaStream_t{}, true);
+    };
+    const TuningParams config =
+        autotune_config(tune_key, kernel_label, space, defaults, constraint, benchmark, precompile, canonicalize);
     if (have_snap)
         jit::restore_device_range_snapshots(snap, stream);
-    launch_one(config, stream);
+    launch_one(config, stream, false);
 }
 
 } // namespace dmk::cuda::pt

@@ -89,14 +89,17 @@ std::shared_ptr<JitKernel> JitCache::get_kernel_from_source(const JitKey &key, c
                                                             const std::string &name_expression) {
     const std::string cache_key = key.to_string();
 
-    std::lock_guard<std::mutex> guard(mutex_);
+    {
+        std::lock_guard<std::mutex> guard(mutex_);
+        auto it = cache_.find(cache_key);
 
-    auto it = cache_.find(cache_key);
-
-    if (it != cache_.end()) {
-        return it->second;
+        if (it != cache_.end()) {
+            return it->second;
+        }
     }
 
+    // Unlocked so a tuning sweep can compile on every core. Two threads racing the same key
+    // both compile; the emplace below keeps whichever finishes first.
     CompiledBinary bin =
         compiler_.compile(source, key.name + ".cu", key.sm_major, key.sm_minor, make_nvrtc_options(), name_expression);
     CUmodule module = nullptr;
@@ -135,9 +138,8 @@ std::shared_ptr<JitKernel> JitCache::get_kernel_from_source(const JitKey &key, c
 
     auto kernel = std::make_shared<JitKernel>(module, function);
 
-    cache_.emplace(cache_key, kernel);
-
-    return kernel;
+    std::lock_guard<std::mutex> guard(mutex_);
+    return cache_.emplace(cache_key, std::move(kernel)).first->second;
 }
 
 } // namespace dmk::cuda::jit

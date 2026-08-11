@@ -93,10 +93,22 @@ std::optional<TuningParams> autotune_cached(const std::string &tune_key) {
     return it->second;
 }
 
+TuningParams clamp_tiles(TuningParams params, const std::vector<std::pair<const char *, int>> &tile_extents) {
+    for (const auto &[name, extent] : tile_extents) {
+        const auto it = params.find(name);
+        if (it != params.end() && extent > 0) {
+            it->second = std::min(it->second, extent);
+        }
+    }
+    return params;
+}
+
 TuningParams autotune_config(const std::string &tune_key, const std::string &kernel_label,
                              const std::vector<TuningParameter> &space, const TuningParams &defaults,
                              const std::function<bool(const TuningParams &)> &constraint,
-                             const std::function<double(const TuningParams &)> &benchmark) {
+                             const std::function<double(const TuningParams &)> &benchmark,
+                             const std::function<void(const TuningParams &)> &precompile,
+                             const std::function<TuningParams(TuningParams)> &canonicalize) {
     {
         std::lock_guard<std::mutex> lock(tune_cache_mutex());
         const auto it = tune_cache().find(tune_key);
@@ -118,7 +130,8 @@ TuningParams autotune_config(const std::string &tune_key, const std::string &ker
     jit::GridTuneOptions options;
     options.kernel = kernel_label;
     options.key = tune_key + "|sp=" + std::to_string(std::hash<std::string>{}(space_sig.str()));
-    options.benchmark = jit::CudaBenchmarkOptions{2, 5};
+    options.precompile = precompile;
+    options.canonicalize = canonicalize;
 
     jit::GridTuneDecision decision = jit::tune_grid(options, space, defaults, constraint, benchmark);
 

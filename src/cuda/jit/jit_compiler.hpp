@@ -11,4 +11,8 @@ class JitCompiler {
                            const std::string &name_expression = {}) const;
 };
 
+/// Cumulative NVRTC cost per program, at debug level. Times are summed per compile, so the
+/// total exceeds elapsed wall whenever a matrix was built in parallel.
+void report_jit_compiles();
+
 } // namespace dmk::cuda::jit

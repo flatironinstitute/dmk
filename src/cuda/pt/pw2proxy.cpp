@@ -54,7 +54,7 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
     const int n_args = static_cast<int>(args_h.size());
     const auto a0 = args_h[0];
 
-    auto launch_one = [&](const TuningParams &p, cudaStream_t st) {
+    auto launch_one = [&](const TuningParams &p, cudaStream_t st, bool compile_only) {
         const std::size_t shared =
             pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, p.at("K3_TILE"), sizeof(Real));
 
@@ -74,6 +74,8 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
         auto kernel = cache.get_kernel_from_source(
             key, [&] { return make_stage_source("pt/pw2proxy.cu", key, "", "PtPwToProxy"); });
         set_max_dynamic_smem(*kernel, shared);
+        if (compile_only)
+            return;
         const dmk::cuda::PwToProxyArgs<Real> *dev_args = d_args.data();
         int n = n_args;
         kernel->launch(dim3(max_boxes, n_args, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, dev_args, n);
@@ -86,7 +88,7 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
     const std::string tk = tune_key.str();
 
     if (auto cfg = autotune_cached(tk)) {
-        launch_one(*cfg, stream);
+        launch_one(*cfg, stream, false);
         return;
     }
 
@@ -109,8 +111,14 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
         return pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, p.at("K3_TILE"), sizeof(Real)) <= max_shared;
     };
 
+    const auto canonicalize = [&](TuningParams p) {
+        return clamp_tiles(
+            std::move(p),
+            {{"K1_TILE", a0.n_order}, {"K2_TILE", a0.n_order}, {"K3_TILE", a0.n_order}, {"KR_TILE", a0.n_pw}});
+    };
+
     autotuned_launch<Real>(tk, "PtPwToProxyMultiLevelKernel", space, defaults, constraint, launch_one, proxy_flat,
-                           proxy_count, stream);
+                           proxy_count, stream, canonicalize);
 }
 
 template void launch_pw2proxy<float>(std::vector<dmk::cuda::PwToProxyArgs<float>> &, float *, std::size_t, cudaStream_t,

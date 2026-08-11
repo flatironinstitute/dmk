@@ -340,16 +340,17 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
             return shared_bytes_for(st, bs, tg) <= max_shared;
         };
         const auto benchmark = [&](const TuningParams &p) {
-            return jit::benchmark_cuda_ms(stream, jit::CudaBenchmarkOptions{2, 5},
+            return jit::benchmark_cuda_ms(stream, jit::CudaBenchmarkOptions{},
                                           [&](cudaStream_t bs) { launch_with(get_kernel(p), p, bench_args, bs); });
         };
 
         // The stats kernel recomputes every pair distance to measure what the cull *should*
         // have kept, so it is far slower than the real one and nobody runs it for speed.
         // Tuning it would JIT and benchmark the whole grid of a kernel that does not matter.
-        const TuningParams config =
-            prefilter_stats ? defaults
-                            : autotune_config(tune_key, "PtDirectKernel", space, defaults, constraint, benchmark);
+        const auto precompile = [&](const TuningParams &p) { get_kernel(p); };
+        const TuningParams config = prefilter_stats ? defaults
+                                                    : autotune_config(tune_key, "PtDirectKernel", space, defaults,
+                                                                      constraint, benchmark, precompile, {});
         std::pair<std::shared_ptr<jit::JitKernel>, TuningParams> plan{get_kernel(config), config};
 
         std::lock_guard<std::mutex> lock(plan_mtx);

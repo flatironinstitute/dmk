@@ -2,9 +2,15 @@
 
 #include "jit_source_utils.hpp"
 
+#include <dmk/logger.h>
+
 #include <nvrtc.h>
 
+#include <algorithm>
+#include <chrono>
 #include <cstdlib>
+#include <map>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -13,6 +19,33 @@
 namespace dmk::cuda::jit {
 
 namespace {
+
+struct CompileStat {
+    long long count = 0;
+    double total_ms = 0;
+    double max_ms = 0;
+};
+
+std::mutex &stats_mutex() {
+    static std::mutex m;
+    return m;
+}
+
+std::map<std::string, CompileStat> &compile_stats() {
+    static std::map<std::string, CompileStat> s;
+    return s;
+}
+
+void record_compile(const std::string &program_name, double elapsed_ms) {
+    {
+        std::lock_guard<std::mutex> lock(stats_mutex());
+        CompileStat &s = compile_stats()[program_name];
+        ++s.count;
+        s.total_ms += elapsed_ms;
+        s.max_ms = std::max(s.max_ms, elapsed_ms);
+    }
+    dmk::get_logger()->trace("jit: compiled {} in {:.1f} ms", program_name, elapsed_ms);
+}
 
 void throw_nvrtc(nvrtcResult res, const std::string &where, const std::string &log = {}) {
     std::string msg = where + ": " + nvrtcGetErrorString(res);
@@ -40,9 +73,36 @@ std::string get_program_log(nvrtcProgram prog) {
 
 } // namespace
 
+void report_jit_compiles() {
+    std::vector<std::pair<std::string, CompileStat>> rows;
+    {
+        std::lock_guard<std::mutex> lock(stats_mutex());
+        rows.assign(compile_stats().begin(), compile_stats().end());
+    }
+    if (rows.empty())
+        return;
+
+    std::sort(rows.begin(), rows.end(),
+              [](const auto &a, const auto &b) { return a.second.total_ms > b.second.total_ms; });
+
+    long long n = 0;
+    double ms = 0;
+    for (const auto &[name, s] : rows) {
+        n += s.count;
+        ms += s.total_ms;
+    }
+
+    auto log = dmk::get_logger();
+    log->debug("jit: {} NVRTC compiles, {:.2f} s total compile time", n, ms / 1000.0);
+    for (const auto &[name, s] : rows)
+        log->debug("jit:   {:<34} n={:<5} total={:8.0f} ms  mean={:6.1f}  max={:6.1f}", name, s.count, s.total_ms,
+                   s.total_ms / s.count, s.max_ms);
+}
+
 CompiledBinary JitCompiler::compile(const std::string &source, const std::string &program_name, int sm_major,
                                     int sm_minor, const std::vector<std::string> &extra_options,
                                     const std::string &name_expression) const {
+    const auto compile_start = std::chrono::steady_clock::now();
     nvrtcProgram prog = nullptr;
 
     std::vector<const char *> header_sources;
@@ -155,6 +215,9 @@ CompiledBinary JitCompiler::compile(const std::string &source, const std::string
     }
 
     nvrtcDestroyProgram(&prog);
+
+    record_compile(program_name,
+                   std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - compile_start).count());
 
     return out;
 }

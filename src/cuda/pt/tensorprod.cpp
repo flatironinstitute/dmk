@@ -37,7 +37,7 @@ void launch_tensorprod(dmk::cuda::TensorprodArgs<Real> &args, std::size_t proxy_
         return;
     static JitCache cache;
 
-    auto launch_one = [&](const TuningParams &p, cudaStream_t st) {
+    auto launch_one = [&](const TuningParams &p, cudaStream_t st, bool compile_only) {
         JitKey key;
         key.name = "PtTensorprodKernel";
         key.real = jit_real_name<Real>();
@@ -50,6 +50,8 @@ void launch_tensorprod(dmk::cuda::TensorprodArgs<Real> &args, std::size_t proxy_
             key, [&] { return make_stage_source("pt/tensorprod.cu", key, "", "PtTensorprod"); });
         const std::size_t shared = tp_shared_bytes(args.n_order, p.at("Z_TILE"), sizeof(Real));
         set_max_dynamic_smem(*kernel, shared);
+        if (compile_only)
+            return;
         kernel->launch(dim3(grid, args.n_charge_dim, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, args);
     };
 
@@ -64,13 +66,13 @@ void launch_tensorprod(dmk::cuda::TensorprodArgs<Real> &args, std::size_t proxy_
     const TuningParams defaults{{"BLOCK_SIZE", 512}, {"Z_TILE", 2}, {"I_TILE", 2}, {"J_TILE", 4}};
 
     if (auto cfg = autotune_cached(tk)) {
-        launch_one(*cfg, stream);
+        launch_one(*cfg, stream, false);
         return;
     }
     // Measuring a level of a few blocks would pick a config for launch overhead rather than for
     // throughput, and BLOCK_SIZE decides blocks per SM on a kernel that stalls mostly on barriers.
     if (!tune_here) {
-        launch_one(defaults, stream);
+        launch_one(defaults, stream, false);
         return;
     }
 
@@ -89,8 +91,12 @@ void launch_tensorprod(dmk::cuda::TensorprodArgs<Real> &args, std::size_t proxy_
         return tp_shared_bytes(n_order, z, sizeof(Real)) <= max_shared;
     };
 
+    const auto canonicalize = [&](TuningParams p) {
+        return clamp_tiles(std::move(p), {{"Z_TILE", n_order}, {"I_TILE", n_order}, {"J_TILE", n_order}});
+    };
+
     autotuned_launch<Real>(tk, "PtTensorprodKernel", space, defaults, constraint, launch_one, args.proxy_flat,
-                           proxy_count, stream);
+                           proxy_count, stream, canonicalize);
 }
 
 template void launch_tensorprod<float>(dmk::cuda::TensorprodArgs<float> &, std::size_t, cudaStream_t, bool);

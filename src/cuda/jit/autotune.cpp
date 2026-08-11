@@ -1,10 +1,18 @@
 #include "autotune.hpp"
 
+#include "jit_compiler.hpp"
+
+#include <dmk/logger.h>
+
+#include <cuda.h>
 #include <cuda_runtime.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
+#include <thread>
 
 namespace dmk::cuda::jit {
 namespace {
@@ -313,6 +321,91 @@ void check_cuda(cudaError_t err, const char *where) {
     if (err != cudaSuccess) {
         throw std::runtime_error(std::string(where) + ": " + cudaGetErrorString(err));
     }
+}
+
+void log_tune_cache_hit(const std::string &kernel, const TuningParams &params, double runtime_ms) {
+    dmk::get_logger()->debug("autotune: {} cache hit, {} ({:.4f} ms)", kernel, tuning_params_to_string(params),
+                             runtime_ms);
+}
+
+void log_tune_candidate(const std::string &kernel, const TuningParams &params, double runtime_ms, double wall_ms) {
+    dmk::get_logger()->debug("autotune: {} candidate {} -> {:.4f} ms (cost {:.1f} ms, {:.0f}x)", kernel,
+                             tuning_params_to_string(params), runtime_ms, wall_ms,
+                             runtime_ms > 0 ? wall_ms / runtime_ms : 0.0);
+}
+
+void log_tune_drift(const std::string &kernel, double control_first_ms, double control_latest_ms) {
+    dmk::get_logger()->debug("autotune: {} control {:.4f} -> {:.4f} ms ({:+.1f}% drift, candidates scaled back)",
+                             kernel, control_first_ms, control_latest_ms,
+                             100.0 * (control_latest_ms - control_first_ms) / control_first_ms);
+}
+
+void log_tune_settle(const std::string &kernel, int rounds, double runtime_ms) {
+    dmk::get_logger()->debug("autotune: {} settled after {} rounds at {:.4f} ms", kernel, rounds, runtime_ms);
+}
+
+void log_tune_defaults(const std::string &kernel, const TuningParams &params) {
+    dmk::get_logger()->warn("autotune: {} has no feasible config on this device; using defaults {}", kernel,
+                            tuning_params_to_string(params));
+}
+
+void log_tune_result(const std::string &kernel, const TuningParams &params, double runtime_ms, std::size_t n_candidates,
+                     std::size_t n_raw, double compile_s, double bench_s) {
+    dmk::get_logger()->info("autotune: {} tuned over {} of {} configs in {:.1f} s (compile {:.1f} s, benchmark {:.1f} "
+                            "s) -> {} ({:.4f} ms)",
+                            kernel, n_candidates, n_raw, compile_s + bench_s, compile_s, bench_s,
+                            tuning_params_to_string(params), runtime_ms);
+}
+
+double precompile_candidates(const std::string &kernel, const std::function<void(const TuningParams &)> &precompile,
+                             const std::vector<TuningParams> &candidates) {
+    unsigned n_threads = std::thread::hardware_concurrency();
+    if (const char *env = std::getenv("DMK_JIT_COMPILE_THREADS")) {
+        n_threads = std::strtoul(env, nullptr, 10);
+    }
+
+    n_threads = std::min<unsigned>(std::max(1u, n_threads), 16u);
+    n_threads = std::min<unsigned>(n_threads, candidates.size());
+
+    auto log = dmk::get_logger();
+    log->debug("jit: precompiling {} configs for {} on {} threads", candidates.size(), kernel, n_threads);
+    const auto start = std::chrono::steady_clock::now();
+
+    // A fresh thread has no current context, and loading a compiled module is a driver call:
+    // without this every worker compiles, fails to load, and discards the result.
+    CUcontext context = nullptr;
+    cuCtxGetCurrent(&context);
+
+    std::atomic<std::size_t> next{0};
+    std::atomic<int> failures{0};
+    std::vector<std::thread> workers;
+    workers.reserve(n_threads);
+    for (unsigned t = 0; t < n_threads; ++t) {
+        workers.emplace_back([&] {
+            if (context) {
+                cuCtxSetCurrent(context);
+            }
+            for (std::size_t i = next++; i < candidates.size(); i = next++) {
+                try {
+                    precompile(candidates[i]);
+                } catch (...) {
+                    ++failures;
+                }
+            }
+        });
+    }
+    for (auto &w : workers) {
+        w.join();
+    }
+
+    const double elapsed_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    log->debug("jit: precompiled {} configs for {} in {:.2f} s", candidates.size(), kernel, elapsed_s);
+    if (failures > 0) {
+        log->warn("jit: {} of {} precompiles for {} failed and will be recompiled while timed", failures.load(),
+                  candidates.size(), kernel);
+    }
+    report_jit_compiles();
+    return elapsed_s;
 }
 
 } // namespace dmk::cuda::jit

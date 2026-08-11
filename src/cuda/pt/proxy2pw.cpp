@@ -57,7 +57,7 @@ void launch_proxy2pw(std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, cudaStr
     // The fused Stokeslet projector holds one phase-2 buffer per charge dim.
     const int ff2_copies = (a0.multiply_mode == 2) ? a0.n_charge_dim : 1;
 
-    auto launch_one = [&](const TuningParams &p, cudaStream_t st) {
+    auto launch_one = [&](const TuningParams &p, cudaStream_t st, bool compile_only) {
         const std::size_t shared = p2pw_shared_bytes(max_n_order, max_n_pw, p.at("Z_TILE"), ff2_copies, sizeof(Real));
 
         JitKey key;
@@ -79,6 +79,8 @@ void launch_proxy2pw(std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, cudaStr
         auto kernel = cache.get_kernel_from_source(
             key, [&] { return make_stage_source("pt/proxy2pw.cu", key, "", "PtProxy2Pw"); });
         set_max_dynamic_smem(*kernel, shared);
+        if (compile_only)
+            return;
         const dmk::cuda::Proxy2PwArgs<Real> *dev_args = d_args.data();
         int n = n_args;
         kernel->launch(dim3(max_boxes, n_args, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, dev_args, n);
@@ -91,7 +93,7 @@ void launch_proxy2pw(std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, cudaStr
     const std::string tk = tune_key.str();
 
     if (auto cfg = autotune_cached(tk)) {
-        launch_one(*cfg, stream);
+        launch_one(*cfg, stream, false);
         return;
     }
 
@@ -121,8 +123,13 @@ void launch_proxy2pw(std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, cudaStr
         return p2pw_shared_bytes(max_n_order, max_n_pw, z, ff2_copies, sizeof(Real)) <= max_shared;
     };
 
+    const auto canonicalize = [&](TuningParams p) {
+        return clamp_tiles(std::move(p),
+                           {{"Z_TILE", a0.n_pw2}, {"I_TILE", a0.n_order}, {"M1_TILE", a0.n_pw}, {"M2_TILE", a0.n_pw}});
+    };
+
     autotuned_launch<Real>(tk, "PtProxy2PwMultiLevelKernel", space, defaults, constraint, launch_one,
-                           /*snapshot_base=*/static_cast<Real *>(nullptr), 0, stream);
+                           /*snapshot_base=*/static_cast<Real *>(nullptr), 0, stream, canonicalize);
 }
 
 template void launch_proxy2pw<float>(std::vector<dmk::cuda::Proxy2PwArgs<float>> &, cudaStream_t, std::string_view);
