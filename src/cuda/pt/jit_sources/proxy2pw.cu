@@ -57,10 +57,13 @@ __device__ __forceinline__ int pencil_slot(const int *__restrict__ pencil, int p
 // KERNEL_START
 
 extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
-    PtProxy2PwMultiLevelKernel(const Proxy2PwArgs<Real> *__restrict__ a_multilevel, int n_args) {
+    PtProxy2PwMultiLevelKernel(const Proxy2PwArgs<Real> *__restrict__ a_multilevel, int n_args, unsigned char *scratch,
+                               long scratch_stride, int box_base) {
     using Complex = p2pw_complex<Real>;
 
-    const int box_idx = blockIdx.x;
+    // Only the global-scratch path splits a level across launches, so the offset costs the
+    // shared path nothing.
+    const int box_idx = SMEM_GLOBAL ? blockIdx.x + box_base : blockIdx.x;
     const int arg_idx = blockIdx.y;
 
     if (arg_idx >= n_args)
@@ -77,7 +80,12 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
     static_assert(P2PW_MULTIPLY != 2 || N_CHARGE_DIM == 3, "the fused projector is the 3-vector Stokeslet");
     constexpr int FF2_DIM = PROXY2PW_Z_TILE * N_ORDER * N_PW;
 
-    extern __shared__ __align__(16) unsigned char shared_raw[];
+    extern __shared__ __align__(16) unsigned char dynamic_smem[];
+    // At the largest expansions the working set exceeds the device's per-block shared limit, and
+    // the block runs against a private slice of a global buffer instead. SMEM_GLOBAL is baked per
+    // module, so only one of these survives compilation and the shared path keeps its LDS loads.
+    unsigned char *__restrict__ shared_raw =
+        SMEM_GLOBAL ? scratch + (long(blockIdx.y) * gridDim.x + blockIdx.x) * scratch_stride : &dynamic_smem[0];
     Complex *__restrict__ ff = reinterpret_cast<Complex *>(shared_raw);
     Complex *__restrict__ ff2 = ff + PROXY2PW_Z_TILE * N_ORDER * N_ORDER;
     Complex *__restrict__ poly2pw_s = ff2 + D_TILE * FF2_DIM;

@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <functional>
 #include <limits>
@@ -100,7 +101,7 @@ double precompile_candidates(const std::string &kernel, const std::function<void
 /// Defined out of line so this header does not drag spdlog into every launcher.
 void log_tune_cache_hit(const std::string &kernel, const TuningParams &params, double runtime_ms);
 void log_tune_candidate(const std::string &kernel, const TuningParams &params, double runtime_ms, double wall_ms);
-void log_tune_defaults(const std::string &kernel, const TuningParams &params);
+void log_tune_fallback(const std::string &kernel, const TuningParams &params);
 void log_tune_drift(const std::string &kernel, double control_first_ms, double control_latest_ms);
 void log_tune_settle(const std::string &kernel, int rounds, double runtime_ms);
 void log_tune_result(const std::string &kernel, const TuningParams &params, double runtime_ms, std::size_t n_candidates,
@@ -249,11 +250,64 @@ double benchmark_cuda_ms(cudaStream_t stream, const CudaBenchmarkOptions &option
     return static_cast<double>(elapsed_ms) / options.batch_launches;
 }
 
+/// Grid point nearest `default_params` that satisfies `constraint`, or `default_params` if the
+/// whole space is infeasible. One set of defaults serves every device and problem size, so a
+/// shared-memory limit can rule them out; the untuned paths still have to launch something.
+template <class Constraint>
+TuningParams nearest_feasible(const std::vector<TuningParameter> &space, const TuningParams &default_params,
+                              Constraint &&constraint, const std::function<TuningParams(TuningParams)> &canonicalize) {
+    const auto canonical = [&](TuningParams p) { return canonicalize ? canonicalize(std::move(p)) : p; };
+    const auto feasible = [&](const TuningParams &p) {
+        try {
+            return bool(std::invoke(constraint, p));
+        } catch (...) {
+            return false;
+        }
+    };
+
+    const TuningParams reference = canonical(default_params);
+    if (feasible(reference)) {
+        return default_params;
+    }
+
+    const auto position = [](const TuningParameter &axis, int value) {
+        const auto it = std::find(axis.values.begin(), axis.values.end(), value);
+        return it == axis.values.end() ? long(axis.values.size()) : long(it - axis.values.begin());
+    };
+    const auto distance = [&](const TuningParams &p) {
+        long d = 0;
+        for (const TuningParameter &axis : space) {
+            const auto pi = p.find(axis.name);
+            const auto ri = reference.find(axis.name);
+            if (pi != p.end() && ri != reference.end()) {
+                d += std::abs(position(axis, pi->second) - position(axis, ri->second));
+            }
+        }
+        return d;
+    };
+
+    std::optional<TuningParams> best;
+    long best_distance = 0;
+    for (TuningParams p : expand_grid(space)) {
+        p = canonical(std::move(p));
+        if (!feasible(p)) {
+            continue;
+        }
+        const long d = distance(p);
+        if (!best || d < best_distance) {
+            best_distance = d;
+            best = std::move(p);
+        }
+    }
+    return best ? *best : default_params;
+}
+
 template <class Constraint, class Benchmark>
 GridTuneDecision tune_grid(const GridTuneOptions &options, const std::vector<TuningParameter> &space,
                            const TuningParams &default_params, Constraint &&constraint, Benchmark &&benchmark) {
     if (options.disable || env_flag_enabled("DMK_JIT_AUTOTUNE_DISABLE")) {
-        return GridTuneDecision{default_params, 0.0, false, false};
+        return GridTuneDecision{nearest_feasible(space, default_params, constraint, options.canonicalize), 0.0, false,
+                                false};
     }
 
     const bool force = options.force || env_flag_enabled("DMK_JIT_AUTOTUNE_FORCE");
@@ -474,8 +528,9 @@ GridTuneDecision tune_grid(const GridTuneOptions &options, const std::vector<Tun
 
     if (!best) {
         if (options.fallback_to_default_on_failure) {
-            log_tune_defaults(options.kernel, default_params);
-            return GridTuneDecision{default_params, 0.0, false, false};
+            const TuningParams params = nearest_feasible(space, default_params, constraint, options.canonicalize);
+            log_tune_fallback(options.kernel, params);
+            return GridTuneDecision{params, 0.0, false, false};
         }
         throw std::runtime_error("tune_grid: no valid configuration for " + options.kernel);
     }

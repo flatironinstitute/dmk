@@ -42,8 +42,11 @@ __device__ __forceinline__ Real complx_real_madd(Real acc, const complx<Real> a,
 // KERNEL_START
 
 extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
-    PtPwToProxyMultiLevelKernel(const PwToProxyArgs<Real> *__restrict__ args, int n_args) {
-    const int box_idx = blockIdx.x;
+    PtPwToProxyMultiLevelKernel(const PwToProxyArgs<Real> *__restrict__ args, int n_args, unsigned char *scratch,
+                                long scratch_stride, int box_base) {
+    // Only the global-scratch path splits a level across launches, so the offset costs the
+    // shared path nothing.
+    const int box_idx = SMEM_GLOBAL ? blockIdx.x + box_base : blockIdx.x;
     const int arg_idx = blockIdx.y;
 
     if (arg_idx >= n_args)
@@ -77,7 +80,12 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
     const int k_pad = ((n_order + 3) / 4) * 4;
     const int phase1_cols = n_pw * n_pw;
 
-    extern __shared__ __align__(16) unsigned char shared_raw[];
+    extern __shared__ __align__(16) unsigned char dynamic_smem[];
+    // At the largest expansions the working set exceeds the device's per-block shared limit, and
+    // the block runs against a private slice of a global buffer instead. SMEM_GLOBAL is baked per
+    // module, so only one of these survives compilation and the shared path keeps its LDS loads.
+    unsigned char *__restrict__ shared_raw =
+        SMEM_GLOBAL ? scratch + (long(blockIdx.y) * gridDim.x + blockIdx.x) * scratch_stride : &dynamic_smem[0];
 
     // The pencil table is decoded once per block into shared, already unpacked. In the m3 loop it
     // was a *global* load whose result the data load's address depends on -- two dependent global
@@ -88,7 +96,35 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
     const int n_pencil = n_pw * n_pw2;
     int4 *__restrict__ s_pencil = reinterpret_cast<int4 *>(shared_raw);
 
-    complx<Real> *__restrict__ smem = reinterpret_cast<complx<Real> *>(s_pencil + n_pencil);
+    // A null table means cube order; writing that case out as an identity run keeps one code path
+    // in the inner loop.
+    const auto decode_pencil = [&](int p) -> int4 {
+        int4 v;
+        if (pencil) {
+            const int2 pv = reinterpret_cast<const int2 *>(pencil)[p];
+            v.x = pv.x;
+            v.y = pv.y & 0xffff;
+            v.z = pv.y >> 16;
+        } else {
+            v.x = (p % n_pw) * n_pw + (p / n_pw) * phase1_cols;
+            v.y = 0;
+            v.z = n_pw;
+        }
+        v.w = 0;
+        return v;
+    };
+
+    // Shared when the table fits, otherwise decoded per use: at the largest expansions the table
+    // is the difference between fitting in shared and not running at all, and it is a latency
+    // optimization rather than a requirement.
+    const auto pencil_at = [&](int p) -> int4 {
+        if constexpr (PENCIL_SMEM)
+            return s_pencil[p];
+        else
+            return decode_pencil(p);
+    };
+
+    complx<Real> *__restrict__ smem = reinterpret_cast<complx<Real> *>(s_pencil + (PENCIL_SMEM ? n_pencil : 0));
 
     complx<Real> *__restrict__ s_A_T = smem;
     complx<Real> *__restrict__ s_F = s_A_T + n_pw * k_pad;
@@ -105,24 +141,9 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
         s_A_T[idx] = z;
     }
 
-    // A null table means cube order; writing that case out as an identity run keeps one code path
-    // in the inner loop.
-    for (int p = threadIdx.x; p < n_pencil; p += blockDim.x) {
-        int4 v;
-        if (pencil) {
-            const int2 pv = reinterpret_cast<const int2 *>(pencil)[p];
-            v.x = pv.x;
-            v.y = pv.y & 0xffff;
-            v.z = pv.y >> 16;
-        } else {
-            const int m2 = p % n_pw;
-            const int m3 = p / n_pw;
-            v.x = m2 * n_pw + m3 * phase1_cols;
-            v.y = 0;
-            v.z = n_pw;
-        }
-        v.w = 0;
-        s_pencil[p] = v;
+    if constexpr (PENCIL_SMEM) {
+        for (int p = threadIdx.x; p < n_pencil; p += blockDim.x)
+            s_pencil[p] = decode_pencil(p);
     }
 
     __syncthreads();
@@ -183,7 +204,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
 #pragma unroll
                     for (int cr = 0; cr < COL_REG; ++cr) {
                         const int xy = threadIdx.x + rd * (BLOCK_SIZE * COL_REG) + cr * BLOCK_SIZE;
-                        const int4 pv = s_pencil[col_m2[rd][cr] + m3 * n_pw];
+                        const int4 pv = pencil_at(col_m2[rd][cr] + m3 * n_pw);
                         const int m1 = col_m1[rd][cr];
                         const int slot = (xy < phase1_cols && m1 >= pv.y && m1 < pv.z) ? pv.x + m1 : -1;
 

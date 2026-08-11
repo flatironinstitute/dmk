@@ -69,12 +69,6 @@ void launch_tensorprod(dmk::cuda::TensorprodArgs<Real> &args, std::size_t proxy_
         launch_one(*cfg, stream, false);
         return;
     }
-    // Measuring a level of a few blocks would pick a config for launch overhead rather than for
-    // throughput, and BLOCK_SIZE decides blocks per SM on a kernel that stalls mostly on barriers.
-    if (!tune_here) {
-        launch_one(defaults, stream, false);
-        return;
-    }
 
     const cudaDeviceProp &prop = device_prop();
     const std::size_t max_shared = device_max_shared_bytes();
@@ -94,6 +88,13 @@ void launch_tensorprod(dmk::cuda::TensorprodArgs<Real> &args, std::size_t proxy_
     const auto canonicalize = [&](TuningParams p) {
         return clamp_tiles(std::move(p), {{"Z_TILE", n_order}, {"I_TILE", n_order}, {"J_TILE", n_order}});
     };
+
+    // Measuring a level of a few blocks would pick a config for launch overhead rather than for
+    // throughput, and BLOCK_SIZE decides blocks per SM on a kernel that stalls mostly on barriers.
+    if (!tune_here) {
+        launch_one(jit::nearest_feasible(space, defaults, constraint, canonicalize), stream, false);
+        return;
+    }
 
     autotuned_launch<Real>(tk, "PtTensorprodKernel", space, defaults, constraint, launch_one, args.proxy_flat,
                            proxy_count, stream, canonicalize);

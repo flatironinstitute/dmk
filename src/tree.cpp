@@ -762,10 +762,8 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
         const int n_pw_periodic = expansion_constants.n_pw_periodic;
         // Periodic grid: dk = 2*pi/L, n_pw_periodic modes per dimension
         const Real dk = 2.0 * M_PI / boxsize[0];
-        // Multi-level trees use the first child scale for the root smooth kernel.
-        // For a single-level tree there is no level-1 box, so fall back to the root scale.
-        const int sigma_level = std::min(1, n_levels() - 1);
-        const Real sigma1 = boxsize[sigma_level] / fourier_data.beta();
+        // The root's near field runs one level finer than the root itself
+        const Real sigma1 = boxsize[1] / fourier_data.beta();
         const long n_pw_modes_periodic = sctl::pow<DIM - 1>(n_pw_periodic) * ((n_pw_periodic + 1) / 2);
         const int n_fourier = DIM * sctl::pow<2>(n_pw_periodic / 2) + 1;
 
@@ -795,7 +793,6 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
         fourier_data.calc_planewave_coeff_matrices(-1, n_order, n_pw, window_fourier_data.poly2pw,
                                                    window_fourier_data.pw2poly);
     }
-
     // Difference constants/transformation matrices
     {
         difference_fourier_data.resize(n_levels());

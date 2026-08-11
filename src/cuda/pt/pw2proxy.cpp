@@ -20,14 +20,15 @@ using jit::jit_real_name;
 using jit::JitCache;
 using jit::JitKey;
 
-std::size_t pw2proxy_shared_bytes(int max_n_pw, int max_n_pw2, int max_n_order, int k3_tile, std::size_t sizeof_real) {
+std::size_t pw2proxy_shared_bytes(int max_n_pw, int max_n_pw2, int max_n_order, int k3_tile, bool pencil_smem,
+                                  std::size_t sizeof_real) {
     const int max_k_pad = ((max_n_order + 3) / 4) * 4;
     const int max_phase1_cols = max_n_pw * max_n_pw;
     const std::size_t complex_count = std::size_t(max_n_pw) * std::size_t(max_k_pad) +
                                       std::size_t(k3_tile) * std::size_t(max_phase1_cols) +
                                       std::size_t(k3_tile) * std::size_t(max_n_order) * std::size_t(max_n_pw);
     // The unpacked pencil table leads the block, as int4 so it stays 16-byte aligned.
-    const std::size_t pencil_bytes = std::size_t(max_n_pw) * max_n_pw2 * 4 * sizeof(int);
+    const std::size_t pencil_bytes = pencil_smem ? std::size_t(max_n_pw) * max_n_pw2 * 4 * sizeof(int) : 0;
     return pencil_bytes + complex_count * (2 * sizeof_real);
 }
 
@@ -54,31 +55,72 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
     const int n_args = static_cast<int>(args_h.size());
     const auto a0 = args_h[0];
 
+    const std::size_t max_shared = device_max_shared_bytes();
+    // Keep the unpacked table only where the narrowest tiling can still afford it; past that it is
+    // the difference between fitting in shared and having no runnable config at all.
+    const bool pencil_smem =
+        pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, 1, true, sizeof(Real)) <= max_shared;
+    // Past ~9 significant digits the phase buffers alone outgrow any per-block shared limit. The
+    // kernel then runs against a private slice of a global buffer instead, at the narrowest tiling
+    // so the slice stays small.
+    const bool smem_global =
+        pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, 1, false, sizeof(Real)) > max_shared;
+    static cuda_helpers::DeviceBuffer<unsigned char> d_scratch;
+
     auto launch_one = [&](const TuningParams &p, cudaStream_t st, bool compile_only) {
         const std::size_t shared =
-            pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, p.at("K3_TILE"), sizeof(Real));
+            pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, p.at("K3_TILE"), pencil_smem, sizeof(Real));
 
-        const int min_blocks = resident_blocks_per_sm(shared, p.at("BLOCK_SIZE"));
+        // Occupancy is register-bound once the working set leaves shared, and asking for the
+        // thread-limited maximum there would only buy blocks by spilling.
+        const int min_blocks = smem_global ? 1 : resident_blocks_per_sm(shared, p.at("BLOCK_SIZE"));
 
         JitKey key;
         key.name = "PtPwToProxyMultiLevelKernel";
         key.real = jit_real_name<Real>();
         key.sm_major = cache.sm_major();
         key.sm_minor = cache.sm_minor();
-        key.params = {{"N_ORDER", a0.n_order},      {"N_PW", a0.n_pw},
-                      {"N_PW2", a0.n_pw2},          {"N_CHARGE_DIM", a0.n_charge_dim},
-                      {"COL_REG", p.at("COL_REG")}, {"K1_TILE", p.at("K1_TILE")},
-                      {"K2_TILE", p.at("K2_TILE")}, {"K3_TILE", p.at("K3_TILE")},
-                      {"KR_TILE", p.at("KR_TILE")}, {"BLOCK_SIZE", p.at("BLOCK_SIZE")},
-                      {"MIN_BLOCKS", min_blocks}};
+        key.params = {{"N_ORDER", a0.n_order},
+                      {"N_PW", a0.n_pw},
+                      {"N_PW2", a0.n_pw2},
+                      {"N_CHARGE_DIM", a0.n_charge_dim},
+                      {"COL_REG", p.at("COL_REG")},
+                      {"K1_TILE", p.at("K1_TILE")},
+                      {"K2_TILE", p.at("K2_TILE")},
+                      {"K3_TILE", p.at("K3_TILE")},
+                      {"KR_TILE", p.at("KR_TILE")},
+                      {"BLOCK_SIZE", p.at("BLOCK_SIZE")},
+                      {"MIN_BLOCKS", min_blocks},
+                      {"PENCIL_SMEM", pencil_smem ? 1 : 0},
+                      {"SMEM_GLOBAL", smem_global ? 1 : 0}};
         auto kernel = cache.get_kernel_from_source(
             key, [&] { return make_stage_source("pt/pw2proxy.cu", key, "", "PtPwToProxy"); });
-        set_max_dynamic_smem(*kernel, shared);
+        set_max_dynamic_smem(*kernel, smem_global ? 0 : shared);
         if (compile_only)
             return;
         const dmk::cuda::PwToProxyArgs<Real> *dev_args = d_args.data();
         int n = n_args;
-        kernel->launch(dim3(max_boxes, n_args, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, dev_args, n);
+        unsigned char *scratch = nullptr;
+        long stride = 0;
+        int box_base = 0;
+        if (!smem_global) {
+            kernel->launch(dim3(max_boxes, n_args, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), shared, st, dev_args, n, scratch,
+                           stride, box_base);
+            return;
+        }
+        // A slot per launched block, so the grid is capped and the level walked in chunks rather
+        // than sizing the scratch by the box count.
+        stride = static_cast<long>((shared + 15) & ~std::size_t{15});
+        const int slots_x = std::max(1, std::min(max_boxes, 2 * device_prop().multiProcessorCount / n_args));
+        const std::size_t need = static_cast<std::size_t>(stride) * slots_x * n_args;
+        if (need > d_scratch.size())
+            d_scratch.resize(need);
+        scratch = d_scratch.data();
+        for (box_base = 0; box_base < max_boxes; box_base += slots_x) {
+            const int nx = std::min(slots_x, max_boxes - box_base);
+            kernel->launch(dim3(nx, n_args, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), 0, st, dev_args, n, scratch, stride,
+                           box_base);
+        }
     };
 
     std::ostringstream tune_key;
@@ -93,7 +135,6 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
     }
 
     const cudaDeviceProp &prop = device_prop();
-    const std::size_t max_shared = device_max_shared_bytes();
 
     const std::vector<TuningParameter> space{{"COL_REG", {1, 2}},       {"K1_TILE", {1, 2, 3, 4}},
                                              {"K2_TILE", {2, 3, 4}},    {"K3_TILE", {1, 2, 3, 4}},
@@ -108,7 +149,10 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
         if (p.at("COL_REG") <= 0 || p.at("K1_TILE") <= 0 || p.at("K2_TILE") <= 0 || p.at("K3_TILE") <= 0 ||
             p.at("KR_TILE") <= 0)
             return false;
-        return pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, p.at("K3_TILE"), sizeof(Real)) <= max_shared;
+        if (smem_global)
+            return p.at("K3_TILE") == 1;
+        return pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, p.at("K3_TILE"), pencil_smem, sizeof(Real)) <=
+               max_shared;
     };
 
     const auto canonicalize = [&](TuningParams p) {

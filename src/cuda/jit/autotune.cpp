@@ -344,8 +344,8 @@ void log_tune_settle(const std::string &kernel, int rounds, double runtime_ms) {
     dmk::get_logger()->debug("autotune: {} settled after {} rounds at {:.4f} ms", kernel, rounds, runtime_ms);
 }
 
-void log_tune_defaults(const std::string &kernel, const TuningParams &params) {
-    dmk::get_logger()->warn("autotune: {} has no feasible config on this device; using defaults {}", kernel,
+void log_tune_fallback(const std::string &kernel, const TuningParams &params) {
+    dmk::get_logger()->warn("autotune: {} timed no candidate; using untuned {}", kernel,
                             tuning_params_to_string(params));
 }
 
