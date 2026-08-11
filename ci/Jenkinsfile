@@ -30,7 +30,8 @@ try {
             "HOME=${WORKSPACE}",
             "LC_ALL=C",
             "OMP_NUM_THREADS=8",
-            "OPENBLAS_NUM_THREADS=1"
+            "OPENBLAS_NUM_THREADS=1",
+			"DMK_JIT_AUTOTUNE_DISABLE=1"
           ]) {
             sh 'which nvcc'
             sh 'git submodule update --init --recursive'
