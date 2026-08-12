@@ -138,6 +138,9 @@ CompiledBinary JitCompiler::compile(const std::string &source, const std::string
     options_storage.push_back("--std=c++20");
     options_storage.push_back("--gpu-architecture=sm_" + std::to_string(sm_major) + std::to_string(sm_minor));
     options_storage.push_back("-lineinfo");
+    // Every JIT source is a device-only translation unit.
+    // NVRTC before 13.0 does not accept __device__ on lambdas by default
+    options_storage.push_back("--device-as-default-execution-space");
 
     for (const auto &opt : extra_options) {
         options_storage.push_back(opt);
