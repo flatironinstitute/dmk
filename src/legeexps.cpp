@@ -1,4 +1,4 @@
-// Original direct port to C++ from the Fortran code by Libin Lu and github copilot.
+// Original direct port to C++ from Vladimir Rokhlin's Fortran legeexps.f by Libin Lu and github copilot.
 // Templates and further features/redesigns added by Robert Blackwell.
 
 #include <dmk/legeexps.hpp>

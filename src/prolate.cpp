@@ -1,3 +1,4 @@
+// Ported to C++ from Vladimir Rokhlin's Fortran prolcrea.f and prolaterouts.f.
 #include <dmk/legeexps.hpp>
 #include <dmk/prolate.hpp>
 

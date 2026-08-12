@@ -1,0 +1,23 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+set(DMK_HAVE_MPI @DMK_HAVE_MPI@)
+set(DMK_HAVE_OPENMP @DMK_HAVE_OPENMP@)
+set(DMK_GPU_OFFLOAD @DMK_GPU_OFFLOAD@)
+set(DMK_USE_JIT @DMK_USE_JIT@)
+
+find_dependency(BLAS)
+if (DMK_HAVE_MPI)
+  find_dependency(MPI)
+endif()
+if (DMK_HAVE_OPENMP)
+  find_dependency(OpenMP)
+endif()
+if (DMK_GPU_OFFLOAD)
+  find_dependency(CUDAToolkit)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/dmkTargets.cmake")
+
+check_required_components(dmk)

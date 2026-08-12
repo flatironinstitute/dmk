@@ -9,7 +9,7 @@
 #define DMK_DEFAULT(x)
 #endif
 
-typedef enum : int {
+typedef enum {
     DMK_YUKAWA = 0,
     DMK_LAPLACE = 1,
     DMK_SQRT_LAPLACE = 2,
@@ -28,18 +28,18 @@ typedef enum {
 
 // Selects which compute path eval() uses. The CPU path is always available.
 // GPU requires the library to be built with -DDMK_GPU_OFFLOAD=ON
-typedef enum : int {
+typedef enum {
     DMK_EVAL_PATH_CPU = 0,
     DMK_EVAL_PATH_GPU = 1,
 } dmk_eval_path;
 
-typedef enum : int {
+typedef enum {
     DMK_SUCCESS = 0,              ///< no error
     DMK_ERR_INVALID_ARGUMENT = 1, ///< null ptr, negative count, eps<=0, bad dim/kernel/eval value
     DMK_ERR_INTERNAL = 2,         ///< any C++ exception caught at the boundary (detail in last-error)
 } dmk_error;
 
-typedef enum : int {
+typedef enum {
     DMK_LOG_TRACE = 0,
     DMK_LOG_DEBUG = 1,
     DMK_LOG_INFO = 2,
@@ -96,6 +96,11 @@ typedef struct pdmk_params {
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+// pdmk_git_commit is "unknown" when built outside a git repository.
+const char *pdmk_version_string(void);
+void pdmk_version(int *major, int *minor, int *patch);
+const char *pdmk_git_commit(void);
 
 // Fill params with the library defaults. Always succeeds (no-op on a null pointer).
 void pdmk_init_default_params(pdmk_params *params);

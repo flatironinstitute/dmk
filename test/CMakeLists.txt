@@ -7,7 +7,7 @@ if (DMK_BUILD_REFERENCE)
 endif()
 
 add_executable(test_all ${DMK_TEST_SRC})
-target_link_libraries(test_all PRIVATE dmk_shared)
+target_link_libraries(test_all PRIVATE dmk_shared dmk_internal)
 if (DMK_GPU_OFFLOAD)
   target_link_libraries(test_all PRIVATE ${DMK_GPU_TARGET})
 endif()

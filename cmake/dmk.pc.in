@@ -1,0 +1,12 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=@DMK_PC_LIBDIR@
+includedir=@DMK_PC_INCLUDEDIR@
+
+Name: DMK
+Description: Dual-space Multilevel Kernel-splitting fast kernel evaluation
+URL: https://github.com/flatironinstitute/DMK
+Version: @PROJECT_VERSION@
+Cflags: -I${includedir} @DMK_PC_CFLAGS@
+Libs: -L${libdir} -ldmk
+Libs.private: @DMK_PC_LIBS_PRIVATE@

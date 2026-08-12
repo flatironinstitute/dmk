@@ -1,3 +1,4 @@
+// Ported to C++ from Vladimir Rokhlin's Fortran prolcrea.f and prolaterouts.f.
 #ifndef PROLATE0_EVAL_HPP
 #define PROLATE0_EVAL_HPP
 

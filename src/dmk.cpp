@@ -17,6 +17,7 @@
 #include <dmk/tensorprod.hpp>
 #include <dmk/tree.hpp>
 #include <dmk/util.hpp>
+#include <dmk/version.h>
 #include <sctl.hpp>
 
 #include <dmk/nvtx_wrapper.h>
@@ -1057,6 +1058,16 @@ inline void pdmk_esp_eval_impl(pdmk_esp_plan plan, int n, const Real *r_src, con
 } // namespace dmk
 
 extern "C" {
+
+const char *pdmk_version_string(void) { return DMK_VERSION_STRING; }
+
+const char *pdmk_git_commit(void) { return DMK_GIT_COMMIT; }
+
+void pdmk_version(int *major, int *minor, int *patch) {
+    *major = DMK_VERSION_MAJOR;
+    *minor = DMK_VERSION_MINOR;
+    *patch = DMK_VERSION_PATCH;
+}
 
 void pdmk_init_default_params(pdmk_params *params) {
     if (params)

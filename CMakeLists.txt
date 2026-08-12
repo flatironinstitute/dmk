@@ -1,12 +1,43 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(dmk LANGUAGES CXX C)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION.txt" DMK_VERSION)
+string(STRIP "${DMK_VERSION}" DMK_VERSION)
+
+project(dmk VERSION ${DMK_VERSION} LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 
-option(DMK_BUILD_TESTS "Build tests" ON)
+set(DMK_GIT_COMMIT "unknown")
+set(DMK_GIT_DESCRIBE "unknown")
+find_package(Git QUIET)
+if (Git_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
+  execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short=12 HEAD
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE
+    OUTPUT_VARIABLE dmk_commit)
+  execute_process(COMMAND ${GIT_EXECUTABLE} describe --tags --always --dirty
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE
+    OUTPUT_VARIABLE dmk_describe)
+  execute_process(COMMAND ${GIT_EXECUTABLE} describe --tags --exact-match
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE
+    OUTPUT_VARIABLE dmk_tag RESULT_VARIABLE dmk_tagged)
+  if (dmk_commit)
+    set(DMK_GIT_COMMIT "${dmk_commit}")
+  endif()
+  if (dmk_describe)
+    set(DMK_GIT_DESCRIBE "${dmk_describe}")
+  endif()
+  if (dmk_tagged EQUAL 0 AND NOT dmk_tag STREQUAL "v${PROJECT_VERSION}")
+    message(WARNING "git tag ${dmk_tag} disagrees with project version v${PROJECT_VERSION}")
+  endif()
+endif()
+
+set(DMK_GENERATED_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include)
+configure_file(include/dmk/version.h.in ${DMK_GENERATED_INCLUDE_DIR}/dmk/version.h @ONLY)
+
+option(DMK_BUILD_TESTS "Build tests" OFF)
 option(DMK_BUILD_EXAMPLES "Build examples" ON)
 option(DMK_INSTRUMENT "Instrument the code" OFF)
 option(DMK_BUILD_PVFMM "Build PVFMM for comparison. Useless without DMK_BUILD_EXAMPLES" OFF)
@@ -141,6 +172,7 @@ endif()
 set(DMK_INCLUDES
   ${PROJECT_SOURCE_DIR}/include
   ${PROJECT_SOURCE_DIR}/extern/SCTL/include
+  ${DMK_GENERATED_INCLUDE_DIR}
 )
 
 include(FetchContent)
@@ -166,7 +198,6 @@ set(MONOFIT_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(polyfit)
 
 add_subdirectory(extern/spdlog EXCLUDE_FROM_ALL)
-add_subdirectory(extern/nanobench EXCLUDE_FROM_ALL)
 add_subdirectory(extern/doctest EXCLUDE_FROM_ALL)
 add_subdirectory(extern/nda EXCLUDE_FROM_ALL)
 if (DMK_USE_JIT)
@@ -232,16 +263,21 @@ if (NOT DMK_AOT_KERNEL_SRC)
 endif()
 set(DMK_AOT_SRC src/aot_evaluator.cpp ${DMK_AOT_KERNEL_SRC})
 
-add_library(DMKOBJS_BOOTSTRAP OBJECT ${DMK_BOOTSTRAP_SRC})
-set_target_properties(DMKOBJS_BOOTSTRAP PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(DMKOBJS_BOOTSTRAP PUBLIC ${DMK_INCLUDES})
-target_link_libraries(DMKOBJS_BOOTSTRAP PUBLIC ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET} ${DMK_GPU_TARGET} ${DMK_ESP_TARGET}
+# Everything needed to compile against the C++ headers, but not to install
+add_library(dmk_internal INTERFACE)
+target_include_directories(dmk_internal INTERFACE ${DMK_INCLUDES})
+target_compile_options(dmk_internal INTERFACE "${DMK_CXX_FLAGS}")
+target_link_libraries(dmk_internal INTERFACE ${DMK_OPENMP_TARGET} ${DMK_MPI_TARGET} ${DMK_GPU_TARGET}
+  ${DMK_CUDA_JIT_TARGETS} ${DMK_ESP_TARGET}
   nda::nda_c spdlog::spdlog_header_only doctest::doctest BLAS::BLAS polyfit::polyfit
 )
 if (DMK_USE_JIT)
-  target_link_libraries(DMKOBJS_BOOTSTRAP PUBLIC RuFuS::rufus jit_kernels)
+  target_link_libraries(dmk_internal INTERFACE RuFuS::rufus jit_kernels)
 endif()
-target_compile_options(DMKOBJS_BOOTSTRAP PUBLIC "${DMK_CXX_FLAGS}")
+
+add_library(DMKOBJS_BOOTSTRAP OBJECT ${DMK_BOOTSTRAP_SRC})
+set_target_properties(DMKOBJS_BOOTSTRAP PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(DMKOBJS_BOOTSTRAP PUBLIC dmk_internal)
 
 add_library(DMKOBJS_AOT OBJECT ${DMK_AOT_SRC})
 set_target_properties(DMKOBJS_AOT PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -287,24 +323,114 @@ if (DMK_GPU_OFFLOAD)
   target_compile_options(DMKOBJS_CUDA PUBLIC "${DMK_CXX_FLAGS}")
 endif()
 
-set(DMK_GPU_OBJS "")
+set(DMK_OBJECTS $<TARGET_OBJECTS:DMKOBJS_BOOTSTRAP> $<TARGET_OBJECTS:DMKOBJS_AOT>)
 if (DMK_GPU_OFFLOAD)
-  list(APPEND DMK_GPU_OBJS DMKOBJS_CUDA)
+  list(APPEND DMK_OBJECTS $<TARGET_OBJECTS:DMKOBJS_CUDA>)
 endif()
 
-add_library(dmk STATIC)
-target_link_libraries(dmk PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT ${DMK_GPU_OBJS})
+# Sources rather than linked object libraries: an exported target may not name a non-exported one.
+add_library(dmk STATIC ${DMK_OBJECTS})
+add_library(dmk_shared SHARED ${DMK_OBJECTS})
+target_link_libraries(dmk_shared PRIVATE dmk_internal)
 
-add_library(dmk_shared SHARED)
-set_target_properties(dmk_shared PROPERTIES OUTPUT_NAME dmk)
-target_link_libraries(dmk_shared PUBLIC DMKOBJS_BOOTSTRAP DMKOBJS_AOT ${DMK_GPU_OBJS})
+foreach(dmk_target dmk dmk_shared)
+  set_target_properties(${dmk_target} PROPERTIES LINKER_LANGUAGE CXX)
+  target_include_directories(${dmk_target} INTERFACE
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${DMK_GENERATED_INCLUDE_DIR}>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+  if (DMK_HAVE_MPI)
+    target_compile_definitions(${dmk_target} INTERFACE DMK_HAVE_MPI)
+  endif()
+endforeach()
 
-install(TARGETS dmk dmk_shared
+set_target_properties(dmk PROPERTIES EXPORT_NAME dmk_static)
+set_target_properties(dmk_shared PROPERTIES OUTPUT_NAME dmk EXPORT_NAME dmk
+  VERSION ${PROJECT_VERSION} SOVERSION ${PROJECT_VERSION_MAJOR})
+
+target_link_libraries(dmk INTERFACE ${DMK_MPI_TARGET} ${DMK_OPENMP_TARGET} ${DMK_GPU_TARGET}
+  ${DMK_CUDA_JIT_TARGETS} BLAS::BLAS)
+target_link_libraries(dmk_shared INTERFACE ${DMK_MPI_TARGET})
+
+set(DMK_BUNDLE_TARGETS "")
+foreach(dep finufft finufft_common ducc0 nda_c)
+  if (TARGET ${dep})
+    get_target_property(dep_type ${dep} TYPE)
+    if (dep_type STREQUAL "STATIC_LIBRARY")
+      list(APPEND DMK_BUNDLE_TARGETS ${dep})
+    endif()
+  endif()
+endforeach()
+if (DMK_BUNDLE_TARGETS)
+  set(DMK_BUNDLE_FILES "")
+  foreach(dep ${DMK_BUNDLE_TARGETS})
+    list(APPEND DMK_BUNDLE_FILES $<TARGET_FILE:${dep}>)
+  endforeach()
+  string(REPLACE ";" "|" DMK_BUNDLE_FILES_ARG "${DMK_BUNDLE_FILES}")
+  add_dependencies(dmk ${DMK_BUNDLE_TARGETS})
+  # add_dependencies is order-only; this is what forces the re-archive.
+  set_property(TARGET dmk APPEND PROPERTY LINK_DEPENDS ${DMK_BUNDLE_FILES})
+  add_custom_command(TARGET dmk POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+      -DDMK_AR=${CMAKE_AR}
+      -DDMK_APPLE=${APPLE}
+      -DDMK_OUTPUT=$<TARGET_FILE:dmk>
+      "-DDMK_INPUTS=${DMK_BUNDLE_FILES_ARG}"
+      -P ${PROJECT_SOURCE_DIR}/cmake/bundle_static_libs.cmake
+    COMMENT "Bundling static dependencies into libdmk.a"
+    VERBATIM
+  )
+endif()
+
+install(TARGETS dmk dmk_shared EXPORT dmkTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
-install(FILES include/dmk.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/dmk)
+install(FILES include/dmk.h ${DMK_GENERATED_INCLUDE_DIR}/dmk/version.h
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/dmk)
+install(FILES LICENSE THIRD_PARTY_NOTICES.md
+  DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/dmk)
+
+install(EXPORT dmkTargets NAMESPACE dmk:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/dmk)
+configure_package_config_file(cmake/dmkConfig.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/dmkConfig.cmake
+  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/dmk)
+write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/dmkConfigVersion.cmake
+  COMPATIBILITY SameMajorVersion)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/dmkConfig.cmake ${CMAKE_CURRENT_BINARY_DIR}/dmkConfigVersion.cmake
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/dmk)
+
+set(DMK_PC_CFLAGS "")
+set(DMK_PC_LIBS_PRIVATE "")
+if (DMK_HAVE_MPI)
+  list(APPEND DMK_PC_CFLAGS "-DDMK_HAVE_MPI")
+  foreach(dir ${MPI_CXX_INCLUDE_DIRS})
+    list(APPEND DMK_PC_CFLAGS "-I${dir}")
+  endforeach()
+  list(APPEND DMK_PC_LIBS_PRIVATE ${MPI_CXX_LIBRARIES})
+endif()
+if (DMK_HAVE_OPENMP)
+  list(APPEND DMK_PC_LIBS_PRIVATE ${OpenMP_CXX_LIBRARIES})
+endif()
+if (DMK_GPU_OFFLOAD)
+  list(APPEND DMK_PC_LIBS_PRIVATE "-L${CUDAToolkit_LIBRARY_DIR}" -lcudart -lcuda -lnvrtc)
+endif()
+list(APPEND DMK_PC_LIBS_PRIVATE ${BLAS_LIBRARIES})
+string(REPLACE ";" " " DMK_PC_CFLAGS "${DMK_PC_CFLAGS}")
+string(REPLACE ";" " " DMK_PC_LIBS_PRIVATE "${DMK_PC_LIBS_PRIVATE}")
+
+if (IS_ABSOLUTE "${CMAKE_INSTALL_LIBDIR}")
+  set(DMK_PC_LIBDIR "${CMAKE_INSTALL_LIBDIR}")
+else()
+  set(DMK_PC_LIBDIR "\${exec_prefix}/${CMAKE_INSTALL_LIBDIR}")
+endif()
+if (IS_ABSOLUTE "${CMAKE_INSTALL_INCLUDEDIR}")
+  set(DMK_PC_INCLUDEDIR "${CMAKE_INSTALL_INCLUDEDIR}")
+else()
+  set(DMK_PC_INCLUDEDIR "\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}")
+endif()
+configure_file(cmake/dmk.pc.in ${CMAKE_CURRENT_BINARY_DIR}/dmk.pc @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/dmk.pc DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 
 if (DMK_BUILD_TESTS)
   add_subdirectory(test)
@@ -313,8 +439,4 @@ endif()
 if (DMK_BUILD_EXAMPLES)
   add_subdirectory(examples)
   add_subdirectory(scripts)
-endif()
-
-if (DMK_USE_JIT)
-  add_subdirectory(perf)
 endif()

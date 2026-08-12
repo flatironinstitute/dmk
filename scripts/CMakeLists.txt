@@ -2,5 +2,5 @@ add_executable(generate_aot_kernels generate_aot_kernels.cpp)
 target_link_libraries(generate_aot_kernels PRIVATE dmk_bootstrap)
 
 add_executable(benchmark_gradient benchmark_gradient.cpp)
-target_link_libraries(benchmark_gradient PRIVATE dmk_shared)
+target_link_libraries(benchmark_gradient PRIVATE dmk_shared dmk_internal)
 target_compile_definitions(benchmark_gradient PRIVATE DOCTEST_CONFIG_DISABLE SCTL_PROFILE=-1)
