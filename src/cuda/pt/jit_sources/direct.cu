@@ -848,7 +848,7 @@ __device__ __forceinline__ void DirectByBoxBody(dmk::cuda::DirectByBoxArgs<Real>
 
                                 Real dX[SPATIAL_DIM];
                                 if constexpr (NORMAL_DIM > 0) {
-                                    Real ns[NORMAL_DIM];
+                                    Real ns[NORMAL_DIM > 0 ? NORMAL_DIM : 1];
 #pragma unroll
                                     for (int k = 0; k < NORMAL_DIM; ++k) {
                                         ns[k] = s_normal[ss * NORMAL_DIM + k];
