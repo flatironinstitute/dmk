@@ -56,8 +56,8 @@ const char *last_error_message() { return last_error_buffer().c_str(); }
 /// Validate C API inputs before any object is constructed. Throws api_error
 /// (DMK_ERR_INVALID_ARGUMENT) so the boundary guard converts to a clean code.
 template <typename Real>
-void validate_create_args(const pdmk_params &params, int n_src, const Real *r_src, const Real *charge,
-                          const Real *normal, int n_trg, const Real *r_trg) {
+void validate_create_args(dmk_communicator comm, const pdmk_params &params, int n_src, const Real *r_src,
+                          const Real *charge, const Real *normal, int n_trg, const Real *r_trg) {
     auto fail = [](std::string msg) { throw api_error(DMK_ERR_INVALID_ARGUMENT, std::move(msg)); };
 
     if (params.n_dim != 2 && params.n_dim != 3)
@@ -91,6 +91,12 @@ void validate_create_args(const pdmk_params &params, int n_src, const Real *r_sr
 #else
         if (params.n_dim != 3)
             fail("eval_path=GPU is only supported in 3D (the plane-wave pipeline is 3D-only)");
+#ifdef DMK_HAVE_MPI
+        const int n_ranks = sctl::Comm(MPI_Comm(comm)).Size();
+        if (n_ranks > 1)
+            fail("eval_path=GPU is single-rank only (the upward-pass broadcast has no device path), got " +
+                 std::to_string(n_ranks) + " ranks");
+#endif
         // The periodic root kernel is scalar-only: get_periodic_windowed_kernel_ft throws
         // for Stokeslet/Stresslet and the periodic root branch never routes to the dipole
         // multiply, so these are unsupported on the CPU too.
@@ -1105,7 +1111,7 @@ pdmk_tree pdmk_tree_createf(dmk_communicator comm, pdmk_params params, int n_src
                             const float *charge, const float *normal, int n_trg, const float *r_trg) {
     pdmk_tree result = nullptr;
     dmk::dmk_guard([&] {
-        dmk::validate_create_args(params, n_src, r_src, charge, normal, n_trg, r_trg);
+        dmk::validate_create_args(comm, params, n_src, r_src, charge, normal, n_trg, r_trg);
         result = dmk::pdmk_tree_create(comm, params, n_src, r_src, charge, normal, n_trg, r_trg);
     });
     return result;
@@ -1115,7 +1121,7 @@ pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src,
                            const double *charge, const double *normal, int n_trg, const double *r_trg) {
     pdmk_tree result = nullptr;
     dmk::dmk_guard([&] {
-        dmk::validate_create_args(params, n_src, r_src, charge, normal, n_trg, r_trg);
+        dmk::validate_create_args(comm, params, n_src, r_src, charge, normal, n_trg, r_trg);
         result = dmk::pdmk_tree_create(comm, params, n_src, r_src, charge, normal, n_trg, r_trg);
     });
     return result;
@@ -1165,7 +1171,7 @@ dmk_error pdmk_tree_eval(pdmk_tree tree, double *pot_src, double *pot_trg) {
 dmk_error pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
                 const float *normal, int n_trg, const float *r_trg, float *pot_src, float *pot_trg) {
     return dmk::dmk_guard([&] {
-        dmk::validate_create_args(params, n_src, r_src, charge, normal, n_trg, r_trg);
+        dmk::validate_create_args(comm, params, n_src, r_src, charge, normal, n_trg, r_trg);
         if (params.n_dim == 2)
             dmk::pdmk<float, 2>(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg);
         else
@@ -1176,7 +1182,7 @@ dmk_error pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const floa
 dmk_error pdmk(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
                const double *normal, int n_trg, const double *r_trg, double *pot_src, double *pot_trg) {
     return dmk::dmk_guard([&] {
-        dmk::validate_create_args(params, n_src, r_src, charge, normal, n_trg, r_trg);
+        dmk::validate_create_args(comm, params, n_src, r_src, charge, normal, n_trg, r_trg);
         if (params.n_dim == 2)
             dmk::pdmk<double, 2>(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg);
         else

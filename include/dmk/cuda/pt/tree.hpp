@@ -20,6 +20,7 @@ class Tree {
   public:
     Tree(const sctl::Comm &comm, const pdmk_params &params, const sctl::Vector<Real> &r_src,
          const sctl::Vector<Real> &charge, const sctl::Vector<Real> &normal, const sctl::Vector<Real> &r_trg);
+    ~Tree();
 
     void eval();
     void desort_potentials(Real *pot_src, Real *pot_trg);

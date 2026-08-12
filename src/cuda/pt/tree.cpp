@@ -2,9 +2,12 @@
 
 #include <dmk/cuda/helpers.hpp>
 #include <dmk/cuda/pt/passes.hpp>
+#include <dmk/error.hpp>
+#include <dmk/logger.h>
 #include <dmk/nvtx_wrapper.h>
 
 #include <cstdlib>
+#include <string>
 
 namespace dmk::cuda::pt {
 namespace {
@@ -51,6 +54,17 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
     const Real *charge_ptr = charge.Dim() ? &charge[0] : nullptr;
     const Real *normal_ptr = (params.kernel == DMK_STRESSLET && normal.Dim()) ? &normal[0] : nullptr;
     state_->upload_and_sort_charges(charge_ptr, normal_ptr, n_src);
+    cuda_helpers::check_device_errors("tree create");
+}
+
+template <typename Real, int DIM>
+Tree<Real, DIM>::~Tree() {
+    const cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        const std::string msg = std::string("CUDA error at tree destroy: ") + cudaGetErrorString(err);
+        dmk::set_last_error(msg);
+        dmk::get_logger()->error("{}", msg);
+    }
 }
 
 template <typename Real, int DIM>
@@ -92,6 +106,7 @@ void Tree<Real, DIM>::eval() {
         NvtxPass r("pt_finalize", nullptr);
         state_->finalize();
     }
+    cuda_helpers::check_device_errors("tree eval");
 }
 
 template <typename Real, int DIM>
@@ -110,6 +125,7 @@ void Tree<Real, DIM>::desort_potentials(Real *pot_src, Real *pot_trg) {
 template <typename Real, int DIM>
 void Tree<Real, DIM>::update_charges(const Real *charge, const Real *normal) {
     state_->upload_and_sort_charges(charge, normal, tree_->r_src_sorted_owned.Dim() / DIM);
+    cuda_helpers::check_device_errors("tree update_charges");
 }
 
 template class Tree<float, 2>;

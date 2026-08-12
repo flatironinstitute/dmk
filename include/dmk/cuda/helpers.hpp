@@ -24,6 +24,14 @@ namespace dmk::cuda_helpers {
             throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(_e));                            \
     } while (0)
 
+// Runtime-API launches record a fault here instead of returning it; call from an entry
+// point that has already synced.
+inline void check_device_errors(const char *where) {
+    const cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess)
+        throw std::runtime_error(std::string("CUDA error at ") + where + ": " + cudaGetErrorString(err));
+}
+
 // RAII wrapper around a `cudaMalloc`'d region. Move-only. `resize()` is a
 // no-op if the requested size matches what's already allocated, otherwise it
 // frees and re-allocates (no realloc — caller's responsibility if old data

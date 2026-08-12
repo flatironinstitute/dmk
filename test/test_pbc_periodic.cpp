@@ -1212,8 +1212,8 @@ void pbc_solve(dmk_ikernel kernel, dmk_eval_type eval, int n_per_leaf, double ep
     pot_src.SetZero();
     pot_trg.SetZero();
 
-    pdmk_tree tree =
-        pdmk_tree_create(nullptr, params, PBC_N_SRC, &r_src[0], &charges[0], &rnormal[0], PBC_N_TRG, &r_trg[0]);
+    pdmk_tree tree = pdmk_tree_create(DMK_TEST_COMM_SELF, params, PBC_N_SRC, &r_src[0], &charges[0], &rnormal[0],
+                                      PBC_N_TRG, &r_trg[0]);
     REQUIRE_MESSAGE(tree != nullptr, "tree_create failed: ", std::string(pdmk_last_error_message()));
     const dmk_error rc = pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
     pdmk_tree_destroy(tree);

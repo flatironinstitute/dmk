@@ -1,5 +1,5 @@
 // GPU accuracy against an all-pairs direct sum: each case requires rel_l2 < eps.
-// DMK_GPU_OFFLOAD and DMK_HAVE_MPI are mutually exclusive, hence the null communicator.
+// eval_path=GPU is single-rank only, so every case runs on a self communicator.
 
 #ifdef DMK_GPU_OFFLOAD
 
@@ -89,7 +89,8 @@ RunResult<Real> run_case(dmk_ikernel kernel, dmk_eval_type eval, double eps, dmk
     out.pot_trg.SetZero();
 
     const std::string label = path == DMK_EVAL_PATH_CPU ? "CPU" : "GPU";
-    pdmk_tree tree = create_tree(nullptr, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
+    pdmk_tree tree =
+        create_tree(DMK_TEST_COMM_SELF, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
     REQUIRE_MESSAGE(tree != nullptr, label, " tree_create failed (eps=", eps,
                     "): ", std::string(pdmk_last_error_message()));
     const dmk_error rc = eval_tree(tree, &out.pot_src[0], &out.pot_trg[0]);
