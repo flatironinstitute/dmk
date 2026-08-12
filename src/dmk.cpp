@@ -19,12 +19,24 @@
 #include <dmk/util.hpp>
 #include <sctl.hpp>
 
+#include <dmk/nvtx_wrapper.h>
 #include <dmk/omp_wrapper.hpp>
 #include <dmk/testing.hpp>
 
+#ifdef DMK_GPU_OFFLOAD
+#include <dmk/cuda/pt/tree.hpp>
+// GPU point-tree evaluators join the handle variant; selected at create when
+// eval_path == DMK_EVAL_PATH_GPU.
+using pdmk_tree_impl =
+    std::variant<std::unique_ptr<dmk::DMKPtTree<float, 2>>, std::unique_ptr<dmk::DMKPtTree<float, 3>>,
+                 std::unique_ptr<dmk::DMKPtTree<double, 2>>, std::unique_ptr<dmk::DMKPtTree<double, 3>>,
+                 std::unique_ptr<dmk::cuda::pt::Tree<float, 2>>, std::unique_ptr<dmk::cuda::pt::Tree<float, 3>>,
+                 std::unique_ptr<dmk::cuda::pt::Tree<double, 2>>, std::unique_ptr<dmk::cuda::pt::Tree<double, 3>>>;
+#else
 using pdmk_tree_impl =
     std::variant<std::unique_ptr<dmk::DMKPtTree<float, 2>>, std::unique_ptr<dmk::DMKPtTree<float, 3>>,
                  std::unique_ptr<dmk::DMKPtTree<double, 2>>, std::unique_ptr<dmk::DMKPtTree<double, 3>>>;
+#endif
 
 using pdmk_esp_plan_impl = std::variant<std::unique_ptr<dmk::EspPlan<float>>, std::unique_ptr<dmk::EspPlan<double>>>;
 
@@ -44,8 +56,8 @@ const char *last_error_message() { return last_error_buffer().c_str(); }
 /// Validate C API inputs before any object is constructed. Throws api_error
 /// (DMK_ERR_INVALID_ARGUMENT) so the boundary guard converts to a clean code.
 template <typename Real>
-void validate_create_args(const pdmk_params &params, int n_src, const Real *r_src, const Real *charge,
-                          const Real *normal, int n_trg, const Real *r_trg) {
+void validate_create_args(dmk_communicator comm, const pdmk_params &params, int n_src, const Real *r_src,
+                          const Real *charge, const Real *normal, int n_trg, const Real *r_trg) {
     auto fail = [](std::string msg) { throw api_error(DMK_ERR_INVALID_ARGUMENT, std::move(msg)); };
 
     if (params.n_dim != 2 && params.n_dim != 3)
@@ -72,6 +84,29 @@ void validate_create_args(const pdmk_params &params, int n_src, const Real *r_sr
         params.kernel == DMK_STOKESLET || params.kernel == DMK_STRESSLET || params.kernel == DMK_LAPLACE_DIPOLE;
     if (needs_3d && params.n_dim != 3)
         fail("kernel " + std::string(util::to_string(params.kernel)) + " is only supported in 3D");
+
+    if (params.eval_path == DMK_EVAL_PATH_GPU) {
+#ifndef DMK_GPU_OFFLOAD
+        fail("eval_path=GPU requires the library to be built with -DDMK_GPU_OFFLOAD=ON");
+#else
+        if (params.n_dim != 3)
+            fail("eval_path=GPU is only supported in 3D (the plane-wave pipeline is 3D-only)");
+#ifdef DMK_HAVE_MPI
+        const int n_ranks = sctl::Comm(MPI_Comm(comm)).Size();
+        if (n_ranks > 1)
+            fail("eval_path=GPU is single-rank only (the upward-pass broadcast has no device path), got " +
+                 std::to_string(n_ranks) + " ranks");
+#endif
+        // The periodic root kernel is scalar-only: get_periodic_windowed_kernel_ft throws
+        // for Stokeslet/Stresslet and the periodic root branch never routes to the dipole
+        // multiply, so these are unsupported on the CPU too.
+        const bool scalar_kernel =
+            params.kernel == DMK_LAPLACE || params.kernel == DMK_SQRT_LAPLACE || params.kernel == DMK_YUKAWA;
+        if (params.use_periodic && !scalar_kernel)
+            fail("eval_path=GPU does not support periodic boundary conditions for kernel " +
+                 std::string(util::to_string(params.kernel)));
+#endif
+    }
 
     // Reject unsupported kernel/eval-type combinations
     try {
@@ -883,7 +918,7 @@ TEST_CASE_GENERIC("[DMK] error handling", 1) {
 }
 
 template <typename Real>
-inline pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src, const Real *r_src,
+inline pdmk_tree pdmk_tree_create(dmk_communicator comm, const pdmk_params &params, int n_src, const Real *r_src,
                                   const Real *charge, const Real *normal, int n_trg, const Real *r_trg) {
     sctl::Profile::reset();
     sctl::Profile::Enable(true);
@@ -903,6 +938,17 @@ inline pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int
 
     if (params.n_dim != 2 && params.n_dim != 3)
         throw api_error(DMK_ERR_INVALID_ARGUMENT, "Invalid dimension: " + std::to_string(params.n_dim));
+
+#ifdef DMK_GPU_OFFLOAD
+    if (params.eval_path == DMK_EVAL_PATH_GPU) {
+        if (params.n_dim == 2)
+            return new pdmk_tree_impl(std::make_unique<dmk::cuda::pt::Tree<Real, 2>>(
+                sctl_comm, params, r_src_vec, charge_vec, normal_vec, r_trg_vec));
+        return new pdmk_tree_impl(std::make_unique<dmk::cuda::pt::Tree<Real, 3>>(sctl_comm, params, r_src_vec,
+                                                                                 charge_vec, normal_vec, r_trg_vec));
+    }
+#endif
+
     if (params.n_dim == 2) {
         return new pdmk_tree_impl(std::unique_ptr<dmk::DMKPtTree<Real, 2>>(
             new dmk::DMKPtTree<Real, 2>(sctl_comm, params, r_src_vec, charge_vec, normal_vec, r_trg_vec)));
@@ -916,13 +962,21 @@ inline void pdmk_tree_eval(pdmk_tree tree, Real *pot_src, Real *pot_trg) {
     std::visit(
         [&](auto &t) {
             using TreeType = std::decay_t<decltype(t)>;
-            if constexpr (std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 2>>> ||
-                          std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 3>>>) {
-                const auto &comm = (*static_cast<TreeType *>(tree))->GetComm();
+            constexpr bool is_cpu = std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 2>>> ||
+                                    std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 3>>>;
+#ifdef DMK_GPU_OFFLOAD
+            constexpr bool is_gpu = std::is_same_v<TreeType, std::unique_ptr<dmk::cuda::pt::Tree<Real, 2>>> ||
+                                    std::is_same_v<TreeType, std::unique_ptr<dmk::cuda::pt::Tree<Real, 3>>>;
+#else
+            constexpr bool is_gpu = false;
+#endif
+            if constexpr (is_cpu || is_gpu) {
+                const auto &comm = t->GetComm();
                 sctl::Profile::Scoped prof("pdmk_tree_eval", &comm);
-
+                nvtxRangePush("pdmk_tree_eval");
                 t->eval();
                 t->desort_potentials(pot_src, pot_trg);
+                nvtxRangePop();
             } else {
                 throw api_error(DMK_ERR_INVALID_ARGUMENT, "tree precision does not match eval precision");
             }
@@ -935,8 +989,15 @@ inline void pdmk_tree_update_charges(pdmk_tree tree, const Real *charge, const R
     std::visit(
         [&](auto &t) {
             using TreeType = std::decay_t<decltype(t)>;
-            if constexpr (std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 2>>> ||
-                          std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 3>>>) {
+            constexpr bool is_cpu = std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 2>>> ||
+                                    std::is_same_v<TreeType, std::unique_ptr<dmk::DMKPtTree<Real, 3>>>;
+#ifdef DMK_GPU_OFFLOAD
+            constexpr bool is_gpu = std::is_same_v<TreeType, std::unique_ptr<dmk::cuda::pt::Tree<Real, 2>>> ||
+                                    std::is_same_v<TreeType, std::unique_ptr<dmk::cuda::pt::Tree<Real, 3>>>;
+#else
+            constexpr bool is_gpu = false;
+#endif
+            if constexpr (is_cpu || is_gpu) {
                 t->update_charges(charge, normal);
             } else {
                 throw api_error(DMK_ERR_INVALID_ARGUMENT, "tree precision does not match update_charges precision");
@@ -1050,7 +1111,7 @@ pdmk_tree pdmk_tree_createf(dmk_communicator comm, pdmk_params params, int n_src
                             const float *charge, const float *normal, int n_trg, const float *r_trg) {
     pdmk_tree result = nullptr;
     dmk::dmk_guard([&] {
-        dmk::validate_create_args(params, n_src, r_src, charge, normal, n_trg, r_trg);
+        dmk::validate_create_args(comm, params, n_src, r_src, charge, normal, n_trg, r_trg);
         result = dmk::pdmk_tree_create(comm, params, n_src, r_src, charge, normal, n_trg, r_trg);
     });
     return result;
@@ -1060,7 +1121,7 @@ pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src,
                            const double *charge, const double *normal, int n_trg, const double *r_trg) {
     pdmk_tree result = nullptr;
     dmk::dmk_guard([&] {
-        dmk::validate_create_args(params, n_src, r_src, charge, normal, n_trg, r_trg);
+        dmk::validate_create_args(comm, params, n_src, r_src, charge, normal, n_trg, r_trg);
         result = dmk::pdmk_tree_create(comm, params, n_src, r_src, charge, normal, n_trg, r_trg);
     });
     return result;
@@ -1110,7 +1171,7 @@ dmk_error pdmk_tree_eval(pdmk_tree tree, double *pot_src, double *pot_trg) {
 dmk_error pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
                 const float *normal, int n_trg, const float *r_trg, float *pot_src, float *pot_trg) {
     return dmk::dmk_guard([&] {
-        dmk::validate_create_args(params, n_src, r_src, charge, normal, n_trg, r_trg);
+        dmk::validate_create_args(comm, params, n_src, r_src, charge, normal, n_trg, r_trg);
         if (params.n_dim == 2)
             dmk::pdmk<float, 2>(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg);
         else
@@ -1121,7 +1182,7 @@ dmk_error pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const floa
 dmk_error pdmk(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
                const double *normal, int n_trg, const double *r_trg, double *pot_src, double *pot_trg) {
     return dmk::dmk_guard([&] {
-        dmk::validate_create_args(params, n_src, r_src, charge, normal, n_trg, r_trg);
+        dmk::validate_create_args(comm, params, n_src, r_src, charge, normal, n_trg, r_trg);
         if (params.n_dim == 2)
             dmk::pdmk<double, 2>(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg);
         else

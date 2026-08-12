@@ -11,6 +11,7 @@
 //                     stresslet, all (default: all)
 //   -d dim            Dimension: 2, 3, or 0 for both (default: 0)
 //   -l lambda         Yukawa fparam (default: 6.0)
+//   -p c|g            Eval path: CPU or GPU (default: c)
 //   -g                Also measure gradient error (ignored for the velocity kernels)
 //   --beta-sweep      Enable beta sweep mode
 //   --beta-min val    Min beta for sweep (default: 3.0)
@@ -46,6 +47,8 @@ struct Config {
     bool uniform = false;
     bool grad = false;
     double fparam = 6.0; // Yukawa lambda
+    dmk_eval_path eval_path = DMK_EVAL_PATH_CPU;
+    int log_level = DMK_LOG_OFF;
 
     // Kernel/dim filtering (-1 = all)
     dmk_ikernel kernel_filter = static_cast<dmk_ikernel>(-1);
@@ -106,10 +109,11 @@ ErrorMetrics run_one(int n_dim, dmk_ikernel kernel, int n_digits, const Config &
     params.eps = eps;
     params.n_dim = n_dim;
     params.n_per_leaf = cfg.n_per_leaf;
-    params.log_level = DMK_LOG_OFF;
+    params.log_level = cfg.log_level;
     params.eval_src = eval_level;
     params.eval_trg = eval_level;
     params.kernel = kernel;
+    params.eval_path = cfg.eval_path;
     if (kernel == DMK_YUKAWA)
         params.fparam = cfg.fparam;
 
@@ -315,13 +319,17 @@ Config parse_args(int argc, char *argv[]) {
     Config cfg;
 
     static struct option long_opts[] = {
-        {"beta-sweep", no_argument, nullptr, 1001},     {"beta-min", required_argument, nullptr, 1002},
-        {"beta-max", required_argument, nullptr, 1003}, {"beta-step", required_argument, nullptr, 1004},
-        {"digits", required_argument, nullptr, 1005},   {nullptr, 0, nullptr, 0},
+        {"beta-sweep", no_argument, nullptr, 1001},
+        {"beta-min", required_argument, nullptr, 1002},
+        {"beta-max", required_argument, nullptr, 1003},
+        {"beta-step", required_argument, nullptr, 1004},
+        {"digits", required_argument, nullptr, 1005},
+        {"log-level", required_argument, nullptr, 1006},
+        {nullptr, 0, nullptr, 0},
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "N:n:D:t:k:d:l:ugh", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "N:n:D:t:k:d:l:p:ugh", long_opts, nullptr)) != -1) {
         switch (opt) {
         case 'N':
             cfg.n_src = static_cast<int>(std::atof(optarg));
@@ -351,6 +359,16 @@ Config parse_args(int argc, char *argv[]) {
         case 'l':
             cfg.fparam = std::atof(optarg);
             break;
+        case 'p':
+            if (optarg[0] == 'c')
+                cfg.eval_path = DMK_EVAL_PATH_CPU;
+            else if (optarg[0] == 'g')
+                cfg.eval_path = DMK_EVAL_PATH_GPU;
+            else {
+                std::cerr << "Unknown eval_path: " << optarg << "\n";
+                exit(1);
+            }
+            break;
         case 'u':
             cfg.uniform = true;
             break;
@@ -372,6 +390,9 @@ Config parse_args(int argc, char *argv[]) {
         case 1005:
             cfg.sweep_digits = std::atoi(optarg);
             break;
+        case 1006:
+            cfg.log_level = std::atoi(optarg);
+            break;
         case 'h':
         default:
             std::cout << "Usage: " << argv[0] << "\n"
@@ -383,13 +404,16 @@ Config parse_args(int argc, char *argv[]) {
                       << "                    stokeslet, stresslet, all\n"
                       << "  -d dim            2, 3, or 0 for both\n"
                       << "  -l lambda         Yukawa fparam (default: 6.0)\n"
+                      << "  -p c|g            Eval path: CPU or GPU (default: c)\n"
                       << "  -u                Uniform distribution\n"
                       << "  -g                Also measure gradient error\n"
                       << "  --beta-sweep      Enable beta sweep mode\n"
                       << "  --beta-min val    Min beta (default: 3.0)\n"
                       << "  --beta-max val    Max beta (default: 40.0)\n"
                       << "  --beta-step val   Step size (default: 0.5)\n"
-                      << "  --digits val      Digits for sweep (default: 6)\n";
+                      << "  --digits val      Digits for sweep (default: 6)\n"
+                      << "  --log-level val   0=trace 1=debug .. 6=off (default: 6). JIT compile\n"
+                      << "                    timings are reported at debug.\n";
             exit(0);
         }
     }
@@ -415,7 +439,8 @@ int main(int argc, char *argv[]) {
 
         std::cout << "# n_src=" << cfg.n_src << " n_per_leaf=" << cfg.n_per_leaf << " n_direct=" << cfg.n_direct
                   << " prec=" << cfg.prec << " uniform=" << cfg.uniform << " grad=" << cfg.grad
-                  << " fparam=" << cfg.fparam << " threads=" << MY_OMP_GET_MAX_THREADS();
+                  << " fparam=" << cfg.fparam << " path=" << (cfg.eval_path == DMK_EVAL_PATH_GPU ? "g" : "c")
+                  << " threads=" << MY_OMP_GET_MAX_THREADS();
         if (cfg.beta_sweep)
             std::cout << " beta_sweep=[" << cfg.beta_min << "," << cfg.beta_max << "," << cfg.beta_step
                       << "] digits=" << cfg.sweep_digits;

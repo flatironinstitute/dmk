@@ -440,6 +440,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level root pw_out must be ze
     std::fill(poisoned_tree.pw_out.begin(), poisoned_tree.pw_out.end(), poison);
 
     poisoned_tree.form_outgoing_expansions();
+    poisoned_tree.correct_for_self_interactions();
 
     const int n_pw = poisoned_tree.expansion_constants.n_pw_diff;
     const int n_order = poisoned_tree.expansion_constants.n_order;
@@ -1150,3 +1151,190 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Laplace PBC full pipeline vs Ewald", 1) {
         }
     }
 }
+
+#ifdef DMK_GPU_OFFLOAD
+namespace {
+
+constexpr int PBC_N_DIM = 3;
+constexpr int PBC_N_SRC = 2000;
+constexpr int PBC_N_TRG = 500;
+constexpr double PBC_L = 1.0;
+constexpr double PBC_LAMBDA = 6.0;
+
+// One fixed distribution per kernel. Laplace and Sqrt-Laplace converge only conditionally
+// and need a neutral cell; Yukawa deliberately keeps a net charge to exercise the finite
+// k=0 mode of the periodic root kernel.
+void pbc_inputs(dmk_ikernel kernel, sctl::Vector<double> &r_src, sctl::Vector<double> &r_trg,
+                sctl::Vector<double> &charges, sctl::Vector<double> &rnormal) {
+    r_src.ReInit(PBC_N_DIM * PBC_N_SRC);
+    r_trg.ReInit(PBC_N_DIM * PBC_N_TRG);
+    charges.ReInit(PBC_N_SRC);
+    rnormal.ReInit(PBC_N_DIM * PBC_N_SRC);
+    rnormal.SetZero();
+
+    std::default_random_engine eng(99);
+    std::uniform_real_distribution<double> rng(0.01, 0.99);
+    for (int i = 0; i < PBC_N_SRC * PBC_N_DIM; ++i)
+        r_src[i] = rng(eng);
+    for (int i = 0; i < PBC_N_TRG * PBC_N_DIM; ++i)
+        r_trg[i] = rng(eng);
+    for (int i = 0; i < PBC_N_SRC; ++i)
+        charges[i] = rng(eng) - 0.5;
+
+    if (kernel != DMK_YUKAWA) {
+        double sum = 0.0;
+        for (int i = 0; i < PBC_N_SRC; ++i)
+            sum += charges[i];
+        for (int i = 0; i < PBC_N_SRC; ++i)
+            charges[i] -= sum / PBC_N_SRC;
+    }
+}
+
+void pbc_solve(dmk_ikernel kernel, dmk_eval_type eval, int n_per_leaf, double eps, const sctl::Vector<double> &r_src,
+               const sctl::Vector<double> &r_trg, const sctl::Vector<double> &charges,
+               const sctl::Vector<double> &rnormal, sctl::Vector<double> &pot_src, sctl::Vector<double> &pot_trg) {
+    const int odim = eval == DMK_POTENTIAL_GRAD ? 1 + PBC_N_DIM : 1;
+
+    pdmk_params params;
+    params.eps = eps;
+    params.n_dim = PBC_N_DIM;
+    params.n_per_leaf = n_per_leaf;
+    params.eval_src = eval;
+    params.eval_trg = eval;
+    params.kernel = kernel;
+    params.fparam = kernel == DMK_YUKAWA ? PBC_LAMBDA : 0.0;
+    params.use_periodic = true;
+    params.eval_path = DMK_EVAL_PATH_GPU;
+    params.log_level = 6;
+
+    pot_src.ReInit(PBC_N_SRC * odim);
+    pot_trg.ReInit(PBC_N_TRG * odim);
+    pot_src.SetZero();
+    pot_trg.SetZero();
+
+    pdmk_tree tree = pdmk_tree_create(DMK_TEST_COMM_SELF, params, PBC_N_SRC, &r_src[0], &charges[0], &rnormal[0],
+                                      PBC_N_TRG, &r_trg[0]);
+    REQUIRE_MESSAGE(tree != nullptr, "tree_create failed: ", std::string(pdmk_last_error_message()));
+    const dmk_error rc = pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
+    pdmk_tree_destroy(tree);
+    REQUIRE_MESSAGE(rc == DMK_SUCCESS, "eval failed: ", std::string(pdmk_last_error_message()));
+}
+
+// The true periodic answer, independent of tree structure: Ewald for the conditionally
+// convergent kernels, a plain image sum for the absolutely convergent Yukawa.
+void pbc_reference(dmk_ikernel kernel, dmk_eval_type eval, const sctl::Vector<double> &r_src,
+                   const sctl::Vector<double> &r_trg, const sctl::Vector<double> &charges, int n_src_eval,
+                   int n_trg_eval, std::vector<double> &ref_src, std::vector<double> &ref_trg) {
+    const bool with_grad = eval == DMK_POTENTIAL_GRAD;
+    const int odim = with_grad ? 1 + PBC_N_DIM : 1;
+
+    if (kernel == DMK_YUKAWA) {
+        // exp(-lambda*r) decays fast; the nearest excluded image is ~exp(-36).
+        constexpr int n_img = 6;
+        dmk::pbc_ref::image_sum(PBC_N_DIM, PBC_LAMBDA, n_img, eval, PBC_N_SRC, &r_src[0], &charges[0], PBC_L,
+                                n_src_eval, &r_src[0], ref_src);
+        dmk::pbc_ref::image_sum(PBC_N_DIM, PBC_LAMBDA, n_img, eval, PBC_N_SRC, &r_src[0], &charges[0], PBC_L,
+                                n_trg_eval, &r_trg[0], ref_trg);
+        return;
+    }
+
+    dmk::pbc_ref::EwaldRef ewald(kernel, PBC_N_DIM, PBC_N_SRC, &r_src[0], &charges[0], PBC_L);
+    ref_src.assign(std::size_t(n_src_eval) * odim, 0.0);
+    ref_trg.assign(std::size_t(n_trg_eval) * odim, 0.0);
+    for (int i = 0; i < n_src_eval; ++i)
+        ewald.eval(&r_src[i * PBC_N_DIM], i, ref_src[i * odim], with_grad ? &ref_src[i * odim + 1] : nullptr);
+    for (int i = 0; i < n_trg_eval; ++i)
+        ewald.eval(&r_trg[i * PBC_N_DIM], -1, ref_trg[i * odim], with_grad ? &ref_trg[i * odim + 1] : nullptr);
+}
+
+// Relative L2 over `ncomp` components starting at `off` within each odim-sized record.
+double pbc_rel_l2(const double *got, const double *ref, int n, int odim, int off, int ncomp) {
+    double err2 = 0, ref2 = 0;
+    for (int i = 0; i < n; ++i)
+        for (int c = 0; c < ncomp; ++c) {
+            const double r = ref[std::size_t(i) * odim + off + c];
+            err2 += sctl::pow<2>(got[std::size_t(i) * odim + off + c] - r);
+            ref2 += sctl::pow<2>(r);
+        }
+    return ref2 > 0 ? std::sqrt(err2 / ref2) : std::sqrt(err2);
+}
+
+struct PbcPrecision {
+    int n_digits;
+    double eps;
+    double tol_pot;
+    double tol_grad;
+};
+
+const PbcPrecision pbc_precisions[] = {
+    {3, 1e-3, 1e-2, 1e-1},
+    {6, 1e-6, 1e-4, 1e-3},
+    {9, 1e-9, 1e-7, 1e-6},
+    {12, 1e-12, 1e-10, 1e-9},
+};
+
+// n_per_leaf > n_src collapses the tree to a single box, where list1 holds the root 3^DIM
+// times under 3^DIM distinct image shifts -- the configuration that fails outright if the
+// near-field shift table is missing, rather than merely degrading at the boundary.
+struct PbcDepth {
+    int n_per_leaf;
+    const char *label;
+};
+const PbcDepth pbc_depths[] = {
+    {50, "multilevel"},
+    {2 * PBC_N_SRC, "single-level"},
+};
+
+} // namespace
+
+// GPU periodic checked against the same physics references the CPU cases above use, so this
+// asserts correctness rather than agreement with the CPU. The two paths are not expected to
+// agree closely: the GPU is not IEEE, uses a more exact rsqrt than the CPU's digit-tuned
+// approx_rsqrt, and reduces in a different order.
+TEST_CASE_GENERIC("[GPU] pdmk 3d PBC vs reference", 1) {
+    for (const auto kernel : {DMK_LAPLACE, DMK_SQRT_LAPLACE, DMK_YUKAWA}) {
+        sctl::Vector<double> r_src, r_trg, charges, rnormal;
+        pbc_inputs(kernel, r_src, r_trg, charges, rnormal);
+
+        for (const auto &depth : pbc_depths) {
+            for (const auto &pc : pbc_precisions) {
+                for (int with_grad = 0; with_grad <= 1; ++with_grad) {
+                    const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
+                    const int odim = with_grad ? 1 + PBC_N_DIM : 1;
+                    const std::string label = std::string(dmk::util::to_string(kernel)) + " " + depth.label +
+                                              " n_digits=" + std::to_string(pc.n_digits) +
+                                              (with_grad ? " pot+grad" : " pot");
+
+                    SUBCASE(label.c_str()) {
+                        sctl::Vector<double> pot_src, pot_trg;
+                        pbc_solve(kernel, eval, depth.n_per_leaf, pc.eps, r_src, r_trg, charges, rnormal, pot_src,
+                                  pot_trg);
+
+                        const int n_src_eval = std::min(PBC_N_SRC, 50);
+                        const int n_trg_eval = std::min(PBC_N_TRG, 50);
+                        std::vector<double> ref_src, ref_trg;
+                        pbc_reference(kernel, eval, r_src, r_trg, charges, n_src_eval, n_trg_eval, ref_src, ref_trg);
+
+                        const double l2_src = pbc_rel_l2(&pot_src[0], ref_src.data(), n_src_eval, odim, 0, 1);
+                        const double l2_trg = pbc_rel_l2(&pot_trg[0], ref_trg.data(), n_trg_eval, odim, 0, 1);
+                        VERBOSE_MESSAGE("GPU PBC ", label, " pot_src=", l2_src, " pot_trg=", l2_trg);
+                        CHECK(l2_src < pc.tol_pot);
+                        CHECK(l2_trg < pc.tol_pot);
+
+                        if (with_grad) {
+                            const double g_src =
+                                pbc_rel_l2(&pot_src[0], ref_src.data(), n_src_eval, odim, 1, PBC_N_DIM);
+                            const double g_trg =
+                                pbc_rel_l2(&pot_trg[0], ref_trg.data(), n_trg_eval, odim, 1, PBC_N_DIM);
+                            VERBOSE_MESSAGE("  grad_src=", g_src, " grad_trg=", g_trg);
+                            CHECK(g_src < pc.tol_grad);
+                            CHECK(g_trg < pc.tol_grad);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#endif // DMK_GPU_OFFLOAD

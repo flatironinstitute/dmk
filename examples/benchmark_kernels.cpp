@@ -4,14 +4,20 @@
 #include <dmk/util.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <exception>
 #include <getopt.h>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <thread>
 #include <type_traits>
 #include <vector>
+
+#ifdef DMK_GPU_OFFLOAD
+#include <cuda_runtime.h>
+#endif
 
 #ifdef DMK_HAVE_MPI
 #include <mpi.h>
@@ -19,6 +25,31 @@
 #else
 #define MYCOMM nullptr
 #endif
+
+// Page-locks a caller-owned output buffer. pdmk_tree_eval takes a host pointer, so the GPU path's
+// result copy is staged by the driver unless the caller's memory is already page-locked.
+template <typename Real>
+bool pin_host_buffer([[maybe_unused]] std::vector<Real> &buf, bool enable) {
+    if (!enable || buf.empty())
+        return false;
+#ifdef DMK_GPU_OFFLOAD
+    const cudaError_t rc = cudaHostRegister(buf.data(), buf.size() * sizeof(Real), cudaHostRegisterDefault);
+    if (rc == cudaSuccess)
+        return true;
+    std::cerr << "warning: cudaHostRegister failed (" << cudaGetErrorString(rc) << "), continuing unpinned\n";
+#else
+    std::cerr << "warning: --pin needs a DMK_GPU_OFFLOAD build, continuing unpinned\n";
+#endif
+    return false;
+}
+
+template <typename Real>
+void unpin_host_buffer([[maybe_unused]] std::vector<Real> &buf, [[maybe_unused]] bool pinned) {
+#ifdef DMK_GPU_OFFLOAD
+    if (pinned)
+        cudaHostUnregister(buf.data());
+#endif
+}
 
 struct Config {
     int n_src = 1'000'000;
@@ -34,11 +65,15 @@ struct Config {
     dmk_ikernel kernel = DMK_LAPLACE;
     int n_dim = 3;
     double fparam = 6.0;
+    dmk_eval_path eval_path = DMK_EVAL_PATH_CPU;
+    bool use_periodic = false;
     bool bench_build = false;
     bool bench_eval = true;
+    bool bench_update_charges = false;
     bool with_grad = false;
     long seed = 0;
     int n_show_outliers = 0; // print top-N worst points per block to stderr (0 = off)
+    bool pin_host = false;
 };
 
 inline dmk_eval_type get_eval_type(dmk_ikernel kernel, bool with_grad) {
@@ -331,18 +366,52 @@ double run_dmk(pdmk_tree tree, std::vector<Real> &pot_src, std::vector<Real> &po
 
     Real *pot_trg_ptr = n_trg_per_rank > 0 ? pot_trg.data() : nullptr;
     double st = MY_OMP_GET_WTIME();
+    int rc;
     if constexpr (std::is_same_v<Real, float>)
-        pdmk_tree_evalf(tree, pot_src.data(), pot_trg_ptr);
+        rc = pdmk_tree_evalf(tree, pot_src.data(), pot_trg_ptr);
     else
-        pdmk_tree_eval(tree, pot_src.data(), pot_trg_ptr);
+        rc = pdmk_tree_eval(tree, pot_src.data(), pot_trg_ptr);
     double ft = MY_OMP_GET_WTIME();
 
+    if (rc != 0) {
+        std::cerr << "pdmk_tree_eval failed with rc=" << rc << ": " << pdmk_last_error_message() << "\n";
+        std::exit(1);
+    }
+    return ft - st;
+}
+
+template <typename Real>
+double run_update_charges(pdmk_tree tree, const std::vector<Real> &charges, const Real *normal) {
+#ifdef DMK_HAVE_MPI
+    MPI_Barrier(MYCOMM);
+#endif
+
+    double st = omp_get_wtime();
+    int rc;
+    if constexpr (std::is_same_v<Real, float>)
+        rc = pdmk_tree_update_chargesf(tree, charges.data(), normal);
+    else
+        rc = pdmk_tree_update_charges(tree, charges.data(), normal);
+    double ft = omp_get_wtime();
+
+    if (rc != 0) {
+        std::cerr << "pdmk_tree_update_charges failed with rc=" << rc << ": " << pdmk_last_error_message() << "\n";
+        std::exit(1);
+    }
     return ft - st;
 }
 
 void print_build_csv_header(std::ostream &os) { os << "build_time,build_pts_s,build_pts_s_rank,build_pts_s_thread"; }
 
 void print_build_csv_row(const TimingResult &t, std::ostream &os) {
+    os << t.elapsed << "," << t.pts_per_sec << "," << t.pts_per_sec_per_rank << "," << t.pts_per_sec_per_thread;
+}
+
+void print_update_csv_header(std::ostream &os) {
+    os << "update_time,update_pts_s,update_pts_s_rank,update_pts_s_thread";
+}
+
+void print_update_csv_row(const TimingResult &t, std::ostream &os) {
     os << t.elapsed << "," << t.pts_per_sec << "," << t.pts_per_sec_per_rank << "," << t.pts_per_sec_per_thread;
 }
 
@@ -366,8 +435,10 @@ void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ost
        << "# n_direct:             " << cfg.n_direct << "\n"
        << "# n_show_outliers:      " << cfg.n_show_outliers << "\n"
        << "# log_level:            " << cfg.log_level << "\n"
+       << "# eval_path:            " << cfg.eval_path << "\n"
        << "# bench_build:          " << cfg.bench_build << "\n"
-       << "# bench_eval:           " << cfg.bench_eval << "\n";
+       << "# bench_eval:           " << cfg.bench_eval << "\n"
+       << "# bench_update_charges: " << cfg.bench_update_charges << "\n";
 }
 
 struct ErrorBlock {
@@ -438,6 +509,8 @@ void run_benchmark(const Config &cfg) {
     params.n_per_leaf = cfg.n_per_leaf;
     params.log_level = cfg.log_level;
     params.kernel = cfg.kernel;
+    params.eval_path = cfg.eval_path;
+    params.use_periodic = cfg.use_periodic;
     params.eval_src = get_eval_type(cfg.kernel, cfg.with_grad);
     params.eval_trg = params.eval_src;
     if (cfg.kernel == DMK_YUKAWA)
@@ -500,10 +573,46 @@ void run_benchmark(const Config &cfg) {
         }
     }
 
-    if (!cfg.bench_eval)
-        return;
+    pdmk_tree tree = nullptr;
+    if (cfg.bench_update_charges || cfg.bench_eval)
+        tree = create_tree();
 
-    pdmk_tree tree = create_tree();
+    if (cfg.bench_update_charges) {
+        if (rank == 0) {
+            if (!cfg.bench_build)
+                print_csv_config_comment(cfg, np, n_threads, std::cout);
+            print_update_csv_header(std::cout);
+            std::cout << std::flush;
+        }
+        for (int run = 0; run < cfg.n_runs; ++run) {
+            sctl::Profile::reset();
+            const Real *normal_ptr = (cfg.kernel == DMK_STRESSLET) ? normals.data() : nullptr;
+            double dt = run_update_charges<Real>(tree, charges, normal_ptr);
+            TimingResult t = make_timing(dt, n_src, n_src_per_rank, n_threads);
+
+            if (run == 0) {
+                if (rank == 0)
+                    std::cout << ",";
+                pdmk_print_profile_data(MYCOMM, 'h');
+                if (rank == 0)
+                    std::cout << "\n";
+            }
+
+            if (rank == 0) {
+                print_update_csv_row(t, std::cout);
+                std::cout << ",";
+            }
+            pdmk_print_profile_data(MYCOMM, 'c');
+            if (rank == 0)
+                std::cout << "\n" << std::flush;
+        }
+    }
+
+    if (!cfg.bench_eval) {
+        if (tree)
+            pdmk_tree_destroy(tree);
+        return;
+    }
 
     // Direct reference at source positions, and at target positions if requested.
     std::vector<Real> pot_direct_src, pot_direct_trg;
@@ -531,7 +640,7 @@ void run_benchmark(const Config &cfg) {
 #endif
 
     if (rank == 0) {
-        if (!cfg.bench_build)
+        if (!cfg.bench_build && !cfg.bench_update_charges)
             print_csv_config_comment(cfg, np, n_threads, std::cout);
         print_csv_header(std::cout, cfg.with_grad, with_trg);
         std::cout << std::flush;
@@ -555,8 +664,14 @@ void run_benchmark(const Config &cfg) {
         out.have = true;
     };
 
+    // Allocated once and pre-sized: the page-locking has to outlive every run, and it keeps a
+    // reallocation out of each timed iteration.
+    std::vector<Real> pot_dmk_src(size_t(n_src_per_rank) * pot_dim);
+    std::vector<Real> pot_dmk_trg(size_t(n_trg_per_rank) * pot_dim);
+    const bool pinned_src = pin_host_buffer(pot_dmk_src, cfg.pin_host);
+    const bool pinned_trg = pin_host_buffer(pot_dmk_trg, cfg.pin_host);
+
     for (int run = 0; run < cfg.n_runs; ++run) {
-        std::vector<Real> pot_dmk_src, pot_dmk_trg;
         sctl::Profile::reset();
         double dt = run_dmk<Real>(tree, pot_dmk_src, pot_dmk_trg, n_src_per_rank, n_trg_per_rank, pot_dim, rank, np);
         TimingResult t = make_timing(dt, n_src + n_trg, n_src_per_rank + n_trg_per_rank, n_threads);
@@ -600,7 +715,13 @@ void run_benchmark(const Config &cfg) {
         pdmk_print_profile_data(MYCOMM, 'c');
         if (rank == 0)
             std::cout << std::endl << std::flush;
+        // Drawing to terminal takes time away from the GPU *sigh*.
+        if (cfg.eval_path == DMK_EVAL_PATH_GPU)
+            std::this_thread::sleep_for(std::chrono::milliseconds(26));
     }
+
+    unpin_host_buffer(pot_dmk_src, pinned_src);
+    unpin_host_buffer(pot_dmk_trg, pinned_trg);
 
     pdmk_tree_destroy(tree);
 }
@@ -613,11 +734,14 @@ Config parse_args(int argc, char *argv[]) {
         {"no-direct", no_argument, nullptr, 1002},
         {"bench-build", no_argument, nullptr, 1003},
         {"no-bench-eval", no_argument, nullptr, 1004},
+        {"bench-update-charges", no_argument, nullptr, 1005},
+        {"periodic", no_argument, nullptr, 1006},
+        {"pin", no_argument, nullptr, 1007},
         {nullptr, 0, nullptr, 0},
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "N:T:n:e:t:r:D:l:s:k:d:f:O:ugh?", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "N:T:n:e:t:r:D:l:s:k:d:f:O:p:ugh?", long_opts, nullptr)) != -1) {
         switch (opt) {
         case 'N':
             cfg.n_src = int(std::atof(optarg));
@@ -668,6 +792,16 @@ Config parse_args(int argc, char *argv[]) {
         case 'u':
             cfg.uniform = true;
             break;
+        case 'p':
+            if (optarg[0] == 'c')
+                cfg.eval_path = DMK_EVAL_PATH_CPU;
+            else if (optarg[0] == 'g')
+                cfg.eval_path = DMK_EVAL_PATH_GPU;
+            else {
+                std::cerr << "Unknown eval_path: " << optarg << "\n";
+                exit(1);
+            }
+            break;
         case 'g':
             cfg.with_grad = true;
             break;
@@ -682,6 +816,15 @@ Config parse_args(int argc, char *argv[]) {
             break;
         case 1004:
             cfg.bench_eval = false;
+            break;
+        case 1005:
+            cfg.bench_update_charges = true;
+            break;
+        case 1006:
+            cfg.use_periodic = true;
+            break;
+        case 1007:
+            cfg.pin_host = true;
             break;
         case 'h':
         case '?':
@@ -703,9 +846,13 @@ Config parse_args(int argc, char *argv[]) {
                 << "  -u                    Uniform distribution\n"
                 << "  -g                    Evaluate potential + gradient (scalar kernels)\n"
                 << "  -O n_outliers         Print top-N worst points per block to stderr (default: 0 = off)\n"
+                << "  -p                    Evaluation path (c)pu, (g)pu, or (b)oth\n"
                 << "  --direct/--no-direct  Enable/disable direct reference\n"
                 << "  --bench-build         Also benchmark tree build time\n"
                 << "  --no-bench-eval       Skip eval benchmark (build only)\n"
+                << "  --bench-update-charges  Also benchmark pdmk_tree_update_charges\n"
+                << "  --periodic            Periodic boundary conditions (--direct is free-space only)\n"
+                << "  --pin                 Page-lock the potential buffers (GPU path: unstaged D2H)\n"
                 << "  -h                    Help\n";
             exit(0);
         }
