@@ -25,25 +25,11 @@
 #include <vector>
 
 namespace dmk {
-
-// ---------------------------------------------------------------------------
-// NvtxRange — RAII wrapper so every pushed range pops even if the block throws
-// (several stages below throw on CUDA/cuFINUFFT errors) or returns early.
-// Purely a profiling aid for nsys/ncu -- push/pop are no-ops without a profiler
-// attached, so this has no effect on normal runs.
-// ---------------------------------------------------------------------------
 struct NvtxRange {
     explicit NvtxRange(const char *name) { nvtxRangePushA(name); }
     ~NvtxRange() { nvtxRangePop(); }
 };
 
-// ---------------------------------------------------------------------------
-// ComplexT<Real> — the cuFFT/cuFINUFFT complex type matching Real, so the
-// long-range pipeline (spread/FFT/interp) can be genuinely Real-templated
-// instead of always running in double. A GpuState is created for exactly one
-// Real (see GpuState::use_float / gpu_create_state) -- this alias is what lets
-// the same long_range_gpu<Real> body compile against either library's API.
-// ---------------------------------------------------------------------------
 template <typename Real>
 using ComplexT = std::conditional_t<std::is_same_v<Real, double>, cuDoubleComplex, cuFloatComplex>;
 
@@ -149,8 +135,7 @@ struct GpuState {
 };
 
 // Grows *ptr (byte capacity *cap) to at least needed_bytes, freeing+reallocating only when it
-// actually needs to grow. The core of turning "malloc/free every eval" into "malloc once,
-// reuse forever" for a fixed (or non-growing) problem size.
+// actually needs to grow. 
 static void ensure_capacity(void *&ptr, size_t &cap, size_t needed_bytes) {
     if (cap >= needed_bytes) return;
     if (ptr) cudaFree(ptr);
@@ -160,10 +145,6 @@ static void ensure_capacity(void *&ptr, size_t &cap, size_t needed_bytes) {
 }
 
 // Allocate and initialise a GpuState with all physics params and CUDA objects.
-// use_float selects the ONE Real this plan is created for -- every eval call
-// on the returned GpuState must use the matching Real (esp_eval_gpu<float>
-// on a use_float=false plan throws). h_scaling_coeffs is always double (it's
-// computed CPU-side in esp.cpp); it's narrowed to float here, once, if needed.
 GpuState *gpu_create_state(
     int nf, int n_digits,
     double L, double r_c, double gpu_upsampfac, double tol,
@@ -227,16 +208,10 @@ GpuState *gpu_create_state(
     cufinufft_opts co;
     cufinufft_default_opts(&co);
     co.gpu_spreadinterponly = 1;
-    // gpu_upsampfac is GPU_SPREADER_UPSAMPFAC (esp.cpp) -- deliberately decoupled
-    // from the PSWF splitting kernel's sigma (which stays whatever the CPU plan
-    // requested, e.g. 1.35, for grid/PSWF consistency). Fixed at the standard 2.0
-    // so gpu_kerevalmeth=1 (Horner, faster than the direct exp/sqrt eval
-    // non-standard values would require) is valid; precompute_scaling_coefficients_es
-    // derives its (ns,beta) from this same constant, so the two stay consistent.
     co.upsampfac            = gpu_upsampfac;
     co.gpu_kerevalmeth      = 1;
     co.gpu_method = 3;
-    //co.gpu_sort = 0;  //relevant only if co.gpu_method = 1;
+   
     // Use the default (null) stream for cuFINUFFT internals.
     // We sync explicitly before setpts/execute so the NU data is ready.
     // co.gpu_stream is left at cudaStreamDefault (the default from cufinufft_default_opts).
@@ -330,16 +305,6 @@ void gpu_destroy_state(GpuState *gpu) { delete gpu; }
 // classified into one of kEspNbuckets spatial sub-boxes (octants, for the
 // default kEspBins=2), so that once sorted by this composite key, particles
 // within a cell end up spatially clustered, not just cell-clustered.
-//
-// This is purely a reordering -- short_range_kernel/short_range_kernel_old
-// need no changes at all, since cell_start still demarcates exactly the same
-// cell boundaries as before (see build_cell_list_gpu's scaled lower_bound
-// search); they just see tighter within-cell tile locality "for free". On
-// its own this doesn't reduce any arithmetic (nothing prunes using it yet)
-// -- it's the same preparatory-infrastructure role sort_cell_bins plays on
-// the CPU side, there specifically enabling short_range_prune_tile /
-// short_range_prune_source. kEspBins is a fixed default here, not yet wired
-// to a runtime/plan parameter the way esp.cpp's params.esp_bins is.
 // ---------------------------------------------------------------------------
 constexpr int kEspBins     = 2; // sub-cell bins per axis (octants for DIM=3), matches esp.cpp's default
 constexpr int kEspNbuckets = kEspBins * kEspBins * kEspBins;
@@ -393,7 +358,7 @@ __global__ void cell_index_kernel(const Real *d_pos_aos, int n, Real L, int nc, 
 
 // ---------------------------------------------------------------------------
 // cell_index_kernel_morton — flat (cell, Morton-code) composite key per
-// particle. Mirrors CPU's sort_cell_morton (read from the ewald-esp branch),
+// particle. Mirrors CPU's sort_cell_morton,
 // but as ONE global composite-key sort instead of many small per-cell radix
 // sorts, for the same reason cell_index_kernel above already does the bins
 // classification as one global sort: many small independent per-cell sorts
@@ -401,23 +366,6 @@ __global__ void cell_index_kernel(const Real *d_pos_aos, int n, Real L, int nc, 
 // on CPU. Sorting by (cell_index, morton_code) gives the identical relative
 // ordering within each cell's range that sorting each cell's particles by
 // Morton code independently would.
-//
-// part1by2_64 is a direct port of the CPU function of the same name (plain
-// shift/mask chain) -- CPU also has a byte-chunk lookup-table variant
-// (kSpread3) to avoid a dependent shift chain in a tight scalar loop, but
-// that's a CPU-scalar micro-optimization with nothing to offer one GPU thread
-// per particle, so it's not ported.
-//
-// kMortonBits = 16/DIM = 5 for DIM=3 (this branch is always 3D), matching
-// CPU exactly: each axis is quantized to a 32-level (2^5) grid within the
-// particle's own cell, and the 3 axes interleave into a 15-bit code.
-// kMortonBuckets = 2^15 is therefore the per-cell key space the Morton code
-// ranges over -- the composite key is cell_lin*kMortonBuckets + morton_code,
-// analogous to cell_index_kernel's cell_lin*kEspNbuckets + bin_lin, just at
-// finer resolution. Unlike that key (safely int-sized, kEspNbuckets=8), this
-// one needs 64 bits: cell_lin can be large enough that cell_lin*32768
-// overflows int32 for finer r_c / larger domains, so build_cell_list_gpu
-// gives this path its own unsigned long long key buffer and 64-bit sort.
 // ---------------------------------------------------------------------------
 __device__ __forceinline__ uint64_t part1by2_64(uint64_t x) {
     x &= 0x1fffffull;
@@ -610,12 +558,7 @@ static void build_cell_list_gpu(
 // Coefficients ride into the kernel as a compile-time *type* (CoeffTag), not
 // a runtime (pointer, count) pair -- this lets the compiler unroll the Horner
 // chain into a fixed sequence of FMAs against literal immediates instead of a
-// runtime loop reading global memory. CoeffTag::at() is a function (not a
-// `static constexpr double data[N]` member) because nvcc treats class-scope
-// constexpr arrays as host-only; the function form constant-folds on both
-// host and device when called with a compile-time-constant index.
-//
-// clang-format off
+// runtime loop reading global memory. 
 template <typename C>
 concept CoeffTag = requires {
     typename C::value_type;
@@ -644,8 +587,6 @@ __device__ constexpr Real horner_const(Real x) {
 // for reference (n = Coeffs::size, coefficients ascending-order):
 //   P = c[n-1]; dP = 0;
 //   for (i = n-2; i >= 0; --i) { dP = dP*x + P; P = P*x + c[i]; }
-// Note dP's update at each step uses the OLD P (the value *before* that
-// step's update to P) -- the same dependency the runtime loop above has.
 template <CoeffTag Coeffs, std::size_t I, typename Real>
 __device__ constexpr void horner_recurse_deriv(Real x, Real &P, Real &dP) {
     if constexpr (I == 0) {
@@ -691,73 +632,6 @@ __device__ __forceinline__ void eval_esp_pair(
     } else {
         const Real P = horner_const<Coeffs>(x);
         pot_acc += q * P * Rinv;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// short_range_kernel_old — pre-Phase-2 version, kept side by side with the
-// shared-memory/register-blocked short_range_kernel below so the two can be
-// A/B'd directly. One thread per target (grid-stride over the home cell's
-// targets), direct global-memory reads for sources -- no shared-memory
-// tiling, no register-blocking of multiple targets per thread. Still calls
-// the current eval_esp_pair<Coeffs, WantForce, Real> (compile-time
-// coefficients), not the original runtime (pointer, count) version it was
-// written against, so this isolates just the Phase 2 (tiling/register-
-// blocking) change's effect rather than also reverting Phase 1.
-// ---------------------------------------------------------------------------
-template <CoeffTag Coeffs, bool WantForce, typename Real>
-__global__ void short_range_kernel_old(
-    int nc, int n, int out_dim,
-    Real rsc, Real cen, Real r_c_sq,
-    const int    *cell_start,
-    const Real   *d_xs, const Real *d_ys, const Real *d_zs,
-    const Real   *d_qs,
-    const int    *nbc_tab,
-    const Real   *off_tab,
-    Real *pg_sorted)
-{
-    const int home = blockIdx.x; // 0 .. nc^3-1, row-major (x*nc+y)*nc+z, one block per cell
-    const int cx = home / (nc * nc);
-    const int cy = (home / nc) % nc;
-    const int cz = home % nc;
-
-    const int hbeg = cell_start[home];
-    const int n_trg = cell_start[home + 1] - hbeg;
-
-    for (int t = threadIdx.x; t < n_trg; t += blockDim.x) {
-        const int trg = hbeg + t;
-        const Real xt = d_xs[trg], yt = d_ys[trg], zt = d_zs[trg];
-
-        Real pot_acc = Real(0), gx_acc = Real(0), gy_acc = Real(0), gz_acc = Real(0);
-
-        for (int dxi = 0; dxi < 3; ++dxi) {
-            const int nbx = nbc_tab[cx * 3 + dxi];
-            const Real ox = off_tab[cx * 3 + dxi];
-            for (int dyi = 0; dyi < 3; ++dyi) {
-                const int nby = nbc_tab[cy * 3 + dyi];
-                const Real oy = off_tab[cy * 3 + dyi];
-                for (int dzi = 0; dzi < 3; ++dzi) {
-                    const int nbz = nbc_tab[cz * 3 + dzi];
-                    const Real oz = off_tab[cz * 3 + dzi];
-                    const int nb = (nbx * nc + nby) * nc + nbz;
-                    const int sbeg = cell_start[nb], send = cell_start[nb + 1];
-                    for (int s = sbeg; s < send; ++s) {
-                        const Real dx = xt - (d_xs[s] + ox);
-                        const Real dy = yt - (d_ys[s] + oy);
-                        const Real dz = zt - (d_zs[s] + oz);
-                        eval_esp_pair<Coeffs, WantForce, Real>(dx, dy, dz, d_qs[s], rsc, cen, r_c_sq,
-                                                               pot_acc, gx_acc, gy_acc, gz_acc);
-                    }
-                }
-            }
-        }
-
-        pg_sorted[out_dim * trg + 0] = pot_acc;
-        if constexpr (WantForce) {
-            pg_sorted[out_dim * trg + 1] = gx_acc;
-            pg_sorted[out_dim * trg + 2] = gy_acc;
-            pg_sorted[out_dim * trg + 3] = gz_acc;
-        }
     }
 }
 
@@ -1782,11 +1656,7 @@ static void short_range_gpu(
         // in GpuState and only recomputed when n changes (the common case is repeated
         // calls with the same n, e.g. a benchmark loop or successive simulation
         // timesteps, where the sync is pure overhead unrelated to any actual change in
-        // cell populations). A 25% margin absorbs modest population drift between
-        // calls at the same n (e.g. particles moving slightly between timesteps)
-        // without needing to resync; this is a pragmatic bound, not a rigorous one --
-        // a dataset whose max cell population grows by >25% while n stays fixed could
-        // still overflow it.
+        // cell populations). 
         int pruned_max_tiles = 0;
         size_t pruned_shmem_bytes = 0;
         if (gpu.strategy != GpuSrStrategy::Dense) {
@@ -1829,10 +1699,7 @@ static void short_range_gpu(
                 gpu.d_nbc_tab, reinterpret_cast<const Real *>(gpu.d_off_tab), d_pg_sorted);                           \
         }                                                                                                              \
     } while (0)
-// #define DMK_SR_LAUNCH(TAG, WANTFORCE)                                                                              \
-//     short_range_kernel_old<TAG, WANTFORCE, Real><<<nc * nc * nc, threads, 0, gpu.stream>>>(                        \
-//         nc, n, out_dim, rsc, cen, r_c_sq, d_cell_start, d_xs, d_ys, d_zs, d_qs,                                    \
-//         gpu.d_nbc_tab, reinterpret_cast<const Real *>(gpu.d_off_tab), d_pg_sorted)
+
 #define DMK_SR_CASCADE(PREFIX, WANTFORCE)                                                                              \
     do {                                                                                                              \
         if      (n_digits <= 2)  DMK_SR_LAUNCH(EspSrCoeffs_##PREFIX##_2, WANTFORCE);                                   \
