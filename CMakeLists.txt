@@ -117,9 +117,11 @@ if (DMK_GPU_OFFLOAD)
   )
 
   file(GLOB DMK_JIT_CU_SOURCES CONFIGURE_DEPENDS
-    "${PROJECT_SOURCE_DIR}/src/cuda/pt/jit_sources/*.cu")
+    "${PROJECT_SOURCE_DIR}/src/cuda/*/jit_sources/*.cu")
   file(GLOB DMK_JIT_HEADER_FILES CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/include/dmk/cuda/*_kernelargs.hpp")
+  # Device-only headers a JIT source may include that are not kernel-arg structs.
+  list(APPEND DMK_JIT_HEADER_FILES "${PROJECT_SOURCE_DIR}/include/dmk/cuda/bessel_device.hpp")
   set(DMK_JIT_EMBED_HEADERS "")
   foreach(hfile ${DMK_JIT_HEADER_FILES})
     get_filename_component(hname "${hfile}" NAME)
@@ -300,6 +302,7 @@ if (DMK_GPU_OFFLOAD)
               src/cuda/pt/proxy2pw.cpp
               src/cuda/pt/pw2proxy.cpp
               src/cuda/pt/launchers.cpp
+              src/cuda/direct/direct_freespace.cpp
               ${DMK_CUDA_JIT_SRC}
               )
   set_target_properties(DMKOBJS_CUDA PROPERTIES POSITION_INDEPENDENT_CODE ON)

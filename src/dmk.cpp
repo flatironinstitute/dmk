@@ -26,6 +26,8 @@
 #include <dmk/testing.hpp>
 
 #ifdef DMK_GPU_OFFLOAD
+#include <dmk/cuda/direct.hpp>
+#include <dmk/cuda/helpers.hpp>
 #include <dmk/cuda/pt/tree.hpp>
 // GPU point-tree evaluators join the handle variant; selected at create when
 // eval_path == DMK_EVAL_PATH_GPU.
@@ -155,8 +157,18 @@ void validate_direct_args(const pdmk_params &params, int n_src, const Real *r_sr
 
     if (params.use_periodic)
         fail("the direct path has no periodic implementation; use_periodic must be 0");
-    if (params.eval_path != DMK_EVAL_PATH_CPU)
-        fail("the direct path is CPU-only; eval_path must be DMK_EVAL_PATH_CPU");
+
+    // An all-pairs sum has none of the tree path's 3D-only or single-rank restrictions: sources
+    // are gathered on the host before any device work.
+    if (params.eval_path == DMK_EVAL_PATH_GPU) {
+#ifndef DMK_GPU_OFFLOAD
+        fail("eval_path=GPU requires the library to be built with -DDMK_GPU_OFFLOAD=ON");
+#else
+        dmk::cuda::pt::bind_gpu_device(params.gpu_device_id);
+#endif
+    } else if (params.eval_path != DMK_EVAL_PATH_CPU) {
+        fail("Invalid eval_path: " + std::to_string(int(params.eval_path)));
+    }
 
     auto check_eval = [&](dmk_eval_type eval, const char *what) {
         if (eval < DMK_POTENTIAL || eval > DMK_VELOCITY_PRESSURE)
@@ -228,13 +240,20 @@ void pdmk_direct(dmk_communicator comm, const pdmk_params &params, int n_src, co
     }
 #endif
 
-    // The evaluators accumulate, so the caller's buffer is cleared first; that also gives
+    // The CPU evaluators accumulate, so the caller's buffer is cleared first; that also gives
     // ranks holding no global sources a well-defined (zero) result.
     auto eval_at = [&](dmk_eval_type eval, int n, const Real *r, Real *pot) {
         const int out_dim = get_kernel_output_dim(n_dim, params.kernel, eval);
         std::fill(pot, pot + size_t(n) * out_dim, Real(0));
         if (n_src_global == 0)
             return;
+#ifdef DMK_GPU_OFFLOAD
+        if (params.eval_path == DMK_EVAL_PATH_GPU) {
+            cuda_helpers::ScopedDevice device_scope(params.gpu_device_id);
+            cuda::direct_freespace<Real>(params, eval, n_src_global, r_global, charge_global, normal_global, n, r, pot);
+            return;
+        }
+#endif
         const auto func = get_direct_evaluator<Real>(params.kernel, eval, n_dim, params.fparam);
         parallel_direct_eval(func, n_src_global, r_global, charge_global, normal_global, n, r, pot, n_dim, out_dim);
     };
@@ -1035,10 +1054,23 @@ TEST_CASE_GENERIC("[DMK] pdmk_direct", 1) {
         CHECK(pdmk_direct(comm, periodic, n_src, &r_src[0], &charges[0], nullptr, 0, nullptr, pot_src.data(),
                           nullptr) == DMK_ERR_INVALID_ARGUMENT);
 
+        pdmk_params bad_path = params;
+        bad_path.eval_path = dmk_eval_path(DMK_EVAL_PATH_GPU + 1);
+        CHECK(pdmk_direct(comm, bad_path, n_src, &r_src[0], &charges[0], nullptr, 0, nullptr, pot_src.data(),
+                          nullptr) == DMK_ERR_INVALID_ARGUMENT);
+    }
+
+    SUBCASE("a GPU eval_path is accepted only in a GPU build") {
+        std::vector<double> pot_src(n_src);
         pdmk_params gpu = params;
         gpu.eval_path = DMK_EVAL_PATH_GPU;
-        CHECK(pdmk_direct(comm, gpu, n_src, &r_src[0], &charges[0], nullptr, 0, nullptr, pot_src.data(), nullptr) ==
-              DMK_ERR_INVALID_ARGUMENT);
+        const dmk_error err =
+            pdmk_direct(comm, gpu, n_src, &r_src[0], &charges[0], nullptr, 0, nullptr, pot_src.data(), nullptr);
+#ifdef DMK_GPU_OFFLOAD
+        CHECK(err == DMK_SUCCESS);
+#else
+        CHECK(err == DMK_ERR_INVALID_ARGUMENT);
+#endif
     }
 
     SUBCASE("unimplemented eval types and kernel/dim combinations are rejected") {

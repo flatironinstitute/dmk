@@ -190,10 +190,14 @@ dmk_error pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const floa
 /// every target, no tree and no approximation, so the cost is O(n_src * n_trg). Intended as
 /// the reference path for validating pdmk, not for production-size problems.
 ///
-/// Only n_dim, kernel, eval_src, eval_trg and fparam are read from params; eps, n_per_leaf,
-/// use_periodic and eval_path are not (a non-default use_periodic or eval_path is rejected
+/// Reads n_dim, kernel, eval_src, eval_trg, fparam, eval_path and gpu_device_id from params;
+/// eps and n_per_leaf are not used, and use_periodic must be 0 (a periodic request is rejected
 /// rather than silently ignored). The direct kernels implement DMK_POTENTIAL,
 /// DMK_POTENTIAL_GRAD and DMK_VELOCITY only.
+///
+/// eval_path selects CPU or GPU. Unlike the tree path the GPU direct kernel has no dimension
+/// or rank restriction -- it is a plain all-pairs sum over the gathered sources -- so every
+/// kernel/dimension combination below is available on either path.
 ///
 /// Under MPI the sources are gathered across comm, so r_src/charge/normal are this rank's
 /// slice while pot_src/pot_trg hold the results for this rank's own points -- the same
