@@ -40,10 +40,29 @@ struct NvtxPass {
 
 } // namespace
 
+void bind_gpu_device(int device_id) {
+    int n_devices = 0;
+    DMK_CHECK_CUDA(cudaGetDeviceCount(&n_devices));
+    if (device_id < 0 || device_id >= n_devices)
+        throw api_error(DMK_ERR_INVALID_ARGUMENT, "gpu_device_id " + std::to_string(device_id) + " is out of range: " +
+                                                      std::to_string(n_devices) + " CUDA device(s) visible");
+
+    // Initialized by the first call, so `bound` is the device this process committed to.
+    static const int bound = device_id;
+    if (bound != device_id)
+        throw api_error(DMK_ERR_INVALID_ARGUMENT, "this process is already using CUDA device " + std::to_string(bound) +
+                                                      "; DMK drives one device per process (requested " +
+                                                      std::to_string(device_id) + ")");
+}
+
 template <typename Real, int DIM>
 Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const sctl::Vector<Real> &r_src,
                       const sctl::Vector<Real> &charge, const sctl::Vector<Real> &normal,
-                      const sctl::Vector<Real> &r_trg) {
+                      const sctl::Vector<Real> &r_trg)
+    : device_id_(params.gpu_device_id) {
+    bind_gpu_device(device_id_);
+    cuda_helpers::ScopedDevice device_scope(device_id_);
+
     // The owned tree runs the GPU host precompute only (tree build, metadata,
     // and plane-wave layout); all device state lives in state_.
     tree_ = std::make_unique<DMKPtTree<Real, DIM>>(comm, params, r_src, charge, normal, r_trg);
@@ -59,6 +78,7 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
 
 template <typename Real, int DIM>
 Tree<Real, DIM>::~Tree() {
+    cuda_helpers::ScopedDevice device_scope(device_id_);
     const cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
         const std::string msg = std::string("CUDA error at tree destroy: ") + cudaGetErrorString(err);
@@ -69,6 +89,7 @@ Tree<Real, DIM>::~Tree() {
 
 template <typename Real, int DIM>
 void Tree<Real, DIM>::eval() {
+    cuda_helpers::ScopedDevice device_scope(device_id_);
     // The near-field `direct` runs concurrently on direct_stream with the
     // upward -> form_outgoing -> downward -> eval_targets chain on
     // downward_stream; `finalize` joins them (direct_stream waits on the
@@ -111,6 +132,7 @@ void Tree<Real, DIM>::eval() {
 
 template <typename Real, int DIM>
 void Tree<Real, DIM>::desort_potentials(Real *pot_src, Real *pot_trg) {
+    cuda_helpers::ScopedDevice device_scope(device_id_);
     // finalize wrote the descattered (user-order) result into d_pot_*_final and
     // synced; one D2H per side.
     const auto &o = state_->outputs;
@@ -124,6 +146,7 @@ void Tree<Real, DIM>::desort_potentials(Real *pot_src, Real *pot_trg) {
 
 template <typename Real, int DIM>
 void Tree<Real, DIM>::update_charges(const Real *charge, const Real *normal) {
+    cuda_helpers::ScopedDevice device_scope(device_id_);
     state_->upload_and_sort_charges(charge, normal, tree_->r_src_sorted_owned.Dim() / DIM);
     cuda_helpers::check_device_errors("tree update_charges");
 }

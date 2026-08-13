@@ -24,6 +24,27 @@ namespace dmk::cuda_helpers {
             throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(_e));                            \
     } while (0)
 
+// Makes `device` current for the lifetime of the guard and restores the caller's device
+// afterwards, so a DMK call never leaves the ambient device changed. Non-throwing: it runs
+// in destructors, and the device id is range-checked at tree creation.
+class ScopedDevice {
+  public:
+    explicit ScopedDevice(int device) noexcept {
+        if (cudaGetDevice(&previous_) == cudaSuccess && device != previous_)
+            restore_ = cudaSetDevice(device) == cudaSuccess;
+    }
+    ~ScopedDevice() {
+        if (restore_)
+            cudaSetDevice(previous_);
+    }
+    ScopedDevice(const ScopedDevice &) = delete;
+    ScopedDevice &operator=(const ScopedDevice &) = delete;
+
+  private:
+    int previous_ = 0;
+    bool restore_ = false;
+};
+
 // Runtime-API launches record a fault here instead of returning it; call from an entry
 // point that has already synced.
 inline void check_device_errors(const char *where) {

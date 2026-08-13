@@ -3,6 +3,7 @@
 #include <span>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
@@ -86,6 +87,14 @@ void validate_create_args(dmk_communicator comm, const pdmk_params &params, int 
     if (needs_3d && params.n_dim != 3)
         fail("kernel " + std::string(util::to_string(params.kernel)) + " is only supported in 3D");
 
+    // Rejected here so the caller gets DMK_ERR_INVALID_ARGUMENT rather than the
+    // DMK_ERR_INTERNAL a deeper throw would produce.
+    const bool scalar_kernel =
+        params.kernel == DMK_LAPLACE || params.kernel == DMK_SQRT_LAPLACE || params.kernel == DMK_YUKAWA;
+    if (params.use_periodic && !scalar_kernel)
+        fail("periodic boundary conditions are not supported for kernel " +
+             std::string(util::to_string(params.kernel)));
+
     if (params.eval_path == DMK_EVAL_PATH_GPU) {
 #ifndef DMK_GPU_OFFLOAD
         fail("eval_path=GPU requires the library to be built with -DDMK_GPU_OFFLOAD=ON");
@@ -98,14 +107,7 @@ void validate_create_args(dmk_communicator comm, const pdmk_params &params, int 
             fail("eval_path=GPU is single-rank only (the upward-pass broadcast has no device path), got " +
                  std::to_string(n_ranks) + " ranks");
 #endif
-        // The periodic root kernel is scalar-only: get_periodic_windowed_kernel_ft throws
-        // for Stokeslet/Stresslet and the periodic root branch never routes to the dipole
-        // multiply, so these are unsupported on the CPU too.
-        const bool scalar_kernel =
-            params.kernel == DMK_LAPLACE || params.kernel == DMK_SQRT_LAPLACE || params.kernel == DMK_YUKAWA;
-        if (params.use_periodic && !scalar_kernel)
-            fail("eval_path=GPU does not support periodic boundary conditions for kernel " +
-                 std::string(util::to_string(params.kernel)));
+        dmk::cuda::pt::bind_gpu_device(params.gpu_device_id);
 #endif
     }
 
@@ -125,6 +127,122 @@ void validate_create_args(dmk_communicator comm, const pdmk_params &params, int 
     // an uncatchable segfault rather than an exception.
     if (params.kernel == DMK_STRESSLET && normal == nullptr)
         fail("Stresslet requires a non-null normal array");
+}
+
+/// Validate inputs to the direct path. It shares pdmk's argument layout but none of its
+/// tree parameters, and it has no periodic or GPU implementation, so the checks differ from
+/// validate_create_args. An eval type is only checked when its output is actually requested:
+/// a Stokeslet run that only fills pot_trg must not trip over the default eval_src.
+template <typename Real>
+void validate_direct_args(const pdmk_params &params, int n_src, const Real *r_src, const Real *charge,
+                          const Real *normal, int n_trg, const Real *r_trg, const Real *pot_src, const Real *pot_trg) {
+    auto fail = [](std::string msg) { throw api_error(DMK_ERR_INVALID_ARGUMENT, std::move(msg)); };
+
+    if (params.n_dim != 2 && params.n_dim != 3)
+        fail("Invalid dimension: " + std::to_string(params.n_dim));
+    if (n_src < 0 || n_trg < 0)
+        fail("n_src and n_trg must be non-negative");
+    if (params.kernel < DMK_YUKAWA || params.kernel > DMK_LAPLACE_DIPOLE)
+        fail("Invalid kernel: " + std::to_string(int(params.kernel)));
+    if (params.kernel == DMK_YUKAWA && params.fparam <= 0.0)
+        fail("Invalid yukawa lambda. lambda must be positive, got " + std::to_string(params.fparam));
+
+    // Only the Stokes kernels are missing a 2D direct evaluator; the dipole has one even
+    // though the tree path (validate_create_args) is 3D-only.
+    const bool needs_3d = params.kernel == DMK_STOKESLET || params.kernel == DMK_STRESSLET;
+    if (needs_3d && params.n_dim != 3)
+        fail("kernel " + std::string(util::to_string(params.kernel)) + " is only supported in 3D");
+
+    if (params.use_periodic)
+        fail("the direct path has no periodic implementation; use_periodic must be 0");
+    if (params.eval_path != DMK_EVAL_PATH_CPU)
+        fail("the direct path is CPU-only; eval_path must be DMK_EVAL_PATH_CPU");
+
+    auto check_eval = [&](dmk_eval_type eval, const char *what) {
+        if (eval < DMK_POTENTIAL || eval > DMK_VELOCITY_PRESSURE)
+            fail(std::string("Invalid ") + what + ": " + std::to_string(int(eval)));
+        if (eval == DMK_POTENTIAL_GRAD_HESSIAN || eval == DMK_VELOCITY_PRESSURE)
+            fail(std::string(what) + "=" + std::string(util::to_string(eval)) +
+                 " is not implemented by the direct kernels (potential, potential+gradient and velocity only)");
+        try {
+            get_kernel_output_dim(params.n_dim, params.kernel, eval);
+        } catch (const std::exception &e) {
+            fail(e.what());
+        }
+    };
+    if (pot_src)
+        check_eval(params.eval_src, "eval_src");
+    if (pot_trg)
+        check_eval(params.eval_trg, "eval_trg");
+
+    if (n_src > 0 && (r_src == nullptr || charge == nullptr))
+        fail("r_src and charge must be non-null when n_src > 0");
+    if (n_trg > 0 && pot_trg != nullptr && r_trg == nullptr)
+        fail("r_trg must be non-null when n_trg > 0 and pot_trg is requested");
+    if (params.kernel == DMK_STRESSLET && n_src > 0 && normal == nullptr)
+        fail("Stresslet requires a non-null normal array");
+}
+
+/// Direct summation needs every source at every target, so each rank's source slice is
+/// gathered onto all ranks; targets, and therefore the outputs, stay rank-local.
+template <typename Real>
+void pdmk_direct(dmk_communicator comm, const pdmk_params &params, int n_src, const Real *r_src, const Real *charge,
+                 const Real *normal, int n_trg, const Real *r_trg, Real *pot_src, Real *pot_trg) {
+    const int n_dim = params.n_dim;
+    const int charge_dim = params.kernel == DMK_STRESSLET ? n_dim : get_kernel_input_dim(n_dim, params.kernel);
+    const bool has_normal = params.kernel == DMK_STRESSLET;
+
+    int n_src_global = n_src;
+    const Real *r_global = r_src;
+    const Real *charge_global = charge;
+    const Real *normal_global = normal;
+    std::vector<Real> r_gathered, charge_gathered, normal_gathered;
+
+#ifdef DMK_HAVE_MPI
+    const int n_ranks = sctl::Comm(MPI_Comm(comm)).Size();
+    if (n_ranks > 1) {
+        const MPI_Datatype mpi_t = std::is_same_v<Real, float> ? MPI_FLOAT : MPI_DOUBLE;
+        std::vector<int> n_per_rank(n_ranks);
+        MPI_Allgather(&n_src, 1, MPI_INT, n_per_rank.data(), 1, MPI_INT, comm);
+        n_src_global = 0;
+        for (int n : n_per_rank)
+            n_src_global += n;
+
+        auto gather = [&](const Real *local, int comp_dim, std::vector<Real> &out) {
+            std::vector<int> counts(n_ranks), displs(n_ranks);
+            for (int i = 0; i < n_ranks; ++i) {
+                counts[i] = n_per_rank[i] * comp_dim;
+                displs[i] = i ? displs[i - 1] + counts[i - 1] : 0;
+            }
+            out.resize(size_t(n_src_global) * comp_dim);
+            MPI_Allgatherv(local, n_src * comp_dim, mpi_t, out.data(), counts.data(), displs.data(), mpi_t, comm);
+        };
+        gather(r_src, n_dim, r_gathered);
+        gather(charge, charge_dim, charge_gathered);
+        r_global = r_gathered.data();
+        charge_global = charge_gathered.data();
+        if (has_normal) {
+            gather(normal, n_dim, normal_gathered);
+            normal_global = normal_gathered.data();
+        }
+    }
+#endif
+
+    // The evaluators accumulate, so the caller's buffer is cleared first; that also gives
+    // ranks holding no global sources a well-defined (zero) result.
+    auto eval_at = [&](dmk_eval_type eval, int n, const Real *r, Real *pot) {
+        const int out_dim = get_kernel_output_dim(n_dim, params.kernel, eval);
+        std::fill(pot, pot + size_t(n) * out_dim, Real(0));
+        if (n_src_global == 0)
+            return;
+        const auto func = get_direct_evaluator<Real>(params.kernel, eval, n_dim, params.fparam);
+        parallel_direct_eval(func, n_src_global, r_global, charge_global, normal_global, n, r, pot, n_dim, out_dim);
+    };
+
+    if (pot_src && n_src > 0)
+        eval_at(params.eval_src, n_src, r_src, pot_src);
+    if (pot_trg && n_trg > 0)
+        eval_at(params.eval_trg, n_trg, r_trg, pot_trg);
 }
 
 template <typename T, int DIM>
@@ -829,6 +947,122 @@ TEST_CASE_GENERIC("[DMK] pdmk Laplace dipole gradient", 1) {
     }
 }
 
+TEST_CASE_GENERIC("[DMK] pdmk_direct", 1) {
+#ifdef DMK_HAVE_MPI
+    auto comm = test_comm;
+#else
+    auto comm = nullptr;
+#endif
+    constexpr int n_dim = 3;
+    constexpr int n_src = 2000;
+    constexpr int n_trg = 500;
+
+    sctl::Vector<double> r_src, charges, rnormal, r_trg;
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, false, false, r_src, r_trg, rnormal, charges, 0);
+
+    pdmk_params params;
+    pdmk_init_default_params(&params);
+    params.n_dim = n_dim;
+    params.kernel = DMK_LAPLACE;
+    params.log_level = SPDLOG_LEVEL_OFF;
+
+    auto rel_l2 = [](const std::vector<double> &approx, const std::vector<double> &ref) {
+        double err2 = 0.0, ref2 = 0.0;
+        for (size_t i = 0; i < approx.size(); ++i) {
+            err2 += sctl::pow<2>(approx[i] - ref[i]);
+            ref2 += sctl::pow<2>(ref[i]);
+        }
+        return std::sqrt(err2 / ref2);
+    };
+
+    // The tree solve is the approximation, so it is run at a tolerance far tighter than the
+    // threshold being asserted; direct summation is exact up to roundoff.
+    SUBCASE("agrees with a tight-tolerance tree solve") {
+        std::vector<double> pot_src(n_src), pot_trg(n_trg);
+        REQUIRE(pdmk_direct(comm, params, n_src, &r_src[0], &charges[0], nullptr, n_trg, &r_trg[0], pot_src.data(),
+                            pot_trg.data()) == DMK_SUCCESS);
+
+        pdmk_params tree_params = params;
+        tree_params.eps = 1e-12;
+        std::vector<double> tree_src(n_src), tree_trg(n_trg);
+        REQUIRE(pdmk(comm, tree_params, n_src, &r_src[0], &charges[0], nullptr, n_trg, &r_trg[0], tree_src.data(),
+                     tree_trg.data()) == DMK_SUCCESS);
+
+        CHECK(rel_l2(pot_src, tree_src) < 1e-10);
+        CHECK(rel_l2(pot_trg, tree_trg) < 1e-10);
+    }
+
+    SUBCASE("a NULL output skips that point set") {
+        std::vector<double> both_trg(n_trg), only_trg(n_trg);
+        REQUIRE(pdmk_direct(comm, params, n_src, &r_src[0], &charges[0], nullptr, n_trg, &r_trg[0], nullptr,
+                            both_trg.data()) == DMK_SUCCESS);
+        std::vector<double> pot_src(n_src);
+        REQUIRE(pdmk_direct(comm, params, n_src, &r_src[0], &charges[0], nullptr, n_trg, &r_trg[0], pot_src.data(),
+                            only_trg.data()) == DMK_SUCCESS);
+        CHECK(rel_l2(both_trg, only_trg) == 0.0);
+    }
+
+    // eval_src is left at the default DMK_POTENTIAL, which the Stokeslet does not support;
+    // it must not be validated when no source output is requested.
+    SUBCASE("a NULL output also skips its eval type's validation") {
+        pdmk_params stokes = params;
+        stokes.kernel = DMK_STOKESLET;
+        stokes.eval_trg = DMK_VELOCITY;
+        std::vector<double> stokes_charges(n_src * n_dim, 1.0);
+        std::vector<double> vel_trg(n_trg * n_dim);
+        CHECK(pdmk_direct(comm, stokes, n_src, &r_src[0], stokes_charges.data(), nullptr, n_trg, &r_trg[0], nullptr,
+                          vel_trg.data()) == DMK_SUCCESS);
+    }
+
+    SUBCASE("single precision agrees with double") {
+        std::vector<double> pot_trg(n_trg);
+        REQUIRE(pdmk_direct(comm, params, n_src, &r_src[0], &charges[0], nullptr, n_trg, &r_trg[0], nullptr,
+                            pot_trg.data()) == DMK_SUCCESS);
+
+        std::vector<float> r_srcf(r_src.begin(), r_src.end()), chargesf(charges.begin(), charges.end());
+        std::vector<float> r_trgf(r_trg.begin(), r_trg.end()), pot_trgf(n_trg);
+        REQUIRE(pdmk_directf(comm, params, n_src, r_srcf.data(), chargesf.data(), nullptr, n_trg, r_trgf.data(),
+                             nullptr, pot_trgf.data()) == DMK_SUCCESS);
+
+        std::vector<double> promoted(pot_trgf.begin(), pot_trgf.end());
+        CHECK(rel_l2(promoted, pot_trg) < 1e-5);
+    }
+
+    SUBCASE("tree-only parameters are rejected rather than ignored") {
+        std::vector<double> pot_src(n_src);
+        pdmk_params periodic = params;
+        periodic.use_periodic = 1;
+        CHECK(pdmk_direct(comm, periodic, n_src, &r_src[0], &charges[0], nullptr, 0, nullptr, pot_src.data(),
+                          nullptr) == DMK_ERR_INVALID_ARGUMENT);
+
+        pdmk_params gpu = params;
+        gpu.eval_path = DMK_EVAL_PATH_GPU;
+        CHECK(pdmk_direct(comm, gpu, n_src, &r_src[0], &charges[0], nullptr, 0, nullptr, pot_src.data(), nullptr) ==
+              DMK_ERR_INVALID_ARGUMENT);
+    }
+
+    SUBCASE("unimplemented eval types and kernel/dim combinations are rejected") {
+        std::vector<double> pot_src(n_src * 16);
+        pdmk_params hessian = params;
+        hessian.eval_src = DMK_POTENTIAL_GRAD_HESSIAN;
+        CHECK(pdmk_direct(comm, hessian, n_src, &r_src[0], &charges[0], nullptr, 0, nullptr, pot_src.data(), nullptr) ==
+              DMK_ERR_INVALID_ARGUMENT);
+
+        pdmk_params stokes_2d = params;
+        stokes_2d.n_dim = 2;
+        stokes_2d.kernel = DMK_STOKESLET;
+        stokes_2d.eval_src = DMK_VELOCITY;
+        CHECK(pdmk_direct(comm, stokes_2d, n_src, &r_src[0], &charges[0], nullptr, 0, nullptr, pot_src.data(),
+                          nullptr) == DMK_ERR_INVALID_ARGUMENT);
+    }
+
+    SUBCASE("null charge with n_src > 0 is rejected") {
+        std::vector<double> pot_src(n_src);
+        CHECK(pdmk_direct(comm, params, n_src, &r_src[0], nullptr, nullptr, 0, nullptr, pot_src.data(), nullptr) ==
+              DMK_ERR_INVALID_ARGUMENT);
+    }
+}
+
 TEST_CASE_GENERIC("[DMK] error handling", 1) {
 #ifdef DMK_HAVE_MPI
     auto comm = test_comm;
@@ -1198,6 +1432,22 @@ dmk_error pdmk(dmk_communicator comm, pdmk_params params, int n_src, const doubl
             dmk::pdmk<double, 2>(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg);
         else
             dmk::pdmk<double, 3>(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg);
+    });
+}
+
+dmk_error pdmk_directf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
+                       const float *normal, int n_trg, const float *r_trg, float *pot_src, float *pot_trg) {
+    return dmk::dmk_guard([&] {
+        dmk::validate_direct_args(params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg);
+        dmk::pdmk_direct<float>(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg);
+    });
+}
+
+dmk_error pdmk_direct(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
+                      const double *normal, int n_trg, const double *r_trg, double *pot_src, double *pot_trg) {
+    return dmk::dmk_guard([&] {
+        dmk::validate_direct_args(params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg);
+        dmk::pdmk_direct<double>(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg);
     });
 }
 

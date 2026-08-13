@@ -1,8 +1,9 @@
 Installation
 ============
 
-DMK requires a C++20 compiler and CMake (>= 3.20). It is built with CMake and the git
-submodules in ``extern/``, so clone recursively.
+DMK requires a C++20 compiler, CMake (>= 3.20), a BLAS implementation, and optionally an MPI
+implementation and/or a CUDA implementation. It is built with CMake and the git submodules in
+``extern/``, so clone recursively.
 
 Dependencies
 ------------
@@ -12,26 +13,32 @@ Dependencies
 - **OpenMP** (optional, ``DMK_HAVE_OPENMP``, default ON): shared-memory parallelism.
 - **LLVM** (optional, ``DMK_USE_JIT``, default OFF): JIT-compiled kernels; RuFuS targets
   LLVM 19.
+- **CUDA** (optional, ``DMK_GPU_OFFLOAD``, default OFF): GPU based ``pdmk`` tree evals,
+  ``pdmk`` charge updates, and free space direct sums.
 
-FINUFFT (fetched automatically) provides the FFTs used by the ESP periodic solver.
+FINUFFT (fetched automatically) provides the FFTs and spread/interp algorithms used by the ESP
+periodic solver.
 
 Building on Flatiron Institute resources
 ----------------------------------------
 
 .. code-block:: bash
 
-   module load modules/2.3 python gcc/13 openmpi intel-oneapi-mkl flexiblas
+   module load gcc openmpi intel-oneapi-mkl flexiblas
 
    git clone git@github.com:flatironinstitute/DMK --recursive
    cd DMK
    mkdir build
    cd build
 
-   cmake .. -DCMAKE_BUILD_TYPE=relwithdebinfo -DBLA_VENDOR=FlexiBLAS
+   cmake .. -DCMAKE_BUILD_TYPE=relwithdebinfo -DBLA_VENDOR=FlexiBLAS -DCMAKE_CXX_FLAGS="-march=x86-64-v4"
    make -j 10
 
 Optionally, ``-DDMK_USE_JIT=ON`` enables runtime JIT-generated short-range kernels. This
-requires LLVM; on FI systems, ``module load llvm/19.1.7``.
+requires ``LLVM >= 19``. JIT is mostly used as a developer option to make shifting the
+``beta(kernel, eps, eval_type)`` curves without having to pay to rebuild the entire direct
+evaluator tree. Mild performance bumps are also possible, especially when running on multiple
+different hardware.
 
 Building on macOS
 -----------------
@@ -57,9 +64,12 @@ it.
 Running the tests
 -----------------
 
-Tests are built by default (``DMK_BUILD_TESTS=ON``). From the build directory:
+Tests require ``-DDMK_BUILD_TESTS=ON`` at configure time. Environment variable
+``DMK_JIT_AUTOTUNE_DISABLE=1`` is helpful for GPU builds. The GPU path uses a JIT+Autotuning
+pipeline that is expensive (~30s) on first call to any device/kernel/precision/eval_type
+combination. From the build directory:
 
 .. code-block:: bash
 
-   ./test/test_all              # run all tests
-   mpirun -np 4 ./test/test_all # MPI-enabled build
+   DMK_JIT_AUTOTUNE_DISABLE=1 ./test/test_all # run all tests
+   DMK_JIT_AUTOTUNE_DISABLE=1 mpirun -np 4 ./test/test_all # MPI-enabled build

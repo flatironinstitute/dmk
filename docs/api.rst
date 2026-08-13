@@ -46,6 +46,14 @@ Tree lifecycle
 
 .. doxygenfunction:: pdmk
 
+Direct summation
+----------------
+
+Brute-force evaluation with no tree and no approximation, used as the reference for
+validating a tree solve. See :doc:`features` for the combinations it implements.
+
+.. doxygenfunction:: pdmk_direct
+
 Profiling
 ---------
 

@@ -90,6 +90,9 @@ typedef struct pdmk_params {
     uint32_t debug_flags DMK_DEFAULT(0);     ///< Debug params bit field, see above
     double debug_params[8] DMK_DEFAULT({0}); ///< 0: beta, 1: order, rest: placeholders
     dmk_eval_path eval_path DMK_DEFAULT(DMK_EVAL_PATH_CPU); ///< CPU / GPU
+    ///< CUDA device to run on when eval_path is GPU. A process is pinned to the first device
+    ///< it uses (the JIT module caches are per-device); typical MPI use is one device per rank.
+    int gpu_device_id DMK_DEFAULT(0);
 } pdmk_params;
 // clang-format on
 
@@ -182,6 +185,26 @@ dmk_error pdmk(dmk_communicator comm, pdmk_params params, int n_src, const doubl
                const double *normal, int n_trg, const double *r_trg, double *pot_src, double *pot_trg);
 dmk_error pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
                 const float *normal, int n_trg, const float *r_trg, float *pot_src, float *pot_trg);
+
+/// Direct (brute-force) evaluation of the same sum pdmk approximates: every source against
+/// every target, no tree and no approximation, so the cost is O(n_src * n_trg). Intended as
+/// the reference path for validating pdmk, not for production-size problems.
+///
+/// Only n_dim, kernel, eval_src, eval_trg and fparam are read from params; eps, n_per_leaf,
+/// use_periodic and eval_path are not (a non-default use_periodic or eval_path is rejected
+/// rather than silently ignored). The direct kernels implement DMK_POTENTIAL,
+/// DMK_POTENTIAL_GRAD and DMK_VELOCITY only.
+///
+/// Under MPI the sources are gathered across comm, so r_src/charge/normal are this rank's
+/// slice while pot_src/pot_trg hold the results for this rank's own points -- the same
+/// distributed convention as pdmk. Either output may be NULL to skip evaluating at that
+/// point set; the corresponding eval type is then not validated. Outputs are overwritten,
+/// not accumulated into.
+dmk_error pdmk_direct(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
+                      const double *normal, int n_trg, const double *r_trg, double *pot_src, double *pot_trg);
+/// Single-precision pdmk_direct.
+dmk_error pdmk_directf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
+                       const float *normal, int n_trg, const float *r_trg, float *pot_src, float *pot_trg);
 #ifdef __cplusplus
 }
 #endif

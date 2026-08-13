@@ -702,6 +702,7 @@ direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_ty
                 yukawa_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor,
                                                             lambda, eval_level);
             };
+        break;
 
     case dmk_ikernel::DMK_LAPLACE:
         if (n_dim == 2)
@@ -716,6 +717,7 @@ direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_ty
                 laplace_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor,
                                                              eval_level);
             };
+        break;
     case dmk_ikernel::DMK_SQRT_LAPLACE:
         if (n_dim == 2)
             return [eval_level](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
@@ -729,12 +731,14 @@ direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_ty
                 sqrt_laplace_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot,
                                                                   unroll_factor, eval_level);
             };
+        break;
     case dmk_ikernel::DMK_STOKESLET:
         if (n_dim == 3)
             return [](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
                       const Real *r_trg, Real *pot) {
                 stokeslet_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot, unroll_factor);
             };
+        break;
     case dmk_ikernel::DMK_STRESSLET:
         if (n_dim == 3)
             return [](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
@@ -742,6 +746,7 @@ direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_ty
                 stresslet_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, normals, n_trg, r_trg, pot,
                                                                unroll_factor);
             };
+        break;
     case dmk_ikernel::DMK_LAPLACE_DIPOLE:
         if (n_dim == 2)
             return [eval_level](int n_src, const Real *r_src, const Real *charge, const Real *normals, int n_trg,
@@ -755,9 +760,9 @@ direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_ty
                 laplace_dipole_3d_all_pairs_direct<Real, MaxVecLen>(n_src, r_src, charge, n_trg, r_trg, pot,
                                                                     unroll_factor, eval_level);
             };
-    default:
-        throw std::runtime_error("Unsupported kernel for direct evaluator");
+        break;
     }
+    throw std::runtime_error(std::format("No direct evaluator for kernel {} in {}D", util::to_string(kernel), n_dim));
 }
 
 template std::vector<std::vector<float>> get_local_correction_coeffs<float>(dmk_ikernel kernel, int n_dim, int n_digits,
