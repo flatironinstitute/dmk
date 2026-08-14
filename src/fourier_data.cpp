@@ -66,122 +66,6 @@ inline double truncated_yukawa_zero_mode(double x) {
     return (1 - std::exp(-x) * (1 + x)) / (x * x);
 }
 
-// Kernel truncated at r = rl, keeping the lattice sum free of periodic images.
-template <typename Real, int DIM>
-void yukawa_windowed_kernel_ft(const double *params, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
-                               sctl::Vector<Real> &windowed_ft) {
-    auto [hpw, ws, L] = get_PSWF_windowed_kernel_pwterms<DIM>(boxsize);
-    const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
-    windowed_ft.ReInit(n_fourier);
-
-    const Real lambda = params[0];
-    const Real lambda2 = lambda * lambda;
-
-    const Real arg = L * lambda;
-    Real bessk0_Llambda = 0, bessk1_Llambda = 0, exp_Llambda = 0;
-    if constexpr (DIM == 2) {
-        bessk0_Llambda = util::cyl_bessel_k(0, arg);
-        bessk1_Llambda = util::cyl_bessel_k(1, arg);
-    } else
-        exp_Llambda = std::exp(-arg);
-
-    const Real psi0 = pf.eval_val(0);
-    const Real factor = ws / psi0;
-    for (int i = 0; i < n_fourier; ++i) {
-        const Real k = sqrt((Real)i) * hpw;
-        const Real xi2 = k * k + lambda2;
-        const Real xi = sqrt(xi2);
-        const Real xval = xi * boxsize / beta;
-        const Real fval = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
-        const Real xsc = L * k;
-
-        if constexpr (DIM == 2) {
-            using util::cyl_bessel_j;
-            windowed_ft[i] = factor * fval / xi2 *
-                             (-L * lambda * cyl_bessel_j(0, xsc) * bessk1_Llambda + Real{1.0} +
-                              xsc * cyl_bessel_j(1, xsc) * bessk0_Llambda);
-        } else if (i == 0)
-            windowed_ft[0] = factor * fval * L * L * truncated_yukawa_zero_mode(arg);
-        else
-            windowed_ft[i] = factor * fval / xi2 * (Real{1} - exp_Llambda * (cos(xsc) + lambda * sin(xsc) / k));
-    }
-}
-
-template <typename Real>
-void laplace_2d_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
-                                   sctl::Vector<Real> &windowed_ft) {
-    constexpr int DIM = 2;
-    const auto [hpw, ws, rl] = get_PSWF_windowed_kernel_pwterms<DIM>(boxsize);
-    const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
-    windowed_ft.ReInit(n_fourier);
-
-    const Real psi0 = pf.eval_val(0.0);
-    const Real dfact = rl * std::log(rl);
-    for (int i = 0; i < n_fourier; ++i) {
-        const Real rk = sqrt((Real)i) * hpw;
-        const Real xval = rk * boxsize / beta;
-        const Real fval = (xval <= 1.0) ? pf.eval_val(xval) : 0.0;
-        const Real x = rl * rk;
-
-        windowed_ft[i] = ws * fval / psi0;
-        if (x > 1E-10) {
-            const Real dj0 = util::cyl_bessel_j(0, x);
-            const Real dj1 = util::cyl_bessel_j(1, x);
-            const Real tker = -(1 - dj0) / (rk * rk) + dfact * dj1 / rk;
-            windowed_ft[i] *= tker;
-        } else
-            windowed_ft[i] *= -0.25 * rl * rl + 0.5 * dfact * rl;
-    }
-}
-
-template <typename Real>
-void laplace_3d_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
-                                   sctl::Vector<Real> &windowed_ft) {
-    constexpr int DIM = 3;
-    const auto [hpw, ws, rl] = get_PSWF_windowed_kernel_pwterms<DIM>(boxsize);
-    const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
-    windowed_ft.ReInit(n_fourier);
-
-    auto [c0, c1, c2, c3] = pf.intvals(beta);
-    c1 = c0 * boxsize;
-
-    constexpr int n_quad = 100;
-    std::array<Real, n_quad> xs, whts, fvals;
-    legerts(1, n_quad, xs.data(), whts.data());
-
-    for (int i = 0; i < n_quad; ++i) {
-        xs[i] = 0.5 * (xs[i] + 1) * boxsize;
-        whts[i] *= 0.5 * boxsize;
-    }
-
-    for (int i = 0; i < n_quad; ++i) {
-        const Real val = pf.eval_val(xs[i] / boxsize);
-        fvals[i] = val * whts[i] / c1;
-    }
-
-    for (int i = 0; i < n_fourier; ++i) {
-        double rk = sqrt((Real)i) * hpw;
-
-        windowed_ft[i] = Real{0.0};
-        for (int j = 0; j < n_quad; ++j)
-            windowed_ft[i] += cos(rk * xs[j]) * fvals[j];
-
-        if (i > 0)
-            windowed_ft[i] *= ws * Real{2.0} * sctl::pow<2>(sin(0.5 * rk * rl) / rk);
-        else
-            windowed_ft[i] *= 0.5 * ws * sctl::pow<2>(rl);
-    }
-}
-
-template <typename Real, int DIM>
-inline void laplace_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
-                                       sctl::Vector<Real> &windowed_ft) {
-    if constexpr (DIM == 2)
-        return laplace_2d_windowed_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, windowed_ft);
-    if constexpr (DIM == 3)
-        return laplace_3d_windowed_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, windowed_ft);
-}
-
 template <typename Real>
 inline void sqrt_laplace_2d_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
                                                sctl::Vector<Real> &windowed_ft) {
@@ -335,111 +219,6 @@ inline void sqrt_laplace_windowed_kernel_ft(const double *rpars, Real beta, int 
         return sqrt_laplace_2d_windowed_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, windowed_ft);
     if constexpr (DIM == 3)
         return sqrt_laplace_3d_windowed_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, windowed_ft);
-}
-
-template <typename Real>
-inline void stokes_2d_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
-                                         sctl::Vector<Real> &windowed_ft) {
-    const Real psi0 = pf.eval_val(0.0);
-    const Real rl = boxsize * (std::sqrt(2.0) + 1.0);
-    const Real rl4 = rl * rl * rl * rl;
-    const Real hpw = 1.0 / boxsize;
-    const int nfourier = 2 * (npw / 2) * (npw / 2);
-
-    windowed_ft.ReInit(nfourier + 1);
-    for (int i = 0; i <= nfourier; ++i) {
-        const Real xi = i * hpw;
-        const Real xval = xi * boxsize / beta;
-
-        Real fval = 0.0;
-        if (xval <= 1.0) {
-            auto [psi, dpsi] = pf.eval_val_derivative(xval);
-            fval = (psi - 0.5 * xval * dpsi) / psi0;
-        }
-
-        const Real x = rl * xi;
-        Real tker;
-        if (i == 0) {
-            tker = -rl4 / 64.0;
-        } else if (x > 0.2) {
-            Real j0 = util::cyl_bessel_j(0, x);
-            Real j1 = util::cyl_bessel_j(1, x);
-            tker = (-1.0 + j0 + 0.5 * x * j1) / (xi * xi * xi * xi);
-        } else {
-            Real x2 = x * x, x4 = x2 * x2, x6 = x2 * x4, x8 = x2 * x6, x10 = x2 * x8;
-            tker =
-                (-1.0 / 64 + x2 / 1152 - x4 / 49152 + x6 / 3686400.0 - x8 / 4.24673280e8 + x10 / 6.9363302400e10) * rl4;
-        }
-
-        windowed_ft[i] = fval * tker;
-    }
-}
-
-template <typename Real>
-inline void stokes_3d_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
-                                         sctl::Vector<Real> &windowed_ft) {
-    const Real psi0 = pf.eval_val(0.0);
-    const Real rl = boxsize * (std::sqrt(3.0) + 1.0);
-    const auto [hpw, ws, _] = get_PSWF_windowed_kernel_pwterms<3>(boxsize);
-    const double rl4 = sctl::pow<4>(rl);
-    const int nfourier = 3 * (npw / 2) * (npw / 2);
-
-    windowed_ft.ReInit(nfourier + 1);
-    for (int i = 0; i <= nfourier; ++i) {
-        const Real xi = sqrt(Real(i)) * hpw;
-        const Real xval = xi * boxsize / beta;
-
-        const Real fval = [&]() {
-            if (xval <= 1.0) {
-                auto [psi, dpsi] = pf.eval_val_derivative(xval);
-                return (psi - 0.5 * xval * dpsi) / psi0;
-            } else
-                return 0.0;
-        }();
-
-        const Real tker = [&]() {
-            const Real x = rl * xi;
-
-            if (x > 0.2) {
-                return -(1.0 + 0.5 * cos(x) - 1.5 * sin(x) / x) / (xi * xi * xi * xi);
-            } else {
-                Real x2 = x * x, x4 = x2 * x2, x6 = x2 * x4, x8 = x2 * x6, x10 = x2 * x8;
-                return -(1.0 / 120 - x2 / 2520 + x4 / 120960 - x6 / 9979200.0 + x8 / 1.245404160e9 -
-                         x10 / 2.17945728e11) *
-                       rl4;
-            }
-        }();
-
-        windowed_ft[i] = fval * tker * ws;
-    }
-}
-
-template <typename Real, int DIM>
-inline void stokes_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
-                                      sctl::Vector<Real> &windowed_ft) {
-    if constexpr (DIM == 2)
-        return stokes_2d_windowed_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, windowed_ft);
-    if constexpr (DIM == 3)
-        return stokes_3d_windowed_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, windowed_ft);
-}
-
-template <typename Real, int DIM>
-void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
-                            sctl::Vector<Real> &windowed_ft) {
-    switch (kernel) {
-    case dmk_ikernel::DMK_YUKAWA:
-        return yukawa_windowed_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, windowed_ft);
-    case dmk_ikernel::DMK_LAPLACE:
-        return laplace_windowed_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, windowed_ft);
-    case dmk_ikernel::DMK_SQRT_LAPLACE:
-        return sqrt_laplace_windowed_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, windowed_ft);
-    case dmk_ikernel::DMK_STOKESLET:
-        return stokes_windowed_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, windowed_ft);
-    case dmk_ikernel::DMK_STRESSLET:
-        return stokes_windowed_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, windowed_ft);
-    case dmk_ikernel::DMK_LAPLACE_DIPOLE:
-        return laplace_windowed_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, windowed_ft);
-    }
 }
 
 template <typename Real, int DIM>
@@ -729,10 +508,11 @@ void laplace_periodic_windowed_kernel_ft(Real ghat, Real dk, int n_fourier, Real
 template <typename Real, int DIM>
 void laplace_freespace_windowed_kernel_ft(Real ghat, Real dk, int n_fourier, Real sigma1, Real rl, Prolate0Fun &pf,
                                           sctl::Vector<Real> &kernel_ft) {
-    const Real c = ghat / pf.eval_val(0.0);
+    const Real c = ghat / pf.psi0_zero;
     kernel_ft.ReInit(n_fourier);
     if constexpr (DIM == 3) {
-        kernel_ft[0] = Real(2.0 * M_PI) * rl * rl; // c*psi0*(rl^2/2), c=4*pi/psi0
+        // k -> 0 limit of the loop body: (1-cos(kappa*rl))/kappa^2 -> rl^2/2, psi_val -> psi0_zero.
+        kernel_ft[0] = c * pf.psi0_zero * Real(0.5) * rl * rl;
         for (int i = 1; i < n_fourier; ++i) {
             const Real kappa = std::sqrt(Real(i)) * dk;
             const Real arg = kappa * sigma1;
@@ -740,9 +520,9 @@ void laplace_freespace_windowed_kernel_ft(Real ghat, Real dk, int n_fourier, Rea
             kernel_ft[i] = c * psi_val * (Real(1) - std::cos(kappa * rl)) / (kappa * kappa);
         }
     } else {
-        // free_2d = (2*pi/psi0)*psi_val*tker = -c*psi_val*tker (c = ghat/psi0 = -2*pi/psi0).
+        // free_2d = -c*psi_val*tker (the log kernel's ghat is negative, the symbol is not).
         const Real dfact = rl * std::log(rl);
-        kernel_ft[0] = Real(2.0 * M_PI) * (Real(-0.25) * rl * rl + Real(0.5) * dfact * rl); // 2*pi*tker(0)
+        kernel_ft[0] = -c * pf.psi0_zero * (Real(-0.25) * rl * rl + Real(0.5) * dfact * rl); // tker(0)
         for (int i = 1; i < n_fourier; ++i) {
             const Real kappa = std::sqrt(Real(i)) * dk;
             const Real arg = kappa * sigma1;
@@ -778,7 +558,7 @@ void yukawa_periodic_windowed_kernel_ft(Real ghat, const double *rpars, Real dk,
 template <typename Real, int DIM>
 void yukawa_freespace_windowed_kernel_ft(Real ghat, const double *rpars, Real dk, int n_fourier, Real sigma1, Real rl,
                                          Prolate0Fun &pf, sctl::Vector<Real> &kernel_ft) {
-    const Real c = ghat / pf.eval_val(0.0);
+    const Real c = ghat / pf.psi0_zero;
     const Real lambda = *rpars;
     const Real lambda2 = lambda * lambda;
     kernel_ft.ReInit(n_fourier);
@@ -793,15 +573,16 @@ void yukawa_freespace_windowed_kernel_ft(Real ghat, const double *rpars, Real dk
         const Real xi2 = Real(i) * dk * dk + lambda2;
         const Real arg = std::sqrt(xi2) * sigma1;
         const Real psi_val = (std::abs(arg) <= 1.0) ? pf.eval_val(arg) : Real(0);
-        Real val = c * psi_val / xi2;
         const Real x = rl * kappa;
         if constexpr (DIM == 2)
-            val *= Real(1) + x * util::cyl_bessel_j(1, x) * k0_rll - rl * lambda * util::cyl_bessel_j(0, x) * k1_rll;
-        else {
-            const Real sin_over_k = (kappa > Real(0)) ? std::sin(x) / kappa : rl;
-            val *= Real(1) - exp_rll * (std::cos(x) + lambda * sin_over_k);
-        }
-        kernel_ft[i] = val;
+            kernel_ft[i] =
+                c * psi_val / xi2 *
+                (Real(1) + x * util::cyl_bessel_j(1, x) * k0_rll - rl * lambda * util::cyl_bessel_j(0, x) * k1_rll);
+        else if (i == 0)
+            // (1 - exp(-l*rl)*(1 + l*rl))/l^2 loses all its digits as l -> 0; take it from the series.
+            kernel_ft[0] = c * psi_val * rl * rl * truncated_yukawa_zero_mode(lambda * rl);
+        else
+            kernel_ft[i] = c * psi_val / xi2 * (Real(1) - exp_rll * (std::cos(x) + lambda * std::sin(x) / kappa));
     }
 }
 
@@ -1089,7 +870,7 @@ Real calc_log_windowed_kernel_value_at_zero(int dim, const Prolate0Fun &pf, Real
 template <typename Real>
 void stokes_3d_freespace_windowed_kernel_ft(Real ghat, Real dk, int n_fourier, Real sigma1, Real rl, Prolate0Fun &pf,
                                             sctl::Vector<Real> &kernel_ft) {
-    const Real c = ghat / pf.eval_val(0.0);
+    const Real c = ghat / pf.psi0_zero;
     const Real rl4 = rl * rl * rl * rl;
     kernel_ft.ReInit(n_fourier);
     for (int i = 0; i < n_fourier; ++i) {
@@ -1115,66 +896,123 @@ void stokes_3d_freespace_windowed_kernel_ft(Real ghat, Real dk, int n_fourier, R
     }
 }
 
-// Windowed scalar-kernel FT in ESP's reciprocal-lattice convention (kappa = sqrt(i)*dk, dk =
-// 2*pi/boxsize), shared by the tree's periodic root box and ESP. Routes on (kernel, freespace) to a
-// dedicated periodic or free-space routine -- no freespace flag is threaded into the leaf routines.
-// Periodic is the reciprocal-sum symbol (k=0 dropped for the non-screened kernels). Free-space uses the
-// Vico-Greengard truncation at radius rl: a closed-form truncated symbol times the prolate spectral
-// window for Laplace/Yukawa, and a windowed-profile quadrature (prolate near-window x prolate
-// far-truncation) for Sqrt-Laplace, which has no closed form. Distinct from the tree's
-// planewave-convention get_windowed_kernel_ft.
+// Windowed kernel FT in the tree's plane-wave convention, for the non-periodic root box: sampled at
+// kappa = sqrt(i)*hpw (hpw = 1/boxsize) and carrying the plane-wave quadrature weight ws in place of the
+// kernel's real-space normalization ghat. Shares the free-space leaf routines with
+// get_lattice_windowed_kernel_ft below -- the convention is entirely in the (spacing, prefactor) pair.
 template <typename Real, int DIM>
-void get_periodic_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int n_pw_periodic,
-                                     Real boxsize, Real sigma1, Prolate0Fun &pf, sctl::Vector<Real> &kernel_ft,
-                                     bool freespace, Real rl) {
+void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
+                            sctl::Vector<Real> &windowed_ft) {
+    const auto [hpw, ws, rl] = get_PSWF_windowed_kernel_pwterms<DIM>(boxsize);
+    const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
+    const Real sigma1 = boxsize / beta;
+
+    // The 2D leaf applies -c because the log kernel's ghat is negative, so the plane-wave weight enters
+    // negated. In 3D the leaf's psi0(kappa*sigma1) window replaces the real-space cosine quadrature this
+    // path used to run; the two agree with no extra factor, since the quadrature was normalized by
+    // \int_0^1 psi0 and the eigenvalue identity at t=0 gives 2*\int_0^1 psi0 = lambda0*psi0(0).
+    const Real laplace_scale = DIM == 2 ? -ws : ws;
+
+    switch (kernel) {
+    case DMK_YUKAWA:
+        return yukawa_freespace_windowed_kernel_ft<Real, DIM>(ws, rpars, hpw, n_fourier, sigma1, rl, pf, windowed_ft);
+    case DMK_LAPLACE:
+        return laplace_freespace_windowed_kernel_ft<Real, DIM>(laplace_scale, hpw, n_fourier, sigma1, rl, pf,
+                                                               windowed_ft);
+    case DMK_LAPLACE_DIPOLE:
+        return laplace_freespace_windowed_kernel_ft<Real, DIM>(laplace_scale, hpw, n_fourier, sigma1, rl, pf,
+                                                               windowed_ft);
+    case DMK_SQRT_LAPLACE:
+        // The one kernel whose free-space leaf is not yet shared: this path's window is a sum of prolate
+        // ramps, the lattice path's is a product. Reconciling them is deferred.
+        return sqrt_laplace_windowed_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, windowed_ft);
+    case DMK_STOKESLET:
+        // The Stokes truncation radius is the box diagonal plus one box, not the generic 2*sqrt(DIM)*boxsize.
+        if constexpr (DIM == 3)
+            return stokes_3d_freespace_windowed_kernel_ft<Real>(ws, hpw, n_fourier, sigma1,
+                                                                boxsize * Real(1.0 + std::sqrt(3.0)), pf, windowed_ft);
+        else
+            throw std::runtime_error("Stokeslet: only DIM=3 supported");
+    case DMK_STRESSLET:
+        if constexpr (DIM == 3)
+            return stokes_3d_freespace_windowed_kernel_ft<Real>(ws, hpw, n_fourier, sigma1,
+                                                                boxsize * Real(1.0 + std::sqrt(3.0)), pf, windowed_ft);
+        else
+            throw std::runtime_error("Stresslet: only DIM=3 supported");
+    default:
+        throw std::runtime_error("Unsupported kernel " + std::to_string(kernel));
+    }
+}
+
+// Windowed kernel FT in the reciprocal-lattice convention (kappa = sqrt(i)*dk, dk = 2*pi/boxsize),
+// shared by the tree's periodic root box and ESP. Routes on (kernel, periodic) to a dedicated periodic
+// or free-space routine -- no periodicity flag is threaded into the leaf routines. Periodic is the
+// reciprocal-sum symbol (k=0 dropped for the non-screened kernels). Free-space uses the Vico-Greengard
+// truncation at radius rl: a closed-form truncated symbol times the prolate spectral window for
+// Laplace/Yukawa, and a windowed-profile quadrature (prolate near-window x prolate far-truncation) for
+// Sqrt-Laplace, which has no closed form. Distinct from the tree's planewave-convention
+// get_windowed_kernel_ft.
+template <typename Real, int DIM>
+void get_lattice_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int n_pw, Real boxsize,
+                                    Real sigma1, Real rl, bool periodic, Prolate0Fun &pf,
+                                    sctl::Vector<Real> &kernel_ft) {
     const Real dk = 2.0 * M_PI / boxsize;
-    const int n_fourier = DIM * sctl::pow<2>(n_pw_periodic / 2) + 1;
+    const int n_fourier = DIM * sctl::pow<2>(n_pw / 2) + 1;
     const Real four_pi = 4.0 * M_PI, two_pi = 2.0 * M_PI;
     const Real b = sigma1 * beta; // real-space near-window scale (= r_c)
     switch (kernel) {
     case DMK_YUKAWA:
         // K0 in 2D (2*pi), exp(-lr)/r in 3D (4*pi).
-        if (freespace)
-            return yukawa_freespace_windowed_kernel_ft<Real, DIM>(DIM == 2 ? two_pi : four_pi, rpars, dk, n_fourier,
-                                                                  sigma1, rl, pf, kernel_ft);
-        return yukawa_periodic_windowed_kernel_ft<Real, DIM>(DIM == 2 ? two_pi : four_pi, rpars, dk, n_fourier, sigma1,
-                                                             pf, kernel_ft);
+        if (periodic)
+            return yukawa_periodic_windowed_kernel_ft<Real, DIM>(DIM == 2 ? two_pi : four_pi, rpars, dk, n_fourier,
+                                                                 sigma1, pf, kernel_ft);
+        return yukawa_freespace_windowed_kernel_ft<Real, DIM>(DIM == 2 ? two_pi : four_pi, rpars, dk, n_fourier, sigma1,
+                                                              rl, pf, kernel_ft);
+    case DMK_LAPLACE:
+        // log in 2D (-2*pi), 1/r in 3D (4*pi).
+        if (periodic)
+            return laplace_periodic_windowed_kernel_ft<Real, DIM>(DIM == 2 ? -two_pi : four_pi, dk, n_fourier, sigma1,
+                                                                  pf, kernel_ft);
+        return laplace_freespace_windowed_kernel_ft<Real, DIM>(DIM == 2 ? -two_pi : four_pi, dk, n_fourier, sigma1, rl,
+                                                               pf, kernel_ft);
+    case DMK_LAPLACE_DIPOLE:
+        // Same scalar symbol as the Laplace kernel; the dipole structure is supplied downstream.
+        if (periodic)
+            return laplace_periodic_windowed_kernel_ft<Real, DIM>(DIM == 2 ? -two_pi : four_pi, dk, n_fourier, sigma1,
+                                                                  pf, kernel_ft);
+        return laplace_freespace_windowed_kernel_ft<Real, DIM>(DIM == 2 ? -two_pi : four_pi, dk, n_fourier, sigma1, rl,
+                                                               pf, kernel_ft);
     case DMK_SQRT_LAPLACE:
         // 1/r in 2D, 1/r^2 in 3D. No closed-form truncated FT -> windowed-profile quadrature.
         if constexpr (DIM == 2) {
-            if (freespace)
-                return sqrt_laplace_2d_freespace_windowed_kernel_ft<Real>(dk, n_fourier, b, rl, pf, kernel_ft);
-            return sqrt_laplace_2d_periodic_windowed_kernel_ft<Real>(dk, n_fourier, b, pf, kernel_ft);
+            if (periodic)
+                return sqrt_laplace_2d_periodic_windowed_kernel_ft<Real>(dk, n_fourier, b, pf, kernel_ft);
+            return sqrt_laplace_2d_freespace_windowed_kernel_ft<Real>(dk, n_fourier, b, rl, pf, kernel_ft);
         } else {
-            if (freespace)
-                return sqrt_laplace_3d_freespace_windowed_kernel_ft<Real>(dk, n_fourier, b, rl, pf, kernel_ft);
-            return sqrt_laplace_3d_periodic_windowed_kernel_ft<Real>(dk, n_fourier, b, pf, kernel_ft);
+            if (periodic)
+                return sqrt_laplace_3d_periodic_windowed_kernel_ft<Real>(dk, n_fourier, b, pf, kernel_ft);
+            return sqrt_laplace_3d_freespace_windowed_kernel_ft<Real>(dk, n_fourier, b, rl, pf, kernel_ft);
         }
     case DMK_STOKESLET:
         // Scalar biharmonic symbol f for the Oseen projector (Stresslet reuses the same f, different
-        // projector). ESP free-space only; periodic (Hasimoto reciprocal sum) is not implemented.
+        // projector). Free-space only; periodic (Hasimoto reciprocal sum) is not implemented.
         if constexpr (DIM == 3) {
-            if (freespace)
-                return stokes_3d_freespace_windowed_kernel_ft<Real>(four_pi, dk, n_fourier, sigma1, rl, pf, kernel_ft);
-            throw std::runtime_error("ESP Stokeslet: periodic windowed FT not implemented");
+            if (periodic)
+                throw std::runtime_error("Stokeslet: periodic windowed FT not implemented");
+            return stokes_3d_freespace_windowed_kernel_ft<Real>(four_pi, dk, n_fourier, sigma1, rl, pf, kernel_ft);
         } else
-            throw std::runtime_error("ESP Stokeslet: only DIM=3 supported");
+            throw std::runtime_error("Stokeslet: only DIM=3 supported");
     case DMK_STRESSLET:
         // Same scalar biharmonic symbol f as the Stokeslet; the Stresslet projector (an extra k factor)
-        // supplies the differing structure. ESP free-space only.
+        // supplies the differing structure. Free-space only.
         if constexpr (DIM == 3) {
-            if (freespace)
-                return stokes_3d_freespace_windowed_kernel_ft<Real>(four_pi, dk, n_fourier, sigma1, rl, pf, kernel_ft);
-            throw std::runtime_error("ESP Stresslet: periodic windowed FT not implemented");
+            if (periodic)
+                throw std::runtime_error("Stresslet: periodic windowed FT not implemented");
+            return stokes_3d_freespace_windowed_kernel_ft<Real>(four_pi, dk, n_fourier, sigma1, rl, pf, kernel_ft);
         } else
-            throw std::runtime_error("ESP Stresslet: only DIM=3 supported");
+            throw std::runtime_error("Stresslet: only DIM=3 supported");
     default:
-        // log in 2D (-2*pi), 1/r in 3D (4*pi).
-        if (freespace)
-            return laplace_freespace_windowed_kernel_ft<Real, DIM>(DIM == 2 ? -two_pi : four_pi, dk, n_fourier, sigma1,
-                                                                   rl, pf, kernel_ft);
-        return laplace_periodic_windowed_kernel_ft<Real, DIM>(DIM == 2 ? -two_pi : four_pi, dk, n_fourier, sigma1, pf,
-                                                              kernel_ft);
+        throw std::runtime_error("Unsupported kernel " + std::to_string(kernel));
     }
 }
 
@@ -1513,20 +1351,18 @@ template void get_difference_kernel_ft<double, 2>(bool init, dmk_ikernel kernel,
 template void get_difference_kernel_ft<double, 3>(bool init, dmk_ikernel kernel, const double *rpars, double beta,
                                                   int npw, double boxsize, Prolate0Fun &pf,
                                                   sctl::Vector<double> &diff_kernel_ft);
-template void get_periodic_windowed_kernel_ft<float, 2>(dmk_ikernel kernel, const double *rpars, float beta,
-                                                        int n_pw_periodic, float boxsize, float sigma1, Prolate0Fun &pf,
-                                                        sctl::Vector<float> &kernel_ft, bool freespace, float rl);
-template void get_periodic_windowed_kernel_ft<float, 3>(dmk_ikernel kernel, const double *rpars, float beta,
-                                                        int n_pw_periodic, float boxsize, float sigma1, Prolate0Fun &pf,
-                                                        sctl::Vector<float> &kernel_ft, bool freespace, float rl);
-template void get_periodic_windowed_kernel_ft<double, 2>(dmk_ikernel kernel, const double *rpars, double beta,
-                                                         int n_pw_periodic, double boxsize, double sigma1,
-                                                         Prolate0Fun &pf, sctl::Vector<double> &kernel_ft,
-                                                         bool freespace, double rl);
-template void get_periodic_windowed_kernel_ft<double, 3>(dmk_ikernel kernel, const double *rpars, double beta,
-                                                         int n_pw_periodic, double boxsize, double sigma1,
-                                                         Prolate0Fun &pf, sctl::Vector<double> &kernel_ft,
-                                                         bool freespace, double rl);
+template void get_lattice_windowed_kernel_ft<float, 2>(dmk_ikernel kernel, const double *rpars, float beta, int n_pw,
+                                                       float boxsize, float sigma1, float rl, bool periodic,
+                                                       Prolate0Fun &pf, sctl::Vector<float> &kernel_ft);
+template void get_lattice_windowed_kernel_ft<float, 3>(dmk_ikernel kernel, const double *rpars, float beta, int n_pw,
+                                                       float boxsize, float sigma1, float rl, bool periodic,
+                                                       Prolate0Fun &pf, sctl::Vector<float> &kernel_ft);
+template void get_lattice_windowed_kernel_ft<double, 2>(dmk_ikernel kernel, const double *rpars, double beta, int n_pw,
+                                                        double boxsize, double sigma1, double rl, bool periodic,
+                                                        Prolate0Fun &pf, sctl::Vector<double> &kernel_ft);
+template void get_lattice_windowed_kernel_ft<double, 3>(dmk_ikernel kernel, const double *rpars, double beta, int n_pw,
+                                                        double boxsize, double sigma1, double rl, bool periodic,
+                                                        Prolate0Fun &pf, sctl::Vector<double> &kernel_ft);
 
 template float calc_log_windowed_kernel_value_at_zero<float>(int dim, const Prolate0Fun &pf, float beta, float boxsize);
 template double calc_log_windowed_kernel_value_at_zero<double>(int dim, const Prolate0Fun &pf, double beta,

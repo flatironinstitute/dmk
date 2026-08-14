@@ -66,11 +66,8 @@ namespace dmk {
 PSWFKernel::PSWFKernel(double eps_, double beta_, int lenw) : eps(eps_), beta(beta_) {
     pswf = dmk::Prolate0Fun(beta, lenw);
 
-    scale = 1.0 / pswf.eval_val(0.0);
-
-    double mu = pswf.rlam20 / M_PI;
-    lambda0 = std::sqrt(2.0 * M_PI * mu / beta);
-
+    scale = 1.0 / pswf.psi0_zero;
+    lambda0 = pswf.lambda0;
     c0 = pswf.int_eval(1.0) * scale;
 }
 
@@ -1089,13 +1086,13 @@ std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() {
     // Long-range windowed kernel W(k), reused from the DMK level-0 periodic root-box FT so it shares
     // the residual's prolate windowing (W + L ~= u). Sampled radially at kappa = sqrt(i)*dk,
     // dk = 2*pi/L, and the grid point gidx maps to i = sum(k_idx[gidx]^2). k=0 is handled inside
-    // (dropped for Laplace/Sqrt-Laplace, finite for Yukawa). The lambda0/(2*c0) factor reconciles
-    // fourier_data's prolate/psi0 convention with the phi_hat normalization above.
+    // (dropped for Laplace/Sqrt-Laplace, finite for Yukawa). No renormalization is needed against the
+    // phi_hat convention above: the prolate eigenvalue identity at t=0 gives 2*\int_0^1 psi0 =
+    // lambda0*psi0(0), i.e. lambda0/(2*c0) = 1 for the psi0-normalized c0 held by PSWFKernel.
     sctl::Vector<double> kernel_ft;
-    get_periodic_windowed_kernel_ft<double, DIM>(params.kernel, &params.fparam, pswf.beta, nf, L_grid,
-                                                 params.r_c / pswf.beta, pswf.pswf, kernel_ft, !params.use_periodic,
-                                                 trunc_rl);
-    const double norm = pswf.lambda0 / (2.0 * pswf.c0);
+    get_lattice_windowed_kernel_ft<double, DIM>(params.kernel, &params.fparam, pswf.beta, nf, L_grid,
+                                                params.r_c / pswf.beta, trunc_rl, params.use_periodic, pswf.pswf,
+                                                kernel_ft);
 
     int ntot = 1;
     double L_pow_dim = 1.0;
@@ -1119,8 +1116,8 @@ std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() {
             i_rad += k_idx[gidx[d]] * k_idx[gidx[d]];
             ph *= phi_hat_1d[gidx[d]];
         }
-        p[grid_idx<DIM>(gidx, nf)] = norm * kernel_ft[i_rad] / (L_pow_dim * ph * ph * static_cast<double>(ntot));
-        self_sum += norm * kernel_ft[i_rad];
+        p[grid_idx<DIM>(gidx, nf)] = kernel_ft[i_rad] / (L_pow_dim * ph * ph * static_cast<double>(ntot));
+        self_sum += kernel_ft[i_rad];
     }
 
     return p;

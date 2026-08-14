@@ -767,8 +767,8 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
         const long n_pw_modes_periodic = sctl::pow<DIM - 1>(n_pw_periodic) * ((n_pw_periodic + 1) / 2);
         const int n_fourier = DIM * sctl::pow<2>(n_pw_periodic / 2) + 1;
 
-        get_periodic_windowed_kernel_ft<Real, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_pw_periodic,
-                                                   boxsize[0], sigma1, fourier_data.prolate0_fun, kernel_ft);
+        get_lattice_windowed_kernel_ft<Real, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_pw_periodic,
+                                                  boxsize[0], sigma1, 0, true, fourier_data.prolate0_fun, kernel_ft);
 
         window_fourier_data.radialft.ReInit(n_pw_modes_periodic);
         util::mk_tensor_product_fourier_transform(

@@ -284,10 +284,19 @@ void pdmk(dmk_communicator comm, const pdmk_params &params, int n_src, const T *
     sctl::Vector<T> charge_vec(n_src * kernel_input_dim, const_cast<T *>(charge), false);
     sctl::Vector<T> normal_vec(n_src * params.n_dim, const_cast<T *>(normal), false);
 
-    DMKPtTree<T, DIM> tree(sctl_comm, params, r_src_vec, charge_vec, normal_vec, r_trg_vec);
-    tree.eval();
+#ifdef DMK_GPU_OFFLOAD
+    if (params.eval_path == DMK_EVAL_PATH_GPU) {
+        cuda::pt::Tree<T, DIM> tree(sctl_comm, params, r_src_vec, charge_vec, normal_vec, r_trg_vec);
+        tree.eval();
+        tree.desort_potentials(pot_src, pot_trg);
+    } else
+#endif
+    {
+        DMKPtTree<T, DIM> tree(sctl_comm, params, r_src_vec, charge_vec, normal_vec, r_trg_vec);
+        tree.eval();
+        tree.desort_potentials(pot_src, pot_trg);
+    }
 
-    tree.desort_potentials(pot_src, pot_trg);
     if (params.log_level <= DMK_LOG_INFO) {
         auto dt = MY_OMP_GET_WTIME() - st;
         int N = n_src + n_trg;
