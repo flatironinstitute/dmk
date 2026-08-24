@@ -1,92 +1,54 @@
-// ESP short-range direct sum. The launcher prepends a prelude defining Real, the
-// DMK_ESP_SR_KERNEL_NAME symbol, the baked-literal Coeffs struct, and the BLOCK_SIZE / TILE_WIDTH /
-// TARGETS_PER_THREAD / STRATEGY / WANT_FORCE / PRUNE_STATS constants. Coefficients are compile-time
-// literals folded into the FMAs -- no runtime coeff buffer.
-//
-// STRATEGY mirrors GpuSrStrategy: 0 = Dense, 1 = PruneTile, 2 = PruneSource.
+// ESP short-range direct sum. The launcher prepends Real, DMK_ESP_SR_KERNEL_NAME, the coefficient
+// packs, DMK_ESP_SR_EVALUATOR and the BLOCK_SIZE / TILE_WIDTH / TARGETS_PER_THREAD / STRATEGY /
+// PRUNE_STATS / KERNEL constants. STRATEGY mirrors GpuSrStrategy: 0 Dense, 1 PruneTile, 2 PruneSource.
 
 #include <dmk/cuda/esp_sr_kernelargs.hpp>
+#include <dmk/cuda/poly_evaluators_device.hpp>
 
 using EspSrArgs = dmk::cuda::EspSrArgs<Real>;
+using Evaluator = DMK_ESP_SR_EVALUATOR;
 
-template <int I>
-__device__ constexpr Real horner_recurse(Real x, Real acc) {
-    if constexpr (I == 0)
-        return acc;
+constexpr int IN_DIM = Evaluator::KERNEL_INPUT_DIM;
+constexpr int OUT_DIM = Evaluator::KERNEL_OUTPUT_DIM;
+constexpr int NRM_DIM = Evaluator::NORMAL_DIM;
+constexpr int NRM_SLOTS = NRM_DIM > 0 ? NRM_DIM : 1; // zero-length arrays break CUDA < 12.5
+
+// NVRTC has no standard headers, so INFINITY does not exist.
+__device__ __forceinline__ float dmk_inf(float) { return __int_as_float(0x7f800000); }
+__device__ __forceinline__ double dmk_inf(double) { return __longlong_as_double(0x7ff0000000000000LL); }
+
+// thresh2 = 0: R2 > 0 is what drops the self pair, as on the CPU.
+__device__ __forceinline__ Evaluator esp_evaluator(const EspSrArgs &a) {
+    return Evaluator{Real(0), a.r_c_sq, a.rsc, a.cen};
+}
+
+// Templated on Eval so the if constexpr condition is dependent and the untaken branch is discarded.
+template <typename Eval>
+__device__ __forceinline__ void esp_accumulate(const Eval &ev, Real (&acc)[Eval::KERNEL_OUTPUT_DIM], Real dx, Real dy,
+                                               Real dz, const Real (&vs)[Eval::KERNEL_INPUT_DIM],
+                                               const Real (&ns)[Eval::NORMAL_DIM > 0 ? Eval::NORMAL_DIM : 1]) {
+    const Real dX[3] = {dx, dy, dz};
+    if constexpr (Eval::NORMAL_DIM > 0)
+        direct_eval_accumulate<true>(ev, acc, dX, vs, ns);
     else
-        return horner_recurse<I - 1>(x, acc * x + Real(Coeffs::at(I - 1)));
+        direct_eval_accumulate<true>(ev, acc, dX, vs);
 }
 
-template <int UNUSED = 0>
-__device__ constexpr Real horner_const(Real x) {
-    static_assert(Coeffs::size > 0, "empty coefficient pack");
-    return horner_recurse<Coeffs::size - 1>(x, Real(Coeffs::at(Coeffs::size - 1)));
-}
+// Dense: one block per home cell, each thread register-blocking TARGETS strided targets. The 27
+// neighbour cells are staged through shared memory in block-sized tiles.
 
-// P and dP/dx together, by synthetic division. Coefficients are ascending-order.
-template <int I>
-__device__ constexpr void horner_recurse_deriv(Real x, Real &P, Real &dP) {
-    if constexpr (I == 0) {
-        return;
-    } else {
-        Real old_P = P;
-        P = P * x + Real(Coeffs::at(I - 1));
-        dP = dP * x + old_P;
-        return horner_recurse_deriv<I - 1>(x, P, dP);
-    }
-}
-
-template <int UNUSED = 0>
-__device__ constexpr void horner_const_deriv(Real x, Real &P, Real &dP) {
-    static_assert(Coeffs::size > 0, "empty coefficient pack");
-    P = Real(Coeffs::at(Coeffs::size - 1));
-    dP = Real{0};
-    horner_recurse_deriv<Coeffs::size - 1>(x, P, dP);
-}
-
-// The short-range math, for one source-target pair.
-template <bool WantForce>
-__device__ __forceinline__ void eval_esp_pair(
-    Real dx, Real dy, Real dz, Real q,
-    Real rsc, Real cen, Real r_c_sq,
-    Real &pot_acc, Real &gx_acc, Real &gy_acc, Real &gz_acc)
-{
-    const Real R2 = dx * dx + dy * dy + dz * dz;
-    if (R2 <= Real(0) || R2 >= r_c_sq) return; // also masks the R2=0 self-pair
-
-    const Real Rinv = rsqrt(R2); // CUDA's rsqrt()/__drsqrt_rn(), full IEEE precision
-    const Real x = (R2 * Rinv + cen) * rsc; // = (R + cen)*rsc, mapped into [-1,1]
-
-    if constexpr (WantForce) {
-        Real P, dP;
-        horner_const_deriv<>(x, P, dP);
-        pot_acc += q * P * Rinv;
-        const Real df_dR2 = Rinv * Rinv * (dP * rsc - P * Rinv);
-        gx_acc += q * dx * df_dR2;
-        gy_acc += q * dy * df_dR2;
-        gz_acc += q * dz * df_dR2;
-    } else {
-        const Real P = horner_const<>(x);
-        pot_acc += q * P * Rinv;
-    }
-}
-
-// Dense: one block per home cell, each thread register-blocking TARGETS targets. Slot q of thread i
-// is target t_base + q*blockDim.x -- strided so consecutive threads hold consecutive targets, which
-// keeps position loads and result writes coalesced. The 27 neighbour cells are staged through shared
-// memory in block-sized tiles so each source is read from global once per block, not once per target.
-
-template <bool WantForce, int TARGETS>
+template <int TARGETS>
 __device__ void short_range_dense_body(const EspSrArgs &a)
 {
     const int nc = a.nc;
-    const int out_dim = a.out_dim;
-    const Real rsc = a.rsc, cen = a.cen, r_c_sq = a.r_c_sq;
+    const Evaluator ev = esp_evaluator(a);
     const int *__restrict__ cell_start = a.cell_start;
     const Real *__restrict__ d_xs = a.xs;
     const Real *__restrict__ d_ys = a.ys;
     const Real *__restrict__ d_zs = a.zs;
     const Real *__restrict__ d_qs = a.qs;
+    const Real *__restrict__ d_ns = a.ns;
+    const int n_sorted = a.n_sorted;
     const int *__restrict__ nbc_tab = a.nbc_tab;
     const Real *__restrict__ off_tab = a.off_tab;
     Real *__restrict__ pg_sorted = a.pg_sorted;
@@ -94,7 +56,8 @@ __device__ void short_range_dense_body(const EspSrArgs &a)
     __shared__ Real s_xs[BLOCK_SIZE];
     __shared__ Real s_ys[BLOCK_SIZE];
     __shared__ Real s_zs[BLOCK_SIZE];
-    __shared__ Real s_qs[BLOCK_SIZE];
+    __shared__ Real s_qs[IN_DIM][BLOCK_SIZE];
+    __shared__ Real s_ns[NRM_SLOTS][BLOCK_SIZE];
 
     const int home = blockIdx.x; // 0 .. nc^3-1, row-major (x*nc+y)*nc+z, one block per cell
     const int cx = home / (nc * nc);
@@ -113,7 +76,7 @@ __device__ void short_range_dense_body(const EspSrArgs &a)
         int trg_idx[TARGETS];
         bool any_active = false;
         Real xt[TARGETS], yt[TARGETS], zt[TARGETS];
-        Real pot_acc[TARGETS] = {}, gx_acc[TARGETS] = {}, gy_acc[TARGETS] = {}, gz_acc[TARGETS] = {};
+        Real acc[TARGETS][OUT_DIM] = {};
 #pragma unroll
         for (int q = 0; q < TARGETS; ++q) {
             const int t = t_base + q * blockDim.x;
@@ -126,14 +89,22 @@ __device__ void short_range_dense_body(const EspSrArgs &a)
             }
         }
 
+        // -1 is a free-space neighbour outside the box. Block-uniform, so __syncthreads stays
+        // collective.
         for (int dxi = 0; dxi < 3; ++dxi) {
             const int nbx = nbc_tab[cx * 3 + dxi];
+            if (nbx < 0)
+                continue;
             const Real ox = off_tab[cx * 3 + dxi];
             for (int dyi = 0; dyi < 3; ++dyi) {
                 const int nby = nbc_tab[cy * 3 + dyi];
+                if (nby < 0)
+                    continue;
                 const Real oy = off_tab[cy * 3 + dyi];
                 for (int dzi = 0; dzi < 3; ++dzi) {
                     const int nbz = nbc_tab[cz * 3 + dzi];
+                    if (nbz < 0)
+                        continue;
                     const Real oz = off_tab[cz * 3 + dzi];
                     const int nb = (nbx * nc + nby) * nc + nbz;
                     const int sbeg = cell_start[nb], send = cell_start[nb + 1];
@@ -145,7 +116,14 @@ __device__ void short_range_dense_body(const EspSrArgs &a)
                             s_xs[threadIdx.x] = d_xs[s_idx] + ox;
                             s_ys[threadIdx.x] = d_ys[s_idx] + oy;
                             s_zs[threadIdx.x] = d_zs[s_idx] + oz;
-                            s_qs[threadIdx.x] = d_qs[s_idx];
+#pragma unroll
+                            for (int c = 0; c < IN_DIM; ++c)
+                                s_qs[c][threadIdx.x] = d_qs[c * n_sorted + s_idx];
+                            if constexpr (NRM_DIM > 0) {
+#pragma unroll
+                                for (int c = 0; c < NRM_DIM; ++c)
+                                    s_ns[c][threadIdx.x] = d_ns[c * n_sorted + s_idx];
+                            }
                         }
                         __syncthreads();
 
@@ -156,7 +134,17 @@ __device__ void short_range_dense_body(const EspSrArgs &a)
                             for (int k = 0; k < TARGETS; ++k) {
                                 if (!active[k]) continue;
                                 for (int s = 0; s < n_local; ++s) {
-                                    eval_esp_pair<WantForce>(xt[k] - s_xs[s], yt[k] - s_ys[s], zt[k] - s_zs[s], s_qs[s], rsc, cen, r_c_sq, pot_acc[k], gx_acc[k], gy_acc[k], gz_acc[k]);
+                                    Real vs[IN_DIM], ns[NRM_SLOTS] = {};
+#pragma unroll
+                                    for (int c = 0; c < IN_DIM; ++c)
+                                        vs[c] = s_qs[c][s];
+                                    if constexpr (NRM_DIM > 0) {
+#pragma unroll
+                                        for (int c = 0; c < NRM_DIM; ++c)
+                                            ns[c] = s_ns[c][s];
+                                    }
+                                    esp_accumulate(ev, acc[k], xt[k] - s_xs[s], yt[k] - s_ys[s], zt[k] - s_zs[s], vs,
+                                                   ns);
                                 }
                             }
                         }
@@ -170,12 +158,9 @@ __device__ void short_range_dense_body(const EspSrArgs &a)
         for (int k = 0; k < TARGETS; ++k) {
             if (!active[k]) continue;
             const int trg = hbeg + trg_idx[k];
-            pg_sorted[out_dim * trg + 0] = pot_acc[k];
-            if constexpr (WantForce) {
-                pg_sorted[out_dim * trg + 1] = gx_acc[k];
-                pg_sorted[out_dim * trg + 2] = gy_acc[k];
-                pg_sorted[out_dim * trg + 3] = gz_acc[k];
-            }
+#pragma unroll
+            for (int c = 0; c < OUT_DIM; ++c)
+                pg_sorted[OUT_DIM * trg + c] = acc[k][c];
         }
     }
 }
@@ -195,23 +180,25 @@ __device__ __forceinline__ Real warp_reduce_max(Real v) {
     return v;
 }
 
-template <bool WantForce>
+template <int UNUSED = 0>
 __device__ void short_range_prune_tile_body(const EspSrArgs &a)
 {
     const int nc = a.nc;
-    const int out_dim = a.out_dim;
-    const Real rsc = a.rsc, cen = a.cen, r_c_sq = a.r_c_sq;
+    const Real r_c_sq = a.r_c_sq;
+    const Evaluator ev = esp_evaluator(a);
     const int *__restrict__ cell_start = a.cell_start;
     const Real *__restrict__ d_xs = a.xs;
     const Real *__restrict__ d_ys = a.ys;
     const Real *__restrict__ d_zs = a.zs;
     const Real *__restrict__ d_qs = a.qs;
+    const Real *__restrict__ d_ns = a.ns;
+    const int n_sorted = a.n_sorted;
     const int *__restrict__ nbc_tab = a.nbc_tab;
     const Real *__restrict__ off_tab = a.off_tab;
     Real *__restrict__ pg_sorted = a.pg_sorted;
     const int max_tiles = a.max_tiles;
 
-    // Per-tile AABB/shift/base/len table. max_tiles is a cached-with-margin bound, not a guarantee.
+    // Per-tile AABB/shift/base/len table.
     extern __shared__ unsigned char s_raw[];
     Real *s_lo_x = reinterpret_cast<Real *>(s_raw);
     Real *s_lo_y = s_lo_x + max_tiles;
@@ -225,7 +212,7 @@ __device__ void short_range_prune_tile_body(const EspSrArgs &a)
     int  *s_base = reinterpret_cast<int *>(s_shift_z + max_tiles);
     int  *s_len  = s_base + max_tiles;
 
-    // Per-neighbour-cell metadata (not per-tile); static shared, coexists with the dynamic block.
+    // Per-neighbour-cell metadata; static shared.
     __shared__ int  s_nb_lin[27];
     __shared__ int  s_nb_tile0[28]; // exclusive prefix sum of per-neighbor tile counts; [27] = total
     __shared__ Real s_nb_shift_x[27], s_nb_shift_y[27], s_nb_shift_z[27];
@@ -252,12 +239,14 @@ __device__ void short_range_prune_tile_body(const EspSrArgs &a)
         const Real ox = off_tab[cx * 3 + dxi];
         const Real oy = off_tab[cy * 3 + dyi];
         const Real oz = off_tab[cz * 3 + dzi];
-        const int nb = (nbx * nc + nby) * nc + nbz;
+        // -1 means outside the box; zero tiles drops it from the prefix sum.
+        const bool valid_nb = (nbx >= 0) && (nby >= 0) && (nbz >= 0);
+        const int nb = valid_nb ? (nbx * nc + nby) * nc + nbz : 0;
         s_nb_lin[tid] = nb;
         s_nb_shift_x[tid] = ox;
         s_nb_shift_y[tid] = oy;
         s_nb_shift_z[tid] = oz;
-        const int len = cell_start[nb + 1] - cell_start[nb];
+        const int len = valid_nb ? cell_start[nb + 1] - cell_start[nb] : 0;
         s_nb_tile0[tid] = (len + TILE_WIDTH - 1) / TILE_WIDTH;
     }
     __syncthreads();
@@ -271,11 +260,10 @@ __device__ void short_range_prune_tile_body(const EspSrArgs &a)
         s_nb_tile0[27] = acc;
     }
     __syncthreads();
-    // Clamp: exceeding the margin truncates the tile list (slightly wrong) rather than overflowing
-    // shared memory.
+    // Exceeding the margin truncates the tile list rather than overflowing shared memory.
     const int n_stiles = min(s_nb_tile0[27], max_tiles);
 
-    // Phase 1: one warp per source tile -- gather, AABB-reduce, store.
+    // Phase 1: one warp per source tile.
     for (int gt = warp_id; gt < n_stiles; gt += n_warps) {
         int nbi = 0;
         while (nbi < 26 && s_nb_tile0[nbi + 1] <= gt)
@@ -291,12 +279,12 @@ __device__ void short_range_prune_tile_body(const EspSrArgs &a)
         const Real x = valid ? d_xs[t_base + lane] + ox : Real(0);
         const Real y = valid ? d_ys[t_base + lane] + oy : Real(0);
         const Real z = valid ? d_zs[t_base + lane] + oz : Real(0);
-        Real lo_x = warp_reduce_min(valid ? x : Real(INFINITY));
-        Real hi_x = warp_reduce_max(valid ? x : Real(-INFINITY));
-        Real lo_y = warp_reduce_min(valid ? y : Real(INFINITY));
-        Real hi_y = warp_reduce_max(valid ? y : Real(-INFINITY));
-        Real lo_z = warp_reduce_min(valid ? z : Real(INFINITY));
-        Real hi_z = warp_reduce_max(valid ? z : Real(-INFINITY));
+        Real lo_x = warp_reduce_min(valid ? x : dmk_inf(Real(0)));
+        Real hi_x = warp_reduce_max(valid ? x : -dmk_inf(Real(0)));
+        Real lo_y = warp_reduce_min(valid ? y : dmk_inf(Real(0)));
+        Real hi_y = warp_reduce_max(valid ? y : -dmk_inf(Real(0)));
+        Real lo_z = warp_reduce_min(valid ? z : dmk_inf(Real(0)));
+        Real hi_z = warp_reduce_max(valid ? z : -dmk_inf(Real(0)));
 
         if (lane == 0) {
             s_lo_x[gt] = lo_x; s_lo_y[gt] = lo_y; s_lo_z[gt] = lo_z;
@@ -316,17 +304,17 @@ __device__ void short_range_prune_tile_body(const EspSrArgs &a)
         const Real yt = my_active ? d_ys[trg] : Real(0);
         const Real zt = my_active ? d_zs[trg] : Real(0);
 
-        const Real tlo_x = warp_reduce_min(my_active ? xt : Real(INFINITY));
-        const Real thi_x = warp_reduce_max(my_active ? xt : Real(-INFINITY));
-        const Real tlo_y = warp_reduce_min(my_active ? yt : Real(INFINITY));
-        const Real thi_y = warp_reduce_max(my_active ? yt : Real(-INFINITY));
-        const Real tlo_z = warp_reduce_min(my_active ? zt : Real(INFINITY));
-        const Real thi_z = warp_reduce_max(my_active ? zt : Real(-INFINITY));
+        const Real tlo_x = warp_reduce_min(my_active ? xt : dmk_inf(Real(0)));
+        const Real thi_x = warp_reduce_max(my_active ? xt : -dmk_inf(Real(0)));
+        const Real tlo_y = warp_reduce_min(my_active ? yt : dmk_inf(Real(0)));
+        const Real thi_y = warp_reduce_max(my_active ? yt : -dmk_inf(Real(0)));
+        const Real tlo_z = warp_reduce_min(my_active ? zt : dmk_inf(Real(0)));
+        const Real thi_z = warp_reduce_max(my_active ? zt : -dmk_inf(Real(0)));
 
-        Real pot_acc = Real(0), gx_acc = Real(0), gy_acc = Real(0), gz_acc = Real(0);
+        Real acc[OUT_DIM] = {};
 
         for (int st = 0; st < n_stiles; ++st) {
-            // Branchless squared box-distance, same formula as the CPU's short_range_prune_tile.
+
             const Real ddx = max(Real(0), max(s_lo_x[st] - thi_x, tlo_x - s_hi_x[st]));
             const Real ddy = max(Real(0), max(s_lo_y[st] - thi_y, tlo_y - s_hi_y[st]));
             const Real ddz = max(Real(0), max(s_lo_z[st] - thi_z, tlo_z - s_hi_z[st]));
@@ -339,7 +327,7 @@ __device__ void short_range_prune_tile_body(const EspSrArgs &a)
                         atomicAdd(&a.prune_stats[1], 1ull);
             }
             if (pruned)
-                continue; // whole tile pruned: no source load, no eval_esp_pair calls
+                continue; // whole tile pruned: no source load, no evaluator calls
 
             const int s_base_i = s_base[st], s_len_i = s_len[st];
             const Real shx = s_shift_x[st], shy = s_shift_y[st], shz = s_shift_z[st];
@@ -347,47 +335,58 @@ __device__ void short_range_prune_tile_body(const EspSrArgs &a)
             const Real sx = have_src ? d_xs[s_base_i + lane] + shx : Real(0);
             const Real sy = have_src ? d_ys[s_base_i + lane] + shy : Real(0);
             const Real sz = have_src ? d_zs[s_base_i + lane] + shz : Real(0);
-            const Real sq = have_src ? d_qs[s_base_i + lane] : Real(0);
+            Real sq[IN_DIM], sn[NRM_SLOTS] = {};
+#pragma unroll
+            for (int c = 0; c < IN_DIM; ++c)
+                sq[c] = have_src ? d_qs[c * n_sorted + s_base_i + lane] : Real(0);
+            if constexpr (NRM_DIM > 0) {
+#pragma unroll
+                for (int c = 0; c < NRM_DIM; ++c)
+                    sn[c] = have_src ? d_ns[c * n_sorted + s_base_i + lane] : Real(0);
+            }
 
-            // Each lane loads one source and broadcasts in turn: no shared staging, no redundant
-            // per-lane global reads.
+            // Each lane loads one source and broadcasts in turn.
             for (int l = 0; l < s_len_i; ++l) {
                 const Real bx = __shfl_sync(0xffffffffu, sx, l);
                 const Real by = __shfl_sync(0xffffffffu, sy, l);
                 const Real bz = __shfl_sync(0xffffffffu, sz, l);
-                const Real bq = __shfl_sync(0xffffffffu, sq, l);
+                Real vs[IN_DIM], ns[NRM_SLOTS] = {};
+#pragma unroll
+                for (int c = 0; c < IN_DIM; ++c)
+                    vs[c] = __shfl_sync(0xffffffffu, sq[c], l);
+                if constexpr (NRM_DIM > 0) {
+#pragma unroll
+                    for (int c = 0; c < NRM_DIM; ++c)
+                        ns[c] = __shfl_sync(0xffffffffu, sn[c], l);
+                }
                 if (my_active)
-                    eval_esp_pair<WantForce>(xt - bx, yt - by, zt - bz, bq, rsc, cen, r_c_sq,
-                                                           pot_acc, gx_acc, gy_acc, gz_acc);
+                    esp_accumulate(ev, acc, xt - bx, yt - by, zt - bz, vs, ns);
             }
         }
 
         if (my_active) {
-            pg_sorted[out_dim * trg + 0] = pot_acc;
-            if constexpr (WantForce) {
-                pg_sorted[out_dim * trg + 1] = gx_acc;
-                pg_sorted[out_dim * trg + 2] = gy_acc;
-                pg_sorted[out_dim * trg + 3] = gz_acc;
-            }
+#pragma unroll
+            for (int c = 0; c < OUT_DIM; ++c)
+                pg_sorted[OUT_DIM * trg + c] = acc[c];
         }
     }
 }
 
-// PruneSource: box-vs-point rather than PruneTile's box-vs-box, so a chunk whose AABB straddles r_c
-// can still have most of its individual points culled. Phase 1 is identical to PruneTile's. Phase 2
-// keeps the cheap AABB pre-filter, then per-lane tests survivors, warp-ballots them, and compacts
-// through shared memory before evaluating.
-template <bool WantForce>
+// PruneSource: box-vs-point rather than box-vs-box, so a chunk straddling r_c can still have most
+// of its points culled. Survivors are warp-ballotted and compacted through shared memory.
+template <int UNUSED = 0>
 __device__ void short_range_prune_source_body(const EspSrArgs &a)
 {
     const int nc = a.nc;
-    const int out_dim = a.out_dim;
-    const Real rsc = a.rsc, cen = a.cen, r_c_sq = a.r_c_sq;
+    const Real r_c_sq = a.r_c_sq;
+    const Evaluator ev = esp_evaluator(a);
     const int *__restrict__ cell_start = a.cell_start;
     const Real *__restrict__ d_xs = a.xs;
     const Real *__restrict__ d_ys = a.ys;
     const Real *__restrict__ d_zs = a.zs;
     const Real *__restrict__ d_qs = a.qs;
+    const Real *__restrict__ d_ns = a.ns;
+    const int n_sorted = a.n_sorted;
     const int *__restrict__ nbc_tab = a.nbc_tab;
     const Real *__restrict__ off_tab = a.off_tab;
     Real *__restrict__ pg_sorted = a.pg_sorted;
@@ -411,12 +410,13 @@ __device__ void short_range_prune_source_body(const EspSrArgs &a)
     __shared__ int  s_nb_tile0[28];
     __shared__ Real s_nb_shift_x[27], s_nb_shift_y[27], s_nb_shift_z[27];
 
-    // Per-warp compaction staging: one slot per lane. Static -- its size is density-independent.
+    // Per-warp compaction staging: one slot per lane.
     constexpr int kMaxWarps = BLOCK_SIZE / TILE_WIDTH;
     __shared__ Real s_stage_x[kMaxWarps][TILE_WIDTH];
     __shared__ Real s_stage_y[kMaxWarps][TILE_WIDTH];
     __shared__ Real s_stage_z[kMaxWarps][TILE_WIDTH];
-    __shared__ Real s_stage_q[kMaxWarps][TILE_WIDTH];
+    __shared__ Real s_stage_q[kMaxWarps][IN_DIM][TILE_WIDTH];
+    __shared__ Real s_stage_n[kMaxWarps][NRM_SLOTS][TILE_WIDTH];
 
     const int home = blockIdx.x;
     const int cx = home / (nc * nc);
@@ -432,7 +432,7 @@ __device__ void short_range_prune_source_body(const EspSrArgs &a)
     const int lane = tid % warpSize;
     const int n_warps = blockDim.x / warpSize;
 
-    // Phase 1 (identical to PruneTile)
+    // Phase 1, as PruneTile
     if (tid < 27) {
         const int dzi = tid % 3, dyi = (tid / 3) % 3, dxi = tid / 9;
         const int nbx = nbc_tab[cx * 3 + dxi];
@@ -441,12 +441,13 @@ __device__ void short_range_prune_source_body(const EspSrArgs &a)
         const Real ox = off_tab[cx * 3 + dxi];
         const Real oy = off_tab[cy * 3 + dyi];
         const Real oz = off_tab[cz * 3 + dzi];
-        const int nb = (nbx * nc + nby) * nc + nbz;
+        const bool valid_nb = (nbx >= 0) && (nby >= 0) && (nbz >= 0);
+        const int nb = valid_nb ? (nbx * nc + nby) * nc + nbz : 0;
         s_nb_lin[tid] = nb;
         s_nb_shift_x[tid] = ox;
         s_nb_shift_y[tid] = oy;
         s_nb_shift_z[tid] = oz;
-        const int len = cell_start[nb + 1] - cell_start[nb];
+        const int len = valid_nb ? cell_start[nb + 1] - cell_start[nb] : 0;
         s_nb_tile0[tid] = (len + TILE_WIDTH - 1) / TILE_WIDTH;
     }
     __syncthreads();
@@ -477,12 +478,12 @@ __device__ void short_range_prune_source_body(const EspSrArgs &a)
         const Real x = valid ? d_xs[t_base + lane] + ox : Real(0);
         const Real y = valid ? d_ys[t_base + lane] + oy : Real(0);
         const Real z = valid ? d_zs[t_base + lane] + oz : Real(0);
-        Real lo_x = warp_reduce_min(valid ? x : Real(INFINITY));
-        Real hi_x = warp_reduce_max(valid ? x : Real(-INFINITY));
-        Real lo_y = warp_reduce_min(valid ? y : Real(INFINITY));
-        Real hi_y = warp_reduce_max(valid ? y : Real(-INFINITY));
-        Real lo_z = warp_reduce_min(valid ? z : Real(INFINITY));
-        Real hi_z = warp_reduce_max(valid ? z : Real(-INFINITY));
+        Real lo_x = warp_reduce_min(valid ? x : dmk_inf(Real(0)));
+        Real hi_x = warp_reduce_max(valid ? x : -dmk_inf(Real(0)));
+        Real lo_y = warp_reduce_min(valid ? y : dmk_inf(Real(0)));
+        Real hi_y = warp_reduce_max(valid ? y : -dmk_inf(Real(0)));
+        Real lo_z = warp_reduce_min(valid ? z : dmk_inf(Real(0)));
+        Real hi_z = warp_reduce_max(valid ? z : -dmk_inf(Real(0)));
 
         if (lane == 0) {
             s_lo_x[gt] = lo_x; s_lo_y[gt] = lo_y; s_lo_z[gt] = lo_z;
@@ -502,18 +503,17 @@ __device__ void short_range_prune_source_body(const EspSrArgs &a)
         const Real yt = my_active ? d_ys[trg] : Real(0);
         const Real zt = my_active ? d_zs[trg] : Real(0);
 
-        const Real tlo_x = warp_reduce_min(my_active ? xt : Real(INFINITY));
-        const Real thi_x = warp_reduce_max(my_active ? xt : Real(-INFINITY));
-        const Real tlo_y = warp_reduce_min(my_active ? yt : Real(INFINITY));
-        const Real thi_y = warp_reduce_max(my_active ? yt : Real(-INFINITY));
-        const Real tlo_z = warp_reduce_min(my_active ? zt : Real(INFINITY));
-        const Real thi_z = warp_reduce_max(my_active ? zt : Real(-INFINITY));
+        const Real tlo_x = warp_reduce_min(my_active ? xt : dmk_inf(Real(0)));
+        const Real thi_x = warp_reduce_max(my_active ? xt : -dmk_inf(Real(0)));
+        const Real tlo_y = warp_reduce_min(my_active ? yt : dmk_inf(Real(0)));
+        const Real thi_y = warp_reduce_max(my_active ? yt : -dmk_inf(Real(0)));
+        const Real tlo_z = warp_reduce_min(my_active ? zt : dmk_inf(Real(0)));
+        const Real thi_z = warp_reduce_max(my_active ? zt : -dmk_inf(Real(0)));
 
-        Real pot_acc = Real(0), gx_acc = Real(0), gy_acc = Real(0), gz_acc = Real(0);
+        Real acc[OUT_DIM] = {};
 
         for (int st = 0; st < n_stiles; ++st) {
-            // Box-vs-box pre-filter on the Phase-1 AABBs: a chunk fully out of range needs no
-            // per-point work.
+    
             const Real ddx = max(Real(0), max(s_lo_x[st] - thi_x, tlo_x - s_hi_x[st]));
             const Real ddy = max(Real(0), max(s_lo_y[st] - thi_y, tlo_y - s_hi_y[st]));
             const Real ddz = max(Real(0), max(s_lo_z[st] - thi_z, tlo_z - s_hi_z[st]));
@@ -532,9 +532,17 @@ __device__ void short_range_prune_source_body(const EspSrArgs &a)
             const Real sx = have_src ? d_xs[s_base_i + lane] + shx : Real(0);
             const Real sy = have_src ? d_ys[s_base_i + lane] + shy : Real(0);
             const Real sz = have_src ? d_zs[s_base_i + lane] + shz : Real(0);
-            const Real sq = have_src ? d_qs[s_base_i + lane] : Real(0);
+            Real sq[IN_DIM], sn[NRM_SLOTS] = {};
+#pragma unroll
+            for (int c = 0; c < IN_DIM; ++c)
+                sq[c] = have_src ? d_qs[c * n_sorted + s_base_i + lane] : Real(0);
+            if constexpr (NRM_DIM > 0) {
+#pragma unroll
+                for (int c = 0; c < NRM_DIM; ++c)
+                    sn[c] = have_src ? d_ns[c * n_sorted + s_base_i + lane] : Real(0);
+            }
 
-            // Same formula as above with the source side degenerated to a point (lo=hi=s).
+
             const Real pdx = max(Real(0), max(tlo_x - sx, sx - thi_x));
             const Real pdy = max(Real(0), max(tlo_y - sy, sy - thi_y));
             const Real pdz = max(Real(0), max(tlo_z - sz, sz - thi_z));
@@ -552,7 +560,14 @@ __device__ void short_range_prune_source_body(const EspSrArgs &a)
                 s_stage_x[warp_id][slot] = sx;
                 s_stage_y[warp_id][slot] = sy;
                 s_stage_z[warp_id][slot] = sz;
-                s_stage_q[warp_id][slot] = sq;
+#pragma unroll
+                for (int c = 0; c < IN_DIM; ++c)
+                    s_stage_q[warp_id][c][slot] = sq[c];
+                if constexpr (NRM_DIM > 0) {
+#pragma unroll
+                    for (int c = 0; c < NRM_DIM; ++c)
+                        s_stage_n[warp_id][c][slot] = sn[c];
+                }
             }
             __syncwarp(); // scatters visible before any lane reads the staging buffer
 
@@ -561,32 +576,41 @@ __device__ void short_range_prune_source_body(const EspSrArgs &a)
                 const Real bx = s_stage_x[warp_id][i];
                 const Real by = s_stage_y[warp_id][i];
                 const Real bz = s_stage_z[warp_id][i];
-                const Real bq = s_stage_q[warp_id][i];
+                Real vs[IN_DIM], ns[NRM_SLOTS] = {};
+#pragma unroll
+                for (int c = 0; c < IN_DIM; ++c)
+                    vs[c] = s_stage_q[warp_id][c][i];
+                if constexpr (NRM_DIM > 0) {
+#pragma unroll
+                    for (int c = 0; c < NRM_DIM; ++c)
+                        ns[c] = s_stage_n[warp_id][c][i];
+                }
                 if (my_active)
-                    eval_esp_pair<WantForce>(xt - bx, yt - by, zt - bz, bq, rsc, cen, r_c_sq,
-                                                           pot_acc, gx_acc, gy_acc, gz_acc);
+                    esp_accumulate(ev, acc, xt - bx, yt - by, zt - bz, vs, ns);
             }
             __syncwarp(); // all reads of this chunk's staging buffer done before the next chunk scatters
         }
 
         if (my_active) {
-            pg_sorted[out_dim * trg + 0] = pot_acc;
-            if constexpr (WantForce) {
-                pg_sorted[out_dim * trg + 1] = gx_acc;
-                pg_sorted[out_dim * trg + 2] = gy_acc;
-                pg_sorted[out_dim * trg + 3] = gz_acc;
-            }
+#pragma unroll
+            for (int c = 0; c < OUT_DIM; ++c)
+                pg_sorted[OUT_DIM * trg + c] = acc[c];
         }
     }
 }
 // KERNEL_START
 
+// KERNEL only separates modules whose baked coefficients coincide; TILE_WIDTH and PRUNE_STATS are
+// read only by the pruned bodies. Named here so NVRTC does not warn they are unused.
+static_assert(KERNEL >= 0, "KERNEL must be a dmk_ikernel value");
+static_assert(TILE_WIDTH == 32, "the pruned strategies assume one warp per tile");
+static_assert(PRUNE_STATS == 0 || PRUNE_STATS == 1, "PRUNE_STATS is a flag");
+
 extern "C" __global__ void __launch_bounds__(BLOCK_SIZE) DMK_ESP_SR_KERNEL_NAME(EspSrArgs a) {
-    constexpr bool want_force = (WANT_FORCE != 0);
     if constexpr (STRATEGY == 0)
-        short_range_dense_body<want_force, TARGETS_PER_THREAD>(a);
+        short_range_dense_body<TARGETS_PER_THREAD>(a);
     else if constexpr (STRATEGY == 1)
-        short_range_prune_tile_body<want_force>(a);
+        short_range_prune_tile_body<>(a);
     else
-        short_range_prune_source_body<want_force>(a);
+        short_range_prune_source_body<>(a);
 }

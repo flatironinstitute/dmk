@@ -1,10 +1,9 @@
 // ESP GPU support kernels: cell-list construction and the long-range spectral steps. The launcher
-// prepends a prelude defining Real, the DMK_ESP_SUPPORT_KERNEL_NAME symbol and the STAGE /
-// BLOCK_SIZE constants; one module per stage is compiled from this one source.
+// prepends Real, DMK_ESP_SUPPORT_KERNEL_NAME and the STAGE / BLOCK_SIZE / PROJECTOR constants.
 
 #include <dmk/cuda/esp_support_kernelargs.hpp>
 
-// NVRTC has no <type_traits>, hence the explicit specialization instead of std::conditional_t.
+// NVRTC has no <type_traits>.
 struct DmkFloat2 { float x, y; };
 struct DmkDouble2 { double x, y; };
 template <class T> struct ComplexFor;
@@ -20,9 +19,7 @@ using dmk::cuda::kEspNbuckets;
 using dmk::cuda::kMortonBits;
 using dmk::cuda::kMortonBuckets;
 
-// Flat (cell, spatial-bin) composite key per particle. Mirrors the CPU's particle_cell /
-// cell_linear_index plus sort_cell_bins, so sorting by this key clusters particles spatially within
-// each cell, not merely by cell.
+// Flat (cell, spatial-bin) composite key: sorting by it clusters particles within each cell.
 
 
 __device__ void cell_index_kernel(const EspSupportArgs &args)
@@ -55,15 +52,13 @@ __device__ void cell_index_kernel(const EspSupportArgs &args)
     const int cy = cell_coord_and_bin(d_pos_aos[3 * i + 1], by);
     const int cz = cell_coord_and_bin(d_pos_aos[3 * i + 2], bz);
 
-    // bin_lin < nbuckets always, so the composite key never crosses a cell boundary. One global
-    // sort replaces the CPU's many small per-cell sorts, which do not map onto GPU parallelism.
+    // bin_lin < nbuckets always, so the composite key never crosses a cell boundary.
     const int cell_lin = (cx * nc + cy) * nc + cz;
     const int bin_lin  = (bz * kEspBins + by) * kEspBins + bx; // matches sort_cell_bins' key = key*bins + bidx[d], d=DIM-1..0
     d_cell_idx[i] = cell_lin * kEspNbuckets + bin_lin;
 }
 
-// (cell, Morton-code) composite key. Sorting by it yields the same within-cell ordering as the
-// CPU's per-cell Morton sorts.
+// (cell, Morton-code) composite key.
 __device__ __forceinline__ unsigned long long part1by2_64(unsigned long long x) {
     x &= 0x1fffffull;
     x = (x | x << 32) & 0x1f00000000ffffull;
@@ -91,8 +86,7 @@ __device__ void cell_index_kernel_morton(const EspSupportArgs &args)
     if (i >= n) return;
     const Real cell_size = L / Real(nc);
 
-    // As cell_index_kernel, but returning the continuous within-cell fraction: Morton needs
-    // kMortonBits of resolution, not one bin.
+    // Morton needs kMortonBits of resolution, not one bin.
     auto cell_coord_and_frac = [&](Real x, Real &frac_out) {
         const Real u = (x + L / Real(2)) / cell_size;
         int c = static_cast<int>(floor(u));
@@ -136,7 +130,9 @@ __device__ void gather_sorted_kernel(const EspSupportArgs &args)
     d_xs[slot] = d_pos_aos[3 * orig + 0];
     d_ys[slot] = d_pos_aos[3 * orig + 1];
     d_zs[slot] = d_pos_aos[3 * orig + 2];
-    d_qs[slot] = d_charges[orig];
+    // AoS [charge | normal] in, charge_dim SoA planes of stride n out.
+    for (int c = 0; c < args.charge_dim; ++c)
+        d_qs[c * n + slot] = d_charges[args.charge_dim * orig + c];
 }
 
 __device__ void scatter_kernel(const EspSupportArgs &args)
@@ -154,26 +150,112 @@ __device__ void scatter_kernel(const EspSupportArgs &args)
     int a = blockIdx.x * blockDim.x + threadIdx.x;
     if (a >= n) return;
     const int o = d_orig[a];
-    d_pot[o] += pg_sorted[out_dim * a + 0];
-    if (out_dim > 1) {
-        const Real q = d_qs_sorted[a];
-        d_fx[o] += -q * pg_sorted[out_dim * a + 1];
-        d_fy[o] += -q * pg_sorted[out_dim * a + 2];
-        d_fz[o] += -q * pg_sorted[out_dim * a + 3];
-    }
+
+    // Component 0 lands raw. The scalar kernels turn the gradient rows into a force with the
+    // target's own charge; the vector kernels' components pass through as velocities.
+    Real *out[4] = {d_pot, d_fx, d_fy, d_fz};
+    out[0][o] += pg_sorted[out_dim * a + 0];
+    if (out_dim == 1) return;
+    const Real q = args.grad_is_force ? d_qs_sorted[a] : Real(1);
+    const Real sgn = args.grad_is_force ? Real(-1) : Real(1);
+    for (int k = 1; k < out_dim; ++k)
+        out[k][o] += sgn * q * pg_sorted[out_dim * a + k];
 }
 
-// In place: b_hat[i] *= scaling_coeffs[i], producing pot_hat.
-__device__ void scaling_kernel(const EspSupportArgs &args)
-{
-    const int ntot = args.ntot;
-    const Real *scaling_coeffs = args.scaling_coeffs;
-    Complex *b_hat = args.grid;
+__device__ __forceinline__ Complex cadd(Complex a, Complex b) { return {a.x + b.x, a.y + b.y}; }
+__device__ __forceinline__ Complex csub(Complex a, Complex b) { return {a.x - b.x, a.y - b.y}; }
+__device__ __forceinline__ Complex cscale(Complex a, Real s) { return {a.x * s, a.y * s}; }
+// (i*s)*a
+__device__ __forceinline__ Complex cmul_is(Complex a, Real s) { return {-a.y * s, a.x * s}; }
 
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__device__ __forceinline__ int grad_kidx(int i, int nf) { return (i <= nf / 2) ? i : i - nf; }
+
+// DMK's grid_idx is row-major but FINUFFT stores column-major, so axis 0 is the fastest-varying
+// index: kx from i%nf, kz from the slowest. Transposing this is invisible for an isotropic symbol
+// and wrong for every projector, so all of them go through here.
+__device__ __forceinline__ void grid_kvec(int i, int nf, Real coeff, Real &kx, Real &ky, Real &kz) {
+    const int i2 = i % nf;
+    const int i1 = (i / nf) % nf;
+    const int i0 = i / (nf * nf);
+    kx = coeff * Real(grad_kidx(i2, nf));
+    ky = coeff * Real(grad_kidx(i1, nf));
+    kz = coeff * Real(grad_kidx(i0, nf));
+}
+
+// Far-field spectrum: n_channels input spectra -> out_dim output spectra. PROJECTOR selects the
+// per-mode operator (0 scalar, 1 dipole, 2 Oseen, 3 stresslet); scaling_coeffs carries the scalar
+// radial symbol f in every case.
+template <int P>
+__device__ void project_kernel(const EspSupportArgs &args) {
+    const int ntot = args.ntot;
+    const int nf = args.nf;
+    const int out_dim = args.out_dim;
+    const Real *scaling_coeffs = args.scaling_coeffs;
+    const Complex *in = args.chan_in;
+    Complex *out = args.chan_out;
+
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= ntot) return;
-    Real s = scaling_coeffs[i];
-    b_hat[i] = {b_hat[i].x * s, b_hat[i].y * s}; //.x = real part; .y = imaginary part
+
+    const Real f = scaling_coeffs[i];
+
+    if constexpr (P == 0) {
+        // k is only needed for the gradient rows.
+        const Complex ph = cscale(in[i], f);
+        out[i] = ph;
+        if (out_dim > 1) {
+            Real kx, ky, kz;
+            grid_kvec(i, nf, args.coeff_grad, kx, ky, kz);
+            out[ntot + i] = cmul_is(ph, kx);
+            out[2 * ntot + i] = cmul_is(ph, ky);
+            out[3 * ntot + i] = cmul_is(ph, kz);
+        }
+        return;
+    }
+
+    Real kx, ky, kz;
+    grid_kvec(i, nf, args.coeff_grad, kx, ky, kz);
+
+    if constexpr (P == 1) {
+        // -i f (k.d), d being the three dipole-component spectra.
+        const Complex dot = cadd(cadd(cscale(in[i], kx), cscale(in[ntot + i], ky)), cscale(in[2 * ntot + i], kz));
+        const Complex ph = cmul_is(dot, -f);
+        out[i] = ph;
+        if (out_dim > 1) {
+            out[ntot + i] = cmul_is(ph, kx);
+            out[2 * ntot + i] = cmul_is(ph, ky);
+            out[3 * ntot + i] = cmul_is(ph, kz);
+        }
+    } else if constexpr (P == 2) {
+        // Oseen: u_i = f(k_i (k.F) - |k|^2 F_i).
+        const Complex p0 = in[i], p1 = in[ntot + i], p2 = in[2 * ntot + i];
+        const Complex dot = cadd(cadd(cscale(p0, kx), cscale(p1, ky)), cscale(p2, kz));
+        const Real dd = (kx * kx + ky * ky + kz * kz) * f;
+        out[i] = csub(cscale(dot, kx * f), cscale(p0, dd));
+        out[ntot + i] = csub(cscale(dot, ky * f), cscale(p1, dd));
+        out[2 * ntot + i] = csub(cscale(dot, kz * f), cscale(p2, dd));
+    } else {
+        // zz = |k|^2 tr(P) - 2 k^T P k;  u_i = -i f (k_i zz + |k|^2 ((P+P^T)k)_i).
+        // P[a][b] is the spectrum of channel a*3+b.
+        const Real kvec[3] = {kx, ky, kz};
+        const Real ksq = kx * kx + ky * ky + kz * kz;
+        Complex P3[3][3];
+        for (int a = 0; a < 3; ++a)
+            for (int b = 0; b < 3; ++b)
+                P3[a][b] = in[(a * 3 + b) * ntot + i];
+        Complex trace = cadd(cadd(P3[0][0], P3[1][1]), P3[2][2]);
+        Complex kPk{Real(0), Real(0)};
+        for (int a = 0; a < 3; ++a)
+            for (int b = 0; b < 3; ++b)
+                kPk = cadd(kPk, cscale(P3[a][b], kvec[a] * kvec[b]));
+        const Complex zz = csub(cscale(trace, ksq), cscale(kPk, Real(2)));
+        for (int a = 0; a < 3; ++a) {
+            Complex prod{Real(0), Real(0)};
+            for (int b = 0; b < 3; ++b)
+                prod = cadd(prod, cscale(cadd(P3[a][b], P3[b][a]), kvec[b]));
+            out[a * ntot + i] = cmul_is(cadd(cscale(zz, kvec[a]), cscale(prod, ksq)), -f);
+        }
+    }
 }
 
 // cuFFT's inverse transform is unnormalized, so scale by 1/ntot.
@@ -201,41 +283,7 @@ __device__ void extract_real_kernel(const EspSupportArgs &args)
     d_out[i] += Real(d_c[i].x);
 }
 
-// grad(u)_hat_k = i*k*u_hat_k, so each force spectrum is pot_hat * i*k_component*coeff_grad. k_idx
-// is recomputed per thread rather than buffered. Note the axis swap: f_hat_x uses k_idx[iz], matching
-// long_range()'s force block on the CPU.
-__device__ __forceinline__ int grad_kidx(int i, int nf) { return (i <= nf / 2) ? i : i - nf; }
-
-__device__ void grad_scaling_kernel(const EspSupportArgs &args)
-{
-    const int nf = args.nf;
-    const Real coeff_grad = args.coeff_grad;
-    const Complex *pot_hat = args.pot_hat;
-    Complex *f_hat_x = args.f_hat_x;
-    Complex *f_hat_y = args.f_hat_y;
-    Complex *f_hat_z = args.f_hat_z;
-
-    const long long ntot = (long long)nf * nf * nf;
-    const long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= ntot) return;
-
-    const int iz = int(i % nf);
-    const int iy = int((i / nf) % nf);
-    const int ix = int(i / ((long long)nf * nf));
-
-    const Complex s = pot_hat[i];
-    auto mul_ik = [=](int k) {
-        const Real factor = coeff_grad * Real(k);
-        // s * (i * factor) = (-s.y*factor, s.x*factor)
-        return Complex{-s.y * factor, s.x * factor};
-    };
-    f_hat_x[i] = mul_ik(grad_kidx(iz, nf));
-    f_hat_y[i] = mul_ik(grad_kidx(iy, nf));
-    f_hat_z[i] = mul_ik(grad_kidx(ix, nf));
-}
-
-// force_out[j] += -charge[j]*real(force_c[j]). Charges come from d_c, already packed as {charge, 0}
-// for spreading.
+// force_out[j] += -charge[j]*real(force_c[j]); charges come from d_c, packed as {charge, 0}.
 __device__ void accumulate_force_kernel(const EspSupportArgs &args)
 {
     const int n = args.n;
@@ -248,15 +296,28 @@ __device__ void accumulate_force_kernel(const EspSupportArgs &args)
     d_force_out[i] += Real(-d_c[i].x * d_force_c[i].x);
 }
 
+// Removes the long-range field's self-interaction. One shape covers the scalar potential self,
+// the Laplace-dipole gradient self (components 1..3) and the Stokeslet per-component self.
 __device__ void self_interaction_kernel(const EspSupportArgs &args)
 {
     const int n = args.n;
     const Real factor = args.factor;
     const Real *d_charges = args.charges;
-    Real *d_pot = args.pot;
+    Real *out[4] = {args.pot, args.fx, args.fy, args.fz};
 
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) d_pot[i] -= d_charges[i] * factor;
+    if (i >= n) return;
+    for (int k = 0; k < args.self_count; ++k)
+        out[args.self_first + k][i] -= factor * d_charges[args.charge_dim * i + k];
+}
+
+// out[self_first][i] += factor, for the Stokeslet's free-space zero-mode gauge.
+__device__ void add_const_kernel(const EspSupportArgs &args)
+{
+    const int n = args.n;
+    Real *out[4] = {args.pot, args.fx, args.fy, args.fz};
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) out[args.self_first][i] += args.factor;
 }
 
 // AoS positions/charges -> scaled [-pi,pi) SoA coords + packed complex charges, on device.
@@ -276,7 +337,17 @@ __device__ void scale_pack_kernel(const EspSupportArgs &args)
     d_x[i] = d_pos_aos[3 * i + 0] * scale;
     d_y[i] = d_pos_aos[3 * i + 1] * scale;
     d_z[i] = d_pos_aos[3 * i + 2] * scale;
-    d_c[i] = {d_charges[i], Real(0)};
+
+    // One complex plane per spread channel; the Stresslet's are the outer product force[a]*normal[b].
+    const int cd = args.charge_dim;
+    if (args.pack_outer) {
+        for (int a = 0; a < 3; ++a)
+            for (int b = 0; b < 3; ++b)
+                d_c[(a * 3 + b) * n + i] = {d_charges[cd * i + a] * d_charges[cd * i + 3 + b], Real(0)};
+    } else {
+        for (int c = 0; c < args.n_channels; ++c)
+            d_c[c * n + i] = {d_charges[cd * i + c], Real(0)};
+    }
 }
 // KERNEL_START
 
@@ -290,17 +361,17 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE) DMK_ESP_SUPPORT_KERNEL_
     else if constexpr (STAGE == 3)
         scatter_kernel(args);
     else if constexpr (STAGE == 4)
-        scaling_kernel(args);
+        project_kernel<PROJECTOR>(args);
     else if constexpr (STAGE == 5)
         normalize_kernel(args);
     else if constexpr (STAGE == 6)
         extract_real_kernel(args);
     else if constexpr (STAGE == 7)
-        grad_scaling_kernel(args);
-    else if constexpr (STAGE == 8)
         accumulate_force_kernel(args);
-    else if constexpr (STAGE == 9)
+    else if constexpr (STAGE == 8)
         self_interaction_kernel(args);
+    else if constexpr (STAGE == 9)
+        add_const_kernel(args);
     else
         scale_pack_kernel(args);
 }

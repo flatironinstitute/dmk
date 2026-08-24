@@ -1195,10 +1195,10 @@ std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() {
 // scaling coefficients deconvolve by the ES FT instead of the PSWF. The splitting kernel is
 // untouched -- it and the spreading kernel are independent factors, so the hybrid is valid.
 //
-// Deliberately not params.sigma: sigma sets the grid resolution and PSWF bandwidth and must match the
-// CPU plan, whereas the spreader's upsampfac is a GPU-only detail pinned to 2.0 so cuFINUFFT's
-// gpu_kerevalmeth=1 Horner path is valid.
-constexpr double GPU_SPREADER_UPSAMPFAC = 2.0;
+// The spreader's upsampfac must be params.sigma: cuFINUFFT derives both the ES width and its beta
+// from it, so any other value spreads with a kernel tuned for a grid this is not. At upsampfac 2 on
+// a sigma=1.35 grid the Stresslet misses eps by 10x. Off-standard values give up cuFINUFFT's
+// gpu_kerevalmeth=1 Horner path, which costs a few percent per eval.
 
 // Reproduces cuFINUFFT's setup_spreader nspread/beta choice, so this matches the kernel its
 // spreader actually uses.
@@ -1219,6 +1219,13 @@ static void es_kernel_params_from_tol(double tol, double upsampfac, int &ns, dou
     if (upsampfac != 2.0)
         betaoverns = 0.97 * M_PI * (1.0 - 1.0 / (2.0 * upsampfac));
     beta = betaoverns * ns;
+}
+
+// Inverse of the nspread rule above: the tol that makes cuFINUFFT choose an ES width of ns.
+static double es_tol_for_ns(int ns, double upsampfac) {
+    if (upsampfac == 2.0)
+        return std::pow(10.0, 1 - ns);
+    return std::exp(-ns * M_PI * std::sqrt(1.0 - 1.0 / upsampfac));
 }
 
 // ES shape on unit support, normalized to 1 at the origin (matching PSWFKernel::operator()).
@@ -1699,26 +1706,32 @@ std::array<std::span<Real>, 4> EspPlan<Real>::output_spans(int n) {
             std::span<Real>(b + 2 * n, output_dim > 2 ? n : 0), std::span<Real>(b + 3 * n, output_dim > 3 ? n : 0)};
 }
 
+// Short_range/long_range take one charge_dim-wide payload per source. Only the Stresslet packs
+// [force | normal]; every other kernel passes charges straight through, leaving `scratch` untouched.
+template <typename Real>
+const Real *EspPlan<Real>::pack_payload(int n, const Real *charges, const Real *normals,
+                                        std::vector<Real> &scratch) const {
+    if (normal_dim == 0)
+        return charges;
+    if (!normals)
+        throw std::runtime_error("ESP Stresslet eval requires non-null normals");
+    scratch.resize(size_t(charge_dim) * n);
+    for (int i = 0; i < n; ++i) {
+        for (int k = 0; k < input_dim; ++k)
+            scratch[charge_dim * i + k] = charges[input_dim * i + k];
+        for (int k = 0; k < normal_dim; ++k)
+            scratch[charge_dim * i + input_dim + k] = normals[normal_dim * i + k];
+    }
+    return scratch.data();
+}
+
 template <typename Real>
 PotForce<Real> EspPlan<Real>::eval(int n, const Real *r_src, const Real *charges, const Real *normals) {
     sctl::Profile::Scoped esp_eval("esp_eval");
     const bool want_force = (params.eval_type >= DMK_POTENTIAL_GRAD);
 
-    // Short_range/long_range operate on a single charge_dim-wide payload per source. The Stresslet packs
-    // [force | normal] (charge_dim = input_dim + normal_dim); every other kernel passes charges through.
     std::vector<Real> combined;
-    if (normal_dim > 0) {
-        if (!normals)
-            throw std::runtime_error("ESP Stresslet eval requires non-null normals");
-        combined.resize(size_t(charge_dim) * n);
-        for (int i = 0; i < n; ++i) {
-            for (int k = 0; k < input_dim; ++k)
-                combined[charge_dim * i + k] = charges[input_dim * i + k];
-            for (int k = 0; k < normal_dim; ++k)
-                combined[charge_dim * i + input_dim + k] = normals[normal_dim * i + k];
-        }
-    }
-    const Real *payload = normal_dim > 0 ? combined.data() : charges;
+    const Real *payload = pack_payload(n, charges, normals, combined);
 
     auto [pot_sp, fx_sp, fy_sp, fz_sp] = output_spans(n);
 
@@ -1779,58 +1792,78 @@ PotForce<Real> EspPlan<Real>::eval(int n, const Real *r_src, const Real *charges
 // Runs one sub-step of eval(). 3D only: these exist to compare against the GPU path, which is 3D.
 template <typename Real, typename SubStep>
 static PotForce<Real> esp_eval_one_step(EspPlan<Real> *plan, const std::vector<Vec3T<Real>> &r_src,
-                                        const std::vector<Real> &charges, const char *what, SubStep sub_step) {
+                                        const std::vector<Real> &charges, const std::vector<Real> &normals,
+                                        const char *what, SubStep sub_step) {
     if (plan->n_dim != 3)
         throw std::runtime_error(std::string(what) + ": 3D only");
     const int n = static_cast<int>(r_src.size());
+    std::vector<Real> combined;
+    const Real *payload = plan->pack_payload(n, charges.data(), normals.empty() ? nullptr : normals.data(), combined);
     auto sp = plan->output_spans(n);
     std::array<std::span<Real>, 3> force{sp[1], sp[2], sp[3]};
-    sub_step(n, reinterpret_cast<const Real *>(r_src.data()), charges.data(), sp[0], force);
+    sub_step(n, reinterpret_cast<const Real *>(r_src.data()), payload, sp[0], force);
     return {sp[0], sp[1], sp[2], sp[3], {}, {}, {}};
 }
 
 template <typename Real>
 PotForce<Real> esp_eval_short_range(EspPlan<Real> *plan, const std::vector<Vec3T<Real>> &r_src,
-                                    const std::vector<Real> &charges) {
-    return esp_eval_one_step(plan, r_src, charges, "esp_eval_short_range",
+                                    const std::vector<Real> &charges, const std::vector<Real> &normals) {
+    return esp_eval_one_step(plan, r_src, charges, normals, "esp_eval_short_range",
                              [plan](auto... args) { plan->template short_range<3>(args...); });
 }
 
 template <typename Real>
 PotForce<Real> esp_eval_long_range(EspPlan<Real> *plan, const std::vector<Vec3T<Real>> &r_src,
-                                   const std::vector<Real> &charges) {
-    return esp_eval_one_step(plan, r_src, charges, "esp_eval_long_range",
+                                   const std::vector<Real> &charges, const std::vector<Real> &normals) {
+    return esp_eval_one_step(plan, r_src, charges, normals, "esp_eval_long_range",
                              [plan](auto... args) { plan->template long_range<3>(args...); });
 }
 
-template PotForce<float> esp_eval_short_range<float>(EspPlan<float> *, const std::vector<Vec3T<float>> &,
-                                                     const std::vector<float> &);
-template PotForce<double> esp_eval_short_range<double>(EspPlan<double> *, const std::vector<Vec3T<double>> &,
-                                                       const std::vector<double> &);
-template PotForce<float> esp_eval_long_range<float>(EspPlan<float> *, const std::vector<Vec3T<float>> &,
-                                                    const std::vector<float> &);
-template PotForce<double> esp_eval_long_range<double>(EspPlan<double> *, const std::vector<Vec3T<double>> &,
-                                                      const std::vector<double> &);
+#define DMK_ESP_ONE_STEP_INST(Real)                                                                                    \
+    template PotForce<Real> esp_eval_short_range<Real>(EspPlan<Real> *, const std::vector<Vec3T<Real>> &,              \
+                                                       const std::vector<Real> &, const std::vector<Real> &);          \
+    template PotForce<Real> esp_eval_long_range<Real>(EspPlan<Real> *, const std::vector<Vec3T<Real>> &,               \
+                                                      const std::vector<Real> &, const std::vector<Real> &)
+
+DMK_ESP_ONE_STEP_INST(float);
+DMK_ESP_ONE_STEP_INST(double);
+#undef DMK_ESP_ONE_STEP_INST
 
 #ifdef DMK_GPU_OFFLOAD
 template <typename Real>
 GpuState *esp_create_gpu_plan(EspPlan<Real> *plan, GpuSrStrategy strategy, GpuSortMode sort_mode) {
     if (plan->n_dim != 3)
         throw std::runtime_error("esp_create_gpu_plan: 3D only");
-    // The GPU neighbour tables always wrap by +/-L with no out-of-range sentinel, so free space
-    // would silently evaluate periodic images.
-    if (!plan->params.use_periodic)
-        throw std::runtime_error("esp_create_gpu_plan: free-space (non-periodic) is CPU-only");
 
-    // pswf.eps, not params.eps: esp_plan_digits bumps the accuracy for gradient and dipole evals.
-    const double tol = plan->pswf.eps;
-    const std::vector<double> sc = plan->template precompute_scaling_coefficients_es<3>(tol, GPU_SPREADER_UPSAMPFAC);
-    // L_grid, not params.L: they differ whenever pad != 1.
-    // beta: the short-range coefficients are generated per launch, so the GPU residual tracks the
-    // plan's own bandwidth rather than a baked-in sigma.
-    return gpu_create_state(plan->n_f, plan->n_digits, plan->L_grid, plan->params.r_c, GPU_SPREADER_UPSAMPFAC, tol,
-                            plan->pswf.beta, double(plan->self_factor), plan->params.eval_type,
-                            std::is_same_v<Real, float>, strategy, sort_mode, sc.data());
+    // The grid is sized for the PSWF spread width P, so the ES spreader must be that wide too.
+    // Passing pswf.eps instead lands 2-3 grid points narrow.
+    const double upsampfac = plan->params.sigma;
+    const double tol = es_tol_for_ns(plan->P, upsampfac);
+    const std::vector<double> sc = plan->template precompute_scaling_coefficients_es<3>(tol, upsampfac);
+
+    GpuPlanConfig cfg;
+    cfg.nf = plan->n_f;
+    cfg.n_digits = plan->n_digits;
+    // The particle box drives cell binning and the wrap shifts, the padded grid the FFT. Equal
+    // only when periodic.
+    cfg.L_box = plan->params.L;
+    cfg.L_grid = plan->L_grid;
+    cfg.r_c = plan->params.r_c;
+    cfg.gpu_upsampfac = upsampfac;
+    cfg.tol = tol;
+    cfg.beta = plan->pswf.beta;
+    cfg.self_factor = double(plan->self_factor);
+    cfg.fparam = plan->params.fparam;
+    cfg.dipole_grad_self = double(plan->dipole_grad_self);
+    cfg.kernel = plan->params.kernel;
+    cfg.eval_type = plan->params.eval_type;
+    cfg.use_periodic = plan->params.use_periodic != 0;
+    cfg.trunc_rl = plan->trunc_rl;
+    cfg.use_float = std::is_same_v<Real, float>;
+    cfg.strategy = strategy;
+    cfg.sort_mode = sort_mode;
+    cfg.h_scaling_coeffs = sc.data();
+    return gpu_create_state(cfg);
 }
 
 void esp_destroy_gpu_plan(GpuState *gpu) { gpu_destroy_state(gpu); }

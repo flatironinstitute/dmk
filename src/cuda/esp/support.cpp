@@ -20,9 +20,9 @@ using jit::JitKey;
 
 constexpr int kSupportBlockSize = 256;
 
-// One module per stage. No coefficients are baked, so (stage, real, sm) names the module completely.
+// (stage, real, sm, projector) names a module completely; no coefficients are baked.
 template <typename Real>
-const jit::JitKernel &support_kernel(int stage) {
+const jit::JitKernel &support_kernel(int stage, int projector) {
     static JitCache cache;
     const std::string kernel_name = "EspSupportKernel_s" + std::to_string(stage);
 
@@ -33,6 +33,8 @@ const jit::JitKernel &support_kernel(int stage) {
     key.sm_minor = cache.sm_minor();
     key.params["STAGE"] = stage;
     key.params["BLOCK_SIZE"] = kSupportBlockSize;
+    // Only the project stage reads it, but the dispatch is not a template so every stage defines it.
+    key.params["PROJECTOR"] = projector;
 
     // JitCache owns the kernel and outlives every launch, so returning a reference is safe.
     return *cache.get_kernel_from_source(key, [&] {
@@ -43,18 +45,30 @@ const jit::JitKernel &support_kernel(int stage) {
 
 } // namespace
 
+int esp_projector_for(dmk_ikernel kernel) {
+    switch (kernel) {
+    case DMK_LAPLACE_DIPOLE:
+        return kEspProjDipole;
+    case DMK_STOKESLET:
+        return kEspProjStokeslet;
+    case DMK_STRESSLET:
+        return kEspProjStresslet;
+    default:
+        return kEspProjScalar;
+    }
+}
+
 template <typename Real>
-void launch_stage(int stage, int n_elems, EspSupportArgs<Real, ComplexT<Real>> &a, cudaStream_t stream) {
+void launch_stage(int stage, int n_elems, EspSupportArgs<Real, ComplexT<Real>> &a, cudaStream_t stream, int projector) {
     if (n_elems <= 0)
         return;
     const int blocks = (n_elems + kSupportBlockSize - 1) / kSupportBlockSize;
-    support_kernel<Real>(stage).launch(dim3(blocks, 1, 1), dim3(kSupportBlockSize, 1, 1), 0, stream, a);
+    support_kernel<Real>(stage, projector).launch(dim3(blocks, 1, 1), dim3(kSupportBlockSize, 1, 1), 0, stream, a);
 }
 
-// Sorts particles into cubic cells (CSR cell_start), via sort_by_key + lower_bound rather than the
-// CPU's counting sort.
+// Sorts particles into cubic cells (CSR cell_start) via sort_by_key + lower_bound.
 template <typename Real>
-void build_cell_list_gpu(GpuState &gpu, int n, int nc, const Real *d_pos_aos, const Real *d_charges,
+void build_cell_list_gpu(GpuState &gpu, int n, int nc, int charge_dim, const Real *d_pos_aos, const Real *d_charges,
                          int **d_cell_start_out, int **d_orig_out, Real **d_xs_out, Real **d_ys_out, Real **d_zs_out,
                          Real **d_qs_out) {
     const int ncells = nc * nc * nc;
@@ -62,15 +76,15 @@ void build_cell_list_gpu(GpuState &gpu, int n, int nc, const Real *d_pos_aos, co
     EspSupportArgs<Real, ComplexT<Real>> a;
     a.n = n;
     a.nc = nc;
-    a.L = Real(gpu.L);
+    a.L = Real(gpu.L_box); // cell binning is particle-box geometry
+    a.charge_dim = charge_dim;
     a.pos_aos = d_pos_aos;
     a.charges = d_charges;
 
     int *d_orig = nullptr;
 
     if (gpu.sort_mode == GpuSortMode::Morton) {
-        // The 8-byte keys are dead after the sort; d_orig is the real output. Wider keys mean this
-        // path sizes the shared scratch differently than Bins.
+        // Wider keys than Bins, so the shared scratch is sized differently.
         ensure_capacity(gpu.d_scratch_idx, gpu.scratch_idx_cap,
                         std::size_t(n) * sizeof(unsigned long long) + std::size_t(n) * sizeof(int));
         unsigned long long *d_cell_idx = reinterpret_cast<unsigned long long *>(gpu.d_scratch_idx);
@@ -92,8 +106,9 @@ void build_cell_list_gpu(GpuState &gpu, int n, int nc, const Real *d_pos_aos, co
         sort_cell_keys(d_cell_idx, d_orig, n, ncells, kEspNbuckets, gpu.d_cell_start, gpu.stream);
     }
 
-    // Always used together downstream, so one 4n-Real scratch.
-    ensure_capacity(gpu.d_scratch_sorted, gpu.scratch_sorted_cap, 4 * std::size_t(n) * sizeof(Real));
+    // One (3 + charge_dim) * n Real scratch: three coordinate planes then the payload planes.
+    ensure_capacity(gpu.d_scratch_sorted, gpu.scratch_sorted_cap,
+                    std::size_t(3 + charge_dim) * std::size_t(n) * sizeof(Real));
     Real *d_xs = reinterpret_cast<Real *>(gpu.d_scratch_sorted);
     Real *d_ys = d_xs + n;
     Real *d_zs = d_ys + n;
@@ -114,14 +129,14 @@ void build_cell_list_gpu(GpuState &gpu, int n, int nc, const Real *d_pos_aos, co
     *d_qs_out = d_qs;
 }
 
-// Un-permutes the cell-sorted accumulator onto the caller's arrays. The gradient-to-force sign
-// conversion (-q*grad, using the target's own charge) happens here.
+// Un-permutes the cell-sorted accumulator onto the caller's arrays.
 template <typename Real>
-void scatter_gpu(GpuState &gpu, int n, int out_dim, const int *d_orig, const Real *d_qs_sorted, const Real *d_pg_sorted,
-                 Real *d_pot, Real *d_fx, Real *d_fy, Real *d_fz) {
+void scatter_gpu(GpuState &gpu, int n, int out_dim, bool grad_is_force, const int *d_orig, const Real *d_qs_sorted,
+                 const Real *d_pg_sorted, Real *d_pot, Real *d_fx, Real *d_fy, Real *d_fz) {
     EspSupportArgs<Real, ComplexT<Real>> a;
     a.n = n;
     a.out_dim = out_dim;
+    a.grad_is_force = grad_is_force ? 1 : 0;
     a.orig = d_orig;
     a.qs_sorted = d_qs_sorted;
     a.pg_sorted = d_pg_sorted;
@@ -146,11 +161,11 @@ void report_prune_stats(GpuState &gpu, const unsigned long long *d_prune_stats) 
 }
 
 #define DMK_ESP_SUPPORT_INST(Real)                                                                                     \
-    template void launch_stage<Real>(int, int, EspSupportArgs<Real, ComplexT<Real>> &, cudaStream_t);                  \
-    template void build_cell_list_gpu<Real>(GpuState &, int, int, const Real *, const Real *, int **, int **, Real **, \
-                                            Real **, Real **, Real **);                                                \
-    template void scatter_gpu<Real>(GpuState &, int, int, const int *, const Real *, const Real *, Real *, Real *,     \
-                                    Real *, Real *)
+    template void launch_stage<Real>(int, int, EspSupportArgs<Real, ComplexT<Real>> &, cudaStream_t, int);             \
+    template void build_cell_list_gpu<Real>(GpuState &, int, int, int, const Real *, const Real *, int **, int **,     \
+                                            Real **, Real **, Real **, Real **);                                       \
+    template void scatter_gpu<Real>(GpuState &, int, int, bool, const int *, const Real *, const Real *, Real *,       \
+                                    Real *, Real *, Real *)
 
 DMK_ESP_SUPPORT_INST(float);
 DMK_ESP_SUPPORT_INST(double);

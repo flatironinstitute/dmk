@@ -62,4 +62,8 @@ SplitSource load_split_jit_source(std::string_view filename, std::string_view la
 /// chosen for the old code; folding this into the key retires those entries automatically.
 std::size_t jit_source_hash(std::string_view filename);
 
+/// Same, for an embedded device-only header. A source's own hash does not cover what it includes,
+/// so a tune key depending on header code must fold this in too. Throws on an unknown name.
+std::size_t jit_header_hash(std::string_view header_name);
+
 } // namespace dmk::cuda::jit

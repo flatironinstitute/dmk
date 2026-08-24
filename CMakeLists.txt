@@ -128,6 +128,7 @@ if (DMK_GPU_OFFLOAD)
     "${PROJECT_SOURCE_DIR}/include/dmk/cuda/*_kernelargs.hpp")
   # Device-only headers a JIT source may include that are not kernel-arg structs.
   list(APPEND DMK_JIT_HEADER_FILES "${PROJECT_SOURCE_DIR}/include/dmk/cuda/bessel_device.hpp")
+  list(APPEND DMK_JIT_HEADER_FILES "${PROJECT_SOURCE_DIR}/include/dmk/cuda/poly_evaluators_device.hpp")
   set(DMK_JIT_EMBED_HEADERS "")
   foreach(hfile ${DMK_JIT_HEADER_FILES})
     get_filename_component(hname "${hfile}" NAME)

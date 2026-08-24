@@ -1,5 +1,6 @@
 #ifdef DMK_GPU_OFFLOAD
 
+#include <dmk/direct.hpp>
 #include <dmk/esp.hpp>
 #include <dmk/omp_wrapper.hpp>
 #include <sctl.hpp>
@@ -40,20 +41,47 @@ struct Config {
     // -M <n>: within-cell sort -- 0=bins (default, octant sub-bins), 1=morton (Z-order).
     // Independent of strategy; any strategy can run with either sort.
     dmk::GpuSortMode sort_mode = dmk::GpuSortMode::Bins;
+    dmk_ikernel kernel = DMK_LAPLACE;
+    double fparam = 6.0; // -l: Yukawa lambda
+    bool periodic = true;
 };
 
+// Free-space only on the CPU as well.
+static bool kernel_is_freespace_only(dmk_ikernel k) {
+    return k == DMK_LAPLACE_DIPOLE || k == DMK_STOKESLET || k == DMK_STRESSLET;
+}
+
+static dmk_ikernel kernel_from_name(const char *name) {
+    const std::string s(name);
+    if (s == "laplace")
+        return DMK_LAPLACE;
+    if (s == "sqrt-laplace")
+        return DMK_SQRT_LAPLACE;
+    if (s == "yukawa")
+        return DMK_YUKAWA;
+    if (s == "dipole")
+        return DMK_LAPLACE_DIPOLE;
+    if (s == "stokeslet")
+        return DMK_STOKESLET;
+    if (s == "stresslet")
+        return DMK_STRESSLET;
+    throw std::runtime_error("benchmark_esp_gpu: -k must be laplace, sqrt-laplace, yukawa, dipole, "
+                             "stokeslet or stresslet");
+}
+
 // The GPU plan takes its Real from the CPU plan's type, so there is no separate precision argument.
-static pdmk_esp_params esp_params(double L, double r_c, double eps, double sigma, dmk_eval_type eval_type) {
+static pdmk_esp_params esp_params(const Config &cfg, dmk_eval_type eval_type) {
     pdmk_esp_params p{};
-    p.L = L;
-    p.r_c = r_c;
-    p.eps = eps;
+    p.L = cfg.L;
+    p.r_c = cfg.r_c;
+    p.eps = cfg.eps;
     p.log_level = 6;
-    p.kernel = DMK_LAPLACE;
+    p.kernel = cfg.kernel;
+    p.fparam = cfg.fparam;
     p.n_dim = 3;
     p.eval_type = eval_type;
-    p.sigma = sigma;
-    p.use_periodic = 1;
+    p.sigma = cfg.sigma;
+    p.use_periodic = cfg.periodic ? 1 : 0;
     return p;
 }
 
@@ -68,17 +96,21 @@ std::vector<dmk::Vec3T<Real>> generate_positions(int n, double L, long seed = 42
     return r;
 }
 
-// Alternating ±1 charges — ensures charge neutrality for well-conditioned Ewald.
+// Alternating ±1 where charge neutrality matters, uniform random otherwise.
 template <typename Real>
-std::vector<Real> generate_charges(int n) {
-    std::vector<Real> q(n);
-    for (int i = 0; i < n; ++i)
-        q[i] = Real(1 - 2 * (i & 1));
+std::vector<Real> generate_payload(int count, bool neutral) {
+    std::vector<Real> q(count);
+    std::mt19937 eng(7u);
+    std::uniform_real_distribution<double> uni(-0.5, 0.5);
+    for (int i = 0; i < count; ++i)
+        q[i] = neutral ? Real(1 - 2 * (i & 1)) : Real(uni(eng));
     return q;
 }
 
 void print_config(const Config &cfg, std::ostream &os) {
     os << "# n_src:             " << cfg.n_src << "\n"
+       << "# kernel:            " << dmk::util::to_string(cfg.kernel) << "\n"
+       << "# periodic:          " << (cfg.periodic ? "true" : "false") << "\n"
        << "# L:                 " << cfg.L << "\n"
        << "# r_c:               " << cfg.r_c << "\n"
        << "# eps:               " << cfg.eps << "\n"
@@ -122,19 +154,19 @@ double l2_rel_err(std::span<Real> gpu_pot, std::span<Real> cpu_pot) {
 // Analytic forces against central-difference FD. The step is much larger than the CPU version's
 // 1e-12: cuFINUFFT's plan tolerance puts a noise floor under the potential, so the step needs
 // step^2 << eps/step, i.e. step ~ eps^(1/3).
+// Scalar kernels only: the reference is -q_i * dphi/dx.
 double check_forces_fd_gpu(const dmk::PotForce<double> &esp, const std::vector<dmk::Vec3T<double>> &r_src_d,
-                           const std::vector<double> &charges_d, double L, double r_c, double eps, double sigma,
-                           int n_sample = 20) {
+                           const std::vector<double> &charges_d, const Config &cfg, int n_sample = 20) {
     const int n = static_cast<int>(charges_d.size());
     n_sample = std::min(n_sample, n);
-    const double step = std::cbrt(eps);
+    const double step = std::cbrt(cfg.eps);
 
     std::vector<int> idx(n);
     std::iota(idx.begin(), idx.end(), 0);
     std::shuffle(idx.begin(), idx.end(), std::default_random_engine(123));
     idx.resize(n_sample);
 
-    auto *plan = new dmk::EspPlan<double>(esp_params(L, r_c, eps, sigma, DMK_POTENTIAL));
+    auto *plan = new dmk::EspPlan<double>(esp_params(cfg, DMK_POTENTIAL));
     dmk::GpuState *gpu = dmk::esp_create_gpu_plan(plan);
 
     std::vector<dmk::Vec3T<double>> r_pert = r_src_d;
@@ -168,9 +200,9 @@ double check_forces_fd_gpu(const dmk::PotForce<double> &esp, const std::vector<d
 // accuracy reference.
 template <typename Real>
 void run_phase(const Config &cfg, int n, const std::vector<dmk::Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-               dmk_eval_type eval_type, const char *phase_name) {
+               const std::vector<Real> &normals, dmk_eval_type eval_type, const char *phase_name) {
     double t_plan0 = MY_OMP_GET_WTIME();
-    auto *plan = new dmk::EspPlan<Real>(esp_params(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, eval_type));
+    auto *plan = new dmk::EspPlan<Real>(esp_params(cfg, eval_type));
     dmk::GpuState *gpu = dmk::esp_create_gpu_plan(plan, cfg.strategy, cfg.sort_mode);
     double t_plan1 = MY_OMP_GET_WTIME();
     if (cfg.bench_plan)
@@ -178,13 +210,14 @@ void run_phase(const Config &cfg, int n, const std::vector<dmk::Vec3T<Real>> &r_
                   << std::flush;
 
     // Absorb first-call overhead before any timed iteration.
-    dmk::esp_eval_gpu(gpu, r_src, charges);
+    dmk::esp_eval_gpu(gpu, r_src, charges, normals);
 
     double cpu_time = std::numeric_limits<double>::quiet_NaN();
     dmk::PotForce<Real> cpu_result{};
     if (!cfg.skip_cpu_baseline) {
         double t0 = MY_OMP_GET_WTIME();
-        cpu_result = plan->eval(n, reinterpret_cast<const Real *>(r_src.data()), charges.data());
+        cpu_result = plan->eval(n, reinterpret_cast<const Real *>(r_src.data()), charges.data(),
+                                normals.empty() ? nullptr : normals.data());
         double t1 = MY_OMP_GET_WTIME();
         cpu_time = t1 - t0;
         std::cout << "# cpu_baseline_time (" << phase_name << "): " << cpu_time << " s (" << n / cpu_time << " pts/s)\n"
@@ -201,7 +234,7 @@ void run_phase(const Config &cfg, int n, const std::vector<dmk::Vec3T<Real>> &r_
     cudaProfilerStart();
     for (int run = 0; run < cfg.n_runs; ++run) {
         double t0 = MY_OMP_GET_WTIME();
-        auto result = dmk::esp_eval_gpu(gpu, r_src, charges);
+        auto result = dmk::esp_eval_gpu(gpu, r_src, charges, normals);
         double t1 = MY_OMP_GET_WTIME();
         gpu_time_sum += (t1 - t0);
 
@@ -232,32 +265,44 @@ void run_benchmark(Config cfg) {
     }
     print_config(cfg, std::cout);
 
+    const int in_dim = dmk::get_kernel_input_dim(3, cfg.kernel);
+    const int nrm_dim = (cfg.kernel == DMK_STRESSLET) ? 3 : 0;
+
     auto r_src_d = generate_positions<double>(n, cfg.L);
-    auto charges_d = generate_charges<double>(n);
+    auto charges_d = generate_payload<double>(in_dim * n, in_dim == 1);
+    auto normals_d = generate_payload<double>(nrm_dim * n, false);
 
     std::vector<dmk::Vec3T<Real>> r_src(n);
-    std::vector<Real> charges(n);
-    for (int i = 0; i < n; ++i) {
+    std::vector<Real> charges(charges_d.begin(), charges_d.end());
+    std::vector<Real> normals(normals_d.begin(), normals_d.end());
+    for (int i = 0; i < n; ++i)
         r_src[i] = {Real(r_src_d[i][0]), Real(r_src_d[i][1]), Real(r_src_d[i][2])};
-        charges[i] = Real(charges_d[i]);
+
+    // Stokeslet/Stresslet have no potential or gradient.
+    const bool velocity = cfg.kernel == DMK_STOKESLET || cfg.kernel == DMK_STRESSLET;
+    if (velocity) {
+        run_phase<Real>(cfg, n, r_src, charges, normals, DMK_VELOCITY, "eval_velocity");
+        return;
     }
 
-    run_phase<Real>(cfg, n, r_src, charges, DMK_POTENTIAL, "eval_potential");
+    run_phase<Real>(cfg, n, r_src, charges, normals, DMK_POTENTIAL, "eval_potential");
 
     if (cfg.bench_forces || cfg.check_forces) { // -F implies running the forces phase it validates against
-        run_phase<Real>(cfg, n, r_src, charges, DMK_POTENTIAL_GRAD, "eval_forces");
+        run_phase<Real>(cfg, n, r_src, charges, normals, DMK_POTENTIAL_GRAD, "eval_forces");
 
-        if (cfg.check_forces) {
+        // The FD reference assumes force = -q*grad(phi).
+        if (cfg.check_forces && in_dim != 1) {
+            std::cout << "# force_check: skipped (only meaningful for the scalar kernels)\n" << std::flush;
+        } else if (cfg.check_forces) {
             constexpr int n_fd_sample = 20;
             std::cout << "# phase: force_check (FD on " << n_fd_sample
                       << " random particles x 6 evals each; not all N)\n"
                       << std::flush;
 
-            auto *plan = new dmk::EspPlan<double>(esp_params(cfg.L, cfg.r_c, cfg.eps, cfg.sigma, DMK_POTENTIAL_GRAD));
+            auto *plan = new dmk::EspPlan<double>(esp_params(cfg, DMK_POTENTIAL_GRAD));
             dmk::GpuState *gpu = dmk::esp_create_gpu_plan(plan, cfg.strategy, cfg.sort_mode);
             auto esp = dmk::esp_eval_gpu(gpu, r_src_d, charges_d);
-            double force_l2_err =
-                check_forces_fd_gpu(esp, r_src_d, charges_d, cfg.L, cfg.r_c, cfg.eps, cfg.sigma, n_fd_sample);
+            double force_l2_err = check_forces_fd_gpu(esp, r_src_d, charges_d, cfg, n_fd_sample);
             std::cout << "# force_check: l2_rel_err=" << force_l2_err << "\n" << std::flush;
             dmk::esp_destroy_gpu_plan(gpu);
             delete plan;
@@ -268,7 +313,7 @@ void run_benchmark(Config cfg) {
 Config parse_args(int argc, char *argv[]) {
     Config cfg;
     int opt;
-    while ((opt = getopt(argc, argv, "N:L:c:e:r:t:s:pP:M:FSgh?")) != -1) {
+    while ((opt = getopt(argc, argv, "N:L:c:e:r:t:s:k:l:pP:M:FSgh?")) != -1) {
         switch (opt) {
         case 'N':
             cfg.n_src = int(std::atof(optarg));
@@ -315,6 +360,13 @@ Config parse_args(int argc, char *argv[]) {
         case 's':
             cfg.sigma = std::atof(optarg);
             break;
+        case 'k':
+            cfg.kernel = kernel_from_name(optarg);
+            cfg.periodic = !kernel_is_freespace_only(cfg.kernel);
+            break;
+        case 'l':
+            cfg.fparam = std::atof(optarg);
+            break;
         case 't':
             if (optarg[0] == 'd')
                 cfg.prec = 'd';
@@ -337,6 +389,10 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -t f|d     Precision: float or double (default d)\n"
                       << "  -p         Also report plan creation time (cpu EspPlan + gpu_create_state)\n"
                       << "  -s sigma   FINUFFT/cuFINUFFT upsampling factor (default 1.35)\n"
+                      << "  -k kernel  laplace (default), sqrt-laplace, yukawa, dipole, stokeslet,\n"
+                      << "             stresslet. dipole/stokeslet/stresslet are free-space only, so -k\n"
+                      << "             also selects the boundary condition.\n"
+                      << "  -l lambda  Yukawa screening parameter (default 6.0)\n"
                       << "  -g         Also benchmark forces (phase eval_forces, DMK_POTENTIAL_GRAD plan).\n"
                       << "             Potential-only timing (phase eval_potential) always runs regardless.\n"
                       << "  -F         Validate GPU forces against a finite-difference reference. Samples 20\n"

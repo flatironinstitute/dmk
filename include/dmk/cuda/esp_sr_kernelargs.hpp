@@ -2,16 +2,14 @@
 
 namespace dmk::cuda {
 
-// Shared verbatim between the host launcher and the NVRTC device source, which is what guarantees
-// layout agreement -- so no includes and no std:: here.
+// Shared verbatim with the NVRTC device source, so no includes and no std:: here.
 //
-// Positions/charges are the cell-sorted SoA arrays; pg_sorted is the interleaved
-// [pot, d/dx, d/dy, d/dz] accumulator in that same order, un-permuted afterwards. max_tiles sizes
-// the pruned strategies' dynamic shared-memory table; prune_stats is read only when PRUNE_STATS.
+// Cell-sorted throughout: qs holds KERNEL_INPUT_DIM charge planes and ns NORMAL_DIM normal planes,
+// both of stride n_sorted; pg_sorted is the KERNEL_OUTPUT_DIM-interleaved accumulator.
 template <typename Real>
 struct EspSrArgs {
     int nc = 0;
-    int out_dim = 0;
+    int n_sorted = 0; // plane stride for qs/ns
 
     Real rsc = Real{0};
     Real cen = Real{0};
@@ -22,6 +20,7 @@ struct EspSrArgs {
     const Real *ys = nullptr;
     const Real *zs = nullptr;
     const Real *qs = nullptr;
+    const Real *ns = nullptr;
 
     const int *nbc_tab = nullptr;
     const Real *off_tab = nullptr;

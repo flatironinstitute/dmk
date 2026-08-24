@@ -174,7 +174,8 @@ struct EspPlan {
     template <int DIM>
     std::vector<double> precompute_scaling_coefficients();
 #ifdef DMK_GPU_OFFLOAD
-    // ES spreading kernel instead of the PSWF: gpu_upsampfac is the spreader's, not sigma.
+    // ES spreading kernel instead of the PSWF. tol/gpu_upsampfac must be the pair cuFINUFFT was
+    // planned with, or the deconvolution divides by the wrong kernel.
     template <int DIM>
     std::vector<double> precompute_scaling_coefficients_es(double tol, double gpu_upsampfac);
 #endif
@@ -185,15 +186,18 @@ struct EspPlan {
     void long_range(int n, const Real *r_src, const Real *charges, std::span<Real> pot,
                     std::array<std::span<Real>, DIM> force);
     void self_interaction(int n, const Real *charges, std::span<Real> pot);
+    // Interleaves charges and normals into the charge_dim-wide payload short_range/long_range want.
+    const Real *pack_payload(int n, const Real *charges, const Real *normals, std::vector<Real> &scratch) const;
 };
 
-// One sub-step at a time, for GPU-vs-CPU comparison. No self-interaction correction.
+// One sub-step at a time, for GPU-vs-CPU comparison. No self-interaction correction. `normals` is
+// only read by the Stresslet; the components are returned raw, without the velocity relabelling.
 template <typename Real>
 PotForce<Real> esp_eval_short_range(EspPlan<Real> *plan, const std::vector<Vec3T<Real>> &r_src,
-                                    const std::vector<Real> &charges);
+                                    const std::vector<Real> &charges, const std::vector<Real> &normals = {});
 template <typename Real>
 PotForce<Real> esp_eval_long_range(EspPlan<Real> *plan, const std::vector<Vec3T<Real>> &r_src,
-                                   const std::vector<Real> &charges);
+                                   const std::vector<Real> &charges, const std::vector<Real> &normals = {});
 
 // Fixed at plan creation; create several plans to compare. Dense evaluates all 27 neighbour cells;
 // PruneTile culls tile-vs-tile by AABB -- measured to skip only ~10% of pairs when cell width ~= r_c
@@ -208,28 +212,29 @@ enum class GpuSortMode : int { Bins = 0, Morton = 1 };
 
 #ifdef DMK_GPU_OFFLOAD
 // Owns all CUDA resources; create alongside an EspPlan and destroy when done. The plan's Real is
-// the one precision this GpuState exists for, and every esp_eval_gpu* call must match it. Periodic
-// only -- free-space plans throw.
+// the one precision this GpuState exists for, and every esp_eval_gpu* call must match it. 3D only;
+// see esp_create_gpu_plan for the supported kernels.
 struct GpuState;
 template <typename Real>
 GpuState *esp_create_gpu_plan(EspPlan<Real> *plan, GpuSrStrategy strategy = GpuSrStrategy::Dense,
                               GpuSortMode sort_mode = GpuSortMode::Bins);
 void esp_destroy_gpu_plan(GpuState *gpu);
 
-// Returned spans are valid until the next esp_eval_gpu on the same gpu, or until it is destroyed.
-PotForce<float> esp_eval_gpu(GpuState *gpu, const std::vector<Vec3T<float>> &r_src, const std::vector<float> &charges);
-PotForce<double> esp_eval_gpu(GpuState *gpu, const std::vector<Vec3T<double>> &r_src,
-                              const std::vector<double> &charges);
+// `charges` is get_kernel_input_dim components per source; `normals` is only read by the Stresslet,
+// which needs n_dim more. Returned spans are valid until the next esp_eval_gpu on the same gpu, or
+// until it is destroyed.
+#define DMK_ESP_GPU_DECL(Real)                                                                                         \
+    PotForce<Real> esp_eval_gpu(GpuState *gpu, const std::vector<Vec3T<Real>> &r_src,                                  \
+                                const std::vector<Real> &charges, const std::vector<Real> &normals = {});              \
+    PotForce<Real> esp_eval_gpu_short_range(GpuState *gpu, const std::vector<Vec3T<Real>> &r_src,                      \
+                                            const std::vector<Real> &charges, const std::vector<Real> &normals = {});  \
+    PotForce<Real> esp_eval_gpu_long_range(GpuState *gpu, const std::vector<Vec3T<Real>> &r_src,                       \
+                                           const std::vector<Real> &charges, const std::vector<Real> &normals = {})
 
 // Mirrors esp_eval_short_range / esp_eval_long_range.
-PotForce<float> esp_eval_gpu_short_range(GpuState *gpu, const std::vector<Vec3T<float>> &r_src,
-                                         const std::vector<float> &charges);
-PotForce<double> esp_eval_gpu_short_range(GpuState *gpu, const std::vector<Vec3T<double>> &r_src,
-                                          const std::vector<double> &charges);
-PotForce<float> esp_eval_gpu_long_range(GpuState *gpu, const std::vector<Vec3T<float>> &r_src,
-                                        const std::vector<float> &charges);
-PotForce<double> esp_eval_gpu_long_range(GpuState *gpu, const std::vector<Vec3T<double>> &r_src,
-                                         const std::vector<double> &charges);
+DMK_ESP_GPU_DECL(float);
+DMK_ESP_GPU_DECL(double);
+#undef DMK_ESP_GPU_DECL
 #endif
 
 } // namespace dmk

@@ -24,20 +24,34 @@ struct NvtxRange {
     ~NvtxRange() { nvtxRangePop(); }
 };
 
-GpuState *gpu_create_state(int nf, int n_digits, double L, double r_c, double gpu_upsampfac, double tol, double beta,
-                           double self_factor, dmk_eval_type eval_type, bool use_float, GpuSrStrategy strategy,
-                           GpuSortMode sort_mode, const double *h_scaling_coeffs) {
+GpuState *gpu_create_state(const GpuPlanConfig &cfg) {
+    const int nf = cfg.nf;
+    const double L_box = cfg.L_box;
+    const double L_grid = cfg.L_grid;
+    const double r_c = cfg.r_c;
+    const double tol = cfg.tol;
+    const double gpu_upsampfac = cfg.gpu_upsampfac;
+    const dmk_eval_type eval_type = cfg.eval_type;
+    const bool use_float = cfg.use_float;
+    const double *h_scaling_coeffs = cfg.h_scaling_coeffs;
+
     auto *gpu = new GpuState;
     gpu->nf = nf;
-    gpu->n_digits = n_digits;
-    gpu->L = L;
+    gpu->n_digits = cfg.n_digits;
+    gpu->L_box = L_box;
+    gpu->L_grid = L_grid;
     gpu->r_c = r_c;
-    gpu->beta = beta;
-    gpu->self_factor = self_factor;
+    gpu->use_periodic = cfg.use_periodic;
+    gpu->trunc_rl = cfg.trunc_rl;
+    gpu->beta = cfg.beta;
+    gpu->self_factor = cfg.self_factor;
+    gpu->fparam = cfg.fparam;
+    gpu->dipole_grad_self = cfg.dipole_grad_self;
+    gpu->kernel = cfg.kernel;
     gpu->eval_type = eval_type;
     gpu->use_float = use_float;
-    gpu->strategy = strategy;
-    gpu->sort_mode = sort_mode;
+    gpu->strategy = cfg.strategy;
+    gpu->sort_mode = cfg.sort_mode;
 
     const size_t real_sz = use_float ? sizeof(float) : sizeof(double);
     const size_t complex_sz = use_float ? sizeof(cuFloatComplex) : sizeof(cuDoubleComplex);
@@ -57,23 +71,30 @@ GpuState *gpu_create_state(int nf, int n_digits, double L, double r_c, double gp
         cudaMemcpyAsync(gpu->d_scaling_coeffs, h_scaling_coeffs, ntot * real_sz, cudaMemcpyHostToDevice, gpu->stream);
     }
 
-    if (cudaMalloc(&gpu->d_b, ntot * complex_sz) != cudaSuccess)
-        throw std::runtime_error("GpuState: cudaMalloc d_b failed");
+    // One grid per spread channel and one per output component; the Stresslet needs 9 + 3.
+    const KernelDims dims = kernel_dims(cfg.kernel, eval_type);
+    const auto grid_alloc = [&](void **p, int count, const char *what) {
+        const std::size_t bytes = std::size_t(count) * std::size_t(ntot) * complex_sz;
+        if (cudaMalloc(p, bytes) != cudaSuccess)
+            throw std::runtime_error("GpuState: cudaMalloc " + std::string(what) + " failed (" + std::to_string(count) +
+                                     " grids of nf^3=" + std::to_string(ntot) + ", " + std::to_string(bytes >> 20) +
+                                     " MiB)");
+    };
+    grid_alloc(&gpu->d_b, dims.n_channels, "d_b");
+    grid_alloc(&gpu->d_u_hat, dims.out_dim, "d_u_hat");
 
     if (cufftPlan3d(&gpu->fft_plan, nf, nf, nf, use_float ? CUFFT_C2C : CUFFT_Z2Z) != CUFFT_SUCCESS)
         throw std::runtime_error("GpuState: cufftPlan3d failed");
     cufftSetStream(gpu->fft_plan, gpu->stream);
     gpu->fft_plan_valid = true;
 
-    if (cudaMalloc(&gpu->d_b_hat, ntot * complex_sz) != cudaSuccess)
-        throw std::runtime_error("GpuState: cudaMalloc d_b_hat failed");
-
     // makeplan does not bind to n, so these are created once; each eval does setpts then execute.
     cufinufft_opts co;
     cufinufft_default_opts(&co);
     co.gpu_spreadinterponly = 1;
     co.upsampfac = gpu_upsampfac;
-    co.gpu_kerevalmeth = 1;
+    // The Horner spreader only carries coefficients for the standard upsampfacs.
+    co.gpu_kerevalmeth = (gpu_upsampfac == 2.0 || gpu_upsampfac == 1.25) ? 1 : 0;
     co.gpu_method = 3;
 
     // cuFINUFFT stays on the default stream; we sync explicitly before setpts/execute.
@@ -108,23 +129,25 @@ GpuState *gpu_create_state(int nf, int n_digits, double L, double r_c, double gp
         gpu->cfnufft_plan_2 = p2;
     }
 
-    // 27-cell-stencil neighbour tables; depend only on nc, not on particle data.
-    gpu->nc = static_cast<int>(std::floor(L / r_c));
+    // 27-cell-stencil neighbour tables. Particle-box geometry, so L_box and not L_grid.
+    gpu->nc = static_cast<int>(std::floor(L_box / r_c));
     if (gpu->nc < 3)
         throw std::runtime_error("GpuState: short_range_gpu requires r_c <= L/3 (nc >= 3)");
     {
         const int ntab = gpu->nc * 3;
         std::vector<int> h_nbc_tab(ntab);
         std::vector<double> h_off_tab(ntab);
+        // Free space: out-of-range neighbours get the -1 sentinel and the device cell walk skips them.
+        const bool periodic = cfg.use_periodic;
         for (int c = 0; c < gpu->nc; ++c) {
             for (int d = 0; d < 3; ++d) {
                 int ci = c + d - 1;
                 if (ci < 0) {
-                    h_nbc_tab[c * 3 + d] = ci + gpu->nc;
-                    h_off_tab[c * 3 + d] = -L;
+                    h_nbc_tab[c * 3 + d] = periodic ? ci + gpu->nc : -1;
+                    h_off_tab[c * 3 + d] = periodic ? -L_box : 0.0;
                 } else if (ci >= gpu->nc) {
-                    h_nbc_tab[c * 3 + d] = ci - gpu->nc;
-                    h_off_tab[c * 3 + d] = L;
+                    h_nbc_tab[c * 3 + d] = periodic ? ci - gpu->nc : -1;
+                    h_off_tab[c * 3 + d] = periodic ? L_box : 0.0;
                 } else {
                     h_nbc_tab[c * 3 + d] = ci;
                     h_off_tab[c * 3 + d] = 0.0;
@@ -152,14 +175,6 @@ GpuState *gpu_create_state(int nf, int n_digits, double L, double r_c, double gp
         const long long ncells = (long long)gpu->nc * gpu->nc * gpu->nc;
         if (cudaMalloc(&gpu->d_cell_start, (ncells + 1) * sizeof(int)) != cudaSuccess)
             throw std::runtime_error("GpuState: cudaMalloc d_cell_start failed");
-    }
-
-    // Force spectra, only when this plan computes forces.
-    if (eval_type >= DMK_POTENTIAL_GRAD) {
-        if (cudaMalloc(&gpu->d_fhat_x, ntot * complex_sz) != cudaSuccess ||
-            cudaMalloc(&gpu->d_fhat_y, ntot * complex_sz) != cudaSuccess ||
-            cudaMalloc(&gpu->d_fhat_z, ntot * complex_sz) != cudaSuccess)
-            throw std::runtime_error("GpuState: cudaMalloc d_fhat_{x,y,z} failed");
     }
 
     return gpu;
@@ -193,17 +208,33 @@ static cufftResult cufft_exec_c2c_t(cufftHandle plan, ComplexT<Real> *in, Comple
         return cufftExecC2C(plan, in, out, direction);
 }
 
-// spread -> FFT -> scale -> IFFT -> interp (+ forces), mirroring the CPU long_range().
+// spread -> FFT -> project -> IFFT -> interp. The kernel decides how many spectra go in
+// (n_channels) and come out (out_dim); scalar potential+gradient is 1 / 4, the Stresslet 9 / 3.
 template <typename Real>
-static void long_range_gpu(GpuState &gpu, int n, const Real *d_x, const Real *d_y, const Real *d_z,
-                           const ComplexT<Real> *d_c, Real coeff_grad, bool want_force, Real *d_pot, Real *d_fx,
-                           Real *d_fy, Real *d_fz) {
+static void long_range_gpu(GpuState &gpu, int n, const KernelDims &dims, const Real *d_x, const Real *d_y,
+                           const Real *d_z, const ComplexT<Real> *d_c, Real coeff_grad, Real *const *d_out) {
     const long long ntot = (long long)gpu.nf * gpu.nf * gpu.nf;
+    const int nch = dims.n_channels;
+    const int odim = dims.out_dim;
     auto *d_b = reinterpret_cast<ComplexT<Real> *>(gpu.d_b);
-    auto *d_b_hat = reinterpret_cast<ComplexT<Real> *>(gpu.d_b_hat);
+    auto *d_u_hat = reinterpret_cast<ComplexT<Real> *>(gpu.d_u_hat);
     auto *d_scaling_coeffs = reinterpret_cast<Real *>(gpu.d_scaling_coeffs);
 
-    // Step 1: spread NU points -> uniform grid
+    const auto fft = [&](ComplexT<Real> *buf, int direction, const char *what) {
+        cufftResult r = cufft_exec_c2c_t<Real>(gpu.fft_plan, buf, buf, direction);
+        if (r != CUFFT_SUCCESS)
+            throw std::runtime_error(std::string("long_range_gpu: cufft ") + what +
+                                     " failed, err=" + std::to_string(r));
+    };
+    const auto normalize = [&](ComplexT<Real> *buf) {
+        cuda::EspSupportArgs<Real, ComplexT<Real>> a;
+        a.ntot = static_cast<int>(ntot);
+        a.inv_ntot = Real(1) / Real(ntot);
+        a.grid = buf;
+        cuda::esp::launch_stage<Real>(cuda::esp::kEspStageNormalize, static_cast<int>(ntot), a, gpu.stream);
+    };
+
+    // Step 1: spread each channel onto its own grid. setpts binds once for all of them.
     {
         NvtxRange range("long_range/spread");
         // cuFINUFFT is on the default stream, our copies on gpu.stream: sync before setpts.
@@ -220,48 +251,50 @@ static void long_range_gpu(GpuState &gpu, int n, const Real *d_x, const Real *d_
                                      ", last CUDA error: " + cudaGetErrorString(last));
         }
 
-        // Zero before spreading — cuFINUFFT accumulates into the output buffer.
-        cudaMemsetAsync(d_b, 0, ntot * sizeof(ComplexT<Real>), gpu.stream);
-
-        ier = cufinufft_execute_t<Real>(gpu.cfnufft_plan_1, const_cast<ComplexT<Real> *>(d_c), d_b);
-        if (ier != 0)
-            throw std::runtime_error("long_range_gpu: cufinufft_execute spread failed, ier=" + std::to_string(ier));
+        for (int ch = 0; ch < nch; ++ch) {
+            // Zero before spreading -- cuFINUFFT accumulates into the output buffer.
+            cudaMemsetAsync(d_b + ch * ntot, 0, ntot * sizeof(ComplexT<Real>), gpu.stream);
+            ier = cufinufft_execute_t<Real>(gpu.cfnufft_plan_1, const_cast<ComplexT<Real> *>(d_c) + ch * n,
+                                            d_b + ch * ntot);
+            if (ier != 0)
+                throw std::runtime_error("long_range_gpu: cufinufft_execute spread failed, ier=" + std::to_string(ier));
+        }
     }
 
-    // Step 2: forward FFT
+    // Step 2: forward FFT each channel, in place.
     {
         NvtxRange range("long_range/fft_forward");
-        cufftResult r = cufft_exec_c2c_t<Real>(gpu.fft_plan, d_b, d_b_hat, CUFFT_FORWARD);
-        if (r != CUFFT_SUCCESS)
-            throw std::runtime_error("long_range_gpu: cufft forward failed, err=" + std::to_string(r));
+        for (int ch = 0; ch < nch; ++ch)
+            fft(d_b + ch * ntot, CUFFT_FORWARD, "forward");
     }
 
-    // Step 3: scale in place -- d_b_hat becomes pot_hat
+    // Step 3: the per-mode projector, n_channels spectra -> out_dim spectra.
     {
-        NvtxRange range("long_range/scale");
+        NvtxRange range("long_range/project");
         cuda::EspSupportArgs<Real, ComplexT<Real>> a;
         a.ntot = static_cast<int>(ntot);
+        a.nf = gpu.nf;
+        a.out_dim = odim;
+        a.n_channels = nch;
+        a.coeff_grad = coeff_grad;
         a.scaling_coeffs = d_scaling_coeffs;
-        a.grid = d_b_hat;
-        cuda::esp::launch_stage<Real>(cuda::esp::kEspStageScaling, static_cast<int>(ntot), a, gpu.stream);
+        a.chan_in = d_b;
+        a.chan_out = d_u_hat;
+        cuda::esp::launch_stage<Real>(cuda::esp::kEspStageProject, static_cast<int>(ntot), a, gpu.stream,
+                                      cuda::esp::esp_projector_for(gpu.kernel));
     }
-    // Step 4: inverse FFT into d_b (the spread output is dead), then normalize
+
+    // Step 4: inverse FFT + normalize each output component, in place.
     {
         NvtxRange range("long_range/fft_inverse_normalize");
-        cufftResult r = cufft_exec_c2c_t<Real>(gpu.fft_plan, d_b_hat, d_b, CUFFT_INVERSE);
-        if (r != CUFFT_SUCCESS)
-            throw std::runtime_error("long_range_gpu: cufft inverse failed, err=" + std::to_string(r));
-
-        cuda::EspSupportArgs<Real, ComplexT<Real>> a;
-        a.ntot = static_cast<int>(ntot);
-        a.inv_ntot = Real(1) / Real(ntot);
-        a.grid = d_b;
-        cuda::esp::launch_stage<Real>(cuda::esp::kEspStageNormalize, static_cast<int>(ntot), a, gpu.stream);
+        for (int k = 0; k < odim; ++k) {
+            fft(d_u_hat + k * ntot, CUFFT_INVERSE, "inverse");
+            normalize(d_u_hat + k * ntot);
+        }
     }
-    // The NU points do not change within one call, so bind setpts once for every type-2 execute.
-    const bool want_pot_interp = (d_pot != nullptr);
-    const bool want_force_interp = want_force && (d_fx || d_fy || d_fz);
-    if (want_pot_interp || want_force_interp) {
+
+    // Step 5: interpolate each component back to the NU points.
+    {
         NvtxRange range("long_range/interp_setpts");
         int ier = cufinufft_setpts_t<Real>(gpu.cfnufft_plan_2, n, const_cast<Real *>(d_x), const_cast<Real *>(d_y),
                                            const_cast<Real *>(d_z));
@@ -269,87 +302,31 @@ static void long_range_gpu(GpuState &gpu, int n, const Real *d_x, const Real *d_
             throw std::runtime_error("long_range_gpu: cufinufft_setpts interp failed, ier=" + std::to_string(ier));
     }
 
-    // Step 5: interp back to NU points
-    if (want_pot_interp) {
-        NvtxRange range("long_range/interp_potential");
-        // Shared with the force components below: pot_c is consumed before they start.
-        ensure_capacity(gpu.d_scratch_nu_c, gpu.scratch_nu_c_cap, std::size_t(n) * sizeof(ComplexT<Real>));
-        auto *d_pot_c = reinterpret_cast<ComplexT<Real> *>(gpu.d_scratch_nu_c);
+    ensure_capacity(gpu.d_scratch_nu_c, gpu.scratch_nu_c_cap, std::size_t(n) * sizeof(ComplexT<Real>));
+    auto *d_nu_c = reinterpret_cast<ComplexT<Real> *>(gpu.d_scratch_nu_c);
 
-        int ier = cufinufft_execute_t<Real>(gpu.cfnufft_plan_2, d_pot_c, d_b);
+    for (int k = 0; k < odim; ++k) {
+        if (!d_out[k])
+            continue;
+        NvtxRange range("long_range/interp_accumulate");
+        int ier = cufinufft_execute_t<Real>(gpu.cfnufft_plan_2, d_nu_c, d_u_hat + k * ntot);
         if (ier != 0)
             throw std::runtime_error("long_range_gpu: cufinufft_execute interp failed, ier=" + std::to_string(ier));
 
         cuda::EspSupportArgs<Real, ComplexT<Real>> a;
         a.n = n;
-        a.c = d_pot_c;
-        a.out = d_pot;
-        cuda::esp::launch_stage<Real>(cuda::esp::kEspStageExtractReal, n, a, gpu.stream);
-    }
-
-    // Steps 6-8: force path (ik method). d_b_hat still holds pot_hat -- step 4's IFFT read it
-    // without mutating it.
-    if (want_force_interp) {
-        NvtxRange force_path_range("long_range/force_path");
-        auto *f_hat_x = reinterpret_cast<ComplexT<Real> *>(gpu.d_fhat_x);
-        auto *f_hat_y = reinterpret_cast<ComplexT<Real> *>(gpu.d_fhat_y);
-        auto *f_hat_z = reinterpret_cast<ComplexT<Real> *>(gpu.d_fhat_z);
-
-        // Step 6: build the three force spectra from pot_hat.
-        {
-            NvtxRange range("long_range/force_grad_scaling");
-            cuda::EspSupportArgs<Real, ComplexT<Real>> a;
-            a.nf = gpu.nf;
-            a.coeff_grad = coeff_grad;
-            a.pot_hat = d_b_hat;
-            a.f_hat_x = f_hat_x;
-            a.f_hat_y = f_hat_y;
-            a.f_hat_z = f_hat_z;
-            cuda::esp::launch_stage<Real>(cuda::esp::kEspStageGradScaling, static_cast<int>(ntot), a, gpu.stream);
-        }
-
-        // Step 7: inverse FFT each component in place, then normalize.
-        auto ifft_and_normalize = [&](ComplexT<Real> *buf) {
-            NvtxRange range("long_range/force_ifft_normalize");
-            cufftResult r = cufft_exec_c2c_t<Real>(gpu.fft_plan, buf, buf, CUFFT_INVERSE);
-            if (r != CUFFT_SUCCESS)
-                throw std::runtime_error("long_range_gpu: cufft inverse (force) failed, err=" + std::to_string(r));
-            cuda::EspSupportArgs<Real, ComplexT<Real>> a;
-            a.ntot = static_cast<int>(ntot);
-            a.inv_ntot = Real(1) / Real(ntot);
-            a.grid = buf;
-            cuda::esp::launch_stage<Real>(cuda::esp::kEspStageNormalize, static_cast<int>(ntot), a, gpu.stream);
-        };
-        ifft_and_normalize(f_hat_x);
-        ifft_and_normalize(f_hat_y);
-        ifft_and_normalize(f_hat_z);
-
-        // Step 8: interp each component and accumulate. One scratch buffer serves all three,
-        // each fully consumed before the next.
-        ensure_capacity(gpu.d_scratch_nu_c, gpu.scratch_nu_c_cap, std::size_t(n) * sizeof(ComplexT<Real>));
-        auto *d_force_c = reinterpret_cast<ComplexT<Real> *>(gpu.d_scratch_nu_c);
-
-        auto interp_and_accumulate = [&](ComplexT<Real> *grid_force, Real *d_force_out) {
-            if (!d_force_out)
-                return;
-            NvtxRange range("long_range/force_interp_accumulate");
-            int ier = cufinufft_execute_t<Real>(gpu.cfnufft_plan_2, d_force_c, grid_force);
-            if (ier != 0)
-                throw std::runtime_error("long_range_gpu: cufinufft_execute force-interp failed, ier=" +
-                                         std::to_string(ier));
-
-            const int threads = 256;
-            const int blocks = (n + threads - 1) / threads;
-            cuda::EspSupportArgs<Real, ComplexT<Real>> a;
-            a.n = n;
-            a.c = d_c;
-            a.force_c = d_force_c;
-            a.out = d_force_out;
+        // Component 0 lands raw. The scalar kernels turn the gradient rows into a force with the
+        // target's own charge; the vector kernels' components pass through as velocities.
+        if (k > 0 && dims.grad_is_force) {
+            a.c = d_c; // channel 0 is {charge, 0}
+            a.force_c = d_nu_c;
+            a.out = d_out[k];
             cuda::esp::launch_stage<Real>(cuda::esp::kEspStageAccumForce, n, a, gpu.stream);
-        };
-        interp_and_accumulate(f_hat_x, d_fx);
-        interp_and_accumulate(f_hat_y, d_fy);
-        interp_and_accumulate(f_hat_z, d_fz);
+        } else {
+            a.c = d_nu_c;
+            a.out = d_out[k];
+            cuda::esp::launch_stage<Real>(cuda::esp::kEspStageExtractReal, n, a, gpu.stream);
+        }
     }
 }
 
@@ -359,11 +336,6 @@ static auto &host_buf(GpuState *gpu) {
         return gpu->h_dbl_buf;
     else
         return gpu->h_flt_buf;
-}
-
-template <typename Real>
-static Real self_factor(GpuState *gpu) {
-    return Real(gpu->self_factor);
 }
 
 // Calling with the wrong Real would reinterpret_cast every buffer and plan handle to the wrong
@@ -376,78 +348,90 @@ static void check_plan_real(const GpuState *gpu) {
                                  " but this plan was created for " + (gpu->use_float ? "float" : "double"));
 }
 
-// Resize + zero the host buffer, returning the four output spans.
+// Resize + zero the host buffer, returning one span per output component (unused slots stay empty).
 template <typename Real>
-static auto gpu_make_spans(GpuState *gpu, int n) {
-    [[maybe_unused]] const bool want_force = (gpu->eval_type >= DMK_POTENTIAL_GRAD);
-    const int slots = want_force ? 4 : 1;
+static std::array<std::span<Real>, 4> gpu_make_spans(GpuState *gpu, int n, const KernelDims &dims) {
     auto &buf = host_buf<Real>(gpu);
-    buf.assign(slots * n, Real(0));
+    buf.assign(std::size_t(dims.out_dim) * n, Real(0));
     Real *p = buf.data();
-    return std::tuple{std::span<Real>(p, n), want_force ? std::span<Real>(p + n, n) : std::span<Real>{},
-                      want_force ? std::span<Real>(p + 2 * n, n) : std::span<Real>{},
-                      want_force ? std::span<Real>(p + 3 * n, n) : std::span<Real>{}};
+    std::array<std::span<Real>, 4> sp{};
+    for (int k = 0; k < dims.out_dim; ++k)
+        sp[k] = std::span<Real>(p + std::size_t(k) * n, n);
+    return sp;
 }
 
-// Device-side inputs and output accumulators, all views into the plan's persistent scratch. The
-// three entry points differ only in which passes they run over these, so the setup and teardown live
-// here rather than being spelled out (and kept in sync) three times.
+// Device-side inputs and output accumulators, all views into the plan's persistent scratch.
 template <typename Real>
 struct EvalBuffers {
     Real *pos_aos = nullptr;
-    Real *charges = nullptr;
-    Real *pot = nullptr;
-    Real *fx = nullptr;
-    Real *fy = nullptr;
-    Real *fz = nullptr;
+    Real *charges = nullptr;                             // packed [charge | normal] payload, charge_dim * n, AoS
+    Real *out[4] = {nullptr, nullptr, nullptr, nullptr}; // out_dim output accumulators
 };
 
+// `charges` is in_dim components per source, `normals` normal_dim more (Stresslet only); they are
+// interleaved into one charge_dim-wide payload, as EspPlan::eval does.
 template <typename Real>
-static EvalBuffers<Real> upload_inputs(GpuState *gpu, int n, bool want_force, const std::vector<Vec3T<Real>> &r_src,
-                                       const std::vector<Real> &charges) {
+static EvalBuffers<Real> upload_inputs(GpuState *gpu, int n, const KernelDims &dims,
+                                       const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
+                                       const std::vector<Real> &normals) {
     NvtxRange range("eval/upload_input");
     EvalBuffers<Real> b;
 
-    ensure_capacity(gpu->d_scratch_pos, gpu->scratch_pos_cap, 4 * std::size_t(n) * sizeof(Real));
+    ensure_capacity(gpu->d_scratch_pos, gpu->scratch_pos_cap,
+                    std::size_t(3 + dims.charge_dim) * std::size_t(n) * sizeof(Real));
     b.pos_aos = reinterpret_cast<Real *>(gpu->d_scratch_pos);
     b.charges = b.pos_aos + 3 * n;
 
-    ensure_capacity(gpu->d_scratch_out, gpu->scratch_out_cap, 4 * std::size_t(n) * sizeof(Real));
-    b.pot = reinterpret_cast<Real *>(gpu->d_scratch_out);
-    b.fx = want_force ? b.pot + n : nullptr;
-    b.fy = want_force ? b.pot + 2 * n : nullptr;
-    b.fz = want_force ? b.pot + 3 * n : nullptr;
+    ensure_capacity(gpu->d_scratch_out, gpu->scratch_out_cap,
+                    std::size_t(dims.out_dim) * std::size_t(n) * sizeof(Real));
+    Real *out0 = reinterpret_cast<Real *>(gpu->d_scratch_out);
+    for (int k = 0; k < dims.out_dim; ++k)
+        b.out[k] = out0 + std::size_t(k) * n;
 
     const Real *h_pos_aos = reinterpret_cast<const Real *>(r_src.data());
     cudaMemcpyAsync(b.pos_aos, h_pos_aos, 3 * std::size_t(n) * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
-    cudaMemcpyAsync(b.charges, charges.data(), n * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
+
+    if (dims.normal_dim > 0) {
+        if (int(normals.size()) < dims.normal_dim * n)
+            throw std::runtime_error("esp_eval_gpu: this kernel requires per-source normals");
+        std::vector<Real> packed(std::size_t(dims.charge_dim) * n);
+        for (int i = 0; i < n; ++i) {
+            for (int k = 0; k < dims.in_dim; ++k)
+                packed[dims.charge_dim * i + k] = charges[dims.in_dim * i + k];
+            for (int k = 0; k < dims.normal_dim; ++k)
+                packed[dims.charge_dim * i + dims.in_dim + k] = normals[dims.normal_dim * i + k];
+        }
+        // Blocking: `packed` is a local about to go out of scope.
+        cudaMemcpy(b.charges, packed.data(), packed.size() * sizeof(Real), cudaMemcpyHostToDevice);
+    } else {
+        cudaMemcpyAsync(b.charges, charges.data(), std::size_t(dims.charge_dim) * n * sizeof(Real),
+                        cudaMemcpyHostToDevice, gpu->stream);
+    }
 
     // The passes accumulate with +=, so the accumulators start at zero.
-    cudaMemsetAsync(b.pot, 0, n * sizeof(Real), gpu->stream);
-    if (want_force) {
-        cudaMemsetAsync(b.fx, 0, n * sizeof(Real), gpu->stream);
-        cudaMemsetAsync(b.fy, 0, n * sizeof(Real), gpu->stream);
-        cudaMemsetAsync(b.fz, 0, n * sizeof(Real), gpu->stream);
-    }
+    cudaMemsetAsync(out0, 0, std::size_t(dims.out_dim) * n * sizeof(Real), gpu->stream);
     return b;
 }
 
-// Long-range wants scaled [-pi,pi) SoA coords + packed complex charges. The AoS inputs are already
-// resident, so this is a device-to-device reshape.
+// Scaled [-pi,pi) SoA coords + one complex plane per spread channel; a device-to-device reshape.
 template <typename Real>
-static void pack_long_range_inputs(GpuState *gpu, int n, Real scale, const EvalBuffers<Real> &b, Real *&d_x, Real *&d_y,
-                                   Real *&d_z, ComplexT<Real> *&d_c) {
+static void pack_long_range_inputs(GpuState *gpu, int n, const KernelDims &dims, Real scale, const EvalBuffers<Real> &b,
+                                   Real *&d_x, Real *&d_y, Real *&d_z, ComplexT<Real> *&d_c) {
     NvtxRange range("eval/long_range_setup");
     ensure_capacity(gpu->d_scratch_lr_xyz, gpu->scratch_lr_xyz_cap, 3 * std::size_t(n) * sizeof(Real));
     d_x = reinterpret_cast<Real *>(gpu->d_scratch_lr_xyz);
     d_y = d_x + n;
     d_z = d_y + n;
-    ensure_capacity(gpu->d_scratch_lr_c, gpu->scratch_lr_c_cap, std::size_t(n) * sizeof(ComplexT<Real>));
+    ensure_capacity(gpu->d_scratch_lr_c, gpu->scratch_lr_c_cap,
+                    std::size_t(dims.n_channels) * std::size_t(n) * sizeof(ComplexT<Real>));
     d_c = reinterpret_cast<ComplexT<Real> *>(gpu->d_scratch_lr_c);
 
     cuda::EspSupportArgs<Real, ComplexT<Real>> a;
     a.n = n;
     a.scale = scale;
+    a.charge_dim = dims.charge_dim;
+    a.n_channels = dims.n_channels;
+    a.pack_outer = (gpu->kernel == DMK_STRESSLET) ? 1 : 0;
     a.pos_aos = b.pos_aos;
     a.charges = b.charges;
     a.xs = d_x;
@@ -458,120 +442,163 @@ static void pack_long_range_inputs(GpuState *gpu, int n, Real scale, const EvalB
 }
 
 template <typename Real>
-static void download_outputs(GpuState *gpu, int n, bool want_force, const EvalBuffers<Real> &b, std::span<Real> pot,
-                             std::span<Real> fx, std::span<Real> fy, std::span<Real> fz) {
+static void download_outputs(GpuState *gpu, int n, const KernelDims &dims, const EvalBuffers<Real> &b,
+                             const std::array<std::span<Real>, 4> &sp) {
     NvtxRange range("eval/download_output");
     cudaStreamSynchronize(gpu->stream);
-    cudaMemcpy(pot.data(), b.pot, n * sizeof(Real), cudaMemcpyDeviceToHost);
-    if (want_force) {
-        cudaMemcpy(fx.data(), b.fx, n * sizeof(Real), cudaMemcpyDeviceToHost);
-        cudaMemcpy(fy.data(), b.fy, n * sizeof(Real), cudaMemcpyDeviceToHost);
-        cudaMemcpy(fz.data(), b.fz, n * sizeof(Real), cudaMemcpyDeviceToHost);
-    }
+    for (int k = 0; k < dims.out_dim; ++k)
+        cudaMemcpy(sp[k].data(), b.out[k], n * sizeof(Real), cudaMemcpyDeviceToHost);
+}
+
+// Vector-field kernels report velocity, potential-family kernels pot + gradient, as EspPlan::eval.
+template <typename Real>
+static PotForce<Real> as_pot_force(const std::array<std::span<Real>, 4> &sp, dmk_ikernel kernel) {
+    if (kernel == DMK_STOKESLET || kernel == DMK_STRESSLET)
+        return {{}, {}, {}, {}, sp[0], sp[1], sp[2]};
+    return {sp[0], sp[1], sp[2], sp[3], {}, {}, {}};
 }
 
 template <typename Real>
 static PotForce<Real> esp_eval_gpu_impl(GpuState *gpu, const std::vector<Vec3T<Real>> &r_src,
-                                        const std::vector<Real> &charges) {
+                                        const std::vector<Real> &charges, const std::vector<Real> &normals) {
     check_plan_real<Real>(gpu);
     const int n = static_cast<int>(r_src.size());
-    const bool want_force = (gpu->eval_type >= DMK_POTENTIAL_GRAD);
-    auto [pot, fx, fy, fz] = gpu_make_spans<Real>(gpu, n);
-    const EvalBuffers<Real> b = upload_inputs<Real>(gpu, n, want_force, r_src, charges);
+    const KernelDims dims = kernel_dims(gpu->kernel, gpu->eval_type);
+    const auto sp = gpu_make_spans<Real>(gpu, n, dims);
+    const EvalBuffers<Real> b = upload_inputs<Real>(gpu, n, dims, r_src, charges, normals);
 
     {
         NvtxRange range("eval/short_range");
-        cuda::esp::short_range_gpu<Real>(*gpu, n, b.pos_aos, b.charges, b.pot, b.fx, b.fy, b.fz);
+        cuda::esp::short_range_gpu<Real>(*gpu, n, b.pos_aos, b.charges, b.out[0], b.out[1], b.out[2], b.out[3]);
     }
 
-    const Real scale = Real(2.0 * M_PI) / Real(gpu->L);
+    const Real scale = Real(2.0 * M_PI) / Real(gpu->L_grid);
     Real *d_x, *d_y, *d_z;
     ComplexT<Real> *d_c;
-    pack_long_range_inputs<Real>(gpu, n, scale, b, d_x, d_y, d_z, d_c);
+    pack_long_range_inputs<Real>(gpu, n, dims, scale, b, d_x, d_y, d_z, d_c);
 
     {
         NvtxRange range("eval/long_range");
-        long_range_gpu<Real>(*gpu, n, d_x, d_y, d_z, d_c, scale, want_force, b.pot, b.fx, b.fy, b.fz);
+        long_range_gpu<Real>(*gpu, n, dims, d_x, d_y, d_z, d_c, scale, b.out);
     }
 
-    // Potential only, matching the CPU self_interaction.
+    // The scalar kernels remove a potential self-energy; the dipole's odd potential self is zero but
+    // its gradient carries a constant; the Stresslet has neither.
     {
-        NvtxRange range("eval/self_interaction");
-        cuda::EspSupportArgs<Real, ComplexT<Real>> a;
-        a.n = n;
-        a.factor = self_factor<Real>(gpu);
-        a.charges = b.charges;
-        a.pot = b.pot;
-        cuda::esp::launch_stage<Real>(cuda::esp::kEspStageSelfInteraction, n, a, gpu->stream);
+        int first = 0, count = 0;
+        Real factor = Real(0);
+        if (dims.in_dim == 1) {
+            count = 1;
+            factor = Real(gpu->self_factor);
+        } else if (gpu->kernel == DMK_LAPLACE_DIPOLE && dims.out_dim > 1) {
+            first = 1;
+            count = 3;
+            factor = Real(gpu->dipole_grad_self);
+        } else if (gpu->kernel == DMK_STOKESLET) {
+            count = 3;
+            factor = Real(gpu->self_factor);
+        }
+        if (count > 0) {
+            NvtxRange range("eval/self_interaction");
+            cuda::EspSupportArgs<Real, ComplexT<Real>> a;
+            a.n = n;
+            a.charge_dim = dims.charge_dim;
+            a.self_first = first;
+            a.self_count = count;
+            a.factor = factor;
+            a.charges = b.charges;
+            a.pot = b.out[0];
+            a.fx = b.out[1];
+            a.fy = b.out[2];
+            a.fz = b.out[3];
+            cuda::esp::launch_stage<Real>(cuda::esp::kEspStageSelfInteraction, n, a, gpu->stream);
+        }
     }
 
-    download_outputs<Real>(gpu, n, want_force, b, pot, fx, fy, fz);
-    return {pot, fx, fy, fz};
+    // Free-space zero-mode gauge: the truncated Stokeslet symbol drops k=0, so a non-neutral net
+    // force leaves a constant offset (Bagge & Tornberg).
+    if (gpu->kernel == DMK_STOKESLET && !gpu->use_periodic) {
+        NvtxRange range("eval/zero_mode_gauge");
+        Real netf[3] = {Real(0), Real(0), Real(0)};
+        for (int i = 0; i < n; ++i)
+            for (int k = 0; k < 3; ++k)
+                netf[k] += charges[3 * i + k];
+        for (int k = 0; k < 3; ++k) {
+            cuda::EspSupportArgs<Real, ComplexT<Real>> a;
+            a.n = n;
+            a.self_first = k;
+            a.factor = netf[k] / Real(gpu->trunc_rl);
+            a.pot = b.out[0];
+            a.fx = b.out[1];
+            a.fy = b.out[2];
+            a.fz = b.out[3];
+            cuda::esp::launch_stage<Real>(cuda::esp::kEspStageAddConst, n, a, gpu->stream);
+        }
+    }
+
+    download_outputs<Real>(gpu, n, dims, b, sp);
+    return as_pot_force<Real>(sp, gpu->kernel);
 }
+
+// Raw component spans, without the velocity relabelling, matching EspPlan's esp_eval_one_step.
 template <typename Real>
 static PotForce<Real> esp_eval_gpu_short_range_impl(GpuState *gpu, const std::vector<Vec3T<Real>> &r_src,
-                                                    const std::vector<Real> &charges) {
+                                                    const std::vector<Real> &charges,
+                                                    const std::vector<Real> &normals) {
     check_plan_real<Real>(gpu);
     const int n = static_cast<int>(r_src.size());
-    const bool want_force = (gpu->eval_type >= DMK_POTENTIAL_GRAD);
-    auto [pot, fx, fy, fz] = gpu_make_spans<Real>(gpu, n);
-    const EvalBuffers<Real> b = upload_inputs<Real>(gpu, n, want_force, r_src, charges);
+    const KernelDims dims = kernel_dims(gpu->kernel, gpu->eval_type);
+    const auto sp = gpu_make_spans<Real>(gpu, n, dims);
+    const EvalBuffers<Real> b = upload_inputs<Real>(gpu, n, dims, r_src, charges, normals);
 
     {
         NvtxRange range("eval/short_range");
-        cuda::esp::short_range_gpu<Real>(*gpu, n, b.pos_aos, b.charges, b.pot, b.fx, b.fy, b.fz);
+        cuda::esp::short_range_gpu<Real>(*gpu, n, b.pos_aos, b.charges, b.out[0], b.out[1], b.out[2], b.out[3]);
     }
 
-    download_outputs<Real>(gpu, n, want_force, b, pot, fx, fy, fz);
-    return {pot, fx, fy, fz};
+    download_outputs<Real>(gpu, n, dims, b, sp);
+    return {sp[0], sp[1], sp[2], sp[3], {}, {}, {}};
 }
+
 template <typename Real>
 static PotForce<Real> esp_eval_gpu_long_range_impl(GpuState *gpu, const std::vector<Vec3T<Real>> &r_src,
-                                                   const std::vector<Real> &charges) {
+                                                   const std::vector<Real> &charges, const std::vector<Real> &normals) {
     check_plan_real<Real>(gpu);
     const int n = static_cast<int>(r_src.size());
-    const bool want_force = (gpu->eval_type >= DMK_POTENTIAL_GRAD);
-    auto [pot, fx, fy, fz] = gpu_make_spans<Real>(gpu, n);
-    const EvalBuffers<Real> b = upload_inputs<Real>(gpu, n, want_force, r_src, charges);
+    const KernelDims dims = kernel_dims(gpu->kernel, gpu->eval_type);
+    const auto sp = gpu_make_spans<Real>(gpu, n, dims);
+    const EvalBuffers<Real> b = upload_inputs<Real>(gpu, n, dims, r_src, charges, normals);
 
-    const Real scale = Real(2.0 * M_PI) / Real(gpu->L);
+    const Real scale = Real(2.0 * M_PI) / Real(gpu->L_grid);
     Real *d_x, *d_y, *d_z;
     ComplexT<Real> *d_c;
-    pack_long_range_inputs<Real>(gpu, n, scale, b, d_x, d_y, d_z, d_c);
+    pack_long_range_inputs<Real>(gpu, n, dims, scale, b, d_x, d_y, d_z, d_c);
 
     {
         NvtxRange range("eval/long_range");
-        long_range_gpu<Real>(*gpu, n, d_x, d_y, d_z, d_c, scale, want_force, b.pot, b.fx, b.fy, b.fz);
+        long_range_gpu<Real>(*gpu, n, dims, d_x, d_y, d_z, d_c, scale, b.out);
     }
 
-    download_outputs<Real>(gpu, n, want_force, b, pot, fx, fy, fz);
-    return {pot, fx, fy, fz};
+    download_outputs<Real>(gpu, n, dims, b, sp);
+    return {sp[0], sp[1], sp[2], sp[3], {}, {}, {}};
 }
 
-PotForce<float> esp_eval_gpu(GpuState *gpu, const std::vector<Vec3T<float>> &r_src, const std::vector<float> &charges) {
-    return esp_eval_gpu_impl<float>(gpu, r_src, charges);
-}
-PotForce<double> esp_eval_gpu(GpuState *gpu, const std::vector<Vec3T<double>> &r_src,
-                              const std::vector<double> &charges) {
-    return esp_eval_gpu_impl<double>(gpu, r_src, charges);
-}
+#define DMK_ESP_GPU_ENTRY(Real)                                                                                        \
+    PotForce<Real> esp_eval_gpu(GpuState *gpu, const std::vector<Vec3T<Real>> &r_src,                                  \
+                                const std::vector<Real> &charges, const std::vector<Real> &normals) {                  \
+        return esp_eval_gpu_impl<Real>(gpu, r_src, charges, normals);                                                  \
+    }                                                                                                                  \
+    PotForce<Real> esp_eval_gpu_short_range(GpuState *gpu, const std::vector<Vec3T<Real>> &r_src,                      \
+                                            const std::vector<Real> &charges, const std::vector<Real> &normals) {      \
+        return esp_eval_gpu_short_range_impl<Real>(gpu, r_src, charges, normals);                                      \
+    }                                                                                                                  \
+    PotForce<Real> esp_eval_gpu_long_range(GpuState *gpu, const std::vector<Vec3T<Real>> &r_src,                       \
+                                           const std::vector<Real> &charges, const std::vector<Real> &normals) {       \
+        return esp_eval_gpu_long_range_impl<Real>(gpu, r_src, charges, normals);                                       \
+    }
 
-PotForce<float> esp_eval_gpu_short_range(GpuState *gpu, const std::vector<Vec3T<float>> &r_src,
-                                         const std::vector<float> &charges) {
-    return esp_eval_gpu_short_range_impl<float>(gpu, r_src, charges);
-}
-PotForce<double> esp_eval_gpu_short_range(GpuState *gpu, const std::vector<Vec3T<double>> &r_src,
-                                          const std::vector<double> &charges) {
-    return esp_eval_gpu_short_range_impl<double>(gpu, r_src, charges);
-}
-
-PotForce<float> esp_eval_gpu_long_range(GpuState *gpu, const std::vector<Vec3T<float>> &r_src,
-                                        const std::vector<float> &charges) {
-    return esp_eval_gpu_long_range_impl<float>(gpu, r_src, charges);
-}
-PotForce<double> esp_eval_gpu_long_range(GpuState *gpu, const std::vector<Vec3T<double>> &r_src,
-                                         const std::vector<double> &charges) {
-    return esp_eval_gpu_long_range_impl<double>(gpu, r_src, charges);
-}
+DMK_ESP_GPU_ENTRY(float)
+DMK_ESP_GPU_ENTRY(double)
+#undef DMK_ESP_GPU_ENTRY
 
 } // namespace dmk

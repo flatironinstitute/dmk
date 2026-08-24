@@ -8,10 +8,8 @@ constexpr int kEspNbuckets = kEspBins * kEspBins * kEspBins;
 constexpr int kMortonBits = 5; // 16/DIM for DIM=3, matches the CPU's sort_cell_morton
 constexpr unsigned long long kMortonBuckets = 1ull << (3 * kMortonBits);
 
-// One NVRTC module per stage is compiled from one source (selected by STAGE), so a single args
-// struct covers every support kernel and most fields are unused in any given stage. Shared verbatim
-// with the device source, so no includes and no std:: here. Complex is ComplexT<Real> on the device
-// and cuComplex/cuDoubleComplex on the host -- the same two-Real aggregate either way.
+// One args struct covers every support stage, so most fields are unused in any given one. Shared
+// verbatim with the device source, so no includes and no std:: here.
 template <typename Real, typename Complex>
 struct EspSupportArgs {
     int n = 0;
@@ -19,6 +17,13 @@ struct EspSupportArgs {
     int nf = 0;
     int ntot = 0;
     int out_dim = 0;
+    int charge_dim = 0; // packed source payload width, [charge | normal]
+    int n_channels = 0; // long-range input channel count
+    int grad_is_force = 0;
+    int pack_outer = 0; // Stresslet: spread channels are force[a]*normal[b]
+    // Self-correction target: out[self_first .. self_first+self_count) -= factor * charge component.
+    int self_first = 0;
+    int self_count = 0;
 
     Real L = Real{0};
     Real scale = Real{0};
@@ -51,9 +56,9 @@ struct EspSupportArgs {
     const Real *scaling_coeffs = nullptr;
     Complex *grid = nullptr; // b_hat, or the grid normalized in place
     const Complex *pot_hat = nullptr;
-    Complex *f_hat_x = nullptr;
-    Complex *f_hat_y = nullptr;
-    Complex *f_hat_z = nullptr;
+    // n_channels input and out_dim output spectra; channel c starts at c*ntot.
+    const Complex *chan_in = nullptr;
+    Complex *chan_out = nullptr;
 
     // Non-uniform point values
     const Complex *c = nullptr;

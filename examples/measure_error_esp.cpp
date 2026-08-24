@@ -17,6 +17,7 @@
 //   -l lambda         Yukawa fparam (default: 6.0)
 //   -L box            Box side length (default: 1.0)
 //   -o                Free-space (open) boundaries instead of periodic
+//   -p c|g            Eval path: CPU or GPU (default: c). GPU is 3D only.
 //   -s sigma          FINUFFT upsampling (default 1.35; != 1.35 requires -DDMK_USE_JIT=ON)
 //   --dig-min val     Min solver digits (default: 3)
 //   --dig-max val     Max solver digits (default: 9)
@@ -37,6 +38,7 @@
 #include <iomanip>
 #include <iostream>
 #include <random>
+#include <span>
 #include <string_view>
 #include <type_traits>
 #include <vector>
@@ -56,6 +58,7 @@ struct Config {
     double fparam = 6.0;
     double L = 1.0;
     bool use_periodic = true;
+    dmk_eval_path eval_path = DMK_EVAL_PATH_CPU;
     double sigma = 1.35;
     bool sigma_set = false;
     int dig_min = 3, dig_max = 9;
@@ -213,6 +216,50 @@ bool compute_reference(const Config &cfg, int n_dim, dmk_ikernel kernel, int n, 
     return true;
 }
 
+// Fills `pot` with the C API's interleaved layout ([pot, dpot/dx, ...] or [vx, vy, vz]) and returns
+// the eval wall time. The GPU entry points are C++ and report one span per component, so they need
+// transposing into it.
+template <typename Real>
+double esp_eval_interleaved(const pdmk_esp_params &params, dmk_eval_path eval_path, int n, int od,
+                            const std::vector<Real> &r_src, const std::vector<Real> &charges,
+                            const std::vector<Real> &normals, std::vector<Real> &pot) {
+#ifdef DMK_GPU_OFFLOAD
+    if (eval_path == DMK_EVAL_PATH_GPU) {
+        dmk::EspPlan<Real> plan(params);
+        dmk::GpuState *gpu = dmk::esp_create_gpu_plan(&plan);
+        std::vector<dmk::Vec3T<Real>> rv(n);
+        for (int i = 0; i < n; ++i)
+            for (int d = 0; d < 3; ++d)
+                rv[i][d] = r_src[size_t(i) * 3 + d];
+        const double st = MY_OMP_GET_WTIME();
+        auto pf = dmk::esp_eval_gpu(gpu, rv, charges, normals);
+        const double dt = MY_OMP_GET_WTIME() - st;
+        std::span<Real> comp[4] = {pf.pot, pf.force_x, pf.force_y, pf.force_z};
+        if (!pf.vel_x.empty()) {
+            comp[0] = pf.vel_x;
+            comp[1] = pf.vel_y;
+            comp[2] = pf.vel_z;
+        }
+        for (int i = 0; i < n; ++i)
+            for (int c = 0; c < od; ++c)
+                pot[size_t(i) * od + c] = comp[c][i];
+        dmk::esp_destroy_gpu_plan(gpu);
+        return dt;
+    }
+#else
+    (void)eval_path;
+#endif
+    pdmk_esp_plan plan = esp_plan_create<Real>(params);
+    if (!plan) // e.g. requested precision exceeds the (single-precision) spread-width cap
+        throw std::runtime_error(pdmk_last_error_message());
+    const Real *normal = normals.empty() ? nullptr : normals.data();
+    const double st = MY_OMP_GET_WTIME();
+    esp_eval<Real>(plan, n, r_src.data(), charges.data(), normal, pot.data());
+    const double dt = MY_OMP_GET_WTIME() - st;
+    esp_plan_destroy<Real>(plan);
+    return dt;
+}
+
 template <typename Real>
 ErrorMetrics run_one(const Config &cfg, int n_dim, dmk_ikernel kernel, int digits, double r_c,
                      const std::vector<Real> &r_src, const std::vector<Real> &charges, const std::vector<Real> &normals,
@@ -239,16 +286,8 @@ ErrorMetrics run_one(const Config &cfg, int n_dim, dmk_ikernel kernel, int digit
     params.sigma = cfg.sigma;
     params.use_periodic = cfg.use_periodic ? 1 : 0;
 
-    pdmk_esp_plan plan = esp_plan_create<Real>(params);
-    if (!plan) // e.g. requested precision exceeds the (single-precision) spread-width cap
-        throw std::runtime_error(pdmk_last_error_message());
     std::vector<Real> pot(size_t(n) * od);
-
-    const Real *normal = normals.empty() ? nullptr : normals.data();
-    double st = MY_OMP_GET_WTIME();
-    esp_eval<Real>(plan, n, r_src.data(), charges.data(), normal, pot.data());
-    double dt = MY_OMP_GET_WTIME() - st;
-    esp_plan_destroy<Real>(plan);
+    const double dt = esp_eval_interleaved<Real>(params, cfg.eval_path, n, od, r_src, charges, normals, pot);
 
     // Gauge: the periodic potential is fixed only up to a per-component constant (charge-neutral
     // fixtures); free-space kernels have no gauge, so the means stay zero.
@@ -305,6 +344,11 @@ void run_sweep(Config cfg) {
         kernels = {cfg.kernel_filter};
     std::vector<int> dims = cfg.dim_filter == 0 ? std::vector<int>{2, 3} : std::vector<int>{cfg.dim_filter};
 
+    if (cfg.eval_path == DMK_EVAL_PATH_GPU && dims != std::vector<int>{3}) {
+        std::cout << "# note: the GPU path is 3D only; restricting to dim=3\n";
+        dims = {3};
+    }
+
     // The non-scalar kernels are 3D free-space only in ESP (only reachable via an explicit single -k).
     if (kernels.size() == 1 && !esp_is_scalar(kernels[0])) {
         if (cfg.use_periodic) {
@@ -349,21 +393,19 @@ void run_sweep(Config cfg) {
                     const double pad =
                         cfg.use_periodic ? 1.0 : 2.2 * (std::sqrt(double(n_dim)) * cfg.L + 2.0 * r_c) / cfg.L;
                     const int n_f = int(std::ceil(c * pad * cfg.L / (M_PI * r_c)));
+                    std::cout << dmk::util::to_string(kernel) << "," << n_dim << "," << digits << "," << std::scientific
+                              << std::setprecision(1) << eps_fu << "," << std::fixed << std::setprecision(4) << r_c
+                              << "," << cfg.sigma << "," << P << "," << std::fixed << std::setprecision(3) << c << ","
+                              << n_f << ",";
                     try {
                         auto e = run_one<Real>(cfg, n_dim, kernel, digits, r_c, r_src, charges, normals, ref, n_cmp);
-                        std::cout << dmk::util::to_string(kernel) << "," << n_dim << "," << digits << ","
-                                  << std::scientific << std::setprecision(1) << eps_fu << "," << std::fixed
-                                  << std::setprecision(4) << r_c << "," << cfg.sigma << "," << P << "," << std::fixed
-                                  << std::setprecision(3) << c << "," << n_f << "," << std::scientific
-                                  << std::setprecision(4) << e.pot_l2 << "," << e.pot_max << "," << e.force_l2 << ","
-                                  << e.force_max << "," << std::fixed << std::setprecision(4) << e.time << "\n"
-                                  << std::flush;
+                        std::cout << std::scientific << std::setprecision(4) << e.pot_l2 << "," << e.pot_max << ","
+                                  << e.force_l2 << "," << e.force_max << "," << std::fixed << std::setprecision(4)
+                                  << e.time;
                     } catch (std::exception &ex) {
-                        std::cout << dmk::util::to_string(kernel) << "," << n_dim << "," << digits << "," << eps_fu
-                                  << "," << r_c << "," << cfg.sigma << "," << P << "," << c << "," << n_f
-                                  << ",FAILED,FAILED,FAILED,FAILED,0\n"
-                                  << std::flush;
+                        std::cout << "FAILED,FAILED,FAILED,FAILED,0";
                     }
+                    std::cout << "\n" << std::flush;
                 }
             }
         }
@@ -383,7 +425,7 @@ Config parse_args(int argc, char *argv[]) {
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "N:D:t:k:d:l:L:os:h", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "N:D:t:k:d:l:L:op:s:h", long_opts, nullptr)) != -1) {
         switch (opt) {
         case 'N':
             cfg.n_src = int(std::atof(optarg));
@@ -424,6 +466,20 @@ Config parse_args(int argc, char *argv[]) {
         case 'o':
             cfg.use_periodic = false;
             break;
+        case 'p':
+            if (optarg[0] == 'c')
+                cfg.eval_path = DMK_EVAL_PATH_CPU;
+            else if (optarg[0] == 'g') {
+#ifndef DMK_GPU_OFFLOAD
+                std::cerr << "-p g requires a build with DMK_GPU_OFFLOAD=ON\n";
+                exit(1);
+#endif
+                cfg.eval_path = DMK_EVAL_PATH_GPU;
+            } else {
+                std::cerr << "Unknown eval_path: " << optarg << "\n";
+                exit(1);
+            }
+            break;
         case 's':
             cfg.sigma = std::atof(optarg);
             cfg.sigma_set = true;
@@ -458,6 +514,7 @@ Config parse_args(int argc, char *argv[]) {
                       << "  -l lambda       Yukawa fparam (default 6.0)\n"
                       << "  -L box          Box side length (default 1.0)\n"
                       << "  -o              Free-space (open) boundaries instead of periodic\n"
+                      << "  -p c|g          Eval path: CPU or GPU (default: c). GPU is 3D only.\n"
                       << "  -s sigma        FINUFFT upsampling (default 1.35; != 1.35 requires -DDMK_USE_JIT=ON)\n"
                       << "  --dig-min val   Min solver digits (default 3)\n"
                       << "  --dig-max val   Max solver digits (default 9)\n"
@@ -494,7 +551,8 @@ int main(int argc, char *argv[]) {
     }
 #endif
 
-    std::cout << "# n_src=" << cfg.n_src << " n_direct=" << cfg.n_direct << " prec=" << cfg.prec << " L=" << cfg.L
+    std::cout << "# n_src=" << cfg.n_src << " n_direct=" << cfg.n_direct << " prec=" << cfg.prec
+              << " path=" << (cfg.eval_path == DMK_EVAL_PATH_GPU ? "g" : "c") << " L=" << cfg.L
               << " boundary=" << (cfg.use_periodic ? "periodic" : "free-space") << " sigma=" << cfg.sigma
               << " fparam=" << cfg.fparam << " digits=[" << cfg.dig_min << "," << cfg.dig_max << "] rc_frac=["
               << cfg.rc_min << "," << cfg.rc_max << "," << cfg.rc_step << "] seed=" << cfg.seed
