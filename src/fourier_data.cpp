@@ -13,7 +13,6 @@
 #include <algorithm>
 #include <complex.h>
 #include <format>
-#include <limits>
 #include <sctl.hpp>
 #include <stdexcept>
 #include <string>

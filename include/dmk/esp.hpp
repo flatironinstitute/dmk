@@ -166,8 +166,18 @@ struct EspPlan {
     // ignored otherwise.
     PotForce<Real> eval(int n, const Real *r_src, const Real *charges, const Real *normals = nullptr);
 
+    // Zero-initialized output spans over the plan's own workspace.
+    std::array<std::span<Real>, 4> output_spans(int n);
+
+    template <int DIM>
+    std::vector<double> scaling_coefficients_from_phi_hat(const std::vector<double> &phi_hat_1d);
     template <int DIM>
     std::vector<double> precompute_scaling_coefficients();
+#ifdef DMK_GPU_OFFLOAD
+    // ES spreading kernel instead of the PSWF: gpu_upsampfac is the spreader's, not sigma.
+    template <int DIM>
+    std::vector<double> precompute_scaling_coefficients_es(double tol, double gpu_upsampfac);
+#endif
     template <int DIM>
     void short_range(int n, const Real *r_src, const Real *charges, std::span<Real> pot,
                      std::array<std::span<Real>, DIM> force);
@@ -176,5 +186,50 @@ struct EspPlan {
                     std::array<std::span<Real>, DIM> force);
     void self_interaction(int n, const Real *charges, std::span<Real> pot);
 };
+
+// One sub-step at a time, for GPU-vs-CPU comparison. No self-interaction correction.
+template <typename Real>
+PotForce<Real> esp_eval_short_range(EspPlan<Real> *plan, const std::vector<Vec3T<Real>> &r_src,
+                                    const std::vector<Real> &charges);
+template <typename Real>
+PotForce<Real> esp_eval_long_range(EspPlan<Real> *plan, const std::vector<Vec3T<Real>> &r_src,
+                                   const std::vector<Real> &charges);
+
+// Fixed at plan creation; create several plans to compare. Dense evaluates all 27 neighbour cells;
+// PruneTile culls tile-vs-tile by AABB -- measured to skip only ~10% of pairs when cell width ~= r_c
+// (the common case, since nc = floor(L/r_c)), though that was measured with the prune diagnostics
+// on; PruneSource culls box-vs-point and warp-compacts survivors, so it prunes more.
+enum class GpuSrStrategy : int { Dense = 0, PruneTile = 1, PruneSource = 2 };
+
+// Independent of GpuSrStrategy. Bins puts each particle in one of 8 octant sub-bins per cell (cheap,
+// loose tiles); Morton sorts by Z-order over a finer quantization (pricier, tighter). Mirrors the
+// CPU's sort_cell_bins / sort_cell_morton.
+enum class GpuSortMode : int { Bins = 0, Morton = 1 };
+
+#ifdef DMK_GPU_OFFLOAD
+// Owns all CUDA resources; create alongside an EspPlan and destroy when done. The plan's Real is
+// the one precision this GpuState exists for, and every esp_eval_gpu* call must match it. Periodic
+// only -- free-space plans throw.
+struct GpuState;
+template <typename Real>
+GpuState *esp_create_gpu_plan(EspPlan<Real> *plan, GpuSrStrategy strategy = GpuSrStrategy::Dense,
+                              GpuSortMode sort_mode = GpuSortMode::Bins);
+void esp_destroy_gpu_plan(GpuState *gpu);
+
+// Returned spans are valid until the next esp_eval_gpu on the same gpu, or until it is destroyed.
+PotForce<float> esp_eval_gpu(GpuState *gpu, const std::vector<Vec3T<float>> &r_src, const std::vector<float> &charges);
+PotForce<double> esp_eval_gpu(GpuState *gpu, const std::vector<Vec3T<double>> &r_src,
+                              const std::vector<double> &charges);
+
+// Mirrors esp_eval_short_range / esp_eval_long_range.
+PotForce<float> esp_eval_gpu_short_range(GpuState *gpu, const std::vector<Vec3T<float>> &r_src,
+                                         const std::vector<float> &charges);
+PotForce<double> esp_eval_gpu_short_range(GpuState *gpu, const std::vector<Vec3T<double>> &r_src,
+                                          const std::vector<double> &charges);
+PotForce<float> esp_eval_gpu_long_range(GpuState *gpu, const std::vector<Vec3T<float>> &r_src,
+                                        const std::vector<float> &charges);
+PotForce<double> esp_eval_gpu_long_range(GpuState *gpu, const std::vector<Vec3T<double>> &r_src,
+                                         const std::vector<double> &charges);
+#endif
 
 } // namespace dmk

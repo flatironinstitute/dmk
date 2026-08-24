@@ -1,6 +1,6 @@
 set(DMK_TEST_SRC test_all.cpp test_pbc_periodic.cpp test_direct.cpp test_esp.cpp test_yukawa_levels.cpp)
 if (DMK_GPU_OFFLOAD)
-  list(APPEND DMK_TEST_SRC test_gpu_parity.cpp)
+  list(APPEND DMK_TEST_SRC test_gpu_parity.cpp test_esp_gpu.cpp)
 endif()
 if (DMK_BUILD_REFERENCE)
   list(APPEND DMK_TEST_SRC test_reference.cpp)

@@ -53,6 +53,18 @@ std::string &last_error_buffer() {
 }
 } // namespace
 
+#ifdef DMK_HAVE_MPI
+/// The C API documents a null communicator as "self". A null handle is not MPI_COMM_NULL -- in Open
+/// MPI the latter is a real pointer to a sentinel object -- so both cases have to be tested.
+inline MPI_Comm mpi_comm_or_self(dmk_communicator comm) {
+    if constexpr (std::is_pointer_v<MPI_Comm>) {
+        if (comm == MPI_Comm{})
+            return MPI_COMM_SELF;
+    }
+    return comm == MPI_COMM_NULL ? MPI_COMM_SELF : comm;
+}
+#endif
+
 void set_last_error(const std::string &msg) { last_error_buffer() = msg; }
 
 const char *last_error_message() { return last_error_buffer().c_str(); }
@@ -104,7 +116,7 @@ void validate_create_args(dmk_communicator comm, const pdmk_params &params, int 
         if (params.n_dim != 3)
             fail("eval_path=GPU is only supported in 3D (the plane-wave pipeline is 3D-only)");
 #ifdef DMK_HAVE_MPI
-        const int n_ranks = sctl::Comm(MPI_Comm(comm)).Size();
+        const int n_ranks = sctl::Comm(mpi_comm_or_self(comm)).Size();
         if (n_ranks > 1)
             fail("eval_path=GPU is single-rank only (the upward-pass broadcast has no device path), got " +
                  std::to_string(n_ranks) + " ranks");
@@ -211,11 +223,12 @@ void pdmk_direct(dmk_communicator comm, const pdmk_params &params, int n_src, co
     std::vector<Real> r_gathered, charge_gathered, normal_gathered;
 
 #ifdef DMK_HAVE_MPI
-    const int n_ranks = sctl::Comm(MPI_Comm(comm)).Size();
+    const MPI_Comm mpi_comm = mpi_comm_or_self(comm);
+    const int n_ranks = sctl::Comm(mpi_comm).Size();
     if (n_ranks > 1) {
         const MPI_Datatype mpi_t = std::is_same_v<Real, float> ? MPI_FLOAT : MPI_DOUBLE;
         std::vector<int> n_per_rank(n_ranks);
-        MPI_Allgather(&n_src, 1, MPI_INT, n_per_rank.data(), 1, MPI_INT, comm);
+        MPI_Allgather(&n_src, 1, MPI_INT, n_per_rank.data(), 1, MPI_INT, mpi_comm);
         n_src_global = 0;
         for (int n : n_per_rank)
             n_src_global += n;
@@ -227,7 +240,7 @@ void pdmk_direct(dmk_communicator comm, const pdmk_params &params, int n_src, co
                 displs[i] = i ? displs[i - 1] + counts[i - 1] : 0;
             }
             out.resize(size_t(n_src_global) * comp_dim);
-            MPI_Allgatherv(local, n_src * comp_dim, mpi_t, out.data(), counts.data(), displs.data(), mpi_t, comm);
+            MPI_Allgatherv(local, n_src * comp_dim, mpi_t, out.data(), counts.data(), displs.data(), mpi_t, mpi_comm);
         };
         gather(r_src, n_dim, r_gathered);
         gather(charge, charge_dim, charge_gathered);
@@ -268,7 +281,7 @@ template <typename T, int DIM>
 void pdmk(dmk_communicator comm, const pdmk_params &params, int n_src, const T *r_src, const T *charge, const T *normal,
           int n_trg, const T *r_trg, T *pot_src, T *pot_trg) {
 #ifdef DMK_HAVE_MPI
-    const auto &sctl_comm = sctl::Comm(MPI_Comm(comm));
+    const auto &sctl_comm = sctl::Comm(mpi_comm_or_self(comm));
 #else
     const auto &sctl_comm = sctl::Comm().Self();
 #endif
@@ -302,9 +315,9 @@ void pdmk(dmk_communicator comm, const pdmk_params &params, int n_src, const T *
         int N = n_src + n_trg;
 #ifdef DMK_HAVE_MPI
         if (sctl_comm.Rank() == 0)
-            MPI_Reduce(MPI_IN_PLACE, &N, 1, MPI_INT, MPI_SUM, 0, comm);
+            MPI_Reduce(MPI_IN_PLACE, &N, 1, MPI_INT, MPI_SUM, 0, mpi_comm_or_self(comm));
         else
-            MPI_Reduce(&N, &N, 1, MPI_INT, MPI_SUM, 0, comm);
+            MPI_Reduce(&N, &N, 1, MPI_INT, MPI_SUM, 0, mpi_comm_or_self(comm));
 #endif
 
         logger->info("PDMK finished in {:.4f} seconds ({:.0f} pts/s, {:.0f} pts/s/rank)", dt, N / dt,
@@ -1199,7 +1212,7 @@ inline pdmk_tree pdmk_tree_create(dmk_communicator comm, const pdmk_params &para
     sctl::Profile::reset();
     sctl::Profile::Enable(true);
 #ifdef DMK_HAVE_MPI
-    const sctl::Comm sctl_comm(comm);
+    const sctl::Comm sctl_comm(mpi_comm_or_self(comm));
 #else
     const sctl::Comm sctl_comm;
 #endif
@@ -1354,7 +1367,7 @@ const char *pdmk_last_error_message(void) { return dmk::last_error_message(); }
 dmk_error pdmk_print_profile_data(dmk_communicator comm, char type) {
     return dmk::dmk_guard([&] {
 #ifdef DMK_HAVE_MPI
-        sctl::Comm sctl_comm(comm);
+        sctl::Comm sctl_comm(dmk::mpi_comm_or_self(comm));
 #else
         sctl::Comm sctl_comm;
 #endif

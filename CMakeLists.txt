@@ -3,6 +3,10 @@ cmake_minimum_required(VERSION 3.28)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION.txt" DMK_VERSION)
 string(STRIP "${DMK_VERSION}" DMK_VERSION)
 
+# On glibc >= 2.34, libpthread is merged into libc. Force -pthread compiler flag
+# rather than a full-path library, so CMake does not cache /lib64/libpthread.so.
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+
 project(dmk VERSION ${DMK_VERSION} LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -82,9 +86,11 @@ if (DMK_HAVE_OPENMP)
   find_package(OpenMP REQUIRED)
   set(DMK_OPENMP_TARGET OpenMP::OpenMP_CXX)
   list(APPEND DMK_CXX_FLAGS "-DDMK_HAVE_OPENMP")
-  set(OpenMPSupport ON CACHE BOOL "" FORCE)
+  set(OpenMPSupport ON CACHE BOOL "" FORCE) # extern/nda's own option name
+  set(FINUFFT_USE_OPENMP ON CACHE BOOL "" FORCE)
 else()
   set(OpenMPSupport OFF CACHE BOOL "" FORCE)
+  set(FINUFFT_USE_OPENMP OFF CACHE BOOL "" FORCE)
 endif()
 
 set(DMK_MPI_TARGET "")
@@ -146,7 +152,7 @@ if (DMK_GPU_OFFLOAD)
   )
 
   list(APPEND DMK_CXX_FLAGS "-DDMK_GPU_OFFLOAD")
-  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo -Xptxas=-warn-spills")
+  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
 endif()
 
 set(DMK_CUDA_JIT_SRC
@@ -183,6 +189,15 @@ include(FetchContent)
 set(BUILD_SHARED_LIBS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(FINUFFT_USE_DUCC0 ON CACHE BOOL "" FORCE)
+set(DMK_GPU_ESP_TARGET "")
+set(DMK_GPU_ESP_INTERFACE "")
+if (DMK_GPU_OFFLOAD)
+  set(FINUFFT_USE_CUDA ON CACHE BOOL "" FORCE)
+  # Kept off dmk_internal: that feeds generate_aot_kernels, which must not pull cufinufft.
+  set(DMK_GPU_ESP_TARGET finufft::cufinufft CUDA::cufft)
+  # What a consumer of libdmk.a must name itself; cufinufft is archived in (see DMK_BUNDLE_TARGETS).
+  set(DMK_GPU_ESP_INTERFACE CUDA::cufft)
+endif()
 FetchContent_Declare(
   finufft
   GIT_REPOSITORY https://github.com/flatironinstitute/finufft.git
@@ -190,6 +205,12 @@ FetchContent_Declare(
   EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(finufft)
+if (DMK_GPU_OFFLOAD)
+  # finufft builds cufinufft with CUDA_SEPARABLE_COMPILATION, leaving undefined
+  # __cudaRegisterLinkedBinary_* stubs that only an nvlink step supplies. libdmk links as CXX and
+  # libdmk.a is a plain archive, so neither would run it -- resolve them into cufinufft's own archive.
+  set_property(TARGET cufinufft PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+endif()
 set(DMK_ESP_TARGET finufft::finufft ducc0)
 set(DMK_ESP_SRC src/esp.cpp)
 
@@ -298,6 +319,10 @@ target_link_libraries(dmk_bootstrap PUBLIC DMKOBJS_BOOTSTRAP)
 
 if (DMK_GPU_OFFLOAD)
   add_library(DMKOBJS_CUDA OBJECT
+              src/cuda/esp/esp_gpu.cpp
+              src/cuda/esp/short_range.cpp
+              src/cuda/esp/support.cpp
+              src/cuda/esp/sort.cu
               src/cuda/pt/state.cpp
               src/cuda/pt/tree.cpp
               src/cuda/pt/direct.cpp
@@ -325,6 +350,7 @@ if (DMK_GPU_OFFLOAD)
 
   target_link_libraries(DMKOBJS_CUDA PUBLIC
     ${DMK_GPU_TARGET}
+    ${DMK_GPU_ESP_TARGET}
     ${DMK_CUDA_JIT_TARGETS}
     ${DMK_OPENMP_TARGET}
     ${DMK_MPI_TARGET}
@@ -342,7 +368,7 @@ endif()
 # Sources rather than linked object libraries: an exported target may not name a non-exported one.
 add_library(dmk STATIC ${DMK_OBJECTS})
 add_library(dmk_shared SHARED ${DMK_OBJECTS})
-target_link_libraries(dmk_shared PRIVATE dmk_internal)
+target_link_libraries(dmk_shared PRIVATE dmk_internal ${DMK_GPU_ESP_TARGET})
 
 foreach(dmk_target dmk dmk_shared)
   set_target_properties(${dmk_target} PROPERTIES LINKER_LANGUAGE CXX)
@@ -360,11 +386,11 @@ set_target_properties(dmk_shared PROPERTIES OUTPUT_NAME dmk EXPORT_NAME dmk
   VERSION ${PROJECT_VERSION} SOVERSION ${PROJECT_VERSION_MAJOR})
 
 target_link_libraries(dmk INTERFACE ${DMK_MPI_TARGET} ${DMK_OPENMP_TARGET} ${DMK_GPU_TARGET}
-  ${DMK_CUDA_JIT_TARGETS} ${DMK_JIT_TARGET} BLAS::BLAS)
+  ${DMK_CUDA_JIT_TARGETS} ${DMK_JIT_TARGET} ${DMK_GPU_ESP_INTERFACE} BLAS::BLAS)
 target_link_libraries(dmk_shared INTERFACE ${DMK_MPI_TARGET})
 
 set(DMK_BUNDLE_TARGETS "")
-foreach(dep finufft finufft_common ducc0 nda_c rufus)
+foreach(dep finufft finufft_common cufinufft ducc0 nda_c rufus)
   if (TARGET ${dep})
     get_target_property(dep_type ${dep} TYPE)
     if (dep_type STREQUAL "STATIC_LIBRARY")
@@ -427,7 +453,7 @@ if (DMK_HAVE_OPENMP)
   list(APPEND DMK_PC_LIBS_PRIVATE ${OpenMP_CXX_LIBRARIES})
 endif()
 if (DMK_GPU_OFFLOAD)
-  list(APPEND DMK_PC_LIBS_PRIVATE "-L${CUDAToolkit_LIBRARY_DIR}" -lcudart -lcuda -lnvrtc)
+  list(APPEND DMK_PC_LIBS_PRIVATE "-L${CUDAToolkit_LIBRARY_DIR}" -lcudart -lcuda -lnvrtc -lcufft)
 endif()
 if (DMK_USE_JIT)
   list(APPEND DMK_PC_LIBS_PRIVATE "-L${LLVM_LIBRARY_DIR}" -lLLVM)
