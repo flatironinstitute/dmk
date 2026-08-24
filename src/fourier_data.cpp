@@ -10,6 +10,7 @@
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
 
+#include <algorithm>
 #include <complex.h>
 #include <format>
 #include <limits>
@@ -64,161 +65,6 @@ inline double truncated_yukawa_zero_mode(double x) {
     if (x < 0.1)
         return 0.5 + x * (-1.0 / 3 + x * (1.0 / 8 + x * (-1.0 / 30 + x / 144)));
     return (1 - std::exp(-x) * (1 + x)) / (x * x);
-}
-
-template <typename Real>
-inline void sqrt_laplace_2d_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
-                                               sctl::Vector<Real> &windowed_ft) {
-    constexpr int DIM = 2;
-    const auto [hpw, ws, rl] = get_PSWF_windowed_kernel_pwterms<2>(boxsize);
-    const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
-    windowed_ft.ReInit(n_fourier);
-
-    const auto [c0, c1, g0d2, c4] = pf.intvals(beta);
-    const int iw = pf.workarray[0] - 1;
-    const int n_terms = pf.workarray[4];
-
-    std::array<Real, 1000> coeffs{0};
-    std::vector<Real> wprolate(n_terms + 3 + iw);
-    for (int i = 0; i < n_terms + 3 + iw; ++i)
-        wprolate[i] = pf.workarray[i];
-
-    legeinte(&wprolate[iw], n_terms, coeffs.data());
-    coeffs[0] = 0.0;
-
-    const int n_quad = 200;
-    std::array<Real, n_quad> xs, whts, fvals;
-    legerts(1, n_quad, xs.data(), whts.data());
-
-    const double factor = 0.25 * boxsize * rl * 3;
-    for (int i = 0; i < n_quad; ++i) {
-        xs[i] = factor * (xs[i] + 1);
-        whts[i] *= factor;
-    }
-
-    for (int i = 0; i < n_quad; ++i) {
-        auto legint = [&](Real x) {
-            Real fval;
-            if (std::abs(x) < 1.0)
-                legeexev(x, fval, coeffs.data(), n_terms + 1);
-            else if (x >= 1.0)
-                fval = c0;
-            else
-                fval = -c0;
-            return fval;
-        };
-
-        const Real fval0 = legint(xs[i] / boxsize);
-        const Real fval1 = legint((rl + xs[i]) / boxsize);
-        const Real fval2 = legint((rl - xs[i]) / boxsize);
-
-        fvals[i] = fval0 - 0.5 * fval1 + 0.5 * fval2;
-    }
-
-    for (int i = 0; i < n_fourier; ++i) {
-        const Real rk = std::sqrt(Real(i)) * hpw;
-        windowed_ft[i] = Real{0.0};
-        for (int j = 0; j < n_quad; ++j) {
-            const Real z = rk * xs[j];
-            const Real dj0 = (i == 0) ? 1.0 : util::cyl_bessel_j(0, z);
-
-            windowed_ft[i] += dj0 * fvals[j] * whts[j] / c0;
-        }
-        windowed_ft[i] *= ws;
-    }
-}
-
-template <typename Real>
-inline void sqrt_laplace_3d_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
-                                               sctl::Vector<Real> &windowed_ft) {
-    constexpr int DIM = 3;
-    const auto [hpw, ws, rl] = get_PSWF_windowed_kernel_pwterms<3>(boxsize);
-    const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
-    windowed_ft.ReInit(n_fourier);
-
-    // calculate Legendre expansion coefficients of x\psi_0^c(x)
-    int iw = pf.workarray[0] - 1;
-    int n_terms = pf.workarray[4];
-    std::array<Real, 1000> coeffs0, coeffs1, coeffs2, fvals;
-    for (int i = 0; i <= n_terms; ++i)
-        coeffs0[i] = 0.0;
-
-    for (int i = n_terms; i >= 2; --i) {
-        coeffs0[i] += pf.workarray[iw + i - 1] * i / (2 * i - 1.0);
-        coeffs0[i - 2] += pf.workarray[iw + i - 1] * (i - 1) / (2 * i - 1.0);
-    }
-    coeffs0[1] += pf.workarray[iw];
-
-    // FIXME: This wouldn't be necessary if Prolate0Fun had the proper value types
-    std::vector<Real> wprolate(n_terms + 3 + iw);
-    for (int i = 0; i < n_terms + 3 + iw; ++i)
-        wprolate[i] = pf.workarray[i];
-
-    // calculate Legendre expansion coefficients of \int_0^x t\psi_0^c(t)dt
-    legeinte(coeffs0.data(), n_terms, coeffs1.data());
-    Real fval;
-    legeexev(Real(0.0), fval, coeffs1.data(), n_terms + 1);
-    coeffs1[0] -= fval;
-    legeexev(Real(1.0), fval, coeffs1.data(), n_terms + 1);
-    Real c1 = fval;
-
-    // calculate Legendre expansion coefficients of \int_0^x \psi_0^c(t)dt
-    legeinte(&wprolate[iw], n_terms, coeffs2.data());
-    legeexev(Real(1.0), fval, coeffs2.data(), n_terms);
-    double c0 = fval;
-    legeexev(Real(-1.0), fval, coeffs2.data(), n_terms);
-
-    Real dl = 0.5 * rl;
-
-    int n_quad = 200;
-    std::array<Real, 200> xs, whts;
-    legerts(1, n_quad, xs.data(), whts.data());
-    for (int i = 0; i < n_quad; ++i) {
-        xs[i] = (xs[i] + 1) / 2 * dl * 3;
-        whts[i] = whts[i] / 2 * dl * 3;
-    }
-
-    for (int i = 0; i < n_quad; ++i) {
-        Real xval1 = xs[i] / boxsize;
-        Real fval1;
-        if (xval1 < 1.0)
-            legeexev(xval1, fval1, coeffs1.data(), n_terms);
-        else
-            fval1 = c1;
-
-        //  window function
-        Real xval0 = (xs[i] - dl - boxsize) / boxsize;
-        Real fval0;
-        if (std::abs(xval0) < 1.0)
-            legeexev(xval0, fval0, coeffs2.data(), n_terms);
-        else if (xval0 >= 1.0)
-            fval0 = c0;
-        else if (xval0 <= -1.0)
-            fval0 = 0;
-
-        fvals[i] = fval1 / c1 * (1 - fval0 / c0);
-    }
-
-    for (int i = 0; i < n_fourier; ++i) {
-        Real rk = std::sqrt(Real(i)) * hpw;
-        windowed_ft[i] = 0;
-        for (int j = 0; j < n_quad; ++j) {
-            if (i == 0)
-                windowed_ft[i] += fvals[j] * whts[j];
-            else
-                windowed_ft[i] += fvals[j] * whts[j] * sin(rk * xs[j]) / (rk * xs[j]);
-        }
-        windowed_ft[i] *= ws;
-    }
-}
-
-template <typename Real, int DIM>
-inline void sqrt_laplace_windowed_kernel_ft(const double *rpars, Real beta, int npw, Real boxsize, Prolate0Fun &pf,
-                                            sctl::Vector<Real> &windowed_ft) {
-    if constexpr (DIM == 2)
-        return sqrt_laplace_2d_windowed_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, windowed_ft);
-    if constexpr (DIM == 3)
-        return sqrt_laplace_3d_windowed_kernel_ft<Real>(rpars, beta, npw, boxsize, pf, windowed_ft);
 }
 
 template <typename Real, int DIM>
@@ -667,18 +513,24 @@ void sqrt_laplace_3d_periodic_windowed_kernel_ft(Real dk, int n_fourier, Real b,
     }
 }
 
+// Free-space 3D Sqrt-Laplace (1/r^2), shared by the tree's plane-wave root box and by ESP. The profile
+// W(r) = w_near(r) * w_far(r) is supported on [0, r_taper + 2b]:
+//   w_near(r) = F(r/b)/c0F   F(u) = \int_0^u t psi0 (the r^2-measure near window; pairs with the
+//               short-range residual), ramp 0->1 over [0, b] then 1.
+//   w_far(r)  = 0.5*(1 + Glim((r_taper + b - r)/b)/c0G)   symmetric prolate ramp 1->0 over
+//               [r_taper, r_taper + 2b], from the odd G(u) = \int_0^u psi0.
+// Callers want the far taper to start past the box diagonal so W = 1 across the whole pair range. The
+// tree can (rl = 2*sqrt(DIM)*boxsize is twice the diagonal, and the plane-wave representation is not
+// cell-limited); ESP cannot, since its rl IS the diagonal and the padded FFT cell holds exactly that,
+// so it tapers just inside and eats a small error on the longest pairs.
+// 3D radial FT (Vico-Greengard eq. 7; the 1/r^2 Jacobian cancels r^2):
+//   F_hat(kappa) = (ghat/kappa) \int W(r) sin(kappa r)/r dr,   F_hat(0) = ghat \int W(r) dr.
+// ghat is 4*pi in the lattice convention, or the plane-wave quadrature weight ws in the tree's.
 template <typename Real>
-void sqrt_laplace_3d_freespace_windowed_kernel_ft(Real dk, int n_fourier, Real b, Real rl, Prolate0Fun &pf,
-                                                  sctl::Vector<Real> &kernel_ft) {
-    // Free-space 3D Sqrt-Laplace (1/r^2), same clean construction as the 2D case. W(r) = w_near*w_far:
-    //   w_near(r) = F(r/b)/c0F     F(u) = \int_0^u t psi0 (the r^2-measure near window; pairs with the
-    //                              short-range residual), ramp 0->1 over [0, b] then 1.
-    //   w_far(r)  = 0.5*(1 + Glim((rl-b-r)/b)/c0G)   symmetric prolate ramp 1->0 over [rl-2b, rl] using
-    //                              the odd G(u) = \int_0^u psi0 (shared with 2D; the taper shape is free).
-    // W is C^inf and supported on [0, rl]; the plateau W = 1 covers every pair (r <= rl-2b = box
-    // diagonal). 3D radial FT (Vico-Greengard eq. 7; the 1/r^2 Jacobian cancels r^2):
-    //   F_hat(kappa) = (4*pi/kappa) \int_0^rl W(r) sin(kappa r)/r dr,   F_hat(0) = 4*pi \int_0^rl W(r) dr.
+void sqrt_laplace_3d_freespace_windowed_kernel_ft(Real ghat, Real dk, int n_fourier, Real b, Real r_taper,
+                                                  Prolate0Fun &pf, sctl::Vector<Real> &kernel_ft) {
     kernel_ft.ReInit(n_fourier);
+    const Real r_max = r_taper + 2 * b;
 
     std::array<Real, 1000> coeffsF, coeffsG;
     const int n_terms = pf.workarray[4];
@@ -701,32 +553,35 @@ void sqrt_laplace_3d_freespace_windowed_kernel_ft(Real dk, int n_fourier, Real b
         return g;
     };
 
-    // Gauss-Legendre nodes over [0, rl] with the windowed profile W precomputed at each node.
-    constexpr int n_quad = 800;
-    std::array<Real, n_quad> r, W, whts;
+    // Gauss-Legendre nodes over [0, r_max] with the windowed profile W precomputed at each node. The
+    // node count tracks the integrand's oscillation count: sin(kappa*r) runs kappa_max*r_max/(2*pi)
+    // periods over the domain, and Gauss-Legendre wants a handful of nodes per period.
+    constexpr int n_quad_max = 400;
+    const Real n_osc = std::sqrt(Real(n_fourier)) * dk * r_max / Real(2 * M_PI);
+    const int n_quad = std::min(n_quad_max, 64 + int(10 * n_osc));
+    std::array<Real, n_quad_max> r, W, whts;
     {
-        std::array<Real, n_quad> xs;
+        std::array<Real, n_quad_max> xs;
         legerts(1, n_quad, xs.data(), whts.data());
         for (int j = 0; j < n_quad; ++j) {
-            r[j] = (xs[j] + 1) * Real{0.5} * rl;
-            whts[j] *= Real{0.5} * rl;
+            r[j] = (xs[j] + 1) * Real{0.5} * r_max;
+            whts[j] *= Real{0.5} * r_max;
             const Real w_near = Flim(r[j] / b) / c0F;
-            const Real w_far = Real(0.5) * (Real(1) + Glim((rl - b - r[j]) / b) / c0G);
+            const Real w_far = Real(0.5) * (Real(1) + Glim((r_taper + b - r[j]) / b) / c0G);
             W[j] = w_near * w_far;
         }
     }
 
-    const Real four_pi = 4.0 * M_PI;
     Real f0 = 0;
     for (int j = 0; j < n_quad; ++j)
         f0 += W[j] * whts[j];
-    kernel_ft[0] = four_pi * f0;
+    kernel_ft[0] = ghat * f0;
     for (int i = 1; i < n_fourier; ++i) {
         const Real kappa = std::sqrt(Real(i)) * dk;
         Real acc = 0;
         for (int j = 0; j < n_quad; ++j)
             acc += W[j] * std::sin(kappa * r[j]) / r[j] * whts[j];
-        kernel_ft[i] = (four_pi / kappa) * acc;
+        kernel_ft[i] = (ghat / kappa) * acc;
     }
 }
 
@@ -772,21 +627,23 @@ void sqrt_laplace_2d_periodic_windowed_kernel_ft(Real dk, int n_fourier, Real b,
 }
 
 template <typename Real>
-void sqrt_laplace_2d_freespace_windowed_kernel_ft(Real dk, int n_fourier, Real b, Real rl, Prolate0Fun &pf,
-                                                  sctl::Vector<Real> &kernel_ft) {
-    // Free-space 2D Sqrt-Laplace (1/r). The long-range kernel is the DMK windowed kernel at ESP's scale:
-    // one smooth, compact profile W(r) applied to 1/r, W(r) = w_near(r) * w_far(r) with (b = r_c, the
-    // short-range cutoff; G(u) = \int_0^u psi0, c0 = G(1)):
-    //   w_near(r) = G(r/b)/c0                          prolate ramp 0->1 over [0, b], then 1 (pairs with
-    //                                                  the short-range residual 1 - G(r/b)/c0)
-    //   w_far(r)  = 0.5*(1 + Glim((rl-b-r)/b)/c0)      symmetric prolate ramp 1->0 over [rl-2b, rl]
-    // (Glim clamps G to +-c0 outside [-1,1]). W is C^inf and supported on [0, rl]; the plateau W = 1 for
-    // b <= r <= rl-2b covers every source-target pair (r <= rl-2b = box diagonal), so the kernel is
-    // exactly 1/r there. The 1/r Jacobian cancels the r weight in the 2D FT (eq. 8, Vico-Greengard):
-    //   F(kappa) = 2*pi \int_0^rl W(r) J0(kappa r) dr,   F(0) = 2*pi \int_0^rl W(r) dr.
-    // W is compact (no wrap) and its ramp width 2b band-limits F to ~c/b = the grid Nyquist, so no hard
-    // truncation / Gibbs floor and no aliasing.
+void sqrt_laplace_2d_freespace_windowed_kernel_ft(Real ghat, Real dk, int n_fourier, Real b, Real r_taper,
+                                                  Prolate0Fun &pf, sctl::Vector<Real> &kernel_ft) {
+    // Free-space 2D Sqrt-Laplace (1/r), shared by the tree's plane-wave root box and by ESP. One smooth
+    // compact profile W(r) = w_near(r) * w_far(r) applied to 1/r, with G(u) = \int_0^u psi0, c0 = G(1),
+    // and Glim clamping G to +-c0 outside [-1, 1]:
+    //   w_near(r) = G(r/b)/c0   prolate ramp 0->1 over [0, b], then 1 (pairs with the short-range
+    //               residual 1 - G(r/b)/c0; b is boxsize for the tree, r_c for ESP)
+    //   w_far(r)  = 0.5*(1 + Glim((r_taper + b - r)/b)/c0)   symmetric ramp 1->0 over
+    //               [r_taper, r_taper + 2b]
+    // See the 3D routine above for how the callers choose r_taper. W is C^inf, supported on
+    // [0, r_taper + 2b], and its ramp width 2b band-limits F to ~c/b = the grid Nyquist, so there is no
+    // hard truncation, Gibbs floor, or aliasing. The 1/r Jacobian cancels the r weight in the 2D FT
+    // (Vico-Greengard eq. 8):
+    //   F(kappa) = ghat \int W(r) J0(kappa r) dr,   F(0) = ghat \int W(r) dr.
+    // ghat is 2*pi in the lattice convention, or the plane-wave quadrature weight ws for the tree.
     kernel_ft.ReInit(n_fourier);
+    const Real r_max = r_taper + 2 * b;
 
     std::array<Real, 1000> coeffs;
     const int n_terms = pf.workarray[4];
@@ -801,32 +658,34 @@ void sqrt_laplace_2d_freespace_windowed_kernel_ft(Real dk, int n_fourier, Real b
         return g;
     };
 
-    // Gauss-Legendre nodes over [0, rl] with the windowed profile W precomputed at each node.
-    constexpr int n_quad = 800;
-    std::array<Real, n_quad> r, W, whts;
+    // Gauss-Legendre nodes over [0, r_max]; node count from the oscillation count as in the 3D routine
+    // (J0(kappa*r) oscillates at the same asymptotic rate as sin(kappa*r)).
+    constexpr int n_quad_max = 800;
+    const Real n_osc = std::sqrt(Real(n_fourier)) * dk * r_max / Real(2 * M_PI);
+    const int n_quad = std::min(n_quad_max, 64 + int(10 * n_osc));
+    std::array<Real, n_quad_max> r, W, whts;
     {
-        std::array<Real, n_quad> xs;
+        std::array<Real, n_quad_max> xs;
         legerts(1, n_quad, xs.data(), whts.data());
         for (int j = 0; j < n_quad; ++j) {
-            r[j] = (xs[j] + 1) * Real{0.5} * rl;
-            whts[j] *= Real{0.5} * rl;
+            r[j] = (xs[j] + 1) * Real{0.5} * r_max;
+            whts[j] *= Real{0.5} * r_max;
             const Real w_near = Glim(r[j] / b) / c0;
-            const Real w_far = Real(0.5) * (Real(1) + Glim((rl - b - r[j]) / b) / c0);
+            const Real w_far = Real(0.5) * (Real(1) + Glim((r_taper + b - r[j]) / b) / c0);
             W[j] = w_near * w_far;
         }
     }
 
-    const Real two_pi = 2.0 * M_PI;
     Real f0 = 0;
     for (int j = 0; j < n_quad; ++j)
         f0 += W[j] * whts[j];
-    kernel_ft[0] = two_pi * f0;
+    kernel_ft[0] = ghat * f0;
     for (int i = 1; i < n_fourier; ++i) {
         const Real kappa = std::sqrt(Real(i)) * dk;
         Real acc = 0;
         for (int j = 0; j < n_quad; ++j)
             acc += W[j] * util::cyl_bessel_j(0, kappa * r[j]) * whts[j];
-        kernel_ft[i] = two_pi * acc;
+        kernel_ft[i] = ghat * acc;
     }
 }
 
@@ -923,9 +782,18 @@ void get_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, 
         return laplace_freespace_windowed_kernel_ft<Real, DIM>(laplace_scale, hpw, n_fourier, sigma1, rl, pf,
                                                                windowed_ft);
     case DMK_SQRT_LAPLACE:
-        // The one kernel whose free-space leaf is not yet shared: this path's window is a sum of prolate
-        // ramps, the lattice path's is a product. Reconciling them is deferred.
-        return sqrt_laplace_windowed_kernel_ft<Real, DIM>(rpars, beta, npw, boxsize, pf, windowed_ft);
+        // A closed-form truncated symbol is not usable here: a hard cut at rl puts a cos(kappa*rl)
+        // ripple of period 2*pi/rl = 1.81 into the symbol while the mode spacing is hpw = 1/boxsize = 1,
+        // i.e. below Nyquist, so it aliases into an eps-independent ~2e-6 floor that grows with beta.
+        // See scripts/truncated_sqrt_laplace.wl. Taper anchors match src/pdmk/kernel_FT.f, whose two
+        // routines differ: sl3d_* starts its taper at rl/2 (the box diagonal), sl2d_* centers its taper
+        // on rl, and the leaf below spans [r_taper, r_taper + 2b].
+        if constexpr (DIM == 2)
+            return sqrt_laplace_2d_freespace_windowed_kernel_ft<Real>(ws, hpw, n_fourier, boxsize, rl - boxsize, pf,
+                                                                      windowed_ft);
+        else
+            return sqrt_laplace_3d_freespace_windowed_kernel_ft<Real>(ws, hpw, n_fourier, boxsize, rl / 2, pf,
+                                                                      windowed_ft);
     case DMK_STOKESLET:
         // The Stokes truncation radius is the box diagonal plus one box, not the generic 2*sqrt(DIM)*boxsize.
         if constexpr (DIM == 3)
@@ -983,15 +851,20 @@ void get_lattice_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Rea
         return laplace_freespace_windowed_kernel_ft<Real, DIM>(DIM == 2 ? -two_pi : four_pi, dk, n_fourier, sigma1, rl,
                                                                pf, kernel_ft);
     case DMK_SQRT_LAPLACE:
-        // 1/r in 2D, 1/r^2 in 3D. No closed-form truncated FT -> windowed-profile quadrature.
+        // 1/r in 2D (2*pi), 1/r^2 in 3D (4*pi). Windowed-profile quadrature, not a closed-form truncated
+        // symbol -- a hard cut aliases on the mode grid (see get_windowed_kernel_ft above). rl here IS
+        // the box diagonal and the padded FFT cell holds exactly that, so the taper starts 2b inside it
+        // (support [0, rl]) rather than at the diagonal.
         if constexpr (DIM == 2) {
             if (periodic)
                 return sqrt_laplace_2d_periodic_windowed_kernel_ft<Real>(dk, n_fourier, b, pf, kernel_ft);
-            return sqrt_laplace_2d_freespace_windowed_kernel_ft<Real>(dk, n_fourier, b, rl, pf, kernel_ft);
+            return sqrt_laplace_2d_freespace_windowed_kernel_ft<Real>(two_pi, dk, n_fourier, b, rl - 2 * b, pf,
+                                                                      kernel_ft);
         } else {
             if (periodic)
                 return sqrt_laplace_3d_periodic_windowed_kernel_ft<Real>(dk, n_fourier, b, pf, kernel_ft);
-            return sqrt_laplace_3d_freespace_windowed_kernel_ft<Real>(dk, n_fourier, b, rl, pf, kernel_ft);
+            return sqrt_laplace_3d_freespace_windowed_kernel_ft<Real>(four_pi, dk, n_fourier, b, rl - 2 * b, pf,
+                                                                      kernel_ft);
         }
     case DMK_STOKESLET:
         // Scalar biharmonic symbol f for the Oseen projector (Stresslet reuses the same f, different
