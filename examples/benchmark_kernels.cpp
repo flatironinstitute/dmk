@@ -51,13 +51,19 @@ void unpin_host_buffer([[maybe_unused]] std::vector<Real> &buf, [[maybe_unused]]
 #endif
 }
 
+typedef enum : int {
+    DMK_NSPHERESURFACE = 0,
+    DMK_UNIFORM = 1,
+    DMK_NCUBEPARTIALFACET = 2,
+} dmk_distribution;
+
 struct Config {
     int n_src = 1'000'000;
     int n_trg = 0;
     int n_per_leaf = 280;
     double eps = 1e-5;
     char prec = 'f';
-    bool uniform = false;
+    dmk_distribution dist = DMK_NSPHERESURFACE;
     bool enable_direct = true;
     int n_direct = -1;
     int n_runs = 100;
@@ -248,17 +254,33 @@ void print_outliers(const std::vector<Real> &computed, const std::vector<Real> &
 }
 
 template <typename Real>
-void generate_and_scatter(int n_dim, int charge_dim, size_t n_src, size_t n_trg, bool uniform, bool set_fixed_charges,
-                          std::vector<Real> &r_src, std::vector<Real> &r_trg, std::vector<Real> &charges,
-                          std::vector<Real> &normals, long seed, int rank, int np) {
+void generate_and_scatter(int n_dim, int charge_dim, size_t n_src, size_t n_trg, dmk_distribution dist,
+                          bool set_fixed_charges, std::vector<Real> &r_src, std::vector<Real> &r_trg,
+                          std::vector<Real> &charges, std::vector<Real> &normals, long seed, int rank, int np) {
     const int n_src_local = local_count(n_src, np, rank);
     const int n_trg_local = local_count(n_trg, np, rank);
 
     std::vector<Real> r_src_all, r_trg_all, charges_all, normals_all;
 
     if (rank == 0) {
-        dmk::util::init_test_data(n_dim, charge_dim, int(n_src), int(n_trg), uniform, set_fixed_charges, r_src_all,
-                                  r_trg_all, normals_all, charges_all, seed);
+        using namespace dmk::util;
+        constexpr Real almost_one = 1.0 - std::numeric_limits<Real>::epsilon();
+        switch (dist) {
+        case DMK_UNIFORM:
+            init_test_data(n_dim, charge_dim, int(n_src), int(n_trg), UniformVolume<Real>(n_dim, almost_one, seed),
+                           set_fixed_charges, r_src_all, r_trg_all, normals_all, charges_all);
+            break;
+        case DMK_NSPHERESURFACE:
+            init_test_data(n_dim, charge_dim, int(n_src), int(n_trg),
+                           dmk::util::NSphereSurface<Real>(n_dim, 0.95 * 0.5, seed), set_fixed_charges, r_src_all,
+                           r_trg_all, normals_all, charges_all);
+            break;
+        case DMK_NCUBEPARTIALFACET:
+            init_test_data(n_dim, charge_dim, int(n_src), int(n_trg),
+                           dmk::util::NCubePartialFacet<Real>(n_dim, 0.95, 0.02, seed), set_fixed_charges, r_src_all,
+                           r_trg_all, normals_all, charges_all);
+            break;
+        }
     }
 
 #ifdef DMK_HAVE_MPI
@@ -426,7 +448,7 @@ void print_csv_config_comment(const Config &cfg, int np, int n_threads, std::ost
        << "# fparam:               " << cfg.fparam << "\n"
        << "# with_grad:            " << cfg.with_grad << "\n"
        << "# precision:            " << (cfg.prec == 'd' ? "double" : "float") << "\n"
-       << "# uniform_dist:         " << cfg.uniform << "\n"
+       << "# dist:                 " << cfg.dist << "\n"
        << "# seed:                 " << cfg.seed << "\n"
        << "# eps:                  " << cfg.eps << "\n"
        << "# n_per_leaf:           " << cfg.n_per_leaf << "\n"
@@ -520,7 +542,7 @@ void run_benchmark(const Config &cfg) {
     const int pot_dim = dmk::get_kernel_output_dim(n_dim, cfg.kernel, params.eval_src);
 
     std::vector<Real> r_src, r_trg, charges, normals;
-    generate_and_scatter<Real>(n_dim, charge_dim, n_src, n_trg, cfg.uniform, true, r_src, r_trg, charges, normals,
+    generate_and_scatter<Real>(n_dim, charge_dim, n_src, n_trg, cfg.dist, true, r_src, r_trg, charges, normals,
                                cfg.seed, rank, np);
 
     auto create_tree = [&]() -> pdmk_tree {
@@ -741,7 +763,7 @@ Config parse_args(int argc, char *argv[]) {
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "N:T:n:e:t:r:D:l:s:k:d:f:O:p:ugh?", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "N:T:n:e:t:r:D:l:s:k:d:f:O:p:u:gh?", long_opts, nullptr)) != -1) {
         switch (opt) {
         case 'N':
             cfg.n_src = int(std::atof(optarg));
@@ -790,7 +812,7 @@ Config parse_args(int argc, char *argv[]) {
             }
             break;
         case 'u':
-            cfg.uniform = true;
+            cfg.dist = dmk_distribution(std::atoi(optarg));
             break;
         case 'p':
             if (optarg[0] == 'c')
@@ -843,7 +865,7 @@ Config parse_args(int argc, char *argv[]) {
                 << "  -D n_direct           Points for direct comparison\n"
                 << "  -l log_level          DMK log verbosity\n"
                 << "  -s seed               integer seed for random numbers\n"
-                << "  -u                    Uniform distribution\n"
+                << "  -u                    Distribution (0=sphere_surface, 1=uniform, 2=box_partial_facet)\n"
                 << "  -g                    Evaluate potential + gradient (scalar kernels)\n"
                 << "  -O n_outliers         Print top-N worst points per block to stderr (default: 0 = off)\n"
                 << "  -p                    Evaluation path (c)pu, (g)pu, or (b)oth\n"

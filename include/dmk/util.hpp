@@ -3,6 +3,7 @@
 
 #include <dmk/omp_wrapper.hpp>
 #include <dmk/types.hpp>
+#include <random>
 #include <sctl.hpp>
 
 #include <array>
@@ -177,6 +178,186 @@ inline auto size_to = [](auto &v, size_t n) {
     else
         v.ReInit(n);
 };
+
+template <typename Real>
+struct UniformVolume {
+    UniformVolume(int n_dim, Real side_length, long seed) : DIM(n_dim), L(side_length), eng(seed) {};
+
+    inline void operator()(Real *res) {
+        const Real shift = 0.5 * (1 - L);
+        for (int i = 0; i < DIM; ++i)
+            res[i] = dist() * L + shift;
+    };
+
+    inline Real dist() { return u_dist(eng); };
+    constexpr int n_dim() { return DIM; }
+
+    const int DIM;
+    const Real L;
+    std::default_random_engine eng;
+    std::uniform_real_distribution<Real> u_dist;
+};
+
+template <typename Real>
+struct NSphereSurface {
+    NSphereSurface(int n_dim, Real radius, long seed) : DIM(n_dim), R(radius), eng(seed) {};
+
+    inline void operator()(Real *res) {
+        if (DIM == 2) {
+            const Real phi = dist() * 2 * M_PI;
+            res[0] = R * cos(phi) + 0.5;
+            res[1] = R * sin(phi) + 0.5;
+        } else if (DIM == 3) {
+            const Real theta = dist() * M_PI;
+            const Real ct = cos(theta), st = sin(theta);
+            const Real phi = dist() * 2 * M_PI;
+            res[0] = R * st * cos(phi) + 0.5;
+            res[1] = R * st * sin(phi) + 0.5;
+            res[2] = R * ct + 0.5;
+        }
+    };
+
+    inline Real dist() { return u_dist(eng); };
+    constexpr int n_dim() { return DIM; }
+
+    const int DIM;
+    const Real R;
+    std::default_random_engine eng;
+    std::uniform_real_distribution<Real> u_dist;
+};
+
+template <typename Real>
+struct NCubePartialFacet {
+    NCubePartialFacet(int n_dim, Real side_length_, Real band_width_, long seed)
+        : DIM(n_dim), L(side_length_), W(band_width_), eng(seed) {};
+
+    inline void operator()(Real *res) {
+        const Real h = Real{0.5} * L;
+
+        if (DIM == 2) {
+            using vec_type = sctl::Vec<Real, 2>;
+            vec_type res_vec;
+
+            // Sample points along boundary
+            const Real lpos = dist();
+            const vec_type p = [&]() -> vec_type {
+                const int segment = 4 * lpos;
+                const Real t = (Real{4} * lpos - segment) * L;
+                if (segment == 0)
+                    return {t, Real{0}};
+                else if (segment == 1)
+                    return {t, L};
+                else if (segment == 2)
+                    return {Real{0}, t};
+                else
+                    return {L, t};
+            }() - h;
+            p.Store(res);
+        } else if (DIM == 3) {
+            const int normal_axis = 3 * dist();
+            const Real normal_sign = dist() < 0.5 ? -1 : 1;
+
+            // Distance from the nearest edge.
+            const Real u = dist();
+            const Real d = 0.5 * (L - std::sqrt(L * L - 4.0 * u * (L * W - W * W)));
+
+            // Pick which of the 4 edges of the face we're near.
+            const int edge_axis = 2 * dist();
+
+            // Pick which side of that coordinate.
+            const Real edge_sign = dist() < 0.5 ? -1 : 1;
+
+            // Position along the edge.
+            const Real t = (2.0 * dist() - 1.0) * (h - d);
+
+            for (int i = 0; i < 3; i++)
+                res[i] = 0.5;
+
+            // The coordinate normal to the face.
+            res[normal_axis] += normal_sign * h;
+
+            // The two coordinates within the face.
+            const int a = (normal_axis + 1) % 3;
+            const int b = (normal_axis + 2) % 3;
+
+            if (edge_axis == 0) {
+                res[a] += edge_sign * (h - d);
+                res[b] += t;
+            } else {
+                res[a] += t;
+                res[b] += edge_sign * (h - d);
+            }
+        }
+    };
+
+    inline Real dist() { return u_dist(eng); }
+    constexpr int n_dim() { return DIM; };
+
+    const int DIM;
+    const Real L, W;
+    std::default_random_engine eng;
+    std::uniform_real_distribution<Real> u_dist;
+};
+
+inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, auto point_generator, bool set_fixed_charges,
+                           auto &r_src, auto &r_trg, auto &r_normal, auto &charges) {
+    using Real = std::decay_t<decltype(r_src)>::value_type;
+    size_to(r_src, n_dim * n_src);
+    size_to(r_trg, n_dim * n_trg);
+    size_to(charges, nd * n_src);
+    size_to(r_normal, n_dim * n_src);
+
+    // Redraw until the point is interior at the working precision (a double draw < 1 can
+    // round UP to 1.0 in float, landing on the box boundary) and distinct from every point
+    // emitted so far. Coincident points (near-duplicates collapsing below an ulp) and
+    // boundary points otherwise corrupt the tree / far-field.
+    std::unordered_set<std::string> seen;
+    auto emit = [&](Real *p) {
+        for (;;) {
+            point_generator(p);
+            bool interior = true;
+            for (int j = 0; j < n_dim; ++j)
+                interior &= (p[j] > Real(0) && p[j] < Real(1));
+            if (interior && seen.insert(std::string(reinterpret_cast<const char *>(p), n_dim * sizeof(Real))).second)
+                return;
+        }
+    };
+
+    for (int i = 0; i < n_src; ++i) {
+        emit(&r_src[i * n_dim]);
+
+        // Unit normals (sphere-distributed) — required for stresslet, harmless otherwise.
+        if (n_dim == 2) {
+            const Real phi_n = point_generator.dist() * 2 * M_PI;
+            r_normal[i * 2 + 0] = std::cos(phi_n);
+            r_normal[i * 2 + 1] = std::sin(phi_n);
+        } else if (n_dim == 3) {
+            const Real theta_n = point_generator.dist() * M_PI;
+            const Real ct_n = std::cos(theta_n), st_n = std::sin(theta_n);
+            const Real phi_n = point_generator.dist() * 2 * M_PI;
+            r_normal[i * 3 + 0] = st_n * std::cos(phi_n);
+            r_normal[i * 3 + 1] = st_n * std::sin(phi_n);
+            r_normal[i * 3 + 2] = ct_n;
+        }
+
+        for (int j = 0; j < nd; ++j) {
+            charges[i * nd + j] = point_generator.dist() - 0.5;
+        }
+    }
+
+    for (int i_trg = 0; i_trg < n_trg; ++i_trg)
+        emit(&r_trg[i_trg * n_dim]);
+
+    if (set_fixed_charges && n_src > 0)
+        for (int i = 0; i < n_dim; ++i)
+            r_src[i] = 0.0;
+    if (set_fixed_charges && n_src > 1)
+        for (int i = n_dim; i < 2 * n_dim; ++i)
+            r_src[i] = 1 - std::numeric_limits<Real>::epsilon();
+    if (set_fixed_charges && n_src > 2)
+        for (int i = 2 * n_dim; i < 3 * n_dim; ++i)
+            r_src[i] = 0.05;
+}
 
 inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges, auto &r_src,
                            auto &r_trg, auto &rnormal, auto &charges, long seed) {
