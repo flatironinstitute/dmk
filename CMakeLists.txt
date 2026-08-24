@@ -178,6 +178,10 @@ set(DMK_INCLUDES
 )
 
 include(FetchContent)
+# Vendored dependencies are archived into libdmk.a and linked into libdmk.so, so they must be built
+# static and PIC. Normal variables, so a cached BUILD_SHARED_LIBS cannot override them.
+set(BUILD_SHARED_LIBS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(FINUFFT_USE_DUCC0 ON CACHE BOOL "" FORCE)
 FetchContent_Declare(
   finufft
@@ -202,11 +206,15 @@ FetchContent_MakeAvailable(polyfit)
 add_subdirectory(extern/spdlog EXCLUDE_FROM_ALL)
 add_subdirectory(extern/doctest EXCLUDE_FROM_ALL)
 add_subdirectory(extern/nda EXCLUDE_FROM_ALL)
+set(DMK_JIT_TARGET "")
 if (DMK_USE_JIT)
   list(APPEND DMK_CXX_FLAGS "-DDMK_USE_JIT")
   set(RUFUS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(RUFUS_LINK_LLVM_SHARED ON CACHE BOOL "" FORCE)
-  set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+  # librufus.a is bundled into libdmk.a, so its libLLVM.so dependency becomes ours. RuFuS's own
+  # find_package defines the imported target in its directory scope only.
+  find_package(LLVM REQUIRED CONFIG)
+  set(DMK_JIT_TARGET LLVM)
   add_subdirectory(extern/RuFuS EXCLUDE_FROM_ALL)
 
   rufus_embed_ir_as_header(jit_kernels src/jit_kernels.cpp
@@ -352,15 +360,18 @@ set_target_properties(dmk_shared PROPERTIES OUTPUT_NAME dmk EXPORT_NAME dmk
   VERSION ${PROJECT_VERSION} SOVERSION ${PROJECT_VERSION_MAJOR})
 
 target_link_libraries(dmk INTERFACE ${DMK_MPI_TARGET} ${DMK_OPENMP_TARGET} ${DMK_GPU_TARGET}
-  ${DMK_CUDA_JIT_TARGETS} BLAS::BLAS)
+  ${DMK_CUDA_JIT_TARGETS} ${DMK_JIT_TARGET} BLAS::BLAS)
 target_link_libraries(dmk_shared INTERFACE ${DMK_MPI_TARGET})
 
 set(DMK_BUNDLE_TARGETS "")
-foreach(dep finufft finufft_common ducc0 nda_c)
+foreach(dep finufft finufft_common ducc0 nda_c rufus)
   if (TARGET ${dep})
     get_target_property(dep_type ${dep} TYPE)
     if (dep_type STREQUAL "STATIC_LIBRARY")
       list(APPEND DMK_BUNDLE_TARGETS ${dep})
+    elseif (dep_type STREQUAL "SHARED_LIBRARY")
+      message(FATAL_ERROR "${dep} is shared, so it cannot be archived into libdmk.a. "
+        "Configure with -DBUILD_SHARED_LIBS=OFF, or delete CMakeCache.txt if it holds a stale ON.")
     endif()
   endif()
 endforeach()
@@ -417,6 +428,9 @@ if (DMK_HAVE_OPENMP)
 endif()
 if (DMK_GPU_OFFLOAD)
   list(APPEND DMK_PC_LIBS_PRIVATE "-L${CUDAToolkit_LIBRARY_DIR}" -lcudart -lcuda -lnvrtc)
+endif()
+if (DMK_USE_JIT)
+  list(APPEND DMK_PC_LIBS_PRIVATE "-L${LLVM_LIBRARY_DIR}" -lLLVM)
 endif()
 list(APPEND DMK_PC_LIBS_PRIVATE ${BLAS_LIBRARIES})
 string(REPLACE ";" " " DMK_PC_CFLAGS "${DMK_PC_CFLAGS}")
