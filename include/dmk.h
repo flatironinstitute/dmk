@@ -128,6 +128,10 @@ pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src,
 // Short-range method selection bits for pdmk_esp_params.esp_flags. The three strategies
 // (source-pruning granularity, within-cell spatial sort, Newton's-third-law reciprocal) are
 // independent. The default combination below is the empirically fastest.
+//
+// On the GPU path the pruning granularities are mutually exclusive rather than independent:
+// PRUNE_SOURCE takes precedence over PRUNE_TILE, and neither bit means dense. DMK_ESP_N3L,
+// esp_bins and esp_stile are CPU-only, and are reported once at plan creation if set.
 enum {
     DMK_ESP_PRUNE_TILE = 1u << 0,   ///< sub-cell tile-vs-tile AABB pruning
     DMK_ESP_PRUNE_SOURCE = 1u << 1, ///< per-source point-vs-target-box pruning (finest granularity)
@@ -151,6 +155,8 @@ typedef struct pdmk_esp_params {
     uint32_t esp_flags DMK_DEFAULT(DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L | DMK_ESP_MORTON);
     int esp_bins DMK_DEFAULT(2);  ///< octant-bin count per axis when DMK_ESP_MORTON is clear
     int esp_stile DMK_DEFAULT(0); ///< source-tile width for DMK_ESP_PRUNE_TILE (0 -> SIMD width)
+    dmk_eval_path eval_path DMK_DEFAULT(DMK_EVAL_PATH_CPU); ///< GPU is 3D only; see esp_flags above
+    int gpu_device_id DMK_DEFAULT(0);                       ///< CUDA device, when eval_path is GPU
 } pdmk_esp_params;
 
 // Opaque plan handle (heap-allocated internally).
@@ -161,18 +167,18 @@ pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator comm, pdmk_esp_params param
 
 // normal is the per-source orientation array required by the Stresslet (DIM comps per source) and
 // ignored (may be NULL) by every other kernel.
-void pdmk_esp_eval(dmk_communicator comm, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
-                   const double *normal, double *pot_src);
-void pdmk_esp_evalf(dmk_communicator comm, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,
-                    const float *normal, float *pot_src);
+dmk_error pdmk_esp_eval(dmk_communicator comm, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
+                        const double *normal, double *pot_src);
+dmk_error pdmk_esp_evalf(dmk_communicator comm, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,
+                         const float *normal, float *pot_src);
 
 void pdmk_esp_plan_destroy(pdmk_esp_plan plan);
 void pdmk_esp_plan_destroyf(pdmk_esp_plan plan);
 
-void pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double *r_src, const double *charges,
-              const double *normal, double *pot_src);
-void pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const float *r_src, const float *charges,
-               const float *normal, float *pot_src);
+dmk_error pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double *r_src, const double *charges,
+                   const double *normal, double *pot_src);
+dmk_error pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const float *r_src, const float *charges,
+                    const float *normal, float *pot_src);
 
 dmk_error pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const double *normal);
 dmk_error pdmk_tree_update_chargesf(pdmk_tree tree, const float *charge, const float *normal);

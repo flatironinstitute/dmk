@@ -220,18 +220,14 @@ GpuState *esp_create_gpu_plan(EspPlan<Real> *plan, GpuSrStrategy strategy = GpuS
                               GpuSortMode sort_mode = GpuSortMode::Bins);
 void esp_destroy_gpu_plan(GpuState *gpu);
 
-// `charges` is get_kernel_input_dim components per source; `normals` is only read by the Stresslet,
-// which needs n_dim more. Returned spans are valid until the next esp_eval_gpu on the same gpu, or
-// until it is destroyed.
+// Same argument convention as EspPlan<Real>::eval. Returned spans are valid until the next
+// esp_eval_gpu on the same gpu, or until it is destroyed.
 #define DMK_ESP_GPU_DECL(Real)                                                                                         \
-    PotForce<Real> esp_eval_gpu(GpuState *gpu, const std::vector<Vec3T<Real>> &r_src,                                  \
-                                const std::vector<Real> &charges, const std::vector<Real> &normals = {});              \
-    PotForce<Real> esp_eval_gpu_short_range(GpuState *gpu, const std::vector<Vec3T<Real>> &r_src,                      \
-                                            const std::vector<Real> &charges, const std::vector<Real> &normals = {});  \
-    PotForce<Real> esp_eval_gpu_long_range(GpuState *gpu, const std::vector<Vec3T<Real>> &r_src,                       \
-                                           const std::vector<Real> &charges, const std::vector<Real> &normals = {})
+    PotForce<Real> esp_eval_gpu(GpuState *gpu, int n, const Real *r_src, const Real *charges,                          \
+                                const Real *normals = nullptr);                                                        \
+    PotForce<Real> esp_eval_gpu_short_range(GpuState *gpu, int n, const Real *r_src, const Real *charges,              \
+                                            const Real *normals = nullptr)
 
-// Mirrors esp_eval_short_range / esp_eval_long_range.
 DMK_ESP_GPU_DECL(float);
 DMK_ESP_GPU_DECL(double);
 #undef DMK_ESP_GPU_DECL

@@ -82,11 +82,15 @@ constexpr std::string_view to_string(dmk_eval_type k) noexcept {
     return "unknown_eval_type";
 }
 
-// Case-insensitive equality, ignoring an optional leading "DMK_" on either side,
-// so "stokeslet", "STOKESLET", and "DMK_STOKESLET" all match.
+// Case-insensitive equality, ignoring an optional leading "DMK_" on either side and treating '-'
+// as '_', so "stokeslet", "DMK_STOKESLET" and "sqrt-laplace" all match their canonical spellings.
 constexpr bool name_matches(std::string_view a, std::string_view b) noexcept {
     auto strip = [](std::string_view s) { return s.substr(0, 4) == "DMK_" ? s.substr(4) : s; };
-    auto lower = [](char c) -> char { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; };
+    auto lower = [](char c) -> char {
+        if (c >= 'A' && c <= 'Z')
+            return static_cast<char>(c - 'A' + 'a');
+        return c == '-' ? '_' : c;
+    };
     a = strip(a);
     b = strip(b);
     if (a.size() != b.size())

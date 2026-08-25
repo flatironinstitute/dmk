@@ -5,6 +5,7 @@
 #include <dmk.h>
 #include <dmk/direct.hpp>
 #include <dmk/esp.hpp>
+#include <dmk/periodic_reference.hpp>
 #include <doctest/doctest.h>
 #include <map>
 #include <random>
@@ -12,8 +13,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-
-#include "periodic_reference.hpp"
 
 namespace {
 
@@ -61,6 +60,8 @@ struct Points {
     int n, in_dim, nrm_dim, out_dim;
     std::vector<double> r_ref, r_esp, q, nrm;
     std::vector<dmk::Vec3T<double>> r_vec;
+
+    const double *nrm_ptr() const { return nrm.empty() ? nullptr : nrm.data(); }
 
     Points(const Config &c, int n_, unsigned seed) : n(n_) {
         in_dim = dmk::get_kernel_input_dim(3, c.kernel);
@@ -224,7 +225,8 @@ TEST_CASE("[ESP GPU] accuracy vs an exact reference") {
         for (const double eps : epses) {
             Fixture f(c, eps, N_ACC);
             check_vs_reference(f.cpu_eval(), it->second, eps, c, eps, "cpu");
-            check_vs_reference(dmk::esp_eval_gpu(f.gpu, f.p.r_vec, f.p.q, f.p.nrm), it->second, eps, c, eps, "gpu");
+            check_vs_reference(dmk::esp_eval_gpu(f.gpu, f.p.n, f.p.r_esp.data(), f.p.q.data(), f.p.nrm_ptr()),
+                               it->second, eps, c, eps, "gpu");
         }
     }
 }
@@ -236,7 +238,7 @@ TEST_CASE("[ESP GPU] short-range: GPU vs CPU") {
     for (const Config &c : kConfigs) {
         Fixture f(c, 1e-5, N_DENSE);
         auto cpu = dmk::esp_eval_short_range(f.plan, f.p.r_vec, f.p.q, f.p.nrm);
-        auto gpu = dmk::esp_eval_gpu_short_range(f.gpu, f.p.r_vec, f.p.q, f.p.nrm);
+        auto gpu = dmk::esp_eval_gpu_short_range(f.gpu, f.p.n, f.p.r_esp.data(), f.p.q.data(), f.p.nrm_ptr());
         const double l2 = l2_between(components(gpu), components(cpu), f.p.out_dim, f.p.n);
         CHECK_MESSAGE(l2 < TOL, std::string(c.name) << " short-range l2=" << l2);
     }
@@ -257,7 +259,7 @@ TEST_CASE("[ESP GPU] short-range: strategies and sort modes agree") {
         for (auto st : strategies)
             for (auto sm : sorts) {
                 Fixture f(c, 1e-5, N_DENSE, st, sm);
-                auto gpu = dmk::esp_eval_gpu_short_range(f.gpu, f.p.r_vec, f.p.q, f.p.nrm);
+                auto gpu = dmk::esp_eval_gpu_short_range(f.gpu, f.p.n, f.p.r_esp.data(), f.p.q.data(), f.p.nrm_ptr());
                 const auto g = components(gpu);
                 double e2 = 0, r2 = 0;
                 for (int k = 0; k < f.p.out_dim; ++k)

@@ -29,9 +29,8 @@
 #include <dmk/direct.hpp>
 #include <dmk/esp.hpp>
 #include <dmk/omp_wrapper.hpp>
+#include <dmk/periodic_reference.hpp>
 #include <dmk/util.hpp>
-
-#include "periodic_reference.hpp"
 
 #include <cmath>
 #include <getopt.h>
@@ -227,12 +226,8 @@ double esp_eval_interleaved(const pdmk_esp_params &params, dmk_eval_path eval_pa
     if (eval_path == DMK_EVAL_PATH_GPU) {
         dmk::EspPlan<Real> plan(params);
         dmk::GpuState *gpu = dmk::esp_create_gpu_plan(&plan);
-        std::vector<dmk::Vec3T<Real>> rv(n);
-        for (int i = 0; i < n; ++i)
-            for (int d = 0; d < 3; ++d)
-                rv[i][d] = r_src[size_t(i) * 3 + d];
         const double st = MY_OMP_GET_WTIME();
-        auto pf = dmk::esp_eval_gpu(gpu, rv, charges, normals);
+        auto pf = dmk::esp_eval_gpu(gpu, n, r_src.data(), charges.data(), normals.empty() ? nullptr : normals.data());
         const double dt = MY_OMP_GET_WTIME() - st;
         std::span<Real> comp[4] = {pf.pot, pf.force_x, pf.force_y, pf.force_z};
         if (!pf.vel_x.empty()) {

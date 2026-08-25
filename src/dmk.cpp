@@ -42,7 +42,20 @@ using pdmk_tree_impl =
                  std::unique_ptr<dmk::DMKPtTree<double, 2>>, std::unique_ptr<dmk::DMKPtTree<double, 3>>>;
 #endif
 
-using pdmk_esp_plan_impl = std::variant<std::unique_ptr<dmk::EspPlan<float>>, std::unique_ptr<dmk::EspPlan<double>>>;
+// GpuState is incomplete here, so the handle needs an explicit deleter.
+#ifdef DMK_GPU_OFFLOAD
+struct pdmk_esp_gpu_deleter {
+    void operator()(dmk::GpuState *gpu) const { dmk::esp_destroy_gpu_plan(gpu); }
+};
+#endif
+
+struct pdmk_esp_plan_impl {
+    std::variant<std::unique_ptr<dmk::EspPlan<float>>, std::unique_ptr<dmk::EspPlan<double>>> plan;
+#ifdef DMK_GPU_OFFLOAD
+    std::unique_ptr<dmk::GpuState, pdmk_esp_gpu_deleter> gpu;
+    int gpu_device_id = 0;
+#endif
+};
 
 namespace dmk {
 
@@ -1329,18 +1342,77 @@ inline void esp_copy_result(const dmk::PotForce<Real> &result, int n, Real *pot_
 // FFTs/SIMD throughout), it never up-converts through a double plan.
 // (A template can't have C language linkage, so this lives here rather than in the extern "C"
 // block below, which only holds the non-template pdmk_esp_eval/evalf wrappers.)
+#ifdef DMK_GPU_OFFLOAD
+// GpuSrStrategy is one enumerator, so the independent CPU pruning bits collapse by precedence.
+GpuSrStrategy esp_gpu_strategy(const pdmk_esp_params &params) {
+    if (esp_prune_source(params))
+        return GpuSrStrategy::PruneSource;
+    if (esp_prune_tile(params))
+        return GpuSrStrategy::PruneTile;
+    return GpuSrStrategy::Dense;
+}
+
+GpuSortMode esp_gpu_sort_mode(const pdmk_esp_params &params) {
+    return esp_morton(params) ? GpuSortMode::Morton : GpuSortMode::Bins;
+}
+
+void esp_report_inert_gpu_tuning(const pdmk_esp_params &params) {
+    std::string inert;
+    if (esp_n3l(params))
+        inert += " DMK_ESP_N3L";
+    if (!esp_morton(params) && params.esp_bins != 2)
+        inert += " esp_bins";
+    if (esp_prune_tile(params) && !esp_prune_source(params) && params.esp_stile != 0)
+        inert += " esp_stile";
+    if (!inert.empty())
+        get_logger(sctl::Comm::Self(), params.log_level)
+            ->info("esp: GPU plan ignores CPU-only short-range tuning:{}", inert);
+}
+#endif
+
+template <typename Real>
+pdmk_esp_plan esp_plan_create_impl(pdmk_esp_params params) {
+    auto impl = std::make_unique<pdmk_esp_plan_impl>();
+    auto plan = std::make_unique<dmk::EspPlan<Real>>(params);
+
+    if (params.eval_path == DMK_EVAL_PATH_GPU) {
+#ifdef DMK_GPU_OFFLOAD
+        dmk::cuda::pt::bind_gpu_device(params.gpu_device_id);
+        cuda_helpers::ScopedDevice device_scope(params.gpu_device_id);
+        esp_report_inert_gpu_tuning(params);
+        impl->gpu.reset(
+            dmk::esp_create_gpu_plan<Real>(plan.get(), esp_gpu_strategy(params), esp_gpu_sort_mode(params)));
+        impl->gpu_device_id = params.gpu_device_id;
+#else
+        throw api_error(DMK_ERR_INVALID_ARGUMENT, "pdmk_esp_params.eval_path is GPU but this build has no GPU support "
+                                                  "(configure with -DDMK_GPU_OFFLOAD=ON)");
+#endif
+    }
+
+    impl->plan = std::move(plan);
+    return impl.release();
+}
+
 template <typename Real>
 inline void pdmk_esp_eval_impl(pdmk_esp_plan plan, int n, const Real *r_src, const Real *charges, const Real *normal,
                                Real *pot_src) {
+    auto *impl = static_cast<pdmk_esp_plan_impl *>(plan);
     std::visit(
         [&](auto &p) {
             using PlanType = std::decay_t<decltype(p)>;
-            if constexpr (std::is_same_v<PlanType, std::unique_ptr<dmk::EspPlan<Real>>>)
+            if constexpr (std::is_same_v<PlanType, std::unique_ptr<dmk::EspPlan<Real>>>) {
+#ifdef DMK_GPU_OFFLOAD
+                if (impl->gpu) {
+                    cuda_helpers::ScopedDevice device_scope(impl->gpu_device_id);
+                    esp_copy_result<Real>(dmk::esp_eval_gpu(impl->gpu.get(), n, r_src, charges, normal), n, pot_src);
+                    return;
+                }
+#endif
                 esp_copy_result<Real>(p->eval(n, r_src, charges, normal), n, pot_src);
-            else
+            } else
                 throw api_error(DMK_ERR_INVALID_ARGUMENT, "ESP plan precision does not match eval precision");
         },
-        *static_cast<pdmk_esp_plan_impl *>(plan));
+        impl->plan);
 }
 
 } // namespace dmk
@@ -1507,49 +1579,47 @@ dmk_error pdmk_direct(dmk_communicator comm, pdmk_params params, int n_src, cons
 
 pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator /*comm*/, pdmk_esp_params params) {
     pdmk_esp_plan result = nullptr;
-    dmk::dmk_guard([&] {
-        result = new pdmk_esp_plan_impl(std::unique_ptr<dmk::EspPlan<double>>(new dmk::EspPlan<double>(params)));
-    });
+    dmk::dmk_guard([&] { result = dmk::esp_plan_create_impl<double>(params); });
     return result;
 }
 
 pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator /*comm*/, pdmk_esp_params params) {
     pdmk_esp_plan result = nullptr;
-    dmk::dmk_guard([&] {
-        result = new pdmk_esp_plan_impl(std::unique_ptr<dmk::EspPlan<float>>(new dmk::EspPlan<float>(params)));
-    });
+    dmk::dmk_guard([&] { result = dmk::esp_plan_create_impl<float>(params); });
     return result;
 }
 
-void pdmk_esp_eval(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
-                   const double *normal, double *pot_src) {
-    dmk::pdmk_esp_eval_impl<double>(plan, n, r_src, charges, normal, pot_src);
+dmk_error pdmk_esp_eval(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const double *r_src,
+                        const double *charges, const double *normal, double *pot_src) {
+    return dmk::dmk_guard([&] { dmk::pdmk_esp_eval_impl<double>(plan, n, r_src, charges, normal, pot_src); });
 }
 
-void pdmk_esp_evalf(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,
-                    const float *normal, float *pot_src) {
-    dmk::pdmk_esp_eval_impl<float>(plan, n, r_src, charges, normal, pot_src);
+dmk_error pdmk_esp_evalf(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,
+                         const float *normal, float *pot_src) {
+    return dmk::dmk_guard([&] { dmk::pdmk_esp_eval_impl<float>(plan, n, r_src, charges, normal, pot_src); });
 }
 
 void pdmk_esp_plan_destroy(pdmk_esp_plan plan) { delete static_cast<pdmk_esp_plan_impl *>(plan); }
 
 void pdmk_esp_plan_destroyf(pdmk_esp_plan plan) { pdmk_esp_plan_destroy(plan); }
 
-void pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double *r_src, const double *charges,
-              const double *normal, double *pot_src) {
+dmk_error pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double *r_src, const double *charges,
+                   const double *normal, double *pot_src) {
     auto plan = pdmk_esp_plan_create(comm, params);
     if (!plan) // create failed (see pdmk_last_error_message); nothing to evaluate
-        return;
-    pdmk_esp_eval(comm, plan, n, r_src, charges, normal, pot_src);
+        return DMK_ERR_INTERNAL;
+    const dmk_error err = pdmk_esp_eval(comm, plan, n, r_src, charges, normal, pot_src);
     pdmk_esp_plan_destroy(plan);
+    return err;
 }
 
-void pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const float *r_src, const float *charges,
-               const float *normal, float *pot_src) {
+dmk_error pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const float *r_src, const float *charges,
+                    const float *normal, float *pot_src) {
     auto plan = pdmk_esp_plan_createf(comm, params);
     if (!plan)
-        return;
-    pdmk_esp_evalf(comm, plan, n, r_src, charges, normal, pot_src);
+        return DMK_ERR_INTERNAL;
+    const dmk_error err = pdmk_esp_evalf(comm, plan, n, r_src, charges, normal, pot_src);
     pdmk_esp_plan_destroyf(plan);
+    return err;
 }
 }

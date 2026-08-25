@@ -19,18 +19,8 @@ if (DMK_GPU_OFFLOAD)
   target_link_libraries(benchmark_kernels PRIVATE ${DMK_GPU_TARGET})
 endif()
 
-add_executable(benchmark_esp benchmark_esp.cpp)
-target_link_libraries(benchmark_esp PRIVATE dmk dmk_internal)
-target_include_directories(benchmark_esp PRIVATE ${CMAKE_SOURCE_DIR}/test)
-
-if (DMK_GPU_OFFLOAD)
-  add_executable(benchmark_esp_gpu benchmark_esp_gpu.cpp)
-  target_link_libraries(benchmark_esp_gpu PRIVATE dmk dmk_internal)
-endif()
-
 add_executable(measure_error measure_error.cpp)
 target_link_libraries(measure_error PRIVATE dmk dmk_internal)
 
 add_executable(measure_error_esp measure_error_esp.cpp)
 target_link_libraries(measure_error_esp PRIVATE dmk dmk_internal)
-target_include_directories(measure_error_esp PRIVATE ${CMAKE_SOURCE_DIR}/test)

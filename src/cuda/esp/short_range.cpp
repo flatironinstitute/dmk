@@ -10,6 +10,7 @@
 
 #include <dmk/cuda/esp_sr_kernelargs.hpp>
 #include <dmk/direct.hpp>
+#include <dmk/error.hpp>
 #include <dmk/util.hpp>
 
 #include <cstdint>
@@ -91,7 +92,7 @@ int eval_level_for(dmk_eval_type ev) {
         return 1;
     if (ev == DMK_POTENTIAL_GRAD)
         return 2;
-    throw std::runtime_error("esp::short_range: unsupported eval_type");
+    throw api_error(DMK_ERR_INVALID_ARGUMENT, "esp::short_range: unsupported eval_type");
 }
 
 } // namespace
@@ -102,7 +103,7 @@ template <typename Real>
 void short_range_gpu(GpuState &gpu, int n, const Real *d_pos_aos, const Real *d_charges, Real *d_pot, Real *d_fx,
                      Real *d_fy, Real *d_fz) {
     const int nc = gpu.nc;
-    const KernelDims dims = kernel_dims(gpu.kernel, gpu.eval_type);
+    const KernelDims &dims = gpu.dims;
     const int out_dim = dims.out_dim;
     const int ncells = nc * nc * nc;
 
@@ -200,13 +201,14 @@ void short_range_gpu(GpuState &gpu, int n, const Real *d_pos_aos, const Real *d_
         const std::size_t static_bytes = pt::static_smem(*kernel);
         const std::size_t cap = pt::device_max_shared_bytes();
         if (shared_bytes + static_bytes > cap)
-            throw std::runtime_error(
+            throw api_error(
+                DMK_ERR_INVALID_ARGUMENT,
                 "esp::short_range: " +
-                std::string(gpu.strategy == GpuSrStrategy::PruneTile ? "PruneTile" : "PruneSource") + " needs " +
-                std::to_string(shared_bytes) + " B of dynamic + " + std::to_string(static_bytes) +
-                " B of static shared memory (max_tiles=" + std::to_string(max_tiles) + ", n=" + std::to_string(n) +
-                ", nc=" + std::to_string(nc) + ") but this device allows " + std::to_string(cap) +
-                " B per block. Use a smaller r_c (more, smaller cells), fewer sources, or the Dense strategy.");
+                    std::string(gpu.strategy == GpuSrStrategy::PruneTile ? "PruneTile" : "PruneSource") + " needs " +
+                    std::to_string(shared_bytes) + " B of dynamic + " + std::to_string(static_bytes) +
+                    " B of static shared memory (max_tiles=" + std::to_string(max_tiles) + ", n=" + std::to_string(n) +
+                    ", nc=" + std::to_string(nc) + ") but this device allows " + std::to_string(cap) +
+                    " B per block. Use a smaller r_c (more, smaller cells), fewer sources, or the Dense strategy.");
         pt::set_max_dynamic_smem(*kernel, shared_bytes);
     }
 

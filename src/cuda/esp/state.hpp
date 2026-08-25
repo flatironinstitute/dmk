@@ -110,7 +110,11 @@ struct GpuState {
     void *d_scratch_prune_stats = nullptr;
     size_t scratch_prune_stats_cap = 0;
 
+    KernelDims dims{};
+
     GpuState() = default;
+    GpuState(const GpuState &) = delete;
+    GpuState &operator=(const GpuState &) = delete;
     ~GpuState() {
         if (cfnufft_plan_1) {
             if (use_float)

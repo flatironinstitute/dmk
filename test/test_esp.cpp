@@ -1,12 +1,11 @@
 #include <cmath>
 #include <dmk.h>
 #include <dmk/esp.hpp>
+#include <dmk/periodic_reference.hpp>
 #include <dmk/testing.hpp>
 #include <random>
 #include <span>
 #include <vector>
-
-#include "periodic_reference.hpp"
 
 // 10-particle fixture
 namespace {

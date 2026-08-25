@@ -4,6 +4,7 @@
 
 #include <dmk.h>
 #include <dmk/cuda/esp_gpu.hpp>
+#include <dmk/error.hpp>
 #include <dmk/esp.hpp>
 
 #include <cufinufft.h>
@@ -73,6 +74,7 @@ GpuState *gpu_create_state(const GpuPlanConfig &cfg) {
 
     // One grid per spread channel and one per output component; the Stresslet needs 9 + 3.
     const KernelDims dims = kernel_dims(cfg.kernel, eval_type);
+    gpu->dims = dims;
     const auto grid_alloc = [&](void **p, int count, const char *what) {
         const std::size_t bytes = std::size_t(count) * std::size_t(ntot) * complex_sz;
         if (cudaMalloc(p, bytes) != cudaSuccess)
@@ -132,7 +134,7 @@ GpuState *gpu_create_state(const GpuPlanConfig &cfg) {
     // 27-cell-stencil neighbour tables. Particle-box geometry, so L_box and not L_grid.
     gpu->nc = static_cast<int>(std::floor(L_box / r_c));
     if (gpu->nc < 3)
-        throw std::runtime_error("GpuState: short_range_gpu requires r_c <= L/3 (nc >= 3)");
+        throw api_error(DMK_ERR_INVALID_ARGUMENT, "esp: the GPU short-range path requires r_c <= L/3 (nc >= 3)");
     {
         const int ntab = gpu->nc * 3;
         std::vector<int> h_nbc_tab(ntab);
@@ -371,9 +373,8 @@ struct EvalBuffers {
 // `charges` is in_dim components per source, `normals` normal_dim more (Stresslet only); they are
 // interleaved into one charge_dim-wide payload, as EspPlan::eval does.
 template <typename Real>
-static EvalBuffers<Real> upload_inputs(GpuState *gpu, int n, const KernelDims &dims,
-                                       const std::vector<Vec3T<Real>> &r_src, const std::vector<Real> &charges,
-                                       const std::vector<Real> &normals) {
+static EvalBuffers<Real> upload_inputs(GpuState *gpu, int n, const KernelDims &dims, const Real *r_src,
+                                       const Real *charges, const Real *normals) {
     NvtxRange range("eval/upload_input");
     EvalBuffers<Real> b;
 
@@ -388,12 +389,11 @@ static EvalBuffers<Real> upload_inputs(GpuState *gpu, int n, const KernelDims &d
     for (int k = 0; k < dims.out_dim; ++k)
         b.out[k] = out0 + std::size_t(k) * n;
 
-    const Real *h_pos_aos = reinterpret_cast<const Real *>(r_src.data());
-    cudaMemcpyAsync(b.pos_aos, h_pos_aos, 3 * std::size_t(n) * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
+    cudaMemcpyAsync(b.pos_aos, r_src, 3 * std::size_t(n) * sizeof(Real), cudaMemcpyHostToDevice, gpu->stream);
 
     if (dims.normal_dim > 0) {
-        if (int(normals.size()) < dims.normal_dim * n)
-            throw std::runtime_error("esp_eval_gpu: this kernel requires per-source normals");
+        if (!normals)
+            throw api_error(DMK_ERR_INVALID_ARGUMENT, "esp_eval_gpu: this kernel requires per-source normals");
         std::vector<Real> packed(std::size_t(dims.charge_dim) * n);
         for (int i = 0; i < n; ++i) {
             for (int k = 0; k < dims.in_dim; ++k)
@@ -404,8 +404,8 @@ static EvalBuffers<Real> upload_inputs(GpuState *gpu, int n, const KernelDims &d
         // Blocking: `packed` is a local about to go out of scope.
         cudaMemcpy(b.charges, packed.data(), packed.size() * sizeof(Real), cudaMemcpyHostToDevice);
     } else {
-        cudaMemcpyAsync(b.charges, charges.data(), std::size_t(dims.charge_dim) * n * sizeof(Real),
-                        cudaMemcpyHostToDevice, gpu->stream);
+        cudaMemcpyAsync(b.charges, charges, std::size_t(dims.charge_dim) * n * sizeof(Real), cudaMemcpyHostToDevice,
+                        gpu->stream);
     }
 
     // The passes accumulate with +=, so the accumulators start at zero.
@@ -459,11 +459,10 @@ static PotForce<Real> as_pot_force(const std::array<std::span<Real>, 4> &sp, dmk
 }
 
 template <typename Real>
-static PotForce<Real> esp_eval_gpu_impl(GpuState *gpu, const std::vector<Vec3T<Real>> &r_src,
-                                        const std::vector<Real> &charges, const std::vector<Real> &normals) {
+static PotForce<Real> esp_eval_gpu_impl(GpuState *gpu, int n, const Real *r_src, const Real *charges,
+                                        const Real *normals) {
     check_plan_real<Real>(gpu);
-    const int n = static_cast<int>(r_src.size());
-    const KernelDims dims = kernel_dims(gpu->kernel, gpu->eval_type);
+    const KernelDims &dims = gpu->dims;
     const auto sp = gpu_make_spans<Real>(gpu, n, dims);
     const EvalBuffers<Real> b = upload_inputs<Real>(gpu, n, dims, r_src, charges, normals);
 
@@ -542,12 +541,10 @@ static PotForce<Real> esp_eval_gpu_impl(GpuState *gpu, const std::vector<Vec3T<R
 
 // Raw component spans, without the velocity relabelling, matching EspPlan's esp_eval_one_step.
 template <typename Real>
-static PotForce<Real> esp_eval_gpu_short_range_impl(GpuState *gpu, const std::vector<Vec3T<Real>> &r_src,
-                                                    const std::vector<Real> &charges,
-                                                    const std::vector<Real> &normals) {
+static PotForce<Real> esp_eval_gpu_short_range_impl(GpuState *gpu, int n, const Real *r_src, const Real *charges,
+                                                    const Real *normals) {
     check_plan_real<Real>(gpu);
-    const int n = static_cast<int>(r_src.size());
-    const KernelDims dims = kernel_dims(gpu->kernel, gpu->eval_type);
+    const KernelDims &dims = gpu->dims;
     const auto sp = gpu_make_spans<Real>(gpu, n, dims);
     const EvalBuffers<Real> b = upload_inputs<Real>(gpu, n, dims, r_src, charges, normals);
 
@@ -560,41 +557,13 @@ static PotForce<Real> esp_eval_gpu_short_range_impl(GpuState *gpu, const std::ve
     return {sp[0], sp[1], sp[2], sp[3], {}, {}, {}};
 }
 
-template <typename Real>
-static PotForce<Real> esp_eval_gpu_long_range_impl(GpuState *gpu, const std::vector<Vec3T<Real>> &r_src,
-                                                   const std::vector<Real> &charges, const std::vector<Real> &normals) {
-    check_plan_real<Real>(gpu);
-    const int n = static_cast<int>(r_src.size());
-    const KernelDims dims = kernel_dims(gpu->kernel, gpu->eval_type);
-    const auto sp = gpu_make_spans<Real>(gpu, n, dims);
-    const EvalBuffers<Real> b = upload_inputs<Real>(gpu, n, dims, r_src, charges, normals);
-
-    const Real scale = Real(2.0 * M_PI) / Real(gpu->L_grid);
-    Real *d_x, *d_y, *d_z;
-    ComplexT<Real> *d_c;
-    pack_long_range_inputs<Real>(gpu, n, dims, scale, b, d_x, d_y, d_z, d_c);
-
-    {
-        NvtxRange range("eval/long_range");
-        long_range_gpu<Real>(*gpu, n, dims, d_x, d_y, d_z, d_c, scale, b.out);
-    }
-
-    download_outputs<Real>(gpu, n, dims, b, sp);
-    return {sp[0], sp[1], sp[2], sp[3], {}, {}, {}};
-}
-
 #define DMK_ESP_GPU_ENTRY(Real)                                                                                        \
-    PotForce<Real> esp_eval_gpu(GpuState *gpu, const std::vector<Vec3T<Real>> &r_src,                                  \
-                                const std::vector<Real> &charges, const std::vector<Real> &normals) {                  \
-        return esp_eval_gpu_impl<Real>(gpu, r_src, charges, normals);                                                  \
+    PotForce<Real> esp_eval_gpu(GpuState *gpu, int n, const Real *r_src, const Real *charges, const Real *normals) {   \
+        return esp_eval_gpu_impl<Real>(gpu, n, r_src, charges, normals);                                               \
     }                                                                                                                  \
-    PotForce<Real> esp_eval_gpu_short_range(GpuState *gpu, const std::vector<Vec3T<Real>> &r_src,                      \
-                                            const std::vector<Real> &charges, const std::vector<Real> &normals) {      \
-        return esp_eval_gpu_short_range_impl<Real>(gpu, r_src, charges, normals);                                      \
-    }                                                                                                                  \
-    PotForce<Real> esp_eval_gpu_long_range(GpuState *gpu, const std::vector<Vec3T<Real>> &r_src,                       \
-                                           const std::vector<Real> &charges, const std::vector<Real> &normals) {       \
-        return esp_eval_gpu_long_range_impl<Real>(gpu, r_src, charges, normals);                                       \
+    PotForce<Real> esp_eval_gpu_short_range(GpuState *gpu, int n, const Real *r_src, const Real *charges,              \
+                                            const Real *normals) {                                                     \
+        return esp_eval_gpu_short_range_impl<Real>(gpu, n, r_src, charges, normals);                                   \
     }
 
 DMK_ESP_GPU_ENTRY(float)

@@ -9,12 +9,11 @@
 #include <dmk.h>
 #include <dmk/direct.hpp>
 #include <dmk/fourier_data.hpp>
+#include <dmk/periodic_reference.hpp>
 #include <dmk/tensorprod.hpp>
 #include <dmk/testing.hpp>
 #include <dmk/tree.hpp>
 #include <dmk/util.hpp>
-
-#include "periodic_reference.hpp"
 
 #include <sctl.hpp>
 
