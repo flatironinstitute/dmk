@@ -50,6 +50,41 @@ cmake .. -DCMAKE_BUILD_TYPE=relwithdebinfo -DBLA_VENDOR=FlexiBLAS
 make -j 10
 ```
 
+## C++ Build — canonical (reproducible)
+
+These are the exact flags used for benchmark numbers. clang 19 with an
+AVX-512 target produces clean, host-portable perf across Flatiron's Zen 4,
+Cascade Lake, and Ice Lake hosts.
+
+```bash
+# Flatiron module stack
+module -q reset
+module load modules/2.4
+module use ~/modules
+module -q load python gcc/14 cmake openmpi openblas/single flexiblas \
+               llvm/19 doxygen papi perf-linux ninja
+
+mkdir -p build-x86v4-rwd && cd build-x86v4-rwd
+C_INCLUDE_PATH= CPLUS_INCLUDE_PATH= cmake .. \
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=on \
+  -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+  -DCMAKE_CXX_FLAGS="-march=x86-64-v4 -fno-omit-frame-pointer" \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DBLA_VENDOR=OpenBLAS -G Ninja
+cmake --build . -j
+```
+
+Flag rationale:
+
+| Flag | Purpose |
+|------|---------|
+| `-march=x86-64-v4` | Portable AVX-512 target. Deterministic across Zen 4 / Cascade Lake / Ice Lake vs `-march=native`. |
+| `-fno-omit-frame-pointer` | Keeps frame pointers for profilers (perf, vtune). |
+| `RelWithDebInfo` | Full optimization + debug symbols. |
+| `-G Ninja` | Faster parallel builds. |
+| `BLA_VENDOR=OpenBLAS` | Single-threaded OpenBLAS (from `openblas/single` module). |
+| Empty `C_INCLUDE_PATH` / `CPLUS_INCLUDE_PATH` | Prevents stray system paths polluting header search. |
+
 # Building on mac
 Currently an OpenMP capable compiler is required to build the code, which the MacOS default
 clang is not. I have managed to get the build working with clang++ from brew via the following.
