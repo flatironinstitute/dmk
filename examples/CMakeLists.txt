@@ -21,6 +21,3 @@ endif()
 
 add_executable(measure_error measure_error.cpp)
 target_link_libraries(measure_error PRIVATE dmk dmk_internal)
-
-add_executable(measure_error_esp measure_error_esp.cpp)
-target_link_libraries(measure_error_esp PRIVATE dmk dmk_internal)

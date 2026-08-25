@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Exploratory visualization of measure_error_esp output, and calibration of the
+Exploratory visualization of `measure_error --solver esp` output, and calibration of the
 requested->effective tolerance curves.
 
 For each (kernel, dim) it plots achieved accuracy (-log10 relative L2) against the
@@ -13,7 +13,7 @@ potential envelope should sit near y=x ("what you ask is what you get").
 
 To CALIBRATE (map requested -> achieved rawly), run the sweep with the derivative
 bump disabled so requested digits == internal resolution:
-    DMK_ESP_NO_GRAD_BUMP=1 ./examples/measure_error_esp -k all -d 0 > raw.csv
+    DMK_ESP_NO_GRAD_BUMP=1 ./examples/measure_error --solver esp -g -k all -d 0 > raw.csv
     python scripts/analyze_esp_error.py raw.csv
 Run WITHOUT the env var to validate that the baked-in bump makes the gradient meet target.
 
@@ -33,7 +33,9 @@ def load(path):
     data = []
     with open(path) as f:
         lines = [ln for ln in f if ln.strip() and not ln.startswith("#")]
-    for r in csv.DictReader(lines):
+    # Rows are padded for readability, so fields (and the header names) carry leading blanks;
+    # skipinitialspace strips both. pandas users want read_csv(..., comment='#', skipinitialspace=True).
+    for r in csv.DictReader(lines, skipinitialspace=True):
         try:
             data.append(
                 dict(
@@ -41,12 +43,19 @@ def load(path):
                     dim=int(r["dim"]),
                     digits=int(r["digits"]),
                     r_c=float(r["r_c"]),
-                    pot_l2=float(r["pot_l2"]),
-                    grad_l2=float(r["grad_l2"]),
+                    pot_l2=float(r["L2_rel"]),
+                    grad_l2=float(r["grad_L2_rel"]),
                 )
             )
         except ValueError:
             continue  # FAILED rows
+        except KeyError as e:
+            # The gradient columns only exist when the sweep was run with -g, and the
+            # gradient envelope is the whole point of this script.
+            raise SystemExit(
+                f"{path}: missing column {e}. Re-run the sweep with -g:\n"
+                "    DMK_ESP_NO_GRAD_BUMP=1 ./examples/measure_error --solver esp -g -k all -d 0 > raw.csv"
+            )
     return data
 
 

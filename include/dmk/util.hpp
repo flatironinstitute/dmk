@@ -363,6 +363,26 @@ inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, auto point_g
             r_src[i] = 0.05;
 }
 
+enum class Distribution : int {
+    Uniform = 0,
+    NSphereSurface = 1,
+    NCubePartialFacet = 2,
+};
+
+inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, Distribution dist, bool set_fixed_charges,
+                           auto &r_src, auto &r_trg, auto &r_normal, auto &charges, long seed) {
+    using Real = std::decay_t<decltype(r_src)>::value_type;
+    if (dist == Distribution::NSphereSurface)
+        return init_test_data(n_dim, nd, n_src, n_trg, NSphereSurface<Real>(n_dim, 0.95 * 0.5, seed), set_fixed_charges,
+                              r_src, r_trg, r_normal, charges);
+    if (dist == Distribution::NCubePartialFacet)
+        return init_test_data(n_dim, nd, n_src, n_trg, NCubePartialFacet<Real>(n_dim, 0.95, 0.02, seed),
+                              set_fixed_charges, r_src, r_trg, r_normal, charges);
+    constexpr Real almost_one = Real(1) - std::numeric_limits<Real>::epsilon();
+    return init_test_data(n_dim, nd, n_src, n_trg, UniformVolume<Real>(n_dim, almost_one, seed), set_fixed_charges,
+                          r_src, r_trg, r_normal, charges);
+}
+
 inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges, auto &r_src,
                            auto &r_trg, auto &rnormal, auto &charges, long seed) {
     using Real = std::decay_t<decltype(r_src)>::value_type;

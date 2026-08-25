@@ -37,8 +37,8 @@ inline int esp_digits_from_eps(double eps) {
 // Effective tolerance to resolve internally when gradients are requested. A gradient costs extra
 // PSWF resolution relative to the potential, and the amount is kernel- and dimension-dependent (the
 // DMK d_eff analog). Gradient lower-envelope fits (achieved digits >= a*requested + b) come from
-// scripts/analyze_esp_error.py over DMK_ESP_NO_GRAD_BUMP=1 measure_error_esp sweeps: to guarantee
-// the requested target on the gradient, resolve d = ceil((target - b)/a) digits internally.
+// scripts/analyze_esp_error.py over DMK_ESP_NO_GRAD_BUMP=1 `measure_error --solver esp -g` sweeps:
+// to guarantee the requested target on the gradient, resolve d = ceil((target - b)/a) internally.
 inline double esp_grad_eps(dmk_ikernel kernel, int dim, double eps) {
     double a = 1.0, b = 0.0;
     if (kernel == DMK_LAPLACE && dim == 2) {

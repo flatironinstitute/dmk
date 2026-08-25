@@ -37,12 +37,6 @@
 
 enum class Solver { DMK, ESP };
 
-typedef enum : int {
-    DMK_UNIFORM = 0,
-    DMK_NSPHERESURFACE = 1,
-    DMK_NCUBEPARTIALFACET = 2,
-} dmk_distribution;
-
 struct Config {
     Solver solver = Solver::DMK;
 
@@ -64,7 +58,7 @@ struct Config {
     // DMK only
     int n_trg = 0;
     int n_per_leaf = 280;
-    dmk_distribution dist = DMK_UNIFORM;
+    dmk::util::Distribution dist = dmk::util::Distribution::Uniform;
     bool enable_direct = true;
     long seed = 0;
     int n_show_outliers = 0; // print top-N worst points per block to stderr (0 = off)
@@ -338,31 +332,14 @@ void print_outliers(const std::vector<Real> &computed, const std::vector<Real> &
 }
 
 template <typename Real>
-void generate_and_scatter(int n_dim, int charge_dim, size_t n_src, size_t n_trg, dmk_distribution dist,
+void generate_and_scatter(int n_dim, int charge_dim, size_t n_src, size_t n_trg, dmk::util::Distribution dist,
                           bool set_fixed_charges, std::vector<Real> &r_src, std::vector<Real> &r_trg,
                           std::vector<Real> &charges, std::vector<Real> &normals, long seed, int rank, int np) {
     std::vector<Real> r_src_all, r_trg_all, charges_all, normals_all;
 
-    if (rank == 0) {
-        using namespace dmk::util;
-        constexpr Real almost_one = 1.0 - std::numeric_limits<Real>::epsilon();
-        switch (dist) {
-        case DMK_UNIFORM:
-            init_test_data(n_dim, charge_dim, int(n_src), int(n_trg), UniformVolume<Real>(n_dim, almost_one, seed),
-                           set_fixed_charges, r_src_all, r_trg_all, normals_all, charges_all);
-            break;
-        case DMK_NSPHERESURFACE:
-            init_test_data(n_dim, charge_dim, int(n_src), int(n_trg),
-                           dmk::util::NSphereSurface<Real>(n_dim, 0.95 * 0.5, seed), set_fixed_charges, r_src_all,
-                           r_trg_all, normals_all, charges_all);
-            break;
-        case DMK_NCUBEPARTIALFACET:
-            init_test_data(n_dim, charge_dim, int(n_src), int(n_trg),
-                           dmk::util::NCubePartialFacet<Real>(n_dim, 0.95, 0.02, seed), set_fixed_charges, r_src_all,
-                           r_trg_all, normals_all, charges_all);
-            break;
-        }
-    }
+    if (rank == 0)
+        dmk::util::init_test_data(n_dim, charge_dim, int(n_src), int(n_trg), dist, set_fixed_charges, r_src_all,
+                                  r_trg_all, normals_all, charges_all, seed);
 
 #ifdef DMK_HAVE_MPI
     const auto mpi_t = std::is_same_v<Real, float> ? MPI_FLOAT : MPI_DOUBLE;
@@ -529,7 +506,7 @@ void print_dmk_config_comment(const Config &cfg, int np, int n_threads, std::ost
        << "# fparam:               " << cfg.fparam << "\n"
        << "# with_grad:            " << cfg.with_grad << "\n"
        << "# precision:            " << (cfg.prec == 'd' ? "double" : "float") << "\n"
-       << "# dist:                 " << cfg.dist << "\n"
+       << "# dist:                 " << int(cfg.dist) << "\n"
        << "# seed:                 " << cfg.seed << "\n"
        << "# eps:                  " << cfg.eps << "\n"
        << "# n_per_leaf:           " << cfg.n_per_leaf << "\n"
@@ -1504,7 +1481,7 @@ Config parse_args(int argc, char *argv[]) {
             }
             break;
         case 'u':
-            cfg.dist = dmk_distribution(std::atoi(optarg));
+            cfg.dist = dmk::util::Distribution(std::atoi(optarg));
             break;
         case 'p':
             if (optarg[0] == 'c')
