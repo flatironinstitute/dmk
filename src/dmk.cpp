@@ -1308,11 +1308,11 @@ inline void pdmk_tree_update_charges(pdmk_tree tree, const Real *charge, const R
         *static_cast<pdmk_tree_impl *>(tree));
 }
 
-// Writes pot_src interleaved [pot, fx, fy, fz] per particle (matching pdmk_tree_eval's
-// [pot, dx, dy, dz] convention) when the plan's eval_type requests forces; else just pot.
-// Vector-field kernels (Stokeslet/Stresslet) write the velocity interleaved [vx, vy, vz] per particle.
+// Writes pot_src interleaved [pot, dx, dy, dz] per particle, matching pdmk_tree_eval, when the
+// plan's eval_type requests gradients; else just pot. Vector-field kernels (Stokeslet/Stresslet)
+// write the velocity interleaved [vx, vy, vz] per particle.
 template <typename Real>
-inline void esp_copy_result(const dmk::PotForce<Real> &result, int n, Real *pot_src) {
+inline void esp_copy_result(const dmk::PotGrad<Real> &result, int n, Real *pot_src) {
     if (!result.vel_x.empty()) {
         const int dim = result.vel_z.empty() ? 2 : 3;
         for (int i = 0; i < n; ++i) {
@@ -1323,18 +1323,18 @@ inline void esp_copy_result(const dmk::PotForce<Real> &result, int n, Real *pot_
         }
         return;
     }
-    if (result.force_x.empty()) {
+    if (result.grad_x.empty()) {
         std::copy(result.pot.begin(), result.pot.end(), pot_src);
         return;
     }
-    const int dim = result.force_z.empty() ? 2 : 3; // scaffolding for a future DIM=2 plan
+    const int dim = result.grad_z.empty() ? 2 : 3; // scaffolding for a future DIM=2 plan
     const int out_dim = 1 + dim;
     for (int i = 0; i < n; ++i) {
         pot_src[i * out_dim + 0] = result.pot[i];
-        pot_src[i * out_dim + 1] = result.force_x[i];
-        pot_src[i * out_dim + 2] = result.force_y[i];
+        pot_src[i * out_dim + 1] = result.grad_x[i];
+        pot_src[i * out_dim + 2] = result.grad_y[i];
         if (dim == 3)
-            pot_src[i * out_dim + 3] = result.force_z[i];
+            pot_src[i * out_dim + 3] = result.grad_z[i];
     }
 }
 

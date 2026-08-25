@@ -16,7 +16,7 @@
 
 namespace {
 
-constexpr double L = 1.0;
+constexpr double L = 1.0; // ESP's unit box; the pbc_ref helpers still take it explicitly
 // nc = floor(L/r_c) = 6, so the pruned strategies' shared table fits at N_DENSE.
 constexpr double R_C = 0.15;
 // Below ~10k sources the measured error has not converged and reports ~1 digit worse than the truth
@@ -51,14 +51,10 @@ const Config kConfigs[] = {
     {DMK_STRESSLET, 0.0, DMK_VELOCITY, false, 0, "stresslet free"},
 };
 
-// Scalar kernels report force = -q*grad; the dipole reports the raw field gradient.
-bool force_convention(dmk_ikernel k) { return k == DMK_LAPLACE || k == DMK_SQRT_LAPLACE || k == DMK_YUKAWA; }
-
-// Sources in [0.01, 0.99)^3 for the periodic references, and the same points shifted into
-// [-L/2, L/2) for the solver. A shift is invisible to the free-space kernels.
+// Sources in [0.01, 0.99)^3, shared by the references and the solver.
 struct Points {
     int n, in_dim, nrm_dim, out_dim;
-    std::vector<double> r_ref, r_esp, q, nrm;
+    std::vector<double> r, q, nrm;
     std::vector<dmk::Vec3T<double>> r_vec;
 
     const double *nrm_ptr() const { return nrm.empty() ? nullptr : nrm.data(); }
@@ -70,10 +66,10 @@ struct Points {
 
         std::default_random_engine eng(seed);
         std::uniform_real_distribution<double> rng(0.01, 0.99);
-        r_ref.resize(3ul * n);
+        r.resize(3ul * n);
         q.resize(std::size_t(in_dim) * n);
         nrm.resize(std::size_t(nrm_dim) * n);
-        for (double &x : r_ref)
+        for (double &x : r)
             x = rng(eng);
         for (double &v : q)
             v = rng(eng) - 0.5;
@@ -89,18 +85,14 @@ struct Points {
                     q[in_dim * i + k] -= s / n;
             }
 
-        r_esp.resize(r_ref.size());
-        for (std::size_t i = 0; i < r_ref.size(); ++i)
-            r_esp[i] = r_ref[i] - 0.5 * L;
         r_vec.resize(n);
         for (int i = 0; i < n; ++i)
-            r_vec[i] = {r_esp[3 * i], r_esp[3 * i + 1], r_esp[3 * i + 2]};
+            r_vec[i] = {r[3 * i], r[3 * i + 1], r[3 * i + 2]};
     }
 };
 
 pdmk_esp_params esp_params(const Config &c, double eps) {
     pdmk_esp_params p{};
-    p.L = L;
     p.r_c = R_C;
     p.eps = eps;
     p.log_level = 6;
@@ -121,12 +113,12 @@ std::vector<std::vector<double>> exact_reference(const Config &c, const Points &
     std::vector<std::vector<double>> ref(nc, std::vector<double>(N_TEST, 0.0));
 
     if (c.periodic && c.n_img == 0) {
-        dmk::pbc_ref::EwaldRef ewald(c.kernel, 3, p.n, p.r_ref.data(), p.q.data(), L);
+        dmk::pbc_ref::EwaldRef ewald(c.kernel, 3, p.n, p.r.data(), p.q.data(), L);
         for (int i = 0; i < N_TEST; ++i) {
             double g[3] = {0, 0, 0};
-            ewald.eval(&p.r_ref[3 * i], i, ref[0][i], g);
+            ewald.eval(&p.r[3 * i], i, ref[0][i], g);
             for (int k = 1; k < nc; ++k)
-                ref[k][i] = -p.q[i] * g[k - 1];
+                ref[k][i] = g[k - 1];
         }
         return ref;
     }
@@ -134,30 +126,26 @@ std::vector<std::vector<double>> exact_reference(const Config &c, const Points &
     const dmk_eval_type et = velocity ? DMK_VELOCITY : DMK_POTENTIAL_GRAD;
     std::vector<double> flat;
     if (c.periodic) {
-        dmk::pbc_ref::image_sum(3, c.fparam, c.n_img, et, p.n, p.r_ref.data(), p.q.data(), L, N_TEST, p.r_ref.data(),
-                                flat);
+        dmk::pbc_ref::image_sum(3, c.fparam, c.n_img, et, p.n, p.r.data(), p.q.data(), L, N_TEST, p.r.data(), flat);
     } else {
         flat.assign(std::size_t(N_TEST) * nc, 0.0);
-        dmk::get_direct_evaluator<double>(c.kernel, et, 3, c.fparam)(p.n, p.r_esp.data(), p.q.data(),
-                                                                     p.nrm.empty() ? nullptr : p.nrm.data(), N_TEST,
-                                                                     p.r_esp.data(), flat.data());
+        dmk::get_direct_evaluator<double>(c.kernel, et, 3, c.fparam)(p.n, p.r.data(), p.q.data(), p.nrm_ptr(), N_TEST,
+                                                                     p.r.data(), flat.data());
     }
     for (int i = 0; i < N_TEST; ++i)
-        for (int k = 0; k < nc; ++k) {
-            const double v = flat[std::size_t(i) * nc + k];
-            ref[k][i] = (k > 0 && force_convention(c.kernel)) ? -p.q[i] * v : v;
-        }
+        for (int k = 0; k < nc; ++k)
+            ref[k][i] = flat[std::size_t(i) * nc + k];
     return ref;
 }
 
 // ESP reports vector-field kernels as velocity and everything else as pot + gradient.
-std::array<std::span<double>, 4> components(dmk::PotForce<double> &pf) {
+std::array<std::span<double>, 4> components(dmk::PotGrad<double> &pf) {
     if (!pf.vel_x.empty())
         return {pf.vel_x, pf.vel_y, pf.vel_z, std::span<double>{}};
-    return {pf.pot, pf.force_x, pf.force_y, pf.force_z};
+    return {pf.pot, pf.grad_x, pf.grad_y, pf.grad_z};
 }
 
-void check_vs_reference(dmk::PotForce<double> pf, const std::vector<std::vector<double>> &ref, double tol,
+void check_vs_reference(dmk::PotGrad<double> pf, const std::vector<std::vector<double>> &ref, double tol,
                         const Config &c, double eps, const char *who) {
     const auto comp = components(pf);
     const int out_dim = dmk::get_kernel_output_dim(3, c.kernel, c.eval_type);
@@ -202,8 +190,8 @@ struct Fixture {
         dmk::esp_destroy_gpu_plan(gpu);
         delete plan;
     }
-    dmk::PotForce<double> cpu_eval() {
-        return plan->eval(p.n, p.r_esp.data(), p.q.data(), p.nrm.empty() ? nullptr : p.nrm.data());
+    dmk::PotGrad<double> cpu_eval() {
+        return plan->eval(p.n, p.r.data(), p.q.data(), p.nrm.empty() ? nullptr : p.nrm.data());
     }
 };
 
@@ -225,8 +213,8 @@ TEST_CASE("[ESP GPU] accuracy vs an exact reference") {
         for (const double eps : epses) {
             Fixture f(c, eps, N_ACC);
             check_vs_reference(f.cpu_eval(), it->second, eps, c, eps, "cpu");
-            check_vs_reference(dmk::esp_eval_gpu(f.gpu, f.p.n, f.p.r_esp.data(), f.p.q.data(), f.p.nrm_ptr()),
-                               it->second, eps, c, eps, "gpu");
+            check_vs_reference(dmk::esp_eval_gpu(f.gpu, f.p.n, f.p.r.data(), f.p.q.data(), f.p.nrm_ptr()), it->second,
+                               eps, c, eps, "gpu");
         }
     }
 }
@@ -238,7 +226,7 @@ TEST_CASE("[ESP GPU] short-range: GPU vs CPU") {
     for (const Config &c : kConfigs) {
         Fixture f(c, 1e-5, N_DENSE);
         auto cpu = dmk::esp_eval_short_range(f.plan, f.p.r_vec, f.p.q, f.p.nrm);
-        auto gpu = dmk::esp_eval_gpu_short_range(f.gpu, f.p.n, f.p.r_esp.data(), f.p.q.data(), f.p.nrm_ptr());
+        auto gpu = dmk::esp_eval_gpu_short_range(f.gpu, f.p.n, f.p.r.data(), f.p.q.data(), f.p.nrm_ptr());
         const double l2 = l2_between(components(gpu), components(cpu), f.p.out_dim, f.p.n);
         CHECK_MESSAGE(l2 < TOL, std::string(c.name) << " short-range l2=" << l2);
     }
@@ -259,7 +247,7 @@ TEST_CASE("[ESP GPU] short-range: strategies and sort modes agree") {
         for (auto st : strategies)
             for (auto sm : sorts) {
                 Fixture f(c, 1e-5, N_DENSE, st, sm);
-                auto gpu = dmk::esp_eval_gpu_short_range(f.gpu, f.p.n, f.p.r_esp.data(), f.p.q.data(), f.p.nrm_ptr());
+                auto gpu = dmk::esp_eval_gpu_short_range(f.gpu, f.p.n, f.p.r.data(), f.p.q.data(), f.p.nrm_ptr());
                 const auto g = components(gpu);
                 double e2 = 0, r2 = 0;
                 for (int k = 0; k < f.p.out_dim; ++k)
@@ -281,7 +269,6 @@ TEST_CASE("[ESP GPU] free-space uses a padded grid") {
     dmk::EspPlan<double> plan(params);
     CHECK(plan.pad > 1.0);
     CHECK(plan.L_grid > L);
-    CHECK(plan.params.L == L);
 }
 
 // 2D has no GPU path.

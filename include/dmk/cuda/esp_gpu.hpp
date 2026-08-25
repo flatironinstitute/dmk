@@ -15,8 +15,7 @@ struct GpuState; // full definition lives in src/cuda/esp/state.hpp
 struct GpuPlanConfig {
     int nf = 0;
     int n_digits = 0;
-    double L_box = 0;  // particle box (pdmk_esp_params::L): cell binning and periodic wrap shifts
-    double L_grid = 0; // FFT grid extent (EspPlan::L_grid): equals L_box only when periodic
+    double L_grid = 0; // FFT grid extent (EspPlan::L_grid): 1 when periodic, padded otherwise
     double r_c = 0;
     // cuFINUFFT's upsampfac; must equal params.sigma so the ES kernel matches this grid.
     double gpu_upsampfac = 0;

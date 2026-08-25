@@ -34,11 +34,11 @@ inline int esp_digits_from_eps(double eps) {
     return std::clamp(static_cast<int>(std::lround(-std::log10(eps))), 2, 12);
 }
 
-// Effective tolerance to resolve internally when gradients/forces are requested. A gradient costs
-// extra PSWF resolution relative to the potential, and the amount is kernel- and dimension-dependent
-// (the DMK d_eff analog). Force lower-envelope fits (achieved force digits >= a*requested + b) come
-// from scripts/analyze_esp_error.py over DMK_ESP_NO_GRAD_BUMP=1 measure_error_esp sweeps: to guarantee
-// the requested target on the force, resolve d = ceil((target - b)/a) digits internally.
+// Effective tolerance to resolve internally when gradients are requested. A gradient costs extra
+// PSWF resolution relative to the potential, and the amount is kernel- and dimension-dependent (the
+// DMK d_eff analog). Gradient lower-envelope fits (achieved digits >= a*requested + b) come from
+// scripts/analyze_esp_error.py over DMK_ESP_NO_GRAD_BUMP=1 measure_error_esp sweeps: to guarantee
+// the requested target on the gradient, resolve d = ceil((target - b)/a) digits internally.
 inline double esp_grad_eps(dmk_ikernel kernel, int dim, double eps) {
     double a = 1.0, b = 0.0;
     if (kernel == DMK_LAPLACE && dim == 2) {
@@ -61,7 +61,7 @@ inline double esp_grad_eps(dmk_ikernel kernel, int dim, double eps) {
         b = -0.10;
     } else if (kernel == DMK_LAPLACE_DIPOLE && dim == 3) {
         // Dipole shares the Laplace-3D residual profile (its evaluator differentiates it), so reuse the
-        // Laplace-3D force fit until a dedicated analyze_esp_error sweep calibrates it.
+        // Laplace-3D gradient fit until a dedicated analyze_esp_error sweep calibrates it.
         a = 1.01;
         b = -0.19;
     }
@@ -71,7 +71,7 @@ inline double esp_grad_eps(dmk_ikernel kernel, int dim, double eps) {
     return std::pow(10.0, -std::ceil((target - b) / a));
 }
 
-// n_digits the plan resolves to: the requested eps, tightened by esp_grad_eps when forces are wanted
+// n_digits the plan resolves to: the requested eps, tightened by esp_grad_eps when gradients are wanted
 // (the ESP analog of DMK's d_eff bump) so every stage -- eps_d, P, beta, the short-range residual --
 // resolves to match. DMK_ESP_NO_GRAD_BUMP disables the bump, used to calibrate the grad curve raw.
 inline int esp_plan_digits(const pdmk_esp_params &p) {
@@ -93,13 +93,13 @@ inline bool esp_spatial_sort(const pdmk_esp_params &params) {
     return params.esp_flags & (DMK_ESP_PRUNE_TILE | DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L);
 }
 
-// Potential-family kernels (scalar, Laplace-dipole) fill pot + force_x/y/z: force_x/y/z are empty if
-// eval_type == DMK_POTENTIAL, and force_z stays empty for a DIM=2 plan (callers can distinguish DIM by
-// force_z.empty()). Vector-field kernels (Stokeslet velocity) fill vel_x/y/z instead, leaving the
-// pot/force_* spans empty.
+// Potential-family kernels (scalar, Laplace-dipole) fill pot + grad_x/y/z: grad_x/y/z are empty if
+// eval_type == DMK_POTENTIAL, and grad_z stays empty for a DIM=2 plan (callers can distinguish DIM by
+// grad_z.empty()). Vector-field kernels (Stokeslet velocity) fill vel_x/y/z instead, leaving the
+// pot/grad_* spans empty.
 template <typename Real>
-struct PotForce {
-    std::span<Real> pot, force_x, force_y, force_z;
+struct PotGrad {
+    std::span<Real> pot, grad_x, grad_y, grad_z;
     std::span<Real> vel_x, vel_y, vel_z;
 };
 
@@ -134,21 +134,19 @@ struct EspPlan {
     int P, n_f;      // spread width and oversampled grid size per axis
     double h;        // oversampled grid spacing L_grid/n_f
     double pad;      // FFT-grid padding factor per axis (1 periodic; 2*sqrt(n_dim) free-space)
-    double L_grid;   // spectral-grid period pad*L (periodic: == L)
-    double trunc_rl; // free-space kernel truncation radius = sqrt(n_dim)*L (source-box diagonal)
+    double L_grid;   // spectral-grid period, == pad (periodic: 1, i.e. the unit source box)
+    double trunc_rl; // free-space kernel truncation radius ~ sqrt(n_dim) (unit-box diagonal)
     PSWFKernel pswf;
     std::vector<Real> scaling_coeffs; // diagonal far-field scaling, computed in double then narrowed to Real once
     Real self_factor{0};              // long-range kernel value at r=0, subtracted per source (self-energy)
     Real dipole_grad_self{0};         // Laplace-dipole gradient self-constant (grad[a] -= this * d[a] per source)
     pdmk_esp_params params;
     // Component counts (scalar kernels: 1/1). Vector kernels carry input_dim charge components per
-    // source and output_dim potential components per target; grad_is_force distinguishes the scalar
-    // "force" gradient (-q*grad, requires the per-target charge) from a raw field gradient (dipole).
+    // source and output_dim potential components per target.
     int input_dim{1}, output_dim{1}, normal_dim{0};
     // Per-source payload width fed to short_range/long_range: input_dim charge comps, then normal_dim
     // normal comps packed after them (Stresslet = force(3) + normal(3) = 6; every other kernel = input_dim).
     int charge_dim{1};
-    bool grad_is_force{true};
     residual_evaluator_func<Real> evaluator;
     residual_evaluator_range_func<Real> range_evaluator;
     std::vector<Real> buf;
@@ -158,13 +156,13 @@ struct EspPlan {
     std::array<std::vector<Real>, 3> lr_coord;               // n-sized NU coordinates per axis
     std::vector<std::complex<Real>> lr_c, lr_out;            // n-sized channel charges / interp output
     std::vector<std::vector<std::complex<Real>>> lr_in;      // ntot-sized per-input-channel spread/FFT grids
-    std::array<std::vector<std::complex<Real>>, 4> lr_u_hat; // ntot-sized output-component spectra (pot + force axes)
+    std::array<std::vector<std::complex<Real>>, 4> lr_u_hat; // ntot-sized output-component spectra (pot + grad axes)
 
     explicit EspPlan(const pdmk_esp_params &params);
 
     // normals is required for the Stresslet (force-dipole orientation, normal_dim comps per source) and
     // ignored otherwise.
-    PotForce<Real> eval(int n, const Real *r_src, const Real *charges, const Real *normals = nullptr);
+    PotGrad<Real> eval(int n, const Real *r_src, const Real *charges, const Real *normals = nullptr);
 
     // Zero-initialized output spans over the plan's own workspace.
     std::array<std::span<Real>, 4> output_spans(int n);
@@ -181,10 +179,10 @@ struct EspPlan {
 #endif
     template <int DIM>
     void short_range(int n, const Real *r_src, const Real *charges, std::span<Real> pot,
-                     std::array<std::span<Real>, DIM> force);
+                     std::array<std::span<Real>, DIM> grad);
     template <int DIM>
     void long_range(int n, const Real *r_src, const Real *charges, std::span<Real> pot,
-                    std::array<std::span<Real>, DIM> force);
+                    std::array<std::span<Real>, DIM> grad);
     void self_interaction(int n, const Real *charges, std::span<Real> pot);
     // Interleaves charges and normals into the charge_dim-wide payload short_range/long_range want.
     const Real *pack_payload(int n, const Real *charges, const Real *normals, std::vector<Real> &scratch) const;
@@ -193,11 +191,11 @@ struct EspPlan {
 // One sub-step at a time, for GPU-vs-CPU comparison. No self-interaction correction. `normals` is
 // only read by the Stresslet; the components are returned raw, without the velocity relabelling.
 template <typename Real>
-PotForce<Real> esp_eval_short_range(EspPlan<Real> *plan, const std::vector<Vec3T<Real>> &r_src,
-                                    const std::vector<Real> &charges, const std::vector<Real> &normals = {});
-template <typename Real>
-PotForce<Real> esp_eval_long_range(EspPlan<Real> *plan, const std::vector<Vec3T<Real>> &r_src,
+PotGrad<Real> esp_eval_short_range(EspPlan<Real> *plan, const std::vector<Vec3T<Real>> &r_src,
                                    const std::vector<Real> &charges, const std::vector<Real> &normals = {});
+template <typename Real>
+PotGrad<Real> esp_eval_long_range(EspPlan<Real> *plan, const std::vector<Vec3T<Real>> &r_src,
+                                  const std::vector<Real> &charges, const std::vector<Real> &normals = {});
 
 // Fixed at plan creation; create several plans to compare. Dense evaluates all 27 neighbour cells;
 // PruneTile culls tile-vs-tile by AABB -- measured to skip only ~10% of pairs when cell width ~= r_c
@@ -223,10 +221,10 @@ void esp_destroy_gpu_plan(GpuState *gpu);
 // Same argument convention as EspPlan<Real>::eval. Returned spans are valid until the next
 // esp_eval_gpu on the same gpu, or until it is destroyed.
 #define DMK_ESP_GPU_DECL(Real)                                                                                         \
-    PotForce<Real> esp_eval_gpu(GpuState *gpu, int n, const Real *r_src, const Real *charges,                          \
-                                const Real *normals = nullptr);                                                        \
-    PotForce<Real> esp_eval_gpu_short_range(GpuState *gpu, int n, const Real *r_src, const Real *charges,              \
-                                            const Real *normals = nullptr)
+    PotGrad<Real> esp_eval_gpu(GpuState *gpu, int n, const Real *r_src, const Real *charges,                           \
+                               const Real *normals = nullptr);                                                         \
+    PotGrad<Real> esp_eval_gpu_short_range(GpuState *gpu, int n, const Real *r_src, const Real *charges,               \
+                                           const Real *normals = nullptr)
 
 DMK_ESP_GPU_DECL(float);
 DMK_ESP_GPU_DECL(double);

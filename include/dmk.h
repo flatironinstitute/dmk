@@ -123,7 +123,7 @@ pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src,
                            const double *charge, const double *normal, int n_trg, const double *r_trg);
 
 // ESP (Ewald Sum with PSWF kernels)
-// Particles lie in the cubic box [-L/2, L/2)^n_dim.
+// Particles lie in the unit box [0, 1)^n_dim, the same convention as the tree path.
 
 // Short-range method selection bits for pdmk_esp_params.esp_flags. The three strategies
 // (source-pruning granularity, within-cell spatial sort, Newton's-third-law reciprocal) are
@@ -140,8 +140,7 @@ enum {
 };
 
 typedef struct pdmk_esp_params {
-    double L DMK_DEFAULT(1.0);                          ///< periodic box side length
-    double r_c DMK_DEFAULT(0.05);                       ///< real-space cutoff radius
+    double r_c DMK_DEFAULT(0.05);                       ///< real-space cutoff radius (<= 1/3)
     double eps DMK_DEFAULT(1e-6);                       ///< target precision
     int log_level DMK_DEFAULT(6);                       ///< 0: trace … 6: off (matches dmk_log_level)
     dmk_ikernel kernel DMK_DEFAULT(DMK_LAPLACE);        ///< Pair interaction to calculate
@@ -166,7 +165,8 @@ pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator comm, pdmk_esp_params params
 pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator comm, pdmk_esp_params params);
 
 // normal is the per-source orientation array required by the Stresslet (DIM comps per source) and
-// ignored (may be NULL) by every other kernel.
+// ignored (may be NULL) by every other kernel. pot_src is written interleaved per source,
+// [pot, d/dx, ...] for the potential-family kernels and [vx, vy, vz] for the velocity kernels.
 dmk_error pdmk_esp_eval(dmk_communicator comm, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
                         const double *normal, double *pot_src);
 dmk_error pdmk_esp_evalf(dmk_communicator comm, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,

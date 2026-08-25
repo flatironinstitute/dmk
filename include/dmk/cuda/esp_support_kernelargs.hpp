@@ -19,13 +19,11 @@ struct EspSupportArgs {
     int out_dim = 0;
     int charge_dim = 0; // packed source payload width, [charge | normal]
     int n_channels = 0; // long-range input channel count
-    int grad_is_force = 0;
     int pack_outer = 0; // Stresslet: spread channels are force[a]*normal[b]
     // Self-correction target: out[self_first .. self_first+self_count) -= factor * charge component.
     int self_first = 0;
     int self_count = 0;
 
-    Real L = Real{0};
     Real scale = Real{0};
     Real factor = Real{0};
     Real inv_ntot = Real{0};
@@ -35,7 +33,6 @@ struct EspSupportArgs {
     const Real *pos_aos = nullptr;
     const Real *charges = nullptr;
     const int *orig = nullptr;
-    const Real *qs_sorted = nullptr;
     const Real *pg_sorted = nullptr;
 
     int *cell_idx = nullptr;
@@ -48,9 +45,9 @@ struct EspSupportArgs {
 
     // Outputs, in original (un-permuted) particle order
     Real *pot = nullptr;
-    Real *fx = nullptr;
-    Real *fy = nullptr;
-    Real *fz = nullptr;
+    Real *gx = nullptr;
+    Real *gy = nullptr;
+    Real *gz = nullptr;
 
     // Spectral grids
     const Real *scaling_coeffs = nullptr;
@@ -62,7 +59,6 @@ struct EspSupportArgs {
 
     // Non-uniform point values
     const Complex *c = nullptr;
-    const Complex *force_c = nullptr;
     Complex *c_out = nullptr;
     Real *out = nullptr;
 };

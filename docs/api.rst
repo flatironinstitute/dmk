@@ -63,8 +63,8 @@ ESP: Ewald summation with prolates
 ----------------------------------
 
 DMK includes an experimental periodic (and free-space) electrostatics solver based on
-prolate spheroidal wave functions. Particles lie in the cubic box
-:math:`[-L/2,\, L/2)^{n}`.
+prolate spheroidal wave functions. Particles lie in the unit box
+:math:`[0,\, 1)^{n}`, the same convention as the tree path.
 
 .. doxygenstruct:: pdmk_esp_params
    :members:

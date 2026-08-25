@@ -76,7 +76,6 @@ void build_cell_list_gpu(GpuState &gpu, int n, int nc, int charge_dim, const Rea
     EspSupportArgs<Real, ComplexT<Real>> a;
     a.n = n;
     a.nc = nc;
-    a.L = Real(gpu.L_box); // cell binning is particle-box geometry
     a.charge_dim = charge_dim;
     a.pos_aos = d_pos_aos;
     a.charges = d_charges;
@@ -131,19 +130,17 @@ void build_cell_list_gpu(GpuState &gpu, int n, int nc, int charge_dim, const Rea
 
 // Un-permutes the cell-sorted accumulator onto the caller's arrays.
 template <typename Real>
-void scatter_gpu(GpuState &gpu, int n, int out_dim, bool grad_is_force, const int *d_orig, const Real *d_qs_sorted,
-                 const Real *d_pg_sorted, Real *d_pot, Real *d_fx, Real *d_fy, Real *d_fz) {
+void scatter_gpu(GpuState &gpu, int n, int out_dim, const int *d_orig, const Real *d_pg_sorted, Real *d_pot, Real *d_gx,
+                 Real *d_gy, Real *d_gz) {
     EspSupportArgs<Real, ComplexT<Real>> a;
     a.n = n;
     a.out_dim = out_dim;
-    a.grad_is_force = grad_is_force ? 1 : 0;
     a.orig = d_orig;
-    a.qs_sorted = d_qs_sorted;
     a.pg_sorted = d_pg_sorted;
     a.pot = d_pot;
-    a.fx = d_fx;
-    a.fy = d_fy;
-    a.fz = d_fz;
+    a.gx = d_gx;
+    a.gy = d_gy;
+    a.gz = d_gz;
     launch_stage<Real>(kEspStageScatter, n, a, gpu.stream);
 }
 
@@ -164,8 +161,7 @@ void report_prune_stats(GpuState &gpu, const unsigned long long *d_prune_stats) 
     template void launch_stage<Real>(int, int, EspSupportArgs<Real, ComplexT<Real>> &, cudaStream_t, int);             \
     template void build_cell_list_gpu<Real>(GpuState &, int, int, int, const Real *, const Real *, int **, int **,     \
                                             Real **, Real **, Real **, Real **);                                       \
-    template void scatter_gpu<Real>(GpuState &, int, int, bool, const int *, const Real *, const Real *, Real *,       \
-                                    Real *, Real *, Real *)
+    template void scatter_gpu<Real>(GpuState &, int, int, const int *, const Real *, Real *, Real *, Real *, Real *)
 
 DMK_ESP_SUPPORT_INST(float);
 DMK_ESP_SUPPORT_INST(double);

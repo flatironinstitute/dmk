@@ -26,17 +26,16 @@ __device__ void cell_index_kernel(const EspSupportArgs &args)
 {
     const Real *d_pos_aos = args.pos_aos;
     const int n = args.n;
-    const Real L = args.L;
     const int nc = args.nc;
     int *d_cell_idx = args.cell_idx;
 
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    const Real cell_size = L / Real(nc);
+    const Real cell_size = Real(1) / Real(nc);
 
     // Wrapped cell coordinate for axis value x; writes that axis's sub-cell bin into bin_out.
     auto cell_coord_and_bin = [&](Real x, int &bin_out) {
-        const Real u = (x + L / Real(2)) / cell_size; // continuous cell coordinate
+        const Real u = x / cell_size; // continuous cell coordinate
         int c = static_cast<int>(floor(u));
         Real frac = u - floor(u);
         int b = static_cast<int>(frac * Real(kEspBins));
@@ -78,17 +77,16 @@ __device__ void cell_index_kernel_morton(const EspSupportArgs &args)
 {
     const Real *d_pos_aos = args.pos_aos;
     const int n = args.n;
-    const Real L = args.L;
     const int nc = args.nc;
     unsigned long long *d_cell_idx = args.cell_idx64;
 
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    const Real cell_size = L / Real(nc);
+    const Real cell_size = Real(1) / Real(nc);
 
     // Morton needs kMortonBits of resolution, not one bin.
     auto cell_coord_and_frac = [&](Real x, Real &frac_out) {
-        const Real u = (x + L / Real(2)) / cell_size;
+        const Real u = x / cell_size;
         int c = static_cast<int>(floor(u));
         frac_out = u - floor(u);
         c = (c >= nc) ? c - nc : c;
@@ -141,25 +139,14 @@ __device__ void scatter_kernel(const EspSupportArgs &args)
     const int out_dim = args.out_dim;
     const Real *pg_sorted = args.pg_sorted;
     const int *d_orig = args.orig;
-    const Real *d_qs_sorted = args.qs_sorted;
-    Real *d_pot = args.pot;
-    Real *d_fx = args.fx;
-    Real *d_fy = args.fy;
-    Real *d_fz = args.fz;
+    Real *out[4] = {args.pot, args.gx, args.gy, args.gz};
 
     int a = blockIdx.x * blockDim.x + threadIdx.x;
     if (a >= n) return;
     const int o = d_orig[a];
 
-    // Component 0 lands raw. The scalar kernels turn the gradient rows into a force with the
-    // target's own charge; the vector kernels' components pass through as velocities.
-    Real *out[4] = {d_pot, d_fx, d_fy, d_fz};
-    out[0][o] += pg_sorted[out_dim * a + 0];
-    if (out_dim == 1) return;
-    const Real q = args.grad_is_force ? d_qs_sorted[a] : Real(1);
-    const Real sgn = args.grad_is_force ? Real(-1) : Real(1);
-    for (int k = 1; k < out_dim; ++k)
-        out[k][o] += sgn * q * pg_sorted[out_dim * a + k];
+    for (int k = 0; k < out_dim; ++k)
+        out[k][o] += pg_sorted[out_dim * a + k];
 }
 
 __device__ __forceinline__ Complex cadd(Complex a, Complex b) { return {a.x + b.x, a.y + b.y}; }
@@ -283,19 +270,6 @@ __device__ void extract_real_kernel(const EspSupportArgs &args)
     d_out[i] += Real(d_c[i].x);
 }
 
-// force_out[j] += -charge[j]*real(force_c[j]); charges come from d_c, packed as {charge, 0}.
-__device__ void accumulate_force_kernel(const EspSupportArgs &args)
-{
-    const int n = args.n;
-    const Complex *d_c = args.c;
-    const Complex *d_force_c = args.force_c;
-    Real *d_force_out = args.out;
-
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= n) return;
-    d_force_out[i] += Real(-d_c[i].x * d_force_c[i].x);
-}
-
 // Removes the long-range field's self-interaction. One shape covers the scalar potential self,
 // the Laplace-dipole gradient self (components 1..3) and the Stokeslet per-component self.
 __device__ void self_interaction_kernel(const EspSupportArgs &args)
@@ -303,7 +277,7 @@ __device__ void self_interaction_kernel(const EspSupportArgs &args)
     const int n = args.n;
     const Real factor = args.factor;
     const Real *d_charges = args.charges;
-    Real *out[4] = {args.pot, args.fx, args.fy, args.fz};
+    Real *out[4] = {args.pot, args.gx, args.gy, args.gz};
 
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
@@ -315,7 +289,7 @@ __device__ void self_interaction_kernel(const EspSupportArgs &args)
 __device__ void add_const_kernel(const EspSupportArgs &args)
 {
     const int n = args.n;
-    Real *out[4] = {args.pot, args.fx, args.fy, args.fz};
+    Real *out[4] = {args.pot, args.gx, args.gy, args.gz};
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) out[args.self_first][i] += args.factor;
 }
@@ -367,10 +341,8 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE) DMK_ESP_SUPPORT_KERNEL_
     else if constexpr (STAGE == 6)
         extract_real_kernel(args);
     else if constexpr (STAGE == 7)
-        accumulate_force_kernel(args);
-    else if constexpr (STAGE == 8)
         self_interaction_kernel(args);
-    else if constexpr (STAGE == 9)
+    else if constexpr (STAGE == 8)
         add_const_kernel(args);
     else
         scale_pack_kernel(args);

@@ -27,7 +27,6 @@ struct NvtxRange {
 
 GpuState *gpu_create_state(const GpuPlanConfig &cfg) {
     const int nf = cfg.nf;
-    const double L_box = cfg.L_box;
     const double L_grid = cfg.L_grid;
     const double r_c = cfg.r_c;
     const double tol = cfg.tol;
@@ -39,7 +38,6 @@ GpuState *gpu_create_state(const GpuPlanConfig &cfg) {
     auto *gpu = new GpuState;
     gpu->nf = nf;
     gpu->n_digits = cfg.n_digits;
-    gpu->L_box = L_box;
     gpu->L_grid = L_grid;
     gpu->r_c = r_c;
     gpu->use_periodic = cfg.use_periodic;
@@ -131,10 +129,10 @@ GpuState *gpu_create_state(const GpuPlanConfig &cfg) {
         gpu->cfnufft_plan_2 = p2;
     }
 
-    // 27-cell-stencil neighbour tables. Particle-box geometry, so L_box and not L_grid.
-    gpu->nc = static_cast<int>(std::floor(L_box / r_c));
+    // 27-cell-stencil neighbour tables. Unit particle box, so 1 and not L_grid.
+    gpu->nc = static_cast<int>(std::floor(1.0 / r_c));
     if (gpu->nc < 3)
-        throw api_error(DMK_ERR_INVALID_ARGUMENT, "esp: the GPU short-range path requires r_c <= L/3 (nc >= 3)");
+        throw api_error(DMK_ERR_INVALID_ARGUMENT, "esp: the GPU short-range path requires r_c <= 1/3 (nc >= 3)");
     {
         const int ntab = gpu->nc * 3;
         std::vector<int> h_nbc_tab(ntab);
@@ -146,10 +144,10 @@ GpuState *gpu_create_state(const GpuPlanConfig &cfg) {
                 int ci = c + d - 1;
                 if (ci < 0) {
                     h_nbc_tab[c * 3 + d] = periodic ? ci + gpu->nc : -1;
-                    h_off_tab[c * 3 + d] = periodic ? -L_box : 0.0;
+                    h_off_tab[c * 3 + d] = periodic ? -1.0 : 0.0;
                 } else if (ci >= gpu->nc) {
                     h_nbc_tab[c * 3 + d] = periodic ? ci - gpu->nc : -1;
-                    h_off_tab[c * 3 + d] = periodic ? L_box : 0.0;
+                    h_off_tab[c * 3 + d] = periodic ? 1.0 : 0.0;
                 } else {
                     h_nbc_tab[c * 3 + d] = ci;
                     h_off_tab[c * 3 + d] = 0.0;
@@ -317,18 +315,9 @@ static void long_range_gpu(GpuState &gpu, int n, const KernelDims &dims, const R
 
         cuda::EspSupportArgs<Real, ComplexT<Real>> a;
         a.n = n;
-        // Component 0 lands raw. The scalar kernels turn the gradient rows into a force with the
-        // target's own charge; the vector kernels' components pass through as velocities.
-        if (k > 0 && dims.grad_is_force) {
-            a.c = d_c; // channel 0 is {charge, 0}
-            a.force_c = d_nu_c;
-            a.out = d_out[k];
-            cuda::esp::launch_stage<Real>(cuda::esp::kEspStageAccumForce, n, a, gpu.stream);
-        } else {
-            a.c = d_nu_c;
-            a.out = d_out[k];
-            cuda::esp::launch_stage<Real>(cuda::esp::kEspStageExtractReal, n, a, gpu.stream);
-        }
+        a.c = d_nu_c;
+        a.out = d_out[k];
+        cuda::esp::launch_stage<Real>(cuda::esp::kEspStageExtractReal, n, a, gpu.stream);
     }
 }
 
@@ -452,15 +441,15 @@ static void download_outputs(GpuState *gpu, int n, const KernelDims &dims, const
 
 // Vector-field kernels report velocity, potential-family kernels pot + gradient, as EspPlan::eval.
 template <typename Real>
-static PotForce<Real> as_pot_force(const std::array<std::span<Real>, 4> &sp, dmk_ikernel kernel) {
+static PotGrad<Real> as_pot_grad(const std::array<std::span<Real>, 4> &sp, dmk_ikernel kernel) {
     if (kernel == DMK_STOKESLET || kernel == DMK_STRESSLET)
         return {{}, {}, {}, {}, sp[0], sp[1], sp[2]};
     return {sp[0], sp[1], sp[2], sp[3], {}, {}, {}};
 }
 
 template <typename Real>
-static PotForce<Real> esp_eval_gpu_impl(GpuState *gpu, int n, const Real *r_src, const Real *charges,
-                                        const Real *normals) {
+static PotGrad<Real> esp_eval_gpu_impl(GpuState *gpu, int n, const Real *r_src, const Real *charges,
+                                       const Real *normals) {
     check_plan_real<Real>(gpu);
     const KernelDims &dims = gpu->dims;
     const auto sp = gpu_make_spans<Real>(gpu, n, dims);
@@ -507,9 +496,9 @@ static PotForce<Real> esp_eval_gpu_impl(GpuState *gpu, int n, const Real *r_src,
             a.factor = factor;
             a.charges = b.charges;
             a.pot = b.out[0];
-            a.fx = b.out[1];
-            a.fy = b.out[2];
-            a.fz = b.out[3];
+            a.gx = b.out[1];
+            a.gy = b.out[2];
+            a.gz = b.out[3];
             cuda::esp::launch_stage<Real>(cuda::esp::kEspStageSelfInteraction, n, a, gpu->stream);
         }
     }
@@ -528,21 +517,21 @@ static PotForce<Real> esp_eval_gpu_impl(GpuState *gpu, int n, const Real *r_src,
             a.self_first = k;
             a.factor = netf[k] / Real(gpu->trunc_rl);
             a.pot = b.out[0];
-            a.fx = b.out[1];
-            a.fy = b.out[2];
-            a.fz = b.out[3];
+            a.gx = b.out[1];
+            a.gy = b.out[2];
+            a.gz = b.out[3];
             cuda::esp::launch_stage<Real>(cuda::esp::kEspStageAddConst, n, a, gpu->stream);
         }
     }
 
     download_outputs<Real>(gpu, n, dims, b, sp);
-    return as_pot_force<Real>(sp, gpu->kernel);
+    return as_pot_grad<Real>(sp, gpu->kernel);
 }
 
 // Raw component spans, without the velocity relabelling, matching EspPlan's esp_eval_one_step.
 template <typename Real>
-static PotForce<Real> esp_eval_gpu_short_range_impl(GpuState *gpu, int n, const Real *r_src, const Real *charges,
-                                                    const Real *normals) {
+static PotGrad<Real> esp_eval_gpu_short_range_impl(GpuState *gpu, int n, const Real *r_src, const Real *charges,
+                                                   const Real *normals) {
     check_plan_real<Real>(gpu);
     const KernelDims &dims = gpu->dims;
     const auto sp = gpu_make_spans<Real>(gpu, n, dims);
@@ -558,11 +547,11 @@ static PotForce<Real> esp_eval_gpu_short_range_impl(GpuState *gpu, int n, const 
 }
 
 #define DMK_ESP_GPU_ENTRY(Real)                                                                                        \
-    PotForce<Real> esp_eval_gpu(GpuState *gpu, int n, const Real *r_src, const Real *charges, const Real *normals) {   \
+    PotGrad<Real> esp_eval_gpu(GpuState *gpu, int n, const Real *r_src, const Real *charges, const Real *normals) {    \
         return esp_eval_gpu_impl<Real>(gpu, n, r_src, charges, normals);                                               \
     }                                                                                                                  \
-    PotForce<Real> esp_eval_gpu_short_range(GpuState *gpu, int n, const Real *r_src, const Real *charges,              \
-                                            const Real *normals) {                                                     \
+    PotGrad<Real> esp_eval_gpu_short_range(GpuState *gpu, int n, const Real *r_src, const Real *charges,               \
+                                           const Real *normals) {                                                      \
         return esp_eval_gpu_short_range_impl<Real>(gpu, n, r_src, charges, normals);                                   \
     }
 

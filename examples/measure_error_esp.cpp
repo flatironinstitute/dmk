@@ -3,8 +3,8 @@
 //
 // The eps handed to ESP (eps_fu) need not equal the accuracy the user wants: sweeping
 // it against a fixed exact reference reveals, per kernel/dim, how many digits ESP must
-// be asked for so the *force* L2 meets a target (ESP does not compensate derivatives, so
-// forces trail the potential by ~1 digit). This is the ESP analog of measure_error.cpp's
+// be asked for so the *gradient* L2 meets a target (ESP does not compensate derivatives, so
+// gradients trail the potential by ~1 digit). This is the ESP analog of measure_error.cpp's
 // --beta-sweep for DMK.
 //
 // Usage: ./measure_error_esp [options]
@@ -15,7 +15,6 @@
 //                     (default: all; the last three are 3D free-space only)
 //   -d dim            2, 3, or 0 for both (default: 0)
 //   -l lambda         Yukawa fparam (default: 6.0)
-//   -L box            Box side length (default: 1.0)
 //   -o                Free-space (open) boundaries instead of periodic
 //   -p c|g            Eval path: CPU or GPU (default: c). GPU is 3D only.
 //   -s sigma          FINUFFT upsampling (default 1.35; != 1.35 requires -DDMK_USE_JIT=ON)
@@ -55,7 +54,6 @@ struct Config {
     dmk_ikernel kernel_filter = static_cast<dmk_ikernel>(-1);
     int dim_filter = 0;
     double fparam = 6.0;
-    double L = 1.0;
     bool use_periodic = true;
     dmk_eval_path eval_path = DMK_EVAL_PATH_CPU;
     double sigma = 1.35;
@@ -66,7 +64,7 @@ struct Config {
 };
 
 struct ErrorMetrics {
-    double pot_l2, pot_max, force_l2, force_max, time;
+    double pot_l2, pot_max, grad_l2, grad_max, time;
 };
 
 template <typename Real>
@@ -99,9 +97,9 @@ void esp_plan_destroy(pdmk_esp_plan plan) {
 }
 
 template <typename Real>
-std::vector<Real> generate_positions(int n, int n_dim, double L, long seed = 42) {
+std::vector<Real> generate_positions(int n, int n_dim, long seed = 42) {
     std::default_random_engine eng(seed);
-    std::uniform_real_distribution<double> rng(-0.5 * L, 0.5 * L);
+    std::uniform_real_distribution<double> rng(0.0, 1.0);
     std::vector<Real> r(size_t(n) * n_dim);
     for (size_t i = 0; i < r.size(); ++i)
         r[i] = Real(rng(eng));
@@ -165,14 +163,9 @@ bool compute_reference(const Config &cfg, int n_dim, dmk_ikernel kernel, int n, 
     if (kernel == DMK_LAPLACE && n_dim == 2) {
         // The 2D log kernel has no self-contained exact periodic reference (EwaldRef/image_sum don't
         // cover it), so use DMK's own periodic pipeline at eps=1e-12 as the "exact" reference; it
-        // shares ESP's log self/gauge convention (validated in test_esp). DMK works in the unit box,
-        // so map the centered sweep coords [-L/2,L/2) -> [0,1) by s = r/L + 1/2. For neutral charges
-        // the periodic-log potential is unchanged (up to the k=0 gauge run_one removes) and the
-        // physical gradient is the unit-box gradient divided by L.
-        std::vector<double> r_dmk(size_t(n) * n_dim), rnormal(size_t(n) * n_dim, 0.0);
-        for (size_t i = 0; i < r_dmk.size(); ++i)
-            r_dmk[i] = r_src[i] / cfg.L + 0.5;
-
+        // shares ESP's log self/gauge convention (validated in test_esp). Both work in the unit box,
+        // so the sources go straight through.
+        std::vector<double> rnormal(size_t(n) * n_dim, 0.0);
         pdmk_params params;
         params.eps = 1e-12;
         params.n_dim = n_dim;
@@ -183,27 +176,27 @@ bool compute_reference(const Config &cfg, int n_dim, dmk_ikernel kernel, int n, 
         params.use_periodic = true;
         params.log_level = 6;
         std::vector<double> pot_src(size_t(n) * od), pot_trg;
-        pdmk_tree tree = pdmk_tree_create(MYCOMM, params, n, r_dmk.data(), charges.data(), rnormal.data(), 0, nullptr);
+        pdmk_tree tree = pdmk_tree_create(MYCOMM, params, n, r_src.data(), charges.data(), rnormal.data(), 0, nullptr);
         pdmk_tree_eval(tree, pot_src.data(), pot_trg.data());
         pdmk_tree_destroy(tree);
 
         for (int i = 0; i < n_cmp; ++i) {
             ref[size_t(i) * od] = pot_src[size_t(i) * od];
             for (int d = 0; d < n_dim; ++d)
-                ref[size_t(i) * od + 1 + d] = pot_src[size_t(i) * od + 1 + d] / cfg.L;
+                ref[size_t(i) * od + 1 + d] = pot_src[size_t(i) * od + 1 + d];
         }
         return true;
     }
 
     if (kernel == DMK_YUKAWA) {
-        const int n_img = std::max(2, int(std::ceil(21.0 / (cfg.fparam * cfg.L))));
+        const int n_img = std::max(2, int(std::ceil(21.0 / cfg.fparam)));
         std::vector<double> r_trg(r_src.begin(), r_src.begin() + size_t(n_cmp) * n_dim);
-        dmk::pbc_ref::image_sum(n_dim, cfg.fparam, n_img, DMK_POTENTIAL_GRAD, n, r_src.data(), charges.data(), cfg.L,
+        dmk::pbc_ref::image_sum(n_dim, cfg.fparam, n_img, DMK_POTENTIAL_GRAD, n, r_src.data(), charges.data(), 1.0,
                                 n_cmp, r_trg.data(), ref);
         return true;
     }
 
-    dmk::pbc_ref::EwaldRef ewald(kernel, n_dim, n, r_src.data(), charges.data(), cfg.L, 15.0 / cfg.L);
+    dmk::pbc_ref::EwaldRef ewald(kernel, n_dim, n, r_src.data(), charges.data(), 1.0, 15.0);
 #pragma omp parallel for
     for (int i = 0; i < n_cmp; ++i) {
         double pot, grad[3] = {0, 0, 0};
@@ -229,7 +222,7 @@ double esp_eval_interleaved(const pdmk_esp_params &params, dmk_eval_path eval_pa
         const double st = MY_OMP_GET_WTIME();
         auto pf = dmk::esp_eval_gpu(gpu, n, r_src.data(), charges.data(), normals.empty() ? nullptr : normals.data());
         const double dt = MY_OMP_GET_WTIME() - st;
-        std::span<Real> comp[4] = {pf.pot, pf.force_x, pf.force_y, pf.force_z};
+        std::span<Real> comp[4] = {pf.pot, pf.grad_x, pf.grad_y, pf.grad_z};
         if (!pf.vel_x.empty()) {
             comp[0] = pf.vel_x;
             comp[1] = pf.vel_y;
@@ -263,13 +256,10 @@ ErrorMetrics run_one(const Config &cfg, int n_dim, dmk_ikernel kernel, int digit
     const dmk_eval_type et = esp_eval_type(kernel);
     const int od = dmk::get_kernel_output_dim(n_dim, kernel, et);
     // "pot" block = the primary field (velocity kernels: all od comps; else the single potential comp);
-    // "force" block = the trailing derivative comps. Scalar kernels report the force -q*dpot/dx (needs
-    // the target charge); the dipole/velocity kernels report the raw field, matching the reference.
+    // "grad" block = the trailing derivative comps.
     const int n_pot = esp_is_velocity(kernel) ? od : 1;
-    const bool grad_is_force = esp_is_scalar(kernel);
 
     pdmk_esp_params params{};
-    params.L = cfg.L;
     params.r_c = r_c;
     params.eps = std::pow(10.0, -digits);
     params.log_level = DMK_LOG_OFF;
@@ -316,7 +306,7 @@ ErrorMetrics run_one(const Config &cfg, int n_dim, dmk_ikernel kernel, int digit
         double fd2 = 0, fr2i = 0;
         for (int c = n_pot; c < od; ++c) {
             const double f_dmk = double(pot[size_t(i) * od + c]);
-            const double f_ref = grad_is_force ? -charges[i] * ref[size_t(i) * od + c] : ref[size_t(i) * od + c];
+            const double f_ref = ref[size_t(i) * od + c];
             const double fd = f_dmk - f_ref;
             fd2 += fd * fd;
             fr2i += f_ref * f_ref;
@@ -354,7 +344,7 @@ void run_sweep(Config cfg) {
         dims = {3};
     }
 
-    std::cout << "kernel,dim,digits,eps_fu,r_c,sigma,P,c,n_f,pot_l2,pot_max,force_l2,force_max,time\n" << std::flush;
+    std::cout << "kernel,dim,digits,eps_fu,r_c,sigma,P,c,n_f,pot_l2,pot_max,grad_l2,grad_max,time\n" << std::flush;
 
     const int n = cfg.n_src;
     const int n_cmp = std::min(cfg.n_direct, n);
@@ -362,7 +352,7 @@ void run_sweep(Config cfg) {
     for (auto kernel : kernels) {
         const bool needs_normal = esp_needs_normal(kernel);
         for (auto n_dim : dims) {
-            auto r_src_d = generate_positions<double>(n, n_dim, cfg.L, cfg.seed);
+            auto r_src_d = generate_positions<double>(n, n_dim, cfg.seed);
             auto charges_d = generate_charges<double>(n, dmk::get_kernel_input_dim(n_dim, kernel));
             auto normals_d = needs_normal ? generate_normals<double>(n, n_dim) : std::vector<double>{};
 
@@ -384,10 +374,9 @@ void run_sweep(Config cfg) {
                 const int P = dmk::esp_P_from_eps(eps_fu, cfg.sigma, n_dim);
                 const double c = dmk::esp_beta_from_P(cfg.sigma, P);
                 for (double frac = cfg.rc_min; frac <= cfg.rc_max + 1e-9; frac += cfg.rc_step) {
-                    const double r_c = frac * cfg.L;
-                    const double pad =
-                        cfg.use_periodic ? 1.0 : 2.2 * (std::sqrt(double(n_dim)) * cfg.L + 2.0 * r_c) / cfg.L;
-                    const int n_f = int(std::ceil(c * pad * cfg.L / (M_PI * r_c)));
+                    const double r_c = frac;
+                    const double pad = cfg.use_periodic ? 1.0 : 2.2 * (std::sqrt(double(n_dim)) + 2.0 * r_c);
+                    const int n_f = int(std::ceil(c * pad / (M_PI * r_c)));
                     std::cout << dmk::util::to_string(kernel) << "," << n_dim << "," << digits << "," << std::scientific
                               << std::setprecision(1) << eps_fu << "," << std::fixed << std::setprecision(4) << r_c
                               << "," << cfg.sigma << "," << P << "," << std::fixed << std::setprecision(3) << c << ","
@@ -395,7 +384,7 @@ void run_sweep(Config cfg) {
                     try {
                         auto e = run_one<Real>(cfg, n_dim, kernel, digits, r_c, r_src, charges, normals, ref, n_cmp);
                         std::cout << std::scientific << std::setprecision(4) << e.pot_l2 << "," << e.pot_max << ","
-                                  << e.force_l2 << "," << e.force_max << "," << std::fixed << std::setprecision(4)
+                                  << e.grad_l2 << "," << e.grad_max << "," << std::fixed << std::setprecision(4)
                                   << e.time;
                     } catch (std::exception &ex) {
                         std::cout << "FAILED,FAILED,FAILED,FAILED,0";
@@ -420,7 +409,7 @@ Config parse_args(int argc, char *argv[]) {
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "N:D:t:k:d:l:L:op:s:h", long_opts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "N:D:t:k:d:l:op:s:h", long_opts, nullptr)) != -1) {
         switch (opt) {
         case 'N':
             cfg.n_src = int(std::atof(optarg));
@@ -454,9 +443,6 @@ Config parse_args(int argc, char *argv[]) {
             break;
         case 'l':
             cfg.fparam = std::atof(optarg);
-            break;
-        case 'L':
-            cfg.L = std::atof(optarg);
             break;
         case 'o':
             cfg.use_periodic = false;
@@ -507,7 +493,7 @@ Config parse_args(int argc, char *argv[]) {
                       << "                  (default all; the last three are 3D free-space only)\n"
                       << "  -d dim          2, 3, or 0 for both (default 0)\n"
                       << "  -l lambda       Yukawa fparam (default 6.0)\n"
-                      << "  -L box          Box side length (default 1.0)\n"
+
                       << "  -o              Free-space (open) boundaries instead of periodic\n"
                       << "  -p c|g          Eval path: CPU or GPU (default: c). GPU is 3D only.\n"
                       << "  -s sigma        FINUFFT upsampling (default 1.35; != 1.35 requires -DDMK_USE_JIT=ON)\n"
@@ -547,7 +533,7 @@ int main(int argc, char *argv[]) {
 #endif
 
     std::cout << "# n_src=" << cfg.n_src << " n_direct=" << cfg.n_direct << " prec=" << cfg.prec
-              << " path=" << (cfg.eval_path == DMK_EVAL_PATH_GPU ? "g" : "c") << " L=" << cfg.L
+              << " path=" << (cfg.eval_path == DMK_EVAL_PATH_GPU ? "g" : "c")
               << " boundary=" << (cfg.use_periodic ? "periodic" : "free-space") << " sigma=" << cfg.sigma
               << " fparam=" << cfg.fparam << " digits=[" << cfg.dig_min << "," << cfg.dig_max << "] rc_frac=["
               << cfg.rc_min << "," << cfg.rc_max << "," << cfg.rc_step << "] seed=" << cfg.seed

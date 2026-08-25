@@ -74,13 +74,12 @@ struct Config {
     bool bench_update_charges = false;
 
     // ESP only
-    double L = 1.0;
     double r_c = -1.0;
     double sigma = 1.35;
     bool sigma_set = false;
     bool bench_plan = false;
-    bool bench_forces = false;
-    bool check_forces = false;
+    bool bench_grad = false;
+    bool check_grad = false;
     bool skip_cpu_baseline = false;
     double freespace_pad = 0;
     uint32_t esp_flags = DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L | DMK_ESP_MORTON;
@@ -833,7 +832,6 @@ inline dmk_eval_type esp_pot_eval_type(dmk_ikernel k) { return is_velocity_kerne
 
 pdmk_esp_params make_params(const Config &cfg, double r_c, dmk_eval_type eval_type, dmk_eval_path eval_path) {
     pdmk_esp_params params{};
-    params.L = cfg.L;
     params.r_c = r_c;
     params.eps = cfg.eps;
     params.n_dim = cfg.n_dim;
@@ -900,11 +898,11 @@ void esp_plan_destroy(pdmk_esp_plan plan) {
         pdmk_esp_plan_destroy(plan);
 }
 
-// Positions are uniform on [-L/2, L/2)^n_dim.
+// Positions are uniform on the unit box [0, 1)^n_dim
 template <typename Real>
-std::vector<Real> generate_positions(int n, int n_dim, double L, long seed = 42) {
+std::vector<Real> generate_positions(int n, int n_dim, long seed = 42) {
     std::default_random_engine eng(seed);
-    std::uniform_real_distribution<double> rng(-0.5 * L, 0.5 * L);
+    std::uniform_real_distribution<double> rng(0.0, 1.0);
     std::vector<Real> r(size_t(n) * n_dim);
     for (size_t i = 0; i < r.size(); ++i)
         r[i] = Real(rng(eng));
@@ -954,7 +952,7 @@ bool compute_reference(const Config &cfg, int n, const std::vector<double> &r_sr
                        std::vector<double> &ref) {
     const int nd = cfg.n_dim;
     const int n_cmp = std::min(cfg.n_direct, n);
-    const double L = cfg.L;
+    constexpr double L = 1.0; // the unit box; pbc_ref and the image sum still take it explicitly
 
     if (!cfg.use_periodic) {
         const dmk_eval_type et = esp_pot_eval_type(cfg.kernel);
@@ -1018,7 +1016,6 @@ bool compute_reference(const Config &cfg, int n, const std::vector<double> &r_sr
 void print_esp_config(const Config &cfg, int n_threads, std::ostream &os) {
     os << "# n_src:       " << cfg.n_src << "\n"
        << "# n_dim:       " << cfg.n_dim << "\n"
-       << "# L:           " << cfg.L << "\n"
        << "# r_c:         " << cfg.r_c << "\n"
        << "# eps:         " << cfg.eps << "\n"
        << "# kernel:      " << dmk::util::to_string(cfg.kernel) << "\n"
@@ -1030,8 +1027,8 @@ void print_esp_config(const Config &cfg, int n_threads, std::ostream &os) {
        << "# prec:        " << (cfg.prec == 'd' ? "double" : "float") << "\n"
        << "# eval_path:   " << (cfg.eval_path == DMK_EVAL_PATH_GPU ? "gpu" : "cpu") << "\n"
        << "# bench_plan:  " << (cfg.bench_plan ? "true" : "false") << "\n"
-       << "# bench_forces:" << (cfg.bench_forces ? "true" : "false") << "\n"
-       << "# check_forces:" << (cfg.check_forces ? "true" : "false") << "\n"
+       << "# bench_grad:  " << (cfg.bench_grad ? "true" : "false") << "\n"
+       << "# check_grad:  " << (cfg.check_grad ? "true" : "false") << "\n"
        << "# log_level:   " << cfg.log_level << "\n"
        << "# short_range: " << sr_summary(cfg.esp_flags, cfg.esp_bins, cfg.esp_stile) << "\n"
        << "# omp_threads: " << n_threads << "\n";
@@ -1047,8 +1044,7 @@ void init_sensible_defaults(Config &cfg, const std::vector<double> &r_src_d, con
     if (cfg.r_c != -1.0)
         return;
 
-    const std::vector<double> rc_candidates = {0.02 * cfg.L, 0.03 * cfg.L, 0.04 * cfg.L, 0.05 * cfg.L,
-                                               0.06 * cfg.L, 0.07 * cfg.L, 0.10 * cfg.L, 0.12 * cfg.L};
+    const std::vector<double> rc_candidates = {0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.10, 0.12};
 
     if (!have_ref) {
         cfg.r_c = rc_candidates[rc_candidates.size() / 2];
@@ -1083,8 +1079,8 @@ void init_sensible_defaults(Config &cfg, const std::vector<double> &r_src_d, con
 // The FD step depends on the eval path: cuFINUFFT's plan tolerance puts a noise floor under the GPU
 // potential, so there the step needs step^2 << eps/step, i.e. step ~ eps^(1/3), far larger than the
 // CPU's 1e-12.
-double check_forces_fd(const std::vector<double> &pot_src_grad, const std::vector<double> &r_src_d,
-                       const std::vector<double> &charges_d, pdmk_esp_params params, double eps, int n_sample = 20) {
+double check_grad_fd(const std::vector<double> &pot_src_grad, const std::vector<double> &r_src_d,
+                     const std::vector<double> &charges_d, pdmk_esp_params params, double eps, int n_sample = 20) {
     const int n = static_cast<int>(charges_d.size());
     const int nd = params.n_dim;
     const int out_dim = 1 + nd;
@@ -1114,10 +1110,10 @@ double check_forces_fd(const std::vector<double> &pot_src_grad, const std::vecto
 
             r_pert[nd * i + a] = r_src_d[nd * i + a];
 
-            const double f_ref = -charges_d[i] * (pot_plus - pot_minus) / (2.0 * step);
-            const double diff = pot_src_grad[i * out_dim + 1 + a] - f_ref;
+            const double g_ref = (pot_plus - pot_minus) / (2.0 * step);
+            const double diff = pot_src_grad[i * out_dim + 1 + a] - g_ref;
             err2 += diff * diff;
-            ref2 += f_ref * f_ref;
+            ref2 += g_ref * g_ref;
         }
     }
 
@@ -1131,7 +1127,7 @@ void warmup(const Config &cfg) {
     const int input_dim = dmk::get_kernel_input_dim(cfg.n_dim, cfg.kernel);
     const dmk_eval_type et = esp_pot_eval_type(cfg.kernel);
     const int out_dim = dmk::get_kernel_output_dim(cfg.n_dim, cfg.kernel, et);
-    auto r_w = generate_positions<Real>(nw, cfg.n_dim, cfg.L);
+    auto r_w = generate_positions<Real>(nw, cfg.n_dim);
     auto q_w = generate_charges<Real>(nw, input_dim);
     std::vector<Real> nrm_w;
     if (needs_normal(cfg.kernel))
@@ -1235,18 +1231,18 @@ void run_esp_plan_bench(const Config &cfg, int n, dmk_eval_type eval_type) {
     }
 }
 
-void run_force_check(const Config &cfg, int n, const std::vector<double> &r_src_d,
-                     const std::vector<double> &charges_d) {
+void run_grad_check(const Config &cfg, int n, const std::vector<double> &r_src_d,
+                    const std::vector<double> &charges_d) {
     constexpr int n_fd_sample = 20;
     pdmk_esp_params params = make_params(cfg, cfg.r_c, DMK_POTENTIAL_GRAD, cfg.eval_path);
     pdmk_esp_plan plan = esp_plan_create<double>(params);
 
-    std::cout << "# phase: force_check (FD on " << n_fd_sample << " random particles x 6 evals each; not all N)\n"
+    std::cout << "# phase: grad_check (FD on " << n_fd_sample << " random particles x 6 evals each; not all N)\n"
               << std::flush;
     std::vector<double> pot_d(size_t(n) * (1 + cfg.n_dim));
     esp_eval<double>(plan, n, r_src_d.data(), charges_d.data(), nullptr, pot_d.data());
-    const double err = check_forces_fd(pot_d, r_src_d, charges_d, params, cfg.eps, n_fd_sample);
-    std::cout << "# force_check: l2_rel_err=" << err << "\n" << std::flush;
+    const double err = check_grad_fd(pot_d, r_src_d, charges_d, params, cfg.eps, n_fd_sample);
+    std::cout << "# grad_check: l2_rel_err=" << err << "\n" << std::flush;
 
     esp_plan_destroy<double>(plan);
 }
@@ -1263,16 +1259,16 @@ void run_esp_benchmark(Config cfg) {
                       << " is free-space only in ESP; forcing free-space boundaries\n";
             cfg.use_periodic = false;
         }
-        if (cfg.bench_forces || cfg.check_forces) {
-            std::cout << "# note: -g/-F (forces) apply only to the scalar kernels; ignoring\n";
-            cfg.bench_forces = cfg.check_forces = false;
+        if (cfg.bench_grad || cfg.check_grad) {
+            std::cout << "# note: -g/-F (gradients) apply only to the scalar kernels; ignoring\n";
+            cfg.bench_grad = cfg.check_grad = false;
         }
     }
 
     const int input_dim = dmk::get_kernel_input_dim(cfg.n_dim, cfg.kernel);
     const bool with_normal = needs_normal(cfg.kernel);
 
-    auto r_src_d = generate_positions<double>(n, cfg.n_dim, cfg.L);
+    auto r_src_d = generate_positions<double>(n, cfg.n_dim);
     auto charges_d = generate_charges<double>(n, input_dim);
     auto normals_d = with_normal ? generate_normals<double>(n, cfg.n_dim) : std::vector<double>{};
 
@@ -1299,18 +1295,18 @@ void run_esp_benchmark(Config cfg) {
     const char *pot_phase = is_velocity_kernel(cfg.kernel) ? "eval_velocity" : "eval_potential";
 
     if (cfg.bench_plan)
-        run_esp_plan_bench<Real>(cfg, n, cfg.bench_forces ? DMK_POTENTIAL_GRAD : pot_et);
+        run_esp_plan_bench<Real>(cfg, n, cfg.bench_grad ? DMK_POTENTIAL_GRAD : pot_et);
 
     warmup<Real>(cfg);
 
-    if (cfg.bench_forces) {
-        run_esp_phase<Real>(cfg, n, r_src, charges, normals, ref, have_ref, DMK_POTENTIAL_GRAD, "eval_forces");
+    if (cfg.bench_grad) {
+        run_esp_phase<Real>(cfg, n, r_src, charges, normals, ref, have_ref, DMK_POTENTIAL_GRAD, "eval_grad");
     } else {
         run_esp_phase<Real>(cfg, n, r_src, charges, normals, ref, have_ref, pot_et, pot_phase);
     }
 
-    if (cfg.check_forces)
-        run_force_check(cfg, n, r_src_d, charges_d);
+    if (cfg.check_grad)
+        run_grad_check(cfg, n, r_src_d, charges_d);
 }
 
 // ---------------------------------------------------------------------------
@@ -1360,7 +1356,7 @@ static const struct option long_opts[] = {
     {nullptr, 0, nullptr, 0},
 };
 
-static const char *short_opts = "N:T:n:e:t:r:D:l:s:k:d:f:O:p:u:L:c:gFh?";
+static const char *short_opts = "N:T:n:e:t:r:D:l:s:k:d:f:O:p:u:c:gFh?";
 
 void print_usage(const char *argv0) {
     std::cout << "Usage: " << argv0 << " [options]\n"
@@ -1382,8 +1378,7 @@ void print_usage(const char *argv0) {
               << "  -D n_direct           Points compared against the reference: -1 all of them,\n"
               << "                        0 skips the reference entirely (default 10000)\n"
               << "  -l log_level          DMK log verbosity 0-6\n"
-              << "  -g                    Potential + gradient. ESP names the phase eval_forces because\n"
-              << "                        its scalar kernels report the axes as the force -q*grad.\n"
+              << "  -g                    Potential + gradient.\n"
               << "  --periodic            Periodic boundaries (default free-space)\n"
               << "  --gpu-device n        CUDA device id when -p g (default 0)\n"
               << "  -h                    Help\n"
@@ -1401,9 +1396,8 @@ void print_usage(const char *argv0) {
               << "  --pin                 Page-lock the potential buffers (GPU path: unstaged D2H)\n"
               << "\n"
               << "--solver esp only:\n"
-              << "  -L L                  Box side length (default 1.0)\n"
               << "  -c r_c                Real-space cutoff (default: auto-picked for accuracy)\n"
-              << "  -F                    Validate forces against a finite-difference reference.\n"
+              << "  -F                    Validate gradients against a finite-difference reference.\n"
               << "                        Samples 20 random particles, not all N.\n"
               << "  --sigma s             FINUFFT upsampling factor for the long-range PSWF kernel (1.35).\n"
               << "                        Requires JIT support (-DDMK_USE_JIT=ON at configure time).\n"
@@ -1496,9 +1490,6 @@ Config parse_args(int argc, char *argv[]) {
         case 'f':
             cfg.fparam = std::atof(optarg);
             break;
-        case 'L':
-            cfg.L = std::atof(optarg);
-            break;
         case 'c':
             cfg.r_c = std::atof(optarg);
             break;
@@ -1527,10 +1518,10 @@ Config parse_args(int argc, char *argv[]) {
             break;
         case 'g':
             cfg.with_grad = true;
-            cfg.bench_forces = true;
+            cfg.bench_grad = true;
             break;
         case 'F':
-            cfg.check_forces = true;
+            cfg.check_grad = true;
             break;
         case OPT_DIRECT:
             cfg.enable_direct = true;

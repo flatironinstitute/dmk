@@ -100,8 +100,8 @@ int eval_level_for(dmk_eval_type ev) {
 // The residual polynomial comes from get_esp_correction_coeffs, the same function the CPU
 // evaluators use, and is baked into the NVRTC module as literals.
 template <typename Real>
-void short_range_gpu(GpuState &gpu, int n, const Real *d_pos_aos, const Real *d_charges, Real *d_pot, Real *d_fx,
-                     Real *d_fy, Real *d_fz) {
+void short_range_gpu(GpuState &gpu, int n, const Real *d_pos_aos, const Real *d_charges, Real *d_pot, Real *d_gx,
+                     Real *d_gy, Real *d_gz) {
     const int nc = gpu.nc;
     const KernelDims &dims = gpu.dims;
     const int out_dim = dims.out_dim;
@@ -235,7 +235,7 @@ void short_range_gpu(GpuState &gpu, int n, const Real *d_pos_aos, const Real *d_
     if (prune_stats)
         report_prune_stats(gpu, d_prune_stats);
 
-    scatter_gpu<Real>(gpu, n, out_dim, dims.grad_is_force, d_orig, d_qs, d_pg_sorted, d_pot, d_fx, d_fy, d_fz);
+    scatter_gpu<Real>(gpu, n, out_dim, d_orig, d_pg_sorted, d_pot, d_gx, d_gy, d_gz);
 }
 
 template void short_range_gpu<float>(GpuState &, int, const float *, const float *, float *, float *, float *, float *);

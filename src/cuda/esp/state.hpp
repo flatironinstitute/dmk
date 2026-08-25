@@ -21,12 +21,11 @@ using ComplexT = std::conditional_t<std::is_same_v<Real, double>, cuDoubleComple
 
 // Per-kernel component counts, from the same tables the CPU plan uses.
 struct KernelDims {
-    int in_dim;         // charge components per source
-    int normal_dim;     // normal components per source
-    int charge_dim;     // packed payload width, [charge | normal]
-    int out_dim;        // output components per target
-    int n_channels;     // long-range spread/forward-FFT passes
-    bool grad_is_force; // scatter turns the raw gradient into a force, -q*grad
+    int in_dim;     // charge components per source
+    int normal_dim; // normal components per source
+    int charge_dim; // packed payload width, [charge | normal]
+    int out_dim;    // output components per target
+    int n_channels; // long-range spread/forward-FFT passes
 };
 
 inline KernelDims kernel_dims(dmk_ikernel kernel, dmk_eval_type eval_type) {
@@ -36,7 +35,6 @@ inline KernelDims kernel_dims(dmk_ikernel kernel, dmk_eval_type eval_type) {
     d.charge_dim = d.in_dim + d.normal_dim;
     d.out_dim = get_kernel_output_dim(3, kernel, eval_type);
     d.n_channels = (kernel == DMK_STRESSLET) ? 9 : d.in_dim;
-    d.grad_is_force = kernel == DMK_LAPLACE || kernel == DMK_SQRT_LAPLACE || kernel == DMK_YUKAWA;
     return d;
 }
 
@@ -45,9 +43,8 @@ struct GpuState {
     // Set once at plan creation, read at every eval.
     int nf;
     int n_digits;
-    // L_box drives cell binning and the wrap shifts, L_grid the FFT and NU scaling. Equal only when
-    // periodic.
-    double L_box, L_grid, r_c;
+    // The particle box is the unit box; L_grid drives the FFT and NU scaling (== 1 when periodic).
+    double L_grid, r_c;
     // PSWF bandwidth; the short-range coefficients are generated per launch from (n_digits, beta).
     double beta;
     double self_factor;
@@ -76,7 +73,7 @@ struct GpuState {
     // Uploaded once at plan creation. void* because the concrete type depends on use_float.
     cudaStream_t stream = nullptr;
     void *d_scaling_coeffs = nullptr; // nf³ Real
-    int nc = 0;                       // cells per dimension, = floor(L_box/r_c)
+    int nc = 0;                       // cells per dimension, = floor(1/r_c)
     int *d_nbc_tab = nullptr;         // nc*3 ints — neighbor cell index per (cell,delta)
     void *d_off_tab = nullptr;        // nc*3 Real — periodic image shift per (cell,delta)
     // n_channels * nf³ ComplexT<Real> — spread output (NU → uniform), forward-FFT'd in place
@@ -93,7 +90,7 @@ struct GpuState {
     void *d_scratch_pos = nullptr;
     size_t scratch_pos_cap = 0; // pos_aos (3n) + charges (n), Real
     void *d_scratch_out = nullptr;
-    size_t scratch_out_cap = 0; // pot/fx/fy/fz (4n), Real (outputs)
+    size_t scratch_out_cap = 0; // pot/gx/gy/gz (4n), Real (outputs)
     void *d_scratch_idx = nullptr;
     size_t scratch_idx_cap = 0; // cell_idx (n) + orig (n), int
     void *d_scratch_sorted = nullptr;
@@ -105,7 +102,7 @@ struct GpuState {
     void *d_scratch_lr_c = nullptr;
     size_t scratch_lr_c_cap = 0; // packed charges (n), ComplexT<Real>
     void *d_scratch_nu_c = nullptr;
-    size_t scratch_nu_c_cap = 0; // pot_c / force_c (n), ComplexT<Real>
+    size_t scratch_nu_c_cap = 0; // NU point values (n), ComplexT<Real>
     // Pruned-strategy diagnostics; allocated only when PRUNE_STATS is on.
     void *d_scratch_prune_stats = nullptr;
     size_t scratch_prune_stats_cap = 0;
