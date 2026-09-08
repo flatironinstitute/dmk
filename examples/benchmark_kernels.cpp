@@ -119,19 +119,42 @@ dmk_ikernel parse_kernel(const char *s) {
     throw std::runtime_error("Unknown kernel: " + std::string(s));
 }
 
+// gauge: a periodic potential is fixed only up to an additive constant, so both sides are
+// mean-subtracted (over the compared components) before the error is formed.
 template <typename Real>
 ErrorMetrics compute_error(const std::vector<Real> &computed, const std::vector<Real> &reference, int rank, int np,
-                           int kdim = 1, int comp_begin = 0, int comp_end = -1) {
+                           int kdim = 1, int comp_begin = 0, int comp_end = -1, bool gauge = false) {
     if (comp_end < 0)
         comp_end = kdim;
     double local_err2 = 0.0, local_ref2 = 0.0, local_maxre = 0.0;
 
     const size_t n_pts = reference.size() / kdim;
+    double mean_c = 0.0, mean_r = 0.0;
+    if (gauge) {
+        double sum_c = 0.0, sum_r = 0.0, cnt = double(n_pts) * (comp_end - comp_begin);
+        for (size_t p = 0; p < n_pts; ++p)
+            for (int c = comp_begin; c < comp_end; ++c) {
+                sum_c += double(computed[p * kdim + c]);
+                sum_r += double(reference[p * kdim + c]);
+            }
+#ifdef DMK_HAVE_MPI
+        double buf[3] = {sum_c, sum_r, cnt}, glb[3];
+        MPI_Allreduce(buf, glb, 3, MPI_DOUBLE, MPI_SUM, MYCOMM);
+        sum_c = glb[0];
+        sum_r = glb[1];
+        cnt = glb[2];
+#endif
+        if (cnt > 0) {
+            mean_c = sum_c / cnt;
+            mean_r = sum_r / cnt;
+        }
+    }
+
     for (size_t p = 0; p < n_pts; ++p) {
         for (int c = comp_begin; c < comp_end; ++c) {
             const size_t i = p * kdim + c;
-            double diff = double(computed[i]) - double(reference[i]);
-            double ref = double(reference[i]);
+            double diff = (double(computed[i]) - mean_c) - (double(reference[i]) - mean_r);
+            double ref = double(reference[i]) - mean_r;
             local_err2 += diff * diff;
             local_ref2 += ref * ref;
             if (std::abs(ref) > 0.0)
@@ -331,15 +354,28 @@ void print_outliers(const std::vector<Real> &computed, const std::vector<Real> &
        << ") min=" << (nn_all.empty() ? 0.0 : nn_all.front()) << " median=" << med(nn_all) << "\n";
 }
 
+// neutralize: init_test_data's charges are not neutral, and a periodic lattice sum needs them to be,
+// so the per-component mean is removed before the sources are handed out.
 template <typename Real>
 void generate_and_scatter(int n_dim, int charge_dim, size_t n_src, size_t n_trg, dmk::util::Distribution dist,
                           bool set_fixed_charges, std::vector<Real> &r_src, std::vector<Real> &r_trg,
-                          std::vector<Real> &charges, std::vector<Real> &normals, long seed, int rank, int np) {
+                          std::vector<Real> &charges, std::vector<Real> &normals, long seed, bool neutralize, int rank,
+                          int np) {
     std::vector<Real> r_src_all, r_trg_all, charges_all, normals_all;
 
-    if (rank == 0)
+    if (rank == 0) {
         dmk::util::init_test_data(n_dim, charge_dim, int(n_src), int(n_trg), dist, set_fixed_charges, r_src_all,
                                   r_trg_all, normals_all, charges_all, seed);
+        if (neutralize)
+            for (int c = 0; c < charge_dim; ++c) {
+                double mean = 0.0;
+                for (size_t i = 0; i < n_src; ++i)
+                    mean += charges_all[i * charge_dim + c];
+                mean /= n_src;
+                for (size_t i = 0; i < n_src; ++i)
+                    charges_all[i * charge_dim + c] -= Real(mean);
+            }
+    }
 
 #ifdef DMK_HAVE_MPI
     const auto mpi_t = std::is_same_v<Real, float> ? MPI_FLOAT : MPI_DOUBLE;
@@ -366,10 +402,12 @@ void generate_and_scatter(int n_dim, int charge_dim, size_t n_src, size_t n_trg,
 #endif
 }
 
+// Reference field at r_trg. eval_is_src says the evaluation points are this rank's leading sources,
+// which is how the periodic reference knows to drop the self term.
 template <typename Real>
 void run_direct(const Config &cfg, int n_dim, int charge_dim, const std::vector<Real> &r_src,
                 const std::vector<Real> &charges, const std::vector<Real> &normals, const std::vector<Real> &r_trg,
-                std::vector<Real> &pot, int rank, int np) {
+                std::vector<Real> &pot, bool eval_is_src, int rank, int np) {
     const int n_src_local = r_src.size() / n_dim;
     int n_trg_local = r_trg.size() / n_dim;
 
@@ -398,6 +436,7 @@ void run_direct(const Config &cfg, int n_dim, int charge_dim, const std::vector<
         }
     }
 
+    const int src_base = recv_disp_r[rank] / n_dim;
     std::vector<Real> glb_r_src(n_src_global * n_dim);
     std::vector<Real> glb_normals(n_src_global * n_dim);
     std::vector<Real> glb_charges(n_src_global * charge_dim);
@@ -409,6 +448,7 @@ void run_direct(const Config &cfg, int n_dim, int charge_dim, const std::vector<
                    recv_disp_c.data(), mpi_t, MYCOMM);
 #else
     int n_src_global = n_src_local;
+    const int src_base = 0;
     const auto &glb_r_src = r_src;
     const auto &glb_charges = charges;
     const auto &glb_normals = normals;
@@ -425,9 +465,37 @@ void run_direct(const Config &cfg, int n_dim, int charge_dim, const std::vector<
     const int kdim = dmk::get_kernel_output_dim(n_dim, cfg.kernel, eval_level);
     std::vector<double> pot_d(n_trg_local * kdim, 0.0);
 
-    const auto eval = dmk::get_direct_evaluator<double>(cfg.kernel, eval_level, n_dim, cfg.fparam);
-    dmk::parallel_direct_eval<double>(eval, n_src_global, r_src_d.data(), charges_d.data(), normals_d.data(),
-                                      n_trg_local, r_trg_d.data(), pot_d.data(), n_dim, kdim);
+    if (cfg.use_periodic) {
+        constexpr double L = 1.0; // the periodic cell is the tree's unit box
+        if (cfg.kernel == DMK_YUKAWA) {
+            // Absolutely convergent: sum free-space images out to exp(-lambda*n_img) ~ eps/100.
+            const int n_img = std::max(2, int(std::ceil(std::log(100.0 / cfg.eps) / cfg.fparam)));
+            if (rank == 0)
+                std::cout << "# verify: periodic Yukawa image sum, n_img=" << n_img << "\n" << std::flush;
+            dmk::pbc_ref::image_sum(n_dim, cfg.fparam, n_img, eval_level, n_src_global, r_src_d.data(),
+                                    charges_d.data(), L, n_trg_local, r_trg_d.data(), pot_d);
+        } else {
+            // The structure factor costs O(n_src * k_max^n_dim) to build and the real-space sum
+            // O(n_eval * n_src); at benchmark sizes the mode count dominates, so the split is kept
+            // low. Truncation stays at ~1e-12 either way (split * r_cut and k_max / 2 split fixed).
+            const double split = 6.0 / L;
+            if (rank == 0)
+                std::cout << "# verify: periodic Ewald reference for " << n_trg_local << " points\n" << std::flush;
+            dmk::pbc_ref::EwaldRef ewald(cfg.kernel, n_dim, n_src_global, r_src_d.data(), charges_d.data(), L, split);
+#pragma omp parallel for
+            for (int i = 0; i < n_trg_local; ++i) {
+                double p = 0.0, grad[3] = {0, 0, 0};
+                ewald.eval(&r_trg_d[size_t(i) * n_dim], eval_is_src ? src_base + i : -1, p, kdim > 1 ? grad : nullptr);
+                pot_d[size_t(i) * kdim] = p;
+                for (int d = 0; d + 1 < kdim; ++d)
+                    pot_d[size_t(i) * kdim + 1 + d] = grad[d];
+            }
+        }
+    } else {
+        const auto eval = dmk::get_direct_evaluator<double>(cfg.kernel, eval_level, n_dim, cfg.fparam);
+        dmk::parallel_direct_eval<double>(eval, n_src_global, r_src_d.data(), charges_d.data(), normals_d.data(),
+                                          n_trg_local, r_trg_d.data(), pot_d.data(), n_dim, kdim);
+    }
 
     pot.resize(n_trg_local * kdim);
     for (size_t i = 0; i < pot_d.size(); ++i)
@@ -502,6 +570,7 @@ void print_dmk_config_comment(const Config &cfg, int np, int n_threads, std::ost
        << "# n_src:                " << cfg.n_src << "\n"
        << "# n_trg:                " << cfg.n_trg << "\n"
        << "# n_dim:                " << cfg.n_dim << "\n"
+       << "# boundary:             " << (cfg.use_periodic ? "periodic" : "free-space") << "\n"
        << "# kernel:               " << kernel_str << "\n"
        << "# fparam:               " << cfg.fparam << "\n"
        << "# with_grad:            " << cfg.with_grad << "\n"
@@ -562,7 +631,7 @@ void print_csv_row(const TimingResult &t, const ErrorBlock &src, const ErrorBloc
 }
 
 template <typename Real>
-void run_dmk_benchmark(const Config &cfg) {
+void run_dmk_benchmark(Config cfg) {
     int rank = 0, np = 1;
 #ifdef DMK_HAVE_MPI
     MPI_Comm_rank(MYCOMM, &rank);
@@ -571,6 +640,15 @@ void run_dmk_benchmark(const Config &cfg) {
 
     const int n_dim = cfg.n_dim;
     const int n_threads = MY_OMP_GET_MAX_THREADS();
+
+    // EwaldRef's 2D log split carries no self term, so it is only exact at points that are not
+    // sources; this driver always verifies at sources.
+    if (cfg.use_periodic && cfg.kernel == DMK_LAPLACE && n_dim == 2 && cfg.enable_direct) {
+        if (rank == 0)
+            std::cout << "# note: periodic laplace in 2D has no independent reference; errors reported as nan\n";
+        cfg.enable_direct = false;
+    }
+
     const int n_src = cfg.n_src;
     const int n_trg = cfg.n_trg;
     const int n_src_per_rank = local_count(n_src, np, rank);
@@ -596,7 +674,7 @@ void run_dmk_benchmark(const Config &cfg) {
 
     std::vector<Real> r_src, r_trg, charges, normals;
     generate_and_scatter<Real>(n_dim, charge_dim, n_src, n_trg, cfg.dist, true, r_src, r_trg, charges, normals,
-                               cfg.seed, rank, np);
+                               cfg.seed, cfg.use_periodic, rank, np);
 
     auto create_tree = [&]() -> pdmk_tree {
         const Real *r_trg_ptr = with_trg ? r_trg.data() : nullptr;
@@ -696,17 +774,17 @@ void run_dmk_benchmark(const Config &cfg) {
         const int n_direct_per_rank = local_count(n_direct_global, np, rank);
 
         if (n_direct_global == n_src) {
-            run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_src, pot_direct_src, rank, np);
+            run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_src, pot_direct_src, true, rank, np);
         } else {
             std::vector<Real> r_eval(r_src.begin(), r_src.begin() + size_t(n_direct_per_rank) * n_dim);
-            run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_eval, pot_direct_src, rank, np);
+            run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_eval, pot_direct_src, true, rank, np);
         }
 
         if (with_trg) {
             const int n_direct_trg_global = std::min(n_direct_global, n_trg);
             const int n_direct_trg_per_rank = local_count(n_direct_trg_global, np, rank);
             std::vector<Real> r_eval(r_trg.begin(), r_trg.begin() + size_t(n_direct_trg_per_rank) * n_dim);
-            run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_eval, pot_direct_trg, rank, np);
+            run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_eval, pot_direct_trg, false, rank, np);
         }
     }
 
@@ -731,10 +809,10 @@ void run_dmk_benchmark(const Config &cfg) {
         std::vector<Real> dmk_sub(pot_dmk.begin(), pot_dmk.begin() + n_compare);
         std::vector<Real> dir_sub(pot_dir.begin(), pot_dir.begin() + n_compare);
         if (cfg.with_grad) {
-            out.pot = compute_error(dmk_sub, dir_sub, rank, np, pot_dim, 0, 1);
+            out.pot = compute_error(dmk_sub, dir_sub, rank, np, pot_dim, 0, 1, cfg.use_periodic);
             out.grad = compute_error(dmk_sub, dir_sub, rank, np, pot_dim, 1, pot_dim);
         } else {
-            out.pot = compute_error(dmk_sub, dir_sub, rank, np, pot_dim, 0, pot_dim);
+            out.pot = compute_error(dmk_sub, dir_sub, rank, np, pot_dim, 0, pot_dim, cfg.use_periodic);
         }
         out.have = true;
     };
