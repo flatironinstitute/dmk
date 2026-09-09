@@ -6,8 +6,8 @@
 #FC = gfortran
 
 CC = icx
-CXX = icpx
-FC = ifx
+CXX = icpc
+FC = ifort
 
 CLINK = -lstdc++
 FLINK = $(CLINK)
@@ -107,15 +107,13 @@ VCLDIR = ./extern/VCL/version2
 # objects to compile
 # 
 # Common objects
-COM = src/common
+COM = common
 COMOBJS = $(COM)/prini_new.o \
 	$(COM)/hkrand.o \
 	$(COM)/dlaran.o \
 	$(COM)/cumsum.o \
 	$(COM)/fmmcommon2d.o \
 	$(COM)/lapack_f77.o \
-	$(COM)/voltab2d.o \
-	$(COM)/voltab3d.o \
 	$(COM)/specialfunctions/calck0.o \
 	$(COM)/specialfunctions/calck1.o \
 	$(COM)/specialfunctions/besk0.o \
@@ -141,10 +139,10 @@ COMOBJS = $(COM)/prini_new.o \
 	$(COM)/tensor_prod_routs.o
 
 
-COMOBJS+= $(SRCDIR)/libkernels2.o
+COMOBJS+= $(SRCDIR)/libkernels.o
 
 # point DMK objects
-PDMK = src/pdmk
+PDMK = pdmk
 PDMKOBJS = $(PDMK)/lndiv.o \
 	$(PDMK)/lndiv_fast.o \
 	$(PDMK)/kernelevaluation/y2dkernels.o \
@@ -158,7 +156,7 @@ PDMKOBJS = $(PDMK)/lndiv.o \
 	$(PDMK)/kernel_FT.o \
 	$(PDMK)/stokes_kernel_FT.o \
 	$(PDMK)/pdmk_pwrouts.o \
-	$(PDMK)/pdmk3.o 
+	$(PDMK)/pdmk.o 
 
 # Test objects
 OBJS = $(COMOBJS) $(PDMKOBJS)
@@ -169,7 +167,7 @@ OBJS = $(COMOBJS) $(PDMKOBJS)
 
 default: usage
 
-$(SRCDIR)/libkernels2.o: $(SRCDIR)/libkernels2.cpp
+$(SRCDIR)/libkernels.o: $(SRCDIR)/libkernels.cpp
 		$(CXX) $(CXXFLAGS) -I$(VCLDIR) -I$(INCDIR) -c $^ -o $@
 
 usage:
