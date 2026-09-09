@@ -24,6 +24,22 @@ if [ -n "$readme_notices" ] && [ "$readme_notices" != "$(cat THIRD_PARTY_NOTICES
     exit 1
 fi
 
+if grep -q '^## \[Unreleased\]' CHANGELOG.md; then
+    echo "CHANGELOG.md still has an [Unreleased] heading; retitle it to [$version]" >&2
+    exit 1
+fi
+if ! grep -q "^## \[$version\]" CHANGELOG.md; then
+    echo "CHANGELOG.md has no [$version] section" >&2
+    exit 1
+fi
+
+# Read the Docs overrides docs/conf.py on tag builds, so it only has to pin the right X.Y series.
+docs_version=$(sed -nE 's/^version = release = "([^"]+)".*/\1/p' docs/conf.py)
+if [ "$docs_version" != "$version" ] && [ "$docs_version" != "${version%.*}" ]; then
+    echo "docs/conf.py version '$docs_version' is neither $version nor ${version%.*}" >&2
+    exit 1
+fi
+
 echo "$version" > VERSION.txt
 git add VERSION.txt
 
