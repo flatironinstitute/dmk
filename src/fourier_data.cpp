@@ -1,7 +1,6 @@
 #include <cmath>
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
-#include <dmk/fortran.h>
 #include <dmk/fourier_data.hpp>
 #include <dmk/legeexps.hpp>
 #include <dmk/planewave.hpp>

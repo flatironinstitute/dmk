@@ -48,16 +48,8 @@ option(DMK_BUILD_PVFMM "Build PVFMM for comparison. Useless without DMK_BUILD_EX
 option(DMK_HAVE_MPI "Use MPI for parallelism" ON)
 
 option(DMK_HAVE_OPENMP "Use OpenMP for parallelism" ON)
-option(DMK_BUILD_REFERENCE "Build reference Fortran implementation" OFF)
 option(DMK_USE_JIT "Use JIT compilation where supported (requires LLVM)" OFF)
 option(DMK_GPU_OFFLOAD "Enable GPU offloading via CUDA" OFF)
-
-if (DMK_BUILD_REFERENCE)
-  enable_language(Fortran)
-  if (CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
-    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -std=legacy")
-  endif()
-endif()
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
   set(DMK_VECLIB_DEFINE "SCTL_HAVE_SVML")
@@ -250,39 +242,6 @@ if (DMK_USE_JIT)
     DEFINITIONS ${DMK_VECLIB_DEFINE}
     FROM_TARGET nda::nda_c
   )
-endif()
-
-if (DMK_BUILD_REFERENCE)
-  list(APPEND DMK_CXX_FLAGS "-DDMK_HAVE_REFERENCE")
-  file(GLOB_RECURSE DMK_REF_COMMON_SRC CONFIGURE_DEPENDS
-    "${PROJECT_SOURCE_DIR}/src/common/*.f*"
-    "${PROJECT_SOURCE_DIR}/vec-kernels/src/libkernels2.cpp")
-  add_library(dmk_ref_common OBJECT ${DMK_REF_COMMON_SRC})
-  set_target_properties(dmk_ref_common PROPERTIES POSITION_INDEPENDENT_CODE ON)
-  target_include_directories(dmk_ref_common PRIVATE
-    "${PROJECT_SOURCE_DIR}/extern/VCL/version2"
-    "${PROJECT_SOURCE_DIR}/vec-kernels/include")
-
-  file(GLOB_RECURSE DMK_REF_PDMK_SRC CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/pdmk/*.f")
-  list(REMOVE_ITEM DMK_REF_PDMK_SRC
-    "${PROJECT_SOURCE_DIR}/src/pdmk/kernelevaluation/l3dkernels_fast.f"
-    "${PROJECT_SOURCE_DIR}/src/pdmk/pdmk.f"
-    "${PROJECT_SOURCE_DIR}/src/pdmk/pdmk3.f"
-  )
-  add_library(dmk_ref_pdmk OBJECT ${DMK_REF_PDMK_SRC})
-  set_target_properties(dmk_ref_pdmk PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-  file(GLOB_RECURSE DMK_REF_BDMK_SRC CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/bdmk/*.f")
-  list(REMOVE_ITEM DMK_REF_BDMK_SRC
-    "${PROJECT_SOURCE_DIR}/src/bdmk/bdmk4.f"
-  )
-  add_library(dmk_ref_bdmk OBJECT ${DMK_REF_BDMK_SRC})
-  set_target_properties(dmk_ref_bdmk PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-  add_library(dmk_ref STATIC
-    $<TARGET_OBJECTS:dmk_ref_common>
-    $<TARGET_OBJECTS:dmk_ref_pdmk>
-    $<TARGET_OBJECTS:dmk_ref_bdmk>)
 endif()
 
 set(DMK_BOOTSTRAP_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp src/legeexps.cpp

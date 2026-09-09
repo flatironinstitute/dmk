@@ -2,17 +2,11 @@ set(DMK_TEST_SRC test_all.cpp test_pbc_periodic.cpp test_direct.cpp test_esp.cpp
 if (DMK_GPU_OFFLOAD)
   list(APPEND DMK_TEST_SRC test_gpu_parity.cpp test_esp_gpu.cpp)
 endif()
-if (DMK_BUILD_REFERENCE)
-  list(APPEND DMK_TEST_SRC test_reference.cpp)
-endif()
 
 add_executable(test_all ${DMK_TEST_SRC})
 target_link_libraries(test_all PRIVATE dmk_shared dmk_internal)
 if (DMK_GPU_OFFLOAD)
   target_link_libraries(test_all PRIVATE ${DMK_GPU_TARGET})
-endif()
-if (DMK_BUILD_REFERENCE)
-  target_link_libraries(test_all PRIVATE dmk_ref)
 endif()
 
 if (DMK_HAVE_MPI)

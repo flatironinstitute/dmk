@@ -11,7 +11,6 @@
 #include <dmk/direct.hpp>
 #include <dmk/error.hpp>
 #include <dmk/esp.hpp>
-#include <dmk/fortran.h>
 #include <dmk/fourier_data.hpp>
 #include <dmk/logger.h>
 #include <dmk/prolate0_fun.hpp>
