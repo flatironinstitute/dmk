@@ -101,6 +101,12 @@ void validate_create_args(dmk_communicator comm, const pdmk_params &params, int 
         fail("Invalid dimension: " + std::to_string(params.n_dim));
     if (params.eps > 1e-2 || params.eps < 1e-12)
         fail("tolerance 'eps' must lie on [1e-12, 1e-2], got " + std::to_string(params.eps));
+    // Distances come from differencing coordinates held in Real, so no tolerance below its
+    // epsilon is reachable at any tree depth, let alone the depths a real distribution forces.
+    if (params.eps < std::numeric_limits<Real>::epsilon())
+        fail("tolerance 'eps'=" + std::to_string(params.eps) + " is below the epsilon of the " +
+             (sizeof(Real) == 4 ? std::string("single") : std::string("double")) +
+             "-precision entry point; use the double-precision entry point or a looser tolerance");
     if (params.n_per_leaf <= 0)
         fail("n_per_leaf must be positive, got " + std::to_string(params.n_per_leaf));
     if (n_src < 0 || n_trg < 0)

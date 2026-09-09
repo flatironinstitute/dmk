@@ -18,6 +18,7 @@
 #include <dmk/util.hpp>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <omp.h>
 #include <sctl/profile.hpp>
 #include <unistd.h>
@@ -389,6 +390,19 @@ void DMKPtTree<Real, DIM>::compute_level_indices_and_boxsizes() {
         max_depth = std::max(node_mid[i].Depth(), max_depth);
     }
     max_depth++;
+
+    // A box at depth d spans 2^-d, so a distance taken between coordinates of order one keeps
+    // only eps_machine * 2^d of relative accuracy. Past that depth the near field cannot reach
+    // the requested tolerance however the kernel is evaluated. Depth follows from the point
+    // distribution rather than from anything the caller sets directly, so this reports rather
+    // than refuses; n_per_leaf is the knob that makes the tree shallower.
+    const double coord_eps = std::numeric_limits<Real>::epsilon();
+    const int depth_supported = static_cast<int>(std::floor(std::log2(params.eps / coord_eps)));
+    if (max_depth - 1 > depth_supported)
+        logger->warn("tree reached depth {} but coordinates in this precision support only depth {} "
+                     "at eps={:.1e}; the near field will not reach that tolerance. Raise n_per_leaf "
+                     "to flatten the tree, loosen eps, or use the double-precision entry point.",
+                     max_depth - 1, depth_supported, params.eps);
 
     level_indices.ReInit(max_depth);
     boxsize.ReInit(max_depth + 1);
