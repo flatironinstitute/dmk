@@ -192,7 +192,7 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
     // only gets a pointer which gets re-used on Broadcast
     {
         sctl::Vector<Real> data;
-        sctl::Vector<long> count;
+        sctl::Vector<sctl::Long> count;
         this->GetData(data, count, "pdmk_src");
         r_src_sorted_owned = data;
         r_src_cnt_owned = count;
@@ -324,7 +324,7 @@ void DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal
     // Retrieve the sorted owned charges
     {
         sctl::Vector<Real> data;
-        sctl::Vector<long> count;
+        sctl::Vector<sctl::Long> count;
         this->GetData(data, count, "pdmk_charge");
         charge_sorted_owned = data;
         charge_cnt_owned = count;
@@ -1522,7 +1522,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
         const bool is_stresslet = params.kernel == DMK_STRESSLET;
         const int normal_dim = is_stresslet ? DIM : 0;
         const int direct_charge_dim = kernel_input_dim;
-        const long trg_buff_cnt = std::max(long(params.n_per_leaf), n_trg_max_);
+        const sctl::Long trg_buff_cnt = std::max(sctl::Long(params.n_per_leaf), n_trg_max_);
 
         util::StackOrHeapBuffer<Real, DIM * MAX_PTS> r_buf(DIM * params.n_per_leaf);
         util::StackOrHeapBuffer<Real, MAX_CHARGE_DIM * MAX_PTS> charge_buf(direct_charge_dim * params.n_per_leaf);

@@ -200,7 +200,9 @@ void sqrt_laplace_2d_difference_kernel_ft(const double *rpars, Real beta, int np
     const int n_fourier = DIM * sctl::pow<2>(npw / 2) + 1;
     diff_kernel_ft.ReInit(n_fourier);
 
-    const auto [c0, c1, g0d2, c4] = pf.intvals(beta);
+    // The legint lambda below captures c0, and clang rejects capturing a structured binding
+    // when OpenMP is enabled.
+    const Real c0 = pf.intvals(beta)[0];
     const int iw = pf.workarray[0] - 1;
     const int n_terms = pf.workarray[4];
 

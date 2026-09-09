@@ -1,3 +1,33 @@
+// Needs a macOS agent with Homebrew llvm, open-mpi and openblas: the stock Apple clang has no
+// OpenMP. $BREW is the Homebrew prefix, and the agents run a non-login shell whose PATH does not
+// include it -- cmake and mpirun come from there too.
+def macBuild(String name, String agent) {
+  return {
+    node(agent) {
+      stage(name) {
+        checkout scm
+        withEnv([
+          "LC_ALL=C",
+          "OMP_NUM_THREADS=4",
+          "OPENBLAS_NUM_THREADS=1"
+        ]) {
+          sh 'git submodule update --init --recursive'
+          sh '''set -e
+                uname -m
+                export PATH="$BREW/bin:$PATH"
+                LLVM_ROOT=$(brew --prefix llvm)
+                # openblas is keg-only, so cmake only finds it if its prefix is named directly.
+                OPENBLAS_ROOT=$(brew --prefix openblas)
+                brew --prefix open-mpi
+                cmake -B build . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/build/install -DBLA_VENDOR=OpenBLAS -DCMAKE_PREFIX_PATH="$OPENBLAS_ROOT;$BREW" -DCMAKE_CXX_COMPILER="$LLVM_ROOT/bin/clang++" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_EXE_LINKER_FLAGS="-L$LLVM_ROOT/lib/c++ -Wl,-rpath,$LLVM_ROOT/lib/c++" -DCMAKE_SHARED_LINKER_FLAGS="-L$LLVM_ROOT/lib/c++ -Wl,-rpath,$LLVM_ROOT/lib/c++" -DCMAKE_CXX_FLAGS=-Wno-deprecated -DDMK_BUILD_TESTS=ON
+                cmake --build build -j$(sysctl -n hw.ncpu)
+                mpirun -n 2 --bind-to none ./build/test/test_all -nc'''
+        }
+      }
+    }
+  }
+}
+
 properties([
   disableConcurrentBuilds(abortPrevious: true),
   buildDiscarder(logRotator(numToKeepStr: '20', daysToKeepStr: '30'))
@@ -23,7 +53,51 @@ try {
         }
       }
     },
-      gpu: {
+    clang: {
+      runPod(cpus: 8) {
+        stage('clang') {
+          withEnv([
+            "HOME=${WORKSPACE}",
+            "LC_ALL=C",
+            "OMP_NUM_THREADS=4",
+            "OPENBLAS_NUM_THREADS=1"
+          ]) {
+            sh 'which clang++'
+            sh 'git submodule update --init --recursive'
+            sh 'cmake -B build . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/build/install -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DDMK_BUILD_TESTS=ON'
+            sh 'cd build && make -j$PARALLEL'
+            sh 'mpirun -n 2 --bind-to none ./build/test/test_all -nc'
+          }
+        }
+      }
+    },
+    nompi: {
+      runPod(cpus: 8) {
+        stage('nompi') {
+          withEnv([
+            "HOME=${WORKSPACE}",
+            "LC_ALL=C",
+            "OMP_NUM_THREADS=4",
+            "OPENBLAS_NUM_THREADS=1"
+          ]) {
+            sh 'git submodule update --init --recursive'
+            // LIBDIR is pinned so the exported config and dmk.pc land where the checks below look.
+            sh 'cmake -B build . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/prefix -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_CXX_COMPILER=g++ -DDMK_HAVE_MPI=off -DDMK_BUILD_TESTS=ON'
+            sh 'cmake --build build -j$PARALLEL'
+            sh 'ctest --test-dir build --output-on-failure'
+            // The installed package is consumed the way a user does: nothing here may reach the
+            // build tree or the internal interface target that in-tree examples and tests link.
+            sh 'cmake --install build'
+            sh 'cmake -B build-downstream ci/downstream -DCMAKE_PREFIX_PATH=$PWD/prefix'
+            sh 'cmake --build build-downstream -j$PARALLEL'
+            sh './build-downstream/dmk_consumer'
+            sh 'PKG_CONFIG_PATH=$PWD/prefix/lib/pkgconfig pkg-config --cflags --libs dmk'
+            sh 'gcc -fsyntax-only $(PKG_CONFIG_PATH=$PWD/prefix/lib/pkgconfig pkg-config --cflags dmk) ci/downstream/consumer.c'
+          }
+        }
+      }
+    },
+    gpu: {
       runPod(cpus: 8, gpus: 1, gpuType: 'a100') {
         stage('gpu') {
           withEnv([
@@ -31,7 +105,7 @@ try {
             "LC_ALL=C",
             "OMP_NUM_THREADS=8",
             "OPENBLAS_NUM_THREADS=1",
-			"DMK_JIT_AUTOTUNE_DISABLE=1"
+            "DMK_JIT_AUTOTUNE_DISABLE=1"
           ]) {
             sh 'which nvcc'
             sh 'git submodule update --init --recursive'
@@ -41,7 +115,9 @@ try {
           }
         }
       }
-    }
+    },
+    macm1: macBuild('macm1', 'macm1'),
+    macpro: macBuild('macpro', 'macpro')
   }
 }
 finally {

@@ -61,15 +61,21 @@ endif()
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
   set(DMK_VECLIB_DEFINE "SCTL_HAVE_SVML")
-else()
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  # SCTL declares libmvec's vector entry points directly, and they resolve only against glibc.
   set(DMK_VECLIB_DEFINE "SCTL_HAVE_LIBMVEC")
+else()
+  set(DMK_VECLIB_DEFINE "")
 endif()
 
 # Disable google tests and HDF5 for NDA
 set(Build_Tests OFF CACHE BOOL "" FORCE)
 set(HDF5Support OFF CACHE BOOL "" FORCE)
 
-set(DMK_CXX_FLAGS "-DSCTL_MAX_DEPTH=62;-D${DMK_VECLIB_DEFINE}")
+set(DMK_CXX_FLAGS "-DSCTL_MAX_DEPTH=62")
+if (DMK_VECLIB_DEFINE)
+  list(APPEND DMK_CXX_FLAGS "-D${DMK_VECLIB_DEFINE}")
+endif()
 if (DMK_BUILD_TESTS)
   set(DMK_TEST_SRC src/doctest.cpp)
 else()
@@ -428,7 +434,9 @@ install(TARGETS dmk dmk_shared EXPORT dmkTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
-install(FILES include/dmk.h ${DMK_GENERATED_INCLUDE_DIR}/dmk/version.h
+# dmk.h sits at the include root, since every consumer writes #include <dmk.h>
+install(FILES include/dmk.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES ${DMK_GENERATED_INCLUDE_DIR}/dmk/version.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/dmk)
 install(FILES LICENSE THIRD_PARTY_NOTICES.md
   DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/dmk)
@@ -477,6 +485,7 @@ configure_file(cmake/dmk.pc.in ${CMAKE_CURRENT_BINARY_DIR}/dmk.pc @ONLY)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/dmk.pc DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 
 if (DMK_BUILD_TESTS)
+  enable_testing()
   add_subdirectory(test)
 endif()
 
