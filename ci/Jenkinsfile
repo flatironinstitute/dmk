@@ -16,8 +16,10 @@ def macBuild(String name, String agent) {
                 uname -m
                 export PATH="$BREW/bin:$PATH"
                 LLVM_ROOT=$(brew --prefix llvm)
-                brew --prefix open-mpi openblas
-                cmake -B build . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/build/install -DCMAKE_CXX_COMPILER="$LLVM_ROOT/bin/clang++" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_EXE_LINKER_FLAGS="-L$LLVM_ROOT/lib/c++ -Wl,-rpath,$LLVM_ROOT/lib/c++" -DCMAKE_SHARED_LINKER_FLAGS="-L$LLVM_ROOT/lib/c++ -Wl,-rpath,$LLVM_ROOT/lib/c++" -DCMAKE_CXX_FLAGS=-Wno-deprecated -DDMK_BUILD_TESTS=ON
+                # openblas is keg-only, so cmake only finds it if its prefix is named directly.
+                OPENBLAS_ROOT=$(brew --prefix openblas)
+                brew --prefix open-mpi
+                cmake -B build . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/build/install -DBLA_VENDOR=OpenBLAS -DCMAKE_PREFIX_PATH="$OPENBLAS_ROOT;$BREW" -DCMAKE_CXX_COMPILER="$LLVM_ROOT/bin/clang++" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_EXE_LINKER_FLAGS="-L$LLVM_ROOT/lib/c++ -Wl,-rpath,$LLVM_ROOT/lib/c++" -DCMAKE_SHARED_LINKER_FLAGS="-L$LLVM_ROOT/lib/c++ -Wl,-rpath,$LLVM_ROOT/lib/c++" -DCMAKE_CXX_FLAGS=-Wno-deprecated -DDMK_BUILD_TESTS=ON
                 cmake --build build -j$(sysctl -n hw.ncpu)
                 mpirun -n 2 --bind-to none ./build/test/test_all -nc'''
         }
@@ -114,8 +116,8 @@ try {
         }
       }
     },
-    macm1: macBuild('macm1', 'faraday-macm1'),
-    macintel: macBuild('macintel', 'macos')
+    macm1: macBuild('macm1', 'macm1'),
+    macpro: macBuild('macpro', 'macpro')
   }
 }
 finally {
