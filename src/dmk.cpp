@@ -103,9 +103,9 @@ void validate_create_args(dmk_communicator comm, const pdmk_params &params, int 
         fail("Invalid kernel: " + std::to_string(int(params.kernel)));
     if (params.kernel == DMK_YUKAWA && params.fparam <= 0.0)
         fail("Invalid yukawa lambda. lambda must be positive, got " + std::to_string(params.fparam));
-    if (params.eval_src < DMK_POTENTIAL || params.eval_src > DMK_VELOCITY_PRESSURE)
+    if (params.eval_src < DMK_POTENTIAL || params.eval_src > DMK_VELOCITY)
         fail("Invalid eval_src: " + std::to_string(int(params.eval_src)));
-    if (params.eval_trg < DMK_POTENTIAL || params.eval_trg > DMK_VELOCITY_PRESSURE)
+    if (params.eval_trg < DMK_POTENTIAL || params.eval_trg > DMK_VELOCITY)
         fail("Invalid eval_trg: " + std::to_string(int(params.eval_trg)));
 
     // Stokeslet/Stresslet/Laplace-dipole only have 3D evaluators currently
@@ -196,11 +196,8 @@ void validate_direct_args(const pdmk_params &params, int n_src, const Real *r_sr
     }
 
     auto check_eval = [&](dmk_eval_type eval, const char *what) {
-        if (eval < DMK_POTENTIAL || eval > DMK_VELOCITY_PRESSURE)
+        if (eval < DMK_POTENTIAL || eval > DMK_VELOCITY)
             fail(std::string("Invalid ") + what + ": " + std::to_string(int(eval)));
-        if (eval == DMK_POTENTIAL_GRAD_HESSIAN || eval == DMK_VELOCITY_PRESSURE)
-            fail(std::string(what) + "=" + std::string(util::to_string(eval)) +
-                 " is not implemented by the direct kernels (potential, potential+gradient and velocity only)");
         try {
             get_kernel_output_dim(params.n_dim, params.kernel, eval);
         } catch (const std::exception &e) {
@@ -1108,12 +1105,12 @@ TEST_CASE_GENERIC("[DMK] pdmk_direct", 1) {
 #endif
     }
 
-    SUBCASE("unimplemented eval types and kernel/dim combinations are rejected") {
+    SUBCASE("out-of-range eval types and unimplemented kernel/dim combinations are rejected") {
         std::vector<double> pot_src(n_src * 16);
-        pdmk_params hessian = params;
-        hessian.eval_src = DMK_POTENTIAL_GRAD_HESSIAN;
-        CHECK(pdmk_direct(comm, hessian, n_src, &r_src[0], &charges[0], nullptr, 0, nullptr, pot_src.data(), nullptr) ==
-              DMK_ERR_INVALID_ARGUMENT);
+        pdmk_params bad_eval = params;
+        bad_eval.eval_src = dmk_eval_type(99);
+        CHECK(pdmk_direct(comm, bad_eval, n_src, &r_src[0], &charges[0], nullptr, 0, nullptr, pot_src.data(),
+                          nullptr) == DMK_ERR_INVALID_ARGUMENT);
 
         pdmk_params stokes_2d = params;
         stokes_2d.n_dim = 2;
@@ -1176,14 +1173,11 @@ TEST_CASE_GENERIC("[DMK] error handling", 1) {
         CHECK(tree == nullptr);
     }
 
-    SUBCASE("velocity-pressure eval is unsupported and returns NULL") {
+    SUBCASE("out-of-range eval type returns NULL") {
         pdmk_params bad = params;
-        bad.n_dim = 3;
-        bad.kernel = DMK_STOKESLET;
-        bad.eval_src = DMK_VELOCITY_PRESSURE;
-        bad.eval_trg = DMK_VELOCITY_PRESSURE;
-        std::vector<double> stokes_charges(n_src * n_dim, 1.0);
-        pdmk_tree tree = pdmk_tree_create(comm, bad, n_src, &r_src[0], stokes_charges.data(), nullptr, 0, nullptr);
+        bad.eval_src = dmk_eval_type(99);
+        bad.eval_trg = dmk_eval_type(99);
+        pdmk_tree tree = pdmk_tree_create(comm, bad, n_src, &r_src[0], &charges[0], nullptr, 0, nullptr);
         CHECK(tree == nullptr);
     }
 

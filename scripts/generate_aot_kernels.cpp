@@ -118,12 +118,8 @@ std::string eval_level_enum_name(dmk_eval_type el) {
         return "DMK_POTENTIAL";
     case DMK_POTENTIAL_GRAD:
         return "DMK_POTENTIAL_GRAD";
-    case DMK_POTENTIAL_GRAD_HESSIAN:
-        return "DMK_POTENTIAL_GRAD_HESSIAN";
     case DMK_VELOCITY:
         return "DMK_VELOCITY";
-    case DMK_VELOCITY_PRESSURE:
-        return "DMK_VELOCITY_PRESSURE";
     }
     return "DMK_POTENTIAL";
 }

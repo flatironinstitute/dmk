@@ -39,24 +39,18 @@ inline int get_kernel_output_dim(int dim, dmk_ikernel kernel, dmk_eval_type flag
             return 1;
         if (flags == DMK_POTENTIAL_GRAD)
             return 1 + dim;
-        if (flags == DMK_POTENTIAL_GRAD_HESSIAN)
-            return 1 + dim + dim * dim;
         break;
     case DMK_LAPLACE:
         if (flags == DMK_POTENTIAL)
             return 1;
         if (flags == DMK_POTENTIAL_GRAD)
             return 1 + dim;
-        if (flags == DMK_POTENTIAL_GRAD_HESSIAN)
-            return 1 + dim + dim * dim;
         break;
     case DMK_SQRT_LAPLACE:
         if (flags == DMK_POTENTIAL)
             return 1;
         if (flags == DMK_POTENTIAL_GRAD)
             return 1 + dim;
-        if (flags == DMK_POTENTIAL_GRAD_HESSIAN)
-            return 1 + dim + dim * dim;
         break;
     case DMK_STOKESLET:
         if (flags == DMK_VELOCITY)

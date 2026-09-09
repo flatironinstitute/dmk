@@ -21,9 +21,7 @@ typedef enum {
 typedef enum {
     DMK_POTENTIAL = 1,
     DMK_POTENTIAL_GRAD = 2,
-    DMK_POTENTIAL_GRAD_HESSIAN = 3,
-    DMK_VELOCITY = 4,
-    DMK_VELOCITY_PRESSURE = 5,
+    DMK_VELOCITY = 3,
 } dmk_eval_type;
 
 // Selects which compute path eval() uses. The CPU path is always available.
@@ -80,9 +78,9 @@ typedef struct pdmk_params {
     double eps DMK_DEFAULT(1e-3);               ///< target precision
     dmk_ikernel kernel DMK_DEFAULT(DMK_YUKAWA); ///< evaluation kernel
     dmk_eval_type
-        eval_src DMK_DEFAULT(DMK_POTENTIAL); ///< level to compute at sources (potential, pot+grad, pot+grad+hess)
+        eval_src DMK_DEFAULT(DMK_POTENTIAL); ///< level to compute at sources (potential, pot+grad, velocity)
     dmk_eval_type
-        eval_trg DMK_DEFAULT(DMK_POTENTIAL); ///< level to compute at sources (potential, pot+grad, pot+grad+hess)
+        eval_trg DMK_DEFAULT(DMK_POTENTIAL); ///< level to compute at targets (potential, pot+grad, velocity)
     double fparam DMK_DEFAULT(6.0);          ///< param for selected potential (Yukawa lambda param)
     int use_periodic DMK_DEFAULT(false);     ///< use periodic boundary conditions (in all dimensions, currently)
     int n_per_leaf DMK_DEFAULT(200);         ///< tuning: number of particles per leaf in N-tree

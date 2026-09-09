@@ -64,8 +64,10 @@ constexpr std::array<std::string_view, 6> ikernel_names = {
     "yukawa", "laplace", "sqrt_laplace", "stokeslet", "stresslet", "laplace_dipole",
 };
 
-constexpr std::array<std::string_view, 5> return_names = {
-    "potential", "potential_grad", "potential_grad_hessian", "velocity", "velocity_pressure",
+constexpr std::array<std::string_view, 3> return_names = {
+    "potential",
+    "potential_grad",
+    "velocity",
 };
 
 constexpr std::string_view to_string(dmk_ikernel k) noexcept {
