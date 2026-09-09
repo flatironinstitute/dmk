@@ -14,3 +14,15 @@ endif()
 if (DMK_BUILD_REFERENCE)
   target_link_libraries(test_all PRIVATE dmk_ref)
 endif()
+
+if (DMK_HAVE_MPI)
+  add_test(NAME test_all COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+    ${MPIEXEC_PREFLAGS} $<TARGET_FILE:test_all> ${MPIEXEC_POSTFLAGS} -nc)
+else()
+  add_test(NAME test_all COMMAND test_all -nc)
+endif()
+# Autotuning a GPU build dominates the run time of the small test problems. The whole suite runs
+# well past ctest's 1500 s default.
+set_tests_properties(test_all PROPERTIES
+  ENVIRONMENT DMK_JIT_AUTOTUNE_DISABLE=1
+  TIMEOUT 5400)

@@ -479,6 +479,7 @@ configure_file(cmake/dmk.pc.in ${CMAKE_CURRENT_BINARY_DIR}/dmk.pc @ONLY)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/dmk.pc DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 
 if (DMK_BUILD_TESTS)
+  enable_testing()
   add_subdirectory(test)
 endif()
 
