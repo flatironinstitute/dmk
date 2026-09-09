@@ -428,7 +428,9 @@ install(TARGETS dmk dmk_shared EXPORT dmkTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
-install(FILES include/dmk.h ${DMK_GENERATED_INCLUDE_DIR}/dmk/version.h
+# dmk.h sits at the include root, since every consumer writes #include <dmk.h>
+install(FILES include/dmk.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES ${DMK_GENERATED_INCLUDE_DIR}/dmk/version.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/dmk)
 install(FILES LICENSE THIRD_PARTY_NOTICES.md
   DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/dmk)
