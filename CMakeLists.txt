@@ -61,15 +61,21 @@ endif()
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
   set(DMK_VECLIB_DEFINE "SCTL_HAVE_SVML")
-else()
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  # SCTL declares libmvec's vector entry points directly, and they resolve only against glibc.
   set(DMK_VECLIB_DEFINE "SCTL_HAVE_LIBMVEC")
+else()
+  set(DMK_VECLIB_DEFINE "")
 endif()
 
 # Disable google tests and HDF5 for NDA
 set(Build_Tests OFF CACHE BOOL "" FORCE)
 set(HDF5Support OFF CACHE BOOL "" FORCE)
 
-set(DMK_CXX_FLAGS "-DSCTL_MAX_DEPTH=62;-D${DMK_VECLIB_DEFINE}")
+set(DMK_CXX_FLAGS "-DSCTL_MAX_DEPTH=62")
+if (DMK_VECLIB_DEFINE)
+  list(APPEND DMK_CXX_FLAGS "-D${DMK_VECLIB_DEFINE}")
+endif()
 if (DMK_BUILD_TESTS)
   set(DMK_TEST_SRC src/doctest.cpp)
 else()
