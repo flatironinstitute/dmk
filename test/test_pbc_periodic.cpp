@@ -352,6 +352,10 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC asymmetric-depth shift", 1) {
     CHECK(l2_err < 1e-5);
 }
 
+// n_per_leaf above n_src collapses the tree to a single box, where the root-level periodic kernel
+// stands in for the level-0 outgoing expansion and list1 holds the root under all 3^DIM image
+// shifts -- a distinct code path from the multilevel case below, checked against the same Ewald
+// reference so this asserts physics rather than tree structure.
 TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level public API", 1) {
     constexpr int n_dim = 3;
     constexpr int n_src = 8;
@@ -368,29 +372,104 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level public API", 1) {
     sctl::Vector<double> r_trg({0.15, 0.15, 0.15, 0.35, 0.35, 0.35, 0.65, 0.65, 0.65, 0.85, 0.85, 0.85});
     sctl::Vector<double> charges(n_src);
     sctl::Vector<double> normal(n_src * n_dim);
-    sctl::Vector<double> pot_src(n_src);
-    sctl::Vector<double> pot_trg(n_trg);
 
     normal.SetZero();
     for (int i = 0; i < n_src; ++i)
         charges[i] = (i % 2 == 0 ? 1.0 : -1.0) / n_src;
 
-    pdmk_params params;
-    params.eps = 1e-6;
-    params.n_dim = n_dim;
-    params.n_per_leaf = 1000000;
-    params.eval_src = DMK_POTENTIAL;
-    params.eval_trg = DMK_POTENTIAL;
-    params.kernel = DMK_LAPLACE;
-    params.use_periodic = true;
-    params.log_level = 6;
+    const double L = 1.0;
+    dmk::pbc_ref::EwaldRef ewald(DMK_LAPLACE, n_dim, n_src, &r_src[0], &charges[0], L);
 
-    pdmk_tree tree = pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &normal[0], n_trg, &r_trg[0]);
-    pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
-    pdmk_tree_destroy(tree);
+    struct PrecisionCase {
+        int n_digits;
+        double eps;
+        double tol_pot;
+        double tol_grad;
+    };
+    const PrecisionCase cases[] = {
+        {3, 1e-3, 1e-2, 1e-1},
+        {6, 1e-6, 1e-4, 1e-3},
+        {9, 1e-9, 1e-7, 1e-6},
+        {12, 1e-12, 1e-10, 1e-9},
+    };
 
-    CHECK(pot_src.Dim() == n_src);
-    CHECK(pot_trg.Dim() == n_trg);
+    for (const auto &pc : cases) {
+        for (int with_grad = 0; with_grad <= 1; ++with_grad) {
+            const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
+            const int odim = with_grad ? 1 + n_dim : 1;
+            const std::string label = "n_digits=" + std::to_string(pc.n_digits) + (with_grad ? " pot+grad" : " pot");
+
+            SUBCASE(label.c_str()) {
+                pdmk_params params;
+                params.eps = pc.eps;
+                params.n_dim = n_dim;
+                params.n_per_leaf = 1000000;
+                params.eval_src = eval;
+                params.eval_trg = eval;
+                params.kernel = DMK_LAPLACE;
+                params.use_periodic = true;
+                params.log_level = 6;
+
+                sctl::Vector<double> pot_src(n_src * odim), pot_trg(n_trg * odim);
+                pot_src.SetZero();
+                pot_trg.SetZero();
+
+                pdmk_tree tree =
+                    pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &normal[0], n_trg, &r_trg[0]);
+                REQUIRE_MESSAGE(tree != nullptr, "tree_create failed: ", std::string(pdmk_last_error_message()));
+                const dmk_error rc = pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
+                pdmk_tree_destroy(tree);
+                REQUIRE_MESSAGE(rc == DMK_SUCCESS, "eval failed: ", std::string(pdmk_last_error_message()));
+
+                double err2_pot_src = 0, ref2_pot_src = 0;
+                double err2_grad_src = 0, ref2_grad_src = 0;
+                for (int i = 0; i < n_src; ++i) {
+                    double ewald_pot;
+                    double ewald_grad[3];
+                    ewald.eval(&r_src[i * n_dim], i, ewald_pot, with_grad ? ewald_grad : nullptr);
+                    err2_pot_src += sctl::pow<2>(pot_src[i * odim] - ewald_pot);
+                    ref2_pot_src += sctl::pow<2>(ewald_pot);
+                    if (with_grad) {
+                        for (int dd = 0; dd < n_dim; ++dd) {
+                            err2_grad_src += sctl::pow<2>(pot_src[i * odim + 1 + dd] - ewald_grad[dd]);
+                            ref2_grad_src += sctl::pow<2>(ewald_grad[dd]);
+                        }
+                    }
+                }
+
+                double err2_pot_trg = 0, ref2_pot_trg = 0;
+                double err2_grad_trg = 0, ref2_grad_trg = 0;
+                for (int i = 0; i < n_trg; ++i) {
+                    double ewald_pot;
+                    double ewald_grad[3];
+                    ewald.eval(&r_trg[i * n_dim], -1, ewald_pot, with_grad ? ewald_grad : nullptr);
+                    err2_pot_trg += sctl::pow<2>(pot_trg[i * odim] - ewald_pot);
+                    ref2_pot_trg += sctl::pow<2>(ewald_pot);
+                    if (with_grad) {
+                        for (int dd = 0; dd < n_dim; ++dd) {
+                            err2_grad_trg += sctl::pow<2>(pot_trg[i * odim + 1 + dd] - ewald_grad[dd]);
+                            ref2_grad_trg += sctl::pow<2>(ewald_grad[dd]);
+                        }
+                    }
+                }
+
+                const double l2_pot_src = dmk::pbc_ref::safe_l2(err2_pot_src, ref2_pot_src);
+                const double l2_pot_trg = dmk::pbc_ref::safe_l2(err2_pot_trg, ref2_pot_trg);
+
+                VERBOSE_MESSAGE("PBC single-level: ", label, " pot_src=", l2_pot_src, " pot_trg=", l2_pot_trg);
+                CHECK(l2_pot_src < pc.tol_pot);
+                CHECK(l2_pot_trg < pc.tol_pot);
+
+                if (with_grad) {
+                    const double l2_grad_src = dmk::pbc_ref::safe_l2(err2_grad_src, ref2_grad_src);
+                    const double l2_grad_trg = dmk::pbc_ref::safe_l2(err2_grad_trg, ref2_grad_trg);
+                    VERBOSE_MESSAGE("  grad_src=", l2_grad_src, " grad_trg=", l2_grad_trg);
+                    CHECK(l2_grad_src < pc.tol_grad);
+                    CHECK(l2_grad_trg < pc.tol_grad);
+                }
+            }
+        }
+    }
 }
 
 TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level root pw_out must be zeroed", 1) {

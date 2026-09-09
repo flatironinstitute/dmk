@@ -5,6 +5,7 @@
 #include <dmk/testing.hpp>
 #include <random>
 #include <span>
+#include <string>
 #include <vector>
 
 // Small shared fixture for the plumbing tests (2D construction, float-vs-double, the C API).
@@ -328,6 +329,115 @@ TEST_CASE_GENERIC("[ESP] C API pdmk_esp_eval interleaves gradients", 1) {
 
     pdmk_esp_plan_destroy(plan);
     delete plan_cxx;
+}
+
+// The ESP argument contract: every bad-argument case is refused at plan creation (NULL handle /
+// DMK_ERR_INVALID_ARGUMENT) instead of surfacing as DMK_ERR_INTERNAL from inside the solver.
+TEST_CASE_GENERIC("[ESP] C API argument validation", 1) {
+    const pdmk_esp_params base = make_esp_params(R_C, 1e-6, DMK_POTENTIAL);
+    std::vector<double> pot_src(N * 4);
+    // Contents are irrelevant: every call below must be rejected before any of them is read.
+    std::vector<float> r_src_f(3 * N), charges_f(N), pot_src_f(N * 4);
+
+    SUBCASE("bad dimension is rejected by all four entry points") {
+        pdmk_esp_params bad = base;
+        bad.n_dim = 5;
+        CHECK(pdmk_esp_plan_create(nullptr, bad) == nullptr);
+        CHECK(std::string(pdmk_last_error_message()).size() > 0);
+        CHECK(pdmk_esp_plan_createf(nullptr, bad) == nullptr);
+        CHECK(pdmk_esp(nullptr, bad, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+        CHECK(pdmk_espf(nullptr, bad, N, r_src_f.data(), charges_f.data(), nullptr, pot_src_f.data()) ==
+              DMK_ERR_INVALID_ARGUMENT);
+    }
+
+    SUBCASE("out-of-range eval_type is rejected") {
+        pdmk_esp_params bad = base;
+        bad.eval_type = dmk_eval_type(99);
+        CHECK(pdmk_esp_plan_create(nullptr, bad) == nullptr);
+        CHECK(std::string(pdmk_last_error_message()).size() > 0);
+        CHECK(pdmk_esp(nullptr, bad, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+    }
+
+    SUBCASE("r_c above 1/3 is rejected") {
+        pdmk_esp_params bad = base;
+        bad.r_c = 0.5;
+        CHECK(pdmk_esp_plan_create(nullptr, bad) == nullptr);
+        CHECK(std::string(pdmk_last_error_message()).size() > 0);
+        CHECK(pdmk_esp(nullptr, bad, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+    }
+
+    SUBCASE("non-positive r_c is rejected") {
+        pdmk_esp_params bad = base;
+        bad.r_c = 0.0;
+        CHECK(pdmk_esp_plan_create(nullptr, bad) == nullptr);
+        CHECK(pdmk_esp(nullptr, bad, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+    }
+
+    SUBCASE("out-of-range eval_path is rejected") {
+        pdmk_esp_params bad = base;
+        bad.eval_path = dmk_eval_path(7);
+        CHECK(pdmk_esp_plan_create(nullptr, bad) == nullptr);
+        CHECK(std::string(pdmk_last_error_message()).size() > 0);
+        CHECK(pdmk_esp(nullptr, bad, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+    }
+
+    // Laplace-dipole, Stokeslet and Stresslet are 3D free-space only in ESP. use_periodic and n_dim
+    // are set so that exactly one of the two restrictions is violated per subcase.
+    SUBCASE("dipole and Stokes kernels are rejected in 2D") {
+        for (const auto kernel : {DMK_LAPLACE_DIPOLE, DMK_STOKESLET, DMK_STRESSLET}) {
+            pdmk_esp_params bad = base;
+            bad.kernel = kernel;
+            bad.eval_type = kernel == DMK_LAPLACE_DIPOLE ? DMK_POTENTIAL : DMK_VELOCITY;
+            bad.n_dim = 2;
+            bad.use_periodic = 0;
+            CHECK(pdmk_esp_plan_create(nullptr, bad) == nullptr);
+            CHECK(std::string(pdmk_last_error_message()).size() > 0);
+        }
+    }
+
+    SUBCASE("dipole and Stokes kernels are rejected under periodic boundaries") {
+        for (const auto kernel : {DMK_LAPLACE_DIPOLE, DMK_STOKESLET, DMK_STRESSLET}) {
+            pdmk_esp_params bad = base;
+            bad.kernel = kernel;
+            bad.eval_type = kernel == DMK_LAPLACE_DIPOLE ? DMK_POTENTIAL : DMK_VELOCITY;
+            bad.n_dim = 3;
+            bad.use_periodic = 1;
+            CHECK(pdmk_esp_plan_create(nullptr, bad) == nullptr);
+            CHECK(std::string(pdmk_last_error_message()).size() > 0);
+        }
+    }
+
+    SUBCASE("Stresslet without a normal is rejected, not a segfault") {
+        pdmk_esp_params stresslet = base;
+        stresslet.kernel = DMK_STRESSLET;
+        stresslet.eval_type = DMK_VELOCITY;
+        stresslet.use_periodic = 0;
+        // Free-space pads the spectral grid to ~2.2*sqrt(3); the shared R_C would make it enormous.
+        stresslet.r_c = 0.25;
+        std::vector<double> forces(N * 3, 1.0), vel(N * 3);
+        CHECK(pdmk_esp(nullptr, stresslet, N, R_SRC, forces.data(), nullptr, vel.data()) == DMK_ERR_INVALID_ARGUMENT);
+
+        pdmk_esp_plan plan = pdmk_esp_plan_create(nullptr, stresslet);
+        REQUIRE(plan != nullptr);
+        CHECK(pdmk_esp_eval(nullptr, plan, N, R_SRC, forces.data(), nullptr, vel.data()) == DMK_ERR_INVALID_ARGUMENT);
+        pdmk_esp_plan_destroy(plan);
+    }
+
+    SUBCASE("null plan handle is rejected") {
+        CHECK(pdmk_esp_eval(nullptr, nullptr, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+        CHECK(pdmk_esp_evalf(nullptr, nullptr, N, r_src_f.data(), charges_f.data(), nullptr, pot_src_f.data()) ==
+              DMK_ERR_INVALID_ARGUMENT);
+    }
+
+    SUBCASE("null arrays and negative n are rejected at eval") {
+        pdmk_esp_plan plan = pdmk_esp_plan_create(nullptr, base);
+        REQUIRE(plan != nullptr);
+        CHECK(pdmk_esp_eval(nullptr, plan, N, nullptr, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+        CHECK(pdmk_esp_eval(nullptr, plan, N, R_SRC, nullptr, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+        CHECK(pdmk_esp_eval(nullptr, plan, N, R_SRC, CHARGES, nullptr, nullptr) == DMK_ERR_INVALID_ARGUMENT);
+        CHECK(pdmk_esp_eval(nullptr, plan, -1, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+        pdmk_esp_plan_destroy(plan);
+    }
 }
 
 // ---------------------------------------------------------------------------
