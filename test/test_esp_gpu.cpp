@@ -6,7 +6,7 @@
 #include <dmk/direct.hpp>
 #include <dmk/esp.hpp>
 #include <dmk/periodic_reference.hpp>
-#include <doctest/doctest.h>
+#include <dmk/testing.hpp>
 #include <map>
 #include <random>
 #include <span>
@@ -200,7 +200,7 @@ struct Fixture {
 // The only accuracy check: every kernel against an independent lattice sum (periodic) or all-pairs
 // sum (free space), at the requested tolerance. The CPU is checked alongside so a failure is
 // attributable to the GPU rather than to the shared plan.
-TEST_CASE("[ESP GPU] accuracy vs an exact reference") {
+TEST_CASE_GENERIC("[ESP GPU] accuracy vs an exact reference", 1) {
     const double epses[] = {1e-3, 1e-6};
     // The periodic lattice sums dominate the runtime, and configs differing only in eval_type share
     // their points, charges and reference. Key on what the reference actually depends on.
@@ -221,7 +221,7 @@ TEST_CASE("[ESP GPU] accuracy vs an exact reference") {
 
 // Two evaluations of the same finite sum, so this is implementation agreement and not eps-governed.
 // Pins the per-kernel residual coefficients and the polynomial variable mapping.
-TEST_CASE("[ESP GPU] short-range: GPU vs CPU") {
+TEST_CASE_GENERIC("[ESP GPU] short-range: GPU vs CPU", 1) {
     constexpr double TOL = 1e-6;
     for (const Config &c : kConfigs) {
         Fixture f(c, 1e-5, N_DENSE);
@@ -233,7 +233,7 @@ TEST_CASE("[ESP GPU] short-range: GPU vs CPU") {
 }
 
 // Shared tiles, warp shuffle and ballot compaction are three separate readers of the source payload.
-TEST_CASE("[ESP GPU] short-range: strategies and sort modes agree") {
+TEST_CASE_GENERIC("[ESP GPU] short-range: strategies and sort modes agree", 1) {
     constexpr double TOL = 1e-6;
     const dmk::GpuSrStrategy strategies[] = {dmk::GpuSrStrategy::Dense, dmk::GpuSrStrategy::PruneTile,
                                              dmk::GpuSrStrategy::PruneSource};
@@ -264,7 +264,7 @@ TEST_CASE("[ESP GPU] short-range: strategies and sort modes agree") {
 }
 
 // Free space is the only case where the particle box and the FFT grid differ.
-TEST_CASE("[ESP GPU] free-space uses a padded grid") {
+TEST_CASE_GENERIC("[ESP GPU] free-space uses a padded grid", 1) {
     auto params = esp_params({DMK_LAPLACE, 0.0, DMK_POTENTIAL, false, 0, "laplace pot free"}, 1e-5);
     dmk::EspPlan<double> plan(params);
     CHECK(plan.pad > 1.0);
@@ -272,7 +272,7 @@ TEST_CASE("[ESP GPU] free-space uses a padded grid") {
 }
 
 // 2D has no GPU path.
-TEST_CASE("[ESP GPU] 2D plans are rejected") {
+TEST_CASE_GENERIC("[ESP GPU] 2D plans are rejected", 1) {
     auto params = esp_params({DMK_LAPLACE, 0.0, DMK_POTENTIAL, true, 0, "laplace pot pbc"}, 1e-5);
     params.n_dim = 2;
     dmk::EspPlan<double> plan(params);

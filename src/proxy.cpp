@@ -2,6 +2,7 @@
 #include <dmk/chebychev.hpp>
 #include <dmk/gemm.hpp>
 #include <dmk/planewave.hpp>
+#include <dmk/testing.hpp>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
 
@@ -739,7 +740,7 @@ void check_eval_target_gradients_fd() {
     }
 }
 
-TEST_CASE("[DMK] proxy eval_target_gradients finite difference") {
+TEST_CASE_GENERIC("[DMK] proxy eval_target_gradients finite difference", 1) {
     check_eval_target_gradients_fd<2>();
     check_eval_target_gradients_fd<3>();
 }
