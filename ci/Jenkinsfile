@@ -1,3 +1,31 @@
+// Needs a macOS agent with Homebrew llvm, open-mpi and openblas: the stock Apple clang has no
+// OpenMP. $BREW is the Homebrew prefix, and the agents run a non-login shell whose PATH does not
+// include it -- cmake and mpirun come from there too.
+def macBuild(String name, String agent) {
+  return {
+    node(agent) {
+      stage(name) {
+        checkout scm
+        withEnv([
+          "LC_ALL=C",
+          "OMP_NUM_THREADS=4",
+          "OPENBLAS_NUM_THREADS=1"
+        ]) {
+          sh 'git submodule update --init --recursive'
+          sh '''set -e
+                uname -m
+                export PATH="$BREW/bin:$PATH"
+                LLVM_ROOT=$(brew --prefix llvm)
+                brew --prefix open-mpi openblas
+                cmake -B build . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/build/install -DCMAKE_CXX_COMPILER="$LLVM_ROOT/bin/clang++" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_EXE_LINKER_FLAGS="-L$LLVM_ROOT/lib/c++ -Wl,-rpath,$LLVM_ROOT/lib/c++" -DCMAKE_SHARED_LINKER_FLAGS="-L$LLVM_ROOT/lib/c++ -Wl,-rpath,$LLVM_ROOT/lib/c++" -DCMAKE_CXX_FLAGS=-Wno-deprecated -DDMK_BUILD_TESTS=ON
+                cmake --build build -j$(sysctl -n hw.ncpu)
+                mpirun -n 2 --bind-to none ./build/test/test_all -nc'''
+        }
+      }
+    }
+  }
+}
+
 properties([
   disableConcurrentBuilds(abortPrevious: true),
   buildDiscarder(logRotator(numToKeepStr: '20', daysToKeepStr: '30'))
@@ -86,32 +114,8 @@ try {
         }
       }
     },
-    macos: {
-      // Needs a macOS agent with Homebrew llvm, open-mpi and openblas: the stock Apple clang has
-      // no OpenMP. The agent exposes brew as $BREW and runs a non-login shell, so its prefix has
-      // to be put on PATH here -- cmake and mpirun come from there too.
-      node('macos') {
-        stage('macos') {
-          checkout scm
-          withEnv([
-            "LC_ALL=C",
-            "OMP_NUM_THREADS=4",
-            "OPENBLAS_NUM_THREADS=1"
-          ]) {
-            sh 'git submodule update --init --recursive'
-            sh '''set -e
-                  BREW_BIN=$BREW
-                  [ -x "$BREW_BIN" ] || BREW_BIN=$BREW/bin/brew
-                  export PATH="$("$BREW_BIN" --prefix)/bin:$PATH"
-                  LLVM_ROOT=$("$BREW_BIN" --prefix llvm)
-                  "$BREW_BIN" --prefix open-mpi openblas
-                  cmake -B build . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/build/install -DCMAKE_CXX_COMPILER="$LLVM_ROOT/bin/clang++" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_EXE_LINKER_FLAGS="-L$LLVM_ROOT/lib/c++ -Wl,-rpath,$LLVM_ROOT/lib/c++" -DCMAKE_SHARED_LINKER_FLAGS="-L$LLVM_ROOT/lib/c++ -Wl,-rpath,$LLVM_ROOT/lib/c++" -DCMAKE_CXX_FLAGS=-Wno-deprecated -DDMK_BUILD_TESTS=ON
-                  cmake --build build -j$(sysctl -n hw.ncpu)
-                  mpirun -n 2 --bind-to none ./build/test/test_all -nc'''
-          }
-        }
-      }
-    }
+    macm1: macBuild('macm1', 'faraday-macm1'),
+    macintel: macBuild('macintel', 'macos')
   }
 }
 finally {
