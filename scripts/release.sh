@@ -43,8 +43,11 @@ fi
 echo "$version" > VERSION.txt
 git add VERSION.txt
 
+# Tracked-ness, not existence, decides what gets stamped: the bindings are developed in the tree
+# but released through BinaryBuilder, so an untracked manifest must not be swept into the release
+# commit. Stamping resumes on its own if one is ever committed.
 for manifest in bindings/DMK.jl/Project.toml bindings/python/pyproject.toml; do
-    [ -f "$manifest" ] || continue
+    git ls-files --error-unmatch "$manifest" >/dev/null 2>&1 || continue
     sed -i.bak -E "s/^version *= *\".*\"/version = \"$version\"/" "$manifest"
     rm -f "$manifest.bak"
     if ! grep -q "^version = \"$version\"$" "$manifest"; then
