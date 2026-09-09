@@ -1522,7 +1522,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
         const bool is_stresslet = params.kernel == DMK_STRESSLET;
         const int normal_dim = is_stresslet ? DIM : 0;
         const int direct_charge_dim = kernel_input_dim;
-        const long trg_buff_cnt = std::max(long(params.n_per_leaf), n_trg_max_);
+        const sctl::Long trg_buff_cnt = std::max(sctl::Long(params.n_per_leaf), n_trg_max_);
 
         util::StackOrHeapBuffer<Real, DIM * MAX_PTS> r_buf(DIM * params.n_per_leaf);
         util::StackOrHeapBuffer<Real, MAX_CHARGE_DIM * MAX_PTS> charge_buf(direct_charge_dim * params.n_per_leaf);
