@@ -23,7 +23,7 @@ try {
         }
       }
     },
-      gpu: {
+    gpu: {
       runPod(cpus: 8, gpus: 1, gpuType: 'a100') {
         stage('gpu') {
           withEnv([
@@ -31,7 +31,7 @@ try {
             "LC_ALL=C",
             "OMP_NUM_THREADS=8",
             "OPENBLAS_NUM_THREADS=1",
-			"DMK_JIT_AUTOTUNE_DISABLE=1"
+            "DMK_JIT_AUTOTUNE_DISABLE=1"
           ]) {
             sh 'which nvcc'
             sh 'git submodule update --init --recursive'
