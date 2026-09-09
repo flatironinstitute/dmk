@@ -175,7 +175,8 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
     sctl::Profile::Toc();
 
     sctl::Profile::Tic("update_refinement", &comm_);
-    this->UpdateRefinement(r_src, params.n_per_leaf, balance21, params.use_periodic, halo);
+    this->UpdateRefinement(r_src, params.n_per_leaf, balance21,
+                           params.use_periodic ? sctl::all_periodic(DIM) : sctl::Periodicity::NONE, halo);
     sctl::Profile::Toc();
 
     sctl::Profile::Tic("get_non_halo", &comm_);
@@ -233,7 +234,8 @@ void DMKPtTree<Real, DIM>::build_tree_for_gpu(const sctl::Vector<Real> &r_src, c
     sctl::Profile::Toc();
 
     sctl::Profile::Tic("update_refinement", &comm_);
-    this->UpdateRefinement(r_src, params.n_per_leaf, balance21, params.use_periodic, halo);
+    this->UpdateRefinement(r_src, params.n_per_leaf, balance21,
+                           params.use_periodic ? sctl::all_periodic(DIM) : sctl::Periodicity::NONE, halo);
     sctl::Profile::Toc();
 
     sctl::Profile::Tic("get_non_halo", &comm_);
