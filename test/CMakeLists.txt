@@ -10,13 +10,15 @@ if (DMK_GPU_OFFLOAD)
 endif()
 
 if (DMK_HAVE_MPI)
-  add_test(NAME test_all COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+  add_test(NAME test_all COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2 --bind-to none
     ${MPIEXEC_PREFLAGS} $<TARGET_FILE:test_all> ${MPIEXEC_POSTFLAGS} -nc)
 else()
   add_test(NAME test_all COMMAND test_all -nc)
 endif()
 # Autotuning a GPU build dominates the run time of the small test problems. The whole suite runs
-# well past ctest's 1500 s default.
+# well past ctest's 1500 s default. Two threads keeps the MPI ranks threaded, so the hybrid path is
+# what gets tested, without letting ranks times threads run away on a shared machine. The ranks are
+# left unbound, since a rank bound to one core runs both its threads there.
 set_tests_properties(test_all PROPERTIES
-  ENVIRONMENT DMK_JIT_AUTOTUNE_DISABLE=1
+  ENVIRONMENT "DMK_JIT_AUTOTUNE_DISABLE=1;OMP_NUM_THREADS=2"
   TIMEOUT 5400)
