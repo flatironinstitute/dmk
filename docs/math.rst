@@ -175,9 +175,5 @@ The quantities computed at sources and targets are selected independently with t
      - Potential :math:`\phi` only.
    * - ``DMK_POTENTIAL_GRAD``
      - Potential and gradient :math:`\nabla\phi`.
-   * - ``DMK_POTENTIAL_GRAD_HESSIAN``
-     - Potential, gradient, and Hessian.
    * - ``DMK_VELOCITY``
      - Velocity field (Stokes kernels).
-   * - ``DMK_VELOCITY_PRESSURE``
-     - Velocity and pressure (Stokes kernels).

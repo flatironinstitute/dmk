@@ -3,14 +3,16 @@ Supported features
 
 DMK supports the three major modes of operation:
 
-- ``pdmk`` -- A heavily optimized variant of the original tree algorithm from `Jiang and
-  Greenguard <https://dx.doi.org/10.1002/cpa.22240>`_. Supports MPI+OpenMP (CPU only), pure
-  OpenMP, and GPU evaluation. Tree builds are purely CPU based at the current time, though an
-  all GPU implementation is in the works.
+- ``pdmk`` -- Point DMK -- A heavily optimized variant of the original tree algorithm from
+  `Jiang and Greenguard <https://dx.doi.org/10.1002/cpa.22240>`_. Supports MPI+OpenMP (CPU
+  only), pure OpenMP, and GPU evaluation. Tree builds are purely CPU based at the current time,
+  though an all GPU implementation is in the works. The GPU implementation is accordingly
+  optimally used in "build once eval many" contexts, such as in iterative solvers like GMRES.
 - ``esp`` -- A standalone variant of the ``ESP`` (Ewald Summation with Prolate spheroidal wave
   functions) algorithm from `Liang, J., Lu, L., Barnett, A. et
-  al. <https://doi.org/10.1038/s41467-026-73232-8>`_. OpenMP only, but parity with the DMK tree
-  variant. GPU version a WIP, as will be MPI+OpenMP hybrid.
+  al. <https://doi.org/10.1038/s41467-026-73232-8>`_. OpenMP or GPU, with parity with the DMK
+  tree variant. The GPU path covers every 3D kernel, periodic and free-space; 2D is CPU only.
+  MPI+OpenMP hybrid is still a WIP.
 - ``direct`` -- Reference free space direct sums. Available with GPU, OpenMP, and OpenMP+MPI.
 
 See the following tables for full support tables.
@@ -77,9 +79,6 @@ which returns the potential and its gradient together.
      - no
      - no
      - 3D
-
-``DMK_POTENTIAL_GRAD_HESSIAN`` and ``DMK_VELOCITY_PRESSURE`` are declared in
-``dmk_eval_type`` but are not implemented by any kernel or path.
 
 The Stresslet requires a per-source orientation vector (``normal``, ``n_dim`` components per
 source); a null pointer is rejected rather than dereferenced. Every other kernel ignores
@@ -162,6 +161,116 @@ Both paths evaluate the bare Green's function with correctly-rounded division an
 so they agree to round-off but not bit-for-bit -- the summation order differs. Validate against
 a tolerance, not equality.
 
+ESP: Ewald summation with prolates
+----------------------------------
+
+The ``pdmk_esp*`` entry points are an experimental standalone solver: Ewald summation with a
+prolate spheroidal wave function window, over the unit box with either periodic or free-space
+boundaries. It is experimental in the sense that matters for callers -- the ``pdmk_esp*`` API and
+the ``pdmk_esp_params`` layout are not covered by the project's stability guarantees, and the
+combinations below are what is implemented and tested rather than a target for completion.
+
+ESP evaluates at the sources only: one point set, and one ``eval_type`` field rather than the
+``eval_src`` / ``eval_trg`` pair of the tree path. Results are written into ``pot_src``
+interleaved per source, ``[pot, d/dx, ...]`` for the potential kernels and ``[vx, vy, vz]`` for
+the velocity kernels. Both precisions are available: ``pdmk_esp_plan_create`` / ``pdmk_esp_eval``
+/ ``pdmk_esp_plan_destroy`` / ``pdmk_esp`` in double, and the ``f``-suffixed forms in float.
+Kernel, dimension, evaluation type, boundary condition and accuracy are validated when the plan
+is created, so an unsupported combination fails there rather than during evaluation.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 8 8 18 14 14 14
+
+   * - Kernel
+     - 2D
+     - 3D
+     - Eval types
+     - Gradient
+     - Periodic
+     - GPU
+   * - ``DMK_LAPLACE``
+     - yes
+     - yes
+     - potential
+     - yes
+     - 2D, 3D
+     - 3D
+   * - ``DMK_YUKAWA``
+     - yes
+     - yes
+     - potential
+     - yes
+     - 2D, 3D
+     - 3D
+   * - ``DMK_SQRT_LAPLACE``
+     - yes
+     - yes
+     - potential
+     - yes
+     - 2D, 3D
+     - 3D
+   * - ``DMK_LAPLACE_DIPOLE``
+     - no
+     - yes
+     - potential
+     - yes
+     - no
+     - 3D
+   * - ``DMK_STOKESLET``
+     - no
+     - yes
+     - velocity
+     - no
+     - no
+     - 3D
+   * - ``DMK_STRESSLET``
+     - no
+     - yes
+     - velocity
+     - no
+     - no
+     - 3D
+
+Laplace-dipole, Stokeslet and Stresslet are 3D free-space only: a 2D or ``use_periodic`` request
+for them is rejected. The scalar kernels (Laplace, Yukawa, sqrt-Laplace) run periodic and
+free-space in both 2D and 3D. As on the tree path, the Stresslet reads a per-source orientation
+vector from ``normal``, and every other kernel ignores it.
+
+``eval_path = DMK_EVAL_PATH_GPU`` requires ``-DDMK_GPU_OFFLOAD=ON`` and is 3D only, covering
+every kernel, both boundary conditions and both precisions; 2D runs on the CPU, and a 2D GPU plan
+is rejected. The ``comm`` argument is accepted for signature symmetry with the tree path but is
+unused: each call evaluates the whole point set it is handed within one rank, threaded with
+OpenMP or offloaded to one device.
+
+``r_c`` is the real-space cutoff, at most 1/3 of the box so the short-range stencil stays within
+the neighbouring cells, and ``sigma`` is the FINUFFT upsampling factor for the long-range grid.
+Accuracy is set by ``eps``, but the two interact: a tight ``eps`` needs a wide PSWF spread, and a
+request beyond FINUFFT's spread-width cap is rejected at plan creation rather than silently
+clamped -- loosen ``eps``, raise ``sigma``, or use double precision.
+
+``esp_flags`` selects the short-range strategy; the default combination is the fastest known one.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Flag
+     - Effect
+   * - ``DMK_ESP_PRUNE_TILE``
+     - Sub-cell tile-vs-tile AABB pruning, with source-tile width ``esp_stile``.
+   * - ``DMK_ESP_PRUNE_SOURCE``
+     - Per-source point-vs-target-box pruning, the finest granularity. On the GPU it takes
+       precedence over ``DMK_ESP_PRUNE_TILE``; on the CPU the two are independent.
+   * - ``DMK_ESP_N3L``
+     - Newton's-third-law reciprocal sum (13-forward half stencil, 27-coloured). CPU only.
+   * - ``DMK_ESP_MORTON``
+     - Morton within-cell sort, in place of an octant-bin counting sort with ``esp_bins`` bins
+       per axis.
+
+``DMK_ESP_N3L``, ``esp_bins`` and ``esp_stile`` are CPU-only; a GPU plan logs which of them it
+ignores when it is created.
+
 Parallelism
 -----------
 
@@ -175,8 +284,10 @@ Parallelism
      - ``DMK_HAVE_OPENMP``, on by default. Threads within a rank.
    * - MPI
      - ``DMK_HAVE_MPI``, on by default. Points are distributed across ranks; each rank
-       passes its own slice and receives potentials for its own points. Not available with
-       ``DMK_EVAL_PATH_GPU``.
+       passes its own slice and receives potentials for its own points. The GPU tree path is
+       single-rank, so it cannot be combined with multi-rank MPI; the GPU direct path gathers
+       sources on the host and runs under MPI with one device per rank. ESP ignores the
+       communicator.
 
 Platforms
 ---------
@@ -190,17 +301,18 @@ Platforms
      - Notes
    * - Linux x86-64
      - supported, CI
-     - Primary supported platform. GCC and Clang.
+     - Primary supported platform. CI builds with GCC and with Clang.
    * - macOS (Apple silicon)
-     - experimental, no CI
-     - Needs an OpenMP-capable compiler; the default Apple Clang is not. Verified with
-       Homebrew LLVM (see :doc:`install`). CPU only.
+     - supported, no CI
+     - Not covered by CI. Needs an OpenMP-capable compiler; the default Apple Clang is not.
+       Verified with Homebrew LLVM (see :doc:`install`). CPU only.
    * - Windows
      - not supported
      -
    * - CUDA
      - supported, CI
-     - Linux only. Requires ``-DDMK_GPU_OFFLOAD=ON``.
+     - Linux only. Requires ``-DDMK_GPU_OFFLOAD=ON``. The CI GPU job is a single-device
+       build with MPI off.
 
 Optional components
 -------------------
@@ -219,7 +331,7 @@ Optional components
    * - ESP solver
      - always built
      - Experimental periodic and free-space electrostatics solver with its own API
-       (``pdmk_esp*``); see :doc:`api`.
+       (``pdmk_esp*``); see the ESP table above and :doc:`api`.
    * - Instrumentation
      - ``DMK_INSTRUMENT``
      - Off by default. Enables SCTL profiler counters.

@@ -2,7 +2,7 @@
 
 Notable changes to DMK.
 
-## [Unreleased]
+## [1.0.0] - 2026-09-09
 
 First tagged release. Prior history is summarized here rather than reconstructed commit by commit.
 
@@ -35,7 +35,8 @@ First tagged release. Prior history is summarized here rather than reconstructed
 - **Structured error handling.** Entry points return `dmk_error`; `*_create` returns `NULL` on
   failure; `pdmk_last_error_message()` gives per-thread detail. No C++ exception escapes the C
   boundary, and unsupported kernel/dimension/eval/path combinations are rejected with
-  `DMK_ERR_INVALID_ARGUMENT` before any work is done.
+  `DMK_ERR_INVALID_ARGUMENT` before any work is done. ESP arguments are validated when the plan is
+  created, so `pdmk_esp_plan_create` returns `NULL` for a combination it cannot evaluate.
 - **Optional JIT kernels** (`-DDMK_USE_JIT=ON`, LLVM via RuFuS) that compile the short-range
   evaluator for the requested precision instead of using the pre-compiled AOT tables.
 - **Packaging.** Versioned shared library with SONAME, installed CMake package config for
@@ -45,8 +46,6 @@ First tagged release. Prior history is summarized here rather than reconstructed
 
 ### Known limitations
 
-- `DMK_POTENTIAL_GRAD_HESSIAN` and `DMK_VELOCITY_PRESSURE` are accepted by the enum but not
-  implemented by any path.
 - Stokeslet, Stresslet and Laplace-dipole are 3D only.
 - The GPU *tree* path is 3D and single-rank; it cannot be combined with multi-rank MPI. The GPU
   direct path has neither restriction.

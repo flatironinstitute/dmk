@@ -36,10 +36,19 @@ using asymptotic methods.
 
 The tree is a level-restricted (i.e., 2:1 balanced) adaptive tree.
 
+# Documentation
+
+Full documentation -- installation, mathematical background, quickstart, the supported feature
+matrix and the C API reference -- is published at <https://fi-dmk.readthedocs.io>; the sources live in
+[`docs/`](docs).
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and
+[CHANGELOG.md](CHANGELOG.md) for release notes.
+
 # Building the development MPI code on FI resources
 
 ```bash
-module load modules/2.3 python gcc/13 openmpi intel-oneapi-mkl flexiblas
+module load gcc openmpi intel-oneapi-mkl flexiblas
 
 git clone git@github.com:flatironinstitute/DMK --recursive
 cd DMK
@@ -67,32 +76,13 @@ make -j 12
 
 # ESP (Ewald Summation with Prolates)
 
-DMK includes an experimental periodic electrostatics solver based on prolate spheroidal wave
+DMK includes an experimental periodic and free-space electrostatics solver based on prolate spheroidal wave
 functions (PSWFs), as detailed [here](https://www.nature.com/articles/s41467-026-73232-8). 
 
 Optionally, `-DDMK_USE_JIT=ON` enables runtime JIT-generated short-range kernels (matching the
 long-range window exactly at any sigma, instead of the precompiled AOT tables baked at
 sigma=1.35). This requires LLVM — RuFuS (`extern/RuFuS`) targets **LLVM 19** specifically, though may
 work with newer versions. On FI systems: `module load llvm/19.1.7`.
-
-# Fortran code installation guide
-
-We use make utility to install static and/or dynamic libraries, and to run the tests. 
-Type "make" in the main directory to see the list of options for compiling the point code
-for discrete sources. The box code for continuous sources is compiled and tested using 
-the makefile in test/bdmk.
-
-The box code uses BLAS and we suggest that the user use the Intel compiler ifort and the 
-Intel MKL library for optimal performance. Please do "ulimit -s unlimited" on the command 
-window to avoid segfault before carrying out high-accuracy calculations. The point code uses 
-SCTL from PVFMM by Dhairya Malhotra and VCL by Agner Fog for SIMD accelerated kernel evaluations. 
-
-# Fortran code main subroutines
-
-1. The point code is src/pdmk/pdmk.f
-
-2. The box code is src/bdmk/bdmk.f, which requires calling subroutines
-vol_tree_mem and vol_tree_build in src/common/tree_vol_coeffs.f first to build the tree.
 
 # Citing
 

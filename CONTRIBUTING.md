@@ -32,10 +32,13 @@ cd build && make -j 10
 Tests use [doctest](https://github.com/doctest/doctest) and need `-DDMK_BUILD_TESTS=ON`, as above:
 
 ```bash
-./build/test/test_all                    # everything
-./build/test/test_all -tc='*[DMK]*'      # one suite
-mpirun -n 2 ./build/test/test_all -nc    # MPI build
+ctest --test-dir build --output-on-failure   # everything
+./build/test/test_all -tc='*[DMK]*'          # one suite
+mpirun -n 2 ./build/test/test_all -nc        # MPI build
 ```
+
+`ctest` picks the MPI launcher automatically when the build has MPI. Invoke `test_all` directly
+when you need doctest's own flags, such as `-tc` to select a suite.
 
 Many test cases live next to the code they cover, inside `src/*.cpp`, guarded by the
 `TEST_CASE_GENERIC` macro from `include/dmk/testing.hpp` (which maps to `MPI_TEST_CASE` when MPI is
@@ -105,18 +108,25 @@ Work on a branch and open a pull request against `main`. Please:
 
 - keep the build warning-free and the test suite green (`mpirun -n 2 ./build/test/test_all -nc`);
 - add a test for the behaviour you changed;
-- add an entry under *Unreleased* in `CHANGELOG.md` for anything user-visible; and
+- add an entry under *Unreleased* in `CHANGELOG.md` for anything user-visible, opening that
+  section if the last release closed it; and
 - regenerate any generated sources your change affects.
 
-CI runs on Jenkins (`ci/Jenkinsfile`) in a container built from `ci/Dockerfile`: a Linux CPU build
-with g++ and MPI (tests run on 2 ranks), and a Linux GPU build on an A100 with
-`-DDMK_GPU_OFFLOAD=on -DDMK_HAVE_MPI=off`. The GPU job sets `DMK_JIT_AUTOTUNE_DISABLE=1`; do the
-same when running GPU code locally unless you are specifically measuring autotuned performance,
-since autotuning dominates the run time of small problems.
+CI runs on Jenkins (`ci/Jenkinsfile`) in a container built from `ci/Dockerfile`: Linux CPU builds
+with g++ and with clang (tests run on 2 ranks), a Linux CPU build with MPI off, a Linux GPU build
+on an A100 with `-DDMK_GPU_OFFLOAD=on -DDMK_HAVE_MPI=off`, a macOS build, and a `downstream` job
+that installs the package and consumes it through `find_package(dmk)` and `pkg-config`. The GPU job
+sets `DMK_JIT_AUTOTUNE_DISABLE=1`; do the same when running GPU code locally unless you are
+specifically measuring autotuned performance, since autotuning dominates the run time of small
+problems.
+
+The `downstream` job is the only one that exercises the install rules and the exported CMake
+config, so changes to either need it to pass.
 
 ## Releasing
 
 `scripts/release.sh <major.minor.patch>` stamps `VERSION.txt`, syncs the binding manifests, commits
-and tags `vX.Y.Z`. It does not push. Before tagging, retitle the *Unreleased* section of
-`CHANGELOG.md` and make sure documentation changes are already on `main` — Read the Docs builds tags
+and tags `vX.Y.Z`. It does not push. It refuses to run until the *Unreleased* section of
+`CHANGELOG.md` has been retitled to the version being released and `docs/conf.py` agrees with that
+version. Make sure documentation changes are already on `main` — Read the Docs builds tags
 as frozen snapshots, so a later docs fix does not apply to an existing tag.

@@ -19,6 +19,17 @@ Dependencies
 FINUFFT (fetched automatically) provides the FFTs and spread/interp algorithms used by the ESP
 periodic solver.
 
+MPI is part of the ABI
+~~~~~~~~~~~~~~~~~~~~~~
+
+With ``DMK_HAVE_MPI=ON``, the public header ``dmk.h`` includes ``<mpi.h>`` and
+``dmk_communicator`` is ``MPI_Comm``; the installed CMake target propagates ``DMK_HAVE_MPI`` to
+consumers, so they see the same declarations. An installed DMK is therefore bound to the MPI
+implementation it was built against, and no MPI implementation or version is recorded in the
+installed files. Consumers must compile against that same MPI, and a package that ships DMK must
+pin it as a dependency. Build with ``-DDMK_HAVE_MPI=OFF`` for a library with no MPI in its
+interface.
+
 Building on Flatiron Institute resources
 ----------------------------------------
 
@@ -64,12 +75,26 @@ it.
 Running the tests
 -----------------
 
-Tests require ``-DDMK_BUILD_TESTS=ON`` at configure time. Environment variable
-``DMK_JIT_AUTOTUNE_DISABLE=1`` is helpful for GPU builds. The GPU path uses a JIT+Autotuning
-pipeline that is expensive (~30s) on first call to any device/kernel/precision/eval_type
-combination. From the build directory:
+Tests are off by default; add ``-DDMK_BUILD_TESTS=ON`` at configure time to build them. The
+suite is registered with CTest as a single test named ``test_all``, which is the simplest way to
+run it. From the build directory:
+
+.. code-block:: bash
+
+   ctest --output-on-failure
+
+CTest runs the binary under ``mpirun -n 2`` when the build has MPI and invokes it directly
+otherwise, and sets ``DMK_JIT_AUTOTUNE_DISABLE=1`` for the run.
+
+The binary can also be run by hand, which is how to pass doctest options such as a test-case
+filter or a different rank count:
 
 .. code-block:: bash
 
    DMK_JIT_AUTOTUNE_DISABLE=1 ./test/test_all # run all tests
+   DMK_JIT_AUTOTUNE_DISABLE=1 ./test/test_all -tc='*[DMK]*' # one subset
    DMK_JIT_AUTOTUNE_DISABLE=1 mpirun -np 4 ./test/test_all # MPI-enabled build
+
+``DMK_JIT_AUTOTUNE_DISABLE=1`` matters for GPU builds: the GPU path uses a JIT+autotuning
+pipeline that is expensive (~30s) on first call to any device/kernel/precision/eval_type
+combination.
