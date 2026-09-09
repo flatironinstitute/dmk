@@ -570,6 +570,90 @@ TEST_CASE_GENERIC("[DMK] pdmk all", 1) {
     }
 }
 
+TEST_CASE_GENERIC("[DMK] pdmk all float", 1) {
+    constexpr int n_src = 10000;
+    constexpr int nd = 1;
+    constexpr bool uniform = false;
+    constexpr bool set_fixed_charges = true;
+    // eps asks for three digits; the tolerance allows twice that for fp32 round-off in the solve.
+    constexpr double tol = 2e-3;
+
+#ifdef DMK_HAVE_MPI
+    auto comm = test_comm;
+#else
+    auto comm = nullptr;
+#endif
+
+    pdmk_params params;
+    params.eps = 1e-3;
+    params.eval_src = DMK_POTENTIAL;
+    params.eval_trg = DMK_POTENTIAL;
+    params.fparam = 6.0;
+    params.log_level = SPDLOG_LEVEL_OFF;
+    int ndiv[3] = {80, 280, 280};
+
+    const auto test_kernels = {
+        DMK_YUKAWA,
+        DMK_LAPLACE,
+        DMK_SQRT_LAPLACE,
+    };
+
+    for (auto n_dim : {2, 3}) {
+        params.n_dim = n_dim;
+        std::vector<float> r_src, charges, rnormal, r_trg;
+        dmk::util::init_test_data(n_dim, 1, n_src, 0, uniform, set_fixed_charges, r_src, r_trg, rnormal, charges, 0);
+        r_trg = r_src;
+        std::reverse(r_trg.begin(), r_trg.end());
+        r_trg.resize(n_dim * (n_src - set_fixed_charges * 3));
+        const int n_trg = r_trg.size() / n_dim;
+
+        // The reference runs in double over the float-rounded geometry, so it is a higher-accuracy
+        // answer to exactly the problem pdmkf is given rather than to a neighbouring one.
+        const std::vector<double> r_src_ref(r_src.begin(), r_src.end());
+        const std::vector<double> r_trg_ref(r_trg.begin(), r_trg.end());
+        const std::vector<double> charges_ref(charges.begin(), charges.end());
+
+        for (auto kernel : test_kernels) {
+            const std::string kernel_str(util::to_string(kernel));
+
+            SUBCASE((kernel_str + "_" + std::to_string(n_dim)).c_str()) {
+                params.kernel = kernel;
+                params.n_per_leaf = ndiv[int(kernel)];
+
+                std::vector<float> pot_src(n_src * nd), pot_trg(n_trg * nd);
+
+                const int n_test_src = std::min(n_src, 1000);
+                const int n_test_trg = std::min(n_trg, 1000);
+                std::vector<double> test_src, test_trg;
+                std::span<const double> r_src_trunc(r_src_ref.data(), n_test_src * n_dim);
+                std::span<const double> r_trg_trunc(r_trg_ref.data(), n_test_trg * n_dim);
+
+                compute_direct(n_dim, r_src_ref, charges_ref, std::vector<double>{}, r_src_trunc, test_src, kernel,
+                               DMK_POTENTIAL);
+                compute_direct(n_dim, r_src_ref, charges_ref, std::vector<double>{}, r_trg_trunc, test_trg, kernel,
+                               DMK_POTENTIAL);
+
+                REQUIRE(pdmkf(comm, params, n_src, r_src.data(), charges.data(), rnormal.data(), n_trg, r_trg.data(),
+                              pot_src.data(), pot_trg.data()) == DMK_SUCCESS);
+
+                double err_src{0}, err_trg{0};
+                double ref_src{0}, ref_trg{0};
+                for (int i = 0; i < n_test_src; ++i) {
+                    err_src += sctl::pow<2>(test_src[i] - pot_src[i]);
+                    ref_src += sctl::pow<2>(test_src[i]);
+                }
+                for (int i = 0; i < n_test_trg; ++i) {
+                    err_trg += sctl::pow<2>(test_trg[i] - pot_trg[i]);
+                    ref_trg += sctl::pow<2>(test_trg[i]);
+                }
+
+                CHECK(std::sqrt(err_src / ref_src) < tol);
+                CHECK(std::sqrt(err_trg / ref_trg) < tol);
+            }
+        }
+    }
+}
+
 TEST_CASE_GENERIC("[DMK] pdmk 3d stokeslet velocity", 1) {
     constexpr int n_dim = 3;
     constexpr int n_src = 2000;
