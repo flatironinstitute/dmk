@@ -3,6 +3,7 @@
 #include <dmk/esp.hpp>
 #include <dmk/periodic_reference.hpp>
 #include <dmk/testing.hpp>
+#include <dmk/util.hpp>
 #include <random>
 #include <span>
 #include <string>
@@ -198,11 +199,13 @@ TEST_CASE_GENERIC("[ESP] short-range stress: all pairs within r_c", 1) {
     double r_src[N * 3];
     double charges[N];
     {
-        std::mt19937 rng(12345u);
-        std::uniform_real_distribution<double> uni(-sphere_r, sphere_r);
+        // The cluster geometry here is deliberate, so only the draw comes from util.hpp; a
+        // std::uniform_real_distribution would not reproduce across standard libraries.
+        dmk::util::TestRng rng(12345);
+        auto uni = [&] { return sphere_r * (2 * rng() - 1); };
         int placed = 0;
         while (placed < N) {
-            double x = uni(rng), y = uni(rng), z = uni(rng);
+            double x = uni(), y = uni(), z = uni();
             if (x * x + y * y + z * z <= sphere_r * sphere_r) {
                 r_src[3 * placed + 0] = x + 0.5 * L;
                 r_src[3 * placed + 1] = y + 0.5 * L;
@@ -462,13 +465,11 @@ static void run_esp_pbc(const EspPbcParams &c) {
     const int n_dim = c.n_dim;
     const double L = 1.0;
 
-    std::default_random_engine eng(c.seed);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-    std::vector<double> r_src(size_t(n_dim) * n_src), charges(n_src);
-    for (auto &x : r_src)
-        x = rng(eng);
-    for (auto &q : charges)
-        q = rng(eng) - 0.5;
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so cell occupancy varies.
+    std::vector<double> r_src, charges, trg_unused, normals_unused;
+    dmk::util::init_test_data(n_dim, 1, n_src, 0, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, trg_unused, normals_unused, charges, c.seed);
     if (c.neutral) {
         double s = 0;
         for (double q : charges)
@@ -557,15 +558,12 @@ TEST_CASE_GENERIC("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)", 1) {
     constexpr int n_trg = 500;
     const double L = 1.0;
 
-    std::default_random_engine eng(88);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-    std::vector<double> r_src(n_dim * n_src), r_trg(n_dim * n_trg), charges(n_src), rnormal(n_dim * n_src, 0.0);
-    for (auto &x : r_src)
-        x = rng(eng);
-    for (auto &x : r_trg)
-        x = rng(eng);
-    for (auto &q : charges)
-        q = rng(eng) - 0.5;
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so cell occupancy varies.
+    std::vector<double> r_src, r_trg, charges, normals_unused;
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, r_trg, normals_unused, charges, /*seed=*/88);
+    std::vector<double> rnormal(size_t(n_dim) * n_src, 0.0);
     {
         double s = 0;
         for (double q : charges)
@@ -672,13 +670,11 @@ static void run_esp_freespace(const EspFreeParams &c) {
     const int n_dim = c.n_dim;
     const double L = 1.0;
 
-    std::default_random_engine eng(c.seed);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-    std::vector<double> r_src(size_t(n_dim) * n_src), charges(n_src);
-    for (auto &x : r_src)
-        x = rng(eng);
-    for (auto &q : charges)
-        q = rng(eng) - 0.5;
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so cell occupancy varies.
+    std::vector<double> r_src, charges, trg_unused, normals_unused;
+    dmk::util::init_test_data(n_dim, 1, n_src, 0, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, trg_unused, normals_unused, charges, c.seed);
 
     const int n_test = c.n_test;
     std::vector<double> ref_pot(n_test), ref_grad(size_t(n_test) * n_dim, 0.0);
@@ -760,13 +756,11 @@ static void run_esp_freespace_dipole(unsigned seed, int n_test) {
     constexpr int n_dim = 3;
     const double L = 1.0;
 
-    std::default_random_engine eng(seed);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-    std::vector<double> r_src(size_t(n_dim) * n_src), charges(size_t(n_dim) * n_src); // dipole vector per source
-    for (auto &x : r_src)
-        x = rng(eng);
-    for (auto &q : charges)
-        q = rng(eng) - 0.5;
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so cell occupancy varies.
+    std::vector<double> r_src, charges, trg_unused, normals_unused; // charges holds a dipole vector per source
+    dmk::util::init_test_data(n_dim, n_dim, n_src, 0, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, trg_unused, normals_unused, charges, seed);
 
     std::vector<double> ref_pot(n_test), ref_grad(size_t(n_test) * n_dim, 0.0);
     {
@@ -835,13 +829,12 @@ static void run_esp_freespace_stokeslet(unsigned seed, int n_test) {
     constexpr int n_dim = 3;
     const double L = 1.0;
 
-    std::default_random_engine eng(seed);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-    std::vector<double> r_src(size_t(n_dim) * n_src), forces(size_t(n_dim) * n_src); // force vector per source
-    for (auto &x : r_src)
-        x = rng(eng);
-    for (auto &f : forces)
-        f = rng(eng) - 0.5; // non-neutral net force exercises the free-space zero-mode gauge (D.17)
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so cell occupancy varies.
+    // A non-neutral net force exercises the free-space zero-mode gauge (D.17).
+    std::vector<double> r_src, forces, trg_unused, normals_unused; // forces holds a force vector per source
+    dmk::util::init_test_data(n_dim, n_dim, n_src, 0, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, trg_unused, normals_unused, forces, seed);
 
     std::vector<double> ref(size_t(n_test) * n_dim, 0.0); // velocity (3 comps) per target
     {
@@ -885,15 +878,11 @@ static void run_esp_freespace_stresslet(unsigned seed, int n_test) {
     constexpr int n_dim = 3;
     const double L = 1.0;
 
-    std::default_random_engine eng(seed);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-    std::vector<double> r_src(size_t(n_dim) * n_src), forces(size_t(n_dim) * n_src), normals(size_t(n_dim) * n_src);
-    for (auto &x : r_src)
-        x = rng(eng);
-    for (auto &f : forces)
-        f = rng(eng) - 0.5;
-    for (auto &nv : normals)
-        nv = rng(eng) - 0.5;
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so cell occupancy varies.
+    std::vector<double> r_src, forces, normals, trg_unused;
+    dmk::util::init_test_data(n_dim, n_dim, n_src, 0, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, trg_unused, normals, forces, seed);
 
     std::vector<double> ref(size_t(n_test) * n_dim, 0.0); // velocity (3 comps) per target
     {

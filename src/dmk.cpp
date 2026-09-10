@@ -1232,7 +1232,24 @@ TEST_CASE_GENERIC("[DMK] pdmk_direct", 1) {
                              nullptr, pot_trgf.data()) == DMK_SUCCESS);
 
         std::vector<double> promoted(pot_trgf.begin(), pot_trgf.end());
-        CHECK(rel_l2(promoted, pot_trg) < 1e-5);
+
+        // What limits the float run is the coordinate difference, not the kernel: a separation r
+        // differenced from coordinates of order one carries relative error eps_f/r, which 1/r
+        // passes through unchanged, and each potential is dominated by its nearest source.
+        double num = 0.0, den = 0.0;
+        for (int t = 0; t < n_trg; ++t) {
+            double d2_min = std::numeric_limits<double>::max();
+            for (int i = 0; i < n_src; ++i) {
+                double d2 = 0.0;
+                for (int d = 0; d < n_dim; ++d)
+                    d2 += sctl::pow<2>(r_trg[t * n_dim + d] - r_src[i * n_dim + d]);
+                d2_min = std::min(d2_min, d2);
+            }
+            num += sctl::pow<2>(pot_trg[t]) / d2_min;
+            den += sctl::pow<2>(pot_trg[t]);
+        }
+        const double tol = 4 * std::numeric_limits<float>::epsilon() * std::sqrt(num / den);
+        CHECK(rel_l2(promoted, pot_trg) < tol);
     }
 
     SUBCASE("tree-only parameters are rejected rather than ignored") {

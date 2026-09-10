@@ -7,6 +7,7 @@
 #include <dmk/esp.hpp>
 #include <dmk/periodic_reference.hpp>
 #include <dmk/testing.hpp>
+#include <dmk/util.hpp>
 #include <map>
 #include <random>
 #include <span>
@@ -64,17 +65,12 @@ struct Points {
         nrm_dim = (c.kernel == DMK_STRESSLET) ? 3 : 0;
         out_dim = dmk::get_kernel_output_dim(3, c.kernel, c.eval_type);
 
-        std::default_random_engine eng(seed);
-        std::uniform_real_distribution<double> rng(0.01, 0.99);
-        r.resize(3ul * n);
-        q.resize(std::size_t(in_dim) * n);
+        // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather
+        // than uniform so cell occupancy varies.
+        std::vector<double> trg_unused;
+        dmk::util::init_test_data(3, in_dim, n, 0, dmk::util::Distribution::GradedVolume,
+                                  /*set_fixed_charges=*/false, r, trg_unused, nrm, q, seed);
         nrm.resize(std::size_t(nrm_dim) * n);
-        for (double &x : r)
-            x = rng(eng);
-        for (double &v : q)
-            v = rng(eng) - 0.5;
-        for (double &v : nrm)
-            v = rng(eng) - 0.5;
         // The periodic Laplace/Sqrt-Laplace lattice sums only converge for a neutral cell.
         if (c.periodic && c.kernel != DMK_YUKAWA)
             for (int k = 0; k < in_dim; ++k) {

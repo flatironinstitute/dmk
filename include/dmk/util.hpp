@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -185,9 +186,18 @@ inline auto size_to = [](auto &v, size_t n) {
         v.ReInit(n);
 };
 
+// std::default_random_engine and std::uniform_real_distribution are implementation dependent
+// one seed with them can draw different points under libstdc++ and libc++.
+// mt19937 is specified exactly, so we just scale the integer output by 2^-32 to live on [0, 1)
+struct TestRng {
+    explicit TestRng(uint32_t seed) : eng(seed) {}
+    inline double operator()() { return eng() * 0x1p-32; }
+    std::mt19937 eng;
+};
+
 template <typename Real>
 struct UniformVolume {
-    UniformVolume(int n_dim, Real side_length, long seed) : DIM(n_dim), L(side_length), eng(seed) {};
+    UniformVolume(int n_dim, Real side_length, long seed) : DIM(n_dim), L(side_length), rng(seed) {};
 
     inline void operator()(Real *res) {
         const Real shift = 0.5 * (1 - L);
@@ -195,47 +205,82 @@ struct UniformVolume {
             res[i] = dist() * L + shift;
     };
 
-    inline Real dist() { return u_dist(eng); };
+    inline Real dist() { return rng(); };
     constexpr int n_dim() { return DIM; }
 
     const int DIM;
     const Real L;
-    std::default_random_engine eng;
-    std::uniform_real_distribution<Real> u_dist;
+    TestRng rng;
 };
 
+// Volume fill whose density rises linearly along x, from sampling x as sqrt(u).
 template <typename Real>
-struct NSphereSurface {
-    NSphereSurface(int n_dim, Real radius, long seed) : DIM(n_dim), R(radius), eng(seed) {};
+struct GradedVolume {
+    GradedVolume(int n_dim, Real side_length, long seed) : DIM(n_dim), L(side_length), rng(seed) {};
+
+    inline void operator()(Real *res) {
+        const Real shift = 0.5 * (1 - L);
+        res[0] = std::sqrt(dist()) * L + shift;
+        for (int i = 1; i < DIM; ++i)
+            res[i] = dist() * L + shift;
+    };
+
+    inline Real dist() { return rng(); };
+    constexpr int n_dim() { return DIM; }
+
+    const int DIM;
+    const Real L;
+    TestRng rng;
+};
+
+// A sphere (circle in 2D) deformed into radial lobes: the radius is a function of angle, dipping
+// inward over `polar_modes` lobes in the polar angle and `azimuthal_modes` lobes in the azimuth, so
+// surface density and the leaf occupancy that follows from it vary around the surface instead of
+// being uniform over a shell. The deformation is one-sided -- the radius spans [radius - amplitude,
+// radius]. amplitude = 0 degenerates to an exact sphere.
+template <typename Real>
+struct LobedNSphere {
+    LobedNSphere(int n_dim, Real radius, long seed, Real amplitude = Real(0.12), int polar_modes = 6,
+                 int azimuthal_modes = 0)
+        : DIM(n_dim), R(radius), A(amplitude), N_polar(polar_modes), N_azim(azimuthal_modes), rng(seed) {};
 
     inline void operator()(Real *res) {
         if (DIM == 2) {
             const Real phi = dist() * 2 * M_PI;
-            res[0] = R * cos(phi) + 0.5;
-            res[1] = R * sin(phi) + 0.5;
+            const Real rr = radius_at(phi, Real{0});
+            res[0] = rr * cos(phi) + 0.5;
+            res[1] = rr * sin(phi) + 0.5;
         } else if (DIM == 3) {
             const Real theta = dist() * M_PI;
-            const Real ct = cos(theta), st = sin(theta);
             const Real phi = dist() * 2 * M_PI;
-            res[0] = R * st * cos(phi) + 0.5;
-            res[1] = R * st * sin(phi) + 0.5;
-            res[2] = R * ct + 0.5;
+            const Real rr = radius_at(theta, phi);
+            const Real ct = cos(theta), st = sin(theta);
+            res[0] = rr * st * cos(phi) + 0.5;
+            res[1] = rr * st * sin(phi) + 0.5;
+            res[2] = rr * ct + 0.5;
         }
     };
 
-    inline Real dist() { return u_dist(eng); };
+    inline Real radius_at(Real polar, Real azim) const {
+        const Real lobe = std::cos(N_polar * polar) * (N_azim ? std::cos(N_azim * azim) : Real{1});
+        return R - A * (Real{1} - lobe) / 2;
+    }
+
+    inline Real dist() { return rng(); };
     constexpr int n_dim() { return DIM; }
 
     const int DIM;
     const Real R;
-    std::default_random_engine eng;
-    std::uniform_real_distribution<Real> u_dist;
+    const Real A;
+    const int N_polar;
+    const int N_azim;
+    TestRng rng;
 };
 
 template <typename Real>
 struct NCubePartialFacet {
     NCubePartialFacet(int n_dim, Real side_length_, Real band_width_, long seed)
-        : DIM(n_dim), L(side_length_), W(band_width_), eng(seed) {};
+        : DIM(n_dim), L(side_length_), W(band_width_), rng(seed) {};
 
     inline void operator()(Real *res) {
         const Real h = Real{0.5} * L;
@@ -296,13 +341,12 @@ struct NCubePartialFacet {
         }
     };
 
-    inline Real dist() { return u_dist(eng); }
+    inline Real dist() { return rng(); }
     constexpr int n_dim() { return DIM; };
 
     const int DIM;
     const Real L, W;
-    std::default_random_engine eng;
-    std::uniform_real_distribution<Real> u_dist;
+    TestRng rng;
 };
 
 inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, auto point_generator, bool set_fixed_charges,
@@ -367,111 +411,32 @@ inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, auto point_g
 
 enum class Distribution : int {
     Uniform = 0,
-    NSphereSurface = 1,
+    LobedNSphere = 1,
     NCubePartialFacet = 2,
+    GradedVolume = 3,
 };
 
 inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, Distribution dist, bool set_fixed_charges,
                            auto &r_src, auto &r_trg, auto &r_normal, auto &charges, long seed) {
     using Real = std::decay_t<decltype(r_src)>::value_type;
-    if (dist == Distribution::NSphereSurface)
-        return init_test_data(n_dim, nd, n_src, n_trg, NSphereSurface<Real>(n_dim, 0.95 * 0.5, seed), set_fixed_charges,
+    if (dist == Distribution::LobedNSphere)
+        return init_test_data(n_dim, nd, n_src, n_trg, LobedNSphere<Real>(n_dim, 0.95 * 0.5, seed), set_fixed_charges,
                               r_src, r_trg, r_normal, charges);
     if (dist == Distribution::NCubePartialFacet)
         return init_test_data(n_dim, nd, n_src, n_trg, NCubePartialFacet<Real>(n_dim, 0.95, 0.02, seed),
                               set_fixed_charges, r_src, r_trg, r_normal, charges);
     constexpr Real almost_one = Real(1) - std::numeric_limits<Real>::epsilon();
+    if (dist == Distribution::GradedVolume)
+        return init_test_data(n_dim, nd, n_src, n_trg, GradedVolume<Real>(n_dim, almost_one, seed), set_fixed_charges,
+                              r_src, r_trg, r_normal, charges);
     return init_test_data(n_dim, nd, n_src, n_trg, UniformVolume<Real>(n_dim, almost_one, seed), set_fixed_charges,
                           r_src, r_trg, r_normal, charges);
 }
 
 inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, bool uniform, bool set_fixed_charges, auto &r_src,
                            auto &r_trg, auto &rnormal, auto &charges, long seed) {
-    using Real = std::decay_t<decltype(r_src)>::value_type;
-    size_to(r_src, n_dim * n_src);
-    size_to(r_trg, n_dim * n_trg);
-    size_to(charges, nd * n_src);
-    size_to(rnormal, n_dim * n_src);
-
-    const double rin = 0.45;
-    const double wrig = 0.12;
-    const double rwig = 0;
-    const int nwig = 6;
-    std::default_random_engine eng(seed);
-    std::uniform_real_distribution<double> rng;
-
-    // Draw one position (ring/sphere for non-uniform, box-fill for uniform); identical
-    // logic for sources and targets.
-    auto draw_pos = [&](Real *p) {
-        if (!uniform) {
-            if (n_dim == 2) {
-                const double phi = rng(eng) * 2 * M_PI;
-                p[0] = rin * cos(phi) + 0.5;
-                p[1] = rin * sin(phi) + 0.5;
-            } else { // n_dim == 3
-                double theta = rng(eng) * M_PI;
-                double rr = rin + rwig * cos(nwig * theta);
-                double ct = cos(theta), st = sin(theta);
-                double phi = rng(eng) * 2 * M_PI;
-                p[0] = rr * st * cos(phi) + 0.5;
-                p[1] = rr * st * sin(phi) + 0.5;
-                p[2] = rr * ct + 0.5;
-            }
-        } else {
-            for (int j = 0; j < n_dim; ++j)
-                p[j] = rng(eng);
-        }
-    };
-    // Redraw until the point is interior at the working precision (a double draw < 1 can
-    // round UP to 1.0 in float, landing on the box boundary) and distinct from every point
-    // emitted so far. Coincident points (near-duplicates collapsing below an ulp) and
-    // boundary points otherwise corrupt the tree / far-field.
-    std::unordered_set<std::string> seen;
-    auto emit = [&](Real *p) {
-        for (;;) {
-            draw_pos(p);
-            bool interior = true;
-            for (int j = 0; j < n_dim; ++j)
-                interior &= (p[j] > Real(0) && p[j] < Real(1));
-            if (interior && seen.insert(std::string(reinterpret_cast<const char *>(p), n_dim * sizeof(Real))).second)
-                return;
-        }
-    };
-
-    for (int i = 0; i < n_src; ++i) {
-        emit(&r_src[i * n_dim]);
-
-        // Unit normals (sphere-distributed) — required for stresslet, harmless otherwise.
-        if (n_dim == 2) {
-            const double phi_n = rng(eng) * 2 * M_PI;
-            rnormal[i * 2 + 0] = std::cos(phi_n);
-            rnormal[i * 2 + 1] = std::sin(phi_n);
-        } else if (n_dim == 3) {
-            const double theta_n = rng(eng) * M_PI;
-            const double ct_n = std::cos(theta_n), st_n = std::sin(theta_n);
-            const double phi_n = rng(eng) * 2 * M_PI;
-            rnormal[i * 3 + 0] = st_n * std::cos(phi_n);
-            rnormal[i * 3 + 1] = st_n * std::sin(phi_n);
-            rnormal[i * 3 + 2] = ct_n;
-        }
-
-        for (int j = 0; j < nd; ++j) {
-            charges[i * nd + j] = rng(eng) - 0.5;
-        }
-    }
-
-    for (int i_trg = 0; i_trg < n_trg; ++i_trg)
-        emit(&r_trg[i_trg * n_dim]);
-
-    if (set_fixed_charges && n_src > 0)
-        for (int i = 0; i < n_dim; ++i)
-            r_src[i] = 0.0;
-    if (set_fixed_charges && n_src > 1)
-        for (int i = n_dim; i < 2 * n_dim; ++i)
-            r_src[i] = 1 - std::numeric_limits<Real>::epsilon();
-    if (set_fixed_charges && n_src > 2)
-        for (int i = 2 * n_dim; i < 3 * n_dim; ++i)
-            r_src[i] = 0.05;
+    return init_test_data(n_dim, nd, n_src, n_trg, uniform ? Distribution::Uniform : Distribution::LobedNSphere,
+                          set_fixed_charges, r_src, r_trg, rnormal, charges, seed);
 }
 
 template <typename T>
