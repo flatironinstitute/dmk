@@ -13,6 +13,7 @@
 #include <dmk/esp.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/legeexps.hpp>
+#include <dmk/omp_wrapper.hpp>
 #include <dmk/prolate.hpp>
 #include <dmk/prolate0_fun.hpp>
 #include <dmk/types.hpp>
@@ -21,7 +22,6 @@
 #include <finufft.h>
 #include <finufft_common/constants.h>
 #include <finufft_common/utils.h>
-#include <omp.h>
 #include <sctl.hpp>
 #include <span>
 #include <stdexcept>
@@ -97,7 +97,7 @@ static void fftn(const std::vector<std::complex<Real>> &in, std::vector<std::com
         axes[d] = d;
     ducc0::cfmav<std::complex<Real>> vin(in.data(), shape);
     ducc0::vfmav<std::complex<Real>> vout(out.data(), shape);
-    const size_t nthreads = omp_get_max_threads();
+    const size_t nthreads = MY_OMP_GET_MAX_THREADS();
     ensure_ducc0_pool_size(nthreads);
     ducc0::c2c(vin, vout, axes, true, Real(1.0), nthreads);
 }
@@ -119,7 +119,7 @@ static void ifftn(const std::vector<std::complex<Real>> &in, std::vector<std::co
     Real fct = Real(1.0);
     for (int d = 0; d < DIM; ++d)
         fct /= Real(n);
-    const size_t nthreads = omp_get_max_threads();
+    const size_t nthreads = MY_OMP_GET_MAX_THREADS();
     ensure_ducc0_pool_size(nthreads);
     ducc0::c2c(vin, vout, axes, false, fct, nthreads);
 }
