@@ -16,7 +16,6 @@
 #include <cmath>
 #include <dmk.h>
 #include <dmk/direct.hpp>
-#include <dmk/esp.hpp>
 #include <dmk/util.hpp>
 #include <filesystem>
 #include <format>
@@ -53,11 +52,9 @@ static const std::vector<KernelDef> all_kernels = {
 };
 // clang-format on
 
-// ESP short-range residuals. Not dmk_ikernels: they reuse the scalar poly_all_pairs templates but
-// with FINUFFT-derived PSWF coefficients (get_esp_correction_coeffs), so only the coefficient
-// source differs. Overrides give each a distinct getter/coeff name. Laplace/Sqrt-Laplace counts +
-// values are known at generator time (fixed sigma=1.35) -> baked per-digit tables, identical to
-// the DMK-kernel mechanism. 3D also emits the range twin; 2D has none.
+// ESP short-range residuals. Not dmk_ikernels: they reuse the scalar poly_all_pairs templates with
+// FINUFFT-derived PSWF coefficients, so only the coefficient source differs. Overrides give each a
+// distinct getter name. 3D also emits the range twin; 2D has none.
 static const std::vector<KernelDef> esp_baked = {
     {DMK_LAPLACE, 2, {DMK_POTENTIAL, DMK_POTENTIAL_GRAD}, "esp_laplace", "laplace_2d_poly_all_pairs"},
     {DMK_LAPLACE, 3, {DMK_POTENTIAL, DMK_POTENTIAL_GRAD}, "esp_laplace", "laplace_3d_poly_all_pairs"},
@@ -70,19 +67,24 @@ static const std::vector<KernelDef> esp_baked = {
      {DMK_POTENTIAL, DMK_POTENTIAL_GRAD},
      "esp_laplace_dipole",
      "laplace_dipole_3d_poly_all_pairs"},
-    // Stokeslet/Stresslet: their biharmonic residual is scale-invariant (get_esp_correction_coeffs
-    // delegates to the cached bsize=1 get_local_correction_coeffs), so counts + values are fixed at
-    // generator time and bake exactly like the scalars. Two coeff sub-arrays (diag, offd); velocity.
+    // Stokeslet/Stresslet split into two sub-arrays (diag, offd), which share one compiled length.
     {DMK_STOKESLET, 3, {DMK_VELOCITY}, "esp_stokeslet", "stokeslet_3d_poly_all_pairs"},
     {DMK_STRESSLET, 3, {DMK_VELOCITY}, "esp_stresslet", "stresslet_3d_poly_all_pairs"},
 };
 
-// Yukawa ESP: free parameter lambda makes coeff count/values runtime -> enumerate n_coeffs in
-// [3,31] and pipe runtime-computed coeffs into the matching branch. 3D reuses laplace_3d (+range
-// twin); 2D uses yukawa_2d (dense only).
+// Yukawa ESP. 3D reuses the laplace_3d driver (+ range twin); 2D uses yukawa_2d (dense only).
 static const std::vector<KernelDef> esp_yukawa = {
     {DMK_YUKAWA, 3, {DMK_POTENTIAL, DMK_POTENTIAL_GRAD}, "esp_yukawa", "laplace_3d_poly_all_pairs"},
     {DMK_YUKAWA, 2, {DMK_POTENTIAL, DMK_POTENTIAL_GRAD}, "esp_yukawa", "yukawa_2d_poly_all_pairs"},
+};
+
+// Yukawa in the DMK tree. lambda*bsize is a free run-time parameter, so the coefficient count is
+// not a function of the digit count -- measured 5 to 18 at three digits over lambda -- and cannot be
+// keyed off it. Enumerating n_coeffs the way ESP Yukawa does gives it the same compiled Horner
+// length every other kernel gets, instead of a dynamic loop bound.
+static const std::vector<KernelDef> dmk_yukawa = {
+    {DMK_YUKAWA, 3, {DMK_POTENTIAL, DMK_POTENTIAL_GRAD}},
+    {DMK_YUKAWA, 2, {DMK_POTENTIAL, DMK_POTENTIAL_GRAD}},
 };
 
 // All generated names derive from the canonical kernel name (dmk::util::to_string)
@@ -100,18 +102,6 @@ std::string func_name(const KernelDef &k) {
 
 std::string getter_name(const KernelDef &k) { return std::format("get_{}_{}d_kernel", base_name(k), k.dim); }
 
-constexpr int min_digits = 2;
-constexpr int max_digits = 12;
-
-struct CoeffsInfo {
-    int digits;
-    double beta;
-    std::vector<size_t> sub_sizes;           // size of each sub-array
-    size_t total_size;                       // sum of sub_sizes
-    std::vector<std::vector<double>> values; // per-sub-array coefficients (used by CUDA tag emission)
-    dmk_eval_type eval_level;
-};
-
 std::string eval_level_enum_name(dmk_eval_type el) {
     switch (el) {
     case DMK_POTENTIAL:
@@ -124,148 +114,12 @@ std::string eval_level_enum_name(dmk_eval_type el) {
     return "DMK_POTENTIAL";
 }
 
-void emit_coeffs_array(const std::string &name, const std::vector<std::vector<double>> &coeffs, double beta) {
-    out() << std::format("// beta: {}\n", beta);
-    out() << std::format("constexpr double {}[] = {{", name);
-    int count = 0;
-    for (const auto &cvec : coeffs) {
-        for (size_t i = 0; i < cvec.size(); ++i) {
-            if (count > 0)
-                out() << ",";
-            if (count % 4 == 0)
-                out() << "\n    ";
-            out() << std::format(" {:.17e}", cvec[i]);
-            count++;
-        }
-    }
-    out() << "\n};\n\n";
-}
-
-std::string coeff_name(const KernelDef &k, int digits, dmk_eval_type el) {
-    return std::format("{}_{}d_{}_{}", base_name(k), k.dim, dmk::util::to_string(el), digits);
-}
+constexpr int min_digits = 2;
+constexpr int max_digits = 12;
 
 // =====================================================================
 // CPU (host AOT) emission
 // =====================================================================
-
-void emit_getter_branch_for_level(const KernelDef &k, dmk_eval_type el, const std::vector<CoeffsInfo> &infos) {
-    for (const auto &info : infos) {
-        if (info.eval_level != el)
-            continue;
-        const auto cn = coeff_name(k, info.digits, el);
-
-        // Build the n_coeffs_rt template args string
-        // e.g. for 1 sub-array: "NC0"
-        // for 2 sub-arrays: "NC0, NC1"
-        std::string nc_decls, nc_args;
-        for (size_t i = 0; i < info.sub_sizes.size(); ++i) {
-            if (i > 0) {
-                nc_decls += "\n";
-                nc_args += ", ";
-            }
-            nc_decls += std::format("            constexpr int NC{} = {};", i, info.sub_sizes[i]);
-            nc_args += std::format("NC{}", i);
-        }
-
-        out() << std::format(
-            "        if (n_digits <= {}) {{\n"
-            "            constexpr int ND = {}, NC_TOTAL = {};\n"
-            "{}\n"
-            "            std::array<Real, NC_TOTAL> coeffs;\n"
-            "            std::copy_n({}, NC_TOTAL, coeffs.data());\n"
-            "            return [=](Real rsc, Real cen, Real d2max, Real thresh2,\n"
-            "                       int n_src, const Real *r_src, const Real *charge,\n"
-            "                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {{\n"
-            "                {}<Real, MaxVecLen, ND, {}, {}>(\n"
-            "                    eval_level, ND, rsc, cen, d2max, thresh2, {},\n"
-            "                    coeffs.data(), n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);\n"
-            "            }};\n"
-            "        }}\n",
-            info.digits, info.digits, info.total_size, nc_decls, cn, func_name(k), nc_args, eval_level_enum_name(el),
-            nc_args);
-    }
-}
-
-void emit_getter(const KernelDef &k, const std::vector<CoeffsInfo> &infos) {
-    out() << std::format(R"(
-template <class Real, int MaxVecLen>
-residual_evaluator_func<Real> {}(dmk_eval_type eval_level, int n_digits) {{
-    constexpr int UF = unroll_factor;
-)",
-                         getter_name(k));
-
-    bool first = true;
-    for (auto el : k.eval_levels) {
-        out() << std::format("    {}if (eval_level == {}) {{\n", first ? "" : "} else ", eval_level_enum_name(el));
-        emit_getter_branch_for_level(k, el, infos);
-        first = false;
-    }
-    if (!k.eval_levels.empty())
-        out() << "    }\n";
-
-    out() << "    throw std::runtime_error(\"Unsupported eval_level/n_digits combination\");\n"
-          << "}\n";
-}
-
-void emit_getter_branch_for_level_ranges(const KernelDef &k, dmk_eval_type el, const std::vector<CoeffsInfo> &infos) {
-    for (const auto &info : infos) {
-        if (info.eval_level != el)
-            continue;
-        const auto cn = coeff_name(k, info.digits, el);
-
-        std::string nc_decls, nc_args;
-        for (size_t i = 0; i < info.sub_sizes.size(); ++i) {
-            if (i > 0) {
-                nc_decls += "\n";
-                nc_args += ", ";
-            }
-            nc_decls += std::format("            constexpr int NC{} = {};", i, info.sub_sizes[i]);
-            nc_args += std::format("NC{}", i);
-        }
-
-        out() << std::format("        if (n_digits <= {}) {{\n"
-                             "            constexpr int ND = {}, NC_TOTAL = {};\n"
-                             "{}\n"
-                             "            std::array<Real, NC_TOTAL> coeffs;\n"
-                             "            std::copy_n({}, NC_TOTAL, coeffs.data());\n"
-                             "            return [=](Real rsc, Real cen, Real d2max, Real thresh2,\n"
-                             "                       int n_src, const Real *r_src, const Real *charge,\n"
-                             "                       const Real *normals, int n_ranges,\n"
-                             "                       const int *range_starts, const int *range_lens,\n"
-                             "                       int n_trg, const Real *r_trg, Real *pot,\n"
-                             "                       const Real *q_trg, Real *pot_src) {{\n"
-                             "                {}_ranges<Real, MaxVecLen, ND, {}, {}>(\n"
-                             "                    eval_level, ND, rsc, cen, d2max, thresh2, {},\n"
-                             "                    coeffs.data(), n_ranges, range_starts, range_lens, n_src,\n"
-                             "                    r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);\n"
-                             "            }};\n"
-                             "        }}\n",
-                             info.digits, info.digits, info.total_size, nc_decls, cn, func_name(k), nc_args,
-                             eval_level_enum_name(el), nc_args);
-    }
-}
-
-void emit_getter_ranges(const KernelDef &k, const std::vector<CoeffsInfo> &infos) {
-    out() << std::format(R"(
-template <class Real, int MaxVecLen>
-residual_evaluator_range_func<Real> {}_ranges(dmk_eval_type eval_level, int n_digits) {{
-    constexpr int UF = unroll_factor;
-)",
-                         getter_name(k));
-
-    bool first = true;
-    for (auto el : k.eval_levels) {
-        out() << std::format("    {}if (eval_level == {}) {{\n", first ? "" : "} else ", eval_level_enum_name(el));
-        emit_getter_branch_for_level_ranges(k, el, infos);
-        first = false;
-    }
-    if (!k.eval_levels.empty())
-        out() << "    }\n";
-
-    out() << "    throw std::runtime_error(\"Unsupported eval_level/n_digits combination\");\n"
-          << "}\n";
-}
 
 // Yukawa ESP getters. Yukawa's residual has a free parameter (lambda), so its coeff count and
 // values are unknown at generator time. We enumerate n_coeffs over the make_polyfit_abs_error range
@@ -275,91 +129,136 @@ residual_evaluator_range_func<Real> {}_ranges(dmk_eval_type eval_level, int n_di
 constexpr int min_coeffs = 3;
 constexpr int max_coeffs = 31;
 
-void emit_yukawa_branch(const KernelDef &k, dmk_eval_type el, int nc, bool ranges) {
-    const std::string ev = eval_level_enum_name(el);
-    if (ranges) {
-        out() << std::format(
-            "        if (n_coeffs == {0}) {{\n"
-            "            constexpr int NC0 = {0};\n"
-            "            std::vector<Real> cf(coeffs, coeffs + NC0);\n"
-            "            return [cf = std::move(cf), eval_level, n_digits](\n"
-            "                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,\n"
-            "                       const Real *charge, const Real *normals, int n_ranges, const int *range_starts,\n"
-            "                       const int *range_lens, int n_trg, const Real *r_trg, Real *pot,\n"
-            "                       const Real *q_trg, Real *pot_src) {{\n"
-            "                {1}_ranges<Real, MaxVecLen, -1, NC0, {2}>(\n"
-            "                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_ranges,\n"
-            "                    range_starts, range_lens, n_src, r_src, charge, normals, n_trg, r_trg, pot,\n"
-            "                    q_trg, pot_src, UF);\n"
-            "            }};\n"
-            "        }}\n",
-            nc, func_name(k), ev);
-    } else if (k.dim == 3) {
-        out() << std::format(
-            "        if (n_coeffs == {0}) {{\n"
-            "            constexpr int NC0 = {0};\n"
-            "            std::vector<Real> cf(coeffs, coeffs + NC0);\n"
-            "            return [cf = std::move(cf), eval_level, n_digits](\n"
-            "                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,\n"
-            "                       const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) "
-            "{{\n"
-            "                {1}<Real, MaxVecLen, -1, NC0, {2}>(\n"
-            "                    eval_level, n_digits, rsc, cen, d2max, thresh2, NC0, cf.data(), n_src, r_src,\n"
-            "                    charge, normals, n_trg, r_trg, pot, UF);\n"
-            "            }};\n"
-            "        }}\n",
-            nc, func_name(k), ev);
-    } else { // 2D log-split yukawa_2d: bake N_COEFFS_REG, keep N_COEFFS_LOG runtime
-        out() << std::format(
-            "        if (n_coeffs == {0}) {{\n"
-            "            constexpr int NC0 = {0};\n"
-            "            std::vector<Real> cf(coeffs, coeffs + n_coeffs_log + NC0);\n"
-            "            return [cf = std::move(cf), eval_level, n_digits, n_coeffs_log](\n"
-            "                       Real rsc, Real cen, Real d2max, Real thresh2, int n_src, const Real *r_src,\n"
-            "                       const Real *charge, const Real *normals, int n_trg, const Real *r_trg, Real *pot) "
-            "{{\n"
-            "                {1}<Real, MaxVecLen, -1, -1, NC0, {2}>(\n"
-            "                    eval_level, n_digits, rsc, cen, d2max, thresh2, n_coeffs_log, NC0, cf.data(),\n"
-            "                    n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);\n"
-            "            }};\n"
-            "        }}\n",
-            nc, func_name(k), ev);
-    }
+// Every residual takes one of three shapes: a single polynomial, two of equal compiled length with
+// the shorter zero-padded, or -- for 2D Yukawa's log split alone -- a dynamic-length log polynomial
+// paired with a static one. Coefficients always come from the caller, fit at whatever beta it used,
+// and the branch is picked by their run-time length.
+enum class Shape { Single, PaddedPair, DynamicLogPair };
+
+// Declarations and copies for one branch; `n` is the compiled length being matched.
+std::string branch_prologue(Shape shape, int nc) {
+    if (shape == Shape::Single)
+        return std::format("            constexpr int NC0 = {};\n"
+                           "            std::array<Real, NC0> cf{{}};\n"
+                           "            std::copy_n(coeffs[0].data(), coeffs[0].size(), cf.data());\n",
+                           nc);
+    if (shape == Shape::PaddedPair)
+        return std::format("            constexpr int NC = {};\n"
+                           "            std::array<Real, 2 * NC> cf{{}};\n"
+                           "            std::copy_n(coeffs[0].data(), coeffs[0].size(), cf.data());\n"
+                           "            std::copy_n(coeffs[1].data(), coeffs[1].size(), cf.data() + NC);\n",
+                           nc);
+    return std::format("            constexpr int NC0 = {};\n"
+                       "            const int n_log = static_cast<int>(coeffs[0].size());\n"
+                       "            std::vector<Real> cf;\n"
+                       "            cf.reserve(n_log + NC0);\n"
+                       "            cf.insert(cf.end(), coeffs[0].begin(), coeffs[0].end());\n"
+                       "            cf.insert(cf.end(), coeffs[1].begin(), coeffs[1].end());\n",
+                       nc);
 }
 
-void emit_getter_yukawa(const KernelDef &k, bool ranges) {
-    out() << std::format("\ntemplate <class Real, int MaxVecLen>\n"
-                         "{0}<Real> {1}{2}(dmk_eval_type eval_level, int n_digits, const Real *coeffs, int n_coeffs,\n"
-                         "                 int n_coeffs_log) {{\n"
-                         "    constexpr int UF = unroll_factor;\n"
-                         "    (void)n_coeffs_log;\n",
-                         ranges ? "residual_evaluator_range_func" : "residual_evaluator_func", getter_name(k),
-                         ranges ? "_ranges" : "");
+// Template length arguments, and the matching run-time ones the driver still takes.
+std::pair<std::string, std::string> branch_lengths(Shape shape) {
+    if (shape == Shape::Single)
+        return {"NC0", "NC0"};
+    if (shape == Shape::PaddedPair)
+        return {"NC, NC", "NC, NC"};
+    return {"-1, NC0", "n_log, NC0"};
+}
 
+// Which polynomial's length selects the branch: the single one, the longer of a padded pair, or the
+// static half of the log split.
+std::string dispatch_key(Shape shape) {
+    if (shape == Shape::Single)
+        return "static_cast<int>(coeffs.at(0).size())";
+    if (shape == Shape::PaddedPair)
+        return "static_cast<int>(std::max(coeffs.at(0).size(), coeffs.at(1).size()))";
+    return "static_cast<int>(coeffs.at(1).size())";
+}
+
+void emit_branch(const KernelDef &k, dmk_eval_type el, Shape shape, int nc, bool ranges) {
+    const auto [targs, rtargs] = branch_lengths(shape);
+    const std::string body =
+        ranges ? std::format("            return [=](Real rsc, Real cen, Real d2max, Real thresh2,\n"
+                             "                       int n_src, const Real *r_src, const Real *charge,\n"
+                             "                       const Real *normals, int n_ranges,\n"
+                             "                       const int *range_starts, const int *range_lens,\n"
+                             "                       int n_trg, const Real *r_trg, Real *pot,\n"
+                             "                       const Real *q_trg, Real *pot_src) {{\n"
+                             "                {0}_ranges<Real, MaxVecLen, -1, {1}, {2}>(\n"
+                             "                    eval_level, n_digits, rsc, cen, d2max, thresh2, {3},\n"
+                             "                    cf.data(), n_ranges, range_starts, range_lens, n_src,\n"
+                             "                    r_src, charge, normals, n_trg, r_trg, pot, q_trg, pot_src, UF);\n"
+                             "            }};\n",
+                             func_name(k), targs, eval_level_enum_name(el), rtargs)
+               : std::format("            return [=](Real rsc, Real cen, Real d2max, Real thresh2,\n"
+                             "                       int n_src, const Real *r_src, const Real *charge,\n"
+                             "                       const Real *normals, int n_trg, const Real *r_trg, Real *pot) {{\n"
+                             "                {0}<Real, MaxVecLen, -1, {1}, {2}>(\n"
+                             "                    eval_level, n_digits, rsc, cen, d2max, thresh2, {3},\n"
+                             "                    cf.data(), n_src, r_src, charge, normals, n_trg, r_trg, pot, UF);\n"
+                             "            }};\n",
+                             func_name(k), targs, eval_level_enum_name(el), rtargs);
+    out() << std::format("        if (n == {}) {{\n{}{}        }}\n", nc, branch_prologue(shape, nc), body);
+}
+
+void emit_getter(const KernelDef &k, Shape shape, bool ranges) {
+    out() << std::format(R"(
+template <class Real, int MaxVecLen>
+{0}<Real> {1}{2}(dmk_eval_type eval_level, int n_digits,
+                                  const std::vector<std::vector<Real>> &coeffs) {{
+    constexpr int UF = unroll_factor;
+    const int n = {3};
+)",
+                         ranges ? "residual_evaluator_range_func" : "residual_evaluator_func", getter_name(k),
+                         ranges ? "_ranges" : "", dispatch_key(shape));
     bool first = true;
     for (auto el : k.eval_levels) {
         out() << std::format("    {}if (eval_level == {}) {{\n", first ? "" : "} else ", eval_level_enum_name(el));
         for (int nc = min_coeffs; nc <= max_coeffs; ++nc)
-            emit_yukawa_branch(k, el, nc, ranges);
+            emit_branch(k, el, shape, nc, ranges);
         first = false;
     }
     if (!k.eval_levels.empty())
         out() << "    }\n";
-    out() << "    throw std::runtime_error(\"ESP Yukawa: n_coeffs outside AOT range [3,31]\");\n"
+    out() << "    throw std::runtime_error(\"Unsupported eval_level, or n_coeffs outside the AOT range\");\n"
           << "}\n";
 }
 
 // =====================================================================
-// Host AOT: one translation unit per getter, so the build compiles them in
-// parallel. Each unit re-derives the coefficient tables it references and
+// Host AOT: one translation unit per getter, so the build compiles them in parallel. Each unit
 // carries its own explicit instantiations.
 // =====================================================================
 
-enum class Kind { Dmk, EspBaked, EspYukawa };
+// How many polynomials a kernel's residual splits into, measured once with the values discarded.
+// Yukawa is stated rather than measured: its coefficients come from FourierData, not from
+// get_local_correction_coeffs, and its count depends on lambda*bsize anyway.
+int sub_count(const KernelDef &k) {
+    for (int digits = min_digits; digits <= max_digits; ++digits) {
+        try {
+            pdmk_params p;
+            p.kernel = k.kernel;
+            p.n_dim = k.dim;
+            p.eps = std::pow(10, -digits);
+            p.eval_src = k.eval_levels.front();
+            p.eval_trg = k.eval_levels.front();
+            p.debug_flags = 0;
+            const double beta = dmk::util::calc_bandlimiting(p);
+            return static_cast<int>(dmk::get_local_correction_coeffs<double>(k.kernel, k.dim, digits, beta).size());
+        } catch (const std::exception &) {
+        }
+    }
+    throw std::runtime_error("no coefficient shape for " + getter_name(k));
+}
+
+Shape shape_of(const KernelDef &k) {
+    if (k.kernel == DMK_YUKAWA)
+        return k.dim == 2 ? Shape::DynamicLogPair : Shape::Single; // only 2D K0 splits off a log term
+    return sub_count(k) == 2 ? Shape::PaddedPair : Shape::Single;
+}
 
 struct Unit {
     KernelDef k;
-    Kind kind;
     bool ranges;
 };
 
@@ -369,83 +268,35 @@ std::string unit_name(const Unit &u) {
 
 std::vector<Unit> host_units() {
     std::vector<Unit> units;
-    for (const auto &k : all_kernels)
-        units.push_back({k, Kind::Dmk, false});
-    for (const auto &k : esp_baked) {
-        units.push_back({k, Kind::EspBaked, false});
-        if (k.dim == 3)
-            units.push_back({k, Kind::EspBaked, true});
-    }
-    for (const auto &k : esp_yukawa) {
-        units.push_back({k, Kind::EspYukawa, false});
-        if (k.dim == 3)
-            units.push_back({k, Kind::EspYukawa, true});
-    }
-    return units;
-}
-
-// Coefficient tables for one kernel over every eval_level and digit count. DMK kernels take beta
-// from calc_bandlimiting; baked ESP kernels use the fixed sigma=1.35 derivation (esp.hpp) but record
-// beta as 0 in the generated comment, since it is not the bandlimit the DMK path reports.
-std::vector<CoeffsInfo> collect_coeffs(const KernelDef &k, Kind kind) {
-    std::vector<CoeffsInfo> infos;
-    for (auto el : k.eval_levels) {
-        for (int digits = min_digits; digits <= max_digits; ++digits) {
-            try {
-                double beta = 0.0;
-                std::vector<std::vector<double>> coeffs;
-                if (kind == Kind::EspBaked) {
-                    beta = dmk::esp_beta_from_P(1.35, dmk::esp_P_from_eps(std::pow(10.0, -digits), 1.35, k.dim));
-                    coeffs = dmk::get_esp_correction_coeffs<double>(k.kernel, 0.0, 0.0, k.dim, digits, beta);
-                } else {
-                    pdmk_params p;
-                    p.kernel = k.kernel;
-                    p.n_dim = k.dim;
-                    p.eps = std::pow(10, -digits);
-                    p.eval_src = el;
-                    p.eval_trg = el;
-                    p.debug_flags = 0;
-                    beta = dmk::util::calc_bandlimiting(p);
-                    coeffs = dmk::get_local_correction_coeffs<double>(k.kernel, k.dim, digits, beta);
-                }
-
-                CoeffsInfo info;
-                info.digits = digits;
-                info.beta = kind == Kind::EspBaked ? 0.0 : beta;
-                info.total_size = 0;
-                info.eval_level = el;
-                for (const auto &cvec : coeffs) {
-                    info.sub_sizes.push_back(cvec.size());
-                    info.total_size += cvec.size();
-                }
-                info.values = std::move(coeffs);
-                infos.push_back(std::move(info));
-            } catch (std::exception &e) {
-                std::cerr << std::format("// Skipped {} digits={} eval_level={}: {}\n", getter_name(k), digits,
-                                         dmk::util::to_string(el), e.what());
-            }
+    for (const auto &table : {all_kernels, dmk_yukawa})
+        for (const auto &k : table)
+            units.push_back({k, false});
+    // 3D ESP short-range also drives the range-list evaluator; nothing else does.
+    for (const auto &table : {esp_baked, esp_yukawa})
+        for (const auto &k : table) {
+            units.push_back({k, false});
+            if (k.dim == 3)
+                units.push_back({k, true});
         }
-    }
-    return infos;
+    return units;
 }
 
 void emit_instantiations(const Unit &u) {
     const std::string ret = u.ranges ? "residual_evaluator_range_func" : "residual_evaluator_func";
     const std::string sfx = u.ranges ? "_ranges" : "";
     out() << "\n// Explicit instantiations\n";
-    for (auto type : {"float", "double"}) {
-        const std::string args = u.kind == Kind::EspYukawa
-                                     ? std::format("dmk_eval_type, int, const {} *, int, int", type)
-                                     : "dmk_eval_type, int";
-        out() << std::format("template {0}<{1}>\n{2}{3}<{1}, sctl::DefaultVecLen<{1}>()>({4});\n", ret, type,
-                             getter_name(u.k), sfx, args);
-    }
+    for (auto type : {"float", "double"})
+        out() << std::format("template {0}<{1}>\n{2}{3}<{1}, sctl::DefaultVecLen<{1}>()>(dmk_eval_type, int,\n"
+                             "    const std::vector<std::vector<{1}>> &);\n",
+                             ret, type, getter_name(u.k), sfx);
 }
 
 void emit_host_unit(const Unit &u) {
     out() << "// Auto-generated by generate_aot_kernels. Do not edit.\n";
     out() << std::format("// Unit: {}\n", unit_name(u));
-    out() << R"(#include <dmk.h>
+    out() << R"(#include <algorithm>
+#include <array>
+#include <dmk.h>
 #include <dmk/types.hpp>
 #include <dmk/vector_kernels.hpp>
 #include <sctl.hpp>
@@ -457,17 +308,7 @@ constexpr int unroll_factor = 3;
 
 )";
 
-    if (u.kind == Kind::EspYukawa) {
-        emit_getter_yukawa(u.k, u.ranges);
-    } else {
-        const auto infos = collect_coeffs(u.k, u.kind);
-        for (const auto &info : infos)
-            emit_coeffs_array(coeff_name(u.k, info.digits, info.eval_level), info.values, info.beta);
-        if (u.ranges)
-            emit_getter_ranges(u.k, infos);
-        else
-            emit_getter(u.k, infos);
-    }
+    emit_getter(u.k, shape_of(u.k), u.ranges);
 
     emit_instantiations(u);
     out() << "\n} // namespace dmk\n";

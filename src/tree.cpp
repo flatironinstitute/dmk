@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cmath>
 #include <dmk.h>
+#include <dmk/aot_kernels.hpp>
 #include <dmk/chebychev.hpp>
 #include <dmk/direct.hpp>
 #include <dmk/error.hpp>
@@ -933,8 +934,9 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
     // AOT/JIT evaluator, so a failure there is fatal (an empty evaluator array
     // would silently corrupt results).
     if (params.kernel != DMK_YUKAWA) {
-        auto src_eval = make_evaluator_aot<Real>(params.kernel, params.eval_src, DIM, n_digits, 3);
-        auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.eval_trg, DIM, n_digits, 3);
+        const auto coeffs = get_local_correction_coeffs<Real>(params.kernel, DIM, n_digits, expansion_constants.beta);
+        auto src_eval = make_evaluator_aot<Real>(params.kernel, params.eval_src, DIM, n_digits, 3, coeffs);
+        auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.eval_trg, DIM, n_digits, 3, coeffs);
 #ifdef DMK_USE_JIT
         if (!util::env_is_set("DMK_DEBUG_FORCE_AOT")) {
             src_eval =
@@ -947,23 +949,23 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
         evaluator_by_level_src.assign(n_lvl, src_eval);
         evaluator_by_level_trg.assign(n_lvl, trg_eval);
     } else {
+        // Yukawa's coefficients depend on lambda*bsize, so they are per level and their count is not
+        // a function of the digit count. The getters dispatch on that count, which is what compiles
+        // the Horner length in rather than leaving it a dynamic loop bound.
+        constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
         for (int level = 0; level < n_lvl; ++level) {
             auto coeffs = fourier_data.local_correction_coeffs(level, n_digits);
 
-            if constexpr (DIM == 3) {
-                // 3D Yukawa: single monomial fit Q, evaluated as horner(x)*Rinv.
-                std::vector<Real> reg(coeffs.reg_poly.begin(), coeffs.reg_poly.end());
-                evaluator_by_level_src.push_back(
-                    make_evaluator_yukawa<Real>(params.eval_src, DIM, n_digits, std::move(reg)));
-            } else {
-                // 2D Yukawa: log-split fit [PA | PB], evaluated as log(r/bsize)*PA + PB.
-                const int n_log = coeffs.log_poly.size();
-                std::vector<Real> c;
-                c.insert(c.end(), coeffs.log_poly.begin(), coeffs.log_poly.end());
-                c.insert(c.end(), coeffs.reg_poly.begin(), coeffs.reg_poly.end());
-                evaluator_by_level_src.push_back(
-                    make_evaluator_yukawa<Real>(params.eval_src, DIM, n_digits, std::move(c), n_log));
-            }
+            // 3D is a single monomial fit Q evaluated as horner(x)*Rinv; 2D is the log split
+            // [PA | PB], evaluated as log(r/bsize)*PA + PB.
+            std::vector<std::vector<Real>> cf;
+            if constexpr (DIM == 2)
+                cf.emplace_back(coeffs.log_poly.begin(), coeffs.log_poly.end());
+            cf.emplace_back(coeffs.reg_poly.begin(), coeffs.reg_poly.end());
+            if constexpr (DIM == 3)
+                evaluator_by_level_src.push_back(get_yukawa_3d_kernel<Real, MaxVecLen>(params.eval_src, n_digits, cf));
+            else
+                evaluator_by_level_src.push_back(get_yukawa_2d_kernel<Real, MaxVecLen>(params.eval_src, n_digits, cf));
         }
         // FIXME: assumes the same src/trg output configuration
         evaluator_by_level_trg = evaluator_by_level_src;

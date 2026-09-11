@@ -195,7 +195,9 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC direct verification", 1) {
             }
             REQUIRE(max_level > min_level);
 
-            auto eval = dmk::make_evaluator_aot<double>(DMK_LAPLACE, DMK_POTENTIAL, n_dim, pc.n_digits, 3);
+            const auto ref_coeffs = dmk::get_local_correction_coeffs<double>(DMK_LAPLACE, n_dim, pc.n_digits,
+                                                                             tree.expansion_constants.beta);
+            auto eval = dmk::make_evaluator_aot<double>(DMK_LAPLACE, DMK_POTENTIAL, n_dim, pc.n_digits, 3, ref_coeffs);
             const std::vector<double> ref_pot = pbc_direct_ref(eval, sources, targets, tree.boxsize);
 
             const int n_test = std::min((int)targets.size(), 200);
@@ -353,7 +355,9 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC asymmetric-depth shift", 1) {
                     " n_levels=", tree.n_levels(), " n_boxes=", tree.n_boxes());
     REQUIRE(max_level > min_level); // if this fails, tune cluster/filler to force asymmetry
 
-    auto eval = dmk::make_evaluator_aot<double>(DMK_LAPLACE, DMK_POTENTIAL, n_dim, 6, 3);
+    const auto ref_coeffs =
+        dmk::get_local_correction_coeffs<double>(DMK_LAPLACE, n_dim, 6, tree.expansion_constants.beta);
+    auto eval = dmk::make_evaluator_aot<double>(DMK_LAPLACE, DMK_POTENTIAL, n_dim, 6, 3, ref_coeffs);
     const std::vector<double> ref_pot = pbc_direct_ref(eval, sources, targets, tree.boxsize);
 
     const int n_test = (int)targets.size();
