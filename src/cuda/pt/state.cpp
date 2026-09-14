@@ -15,9 +15,13 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
+#include <omp.h>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "gpu_tree_build.hpp"
 
 namespace dmk::cuda::pt {
 
@@ -68,6 +72,44 @@ void launch_scatter_forward_stresslet(const Real *densities, const Real *normals
                    dim);
 }
 
+// Tree-order helpers for the path where the tree owns the particle scatter.
+template <typename Real>
+void launch_accumulate(Real *out, const Real *a, const Real *b, long n_values, cudaStream_t stream) {
+    if (n_values == 0)
+        return;
+    constexpr int BLOCK = 256;
+    static JitCache cache;
+    JitKey key;
+    key.name = "PtAccumulateKernel";
+    key.real = jit_real_name<Real>();
+    key.sm_major = cache.sm_major();
+    key.sm_minor = cache.sm_minor();
+    key.params = {{"BLOCK_SIZE", BLOCK}};
+    auto kernel = cache.get_kernel_from_source(
+        key, [&] { return make_stage_source("pt/shared_state.cu", key, "", "SharedState"); });
+    const long grid = (n_values + BLOCK - 1) / BLOCK;
+    kernel->launch(dim3(grid, 1, 1), dim3(BLOCK, 1, 1), 0, stream, out, a, b, n_values);
+}
+
+template <typename Real>
+void launch_outer_product(const Real *densities, const Real *normals, Real *out, long n_particles, int dim,
+                          cudaStream_t stream) {
+    if (n_particles == 0)
+        return;
+    constexpr int BLOCK = 256;
+    static JitCache cache;
+    JitKey key;
+    key.name = "PtOuterProductKernel";
+    key.real = jit_real_name<Real>();
+    key.sm_major = cache.sm_major();
+    key.sm_minor = cache.sm_minor();
+    key.params = {{"BLOCK_SIZE", BLOCK}};
+    auto kernel = cache.get_kernel_from_source(
+        key, [&] { return make_stage_source("pt/shared_state.cu", key, "", "SharedState"); });
+    const long grid = (n_particles + BLOCK - 1) / BLOCK;
+    kernel->launch(dim3(grid, 1, 1), dim3(BLOCK, 1, 1), 0, stream, densities, normals, out, n_particles, dim);
+}
+
 template <typename Real>
 void launch_accumulate_and_scatter(Real *out, const Real *pot_eval, const Real *pot_extra, const long *scatter_index,
                                    int dof, long n_particles, cudaStream_t stream) {
@@ -95,6 +137,70 @@ void up(DeviceBuffer<T> &d, const Src &s) {
     if (!s.empty())
         d.upload(s.data(), s.size());
 }
+
+// Batches the State constructor's transfers into one device allocation. Most of its forty-odd
+// uploads are a few kilobytes, and at that size a transfer costs far more in per-call overhead than
+// in bytes moved, so the small ones are staged through one page-locked buffer and cross together.
+// Large entries are sent straight from their own storage: staging one costs about what its transfer
+// does, and -- measurably worse -- evicts the host working set the next build's metadata pass needs.
+class UploadBatch {
+  public:
+    template <typename T, typename Src>
+    void add(DeviceBuffer<T> &dst, const Src &src) {
+        if (src.empty())
+            return;
+        items_.push_back({reinterpret_cast<const char *>(src.data()), 0, src.size() * sizeof(T), src.size(), &dst,
+                          +[](void *d, const char *p, std::size_t n) {
+                              static_cast<DeviceBuffer<T> *>(d)->adopt(reinterpret_cast<const T *>(p), n);
+                          }});
+    }
+
+    void flush(DeviceBuffer<char> &arena) {
+        if (items_.empty())
+            return;
+        constexpr std::size_t kPackMax = 32 * 1024;
+        const auto align = [](std::size_t x) { return (x + 255) & ~(std::size_t)255; }; // any element type
+
+        // Staged entries first and contiguous, so they cross as one transfer.
+        std::size_t total = 0, packed = 0;
+        for (auto &it : items_)
+            if (it.bytes < kPackMax) {
+                it.off = total;
+                total = align(total + it.bytes);
+                packed = total;
+            }
+        for (auto &it : items_)
+            if (it.bytes >= kPackMax) {
+                it.off = total;
+                total = align(total + it.bytes);
+            }
+        arena.resize(total);
+
+        const auto pad = packed ? cuda_helpers::pinned_alloc(packed) : std::pair<char *, std::size_t>{nullptr, 0};
+        for (const auto &it : items_) {
+            if (pad.first && it.bytes < kPackMax)
+                std::memcpy(pad.first + it.off, it.src, it.bytes);
+            else
+                DMK_CHECK_CUDA(cudaMemcpy(arena.data() + it.off, it.src, it.bytes, cudaMemcpyHostToDevice));
+        }
+        if (pad.first) {
+            DMK_CHECK_CUDA(cudaMemcpy(arena.data(), pad.first, packed, cudaMemcpyHostToDevice));
+            cuda_helpers::pinned_free(pad.first, pad.second);
+        }
+        for (const auto &it : items_)
+            it.bind(it.dst, arena.data() + it.off, it.n);
+    }
+
+  private:
+    struct Item {
+        const char *src;
+        std::size_t off, bytes, n;
+        void *dst;
+        void (*bind)(void *, const char *, std::size_t);
+    };
+
+    std::vector<Item> items_;
+};
 
 // Non-owning span helpers over the tree's flat host arrays. `long` matches
 // sctl::Long's ABI, so the reinterpret_cast in long_span is safe.
@@ -142,6 +248,7 @@ void build_charge2proxy_groups(BuildInputs<Real, DIM> &in, DMKPtTree<Real, DIM> 
     w.c2p_levels.reserve(w.n_c2p_groups);
     w.c2p_src_box_flat_offsets.reserve(w.n_c2p_groups);
     w.c2p_n_src_boxes_per_group.reserve(w.n_c2p_groups);
+    w.c2p_src_boxes_flat.reserve((std::size_t)w.n_c2p_groups * 2);
     for (const auto &g : tree.charge2proxy_groups) {
         w.c2p_center_boxes.push_back(g.center_box);
         w.c2p_levels.push_back(g.level);
@@ -183,7 +290,7 @@ template <typename Real, int DIM>
 void build_tp_up_pair_lists(BuildInputs<Real, DIM> &in, DMKPtTree<Real, DIM> &tree) {
     auto &w = in.worklists;
     const int n_levels = in.topology.n_levels;
-    const auto &node_lists = tree.GetNodeLists();
+    const auto &node_lists = tree.box_lists();
     constexpr int n_children = 1 << DIM;
 
     // build_charge2proxy_groups already ran, so take the centers from the groups that actually
@@ -195,6 +302,13 @@ void build_tp_up_pair_lists(BuildInputs<Real, DIM> &in, DMKPtTree<Real, DIM> &tr
     w.tp_up_count.assign(n_levels, 0);
     w.tp_up_par_offset.assign(n_levels + 1, 0);
     w.tp_up_par_count.assign(n_levels, 0);
+    // At most one parent entry and one child entry per box, so this is an upper bound rather than a
+    // guess; growing these by doubling is otherwise the bulk of the pass.
+    const std::size_t n_box = tree.n_boxes();
+    for (auto *v : {&w.tp_up_src, &w.tp_up_dst, &w.tp_up_octants, &w.tp_up_assign, &w.tp_up_par,
+                    &w.tp_up_par_child_begin, &w.tp_up_par_child_count})
+        v->reserve(n_box);
+    std::vector<int> order, par, beg, cnt;
     for (int L = 0; L < n_levels; ++L) {
         w.tp_up_offset[L] = w.tp_up_src.size();
         w.tp_up_par_offset[L] = w.tp_up_par.size();
@@ -236,12 +350,14 @@ void build_tp_up_pair_lists(BuildInputs<Real, DIM> &in, DMKPtTree<Real, DIM> &tr
         // absorb the imbalance early. Only the parent entries move; the child arrays they index
         // stay put. Matches what build_charge2proxy_groups does with its work permutation.
         const int par_lo = w.tp_up_par_offset[L], par_hi = static_cast<int>(w.tp_up_par.size());
-        std::vector<int> order(par_hi - par_lo);
+        order.resize(par_hi - par_lo);
         for (int i = 0; i < static_cast<int>(order.size()); ++i)
             order[i] = par_lo + i;
         std::stable_sort(order.begin(), order.end(),
                          [&](int x, int y) { return w.tp_up_par_child_count[x] > w.tp_up_par_child_count[y]; });
-        std::vector<int> par(order.size()), beg(order.size()), cnt(order.size());
+        par.resize(order.size());
+        beg.resize(order.size());
+        cnt.resize(order.size());
         for (int i = 0; i < static_cast<int>(order.size()); ++i) {
             par[i] = w.tp_up_par[order[i]];
             beg[i] = w.tp_up_par_child_begin[order[i]];
@@ -260,33 +376,38 @@ void build_tp_up_pair_lists(BuildInputs<Real, DIM> &in, DMKPtTree<Real, DIM> &tr
 } // namespace
 
 template <typename Real, int DIM>
-BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
+BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree, GpuTreeMetadata<Real> *md) {
     BuildInputs<Real, DIM> in;
+    in.device_metadata = md;
 
+    sctl::Profile::Tic("tbi_topology", &tree.comm());
     // --- Topology ---
     auto &topo = in.topology;
     const int n_boxes = tree.n_boxes();
     const int n_levels = tree.n_levels();
     topo.n_boxes = n_boxes;
     topo.n_levels = n_levels;
-    topo.nlist1_stride = (1 << (2 * DIM)) - (1 << DIM) + 1;
+    // One source of truth: the device kernel indexes the tree's own rows, so the stride must be
+    // the tree's, not a second copy of the formula.
+    topo.nlist1_stride = DMKPtTree<Real, DIM>::list1_stride();
     topo.n_neighbors = sctl::pow<DIM>(3);
 
-    topo.direct_work = std::span<const int>(tree.direct_work.data(), tree.direct_work.size());
+    if (!md)
+        topo.direct_work = std::span<const int>(tree.direct_work.data(), tree.direct_work.size());
 
-    topo.list1_flat.assign((std::size_t)n_boxes * topo.nlist1_stride, -1);
-    topo.list1_count.assign(n_boxes, 0);
+    sctl::Profile::Tic("tbi_list1", &tree.comm());
+    // list1 already sits in the tree in exactly this layout, one stride-nlist1_stride row per box.
+    if (!md) {
+        topo.list1_flat = tree.list1_flat();
+        topo.list1_count = tree.nlist1();
+    }
     // Under PBC a wrapped neighbor appears in list1 as its own box id, so the image shift
     // is the only thing distinguishing the entries: a single-level tree has the root
     // listed 3^DIM times with 3^DIM distinct shifts. boxsize[0] is 1, so shifts are +-1.
-    if (tree.params.use_periodic)
+    if (tree.params.use_periodic && !md) {
         topo.list1_shift_flat.assign((std::size_t)n_boxes * topo.nlist1_stride * DIM, 0);
-    for (int b = 0; b < n_boxes; ++b) {
-        const auto sp = tree.list1(b);
-        topo.list1_count[b] = sp.size();
-        for (std::size_t k = 0; k < sp.size(); ++k)
-            topo.list1_flat[(std::size_t)b * topo.nlist1_stride + k] = sp[k];
-        if (!topo.list1_shift_flat.empty()) {
+#pragma omp parallel for schedule(static)
+        for (int b = 0; b < n_boxes; ++b) {
             const auto sh = tree.list1_shift(b);
             for (std::size_t k = 0; k < sh.size(); ++k)
                 for (int d = 0; d < DIM; ++d)
@@ -294,42 +415,76 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
         }
     }
 
-    const auto &node_mid = tree.GetNodeMID();
-    const auto &node_lists = tree.GetNodeLists();
+    sctl::Profile::Toc();
+
+    sctl::Profile::Tic("tbi_perbox", &tree.comm());
+    const auto &node_mid = tree.box_mid();
+    const auto &node_lists = tree.box_lists();
     topo.box_levels.resize(n_boxes);
     topo.ifpwexp.resize(n_boxes);
-    topo.is_global_leaf.resize(n_boxes);
-    topo.neighbors.resize((std::size_t)n_boxes * topo.n_neighbors);
-    for (int b = 0; b < n_boxes; ++b) {
-        topo.box_levels[b] = node_mid[b].Depth();
-        topo.ifpwexp[b] = tree.ifpwexp[b] ? 1 : 0;
-        topo.is_global_leaf[b] = tree.is_global_leaf[b] ? 1 : 0;
-        for (int k = 0; k < topo.n_neighbors; ++k)
-            topo.neighbors[(std::size_t)b * topo.n_neighbors + k] = node_lists[b].nbr[k];
-    }
-
-    // Shift-list prefilter. shift_pw's neighbor loop rejected empty slots, self, leaf-leaf
-    // pairs, and neighbors without an outgoing expansion; all four depend only on the tree,
-    // so they are resolved once here and the device loop runs branch-free over survivors.
     topo.shift_nbr_offsets.resize(n_boxes + 1);
-    topo.shift_nbr.clear();
-    for (int b = 0; b < n_boxes; ++b) {
-        topo.shift_nbr_offsets[b] = static_cast<int>(topo.shift_nbr.size());
-        const bool b_is_leaf = topo.is_global_leaf[b] != 0;
-        for (int k = 0; k < topo.n_neighbors; ++k) {
-            const int nbr = topo.neighbors[(std::size_t)b * topo.n_neighbors + k];
-            if (nbr < 0 || nbr == b)
-                continue;
-            if (b_is_leaf && topo.is_global_leaf[nbr])
-                continue;
-            const long pw_off = tree.pw_out_offsets[nbr];
-            if (pw_off < 0)
-                continue;
-            topo.shift_nbr.push_back({pw_off, topo.n_neighbors - 1 - k, 0});
-        }
-    }
-    topo.shift_nbr_offsets[n_boxes] = static_cast<int>(topo.shift_nbr.size());
 
+    // Per-box scalars and the shift-list prefilter in one sweep over the node lists. shift_pw's
+    // neighbor loop rejected empty slots, self, leaf-leaf pairs, and neighbors without an outgoing
+    // expansion; all four depend only on the tree, so they are resolved once here and the device
+    // loop runs branch-free over survivors. Survivors go to a per-thread buffer and are stitched
+    // afterwards: counting them first would mean a second pass over the same predicate, and the
+    // neighbor ids are a strided read no cache keeps between passes.
+    const int n_nbr_thread = std::max(1, omp_get_max_threads());
+    std::vector<std::vector<ShiftPwNeighbor>> t_nbr(n_nbr_thread);
+    std::vector<std::size_t> nbr_base(n_nbr_thread + 1, 0);
+#pragma omp parallel num_threads(n_nbr_thread)
+    {
+        const int t = omp_get_thread_num();
+        const int lo = (int)((long)n_boxes * t / n_nbr_thread);
+        const int hi = (int)((long)n_boxes * (t + 1) / n_nbr_thread);
+        auto &out = t_nbr[t];
+        out.reserve((std::size_t)(hi - lo) * 8);
+        for (int b = lo; b < hi; ++b) {
+            topo.box_levels[b] = node_mid[b].Depth();
+            topo.ifpwexp[b] = tree.ifpwexp[b] ? 1 : 0;
+            const bool leaf_b = tree.is_global_leaf[b];
+            const int n0 = (int)out.size();
+            for (int k = 0; k < topo.n_neighbors; ++k) {
+                const int nbr = node_lists[b].nbr[k];
+                if (nbr < 0 || nbr == b)
+                    continue;
+                if (leaf_b && tree.is_global_leaf[nbr])
+                    continue;
+                const long pw_off = tree.pw_out_offsets[nbr];
+                if (pw_off < 0)
+                    continue;
+                out.push_back({pw_off, topo.n_neighbors - 1 - k, 0});
+            }
+            topo.shift_nbr_offsets[b] = (int)out.size() - n0;
+        }
+#pragma omp barrier
+#pragma omp single
+        {
+            for (int i = 0; i < n_nbr_thread; ++i)
+                nbr_base[i + 1] = nbr_base[i] + t_nbr[i].size();
+            topo.shift_nbr.resize(nbr_base[n_nbr_thread]);
+            // Counts -> CSR offsets, with each thread's block starting at its own base.
+            int at = 0;
+            for (int i = 0; i < n_nbr_thread; ++i) {
+                at = (int)nbr_base[i];
+                const int blo = (int)((long)n_boxes * i / n_nbr_thread);
+                const int bhi = (int)((long)n_boxes * (i + 1) / n_nbr_thread);
+                for (int b = blo; b < bhi; ++b) {
+                    const int n = topo.shift_nbr_offsets[b];
+                    topo.shift_nbr_offsets[b] = at;
+                    at += n;
+                }
+            }
+            topo.shift_nbr_offsets[n_boxes] = (int)nbr_base[n_nbr_thread];
+        }
+        std::copy(out.begin(), out.end(), topo.shift_nbr.begin() + nbr_base[t]);
+    }
+    sctl::Profile::Toc();
+
+    sctl::Profile::Toc();
+
+    sctl::Profile::Tic("tbi_particles", &tree.comm());
     // --- Particles ---
     auto &part = in.particles;
     part.is_stresslet = tree.params.kernel == DMK_STRESSLET;
@@ -341,6 +496,13 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
     part.r_trg_offsets = long_span(tree.r_trg_offsets_owned);
     part.scatter_index_src = long_span(tree.scatter_idx_src);
     part.scatter_index_trg = long_span(tree.scatter_idx_trg);
+    part.n_src = tree.n_src_sorted;
+    part.n_trg = tree.n_trg_sorted;
+    part.d_r_src = tree.d_r_src_sorted;
+    part.d_r_trg = tree.d_r_trg_sorted;
+#ifdef DMK_GPU_OFFLOAD
+    part.gpu_tree = tree.gpu_tree;
+#endif
     if (part.is_stresslet) {
         part.charge_offsets = long_span(tree.density_offsets_with_halo);
         part.normal_offsets = long_span(tree.normal_offsets_with_halo);
@@ -349,6 +511,17 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
         part.charge_offsets = long_span(tree.charge_offsets_owned);
     }
 
+    sctl::Profile::Toc();
+
+    if (md) {
+        // The device metadata was only enqueued; everything above this point is host work that ran
+        // behind it. Its two host-visible scalars are read from here on.
+        sctl::Profile::Tic("tbi_md_finish", &tree.comm());
+        gpu_tree_metadata_finish<Real, DIM>(tree.gpu_tree, *md);
+        sctl::Profile::Toc();
+    }
+
+    sctl::Profile::Tic("tbi_fourier", &tree.comm());
     // --- Fourier + per-level geometry ---
     auto &fou = in.fourier;
     fou.n_pw = tree.expansion_constants.n_pw_diff;
@@ -387,8 +560,12 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
     // at large lambda.
     if (tree.params.kernel == DMK_YUKAWA) {
         int level0 = n_levels;
-        for (int b : topo.direct_work)
-            level0 = std::min(level0, topo.box_levels[b]);
+        if (md) {
+            level0 = md->min_direct_level;
+        } else {
+            for (int b : topo.direct_work)
+                level0 = std::min(level0, topo.box_levels[b]);
+        }
         fou.direct_coeffs_level0 = level0;
         for (int L = level0; L <= n_levels; ++L) {
             const auto c = tree.fourier_data.local_correction_coeffs(L, tree.n_digits);
@@ -528,13 +705,23 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
         fou.window_radialft.assign(&wfd.radialft[0], &wfd.radialft[0] + fou.n_pw_modes_win);
     }
 
+    sctl::Profile::Toc();
+
+    sctl::Profile::Tic("tbi_worklists", &tree.comm());
     // --- Worklists ---
     auto &w = in.worklists;
+    sctl::Profile::Tic("wl_c2p");
     build_charge2proxy_groups(in, tree);
+    sctl::Profile::Toc();
+    sctl::Profile::Tic("wl_tpup");
     build_tp_up_pair_lists(in, tree);
+    sctl::Profile::Toc();
+    sctl::Profile::Tic("wl_lists");
 
     w.tp_offset.assign(n_levels + 1, 0);
     w.tp_count.assign(n_levels, 0);
+    for (auto *v : {&w.tp_parents, &w.tp_children, &w.tp_octants, &w.tp_assign_dst})
+        v->reserve(tree.n_boxes());
     for (int L = 0; L < n_levels; ++L) {
         w.tp_offset[L] = w.tp_parents.size();
         for (const auto &p : tree.tensorprod_pairs_per_level[L]) {
@@ -592,20 +779,47 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
     // overlap: a group of 8 spans a 4x4x4 region of sources instead of 8 separate 3x3x3
     // ones, and shift_pw fetches each source's plane-wave slab once rather than once per
     // target. That slab traffic is the whole cost of the kernel.
+    sctl::Profile::Toc();
+    sctl::Profile::Tic("wl_shiftgroup");
     const int shift_group = shift_group_size(fou.n_charge_dim);
+    // Enumerate the groups first: each one's union reads only its own members' neighbour lists, so
+    // with the group list in hand the unions are independent and run in parallel. Every insertion
+    // rescans the group's entries linearly, which made this the largest single cost in
+    // to_build_inputs.
+    struct GroupSpan {
+        int box_off, g0, n_mem;
+    };
+    std::vector<GroupSpan> groups;
+    groups.reserve(w.pw_eval_box_flat.size() / shift_group + n_levels);
     w.shift_group_base.assign(n_levels, 0);
-    w.shift_group_offsets.clear();
-    w.shift_group_src.clear();
     for (int L = 0; L < n_levels; ++L) {
-        w.shift_group_base[L] = static_cast<int>(w.shift_group_offsets.size());
+        w.shift_group_base[L] = static_cast<int>(groups.size());
         const int n_box = w.pw_eval_box_count[L];
         const int box_off = w.pw_eval_box_offset[L];
-        for (int g0 = 0; g0 < n_box; g0 += shift_group) {
-            const int grp_begin = static_cast<int>(w.shift_group_src.size());
-            w.shift_group_offsets.push_back(grp_begin);
-            const int n_mem = std::min(shift_group, n_box - g0);
-            for (int t = 0; t < n_mem; ++t) {
-                const int box = w.pw_eval_box_flat[box_off + g0 + t];
+        for (int g0 = 0; g0 < n_box; g0 += shift_group)
+            groups.push_back({box_off, g0, std::min(shift_group, n_box - g0)});
+    }
+
+    const int n_grp = static_cast<int>(groups.size());
+    const int n_thread = std::max(1, omp_get_max_threads());
+    std::vector<std::vector<ShiftPwGroupSrc>> t_src(n_thread);
+    std::vector<std::vector<int>> t_count(n_thread);
+#pragma omp parallel num_threads(n_thread)
+    {
+        const int t = omp_get_thread_num();
+        // Contiguous group ranges, assigned by hand: the flat output has to come out in group
+        // order, so which groups a thread owns cannot be left to the schedule.
+        const int lo = static_cast<int>((long)n_grp * t / n_thread);
+        const int hi = static_cast<int>((long)n_grp * (t + 1) / n_thread);
+        auto &out = t_src[t];
+        auto &cnt = t_count[t];
+        out.reserve((std::size_t)(hi - lo) * 80);
+        cnt.reserve(hi - lo);
+        for (int g = lo; g < hi; ++g) {
+            const auto &grp = groups[g];
+            const int grp_begin = static_cast<int>(out.size());
+            for (int m = 0; m < grp.n_mem; ++m) {
+                const int box = w.pw_eval_box_flat[grp.box_off + grp.g0 + m];
                 for (int e = topo.shift_nbr_offsets[box]; e < topo.shift_nbr_offsets[box + 1]; ++e) {
                     const ShiftPwNeighbor &nb = topo.shift_nbr[e];
                     // Linear over this group's entries only; the union is ~64 wide. Merging
@@ -613,26 +827,45 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
                     // source: under PBC one box wraps into several neighbor slots of the same
                     // target with different shifts, and collapsing those would drop a term.
                     int slot = -1;
-                    for (int q = grp_begin; q < static_cast<int>(w.shift_group_src.size()); ++q)
-                        if (w.shift_group_src[q].pw_off == nb.pw_off && w.shift_group_src[q].shift_ind[t] < 0) {
+                    for (int q = grp_begin; q < static_cast<int>(out.size()); ++q)
+                        if (out[q].pw_off == nb.pw_off && out[q].shift_ind[m] < 0) {
                             slot = q;
                             break;
                         }
                     if (slot < 0) {
-                        slot = static_cast<int>(w.shift_group_src.size());
+                        slot = static_cast<int>(out.size());
                         ShiftPwGroupSrc gs;
                         gs.pw_off = nb.pw_off;
                         for (int u = 0; u < kShiftGroupMax; ++u)
                             gs.shift_ind[u] = -1;
-                        w.shift_group_src.push_back(gs);
+                        out.push_back(gs);
                     }
-                    w.shift_group_src[slot].shift_ind[t] = static_cast<signed char>(nb.shift_ind);
+                    out[slot].shift_ind[m] = static_cast<signed char>(nb.shift_ind);
                 }
             }
+            cnt.push_back(static_cast<int>(out.size()) - grp_begin);
         }
     }
+
+    std::vector<std::size_t> t_base(n_thread + 1, 0);
+    for (int t = 0; t < n_thread; ++t)
+        t_base[t + 1] = t_base[t] + t_src[t].size();
+    w.shift_group_offsets.clear();
+    w.shift_group_offsets.reserve(n_grp + 1);
+    for (int t = 0; t < n_thread; ++t) {
+        std::size_t at = t_base[t];
+        for (const int c : t_count[t]) {
+            w.shift_group_offsets.push_back(static_cast<int>(at));
+            at += c;
+        }
+    }
+    w.shift_group_src.resize(t_base[n_thread]);
+#pragma omp parallel for schedule(static, 1) num_threads(n_thread)
+    for (int t = 0; t < n_thread; ++t)
+        std::copy(t_src[t].begin(), t_src[t].end(), w.shift_group_src.begin() + t_base[t]);
     w.shift_group_offsets.push_back(static_cast<int>(w.shift_group_src.size()));
 
+    sctl::Profile::Toc();
     w.pw_in_pool_base.assign(n_levels, 0);
     long total_slots = 0;
     for (int L = 0; L < n_levels; ++L) {
@@ -641,20 +874,27 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
     }
 
     w.eval_targets_box_list = tree.eval_targets_box_list;
-    w.self_correction_work = tree.self_correction_work;
+    if (!md)
+        w.self_correction_work = tree.self_correction_work;
 
+    sctl::Profile::Toc();
+
+    sctl::Profile::Tic("tbi_scratch", &tree.comm());
     // --- Scratch strides / sizes ---
     auto &sc = in.scratch;
     sc.tensorprod_scratch_stride_reals = 2L * fou.n_order * fou.n_order * fou.n_order; // 2 * n_order^3 ping-pong slab
     sc.pw_in_stride_reals = 2L * fou.n_charge_dim * fou.n_pw_modes;
     sc.pw_form_stride_reals = (fou.n_tables_up != fou.n_charge_dim) ? 2L * fou.n_tables_up * fou.n_pw_modes : 0;
-    sc.proxy_coeffs_upward_dim = tree.proxy_coeffs_upward.Dim();
-    sc.proxy_coeffs_downward_dim = tree.proxy_coeffs_downward.Dim();
-    sc.pw_out_dim = tree.pw_out.Dim(); // sized by init_planewave_data (called before to_build_inputs)
+    sc.proxy_coeffs_upward_dim = tree.proxy_coeffs_upward_size;
+    sc.proxy_coeffs_downward_dim = tree.proxy_coeffs_downward_size;
+    sc.pw_out_dim = tree.pw_out_size; // sized by init_planewave_data (called before to_build_inputs)
     sc.proxy_offsets_upward = long_span(tree.proxy_coeffs_offsets);
     sc.proxy_offsets_downward = long_span(tree.proxy_coeffs_offsets_downward);
     sc.pw_out_offsets = long_span(tree.pw_out_offsets);
 
+    sctl::Profile::Toc();
+
+    sctl::Profile::Tic("tbi_outputs", &tree.comm());
     // --- Outputs ---
     auto &out = in.outputs;
     out.kernel = tree.params.kernel;
@@ -662,46 +902,80 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
     out.eval_trg = tree.params.eval_trg;
     out.pot_src_dof = tree.kernel_output_dim_src;
     out.pot_trg_dof = tree.kernel_output_dim_trg;
-    out.pot_src_size = (tree.r_src_sorted_owned.Dim() / DIM) * out.pot_src_dof;
-    out.pot_trg_size = (tree.r_trg_sorted_owned.Dim() / DIM) * out.pot_trg_dof;
+    out.pot_src_size = in.particles.n_src * out.pot_src_dof;
+    out.pot_trg_size = in.particles.n_trg * out.pot_trg_dof;
     out.pot_src_offsets = long_span(tree.pot_src_offsets);
     out.pot_trg_offsets = long_span(tree.pot_trg_offsets);
+    sctl::Profile::Toc();
 
     return in;
 }
 
 template <typename Real, int DIM>
 State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
+    UploadBatch batch;
     kernel = in.outputs.kernel;
     n_boxes = in.topology.n_boxes;
     n_levels = in.topology.n_levels;
 
+    sctl::Profile::Tic("sc_topology");
     // --- Topology ---
     topology.nlist1_stride = in.topology.nlist1_stride;
     topology.n_neighbors = in.topology.n_neighbors;
-    up(topology.d_direct_work, in.topology.direct_work);
-    up(topology.d_list1_flat, in.topology.list1_flat);
-    up(topology.d_list1_count, in.topology.list1_count);
-    up(topology.d_list1_shift, in.topology.list1_shift_flat);
-    up(topology.d_box_levels, in.topology.box_levels);
-    up(topology.d_ifpwexp, in.topology.ifpwexp);
+    if (const auto *md = in.device_metadata) {
+        // Derived on the device from the tree's own node lists, and owned by the tree, which
+        // outlives this State. box_levels and ifpwexp still come from the host: metadata routines
+        // that have not moved yet read them there.
+        const std::size_t nb = in.topology.n_boxes;
+        const std::size_t rows = nb * in.topology.nlist1_stride;
+        topology.d_direct_work.adopt(md->d_direct_work, md->n_direct_work);
+        topology.d_list1_flat.adopt(md->d_list1_flat, rows);
+        topology.d_list1_count.adopt(md->d_list1_count, nb);
+        if (md->d_list1_shift)
+            topology.d_list1_shift.adopt(md->d_list1_shift, rows * DIM);
+    } else {
+        batch.add(topology.d_direct_work, in.topology.direct_work);
+        batch.add(topology.d_list1_flat, in.topology.list1_flat);
+        batch.add(topology.d_list1_count, in.topology.list1_count);
+        batch.add(topology.d_list1_shift, in.topology.list1_shift_flat);
+    }
+    batch.add(topology.d_box_levels, in.topology.box_levels);
+    batch.add(topology.d_ifpwexp, in.topology.ifpwexp);
 
+    sctl::Profile::Toc();
+    sctl::Profile::Tic("sc_particles");
     // --- Particles ---
     const auto &pi = in.particles;
-    up(particles.d_r_src, pi.r_src);
-    up(particles.d_r_trg, pi.r_trg);
-    up(particles.d_src_counts, pi.src_counts);
-    up(particles.d_trg_counts, pi.trg_counts);
-    up(particles.d_r_src_offsets, pi.r_src_offsets);
-    up(particles.d_r_trg_offsets, pi.r_trg_offsets);
-    up(particles.d_charge_offsets, pi.charge_offsets);
-    up(particles.d_scatter_index_src, pi.scatter_index_src);
-    up(particles.d_scatter_index_trg, pi.scatter_index_trg);
+    particles.n_src = pi.n_src;
+    particles.n_trg = pi.n_trg;
+    particles.gpu_tree = pi.gpu_tree;
+    // Upload the coordinates only if the tree did not already leave them on the device.
+    if (pi.d_r_src) {
+        particles.r_src_ptr = pi.d_r_src;
+    } else {
+        up(particles.d_r_src, pi.r_src);
+        particles.r_src_ptr = particles.d_r_src.data();
+    }
+    if (pi.d_r_trg) {
+        particles.r_trg_ptr = pi.d_r_trg;
+    } else {
+        up(particles.d_r_trg, pi.r_trg);
+        particles.r_trg_ptr = particles.d_r_trg.data();
+    }
+    batch.add(particles.d_src_counts, pi.src_counts);
+    batch.add(particles.d_trg_counts, pi.trg_counts);
+    batch.add(particles.d_r_src_offsets, pi.r_src_offsets);
+    batch.add(particles.d_r_trg_offsets, pi.r_trg_offsets);
+    batch.add(particles.d_charge_offsets, pi.charge_offsets);
+    batch.add(particles.d_scatter_index_src, pi.scatter_index_src);
+    batch.add(particles.d_scatter_index_trg, pi.scatter_index_trg);
     if (pi.is_stresslet) {
-        up(particles.d_normal_offsets, pi.normal_offsets);
-        up(particles.d_charge_outer_offsets, pi.charge_outer_offsets);
+        batch.add(particles.d_normal_offsets, pi.normal_offsets);
+        batch.add(particles.d_charge_outer_offsets, pi.charge_outer_offsets);
     }
 
+    sctl::Profile::Toc();
+    sctl::Profile::Tic("sc_fourier");
     // --- Fourier (scalars mirror BuildInputs; buffers uploaded verbatim) ---
     const auto &fi = in.fourier;
     fourier.n_pw = fi.n_pw;
@@ -724,56 +998,66 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     fourier.poly2pw_per_level_reals = fi.poly2pw_per_level_reals;
     fourier.radialft_per_level_reals = fi.radialft_per_level_reals;
     fourier.wpwshift_per_level_reals = fi.wpwshift_per_level_reals;
-    up(fourier.d_pw2poly_flat, fi.pw2poly_flat);
-    up(fourier.d_poly2pw_flat, fi.poly2pw_flat);
-    up(fourier.d_radialft_flat, fi.radialft_flat);
-    up(fourier.d_wpwshift_flat, fi.wpwshift_flat);
-    up(fourier.d_pencil_slots, fi.pencil_slots);
+    batch.add(fourier.d_pw2poly_flat, fi.pw2poly_flat);
+    batch.add(fourier.d_poly2pw_flat, fi.poly2pw_flat);
+    batch.add(fourier.d_radialft_flat, fi.radialft_flat);
+    batch.add(fourier.d_wpwshift_flat, fi.wpwshift_flat);
+    batch.add(fourier.d_pencil_slots, fi.pencil_slots);
     fourier.proxy_ball_r2 = fi.proxy_ball_r2;
-    up(fourier.d_full_of_compact, fi.full_of_compact);
+    batch.add(fourier.d_full_of_compact, fi.full_of_compact);
     fourier.n_pw_live = fi.n_pw_live;
-    up(fourier.d_window_pw2poly, fi.window_pw2poly);
-    up(fourier.d_window_poly2pw, fi.window_poly2pw);
-    up(fourier.d_window_radialft, fi.window_radialft);
-    up(fourier.d_p2c, fi.p2c);
-    up(fourier.d_c2p, fi.c2p);
-    up(fourier.d_centers, fi.centers);
-    up(fourier.d_inv_box_scale, fi.inv_box_scale);
-    up(fourier.d_direct_rsc, fi.direct_rsc);
-    up(fourier.d_direct_cen, fi.direct_cen);
-    up(fourier.d_direct_d2max, fi.direct_d2max);
+    batch.add(fourier.d_window_pw2poly, fi.window_pw2poly);
+    batch.add(fourier.d_window_poly2pw, fi.window_poly2pw);
+    batch.add(fourier.d_window_radialft, fi.window_radialft);
+    batch.add(fourier.d_p2c, fi.p2c);
+    batch.add(fourier.d_c2p, fi.c2p);
+    // Box centers come from the device metadata when the tree derived them there; the host array is
+    // then never built.
+    if (in.device_metadata)
+        fourier.d_centers.adopt(in.device_metadata->d_centers, (std::size_t)n_boxes * DIM);
+    else
+        batch.add(fourier.d_centers, fi.centers);
+    batch.add(fourier.d_inv_box_scale, fi.inv_box_scale);
+    batch.add(fourier.d_direct_rsc, fi.direct_rsc);
+    batch.add(fourier.d_direct_cen, fi.direct_cen);
+    batch.add(fourier.d_direct_d2max, fi.direct_d2max);
 
+    sctl::Profile::Toc();
+    sctl::Profile::Tic("sc_worklists");
     // --- Worklists ---
     const auto &wi = in.worklists;
     worklists.n_c2p_groups = wi.n_c2p_groups;
     worklists.n_c2p_active_groups = wi.n_c2p_active_groups;
-    up(worklists.d_c2p_center_boxes, wi.c2p_center_boxes);
-    up(worklists.d_c2p_levels, wi.c2p_levels);
-    up(worklists.d_c2p_src_box_flat_offsets, wi.c2p_src_box_flat_offsets);
-    up(worklists.d_c2p_n_src_boxes_per_group, wi.c2p_n_src_boxes_per_group);
-    up(worklists.d_c2p_src_boxes_flat, wi.c2p_src_boxes_flat);
-    up(worklists.d_c2p_group_perm, wi.c2p_group_perm);
-    up(worklists.d_tp_parents, wi.tp_parents);
-    up(worklists.d_tp_children, wi.tp_children);
-    up(worklists.d_tp_octants, wi.tp_octants);
-    up(worklists.d_tp_assign_dst, wi.tp_assign_dst);
-    up(worklists.d_tp_up_src_boxes, wi.tp_up_src);
-    up(worklists.d_tp_up_dst_boxes, wi.tp_up_dst);
-    up(worklists.d_tp_up_octants, wi.tp_up_octants);
-    up(worklists.d_tp_up_assign, wi.tp_up_assign);
-    up(worklists.d_proxy_zero_boxes, wi.proxy_zero_boxes);
+    batch.add(worklists.d_c2p_center_boxes, wi.c2p_center_boxes);
+    batch.add(worklists.d_c2p_levels, wi.c2p_levels);
+    batch.add(worklists.d_c2p_src_box_flat_offsets, wi.c2p_src_box_flat_offsets);
+    batch.add(worklists.d_c2p_n_src_boxes_per_group, wi.c2p_n_src_boxes_per_group);
+    batch.add(worklists.d_c2p_src_boxes_flat, wi.c2p_src_boxes_flat);
+    batch.add(worklists.d_c2p_group_perm, wi.c2p_group_perm);
+    batch.add(worklists.d_tp_parents, wi.tp_parents);
+    batch.add(worklists.d_tp_children, wi.tp_children);
+    batch.add(worklists.d_tp_octants, wi.tp_octants);
+    batch.add(worklists.d_tp_assign_dst, wi.tp_assign_dst);
+    batch.add(worklists.d_tp_up_src_boxes, wi.tp_up_src);
+    batch.add(worklists.d_tp_up_dst_boxes, wi.tp_up_dst);
+    batch.add(worklists.d_tp_up_octants, wi.tp_up_octants);
+    batch.add(worklists.d_tp_up_assign, wi.tp_up_assign);
+    batch.add(worklists.d_proxy_zero_boxes, wi.proxy_zero_boxes);
     worklists.n_proxy_zero_boxes = static_cast<int>(wi.proxy_zero_boxes.size());
-    up(worklists.d_tp_up_par, wi.tp_up_par);
-    up(worklists.d_tp_up_par_child_begin, wi.tp_up_par_child_begin);
-    up(worklists.d_tp_up_par_child_count, wi.tp_up_par_child_count);
-    up(worklists.d_pw_eval_box_flat, wi.pw_eval_box_flat);
-    up(worklists.d_shift_group_src, wi.shift_group_src);
-    up(worklists.d_shift_group_offsets, wi.shift_group_offsets);
+    batch.add(worklists.d_tp_up_par, wi.tp_up_par);
+    batch.add(worklists.d_tp_up_par_child_begin, wi.tp_up_par_child_begin);
+    batch.add(worklists.d_tp_up_par_child_count, wi.tp_up_par_child_count);
+    batch.add(worklists.d_pw_eval_box_flat, wi.pw_eval_box_flat);
+    batch.add(worklists.d_shift_group_src, wi.shift_group_src);
+    batch.add(worklists.d_shift_group_offsets, wi.shift_group_offsets);
     worklists.shift_group_base_h = wi.shift_group_base;
-    up(worklists.d_pw_form_box_flat, wi.pw_form_box_flat);
+    batch.add(worklists.d_pw_form_box_flat, wi.pw_form_box_flat);
     worklists.n_eval_boxes = static_cast<int>(wi.eval_targets_box_list.size());
-    up(worklists.d_eval_targets_box_list, wi.eval_targets_box_list);
-    up(worklists.d_self_correction_work, wi.self_correction_work);
+    batch.add(worklists.d_eval_targets_box_list, wi.eval_targets_box_list);
+    if (const auto *md = in.device_metadata)
+        worklists.d_self_correction_work.adopt(md->d_self_correction_work, md->n_direct_work);
+    else
+        batch.add(worklists.d_self_correction_work, wi.self_correction_work);
     worklists.pw_in_pool_base_h = wi.pw_in_pool_base;
     worklists.tp_offset_h = wi.tp_offset;
     worklists.tp_count_h = wi.tp_count;
@@ -786,6 +1070,8 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     worklists.pw_form_box_offset_h = wi.pw_form_box_offset;
     worklists.pw_form_box_count_h = wi.pw_form_box_count;
 
+    sctl::Profile::Toc();
+    sctl::Profile::Tic("sc_scratch");
     // --- Scratch (buffers sized/zeroed here; contents produced by the passes) ---
     const auto &si = in.scratch;
     scratch.tensorprod_scratch_stride_reals = si.tensorprod_scratch_stride_reals;
@@ -799,9 +1085,9 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
         scratch.d_proxy_coeffs_downward.resize(si.proxy_coeffs_downward_dim);
         scratch.d_proxy_coeffs_downward.zero_async();
     }
-    up(scratch.d_proxy_offsets_upward, si.proxy_offsets_upward);
-    up(scratch.d_proxy_offsets_downward, si.proxy_offsets_downward);
-    up(scratch.d_pw_out_offsets, si.pw_out_offsets);
+    batch.add(scratch.d_proxy_offsets_upward, si.proxy_offsets_upward);
+    batch.add(scratch.d_proxy_offsets_downward, si.proxy_offsets_downward);
+    batch.add(scratch.d_pw_out_offsets, si.pw_out_offsets);
     scratch.d_pw_out.resize(2 * si.pw_out_dim);
 
     const int max_tp_any = std::max(wi.max_tp_per_level, wi.max_tp_up_per_level);
@@ -826,6 +1112,8 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     const int zero_int = 0;
     scratch.d_box0_id.upload(&zero_int, 1);
 
+    sctl::Profile::Toc();
+    sctl::Profile::Tic("sc_outputs");
     // --- Outputs ---
     outputs.eval_src = in.outputs.eval_src;
     outputs.eval_trg = in.outputs.eval_trg;
@@ -833,14 +1121,27 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     outputs.pot_trg_dof = in.outputs.pot_trg_dof;
     outputs.pot_src_size = in.outputs.pot_src_size;
     outputs.pot_trg_size = in.outputs.pot_trg_size;
-    up(outputs.d_pot_src_offsets, in.outputs.pot_src_offsets);
-    up(outputs.d_pot_trg_offsets, in.outputs.pot_trg_offsets);
+    batch.add(outputs.d_pot_src_offsets, in.outputs.pot_src_offsets);
+    batch.add(outputs.d_pot_trg_offsets, in.outputs.pot_trg_offsets);
     outputs.d_pot_direct_src.resize(outputs.pot_src_size);
     outputs.d_pot_direct_trg.resize(outputs.pot_trg_size);
     outputs.d_pot_eval_src.resize(outputs.pot_src_size);
     outputs.d_pot_eval_trg.resize(outputs.pot_trg_size);
-    outputs.d_pot_src_final.resize(outputs.pot_src_size);
-    outputs.d_pot_trg_final.resize(outputs.pot_trg_size);
+    if (particles.gpu_tree) {
+        // The tree maps these back to the caller's order in desort_potentials, so no user-order
+        // device buffer is needed here at all.
+        if (outputs.pot_src_size)
+            outputs.pot_src_tree =
+                gpu_tree_reserve_data<Real, DIM>(particles.gpu_tree, "pdmk_pot_src", "pdmk_src", outputs.pot_src_dof);
+        if (outputs.pot_trg_size)
+            outputs.pot_trg_tree =
+                gpu_tree_reserve_data<Real, DIM>(particles.gpu_tree, "pdmk_pot_trg", "pdmk_trg", outputs.pot_trg_dof);
+    } else {
+        outputs.d_pot_src_final.resize(outputs.pot_src_size);
+        outputs.d_pot_trg_final.resize(outputs.pot_trg_size);
+    }
+
+    batch.flush(upload_arena);
 
     direct_stream = cuda_helpers::DeviceStream::non_blocking();
     // The near-field kernel's blocks would otherwise hold every SM until they tail off, starving
@@ -855,11 +1156,31 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     outputs.d_pot_eval_trg.zero_async(downward_stream.get());
     outputs.d_pot_direct_src.zero_async(direct_stream.get());
     outputs.d_pot_direct_trg.zero_async(direct_stream.get());
+    sctl::Profile::Toc();
 }
 
 template <typename Real, int DIM>
 void State<Real, DIM>::upload_and_sort_charges(const Real *charges, const Real *normals, long n_src) {
     const int charge_dof = get_kernel_input_dim(DIM, kernel);
+
+    if (particles.gpu_tree) {
+        // AddParticleData sorts the host values into tree order on the device -- exactly what the
+        // scatter kernels below do by hand, but with no permutation on the host.
+        particles.charge_ptr =
+            gpu_tree_add_data<Real, DIM>(particles.gpu_tree, "pdmk_charge", "pdmk_src", charges, charge_dof);
+        if (kernel == DMK_STRESSLET) {
+            particles.normal_ptr =
+                gpu_tree_add_data<Real, DIM>(particles.gpu_tree, "pdmk_normal", "pdmk_src", normals, DIM);
+            particles.d_charge_outer.resize(particles.n_src * DIM * DIM);
+            particles.charge_outer_ptr = particles.d_charge_outer.data();
+            // Both operands are already in tree order, so the outer product needs no index.
+            launch_outer_product<Real>(particles.charge_ptr, particles.normal_ptr, particles.d_charge_outer.data(),
+                                       particles.n_src, DIM, direct_stream.get());
+        }
+        direct_stream.sync();
+        return;
+    }
+
     DeviceBuffer<Real> d_charge_input;
     d_charge_input.upload_async(charges, n_src * charge_dof, direct_stream.get());
     particles.d_charge.resize(n_src * charge_dof);
@@ -875,9 +1196,13 @@ void State<Real, DIM>::upload_and_sort_charges(const Real *charges, const Real *
         particles.d_charge_outer.resize(n_src * DIM * DIM);
         launch_scatter_forward_stresslet(d_charge_input.data(), d_normal_input.data(), particles.d_charge_outer.data(),
                                          particles.d_scatter_index_src.data(), n_src, DIM, direct_stream.get());
+        particles.normal_ptr = particles.d_normal.data();
+        particles.charge_outer_ptr = particles.d_charge_outer.data();
+        particles.charge_ptr = particles.d_charge.data();
         direct_stream.sync();
         return;
     }
+    particles.charge_ptr = particles.d_charge.data();
     direct_stream.sync();
 }
 
@@ -889,6 +1214,18 @@ void State<Real, DIM>::finalize() {
     auto eval_done = cuda_helpers::DeviceEvent::disable_timing();
     DMK_CHECK_CUDA(cudaEventRecord(eval_done, downward_stream.get()));
     DMK_CHECK_CUDA(cudaStreamWaitEvent(direct_stream.get(), eval_done, 0));
+
+    if (particles.gpu_tree) {
+        // Sum in tree order; desort_potentials hands the result to the tree to reorder.
+        if (outputs.pot_src_size)
+            launch_accumulate<Real>(outputs.pot_src_tree, outputs.d_pot_eval_src.data(),
+                                    outputs.d_pot_direct_src.data(), outputs.pot_src_size, direct_stream.get());
+        if (outputs.pot_trg_size)
+            launch_accumulate<Real>(outputs.pot_trg_tree, outputs.d_pot_eval_trg.data(),
+                                    outputs.d_pot_direct_trg.data(), outputs.pot_trg_size, direct_stream.get());
+        direct_stream.sync();
+        return;
+    }
 
     if (outputs.pot_src_size) {
         const long n = static_cast<long>(outputs.pot_src_size / outputs.pot_src_dof);
@@ -918,10 +1255,10 @@ void State<Real, DIM>::dump(DMKPtTree<Real, DIM> &tree) {
     write("dmk_proxy_coeffs", scratch.d_proxy_coeffs_upward.data(), scratch.d_proxy_coeffs_upward.size());
 }
 
-template BuildInputs<float, 2> to_build_inputs<float, 2>(DMKPtTree<float, 2> &);
-template BuildInputs<float, 3> to_build_inputs<float, 3>(DMKPtTree<float, 3> &);
-template BuildInputs<double, 2> to_build_inputs<double, 2>(DMKPtTree<double, 2> &);
-template BuildInputs<double, 3> to_build_inputs<double, 3>(DMKPtTree<double, 3> &);
+template BuildInputs<float, 2> to_build_inputs<float, 2>(DMKPtTree<float, 2> &, GpuTreeMetadata<float> *);
+template BuildInputs<float, 3> to_build_inputs<float, 3>(DMKPtTree<float, 3> &, GpuTreeMetadata<float> *);
+template BuildInputs<double, 2> to_build_inputs<double, 2>(DMKPtTree<double, 2> &, GpuTreeMetadata<double> *);
+template BuildInputs<double, 3> to_build_inputs<double, 3>(DMKPtTree<double, 3> &, GpuTreeMetadata<double> *);
 
 template struct State<float, 2>;
 template struct State<float, 3>;

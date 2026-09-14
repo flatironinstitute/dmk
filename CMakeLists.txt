@@ -64,7 +64,13 @@ endif()
 set(Build_Tests OFF CACHE BOOL "" FORCE)
 set(HDF5Support OFF CACHE BOOL "" FORCE)
 
-set(DMK_CXX_FLAGS "-DSCTL_MAX_DEPTH=62")
+# A Morton code holds DIM*(MAX_DEPTH+1) bits, so at 20 it still fits a 64-bit word for both
+# DIM=2 and DIM=3. That makes MortonCode::IntKeyIsExact true, which is what lets omp_par::sort
+# and the GPU tree's local_sort reach their radix paths instead of a comparison sort. Depth 20 is
+# far past anything DMK can use: coordinates carry only eps_machine*2^d of relative accuracy, so
+# double at eps=1e-12 supports about depth 12 and float much less (see
+# compute_level_indices_and_boxsizes).
+set(DMK_CXX_FLAGS "-DSCTL_MAX_DEPTH=20")
 if (DMK_VECLIB_DEFINE)
   list(APPEND DMK_CXX_FLAGS "-D${DMK_VECLIB_DEFINE}")
 endif()
@@ -151,7 +157,9 @@ if (DMK_GPU_OFFLOAD)
   )
 
   list(APPEND DMK_CXX_FLAGS "-DDMK_GPU_OFFLOAD")
-  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
+  # --expt-relaxed-constexpr: SCTL's experimental GPU tree calls constexpr host functions from
+  # device code (sctl::pow in the node-list strides, among others).
+  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo --expt-relaxed-constexpr")
 endif()
 
 set(DMK_CUDA_JIT_SRC
@@ -289,6 +297,7 @@ if (DMK_GPU_OFFLOAD)
               src/cuda/esp/short_range.cpp
               src/cuda/esp/support.cpp
               src/cuda/esp/sort.cu
+              src/cuda/pt/gpu_tree_build.cu
               src/cuda/pt/state.cpp
               src/cuda/pt/tree.cpp
               src/cuda/pt/direct.cpp

@@ -30,6 +30,14 @@ struct DMKPtTree;
 
 namespace cuda::pt {
 
+/// Owner of a device-resident tree (src/cuda/pt/gpu_tree_build.cu); opaque here.
+template <typename Real, int DIM>
+struct GpuTree;
+
+/// Per-box metadata the device tree derived on its own (src/cuda/pt/gpu_tree_build.hpp).
+template <typename Real>
+struct GpuTreeMetadata;
+
 using cuda_helpers::DeviceBuffer;
 
 /// The tree->GPU seam. Derived arrays (host reshaping of nested tree
@@ -44,22 +52,29 @@ struct BuildInputs {
         int nlist1_stride = 0;                     ///< max near-neighbor source boxes per box
         int n_neighbors = 0;                       ///< 3^DIM colocated-neighbor slots per box
         std::span<const int> direct_work;          ///< target boxes with near-field work (direct)
-        std::vector<int> list1_flat;               ///< [n_boxes*nlist1_stride] near source boxes, -1 pad (direct)
-        std::vector<int> list1_count;              ///< [n_boxes] valid entries per row (direct)
+        std::span<const int> list1_flat;           ///< [n_boxes*nlist1_stride] near source boxes; spans the tree's rows
+        std::span<const int> list1_count;          ///< [n_boxes] valid entries per row (direct)
         std::vector<signed char> list1_shift_flat; ///< [n_boxes*nlist1_stride*DIM] PBC image shift, empty if aperiodic
         std::vector<int> box_levels;               ///< [n_boxes] depth per box (all passes)
-        std::vector<int> neighbors;         ///< [n_boxes*n_neighbors] neighbor ids, -1 invalid (shift list build)
-        std::vector<unsigned char> ifpwexp; ///< [n_boxes] has-PW-expansion flag (upward/form_outgoing/downward)
-        std::vector<unsigned char> is_global_leaf; ///< [n_boxes] leaf-of-eval flag (shift list build)
+        std::vector<unsigned char> ifpwexp;        ///< [n_boxes] has-PW-expansion flag (upward/form_outgoing/downward)
         std::vector<ShiftPwNeighbor> shift_nbr;    ///< surviving shift sources, CSR by box (shift group build)
         std::vector<int> shift_nbr_offsets;        ///< [n_boxes+1] CSR offsets into shift_nbr (shift group build)
     } topology;
 
     /// Sorted source/target coordinates, charges, and the sort permutation.
     struct Particles {
-        bool is_stresslet = false;                  ///< selects the outer(force,normal) proxy path
-        std::span<const Real> r_src;                ///< sorted source coords (direct/upward)
-        std::span<const Real> r_trg;                ///< sorted target coords (direct/eval_targets)
+        bool is_stresslet = false;   ///< selects the outer(force,normal) proxy path
+        std::span<const Real> r_src; ///< sorted source coords (direct/upward)
+        std::span<const Real> r_trg; ///< sorted target coords (direct/eval_targets)
+        /// Set instead of r_src/r_trg when the tree was built on the device and the sorted
+        /// coordinates are already there: the State aliases them rather than uploading.
+        const Real *d_r_src = nullptr;
+        const Real *d_r_trg = nullptr;
+        /// Set with d_r_src/d_r_trg: the tree that owns them also owns the particle scatter, so
+        /// charges and potentials ride it instead of DMK's own permutation kernels.
+        GpuTree<Real, DIM> *gpu_tree = nullptr;
+        long n_src = 0; ///< particles in r_src/d_r_src; the spans may be empty
+        long n_trg = 0;
         std::span<const int> src_counts;            ///< [n_boxes] owned sources per box
         std::span<const int> trg_counts;            ///< [n_boxes] owned targets per box
         std::span<const long> r_src_offsets;        ///< [n_boxes+1] into r_src
@@ -184,13 +199,18 @@ struct BuildInputs {
         std::span<const long> pot_src_offsets;  ///< [n_boxes+1] into source pot
         std::span<const long> pot_trg_offsets;  ///< [n_boxes+1] into target pot
     } outputs;
+
+    /// Set when the tree built its own metadata on the device: the list1, direct-work and
+    /// self-correction arrays are already resident and the State aliases them rather than
+    /// uploading, so the corresponding host spans above are left empty.
+    const GpuTreeMetadata<Real> *device_metadata = nullptr;
 };
 
 /// Populate a BuildInputs from a host-precomputed tree (build_tree_for_gpu +
 /// generate_metadata_for_gpu must have run). The only place that reads tree
-/// internals for the V2 path.
+/// internals for the V2 path. `md` is non-null when the device tree derived its own metadata.
 template <typename Real, int DIM>
-BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree);
+BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree, GpuTreeMetadata<Real> *md = nullptr);
 
 /// Grouped device state for the V2 point-tree pipeline. Uploaded verbatim from
 /// a BuildInputs; the only state that must outlive the producer tree is the
@@ -219,6 +239,19 @@ struct State {
 
     /// Sorted source/target coordinates, charges, and the sort permutation.
     struct Particles {
+        /// Sorted coordinates, as the passes read them. They point at d_r_src/d_r_trg when this
+        /// State uploaded them, and at tree-owned device memory when the tree was built on the
+        /// device and they are already there. The tree outlives the State, so aliasing is safe.
+        const Real *r_src_ptr = nullptr;
+        const Real *r_trg_ptr = nullptr;
+        long n_src = 0; ///< particles behind r_src_ptr, wherever it points
+        long n_trg = 0;
+        /// Charges as the passes read them: the owned buffers below when this State scattered
+        /// them, or tree-owned device memory when the tree did.
+        const Real *charge_ptr = nullptr;
+        const Real *normal_ptr = nullptr;
+        const Real *charge_outer_ptr = nullptr;
+        GpuTree<Real, DIM> *gpu_tree = nullptr;    ///< non-null when the tree owns the scatter
         DeviceBuffer<Real> d_r_src;                ///< sorted source coords (direct/upward)
         DeviceBuffer<long> d_r_src_offsets;        ///< per-box offsets into d_r_src
         DeviceBuffer<int> d_src_counts;            ///< owned sources per box
@@ -372,12 +405,20 @@ struct State {
         DeviceBuffer<Real> d_pot_direct_trg;    ///< near-field trg pot, sorted order (direct pass)
         DeviceBuffer<Real> d_pot_eval_src;      ///< far-field src pot, sorted order (eval_targets)
         DeviceBuffer<Real> d_pot_eval_trg;      ///< far-field trg pot, sorted order (eval_targets)
-        DeviceBuffer<Real> d_pot_src_final;     ///< descattered user-order source pot (finalize->desort)
-        DeviceBuffer<Real> d_pot_trg_final;     ///< descattered user-order target pot (finalize->desort)
+        /// Where finalize writes near+far when the tree owns the scatter: tree-order storage the
+        /// tree then maps back to the caller's order in desort_potentials.
+        Real *pot_src_tree = nullptr;
+        Real *pot_trg_tree = nullptr;
+        DeviceBuffer<Real> d_pot_src_final; ///< descattered user-order source pot (finalize->desort)
+        DeviceBuffer<Real> d_pot_trg_final; ///< descattered user-order target pot (finalize->desort)
     } outputs;
 
     /// Direct runs concurrently with the upward+downward chain; eval waits on
     /// both via events.
+    /// One allocation behind most of the buffers above: the constructor packs its uploads into a
+    /// single transfer and they adopt slices of this. Must outlive every buffer that points into it.
+    cuda_helpers::DeviceBuffer<char> upload_arena;
+
     cuda_helpers::DeviceStream direct_stream;
     cuda_helpers::DeviceStream downward_stream;
 

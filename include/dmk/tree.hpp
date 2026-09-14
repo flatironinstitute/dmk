@@ -16,6 +16,15 @@
 
 namespace dmk {
 
+#ifdef DMK_GPU_OFFLOAD
+namespace cuda::pt {
+/// Owner of the device-resident tree; defined in src/cuda/pt/gpu_tree_build.cu. Held here as an
+/// opaque pointer so this header stays clear of thrust.
+template <typename Real, int DIM>
+struct GpuTree;
+} // namespace cuda::pt
+#endif
+
 template <int DIM>
 struct ExpansionConstants {
     double beta;           // PSWF bandwidth parameter
@@ -600,6 +609,26 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> scatter_idx_src;
     sctl::Vector<sctl::Long> scatter_idx_trg;
 
+    /// Host mirror of a device-side tree's topology, in the sctl::Tree layout the metadata
+    /// routines already expect. Read it through box_mid()/box_attr()/box_lists(), which fall
+    /// back to the sctl::PtTree base while `topology_mirrored` is false.
+    bool topology_mirrored = false;
+#ifdef DMK_GPU_OFFLOAD
+    /// Set when DMK_GPU_TREE selects the device tree build. Owns the sorted coordinates and every
+    /// particle data set attached to them, so it must outlive the device State.
+    cuda::pt::GpuTree<Real, DIM> *gpu_tree = nullptr;
+#endif
+    /// Sorted coordinates on the device, when the device tree built them; null otherwise, and then
+    /// r_src_sorted_owned/r_trg_sorted_owned hold them on the host instead.
+    const Real *d_r_src_sorted = nullptr;
+    const Real *d_r_trg_sorted = nullptr;
+    /// Particles in tree order, wherever the coordinates live.
+    sctl::Long n_src_sorted = 0;
+    sctl::Long n_trg_sorted = 0;
+    sctl::Vector<sctl::Morton<DIM>> mirror_node_mid;
+    sctl::Vector<typename sctl::Tree<DIM>::NodeAttr> mirror_node_attr;
+    sctl::Vector<typename sctl::Tree<DIM>::NodeLists> mirror_node_lists;
+
     sctl::Vector<Real> pot_src_sorted;
     sctl::Vector<sctl::Long> pot_src_cnt;
     sctl::Vector<sctl::Long> pot_src_offsets;
@@ -632,6 +661,11 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> density_cnt_with_halo;
     sctl::Vector<sctl::Long> density_offsets_with_halo;
 
+    /// Lengths proxy_coeffs_upward/downward would have. As with pw_out_size, a device-side tree
+    /// needs only the sizes, to allocate its own buffers.
+    sctl::Long proxy_coeffs_upward_size = 0;
+    sctl::Long proxy_coeffs_downward_size = 0;
+
     sctl::Vector<Real> proxy_coeffs_upward;
     sctl::Vector<sctl::Long> proxy_coeffs_offsets;
     sctl::Vector<Real> proxy_coeffs_downward;
@@ -639,6 +673,9 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     sctl::Vector<std::complex<Real>> pw_out;
     sctl::Vector<sctl::Long> pw_out_offsets;
+    /// Length pw_out would have. The GPU path only needs the size, to allocate its device buffer,
+    /// so the host array itself is left unallocated there -- it is the largest in the run.
+    sctl::Long pw_out_size = 0;
 
     sctl::Vector<bool> ifpwexp;
     sctl::Vector<bool> iftensprodeval;
@@ -701,11 +738,33 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<Real> c2p;
     sctl::Vector<Real> p2c;
 
+    ~DMKPtTree();
+
     DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, const sctl::Vector<Real> &r_src,
               const sctl::Vector<Real> &charge, const sctl::Vector<Real> &normals, const sctl::Vector<Real> &r_trg);
 
     int n_levels() const { return level_indices.Dim(); }
-    std::size_t n_boxes() const { return this->GetNodeMID().Dim(); }
+    std::size_t n_boxes() const { return box_mid().Dim(); }
+
+    using NodeAttr = typename sctl::Tree<DIM>::NodeAttr;
+    using NodeLists = typename sctl::Tree<DIM>::NodeLists;
+
+    /// Tree topology, from whichever tree built it: the sctl::PtTree base, or the host mirror a
+    /// device-side build hands back. Every metadata routine reads the tree through these three, so
+    /// the paths diverge in one place rather than at thirty call sites.
+    ///
+    /// Read the tree through these and never through this->GetNodeMID() and friends: the base's
+    /// constructor seeds a coarsest-uniform-grid tree, so where the mirror is in use the base is
+    /// non-empty but wrong, and a stray direct call would silently traverse that seed instead.
+    const sctl::Vector<sctl::Morton<DIM>> &box_mid() const {
+        return topology_mirrored ? mirror_node_mid : this->GetNodeMID();
+    }
+    const sctl::Vector<NodeAttr> &box_attr() const {
+        return topology_mirrored ? mirror_node_attr : this->GetNodeAttr();
+    }
+    const sctl::Vector<NodeLists> &box_lists() const {
+        return topology_mirrored ? mirror_node_lists : this->GetNodeLists();
+    }
 
     // Add data and refine tree
     void build_tree(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &charge,
@@ -728,6 +787,12 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void build_direct_work_lists();
     void allocate_proxy_coefficients();
     void precompute_window_difference_data();
+    /// c2p/p2c, fourier_data and the plane-wave tables, from a process-wide cache keyed on the
+    /// configuration and the tree depth. Calls precompute_window_difference_data on a miss.
+    void build_shared_precompute();
+    /// Per-level self-interaction constants, from the shared precompute. Views; do not resize.
+    sctl::Vector<Real> self_w0;
+    sctl::Vector<Real> self_w0_grad;
     void build_evaluators();
     void build_self_correction_work_list();
     void generate_metadata();
@@ -750,6 +815,15 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     // Internal data accessors
     std::span<const int> list1(int i_box) const { return std::span<const int>(list1_[i_box].data(), nlist1_[i_box]); }
+    /// list1_ is one fixed-stride row per box, which is already the layout the device kernel
+    /// indexes, so the GPU path spans it instead of flattening a copy. Slots past nlist1_[box] are
+    /// unwritten and never read: the kernel bounds its loop by the count.
+    static constexpr int list1_stride() { return nlist1_max_; }
+    std::span<const int> list1_flat() const {
+        return list1_.empty() ? std::span<const int>()
+                              : std::span<const int>(list1_[0].data(), list1_.size() * nlist1_max_);
+    }
+    std::span<const int> nlist1() const { return std::span<const int>(nlist1_.data(), nlist1_.size()); }
     std::span<const std::array<int, DIM>> list1_shift(int i_box) const {
         return std::span<const std::array<int, DIM>>(list1_shift_[i_box].data(), nlist1_[i_box]);
     }

@@ -6,6 +6,8 @@
 #include <dmk/logger.h>
 #include <dmk/nvtx_wrapper.h>
 
+#include "gpu_tree_build.hpp"
+
 #include <cstdlib>
 #include <string>
 
@@ -60,19 +62,59 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
                       const sctl::Vector<Real> &charge, const sctl::Vector<Real> &normal,
                       const sctl::Vector<Real> &r_trg)
     : device_id_(params.gpu_device_id) {
+    sctl::Profile::Tic("bind_gpu_device", &comm);
     bind_gpu_device(device_id_);
     cuda_helpers::ScopedDevice device_scope(device_id_);
+    sctl::Profile::Toc();
 
     // The owned tree runs the GPU host precompute only (tree build, metadata,
     // and plane-wave layout); all device state lives in state_.
     tree_ = std::make_unique<DMKPtTree<Real, DIM>>(comm, params, r_src, charge, normal, r_trg);
     tree_->init_planewave_data();
 
-    state_ = std::make_unique<State<Real, DIM>>(to_build_inputs(*tree_));
+    // With a device tree, the per-box lists it alone consumes are derived on the device from the
+    // tree's own node lists, so they never round-trip through the host. Must outlive
+    // `build_inputs`, which only holds a pointer to it.
+    GpuTreeMetadata<Real> device_md;
+    if (tree_->gpu_tree) {
+        sctl::Profile::Tic("gpu_tree_metadata", &comm);
+        GpuTreeMetadataParams<Real> mp;
+        mp.boxsize = &tree_->boxsize[0];
+        mp.n_boxsize = tree_->boxsize.Dim();
+        mp.n_levels = tree_->n_levels();
+        mp.w0 = tree_->self_w0.Dim() ? &tree_->self_w0[0] : nullptr;
+        mp.w0_grad = tree_->self_w0_grad.Dim() ? &tree_->self_w0_grad[0] : nullptr;
+        mp.n_w0 = tree_->self_w0.Dim();
+        mp.src_cnt = &tree_->src_counts_with_halo[0];
+        mp.trg_cnt = &tree_->trg_counts_owned[0];
+        mp.nlist1_stride = DMKPtTree<Real, DIM>::list1_stride();
+        mp.periodic = params.use_periodic;
+        // Same choice build_self_correction_work_list makes on the host path.
+        if (params.kernel == DMK_STRESSLET)
+            mp.self_mode = SelfCorrectionMode::zero;
+        else if (params.kernel == DMK_LAPLACE_DIPOLE)
+            mp.self_mode =
+                params.eval_src >= DMK_POTENTIAL_GRAD ? SelfCorrectionMode::w0_grad : SelfCorrectionMode::zero;
+        else
+            mp.self_mode = SelfCorrectionMode::w0;
+        gpu_tree_metadata<Real, DIM>(tree_->gpu_tree, mp, device_md);
+        sctl::Profile::Toc();
+    }
+
+    sctl::Profile::Tic("to_build_inputs", &comm);
+    auto build_inputs = to_build_inputs(*tree_, tree_->gpu_tree ? &device_md : nullptr);
+    sctl::Profile::Toc();
+
+    sctl::Profile::Tic("state_ctor", &comm);
+    state_ = std::make_unique<State<Real, DIM>>(build_inputs);
+    sctl::Profile::Toc();
+
     const long n_src = r_src.Dim() / DIM;
     const Real *charge_ptr = charge.Dim() ? &charge[0] : nullptr;
     const Real *normal_ptr = (params.kernel == DMK_STRESSLET && normal.Dim()) ? &normal[0] : nullptr;
+    sctl::Profile::Tic("upload_and_sort_charges", &comm);
     state_->upload_and_sort_charges(charge_ptr, normal_ptr, n_src);
+    sctl::Profile::Toc();
     cuda_helpers::check_device_errors("tree create");
 }
 
@@ -133,6 +175,17 @@ void Tree<Real, DIM>::eval() {
 template <typename Real, int DIM>
 void Tree<Real, DIM>::desort_potentials(Real *pot_src, Real *pot_trg) {
     cuda_helpers::ScopedDevice device_scope(device_id_);
+    if (tree_->gpu_tree) {
+        // finalize summed near+far in tree order; the tree owns the permutation, so it maps the
+        // result back to the caller's order and copies it out.
+        const auto &o = state_->outputs;
+        if (o.pot_src_size)
+            gpu_tree_get_data<Real, DIM>(tree_->gpu_tree, "pdmk_pot_src", pot_src);
+        if (o.pot_trg_size)
+            gpu_tree_get_data<Real, DIM>(tree_->gpu_tree, "pdmk_pot_trg", pot_trg);
+        return;
+    }
+
     // finalize wrote the descattered (user-order) result into d_pot_*_final and
     // synced; one D2H per side.
     const auto &o = state_->outputs;
@@ -147,7 +200,7 @@ void Tree<Real, DIM>::desort_potentials(Real *pot_src, Real *pot_trg) {
 template <typename Real, int DIM>
 void Tree<Real, DIM>::update_charges(const Real *charge, const Real *normal) {
     cuda_helpers::ScopedDevice device_scope(device_id_);
-    state_->upload_and_sort_charges(charge, normal, tree_->r_src_sorted_owned.Dim() / DIM);
+    state_->upload_and_sort_charges(charge, normal, state_->particles.n_src);
     cuda_helpers::check_device_errors("tree update_charges");
 }
 

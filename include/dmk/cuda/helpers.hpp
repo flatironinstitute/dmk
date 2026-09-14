@@ -13,6 +13,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace dmk::cuda_helpers {
@@ -53,6 +54,89 @@ inline void check_device_errors(const char *where) {
         throw std::runtime_error(std::string("CUDA error at ") + where + ": " + cudaGetErrorString(err));
 }
 
+// Device allocations are pooled rather than handed back to the driver: cudaMalloc costs a few
+// microseconds, cudaFree synchronizes the whole device, and one tree build makes ~70 of each at
+// sizes that repeat exactly from one build to the next. A freed block is reused by the next request
+// it fits without wasting more than half of it. Not thread-safe, and single-device by construction
+// (bind_gpu_device pins the process to one device).
+inline std::vector<std::pair<void *, std::size_t>> &device_pool() {
+    static std::vector<std::pair<void *, std::size_t>> pool;
+    return pool;
+}
+
+// Returns the block and its true capacity, which may exceed `bytes`.
+inline std::pair<void *, std::size_t> pool_alloc(std::size_t bytes) {
+    auto &pool = device_pool();
+    std::size_t best = pool.size();
+    for (std::size_t i = 0; i < pool.size(); ++i)
+        if (pool[i].second >= bytes && pool[i].second <= 2 * bytes &&
+            (best == pool.size() || pool[i].second < pool[best].second))
+            best = i;
+    if (best != pool.size()) {
+        const auto block = pool[best];
+        pool.erase(pool.begin() + best);
+        return block;
+    }
+    void *p = nullptr;
+    DMK_CHECK_CUDA(cudaMalloc(&p, bytes));
+    return {p, bytes};
+}
+
+inline void pool_free(void *p, std::size_t bytes) {
+    if (!p)
+        return;
+    // Retaining one problem's working set is the point; retaining every size a long-running process
+    // has ever asked for is not, so past the cap blocks go back to the driver.
+    constexpr std::size_t retain_max = std::size_t(4) << 30;
+    auto &pool = device_pool();
+    std::size_t held = bytes;
+    for (const auto &b : pool)
+        held += b.second;
+    if (held > retain_max) {
+        cudaFree(p);
+        return;
+    }
+    pool.emplace_back(p, bytes);
+}
+
+// Page-locked host staging, pooled for the same reason: page-locking a few megabytes costs far more
+// than the transfer it serves.
+inline std::vector<std::pair<void *, std::size_t>> &pinned_pool() {
+    static std::vector<std::pair<void *, std::size_t>> pool;
+    return pool;
+}
+
+inline std::pair<char *, std::size_t> pinned_alloc(std::size_t bytes) {
+    auto &pool = pinned_pool();
+    for (auto it = pool.begin(); it != pool.end(); ++it)
+        if (it->second >= bytes) {
+            const auto block = *it;
+            pool.erase(it);
+            return {static_cast<char *>(block.first), block.second};
+        }
+    void *p = nullptr;
+    if (cudaMallocHost(&p, bytes) != cudaSuccess)
+        return {nullptr, 0};
+    return {static_cast<char *>(p), bytes};
+}
+
+inline void pinned_free(char *p, std::size_t bytes) {
+    if (!p)
+        return;
+    // Tighter cap than the device pool: page-locked pages come out of the machine's pool, not the
+    // card's.
+    constexpr std::size_t retain_max = std::size_t(256) << 20;
+    auto &pool = pinned_pool();
+    std::size_t held = bytes;
+    for (const auto &b : pool)
+        held += b.second;
+    if (held > retain_max) {
+        cudaFreeHost(p);
+        return;
+    }
+    pool.emplace_back(p, bytes);
+}
+
 // RAII wrapper around a `cudaMalloc`'d region. Move-only. `resize()` is a
 // no-op if the requested size matches what's already allocated, otherwise it
 // frees and re-allocates (no realloc — caller's responsibility if old data
@@ -64,17 +148,23 @@ class DeviceBuffer {
     explicit DeviceBuffer(std::size_t n) { resize(n); }
     ~DeviceBuffer() { reset(); }
 
-    DeviceBuffer(DeviceBuffer &&o) noexcept : p_(o.p_), n_(o.n_) {
+    DeviceBuffer(DeviceBuffer &&o) noexcept : p_(o.p_), n_(o.n_), cap_(o.cap_), owned_(o.owned_) {
         o.p_ = nullptr;
         o.n_ = 0;
+        o.cap_ = 0;
+        o.owned_ = true;
     }
     DeviceBuffer &operator=(DeviceBuffer &&o) noexcept {
         if (this != &o) {
             reset();
             p_ = o.p_;
             n_ = o.n_;
+            cap_ = o.cap_;
+            owned_ = o.owned_;
             o.p_ = nullptr;
             o.n_ = 0;
+            o.cap_ = 0;
+            o.owned_ = true;
         }
         return *this;
     }
@@ -82,21 +172,35 @@ class DeviceBuffer {
     DeviceBuffer &operator=(const DeviceBuffer &) = delete;
 
     void resize(std::size_t n) {
-        if (n == n_)
+        // An adopted region is someone else's, so a resize must allocate rather than reuse it,
+        // even when the size already matches.
+        if (n == n_ && owned_)
             return;
         reset();
         if (n) {
-            DMK_CHECK_CUDA(cudaMalloc(&p_, n * sizeof(T)));
+            const auto block = pool_alloc(n * sizeof(T));
+            p_ = static_cast<T *>(block.first);
+            cap_ = block.second;
             n_ = n;
         }
     }
 
     void reset() {
-        if (p_) {
-            cudaFree(p_);
-            p_ = nullptr;
-        }
+        if (p_ && owned_)
+            pool_free(p_, cap_);
+        p_ = nullptr;
         n_ = 0;
+        cap_ = 0;
+        owned_ = true;
+    }
+
+    // Point at device memory owned elsewhere, so `data()` and `size()` read as usual but nothing
+    // is freed: the device tree owns its metadata and outlives the State that reads it.
+    void adopt(const T *p, std::size_t n) {
+        reset();
+        p_ = const_cast<T *>(p);
+        n_ = n;
+        owned_ = false;
     }
 
     void upload(const T *src, std::size_t n) {
@@ -134,6 +238,8 @@ class DeviceBuffer {
   private:
     T *p_ = nullptr;
     std::size_t n_ = 0;
+    std::size_t cap_ = 0; ///< bytes the pool handed out, which may exceed n_ * sizeof(T)
+    bool owned_ = true;   ///< false after adopt(): the region belongs to someone else
 };
 
 // RAII wrapper around a cudaStream. Default-constructed instance carries no
