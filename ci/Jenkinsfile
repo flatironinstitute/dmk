@@ -1,4 +1,4 @@
-// Needs a macOS agent with Homebrew llvm, open-mpi and openblas: the stock Apple clang has no
+// Needs a macOS agent with Homebrew gcc, open-mpi and openblas: the stock Apple clang has no
 // OpenMP. $BREW is the Homebrew prefix, and the agents run a non-login shell whose PATH does not
 // include it -- cmake and mpirun come from there too.
 def macBuild(String name, String agent) {
@@ -15,11 +15,16 @@ def macBuild(String name, String agent) {
           sh '''set -e
                 uname -m
                 export PATH="$BREW/bin:$PATH"
-                LLVM_ROOT=$(brew --prefix llvm)
+                # Homebrew's gcc ships only versioned binaries; an unversioned g++ on PATH is
+                # Apple's clang shim, which has no OpenMP. Take the newest installed, and the
+                # matching gcc with it so C and C++ share one OpenMP runtime (libgomp).
+                CXX=$(ls $(brew --prefix gcc)/bin/g++-[0-9]* | sort -V | tail -1)
+                CC=$(echo "$CXX" | sed 's|/g++-|/gcc-|')
+                "$CXX" --version
                 # openblas is keg-only, so cmake only finds it if its prefix is named directly.
                 OPENBLAS_ROOT=$(brew --prefix openblas)
                 brew --prefix open-mpi
-                cmake -B build . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/build/install -DBLA_VENDOR=OpenBLAS -DCMAKE_PREFIX_PATH="$OPENBLAS_ROOT;$BREW" -DCMAKE_CXX_COMPILER="$LLVM_ROOT/bin/clang++" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_EXE_LINKER_FLAGS="-L$LLVM_ROOT/lib/c++ -Wl,-rpath,$LLVM_ROOT/lib/c++" -DCMAKE_SHARED_LINKER_FLAGS="-L$LLVM_ROOT/lib/c++ -Wl,-rpath,$LLVM_ROOT/lib/c++" -DCMAKE_CXX_FLAGS=-Wno-deprecated -DDMK_BUILD_TESTS=ON
+                cmake -B build . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/build/install -DBLA_VENDOR=OpenBLAS -DCMAKE_PREFIX_PATH="$OPENBLAS_ROOT;$BREW" -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_CXX_FLAGS=-Wno-deprecated -DDMK_BUILD_TESTS=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5
                 cmake --build build -j$(sysctl -n hw.ncpu)
                 mpirun -n 2 --bind-to none ./build/test/test_all -nc'''
         }
