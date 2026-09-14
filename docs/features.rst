@@ -300,17 +300,18 @@ Platforms
      - Status
      - Notes
    * - Linux x86-64
-     - supported, CI
+     - Supported, CI
      - Primary supported platform. CI builds with GCC and with Clang.
-   * - macOS (Apple silicon)
-     - supported, no CI
-     - Not covered by CI. Needs an OpenMP-capable compiler; the default Apple Clang is not.
-       Verified with Homebrew LLVM (see :doc:`install`). CPU only.
+   * - macOS (Apple silicon and x86-64)
+     - Unsupported -- CPU only -- in CI
+     - Compiles on CI with brew gcc. Insufficient C++ support in
+       AppleClang. Recommend single threading due to numerous
+       potential OpenMP issues
    * - Windows
-     - not supported
+     - Not supported
      -
    * - CUDA
-     - supported, CI
+     - Supported, CI
      - Linux only. Requires ``-DDMK_GPU_OFFLOAD=ON``. The CI GPU job is a single-device
        build with MPI off.
 
