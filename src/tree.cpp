@@ -257,7 +257,7 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
       kernel_output_dim_trg(get_kernel_output_dim(params.n_dim, params.kernel, params.eval_trg)),
       kernel_output_dim_max(std::max(kernel_output_dim_src, kernel_output_dim_trg)),
       n_tables_up(get_table_count_up<DIM>(params.kernel)), n_tables_down(get_table_count_down<DIM>(params.kernel)),
-      n_digits(std::round(log10(1.0 / params_.eps) - 0.1)), expansion_constants(params),
+      n_digits(util::digits_from_eps(params_.eps)), expansion_constants(params),
       logger(dmk::get_logger(comm, params.log_level)), rank_logger(dmk::get_rank_logger(comm, params.log_level)) {
     debug_omit_pw = (params.debug_flags & DMK_DEBUG_OMIT_PW) || util::env_is_set("DMK_DEBUG_OMIT_PW");
     debug_omit_direct = (params.debug_flags & DMK_DEBUG_OMIT_DIRECT) || util::env_is_set("DMK_DEBUG_OMIT_DIRECT");

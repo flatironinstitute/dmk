@@ -30,10 +30,6 @@ inline int esp_P_from_eps(double eps, double sigma, int dim) {
 // PSWF bandwidth parameter beta from the spread width P and upsampling factor sigma.
 inline double esp_beta_from_P(double sigma, int P) { return M_PI * P * (1.0 - 1.0 / (2 * sigma)) - 0.05; }
 
-inline int esp_digits_from_eps(double eps) {
-    return std::clamp(static_cast<int>(std::lround(-std::log10(eps))), 2, 12);
-}
-
 // Effective tolerance to resolve internally when gradients are requested. A gradient costs extra
 // PSWF resolution relative to the potential, and the amount is kernel- and dimension-dependent (the
 // DMK d_eff analog). Gradient lower-envelope fits (achieved digits >= a*requested + b) come from
@@ -78,7 +74,7 @@ inline int esp_plan_digits(const pdmk_esp_params &p) {
     // Laplace-dipole always needs the bump: even its potential is a derivative of the scalar residual.
     const bool wants_deriv = p.eval_type >= DMK_POTENTIAL_GRAD || p.kernel == DMK_LAPLACE_DIPOLE;
     const bool grad = wants_deriv && !util::env_is_set("DMK_ESP_NO_GRAD_BUMP");
-    return esp_digits_from_eps(grad ? esp_grad_eps(p.kernel, p.n_dim, p.eps) : p.eps);
+    return util::digits_from_eps(grad ? esp_grad_eps(p.kernel, p.n_dim, p.eps) : p.eps);
 }
 
 // Short-range method predicates over pdmk_esp_params.esp_flags (DMK_ESP_* bits, see dmk.h). The

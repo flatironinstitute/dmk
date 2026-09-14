@@ -6,6 +6,7 @@
 #include <random>
 #include <sctl.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -120,6 +121,11 @@ constexpr std::optional<dmk_eval_type> eval_type_from_string(std::string_view s)
         if (name_matches(s, return_names[i]))
             return static_cast<dmk_eval_type>(i + 1);
     return std::nullopt;
+}
+
+// Significant digits the residual is resolved to
+inline int digits_from_eps(double eps) {
+    return std::clamp(static_cast<int>(std::ceil(-std::log10(eps) - 1e-9)), 2, 12);
 }
 
 double calc_bandlimiting(const pdmk_params &p);
