@@ -22,7 +22,6 @@ CFLAGS= -fPIC -O3 -march=native -funroll-loops -std=c99
 CXXFLAGS= -std=c++17 -DSCTL_PROFILE=-1 -fPIC -O3 -march=native -funroll-loops
 #-fsanitize=address -g -rdynamic
 
-FAST_KER = ON
 ifeq ($(FAST_KER),ON)
   CXXFLAGS= -std=c++17 -DSCTL_PROFILE=-1 -DSCTL_HAVE_SVML -fPIC -O3 -march=native -funroll-loops
 # gcc flags
@@ -108,7 +107,7 @@ VCLDIR = ./extern/VCL/version2
 # objects to compile
 # 
 # Common objects
-COM = src/common
+COM = common
 COMOBJS = $(COM)/prini_new.o \
 	$(COM)/hkrand.o \
 	$(COM)/dlaran.o \
@@ -145,7 +144,7 @@ COMOBJS = $(COM)/prini_new.o \
 COMOBJS+= $(SRCDIR)/libkernels2.o
 
 # point DMK objects
-PDMK = src/pdmk
+PDMK = pdmk
 PDMKOBJS = $(PDMK)/lndiv.o \
 	$(PDMK)/lndiv_fast.o \
 	$(PDMK)/kernelevaluation/y2dkernels.o \
@@ -159,15 +158,14 @@ PDMKOBJS = $(PDMK)/lndiv.o \
 	$(PDMK)/kernel_FT.o \
 	$(PDMK)/stokes_kernel_FT.o \
 	$(PDMK)/pdmk_pwrouts.o \
-	$(PDMK)/pdmk4.o 
+	$(PDMK)/pdmk3.o 
 
 # Test objects
 OBJS = $(COMOBJS) $(PDMKOBJS)
 
 
 
-.PHONY: usage lib install test-static test-dyn python test-dipole
-.PHONY: test-l3d-laplace-dipole-pdmk
+.PHONY: usage lib install test-static test-dyn python 
 
 default: usage
 
@@ -182,7 +180,6 @@ usage:
 	@echo "  make lib - compile the main library (in lib/ and lib-static/)"
 	@echo "  make test-static - compile and run validation tests"
 	@echo "  make test-dyn - test successful installation by validation tests linked to dynamic library"
-	@echo "  make test-dipole - compile and run 3D Laplace dipole validation test"
 	@echo "  make objclean - removal all object files, preserving lib"
 	@echo "  make clean - also remove lib and demo executables"
 	@echo ""
@@ -246,14 +243,6 @@ test-dyn: $(DYNAMICLIB)  test/pdmk-dyn
 test/pdmk-static:
 	$(FC) $(FFLAGS) test/pdmk/testpdmk.f -o test/pdmk/int2-pdmk lib-static/$(STATICLIB) $(LIBS) 
 
-test-dipole: test-l3d-laplace-dipole-pdmk
-
-test-l3d-laplace-dipole-pdmk: test/pdmk/test_l3d_laplace_dipole_pdmk
-	test/pdmk/test_l3d_laplace_dipole_pdmk
-
-test/pdmk/test_l3d_laplace_dipole_pdmk: $(STATICLIB) test/pdmk/test_l3d_laplace_dipole_pdmk.f
-	$(FC) $(FFLAGS) test/pdmk/test_l3d_laplace_dipole_pdmk.f -o test/pdmk/test_l3d_laplace_dipole_pdmk lib-static/$(STATICLIB) $(LIBS)
-
 #
 # Linking test files to dynamic libraries
 #
@@ -268,7 +257,6 @@ test/pdmk-dyn:
 clean: objclean
 	rm -f lib-static/*.a lib/*.so
 	rm -f test/pdmk/int2-pdmk
-	rm -f test/pdmk/test_l3d_laplace_dipole_pdmk
 	rm -f test/bdmk/int2-bdmk
 
 objclean: 

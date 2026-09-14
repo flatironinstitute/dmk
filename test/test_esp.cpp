@@ -1,34 +1,33 @@
 #include <cmath>
 #include <dmk.h>
 #include <dmk/esp.hpp>
+#include <dmk/periodic_reference.hpp>
 #include <dmk/testing.hpp>
+#include <dmk/util.hpp>
 #include <random>
 #include <span>
+#include <string>
 #include <vector>
 
-#include "periodic_reference.hpp"
-
-// 10-particle fixture
+// Small shared fixture for the plumbing tests (2D construction, float-vs-double, the C API).
+// Accuracy is asserted by the 2000-source PBC and free-space sweeps further down, not here.
 namespace {
 
 constexpr int N = 10;
-constexpr double L = 1.0, R_C = 0.05;
+constexpr double R_C = 0.05;
 
-const double R_SRC[30] = {0.131538 - 0.5, 0.686773 - 0.5, 0.98255 - 0.5,   0.45865 - 0.5,   0.930436 - 0.5,
-                          0.753356 - 0.5, 0.218959 - 0.5, 0.526929 - 0.5,  0.0726859 - 0.5, 0.678865 - 0.5,
-                          0.653919 - 0.5, 0.884707 - 0.5, 0.934693 - 0.5,  0.701191 - 0.5,  0.436411 - 0.5,
-                          0.519416 - 0.5, 0.762198 - 0.5, 0.477732 - 0.5,  0.0345721 - 0.5, 0.0474645 - 0.5,
-                          0.274907 - 0.5, 0.5297 - 0.5,   0.328234 - 0.5,  0.166507 - 0.5,  0.00769819 - 0.5,
-                          0.75641 - 0.5,  0.897656 - 0.5, 0.0668422 - 0.5, 0.365339 - 0.5,  0.0605643 - 0.5};
+const double R_SRC[30] = {0.131538,   0.686773, 0.98255,   0.45865,   0.930436, 0.753356, 0.218959, 0.526929,
+                          0.0726859,  0.678865, 0.653919,  0.884707,  0.934693, 0.701191, 0.436411, 0.519416,
+                          0.762198,   0.477732, 0.0345721, 0.0474645, 0.274907, 0.5297,   0.328234, 0.166507,
+                          0.00769819, 0.75641,  0.897656,  0.0668422, 0.365339, 0.0605643};
 
 const double CHARGES[10] = {0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5, 0.1, -0.1};
 
 } // namespace
 
 // sigma defaults to pdmk_esp_params's own default (1.35), matching every test below.
-static pdmk_esp_params make_esp_params(double L, double r_c, double eps, dmk_eval_type eval_type) {
+static pdmk_esp_params make_esp_params(double r_c, double eps, dmk_eval_type eval_type) {
     pdmk_esp_params params{};
-    params.L = L;
     params.r_c = r_c;
     params.eps = eps;
     params.eval_type = eval_type;
@@ -51,57 +50,29 @@ static void laplace_reference(int n, const double *r_src, const double *charges,
         ref_out[i] -= mean;
 }
 
-// Analytic triply-periodic 3D-Laplace force reference: F_{i,a} = -q_i * d(pot_i)/dr_{i,a}, from the
-// Ewald split's exact gradient (no finite-difference error, so the comparison can assert eps).
-// force_ref must have room for 3*n doubles.
-static void laplace_force_reference(int n, const double *r_src, const double *charges, double L, double *force_ref) {
+// Analytic triply-periodic 3D-Laplace gradient reference, from the Ewald split's exact gradient (no
+// finite-difference error, so the comparison can assert eps). grad_ref must hold 3*n doubles.
+static void laplace_grad_reference(int n, const double *r_src, const double *charges, double L, double *grad_ref) {
     dmk::pbc_ref::EwaldRef ewald(DMK_LAPLACE, 3, n, r_src, charges, L);
     for (int i = 0; i < n; ++i) {
-        double pot, g[3];
-        ewald.eval(&r_src[i * 3], i, pot, g);
-        for (int a = 0; a < 3; ++a)
-            force_ref[3 * i + a] = -charges[i] * g[a];
+        double pot;
+        ewald.eval(&r_src[i * 3], i, pot, &grad_ref[3 * i]);
     }
 }
 
-// L2-relative error between ESP's analytic forces and a flat [3*n] (x,y,z per particle) reference.
-static double force_l2_rel_err(int n, std::span<double> force_x, std::span<double> force_y, std::span<double> force_z,
-                               const double *force_ref) {
+// L2-relative error between ESP's analytic gradients and a flat [3*n] (x,y,z per particle) reference.
+static double grad_l2_rel_err(int n, std::span<double> grad_x, std::span<double> grad_y, std::span<double> grad_z,
+                              const double *grad_ref) {
     double err2 = 0, ref2 = 0;
     for (int i = 0; i < n; ++i) {
-        const double f_esp[3] = {force_x[i], force_y[i], force_z[i]};
+        const double g_esp[3] = {grad_x[i], grad_y[i], grad_z[i]};
         for (int a = 0; a < 3; ++a) {
-            const double diff = f_esp[a] - force_ref[3 * i + a];
+            const double diff = g_esp[a] - grad_ref[3 * i + a];
             err2 += diff * diff;
-            ref2 += force_ref[3 * i + a] * force_ref[3 * i + a];
+            ref2 += grad_ref[3 * i + a] * grad_ref[3 * i + a];
         }
     }
     return std::sqrt(err2 / ref2);
-}
-
-TEST_CASE_GENERIC("[ESP] 10-particle double vs Ewald", 1) {
-    constexpr double eps = 1e-5;
-
-    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, R_C, eps, DMK_POTENTIAL));
-    auto esp = plan->eval(N, R_SRC, CHARGES);
-
-    double ref[N];
-    laplace_reference(N, R_SRC, CHARGES, L, ref);
-
-    double esp_mean = 0;
-    for (int i = 0; i < N; ++i)
-        esp_mean += esp.pot[i];
-    esp_mean /= N;
-
-    double err2 = 0, ref2 = 0;
-    for (int i = 0; i < N; ++i) {
-        const double diff = (esp.pot[i] - esp_mean) - ref[i];
-        err2 += diff * diff;
-        ref2 += ref[i] * ref[i];
-    }
-    const double l2_rel_err = std::sqrt(err2 / ref2);
-    CHECK_MESSAGE(l2_rel_err < eps, "10-particle l2_rel_err=" << l2_rel_err << " >= " << eps);
-    delete plan;
 }
 
 // Long-range isolation test.
@@ -117,16 +88,16 @@ TEST_CASE_GENERIC("[ESP] long-range only: regular grid, no short-range pairs", 1
     constexpr double eps = 1e-6;
     static_assert(r_c < h, "r_c must be < grid spacing for the short-range sum to be zero");
 
-    // Regular grid positions in [-L/2, L/2)^3; 3D checkerboard ±1 charges (charge-neutral).
+    // Regular grid positions in [0, L)^3; 3D checkerboard ±1 charges (charge-neutral).
     double r_src[N * 3];
     double charges[N];
     for (int ix = 0; ix < n_grid; ++ix)
         for (int iy = 0; iy < n_grid; ++iy)
             for (int iz = 0; iz < n_grid; ++iz) {
                 const int i = (ix * n_grid + iy) * n_grid + iz;
-                r_src[3 * i + 0] = (ix + 0.5) * h - 0.5 * L;
-                r_src[3 * i + 1] = (iy + 0.5) * h - 0.5 * L;
-                r_src[3 * i + 2] = (iz + 0.5) * h - 0.5 * L;
+                r_src[3 * i + 0] = (ix + 0.5) * h;
+                r_src[3 * i + 1] = (iy + 0.5) * h;
+                r_src[3 * i + 2] = (iz + 0.5) * h;
                 charges[i] = ((ix + iy + iz) % 2 == 0) ? 1.0 : -1.0;
             }
 
@@ -134,7 +105,7 @@ TEST_CASE_GENERIC("[ESP] long-range only: regular grid, no short-range pairs", 1
     laplace_reference(N, r_src, charges, L, ref);
 
     // --- Run ESP ---
-    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, r_c, eps, DMK_POTENTIAL_GRAD));
+    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(r_c, eps, DMK_POTENTIAL_GRAD));
     auto esp = plan->eval(N, r_src, charges);
 
     // Gauge-correct ESP output and compare to the (already zero-mean) Ewald reference.
@@ -153,16 +124,16 @@ TEST_CASE_GENERIC("[ESP] long-range only: regular grid, no short-range pairs", 1
 
     CHECK_MESSAGE(l2_rel_err < eps, "long-range-only l2_rel_err=" << l2_rel_err << " >= eps=" << eps);
 
-    // Long-range forces on a symmetric lattice vanish exactly, so relative error is undefined; check
-    // that the residual is within eps of the natural force scale (potential magnitude / lattice pitch).
+    // Long-range gradients on a symmetric lattice vanish exactly, so relative error is undefined; check
+    // that the residual is within eps of the natural gradient scale (potential magnitude / lattice pitch).
     double max_abs = 0, max_pot = 0;
     for (int i = 0; i < N; ++i) {
-        max_abs = std::max({max_abs, std::abs(esp.force_x[i]), std::abs(esp.force_y[i]), std::abs(esp.force_z[i])});
+        max_abs = std::max({max_abs, std::abs(esp.grad_x[i]), std::abs(esp.grad_y[i]), std::abs(esp.grad_z[i])});
         max_pot = std::max(max_pot, std::abs(ref[i]));
     }
-    const double force_tol = eps * max_pot / h;
-    CHECK_MESSAGE(max_abs < force_tol,
-                  "long-range forces should vanish on symmetric lattice, max=" << max_abs << " tol=" << force_tol);
+    const double grad_tol = eps * max_pot / h;
+    CHECK_MESSAGE(max_abs < grad_tol,
+                  "long-range gradients should vanish on symmetric lattice, max=" << max_abs << " tol=" << grad_tol);
     delete plan;
 }
 
@@ -183,13 +154,13 @@ TEST_CASE_GENERIC("[ESP] Madelung constant: NaCl lattice, 1/r kernel", 1) {
         for (int iy = 0; iy < n_grid; ++iy)
             for (int iz = 0; iz < n_grid; ++iz) {
                 const int i = (ix * n_grid + iy) * n_grid + iz;
-                r_src[3 * i + 0] = (ix + 0.5) * h - 0.5 * L;
-                r_src[3 * i + 1] = (iy + 0.5) * h - 0.5 * L;
-                r_src[3 * i + 2] = (iz + 0.5) * h - 0.5 * L;
+                r_src[3 * i + 0] = (ix + 0.5) * h;
+                r_src[3 * i + 1] = (iy + 0.5) * h;
+                r_src[3 * i + 2] = (iz + 0.5) * h;
                 charges[i] = ((ix + iy + iz) % 2 == 0) ? 1.0 : -1.0;
             }
 
-    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, r_c, eps, DMK_POTENTIAL));
+    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(r_c, eps, DMK_POTENTIAL));
     auto esp = plan->eval(N, r_src, charges);
 
     // NaCl is charge-neutral so the mean potential is zero; gauge-correct anyway.
@@ -224,19 +195,21 @@ TEST_CASE_GENERIC("[ESP] short-range stress: all pairs within r_c", 1) {
     constexpr double eps = 1e-4;
     constexpr double sphere_r = r_c / 4.0; // max pairwise dist = 2*sphere_r = r_c/2 < r_c
 
-    // Deterministic positions inside the sphere via rejection sampling.
+    // Deterministic positions inside the sphere via rejection sampling, centred in the box.
     double r_src[N * 3];
     double charges[N];
     {
-        std::mt19937 rng(12345u);
-        std::uniform_real_distribution<double> uni(-sphere_r, sphere_r);
+        // The cluster geometry here is deliberate, so only the draw comes from util.hpp; a
+        // std::uniform_real_distribution would not reproduce across standard libraries.
+        dmk::util::TestRng rng(12345);
+        auto uni = [&] { return sphere_r * (2 * rng() - 1); };
         int placed = 0;
         while (placed < N) {
-            double x = uni(rng), y = uni(rng), z = uni(rng);
+            double x = uni(), y = uni(), z = uni();
             if (x * x + y * y + z * z <= sphere_r * sphere_r) {
-                r_src[3 * placed + 0] = x;
-                r_src[3 * placed + 1] = y;
-                r_src[3 * placed + 2] = z;
+                r_src[3 * placed + 0] = x + 0.5 * L;
+                r_src[3 * placed + 1] = y + 0.5 * L;
+                r_src[3 * placed + 2] = z + 0.5 * L;
                 charges[placed] = (placed % 2 == 0) ? 1.0 : -1.0;
                 ++placed;
             }
@@ -246,11 +219,11 @@ TEST_CASE_GENERIC("[ESP] short-range stress: all pairs within r_c", 1) {
     double ref[N];
     laplace_reference(N, r_src, charges, L, ref);
 
-    std::vector<double> force_ref(3 * N);
-    laplace_force_reference(N, r_src, charges, L, force_ref.data());
+    std::vector<double> grad_ref(3 * N);
+    laplace_grad_reference(N, r_src, charges, L, grad_ref.data());
 
     // --- Run ESP ---
-    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, r_c, eps, DMK_POTENTIAL_GRAD));
+    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(r_c, eps, DMK_POTENTIAL_GRAD));
     auto esp = plan->eval(N, r_src, charges);
 
     double esp_mean = 0;
@@ -268,23 +241,8 @@ TEST_CASE_GENERIC("[ESP] short-range stress: all pairs within r_c", 1) {
 
     CHECK_MESSAGE(l2_rel_err < eps, "short-range-stress l2_rel_err=" << l2_rel_err << " >= eps=" << eps);
 
-    const double force_l2_err = force_l2_rel_err(N, esp.force_x, esp.force_y, esp.force_z, force_ref.data());
-    CHECK_MESSAGE(force_l2_err < eps, "short-range-stress forces l2_rel_err=" << force_l2_err << " >= eps=" << eps);
-    delete plan;
-}
-
-TEST_CASE_GENERIC("[ESP] forces - 10 particles", 1) {
-    constexpr double eps = 1e-6;
-
-    std::vector<double> force_ref(3 * N);
-    laplace_force_reference(N, R_SRC, CHARGES, L, force_ref.data());
-
-    dmk::EspPlan<double> *plan = new dmk::EspPlan<double>(make_esp_params(L, R_C, eps, DMK_POTENTIAL_GRAD));
-    auto esp = plan->eval(N, R_SRC, CHARGES);
-
-    // Compare ESP's analytic forces against the analytic Ewald force reference.
-    const double l2_rel_err = force_l2_rel_err(N, esp.force_x, esp.force_y, esp.force_z, force_ref.data());
-    CHECK_MESSAGE(l2_rel_err < eps, "10-particle forces l2_rel_err=" << l2_rel_err << " >= eps=" << eps);
+    const double grad_l2_err = grad_l2_rel_err(N, esp.grad_x, esp.grad_y, esp.grad_z, grad_ref.data());
+    CHECK_MESSAGE(grad_l2_err < eps, "short-range-stress gradients l2_rel_err=" << grad_l2_err << " >= eps=" << eps);
     delete plan;
 }
 
@@ -292,7 +250,7 @@ TEST_CASE_GENERIC("[ESP] forces - 10 particles", 1) {
 // confirm the 2D plan constructs and evaluates without throwing on whichever path is active.
 TEST_CASE_GENERIC("[ESP] DIM=2 plan runs (JIT and AOT)", 1) {
     constexpr double eps = 1e-5;
-    auto params = make_esp_params(L, R_C, eps, DMK_POTENTIAL);
+    auto params = make_esp_params(R_C, eps, DMK_POTENTIAL);
     params.n_dim = 2;
     dmk::EspPlan<double> plan(params);
     CHECK_NOTHROW(plan.eval(N, R_SRC, CHARGES));
@@ -306,7 +264,7 @@ TEST_CASE_GENERIC("[ESP] float precision matches double", 1) {
     // exceeds float's cap and is rejected at plan creation -- not something float can deliver.
     constexpr double eps = 1e-4;
 
-    dmk::EspPlan<double> *plan_d = new dmk::EspPlan<double>(make_esp_params(L, R_C, eps, DMK_POTENTIAL_GRAD));
+    dmk::EspPlan<double> *plan_d = new dmk::EspPlan<double>(make_esp_params(R_C, eps, DMK_POTENTIAL_GRAD));
     auto esp_d = plan_d->eval(N, R_SRC, CHARGES);
 
     float r_src_f[3 * N], charges_f[N];
@@ -315,7 +273,7 @@ TEST_CASE_GENERIC("[ESP] float precision matches double", 1) {
     for (int i = 0; i < N; ++i)
         charges_f[i] = float(CHARGES[i]);
 
-    dmk::EspPlan<float> *plan_f = new dmk::EspPlan<float>(make_esp_params(L, R_C, eps, DMK_POTENTIAL_GRAD));
+    dmk::EspPlan<float> *plan_f = new dmk::EspPlan<float>(make_esp_params(R_C, eps, DMK_POTENTIAL_GRAD));
     auto esp_f = plan_f->eval(N, r_src_f, charges_f);
 
     double pot_err2 = 0, pot_ref2 = 0;
@@ -325,35 +283,33 @@ TEST_CASE_GENERIC("[ESP] float precision matches double", 1) {
         pot_ref2 += esp_d.pot[i] * esp_d.pot[i];
     }
     // Tolerances here are the single-precision floor (accumulated float roundoff in the FFT/spread,
-    // ~1e-4 pot / ~1e-3 force at this grid size), NOT the method eps: this only checks the float path
+    // ~1e-4 pot / ~1e-3 grad at this grid size), NOT the method eps: this only checks the float path
     // runs in float and tracks double, it is not an accuracy assertion (those are the double tests).
     const double pot_l2_rel_err = std::sqrt(pot_err2 / pot_ref2);
     CHECK_MESSAGE(pot_l2_rel_err < 1e-4, "float vs double potential l2_rel_err=" << pot_l2_rel_err);
 
     double f_err2 = 0, f_ref2 = 0;
     for (int i = 0; i < N; ++i) {
-        const double diffs[3] = {double(esp_f.force_x[i]) - esp_d.force_x[i],
-                                 double(esp_f.force_y[i]) - esp_d.force_y[i],
-                                 double(esp_f.force_z[i]) - esp_d.force_z[i]};
-        const double refs[3] = {esp_d.force_x[i], esp_d.force_y[i], esp_d.force_z[i]};
+        const double diffs[3] = {double(esp_f.grad_x[i]) - esp_d.grad_x[i], double(esp_f.grad_y[i]) - esp_d.grad_y[i],
+                                 double(esp_f.grad_z[i]) - esp_d.grad_z[i]};
+        const double refs[3] = {esp_d.grad_x[i], esp_d.grad_y[i], esp_d.grad_z[i]};
         for (int a = 0; a < 3; ++a) {
             f_err2 += diffs[a] * diffs[a];
             f_ref2 += refs[a] * refs[a];
         }
     }
     const double f_l2_rel_err = std::sqrt(f_err2 / f_ref2);
-    CHECK_MESSAGE(f_l2_rel_err < 1e-3, "float vs double force l2_rel_err=" << f_l2_rel_err);
+    CHECK_MESSAGE(f_l2_rel_err < 1e-3, "float vs double gradient l2_rel_err=" << f_l2_rel_err);
 
     delete plan_d;
     delete plan_f;
 }
 
 // pdmk_esp_eval (the public C API) is not exercised by any other test; confirms it interleaves
-// [pot, fx, fy, fz] per particle rather than dropping forces (as it did before this fix).
-TEST_CASE_GENERIC("[ESP] C API pdmk_esp_eval interleaves forces", 1) {
+// [pot, dx, dy, dz] per particle rather than dropping the gradient.
+TEST_CASE_GENERIC("[ESP] C API pdmk_esp_eval interleaves gradients", 1) {
     constexpr double eps = 1e-6;
     pdmk_esp_params params{};
-    params.L = L;
     params.r_c = R_C;
     params.eps = eps;
     params.eval_type = DMK_POTENTIAL_GRAD;
@@ -369,21 +325,129 @@ TEST_CASE_GENERIC("[ESP] C API pdmk_esp_eval interleaves forces", 1) {
 
     for (int i = 0; i < N; ++i) {
         CHECK(pot_src[i * 4 + 0] == doctest::Approx(esp.pot[i]));
-        CHECK(pot_src[i * 4 + 1] == doctest::Approx(esp.force_x[i]));
-        CHECK(pot_src[i * 4 + 2] == doctest::Approx(esp.force_y[i]));
-        CHECK(pot_src[i * 4 + 3] == doctest::Approx(esp.force_z[i]));
+        CHECK(pot_src[i * 4 + 1] == doctest::Approx(esp.grad_x[i]));
+        CHECK(pot_src[i * 4 + 2] == doctest::Approx(esp.grad_y[i]));
+        CHECK(pot_src[i * 4 + 3] == doctest::Approx(esp.grad_z[i]));
     }
 
     pdmk_esp_plan_destroy(plan);
     delete plan_cxx;
 }
 
+// The ESP argument contract: every bad-argument case is refused at plan creation (NULL handle /
+// DMK_ERR_INVALID_ARGUMENT) instead of surfacing as DMK_ERR_INTERNAL from inside the solver.
+TEST_CASE_GENERIC("[ESP] C API argument validation", 1) {
+    const pdmk_esp_params base = make_esp_params(R_C, 1e-6, DMK_POTENTIAL);
+    std::vector<double> pot_src(N * 4);
+    // Contents are irrelevant: every call below must be rejected before any of them is read.
+    std::vector<float> r_src_f(3 * N), charges_f(N), pot_src_f(N * 4);
+
+    SUBCASE("bad dimension is rejected by all four entry points") {
+        pdmk_esp_params bad = base;
+        bad.n_dim = 5;
+        CHECK(pdmk_esp_plan_create(nullptr, bad) == nullptr);
+        CHECK(std::string(pdmk_last_error_message()).size() > 0);
+        CHECK(pdmk_esp_plan_createf(nullptr, bad) == nullptr);
+        CHECK(pdmk_esp(nullptr, bad, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+        CHECK(pdmk_espf(nullptr, bad, N, r_src_f.data(), charges_f.data(), nullptr, pot_src_f.data()) ==
+              DMK_ERR_INVALID_ARGUMENT);
+    }
+
+    SUBCASE("out-of-range eval_type is rejected") {
+        pdmk_esp_params bad = base;
+        bad.eval_type = dmk_eval_type(99);
+        CHECK(pdmk_esp_plan_create(nullptr, bad) == nullptr);
+        CHECK(std::string(pdmk_last_error_message()).size() > 0);
+        CHECK(pdmk_esp(nullptr, bad, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+    }
+
+    SUBCASE("r_c above 1/3 is rejected") {
+        pdmk_esp_params bad = base;
+        bad.r_c = 0.5;
+        CHECK(pdmk_esp_plan_create(nullptr, bad) == nullptr);
+        CHECK(std::string(pdmk_last_error_message()).size() > 0);
+        CHECK(pdmk_esp(nullptr, bad, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+    }
+
+    SUBCASE("non-positive r_c is rejected") {
+        pdmk_esp_params bad = base;
+        bad.r_c = 0.0;
+        CHECK(pdmk_esp_plan_create(nullptr, bad) == nullptr);
+        CHECK(pdmk_esp(nullptr, bad, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+    }
+
+    SUBCASE("out-of-range eval_path is rejected") {
+        pdmk_esp_params bad = base;
+        bad.eval_path = dmk_eval_path(7);
+        CHECK(pdmk_esp_plan_create(nullptr, bad) == nullptr);
+        CHECK(std::string(pdmk_last_error_message()).size() > 0);
+        CHECK(pdmk_esp(nullptr, bad, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+    }
+
+    // Laplace-dipole, Stokeslet and Stresslet are 3D free-space only in ESP. use_periodic and n_dim
+    // are set so that exactly one of the two restrictions is violated per subcase.
+    SUBCASE("dipole and Stokes kernels are rejected in 2D") {
+        for (const auto kernel : {DMK_LAPLACE_DIPOLE, DMK_STOKESLET, DMK_STRESSLET}) {
+            pdmk_esp_params bad = base;
+            bad.kernel = kernel;
+            bad.eval_type = kernel == DMK_LAPLACE_DIPOLE ? DMK_POTENTIAL : DMK_VELOCITY;
+            bad.n_dim = 2;
+            bad.use_periodic = 0;
+            CHECK(pdmk_esp_plan_create(nullptr, bad) == nullptr);
+            CHECK(std::string(pdmk_last_error_message()).size() > 0);
+        }
+    }
+
+    SUBCASE("dipole and Stokes kernels are rejected under periodic boundaries") {
+        for (const auto kernel : {DMK_LAPLACE_DIPOLE, DMK_STOKESLET, DMK_STRESSLET}) {
+            pdmk_esp_params bad = base;
+            bad.kernel = kernel;
+            bad.eval_type = kernel == DMK_LAPLACE_DIPOLE ? DMK_POTENTIAL : DMK_VELOCITY;
+            bad.n_dim = 3;
+            bad.use_periodic = 1;
+            CHECK(pdmk_esp_plan_create(nullptr, bad) == nullptr);
+            CHECK(std::string(pdmk_last_error_message()).size() > 0);
+        }
+    }
+
+    SUBCASE("Stresslet without a normal is rejected, not a segfault") {
+        pdmk_esp_params stresslet = base;
+        stresslet.kernel = DMK_STRESSLET;
+        stresslet.eval_type = DMK_VELOCITY;
+        stresslet.use_periodic = 0;
+        // Free-space pads the spectral grid to ~2.2*sqrt(3); the shared R_C would make it enormous.
+        stresslet.r_c = 0.25;
+        std::vector<double> forces(N * 3, 1.0), vel(N * 3);
+        CHECK(pdmk_esp(nullptr, stresslet, N, R_SRC, forces.data(), nullptr, vel.data()) == DMK_ERR_INVALID_ARGUMENT);
+
+        pdmk_esp_plan plan = pdmk_esp_plan_create(nullptr, stresslet);
+        REQUIRE(plan != nullptr);
+        CHECK(pdmk_esp_eval(nullptr, plan, N, R_SRC, forces.data(), nullptr, vel.data()) == DMK_ERR_INVALID_ARGUMENT);
+        pdmk_esp_plan_destroy(plan);
+    }
+
+    SUBCASE("null plan handle is rejected") {
+        CHECK(pdmk_esp_eval(nullptr, nullptr, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+        CHECK(pdmk_esp_evalf(nullptr, nullptr, N, r_src_f.data(), charges_f.data(), nullptr, pot_src_f.data()) ==
+              DMK_ERR_INVALID_ARGUMENT);
+    }
+
+    SUBCASE("null arrays and negative n are rejected at eval") {
+        pdmk_esp_plan plan = pdmk_esp_plan_create(nullptr, base);
+        REQUIRE(plan != nullptr);
+        CHECK(pdmk_esp_eval(nullptr, plan, N, nullptr, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+        CHECK(pdmk_esp_eval(nullptr, plan, N, R_SRC, nullptr, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+        CHECK(pdmk_esp_eval(nullptr, plan, N, R_SRC, CHARGES, nullptr, nullptr) == DMK_ERR_INVALID_ARGUMENT);
+        CHECK(pdmk_esp_eval(nullptr, plan, -1, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+        pdmk_esp_plan_destroy(plan);
+    }
+}
+
 // ---------------------------------------------------------------------------
-// Full periodic-pipeline ESP validation.cpp). Each case draws 2000
-// random sources in [0,L)^n_dim, builds an independent periodic reference (Ewald split, or an image
-// sum for the screened Yukawa kernel), then runs the ESP solver on the same points shifted into
-// [-L/2, L/2) and compares pot (+forces) across a precision sweep. sigma=1.35 cannot reach
-// eps=1e-12, so the sweep stops at 9 digits.
+// Full periodic-pipeline ESP validation. Each case draws 2000 random sources in [0,L)^n_dim, builds
+// an independent periodic reference (Ewald split, or an image sum for the screened Yukawa kernel),
+// runs the ESP solver on the same points and compares pot (+grad) across a precision sweep.
+// sigma=1.35 cannot reach eps=1e-12, so the sweep stops at 9 digits.
 namespace {
 
 struct EspPbcParams {
@@ -401,13 +465,11 @@ static void run_esp_pbc(const EspPbcParams &c) {
     const int n_dim = c.n_dim;
     const double L = 1.0;
 
-    std::default_random_engine eng(c.seed);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-    std::vector<double> r_src(size_t(n_dim) * n_src), charges(n_src);
-    for (auto &x : r_src)
-        x = rng(eng);
-    for (auto &q : charges)
-        q = rng(eng) - 0.5;
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so cell occupancy varies.
+    std::vector<double> r_src, charges, trg_unused, normals_unused;
+    dmk::util::init_test_data(n_dim, 1, n_src, 0, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, trg_unused, normals_unused, charges, c.seed);
     if (c.neutral) {
         double s = 0;
         for (double q : charges)
@@ -439,17 +501,11 @@ static void run_esp_pbc(const EspPbcParams &c) {
         }
     }
 
-    // ESP requires particles in [-L/2, L/2); the shift is periodic-invariant.
-    std::vector<double> r_esp(size_t(n_dim) * n_src);
-    for (size_t i = 0; i < r_esp.size(); ++i)
-        r_esp[i] = r_src[i] - 0.5 * L;
-
     const double epses[] = {1e-3, 1e-6, 1e-9};
     for (const double eps : epses)
         for (int with_grad = 0; with_grad <= 1; ++with_grad) {
             const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
             pdmk_esp_params ep{};
-            ep.L = L;
             ep.r_c = L / 4;
             ep.eps = eps;
             ep.n_dim = n_dim;
@@ -459,7 +515,7 @@ static void run_esp_pbc(const EspPbcParams &c) {
             ep.eval_type = eval;
             ep.log_level = 6;
             dmk::EspPlan<double> plan(ep);
-            auto esp = plan.eval(n_src, r_esp.data(), charges.data());
+            auto esp = plan.eval(n_src, r_src.data(), charges.data());
 
             double e2p = 0, r2p = 0, e2g = 0, r2g = 0;
             for (int i = 0; i < n_test; ++i) {
@@ -467,12 +523,12 @@ static void run_esp_pbc(const EspPbcParams &c) {
                 e2p += dp * dp;
                 r2p += ref_pot[i] * ref_pot[i];
                 if (with_grad) {
-                    const double f[3] = {esp.force_x[i], esp.force_y[i], n_dim == 3 ? esp.force_z[i] : 0.0};
+                    const double g[3] = {esp.grad_x[i], esp.grad_y[i], n_dim == 3 ? esp.grad_z[i] : 0.0};
                     for (int d = 0; d < n_dim; ++d) {
-                        const double ref_force = -charges[i] * ref_grad[i * n_dim + d];
-                        const double dg = f[d] - ref_force;
+                        const double gr = ref_grad[i * n_dim + d];
+                        const double dg = g[d] - gr;
                         e2g += dg * dg;
-                        r2g += ref_force * ref_force;
+                        r2g += gr * gr;
                     }
                 }
             }
@@ -480,7 +536,7 @@ static void run_esp_pbc(const EspPbcParams &c) {
             CHECK_MESSAGE(l2p < eps, "eps=" << eps << (with_grad ? " pot+grad" : " pot") << " pot l2=" << l2p);
             if (with_grad) {
                 const double l2g = dmk::pbc_ref::safe_l2(e2g, r2g);
-                CHECK_MESSAGE(l2g < eps, "eps=" << eps << " force l2=" << l2g);
+                CHECK_MESSAGE(l2g < eps, "eps=" << eps << " grad l2=" << l2g);
             }
         }
 }
@@ -502,15 +558,12 @@ TEST_CASE_GENERIC("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)", 1) {
     constexpr int n_trg = 500;
     const double L = 1.0;
 
-    std::default_random_engine eng(88);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-    std::vector<double> r_src(n_dim * n_src), r_trg(n_dim * n_trg), charges(n_src), rnormal(n_dim * n_src, 0.0);
-    for (auto &x : r_src)
-        x = rng(eng);
-    for (auto &x : r_trg)
-        x = rng(eng);
-    for (auto &q : charges)
-        q = rng(eng) - 0.5;
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so cell occupancy varies.
+    std::vector<double> r_src, r_trg, charges, normals_unused;
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, r_trg, normals_unused, charges, /*seed=*/88);
+    std::vector<double> rnormal(size_t(n_dim) * n_src, 0.0);
     {
         double s = 0;
         for (double q : charges)
@@ -518,10 +571,6 @@ TEST_CASE_GENERIC("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)", 1) {
         for (double &q : charges)
             q -= s / n_src;
     }
-
-    std::vector<double> r_esp(n_dim * n_src);
-    for (int i = 0; i < n_dim * n_src; ++i)
-        r_esp[i] = r_src[i] - 0.5 * L;
 
     const int n_cmp = std::min(n_src, 50);
     // FIXME: The reference here is the DMK tree pipeline (not an exact sum): it is the only reference sharing
@@ -556,7 +605,6 @@ TEST_CASE_GENERIC("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)", 1) {
             pdmk_tree_destroy(tree);
 
             pdmk_esp_params ep{};
-            ep.L = L;
             ep.r_c = L / 4;
             ep.eps = eps;
             ep.n_dim = 2;
@@ -564,7 +612,7 @@ TEST_CASE_GENERIC("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)", 1) {
             ep.eval_type = eval;
             ep.log_level = 6;
             dmk::EspPlan<double> plan(ep);
-            auto esp = plan.eval(n_src, r_esp.data(), charges.data());
+            auto esp = plan.eval(n_src, r_src.data(), charges.data());
 
             double gauge = 0, pbar = 0;
             for (int i = 0; i < n_cmp; ++i) {
@@ -579,12 +627,12 @@ TEST_CASE_GENERIC("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)", 1) {
                 e2p += dp * dp;
                 r2p += (pot_src[i * odim] - pbar) * (pot_src[i * odim] - pbar);
                 if (with_grad) {
-                    const double f[2] = {esp.force_x[i], esp.force_y[i]};
+                    const double g[2] = {esp.grad_x[i], esp.grad_y[i]};
                     for (int d = 0; d < n_dim; ++d) {
-                        const double ref_force = -charges[i] * pot_src[i * odim + 1 + d];
-                        const double dg = f[d] - ref_force;
+                        const double gr = pot_src[i * odim + 1 + d];
+                        const double dg = g[d] - gr;
                         e2g += dg * dg;
-                        r2g += ref_force * ref_force;
+                        r2g += gr * gr;
                     }
                 }
             }
@@ -622,13 +670,11 @@ static void run_esp_freespace(const EspFreeParams &c) {
     const int n_dim = c.n_dim;
     const double L = 1.0;
 
-    std::default_random_engine eng(c.seed);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-    std::vector<double> r_src(size_t(n_dim) * n_src), charges(n_src);
-    for (auto &x : r_src)
-        x = rng(eng) - 0.5 * L; // in [-L/2, L/2)
-    for (auto &q : charges)
-        q = rng(eng) - 0.5;
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so cell occupancy varies.
+    std::vector<double> r_src, charges, trg_unused, normals_unused;
+    dmk::util::init_test_data(n_dim, 1, n_src, 0, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, trg_unused, normals_unused, charges, c.seed);
 
     const int n_test = c.n_test;
     std::vector<double> ref_pot(n_test), ref_grad(size_t(n_test) * n_dim, 0.0);
@@ -650,7 +696,6 @@ static void run_esp_freespace(const EspFreeParams &c) {
         for (int with_grad = 0; with_grad <= 1; ++with_grad) {
             const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
             pdmk_esp_params ep{};
-            ep.L = L;
             ep.r_c = L / 4;
             ep.eps = eps;
             ep.n_dim = n_dim;
@@ -670,12 +715,12 @@ static void run_esp_freespace(const EspFreeParams &c) {
                 e2p += dp * dp;
                 r2p += ref_pot[i] * ref_pot[i];
                 if (with_grad) {
-                    const double f[3] = {esp.force_x[i], esp.force_y[i], n_dim == 3 ? esp.force_z[i] : 0.0};
+                    const double g[3] = {esp.grad_x[i], esp.grad_y[i], n_dim == 3 ? esp.grad_z[i] : 0.0};
                     for (int d = 0; d < n_dim; ++d) {
-                        const double ref_force = -charges[i] * ref_grad[i * n_dim + d];
-                        const double dg = f[d] - ref_force;
+                        const double gr = ref_grad[i * n_dim + d];
+                        const double dg = g[d] - gr;
                         e2g += dg * dg;
-                        r2g += ref_force * ref_force;
+                        r2g += gr * gr;
                     }
                 }
             }
@@ -683,7 +728,7 @@ static void run_esp_freespace(const EspFreeParams &c) {
             CHECK_MESSAGE(l2p < eps, "eps=" << eps << (with_grad ? " pot+grad" : " pot") << " pot l2=" << l2p);
             if (with_grad) {
                 const double l2g = dmk::pbc_ref::safe_l2(e2g, r2g);
-                CHECK_MESSAGE(l2g < eps, "eps=" << eps << " force l2=" << l2g);
+                CHECK_MESSAGE(l2g < eps, "eps=" << eps << " grad l2=" << l2g);
             }
         }
 }
@@ -703,7 +748,7 @@ TEST_CASE_GENERIC("[ESP] 2d Sqrt-Laplace free-space vs direct", 1) {
 }
 
 // 3D Laplace-dipole free-space. Sources carry a 3-vector dipole strength (input_dim=3); ESP reports
-// the raw field (potential, and its gradient for POTENTIAL_GRAD) -- no -q force convention. Reference
+// the field potential and, for POTENTIAL_GRAD, its gradient. Reference
 // is the direct all-pairs LaplaceDipole evaluator. Exercises dense + both prune short-range paths and
 // the long-range projector u(k) = -i f(k)(k.d).
 static void run_esp_freespace_dipole(unsigned seed, int n_test) {
@@ -711,13 +756,11 @@ static void run_esp_freespace_dipole(unsigned seed, int n_test) {
     constexpr int n_dim = 3;
     const double L = 1.0;
 
-    std::default_random_engine eng(seed);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-    std::vector<double> r_src(size_t(n_dim) * n_src), charges(size_t(n_dim) * n_src); // dipole vector per source
-    for (auto &x : r_src)
-        x = rng(eng) - 0.5 * L;
-    for (auto &q : charges)
-        q = rng(eng) - 0.5;
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so cell occupancy varies.
+    std::vector<double> r_src, charges, trg_unused, normals_unused; // charges holds a dipole vector per source
+    dmk::util::init_test_data(n_dim, n_dim, n_src, 0, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, trg_unused, normals_unused, charges, seed);
 
     std::vector<double> ref_pot(n_test), ref_grad(size_t(n_test) * n_dim, 0.0);
     {
@@ -739,7 +782,6 @@ static void run_esp_freespace_dipole(unsigned seed, int n_test) {
             for (int with_grad = 0; with_grad <= 1; ++with_grad) {
                 const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
                 pdmk_esp_params ep{};
-                ep.L = L;
                 ep.r_c = L / 4;
                 ep.eps = eps;
                 ep.n_dim = n_dim;
@@ -757,7 +799,7 @@ static void run_esp_freespace_dipole(unsigned seed, int n_test) {
                     e2p += dp * dp;
                     r2p += ref_pot[i] * ref_pot[i];
                     if (with_grad) {
-                        const double g[3] = {esp.force_x[i], esp.force_y[i], esp.force_z[i]};
+                        const double g[3] = {esp.grad_x[i], esp.grad_y[i], esp.grad_z[i]};
                         for (int d = 0; d < n_dim; ++d) {
                             const double dg = g[d] - ref_grad[i * n_dim + d];
                             e2g += dg * dg;
@@ -787,13 +829,12 @@ static void run_esp_freespace_stokeslet(unsigned seed, int n_test) {
     constexpr int n_dim = 3;
     const double L = 1.0;
 
-    std::default_random_engine eng(seed);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-    std::vector<double> r_src(size_t(n_dim) * n_src), forces(size_t(n_dim) * n_src); // force vector per source
-    for (auto &x : r_src)
-        x = rng(eng) - 0.5 * L;
-    for (auto &f : forces)
-        f = rng(eng) - 0.5; // non-neutral net force exercises the free-space zero-mode gauge (D.17)
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so cell occupancy varies.
+    // A non-neutral net force exercises the free-space zero-mode gauge (D.17).
+    std::vector<double> r_src, forces, trg_unused, normals_unused; // forces holds a force vector per source
+    dmk::util::init_test_data(n_dim, n_dim, n_src, 0, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, trg_unused, normals_unused, forces, seed);
 
     std::vector<double> ref(size_t(n_test) * n_dim, 0.0); // velocity (3 comps) per target
     {
@@ -806,7 +847,6 @@ static void run_esp_freespace_stokeslet(unsigned seed, int n_test) {
     for (const uint32_t flags : flag_sets)
         for (const double eps : epses) {
             pdmk_esp_params ep{};
-            ep.L = L;
             ep.r_c = L / 4;
             ep.eps = eps;
             ep.n_dim = n_dim;
@@ -838,15 +878,11 @@ static void run_esp_freespace_stresslet(unsigned seed, int n_test) {
     constexpr int n_dim = 3;
     const double L = 1.0;
 
-    std::default_random_engine eng(seed);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-    std::vector<double> r_src(size_t(n_dim) * n_src), forces(size_t(n_dim) * n_src), normals(size_t(n_dim) * n_src);
-    for (auto &x : r_src)
-        x = rng(eng) - 0.5 * L;
-    for (auto &f : forces)
-        f = rng(eng) - 0.5;
-    for (auto &nv : normals)
-        nv = rng(eng) - 0.5;
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so cell occupancy varies.
+    std::vector<double> r_src, forces, normals, trg_unused;
+    dmk::util::init_test_data(n_dim, n_dim, n_src, 0, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, trg_unused, normals, forces, seed);
 
     std::vector<double> ref(size_t(n_test) * n_dim, 0.0); // velocity (3 comps) per target
     {
@@ -859,7 +895,6 @@ static void run_esp_freespace_stresslet(unsigned seed, int n_test) {
     for (const uint32_t flags : flag_sets)
         for (const double eps : epses) {
             pdmk_esp_params ep{};
-            ep.L = L;
             ep.r_c = L / 4;
             ep.eps = eps;
             ep.n_dim = n_dim;

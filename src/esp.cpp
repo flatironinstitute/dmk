@@ -7,11 +7,13 @@
 #include <cstdlib>
 #include <dmk.h>
 #include <dmk/aot_kernels.hpp>
+#include <dmk/cuda/esp_gpu.hpp>
 #include <dmk/direct.hpp>
 #include <dmk/error.hpp>
 #include <dmk/esp.hpp>
 #include <dmk/fourier_data.hpp>
 #include <dmk/legeexps.hpp>
+#include <dmk/omp_wrapper.hpp>
 #include <dmk/prolate.hpp>
 #include <dmk/prolate0_fun.hpp>
 #include <dmk/types.hpp>
@@ -19,12 +21,18 @@
 #include <ducc0/fft/fft.h>
 #include <finufft.h>
 #include <finufft_common/constants.h>
-#include <omp.h>
+#include <finufft_common/utils.h>
 #include <sctl.hpp>
 #include <span>
 #include <stdexcept>
 #include <utility>
 #include <vector>
+#ifdef __linux__
+// For the ducc0 pool-creation affinity workaround in ensure_ducc0_pool_size.
+#include <pthread.h>
+#include <sched.h>
+#include <unistd.h>
+#endif
 
 // Row-major flattening of a DIM-dimensional grid multi-index (matches the historical
 // ix*n_f*n_f + iy*n_f + iz for DIM=3).
@@ -36,29 +44,84 @@ static inline int grid_idx(const std::array<int, DIM> &idx, int n_f) {
     return r;
 }
 
+// ducc0 sizes its lazily-built global thread pool from the calling thread's pthread affinity mask,
+// not the core count. Under OMP_PROC_BIND=true libgomp has already pinned the master thread to one
+// core, so ducc0 clamps the pool to 1 thread on the first FFT -- permanently, the pool being a
+// function-local static. Forcing the size up is not enough on its own: resize_thread_pool spawns its
+// workers from the calling thread and Linux children inherit its mask, so all N would timeshare one
+// core. Widen the mask for the duration of pool creation only, leaving OpenMP's own placement alone.
+static void ensure_ducc0_pool_size(size_t nthreads) {
+    // resize_thread_pool(X) spawns X-1 workers, the caller being the Xth, so pass the total.
+    if (ducc0::thread_pool_size() >= nthreads)
+        return;
+
+#ifdef __linux__
+    cpu_set_t saved;
+    CPU_ZERO(&saved);
+    const bool have_saved = (pthread_getaffinity_np(pthread_self(), sizeof(saved), &saved) == 0);
+    if (have_saved) {
+        cpu_set_t wide;
+        CPU_ZERO(&wide);
+        const long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+        for (long c = 0; c < ncpu && c < CPU_SETSIZE; ++c)
+            CPU_SET(c, &wide);
+        // A failure here is non-fatal: `wide` is a superset of the current mask, so the
+        // intersection cannot be empty; we just fall back to the old behaviour.
+        pthread_setaffinity_np(pthread_self(), sizeof(wide), &wide);
+    }
+#endif
+
+    ducc0::resize_thread_pool(nthreads);
+
+#ifdef __linux__
+    if (have_saved)
+        pthread_setaffinity_np(pthread_self(), sizeof(saved), &saved);
+#endif
+}
+
+// Out-of-place: c2c reads `in` and writes `out` directly rather than copying first. ducc0 permits
+// `in` and `out` to alias, and the copy is a single-threaded ~30 MB vector assignment that never
+// scales -- 10.6% of the routine at 1 thread but 49% at 64. The first axis pass has to read `in` and
+// write `out` anyway, so dropping the copy removes that traffic rather than moving it.
 template <typename Real, int DIM>
 static void fftn(const std::vector<std::complex<Real>> &in, std::vector<std::complex<Real>> &out, int n) {
-    out = in;
-    const std::vector<size_t> shape(DIM, static_cast<size_t>(n));
+    const size_t nf = n;
+    size_t ntot = 1;
+    for (int d = 0; d < DIM; ++d)
+        ntot *= nf;
+    if (out.size() != ntot) // defensive; every call site pre-sizes
+        out.resize(ntot);
+    const std::vector<size_t> shape(DIM, nf);
     std::vector<size_t> axes(DIM);
     for (int d = 0; d < DIM; ++d)
         axes[d] = d;
-    ducc0::vfmav<std::complex<Real>> v(out.data(), shape);
-    ducc0::c2c(v, v, axes, true, Real(1.0));
+    ducc0::cfmav<std::complex<Real>> vin(in.data(), shape);
+    ducc0::vfmav<std::complex<Real>> vout(out.data(), shape);
+    const size_t nthreads = MY_OMP_GET_MAX_THREADS();
+    ensure_ducc0_pool_size(nthreads);
+    ducc0::c2c(vin, vout, axes, true, Real(1.0), nthreads);
 }
 
 template <typename Real, int DIM>
 static void ifftn(const std::vector<std::complex<Real>> &in, std::vector<std::complex<Real>> &out, int n) {
-    out = in;
-    const std::vector<size_t> shape(DIM, static_cast<size_t>(n));
+    const size_t nf = n;
+    size_t ntot = 1;
+    for (int d = 0; d < DIM; ++d)
+        ntot *= nf;
+    if (out.size() != ntot)
+        out.resize(ntot);
+    const std::vector<size_t> shape(DIM, nf);
     std::vector<size_t> axes(DIM);
     for (int d = 0; d < DIM; ++d)
         axes[d] = d;
-    ducc0::vfmav<std::complex<Real>> v(out.data(), shape);
+    ducc0::cfmav<std::complex<Real>> vin(in.data(), shape);
+    ducc0::vfmav<std::complex<Real>> vout(out.data(), shape);
     Real fct = Real(1.0);
     for (int d = 0; d < DIM; ++d)
         fct /= Real(n);
-    ducc0::c2c(v, v, axes, false, fct);
+    const size_t nthreads = MY_OMP_GET_MAX_THREADS();
+    ensure_ducc0_pool_size(nthreads);
+    ducc0::c2c(vin, vout, axes, false, fct, nthreads);
 }
 
 namespace dmk {
@@ -66,20 +129,18 @@ namespace dmk {
 PSWFKernel::PSWFKernel(double eps_, double beta_, int lenw) : eps(eps_), beta(beta_) {
     pswf = dmk::Prolate0Fun(beta, lenw);
 
-    scale = 1.0 / pswf.eval_val(0.0);
-
-    double mu = pswf.rlam20 / M_PI;
-    lambda0 = std::sqrt(2.0 * M_PI * mu / beta);
-
+    scale = 1.0 / pswf.psi0_zero;
+    lambda0 = pswf.lambda0;
     c0 = pswf.int_eval(1.0) * scale;
 }
 
+// Sources live in the unit box [0,1)^DIM, matching the tree path.
 template <typename Real, int DIM>
-static inline std::array<int, DIM> particle_cell(const Vec3T<Real, DIM> &r, Real L, int n_cells, bool periodic) {
-    const Real cell_size = L / n_cells;
+static inline std::array<int, DIM> particle_cell(const Vec3T<Real, DIM> &r, int n_cells, bool periodic) {
+    const Real cell_size = Real(1) / n_cells;
     std::array<int, DIM> ci;
     for (int d = 0; d < DIM; ++d) {
-        int c = static_cast<int>(std::floor((r[d] + L / 2) / cell_size));
+        int c = static_cast<int>(std::floor(r[d] / cell_size));
         if (periodic) {
             c %= n_cells;
             if (c < 0)
@@ -293,14 +354,12 @@ inline CellList<Real, DIM> build_cell_list(const Real *r_src, const Real *charge
     int ncells = 1;
     for (int d = 0; d < DIM; ++d)
         ncells *= nc;
-    const Real L_r = Real(params.L);
-
     const bool periodic = params.use_periodic;
     auto cell_of = [&](const Real *r) {
         std::array<Real, DIM> rr;
         for (int d = 0; d < DIM; ++d)
             rr[d] = r[d];
-        return cell_linear_index<DIM>(particle_cell<Real, DIM>(rr, L_r, nc, periodic), nc);
+        return cell_linear_index<DIM>(particle_cell<Real, DIM>(rr, nc, periodic), nc);
     };
 
     // pass 1: count per cell
@@ -336,8 +395,7 @@ inline CellList<Real, DIM> build_cell_list(const Real *r_src, const Real *charge
     // tighten each tile's extent.
     if (esp_spatial_sort(params)) {
         sctl::Profile::Scoped sort("spatial_sort");
-        const Real h = L_r / Real(nc);
-        const Real half_L = L_r / Real(2);
+        const Real h = Real(1) / Real(nc);
         const bool morton_sort = esp_morton(params);
         SortScratch<Real, DIM> s;
         for (int c = 0; c < ncells; ++c) {
@@ -352,7 +410,7 @@ inline CellList<Real, DIM> build_cell_list(const Real *r_src, const Real *charge
             }
             std::array<Real, DIM> lo;
             for (int d = 0; d < DIM; ++d)
-                lo[d] = Real(ci_axes[d]) * h - half_L; // cell lower corner
+                lo[d] = Real(ci_axes[d]) * h; // cell lower corner
             if (morton_sort)
                 sort_cell_morton<Real, DIM>(cl, b, len, lo, h, s);
             else
@@ -959,18 +1017,18 @@ static void short_range_n3l(const SRCtx<Real, DIM> &ctx) {
     }
 }
 
-// force[d] is the d-th force-component output span (fx, fy, ... for d in [0,DIM)); unused (may be
-// empty) when eval_type == DMK_POTENTIAL. Chosen over separate fx/fy/fz parameters so this driver
-// and its four strategies stay DIM-generic; esp_eval builds this array from PotForce's spans.
+// grad[d] is the d-th gradient-component output span (d in [0,DIM)); unused (may be empty) when
+// eval_type == DMK_POTENTIAL. Chosen over separate x/y/z parameters so this driver and its four
+// strategies stay DIM-generic; esp_eval builds this array from PotGrad's spans.
 template <typename Real>
 template <int DIM>
 void EspPlan<Real>::short_range(int n, const Real *r_src, const Real *charges, std::span<Real> pot,
-                                std::array<std::span<Real>, DIM> force) {
+                                std::array<std::span<Real>, DIM> grad) {
     sctl::Profile::Scoped short_range("short_range");
     // pow(3,DIM)-cell stencil requires nc >= 3 so periodic images aren't double-counted
-    int nc = static_cast<int>(std::floor(params.L / params.r_c));
+    int nc = static_cast<int>(std::floor(1.0 / params.r_c));
     if (nc < 3)
-        throw std::runtime_error("short_range_fast requires r_c <= L/3 (nc >= 3)");
+        throw std::runtime_error("short_range_fast requires r_c <= 1/3 (nc >= 3)");
     // Stride-3 periodic colouring is conflict-free only if each axis length is divisible by the
     // stride; round nc down to a multiple of 3 (cells grow slightly, still >= r_c, still >= 3).
     if (esp_n3l(params))
@@ -980,7 +1038,6 @@ void EspPlan<Real>::short_range(int n, const Real *r_src, const Real *charges, s
 
     CellList<Real, DIM> cl = build_cell_list<Real, DIM>(r_src, charges, n, nc, params, charge_dim, MaxVecLen);
 
-    const Real L = Real(params.L);
     const Real r_c_sq = Real(params.r_c) * Real(params.r_c);
     const int out_dim = output_dim; // 1 (pot) / 1+DIM (pot+grad) / DIM (velocity)
 
@@ -990,7 +1047,7 @@ void EspPlan<Real>::short_range(int n, const Real *r_src, const Real *charges, s
     const Real rsc = r2_var ? Real(2.0 / (params.r_c * params.r_c)) : Real(2.0 / params.r_c);
     const Real cen = r2_var ? Real(-1.0) : Real(-params.r_c / 2.0);
 
-    // Interleaved [pot] or [pot, d/dx, ...] per particle (out_dim = 1+DIM when forces are wanted),
+    // Interleaved [pot] or [pot, d/dx, ...] per particle (out_dim = 1+DIM when gradients are wanted),
     // in cell-sorted order.
     std::vector<Real> pg_sorted(out_dim * n, Real(0));
 
@@ -1007,10 +1064,10 @@ void EspPlan<Real>::short_range(int n, const Real *r_src, const Real *charges, s
             int ci = c + d - 1;
             if (ci < 0) {
                 nbc_tab[c * 3 + d] = periodic ? ci + nc : -1;
-                off_tab[c * 3 + d] = periodic ? -L : Real(0);
+                off_tab[c * 3 + d] = periodic ? Real(-1) : Real(0);
             } else if (ci >= nc) {
                 nbc_tab[c * 3 + d] = periodic ? ci - nc : -1;
-                off_tab[c * 3 + d] = periodic ? L : Real(0);
+                off_tab[c * 3 + d] = periodic ? Real(1) : Real(0);
             } else {
                 nbc_tab[c * 3 + d] = ci;
                 off_tab[c * 3 + d] = Real(0);
@@ -1049,53 +1106,37 @@ void EspPlan<Real>::short_range(int n, const Real *r_src, const Real *charges, s
         short_range_dense<Real, DIM, MaxVecLen>(ctx);
 
     // Scatter cell-sorted results back to original order. Component 0 is the potential (or velocity x);
-    // components 1.. are the gradient axes (scalar kernels report them as the force -q*grad, q = the
-    // target's own charge) or the remaining raw output components (dipole gradient, Stokeslet velocity).
+    // components 1.. are the gradient axes or the remaining velocity components.
     for (int a = 0; a < n; ++a) {
         const int orig = cl.orig[a];
         pot[orig] += pg_sorted[out_dim * a + 0];
-        if (out_dim == 1)
-            continue;
-        const Real q = grad_is_force ? cl.qs[a] : Real(1);
-        const Real sgn = grad_is_force ? Real(-1) : Real(1);
         for (int k = 1; k < out_dim; ++k)
-            force[k - 1][orig] += sgn * q * pg_sorted[out_dim * a + k];
+            grad[k - 1][orig] += pg_sorted[out_dim * a + k];
     }
 }
 
 // The far-field split's 1/k^2 structure (Fourier transform of the Laplacian Green's function) is
 // dimension-independent by construction, so this generalizes mechanically to DIM=2 -- no new
 // physics needed here (unlike short_range's near-field correction).
+//
+// Takes phi_hat rather than computing it, so the PSWF (CPU) and ES (GPU) variants share everything
+// else: the splitting and spreading kernels are independent factors here.
 template <typename Real>
 template <int DIM>
-std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() {
+std::vector<double> EspPlan<Real>::scaling_coefficients_from_phi_hat(const std::vector<double> &phi_hat_1d) {
     const int nf = n_f;
     std::vector<int> k_idx(nf);
     for (int i = 0; i < nf; ++i)
         k_idx[i] = (i <= nf / 2) ? i : i - nf;
 
-    // 1-D phi_hat values. The spreading-kernel deconvolution is a scaled-grid ([0,2pi), nf points)
-    // quantity, so it must be box-invariant: the argument k_vec*P*h/2 = pi*P*k_idx/nf already cancels
-    // L_grid (h = L_grid/nf), but the amplitude must use the scaled spacing 1/nf, NOT the physical
-    // h = L_grid/nf. Using h here inflates ph by L_grid, ph^2 by L_grid^6, which over-suppresses the
-    // free-space long-range (harmless when L_grid == L, i.e. every periodic case with L used as-is).
-    std::vector<double> phi_hat_1d(nf);
-    for (int i = 0; i < nf; ++i) {
-        double k_vec = 2.0 * M_PI * k_idx[i] / L_grid;
-        double arg = k_vec * (P * h) / 2.0;
-        phi_hat_1d[i] = (P / (2.0 * nf)) * pswf.pswf_hat(arg);
-    }
-
-    // Long-range windowed kernel W(k), reused from the DMK level-0 periodic root-box FT so it shares
-    // the residual's prolate windowing (W + L ~= u). Sampled radially at kappa = sqrt(i)*dk,
-    // dk = 2*pi/L, and the grid point gidx maps to i = sum(k_idx[gidx]^2). k=0 is handled inside
-    // (dropped for Laplace/Sqrt-Laplace, finite for Yukawa). The lambda0/(2*c0) factor reconciles
-    // fourier_data's prolate/psi0 convention with the phi_hat normalization above.
+    // W(k) reuses the DMK level-0 periodic root-box FT, so it shares the residual's prolate
+    // windowing (W + L ~= u). Sampled radially at kappa = sqrt(i)*dk, dk = 2*pi/L, with grid point
+    // gidx mapping to i = sum(k_idx^2); k=0 is handled inside. No renormalization against either
+    // phi_hat convention: both pswf_hat and es_kernel_hat return 2*int_0^1 psi at k=0.
     sctl::Vector<double> kernel_ft;
-    get_periodic_windowed_kernel_ft<double, DIM>(params.kernel, &params.fparam, pswf.beta, nf, L_grid,
-                                                 params.r_c / pswf.beta, pswf.pswf, kernel_ft, !params.use_periodic,
-                                                 trunc_rl);
-    const double norm = pswf.lambda0 / (2.0 * pswf.c0);
+    get_lattice_windowed_kernel_ft<double, DIM>(params.kernel, &params.fparam, pswf.beta, nf, L_grid,
+                                                params.r_c / pswf.beta, trunc_rl, params.use_periodic, pswf.pswf,
+                                                kernel_ft);
 
     int ntot = 1;
     double L_pow_dim = 1.0;
@@ -1105,7 +1146,6 @@ std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() {
     }
 
     std::vector<double> p(ntot, 0.0);
-    double self_sum = 0.0;
     for (int lin = 0; lin < ntot; ++lin) {
         std::array<int, DIM> gidx;
         int rem = lin;
@@ -1119,12 +1159,105 @@ std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() {
             i_rad += k_idx[gidx[d]] * k_idx[gidx[d]];
             ph *= phi_hat_1d[gidx[d]];
         }
-        p[grid_idx<DIM>(gidx, nf)] = norm * kernel_ft[i_rad] / (L_pow_dim * ph * ph * static_cast<double>(ntot));
-        self_sum += norm * kernel_ft[i_rad];
+        p[grid_idx<DIM>(gidx, nf)] = kernel_ft[i_rad] / (L_pow_dim * ph * ph * static_cast<double>(ntot));
     }
 
     return p;
 }
+
+// Box-invariant by construction: the argument pi*P*k_idx/nf already cancels L_grid, but the
+// amplitude must use the scaled spacing 1/nf, NOT physical h -- using h inflates ph^2 by L_grid^6 and
+// over-suppresses the free-space long range (invisible whenever L_grid == L).
+template <typename Real>
+template <int DIM>
+std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() {
+    const int nf = n_f;
+    std::vector<double> phi_hat_1d(nf);
+    for (int i = 0; i < nf; ++i) {
+        const int k_idx = (i <= nf / 2) ? i : i - nf;
+        const double k_vec = 2.0 * M_PI * k_idx / L_grid;
+        const double arg = k_vec * (P * h) / 2.0;
+        phi_hat_1d[i] = (P / (2.0 * nf)) * pswf.pswf_hat(arg);
+    }
+    return scaling_coefficients_from_phi_hat<DIM>(phi_hat_1d);
+}
+
+#ifdef DMK_GPU_OFFLOAD
+// cuFINUFFT's GPU spreader only implements the ES (exponential-of-semicircle) kernel, so the GPU
+// scaling coefficients deconvolve by the ES FT instead of the PSWF. The splitting kernel is
+// untouched -- it and the spreading kernel are independent factors, so the hybrid is valid.
+//
+// The spreader's upsampfac must be params.sigma: cuFINUFFT derives both the ES width and its beta
+// from it, so any other value spreads with a kernel tuned for a grid this is not. At upsampfac 2 on
+// a sigma=1.35 grid the Stresslet misses eps by 10x. Off-standard values give up cuFINUFFT's
+// gpu_kerevalmeth=1 Horner path, which costs a few percent per eval.
+
+// Reproduces cuFINUFFT's setup_spreader nspread/beta choice, so this matches the kernel its
+// spreader actually uses.
+static void es_kernel_params_from_tol(double tol, double upsampfac, int &ns, double &beta) {
+    if (upsampfac == 2.0)
+        ns = static_cast<int>(std::ceil(-std::log10(tol / 10.0)));
+    else
+        ns = static_cast<int>(std::ceil(-std::log(tol) / (M_PI * std::sqrt(1.0 - 1.0 / upsampfac))));
+    ns = std::clamp(ns, 2, 16);
+
+    double betaoverns = 2.30;
+    if (ns == 2)
+        betaoverns = 2.20;
+    if (ns == 3)
+        betaoverns = 2.26;
+    if (ns == 4)
+        betaoverns = 2.38;
+    if (upsampfac != 2.0)
+        betaoverns = 0.97 * M_PI * (1.0 - 1.0 / (2.0 * upsampfac));
+    beta = betaoverns * ns;
+}
+
+// Inverse of the nspread rule above: the tol that makes cuFINUFFT choose an ES width of ns.
+static double es_tol_for_ns(int ns, double upsampfac) {
+    if (upsampfac == 2.0)
+        return std::pow(10.0, 1 - ns);
+    return std::exp(-ns * M_PI * std::sqrt(1.0 - 1.0 / upsampfac));
+}
+
+// ES shape on unit support, normalized to 1 at the origin (matching PSWFKernel::operator()).
+static double es_kernel_shape(double u, double beta) {
+    return std::fabs(u) >= 1.0 ? 0.0 : std::exp(beta * (std::sqrt(1.0 - u * u) - 1.0));
+}
+
+// The ES kernel has no closed-form FT, so quadrature at the same order (q = 2 + 3*ns/2) FINUFFT
+// uses. Summing the first q nodes of a 2q-point rule at double weight exploits the shape's evenness,
+// so at arg=0 this returns 2*int_0^1 psi -- the same normalization pswf_hat carries in lambda0,
+// which is why neither needs a correction factor.
+static double es_kernel_hat(double beta, int ns, double arg) {
+    const int q = std::min(static_cast<int>(2 + 1.5 * ns), 100);
+    std::vector<double> z(2 * q), w(2 * q);
+    finufft::common::gaussquad(2 * q, z.data(), w.data());
+    double sum = 0.0;
+    for (int i = 0; i < q; ++i)
+        sum += 2.0 * w[i] * es_kernel_shape(z[i], beta) * std::cos(arg * z[i]);
+    return sum;
+}
+
+// Same splitting kernel as the CPU path, ES spreading kernel, same amplitude convention.
+template <typename Real>
+template <int DIM>
+std::vector<double> EspPlan<Real>::precompute_scaling_coefficients_es(double tol, double gpu_upsampfac) {
+    const int nf = n_f;
+    int ns;
+    double es_beta;
+    es_kernel_params_from_tol(tol, gpu_upsampfac, ns, es_beta);
+
+    std::vector<double> phi_hat_1d(nf);
+    for (int i = 0; i < nf; ++i) {
+        const int k_idx = (i <= nf / 2) ? i : i - nf;
+        const double k_vec = 2.0 * M_PI * k_idx / L_grid;
+        const double arg = k_vec * (ns * h) / 2.0;
+        phi_hat_1d[i] = (ns / (2.0 * nf)) * es_kernel_hat(es_beta, ns, arg);
+    }
+    return scaling_coefficients_from_phi_hat<DIM>(phi_hat_1d);
+}
+#endif // DMK_GPU_OFFLOAD
 
 // Long-range contribution via FINUFFT spreading/interpolation. DIM=3 is exercised by every existing
 // test/caller; DIM=2 is unverified scaffolding -- short_range throws for DIM=2 before esp_eval ever
@@ -1132,9 +1265,9 @@ std::vector<double> EspPlan<Real>::precompute_scaling_coefficients() {
 template <typename Real>
 template <int DIM>
 void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, std::span<Real> pot,
-                               std::array<std::span<Real>, DIM> force) {
+                               std::array<std::span<Real>, DIM> grad) {
     sctl::Profile::Scoped long_range("long_range");
-    const bool want_force = (params.eval_type >= DMK_POTENTIAL_GRAD);
+    const bool want_grad = (params.eval_type >= DMK_POTENTIAL_GRAD);
     const int nf = n_f;
     int ntot = 1;
     for (int d = 0; d < DIM; ++d)
@@ -1232,7 +1365,7 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
     }
 
     // 3. Far-field spectrum. Scalar kernels multiply the input spectrum by the diagonal radial symbol;
-    // the dipole/Stokeslet/Stresslet apply their per-mode projectors (below). Force spectra follow from
+    // the dipole/Stokeslet/Stresslet apply their per-mode projectors (below). Gradient spectra follow from
     // the ik method: grad(u)_hat = i*k*u_hat, written as a real swap+scale.
     const int out_dim = output_dim;
     auto &u_hat = lr_u_hat;
@@ -1241,7 +1374,7 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
 
     const bool is_dipole = (params.kernel == DMK_LAPLACE_DIPOLE);
     const bool is_stokeslet = (params.kernel == DMK_STOKESLET);
-    if (input_dim == 1 && !want_force) {
+    if (input_dim == 1 && !want_grad) {
 #pragma omp parallel for
         for (int idx = 0; idx < ntot; ++idx)
             u_hat[0][idx] = lr_in[0][idx] * scaling_coeffs[idx];
@@ -1313,7 +1446,7 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
                             ph = lr_in[0][idx] * f;
                         }
                         u_hat[0][idx] = ph;
-                        if (want_force) {
+                        if (want_grad) {
                             u_hat[1][idx] = grad_hat(ph, kx); // axis 0
                             u_hat[2][idx] = grad_hat(ph, ky); // axis 1
                             u_hat[3][idx] = grad_hat(ph, kz); // axis 2
@@ -1328,7 +1461,7 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
                     const int idx = base + g1;
                     const std::complex<Real> ph = lr_in[0][idx] * scaling_coeffs[idx];
                     u_hat[0][idx] = ph;
-                    if (want_force) {
+                    if (want_grad) {
                         u_hat[1][idx] = grad_hat(ph, kvals[g1]); // axis 0
                         u_hat[2][idx] = grad_hat(ph, kvals[g0]); // axis 1
                     }
@@ -1353,15 +1486,12 @@ void EspPlan<Real>::long_range(int n, const Real *r_src, const Real *charges, st
         sctl::Profile::Scoped prof("lr_interp");
         nufft2(out.data(), g.data());
     };
-    // Component 0 is the potential; components 1.. are gradient axes. Scalar kernels report them as the
-    // force -q*grad (q = the target's own charge); the dipole reports the raw field gradient.
+    // Component 0 is the potential; components 1.. are the gradient axes.
     auto accumulate = [&](int k, int j, Real field) {
         if (k == 0)
             pot[j] += field;
-        else if (grad_is_force)
-            force[k - 1][j] += -charges[j] * field;
         else
-            force[k - 1][j] += field;
+            grad[k - 1][j] += field;
     };
 
     for (int k = 0; k < out_dim; k += 2) {
@@ -1413,7 +1543,6 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_)
     output_dim = get_kernel_output_dim(n_dim, params.kernel, params.eval_type);
     normal_dim = (params.kernel == DMK_STRESSLET) ? n_dim : 0;
     charge_dim = input_dim + normal_dim;
-    grad_is_force = scalar_kernel;
     const Real eps_d = std::pow(10.0, -Real(n_digits));
     const double sigma = params.sigma;
     P = esp_P_from_eps(eps_d, sigma, n_dim);
@@ -1442,9 +1571,9 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_)
     // kernel is exact.
     // Constraints: L_grid > 2*rl (no wrap) and dk*rl < pi (no symbol aliasing); L_grid = 2.2*rl gives
     // dk*rl = 2*pi/2.2 < pi with a no-wrap margin.
-    trunc_rl = std::sqrt(double(n_dim)) * params.L + 2.0 * params.r_c;
-    pad = params.use_periodic ? 1.0 : (params.freespace_pad > 0 ? params.freespace_pad : 2.2 * trunc_rl / params.L);
-    L_grid = pad * params.L;
+    trunc_rl = std::sqrt(double(n_dim)) + 2.0 * params.r_c;
+    pad = params.use_periodic ? 1.0 : (params.freespace_pad > 0 ? params.freespace_pad : 2.2 * trunc_rl);
+    L_grid = pad;
     n_f = static_cast<int>(std::ceil(pswf.beta * L_grid / (M_PI * params.r_c)));
     h = L_grid / n_f;
 
@@ -1553,48 +1682,57 @@ EspPlan<Real>::EspPlan(const pdmk_esp_params &params_)
     }
 }
 
+// Zero-initialized output spans over the plan's own workspace: comp0 = pot/velocity-x,
+// comp1.. = grad/velocity. Trailing spans are empty when output_dim does not reach them.
 template <typename Real>
-PotForce<Real> EspPlan<Real>::eval(int n, const Real *r_src, const Real *charges, const Real *normals) {
-    sctl::Profile::Scoped esp_eval("esp_eval");
-    const bool want_force = (params.eval_type >= DMK_POTENTIAL_GRAD);
-    const int slots = output_dim; // component-separated SoA: comp0 = pot/velocity-x, comp1.. = grad/velocity
+std::array<std::span<Real>, 4> EspPlan<Real>::output_spans(int n) {
+    if (static_cast<int>(buf.size()) < output_dim * n)
+        buf.resize(output_dim * n);
+    std::fill(buf.begin(), buf.begin() + output_dim * n, Real(0));
+    Real *b = buf.data();
+    return {std::span<Real>(b, n), std::span<Real>(b + n, output_dim > 1 ? n : 0),
+            std::span<Real>(b + 2 * n, output_dim > 2 ? n : 0), std::span<Real>(b + 3 * n, output_dim > 3 ? n : 0)};
+}
 
-    // Short_range/long_range operate on a single charge_dim-wide payload per source. The Stresslet packs
-    // [force | normal] (charge_dim = input_dim + normal_dim); every other kernel passes charges through.
-    std::vector<Real> combined;
-    if (normal_dim > 0) {
-        if (!normals)
-            throw std::runtime_error("ESP Stresslet eval requires non-null normals");
-        combined.resize(size_t(charge_dim) * n);
-        for (int i = 0; i < n; ++i) {
-            for (int k = 0; k < input_dim; ++k)
-                combined[charge_dim * i + k] = charges[input_dim * i + k];
-            for (int k = 0; k < normal_dim; ++k)
-                combined[charge_dim * i + input_dim + k] = normals[normal_dim * i + k];
-        }
+// Short_range/long_range take one charge_dim-wide payload per source. Only the Stresslet packs
+// [force | normal]; every other kernel passes charges straight through, leaving `scratch` untouched.
+template <typename Real>
+const Real *EspPlan<Real>::pack_payload(int n, const Real *charges, const Real *normals,
+                                        std::vector<Real> &scratch) const {
+    if (normal_dim == 0)
+        return charges;
+    if (!normals)
+        throw std::runtime_error("ESP Stresslet eval requires non-null normals");
+    scratch.resize(size_t(charge_dim) * n);
+    for (int i = 0; i < n; ++i) {
+        for (int k = 0; k < input_dim; ++k)
+            scratch[charge_dim * i + k] = charges[input_dim * i + k];
+        for (int k = 0; k < normal_dim; ++k)
+            scratch[charge_dim * i + input_dim + k] = normals[normal_dim * i + k];
     }
-    const Real *payload = normal_dim > 0 ? combined.data() : charges;
+    return scratch.data();
+}
 
-    // Reuse the plan's typed workspace; zero-initialize the active region.
-    if (static_cast<int>(buf.size()) < slots * n)
-        buf.resize(slots * n);
-    std::fill(buf.begin(), buf.begin() + slots * n, Real(0));
+template <typename Real>
+PotGrad<Real> EspPlan<Real>::eval(int n, const Real *r_src, const Real *charges, const Real *normals) {
+    sctl::Profile::Scoped esp_eval("esp_eval");
+    const bool want_grad = (params.eval_type >= DMK_POTENTIAL_GRAD);
 
-    std::span<Real> pot_sp(buf.data(), n);
-    std::span<Real> fx_sp(buf.data() + n, output_dim > 1 ? n : 0);
-    std::span<Real> fy_sp(buf.data() + 2 * n, output_dim > 2 ? n : 0);
-    std::span<Real> fz_sp(buf.data() + 3 * n, output_dim > 3 ? n : 0);
+    std::vector<Real> combined;
+    const Real *payload = pack_payload(n, charges, normals, combined);
+
+    auto [pot_sp, gx_sp, gy_sp, gz_sp] = output_spans(n);
 
     // Runtime n_dim -> compile-time DIM dispatch (mirrors src/aot_evaluator.cpp's pattern).
     if (n_dim == 3) {
-        std::array<std::span<Real>, 3> force{fx_sp, fy_sp, fz_sp};
-        short_range<3>(n, r_src, payload, pot_sp, force);
-        long_range<3>(n, r_src, payload, pot_sp, force);
+        std::array<std::span<Real>, 3> grad{gx_sp, gy_sp, gz_sp};
+        short_range<3>(n, r_src, payload, pot_sp, grad);
+        long_range<3>(n, r_src, payload, pot_sp, grad);
         self_interaction(n, payload, pot_sp);
     } else if (n_dim == 2) {
-        std::array<std::span<Real>, 2> force{fx_sp, fy_sp};
-        short_range<2>(n, r_src, payload, pot_sp, force);
-        long_range<2>(n, r_src, payload, pot_sp, force);
+        std::array<std::span<Real>, 2> grad{gx_sp, gy_sp};
+        short_range<2>(n, r_src, payload, pot_sp, grad);
+        long_range<2>(n, r_src, payload, pot_sp, grad);
         self_interaction(n, payload, pot_sp);
     } else {
         throw std::runtime_error("ESP: unsupported n_dim=" + std::to_string(n_dim));
@@ -1602,17 +1740,17 @@ PotForce<Real> EspPlan<Real>::eval(int n, const Real *r_src, const Real *charges
 
     // Remove the long-range dipole gradient self-interaction (grad[a] -= const * d[a] per source). The
     // odd dipole potential self is zero, so pot needs no correction.
-    if (params.kernel == DMK_LAPLACE_DIPOLE && want_force) {
-        std::array<std::span<Real>, 3> force{fx_sp, fy_sp, fz_sp};
+    if (params.kernel == DMK_LAPLACE_DIPOLE && want_grad) {
+        std::array<std::span<Real>, 3> grad{gx_sp, gy_sp, gz_sp};
         for (int i = 0; i < n; ++i)
             for (int a = 0; a < 3; ++a)
-                force[a][i] -= dipole_grad_self * charges[3 * i + a];
+                grad[a][i] -= dipole_grad_self * charges[3 * i + a];
     }
 
     // Stokeslet velocity self-interaction: subtract the long-range self term per component
     // (comp0/1/2 = velocity x/y/z).
     if (params.kernel == DMK_STOKESLET) {
-        std::array<std::span<Real>, 3> comp{pot_sp, fx_sp, fy_sp};
+        std::array<std::span<Real>, 3> comp{pot_sp, gx_sp, gy_sp};
         for (int i = 0; i < n; ++i)
             for (int k = 0; k < 3; ++k)
                 comp[k][i] -= self_factor * charges[3 * i + k];
@@ -1634,10 +1772,92 @@ PotForce<Real> EspPlan<Real>::eval(int n, const Real *r_src, const Real *charges
 
     // Vector-field kernels report the output components as velocity; potential-family kernels use the
     // pot + gradient spans.
-    if (grad_is_force || params.kernel == DMK_LAPLACE_DIPOLE)
-        return {pot_sp, fx_sp, fy_sp, fz_sp, {}, {}, {}};
-    return {{}, {}, {}, {}, pot_sp, fx_sp, fy_sp};
+    if (params.kernel == DMK_STOKESLET || params.kernel == DMK_STRESSLET)
+        return {{}, {}, {}, {}, pot_sp, gx_sp, gy_sp};
+    return {pot_sp, gx_sp, gy_sp, gz_sp, {}, {}, {}};
 }
+
+// Runs one sub-step of eval(). 3D only: these exist to compare against the GPU path, which is 3D.
+template <typename Real, typename SubStep>
+static PotGrad<Real> esp_eval_one_step(EspPlan<Real> *plan, const std::vector<Vec3T<Real>> &r_src,
+                                       const std::vector<Real> &charges, const std::vector<Real> &normals,
+                                       const char *what, SubStep sub_step) {
+    if (plan->n_dim != 3)
+        throw std::runtime_error(std::string(what) + ": 3D only");
+    const int n = static_cast<int>(r_src.size());
+    std::vector<Real> combined;
+    const Real *payload = plan->pack_payload(n, charges.data(), normals.empty() ? nullptr : normals.data(), combined);
+    auto sp = plan->output_spans(n);
+    std::array<std::span<Real>, 3> grad{sp[1], sp[2], sp[3]};
+    sub_step(n, reinterpret_cast<const Real *>(r_src.data()), payload, sp[0], grad);
+    return {sp[0], sp[1], sp[2], sp[3], {}, {}, {}};
+}
+
+template <typename Real>
+PotGrad<Real> esp_eval_short_range(EspPlan<Real> *plan, const std::vector<Vec3T<Real>> &r_src,
+                                   const std::vector<Real> &charges, const std::vector<Real> &normals) {
+    return esp_eval_one_step(plan, r_src, charges, normals, "esp_eval_short_range",
+                             [plan](auto... args) { plan->template short_range<3>(args...); });
+}
+
+template <typename Real>
+PotGrad<Real> esp_eval_long_range(EspPlan<Real> *plan, const std::vector<Vec3T<Real>> &r_src,
+                                  const std::vector<Real> &charges, const std::vector<Real> &normals) {
+    return esp_eval_one_step(plan, r_src, charges, normals, "esp_eval_long_range",
+                             [plan](auto... args) { plan->template long_range<3>(args...); });
+}
+
+#define DMK_ESP_ONE_STEP_INST(Real)                                                                                    \
+    template PotGrad<Real> esp_eval_short_range<Real>(EspPlan<Real> *, const std::vector<Vec3T<Real>> &,               \
+                                                      const std::vector<Real> &, const std::vector<Real> &);           \
+    template PotGrad<Real> esp_eval_long_range<Real>(EspPlan<Real> *, const std::vector<Vec3T<Real>> &,                \
+                                                     const std::vector<Real> &, const std::vector<Real> &)
+
+DMK_ESP_ONE_STEP_INST(float);
+DMK_ESP_ONE_STEP_INST(double);
+#undef DMK_ESP_ONE_STEP_INST
+
+#ifdef DMK_GPU_OFFLOAD
+template <typename Real>
+GpuState *esp_create_gpu_plan(EspPlan<Real> *plan, GpuSrStrategy strategy, GpuSortMode sort_mode) {
+    if (plan->n_dim != 3)
+        throw std::runtime_error("esp_create_gpu_plan: 3D only");
+
+    // The grid is sized for the PSWF spread width P, so the ES spreader must be that wide too.
+    // Passing pswf.eps instead lands 2-3 grid points narrow.
+    const double upsampfac = plan->params.sigma;
+    const double tol = es_tol_for_ns(plan->P, upsampfac);
+    const std::vector<double> sc = plan->template precompute_scaling_coefficients_es<3>(tol, upsampfac);
+
+    GpuPlanConfig cfg;
+    cfg.nf = plan->n_f;
+    cfg.n_digits = plan->n_digits;
+    // The particle box drives cell binning and the wrap shifts, the padded grid the FFT. Equal
+    // only when periodic.
+    cfg.L_grid = plan->L_grid;
+    cfg.r_c = plan->params.r_c;
+    cfg.gpu_upsampfac = upsampfac;
+    cfg.tol = tol;
+    cfg.beta = plan->pswf.beta;
+    cfg.self_factor = double(plan->self_factor);
+    cfg.fparam = plan->params.fparam;
+    cfg.dipole_grad_self = double(plan->dipole_grad_self);
+    cfg.kernel = plan->params.kernel;
+    cfg.eval_type = plan->params.eval_type;
+    cfg.use_periodic = plan->params.use_periodic != 0;
+    cfg.trunc_rl = plan->trunc_rl;
+    cfg.use_float = std::is_same_v<Real, float>;
+    cfg.strategy = strategy;
+    cfg.sort_mode = sort_mode;
+    cfg.h_scaling_coeffs = sc.data();
+    return gpu_create_state(cfg);
+}
+
+void esp_destroy_gpu_plan(GpuState *gpu) { gpu_destroy_state(gpu); }
+
+template GpuState *esp_create_gpu_plan<float>(EspPlan<float> *, GpuSrStrategy, GpuSortMode);
+template GpuState *esp_create_gpu_plan<double>(EspPlan<double> *, GpuSrStrategy, GpuSortMode);
+#endif // DMK_GPU_OFFLOAD
 
 template struct EspPlan<float>;
 template struct EspPlan<double>;

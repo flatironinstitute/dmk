@@ -3,6 +3,10 @@ cmake_minimum_required(VERSION 3.28)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION.txt" DMK_VERSION)
 string(STRIP "${DMK_VERSION}" DMK_VERSION)
 
+# On glibc >= 2.34, libpthread is merged into libc. Force -pthread compiler flag
+# rather than a full-path library, so CMake does not cache /lib64/libpthread.so.
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+
 project(dmk VERSION ${DMK_VERSION} LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -44,28 +48,26 @@ option(DMK_BUILD_PVFMM "Build PVFMM for comparison. Useless without DMK_BUILD_EX
 option(DMK_HAVE_MPI "Use MPI for parallelism" ON)
 
 option(DMK_HAVE_OPENMP "Use OpenMP for parallelism" ON)
-option(DMK_BUILD_REFERENCE "Build reference Fortran implementation" OFF)
 option(DMK_USE_JIT "Use JIT compilation where supported (requires LLVM)" OFF)
 option(DMK_GPU_OFFLOAD "Enable GPU offloading via CUDA" OFF)
 
-if (DMK_BUILD_REFERENCE)
-  enable_language(Fortran)
-  if (CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
-    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -std=legacy")
-  endif()
-endif()
-
 if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
   set(DMK_VECLIB_DEFINE "SCTL_HAVE_SVML")
-else()
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  # SCTL declares libmvec's vector entry points directly, and they resolve only against glibc.
   set(DMK_VECLIB_DEFINE "SCTL_HAVE_LIBMVEC")
+else()
+  set(DMK_VECLIB_DEFINE "")
 endif()
 
 # Disable google tests and HDF5 for NDA
 set(Build_Tests OFF CACHE BOOL "" FORCE)
 set(HDF5Support OFF CACHE BOOL "" FORCE)
 
-set(DMK_CXX_FLAGS "-DSCTL_MAX_DEPTH=62;-D${DMK_VECLIB_DEFINE}")
+set(DMK_CXX_FLAGS "-DSCTL_MAX_DEPTH=62")
+if (DMK_VECLIB_DEFINE)
+  list(APPEND DMK_CXX_FLAGS "-D${DMK_VECLIB_DEFINE}")
+endif()
 if (DMK_BUILD_TESTS)
   set(DMK_TEST_SRC src/doctest.cpp)
 else()
@@ -82,9 +84,11 @@ if (DMK_HAVE_OPENMP)
   find_package(OpenMP REQUIRED)
   set(DMK_OPENMP_TARGET OpenMP::OpenMP_CXX)
   list(APPEND DMK_CXX_FLAGS "-DDMK_HAVE_OPENMP")
-  set(OpenMPSupport ON CACHE BOOL "" FORCE)
+  set(OpenMPSupport ON CACHE BOOL "" FORCE) # extern/nda's own option name
+  set(FINUFFT_USE_OPENMP ON CACHE BOOL "" FORCE)
 else()
   set(OpenMPSupport OFF CACHE BOOL "" FORCE)
+  set(FINUFFT_USE_OPENMP OFF CACHE BOOL "" FORCE)
 endif()
 
 set(DMK_MPI_TARGET "")
@@ -117,9 +121,12 @@ if (DMK_GPU_OFFLOAD)
   )
 
   file(GLOB DMK_JIT_CU_SOURCES CONFIGURE_DEPENDS
-    "${PROJECT_SOURCE_DIR}/src/cuda/pt/jit_sources/*.cu")
+    "${PROJECT_SOURCE_DIR}/src/cuda/*/jit_sources/*.cu")
   file(GLOB DMK_JIT_HEADER_FILES CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/include/dmk/cuda/*_kernelargs.hpp")
+  # Device-only headers a JIT source may include that are not kernel-arg structs.
+  list(APPEND DMK_JIT_HEADER_FILES "${PROJECT_SOURCE_DIR}/include/dmk/cuda/bessel_device.hpp")
+  list(APPEND DMK_JIT_HEADER_FILES "${PROJECT_SOURCE_DIR}/include/dmk/cuda/poly_evaluators_device.hpp")
   set(DMK_JIT_EMBED_HEADERS "")
   foreach(hfile ${DMK_JIT_HEADER_FILES})
     get_filename_component(hname "${hfile}" NAME)
@@ -144,7 +151,7 @@ if (DMK_GPU_OFFLOAD)
   )
 
   list(APPEND DMK_CXX_FLAGS "-DDMK_GPU_OFFLOAD")
-  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo -Xptxas=-warn-spills")
+  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
 endif()
 
 set(DMK_CUDA_JIT_SRC
@@ -176,7 +183,20 @@ set(DMK_INCLUDES
 )
 
 include(FetchContent)
+# Vendored dependencies are archived into libdmk.a and linked into libdmk.so, so they must be built
+# static and PIC. Normal variables, so a cached BUILD_SHARED_LIBS cannot override them.
+set(BUILD_SHARED_LIBS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(FINUFFT_USE_DUCC0 ON CACHE BOOL "" FORCE)
+set(DMK_GPU_ESP_TARGET "")
+set(DMK_GPU_ESP_INTERFACE "")
+if (DMK_GPU_OFFLOAD)
+  set(FINUFFT_USE_CUDA ON CACHE BOOL "" FORCE)
+  # Kept off dmk_internal: that feeds generate_aot_kernels, which must not pull cufinufft.
+  set(DMK_GPU_ESP_TARGET finufft::cufinufft CUDA::cufft)
+  # What a consumer of libdmk.a must name itself; cufinufft is archived in (see DMK_BUNDLE_TARGETS).
+  set(DMK_GPU_ESP_INTERFACE CUDA::cufft)
+endif()
 FetchContent_Declare(
   finufft
   GIT_REPOSITORY https://github.com/flatironinstitute/finufft.git
@@ -184,6 +204,12 @@ FetchContent_Declare(
   EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(finufft)
+if (DMK_GPU_OFFLOAD)
+  # finufft builds cufinufft with CUDA_SEPARABLE_COMPILATION, leaving undefined
+  # __cudaRegisterLinkedBinary_* stubs that only an nvlink step supplies. libdmk links as CXX and
+  # libdmk.a is a plain archive, so neither would run it -- resolve them into cufinufft's own archive.
+  set_property(TARGET cufinufft PROPERTY CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+endif()
 set(DMK_ESP_TARGET finufft::finufft ducc0)
 set(DMK_ESP_SRC src/esp.cpp)
 
@@ -200,11 +226,15 @@ FetchContent_MakeAvailable(polyfit)
 add_subdirectory(extern/spdlog EXCLUDE_FROM_ALL)
 add_subdirectory(extern/doctest EXCLUDE_FROM_ALL)
 add_subdirectory(extern/nda EXCLUDE_FROM_ALL)
+set(DMK_JIT_TARGET "")
 if (DMK_USE_JIT)
   list(APPEND DMK_CXX_FLAGS "-DDMK_USE_JIT")
   set(RUFUS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(RUFUS_LINK_LLVM_SHARED ON CACHE BOOL "" FORCE)
-  set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+  # librufus.a is bundled into libdmk.a, so its libLLVM.so dependency becomes ours. RuFuS's own
+  # find_package defines the imported target in its directory scope only.
+  find_package(LLVM REQUIRED CONFIG)
+  set(DMK_JIT_TARGET LLVM)
   add_subdirectory(extern/RuFuS EXCLUDE_FROM_ALL)
 
   rufus_embed_ir_as_header(jit_kernels src/jit_kernels.cpp
@@ -212,39 +242,6 @@ if (DMK_USE_JIT)
     DEFINITIONS ${DMK_VECLIB_DEFINE}
     FROM_TARGET nda::nda_c
   )
-endif()
-
-if (DMK_BUILD_REFERENCE)
-  list(APPEND DMK_CXX_FLAGS "-DDMK_HAVE_REFERENCE")
-  file(GLOB_RECURSE DMK_REF_COMMON_SRC CONFIGURE_DEPENDS
-    "${PROJECT_SOURCE_DIR}/src/common/*.f*"
-    "${PROJECT_SOURCE_DIR}/vec-kernels/src/libkernels2.cpp")
-  add_library(dmk_ref_common OBJECT ${DMK_REF_COMMON_SRC})
-  set_target_properties(dmk_ref_common PROPERTIES POSITION_INDEPENDENT_CODE ON)
-  target_include_directories(dmk_ref_common PRIVATE
-    "${PROJECT_SOURCE_DIR}/extern/VCL/version2"
-    "${PROJECT_SOURCE_DIR}/vec-kernels/include")
-
-  file(GLOB_RECURSE DMK_REF_PDMK_SRC CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/pdmk/*.f")
-  list(REMOVE_ITEM DMK_REF_PDMK_SRC
-    "${PROJECT_SOURCE_DIR}/src/pdmk/kernelevaluation/l3dkernels_fast.f"
-    "${PROJECT_SOURCE_DIR}/src/pdmk/pdmk.f"
-    "${PROJECT_SOURCE_DIR}/src/pdmk/pdmk3.f"
-  )
-  add_library(dmk_ref_pdmk OBJECT ${DMK_REF_PDMK_SRC})
-  set_target_properties(dmk_ref_pdmk PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-  file(GLOB_RECURSE DMK_REF_BDMK_SRC CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/bdmk/*.f")
-  list(REMOVE_ITEM DMK_REF_BDMK_SRC
-    "${PROJECT_SOURCE_DIR}/src/bdmk/bdmk4.f"
-  )
-  add_library(dmk_ref_bdmk OBJECT ${DMK_REF_BDMK_SRC})
-  set_target_properties(dmk_ref_bdmk PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-  add_library(dmk_ref STATIC
-    $<TARGET_OBJECTS:dmk_ref_common>
-    $<TARGET_OBJECTS:dmk_ref_pdmk>
-    $<TARGET_OBJECTS:dmk_ref_bdmk>)
 endif()
 
 set(DMK_BOOTSTRAP_SRC src/dmk.cpp src/proxy.cpp src/tree.cpp src/logger.cpp src/util.cpp src/legeexps.cpp
@@ -288,6 +285,10 @@ target_link_libraries(dmk_bootstrap PUBLIC DMKOBJS_BOOTSTRAP)
 
 if (DMK_GPU_OFFLOAD)
   add_library(DMKOBJS_CUDA OBJECT
+              src/cuda/esp/esp_gpu.cpp
+              src/cuda/esp/short_range.cpp
+              src/cuda/esp/support.cpp
+              src/cuda/esp/sort.cu
               src/cuda/pt/state.cpp
               src/cuda/pt/tree.cpp
               src/cuda/pt/direct.cpp
@@ -300,6 +301,7 @@ if (DMK_GPU_OFFLOAD)
               src/cuda/pt/proxy2pw.cpp
               src/cuda/pt/pw2proxy.cpp
               src/cuda/pt/launchers.cpp
+              src/cuda/direct/direct_freespace.cpp
               ${DMK_CUDA_JIT_SRC}
               )
   set_target_properties(DMKOBJS_CUDA PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -314,6 +316,7 @@ if (DMK_GPU_OFFLOAD)
 
   target_link_libraries(DMKOBJS_CUDA PUBLIC
     ${DMK_GPU_TARGET}
+    ${DMK_GPU_ESP_TARGET}
     ${DMK_CUDA_JIT_TARGETS}
     ${DMK_OPENMP_TARGET}
     ${DMK_MPI_TARGET}
@@ -331,7 +334,7 @@ endif()
 # Sources rather than linked object libraries: an exported target may not name a non-exported one.
 add_library(dmk STATIC ${DMK_OBJECTS})
 add_library(dmk_shared SHARED ${DMK_OBJECTS})
-target_link_libraries(dmk_shared PRIVATE dmk_internal)
+target_link_libraries(dmk_shared PRIVATE dmk_internal ${DMK_GPU_ESP_TARGET})
 
 foreach(dmk_target dmk dmk_shared)
   set_target_properties(${dmk_target} PROPERTIES LINKER_LANGUAGE CXX)
@@ -349,15 +352,18 @@ set_target_properties(dmk_shared PROPERTIES OUTPUT_NAME dmk EXPORT_NAME dmk
   VERSION ${PROJECT_VERSION} SOVERSION ${PROJECT_VERSION_MAJOR})
 
 target_link_libraries(dmk INTERFACE ${DMK_MPI_TARGET} ${DMK_OPENMP_TARGET} ${DMK_GPU_TARGET}
-  ${DMK_CUDA_JIT_TARGETS} BLAS::BLAS)
+  ${DMK_CUDA_JIT_TARGETS} ${DMK_JIT_TARGET} ${DMK_GPU_ESP_INTERFACE} BLAS::BLAS)
 target_link_libraries(dmk_shared INTERFACE ${DMK_MPI_TARGET})
 
 set(DMK_BUNDLE_TARGETS "")
-foreach(dep finufft finufft_common ducc0 nda_c)
+foreach(dep finufft finufft_common cufinufft ducc0 nda_c rufus)
   if (TARGET ${dep})
     get_target_property(dep_type ${dep} TYPE)
     if (dep_type STREQUAL "STATIC_LIBRARY")
       list(APPEND DMK_BUNDLE_TARGETS ${dep})
+    elseif (dep_type STREQUAL "SHARED_LIBRARY")
+      message(FATAL_ERROR "${dep} is shared, so it cannot be archived into libdmk.a. "
+        "Configure with -DBUILD_SHARED_LIBS=OFF, or delete CMakeCache.txt if it holds a stale ON.")
     endif()
   endif()
 endforeach()
@@ -387,7 +393,9 @@ install(TARGETS dmk dmk_shared EXPORT dmkTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
-install(FILES include/dmk.h ${DMK_GENERATED_INCLUDE_DIR}/dmk/version.h
+# dmk.h sits at the include root, since every consumer writes #include <dmk.h>
+install(FILES include/dmk.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES ${DMK_GENERATED_INCLUDE_DIR}/dmk/version.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/dmk)
 install(FILES LICENSE THIRD_PARTY_NOTICES.md
   DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/licenses/dmk)
@@ -413,7 +421,10 @@ if (DMK_HAVE_OPENMP)
   list(APPEND DMK_PC_LIBS_PRIVATE ${OpenMP_CXX_LIBRARIES})
 endif()
 if (DMK_GPU_OFFLOAD)
-  list(APPEND DMK_PC_LIBS_PRIVATE "-L${CUDAToolkit_LIBRARY_DIR}" -lcudart -lcuda -lnvrtc)
+  list(APPEND DMK_PC_LIBS_PRIVATE "-L${CUDAToolkit_LIBRARY_DIR}" -lcudart -lcuda -lnvrtc -lcufft)
+endif()
+if (DMK_USE_JIT)
+  list(APPEND DMK_PC_LIBS_PRIVATE "-L${LLVM_LIBRARY_DIR}" -lLLVM)
 endif()
 list(APPEND DMK_PC_LIBS_PRIVATE ${BLAS_LIBRARIES})
 string(REPLACE ";" " " DMK_PC_CFLAGS "${DMK_PC_CFLAGS}")
@@ -433,6 +444,7 @@ configure_file(cmake/dmk.pc.in ${CMAKE_CURRENT_BINARY_DIR}/dmk.pc @ONLY)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/dmk.pc DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 
 if (DMK_BUILD_TESTS)
+  enable_testing()
   add_subdirectory(test)
 endif()
 

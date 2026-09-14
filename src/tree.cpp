@@ -2,10 +2,10 @@
 #include <cassert>
 #include <cmath>
 #include <dmk.h>
+#include <dmk/aot_kernels.hpp>
 #include <dmk/chebychev.hpp>
 #include <dmk/direct.hpp>
 #include <dmk/error.hpp>
-#include <dmk/fortran.h>
 #include <dmk/fourier_data.hpp>
 #include <dmk/legeexps.hpp>
 #include <dmk/logger.h>
@@ -19,6 +19,7 @@
 #include <dmk/util.hpp>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <omp.h>
 #include <sctl/profile.hpp>
 #include <unistd.h>
@@ -175,7 +176,8 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
     sctl::Profile::Toc();
 
     sctl::Profile::Tic("update_refinement", &comm_);
-    this->UpdateRefinement(r_src, params.n_per_leaf, balance21, params.use_periodic, halo);
+    this->UpdateRefinement(r_src, params.n_per_leaf, balance21,
+                           params.use_periodic ? sctl::all_periodic(DIM) : sctl::Periodicity::NONE, halo);
     sctl::Profile::Toc();
 
     sctl::Profile::Tic("get_non_halo", &comm_);
@@ -191,7 +193,7 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
     // only gets a pointer which gets re-used on Broadcast
     {
         sctl::Vector<Real> data;
-        sctl::Vector<long> count;
+        sctl::Vector<sctl::Long> count;
         this->GetData(data, count, "pdmk_src");
         r_src_sorted_owned = data;
         r_src_cnt_owned = count;
@@ -233,7 +235,8 @@ void DMKPtTree<Real, DIM>::build_tree_for_gpu(const sctl::Vector<Real> &r_src, c
     sctl::Profile::Toc();
 
     sctl::Profile::Tic("update_refinement", &comm_);
-    this->UpdateRefinement(r_src, params.n_per_leaf, balance21, params.use_periodic, halo);
+    this->UpdateRefinement(r_src, params.n_per_leaf, balance21,
+                           params.use_periodic ? sctl::all_periodic(DIM) : sctl::Periodicity::NONE, halo);
     sctl::Profile::Toc();
 
     sctl::Profile::Tic("get_non_halo", &comm_);
@@ -254,7 +257,7 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
       kernel_output_dim_trg(get_kernel_output_dim(params.n_dim, params.kernel, params.eval_trg)),
       kernel_output_dim_max(std::max(kernel_output_dim_src, kernel_output_dim_trg)),
       n_tables_up(get_table_count_up<DIM>(params.kernel)), n_tables_down(get_table_count_down<DIM>(params.kernel)),
-      n_digits(std::round(log10(1.0 / params_.eps) - 0.1)), expansion_constants(params),
+      n_digits(util::digits_from_eps(params_.eps)), expansion_constants(params),
       logger(dmk::get_logger(comm, params.log_level)), rank_logger(dmk::get_rank_logger(comm, params.log_level)) {
     debug_omit_pw = (params.debug_flags & DMK_DEBUG_OMIT_PW) || util::env_is_set("DMK_DEBUG_OMIT_PW");
     debug_omit_direct = (params.debug_flags & DMK_DEBUG_OMIT_DIRECT) || util::env_is_set("DMK_DEBUG_OMIT_DIRECT");
@@ -322,7 +325,7 @@ void DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal
     // Retrieve the sorted owned charges
     {
         sctl::Vector<Real> data;
-        sctl::Vector<long> count;
+        sctl::Vector<sctl::Long> count;
         this->GetData(data, count, "pdmk_charge");
         charge_sorted_owned = data;
         charge_cnt_owned = count;
@@ -388,6 +391,19 @@ void DMKPtTree<Real, DIM>::compute_level_indices_and_boxsizes() {
         max_depth = std::max(node_mid[i].Depth(), max_depth);
     }
     max_depth++;
+
+    // A box at depth d spans 2^-d, so a distance taken between coordinates of order one keeps
+    // only eps_machine * 2^d of relative accuracy. Past that depth the near field cannot reach
+    // the requested tolerance however the kernel is evaluated. Depth follows from the point
+    // distribution rather than from anything the caller sets directly, so this reports rather
+    // than refuses; n_per_leaf is the knob that makes the tree shallower.
+    const double coord_eps = std::numeric_limits<Real>::epsilon();
+    const int depth_supported = static_cast<int>(std::floor(std::log2(params.eps / coord_eps)));
+    if (max_depth - 1 > depth_supported)
+        logger->warn("tree reached depth {} but coordinates in this precision support only depth {} "
+                     "at eps={:.1e}; the near field will not reach that tolerance. Raise n_per_leaf "
+                     "to flatten the tree, loosen eps, or use the double-precision entry point.",
+                     max_depth - 1, depth_supported, params.eps);
 
     level_indices.ReInit(max_depth);
     boxsize.ReInit(max_depth + 1);
@@ -767,8 +783,8 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
         const long n_pw_modes_periodic = sctl::pow<DIM - 1>(n_pw_periodic) * ((n_pw_periodic + 1) / 2);
         const int n_fourier = DIM * sctl::pow<2>(n_pw_periodic / 2) + 1;
 
-        get_periodic_windowed_kernel_ft<Real, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_pw_periodic,
-                                                   boxsize[0], sigma1, fourier_data.prolate0_fun, kernel_ft);
+        get_lattice_windowed_kernel_ft<Real, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_pw_periodic,
+                                                  boxsize[0], sigma1, 0, true, fourier_data.prolate0_fun, kernel_ft);
 
         window_fourier_data.radialft.ReInit(n_pw_modes_periodic);
         util::mk_tensor_product_fourier_transform(
@@ -918,8 +934,9 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
     // AOT/JIT evaluator, so a failure there is fatal (an empty evaluator array
     // would silently corrupt results).
     if (params.kernel != DMK_YUKAWA) {
-        auto src_eval = make_evaluator_aot<Real>(params.kernel, params.eval_src, DIM, n_digits, 3);
-        auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.eval_trg, DIM, n_digits, 3);
+        const auto coeffs = get_local_correction_coeffs<Real>(params.kernel, DIM, n_digits, expansion_constants.beta);
+        auto src_eval = make_evaluator_aot<Real>(params.kernel, params.eval_src, DIM, n_digits, 3, coeffs);
+        auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.eval_trg, DIM, n_digits, 3, coeffs);
 #ifdef DMK_USE_JIT
         if (!util::env_is_set("DMK_DEBUG_FORCE_AOT")) {
             src_eval =
@@ -932,23 +949,23 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
         evaluator_by_level_src.assign(n_lvl, src_eval);
         evaluator_by_level_trg.assign(n_lvl, trg_eval);
     } else {
+        // Yukawa's coefficients depend on lambda*bsize, so they are per level and their count is not
+        // a function of the digit count. The getters dispatch on that count, which is what compiles
+        // the Horner length in rather than leaving it a dynamic loop bound.
+        constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
         for (int level = 0; level < n_lvl; ++level) {
             auto coeffs = fourier_data.local_correction_coeffs(level, n_digits);
 
-            if constexpr (DIM == 3) {
-                // 3D Yukawa: single monomial fit Q, evaluated as horner(x)*Rinv.
-                std::vector<Real> reg(coeffs.reg_poly.begin(), coeffs.reg_poly.end());
-                evaluator_by_level_src.push_back(
-                    make_evaluator_yukawa<Real>(params.eval_src, DIM, n_digits, std::move(reg)));
-            } else {
-                // 2D Yukawa: log-split fit [PA | PB], evaluated as log(r/bsize)*PA + PB.
-                const int n_log = coeffs.log_poly.size();
-                std::vector<Real> c;
-                c.insert(c.end(), coeffs.log_poly.begin(), coeffs.log_poly.end());
-                c.insert(c.end(), coeffs.reg_poly.begin(), coeffs.reg_poly.end());
-                evaluator_by_level_src.push_back(
-                    make_evaluator_yukawa<Real>(params.eval_src, DIM, n_digits, std::move(c), n_log));
-            }
+            // 3D is a single monomial fit Q evaluated as horner(x)*Rinv; 2D is the log split
+            // [PA | PB], evaluated as log(r/bsize)*PA + PB.
+            std::vector<std::vector<Real>> cf;
+            if constexpr (DIM == 2)
+                cf.emplace_back(coeffs.log_poly.begin(), coeffs.log_poly.end());
+            cf.emplace_back(coeffs.reg_poly.begin(), coeffs.reg_poly.end());
+            if constexpr (DIM == 3)
+                evaluator_by_level_src.push_back(get_yukawa_3d_kernel<Real, MaxVecLen>(params.eval_src, n_digits, cf));
+            else
+                evaluator_by_level_src.push_back(get_yukawa_2d_kernel<Real, MaxVecLen>(params.eval_src, n_digits, cf));
         }
         // FIXME: assumes the same src/trg output configuration
         evaluator_by_level_trg = evaluator_by_level_src;
@@ -1520,7 +1537,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
         const bool is_stresslet = params.kernel == DMK_STRESSLET;
         const int normal_dim = is_stresslet ? DIM : 0;
         const int direct_charge_dim = kernel_input_dim;
-        const long trg_buff_cnt = std::max(long(params.n_per_leaf), n_trg_max_);
+        const sctl::Long trg_buff_cnt = std::max(sctl::Long(params.n_per_leaf), n_trg_max_);
 
         util::StackOrHeapBuffer<Real, DIM * MAX_PTS> r_buf(DIM * params.n_per_leaf);
         util::StackOrHeapBuffer<Real, MAX_CHARGE_DIM * MAX_PTS> charge_buf(direct_charge_dim * params.n_per_leaf);

@@ -1,5 +1,7 @@
 // GPU accuracy against an all-pairs direct sum: each case requires rel_l2 < eps.
-// eval_path=GPU is single-rank only, so every case runs on a self communicator.
+// The tree path's eval_path=GPU is single-rank only, so every case runs on a self
+// communicator. The second half of the file covers the GPU brute-force direct sum itself,
+// which has no such restriction.
 
 #ifdef DMK_GPU_OFFLOAD
 
@@ -10,6 +12,7 @@
 #include <vector>
 
 #include <dmk.h>
+#include <dmk/bessel.hpp>
 #include <dmk/direct.hpp>
 #include <dmk/testing.hpp>
 #include <dmk/util.hpp>
@@ -172,6 +175,136 @@ void parity_subcases(dmk_ikernel kernel, dmk_eval_type eval, const std::string &
     SUBCASE(label_f.c_str()) { check_accuracy<float>(kernel, eval, 1e-3, fparam); }
 }
 
+dmk_error direct_sum(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
+                     const double *normal, int n_trg, const double *r_trg, double *pot_src, double *pot_trg) {
+    return pdmk_direct(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg);
+}
+dmk_error direct_sum(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
+                     const float *normal, int n_trg, const float *r_trg, float *pot_src, float *pot_trg) {
+    return pdmk_directf(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg);
+}
+
+/// GPU brute-force direct vs the CPU brute-force direct on identical inputs. Only the summation
+/// order differs, so the two agree to round-off but never bit-for-bit: assert a tolerance.
+///
+/// pot_src is requested as well as pot_trg because evaluating at the sources puts a coincident
+/// pair under every target, which both sides must drop.
+template <typename Real>
+void check_direct_parity(dmk_ikernel kernel, int n_dim, dmk_eval_type eval, double fparam, double tol) {
+    constexpr int n_src = 4000;
+    constexpr int n_trg = 1500;
+
+    const int idim = dmk::get_kernel_input_dim(n_dim, kernel);
+    const int odim = dmk::get_kernel_output_dim(n_dim, kernel, eval);
+
+    sctl::Vector<Real> r_src, r_trg, rnormal, charges;
+    dmk::util::init_test_data(n_dim, idim, n_src, n_trg, /*uniform=*/false, /*set_fixed_charges=*/false, r_src, r_trg,
+                              rnormal, charges, /*seed=*/0);
+
+    pdmk_params params;
+    params.n_dim = n_dim;
+    params.kernel = kernel;
+    params.eval_src = eval;
+    params.eval_trg = eval;
+    params.log_level = 6;
+    if (kernel == DMK_YUKAWA)
+        params.fparam = fparam;
+
+    std::vector<Real> cpu_src(std::size_t(n_src) * odim), cpu_trg(std::size_t(n_trg) * odim);
+    std::vector<Real> gpu_src(std::size_t(n_src) * odim), gpu_trg(std::size_t(n_trg) * odim);
+
+    params.eval_path = DMK_EVAL_PATH_CPU;
+    REQUIRE_MESSAGE(direct_sum(DMK_TEST_COMM_SELF, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0],
+                               cpu_src.data(), cpu_trg.data()) == DMK_SUCCESS,
+                    "CPU direct failed: ", std::string(pdmk_last_error_message()));
+
+    params.eval_path = DMK_EVAL_PATH_GPU;
+    REQUIRE_MESSAGE(direct_sum(DMK_TEST_COMM_SELF, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0],
+                               gpu_src.data(), gpu_trg.data()) == DMK_SUCCESS,
+                    "GPU direct failed: ", std::string(pdmk_last_error_message()));
+
+    const std::vector<double> ref_src(cpu_src.begin(), cpu_src.end());
+    const std::vector<double> ref_trg(cpu_trg.begin(), cpu_trg.end());
+
+    const bool has_grad = eval == DMK_POTENTIAL_GRAD;
+    const int n_lead = has_grad ? 1 : odim;
+
+    const double e_src = rel_l2(gpu_src, ref_src, odim, 0, n_lead);
+    const double e_trg = rel_l2(gpu_trg, ref_trg, odim, 0, n_lead);
+    VERBOSE_MESSAGE("direct GPU vs CPU -- src=", e_src, " trg=", e_trg, " (tol=", tol, ")");
+    CHECK(e_src < tol);
+    CHECK(e_trg < tol);
+
+    if (has_grad) {
+        const double g_src = rel_l2(gpu_src, ref_src, odim, 1, n_dim);
+        const double g_trg = rel_l2(gpu_trg, ref_trg, odim, 1, n_dim);
+        VERBOSE_MESSAGE("direct grad GPU vs CPU -- src=", g_src, " trg=", g_trg, " (tol=", tol, ")");
+        CHECK(g_src < tol);
+        CHECK(g_trg < tol);
+    }
+
+    // A mishandled coincident pair shows up as inf/NaN rather than in a norm.
+    bool all_finite = true;
+    for (Real v : gpu_src)
+        all_finite = all_finite && std::isfinite(double(v));
+    for (Real v : gpu_trg)
+        all_finite = all_finite && std::isfinite(double(v));
+    CHECK(all_finite);
+}
+
+void direct_parity_subcases(dmk_ikernel kernel, int n_dim, dmk_eval_type eval, const std::string &label,
+                            double fparam) {
+    const std::string label_d = label + " double";
+    const std::string label_f = label + " float";
+    SUBCASE(label_d.c_str()) { check_direct_parity<double>(kernel, n_dim, eval, fparam, 1e-12); }
+    SUBCASE(label_f.c_str()) { check_direct_parity<float>(kernel, n_dim, eval, fparam, 1e-5); }
+}
+
+/// 2D Yukawa is the only kernel carrying its own device transcendental
+/// (include/dmk/cuda/bessel_device.hpp). Comparing it against the CPU SIMD path alone would let a
+/// shared coefficient-table error pass, so this uses a scalar host sum over dmk::bessel::k0.
+void check_yukawa_2d_against_host_bessel(double lambda) {
+    constexpr int n_dim = 2;
+    constexpr int n_src = 600;
+    constexpr int n_trg = 200;
+
+    sctl::Vector<double> r_src, r_trg, rnormal, charges;
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, /*uniform=*/false, /*set_fixed_charges=*/false, r_src, r_trg,
+                              rnormal, charges, /*seed=*/1);
+
+    std::vector<double> ref(n_trg, 0.0);
+    for (int t = 0; t < n_trg; ++t) {
+        double acc = 0.0;
+        for (int s = 0; s < n_src; ++s) {
+            const double dx = r_trg[t * n_dim] - r_src[s * n_dim];
+            const double dy = r_trg[t * n_dim + 1] - r_src[s * n_dim + 1];
+            const double r2 = dx * dx + dy * dy;
+            if (r2 == 0.0)
+                continue;
+            acc += charges[s] * dmk::bessel::k0(std::sqrt(r2) * lambda);
+        }
+        ref[t] = acc;
+    }
+
+    pdmk_params params;
+    params.n_dim = n_dim;
+    params.kernel = DMK_YUKAWA;
+    params.eval_src = DMK_POTENTIAL;
+    params.eval_trg = DMK_POTENTIAL;
+    params.fparam = lambda;
+    params.log_level = 6;
+    params.eval_path = DMK_EVAL_PATH_GPU;
+
+    std::vector<double> gpu(n_trg);
+    REQUIRE_MESSAGE(direct_sum(DMK_TEST_COMM_SELF, params, n_src, &r_src[0], &charges[0], nullptr, n_trg, &r_trg[0],
+                               nullptr, gpu.data()) == DMK_SUCCESS,
+                    "GPU direct failed: ", std::string(pdmk_last_error_message()));
+
+    const double err = rel_l2(gpu, ref, 1, 0, 1);
+    VERBOSE_MESSAGE("2d yukawa GPU vs host K0 -- lambda=", lambda, " rel_l2=", err);
+    CHECK(err < 1e-12);
+}
+
 } // namespace
 
 TEST_CASE_GENERIC("[GPU] 3d scalar kernels parity", 1) {
@@ -202,6 +335,45 @@ TEST_CASE_GENERIC("[GPU] 3d Yukawa parity", 1) {
                 std::string(eval == DMK_POTENTIAL ? "pot" : "pot+grad") + " lambda=" + std::to_string(int(lambda));
             parity_subcases(DMK_YUKAWA, eval, label, lambda);
         }
+    }
+}
+
+TEST_CASE_GENERIC("[GPU] direct scalar kernels vs CPU direct", 1) {
+    for (int n_dim : {2, 3}) {
+        for (auto kernel : {DMK_LAPLACE, DMK_SQRT_LAPLACE, DMK_LAPLACE_DIPOLE}) {
+            for (auto eval : {DMK_POTENTIAL, DMK_POTENTIAL_GRAD}) {
+                const std::string label = std::string(dmk::util::to_string(kernel)) + " " + std::to_string(n_dim) +
+                                          "d " + (eval == DMK_POTENTIAL ? "pot" : "pot+grad");
+                direct_parity_subcases(kernel, n_dim, eval, label, 0.0);
+            }
+        }
+    }
+}
+
+TEST_CASE_GENERIC("[GPU] direct velocity kernels vs CPU direct", 1) {
+    for (auto kernel : {DMK_STOKESLET, DMK_STRESSLET})
+        direct_parity_subcases(kernel, 3, DMK_VELOCITY, std::string(dmk::util::to_string(kernel)) + " 3d", 0.0);
+}
+
+// 2D goes through the device K0/K1; small lambda drives its x <= 1 branch, large lambda the
+// asymptotic one.
+TEST_CASE_GENERIC("[GPU] direct Yukawa vs CPU direct", 1) {
+    for (int n_dim : {2, 3}) {
+        for (auto eval : {DMK_POTENTIAL, DMK_POTENTIAL_GRAD}) {
+            for (double lambda : {0.1, 6.0, 30.0}) {
+                const std::string label = std::to_string(n_dim) + "d " +
+                                          std::string(eval == DMK_POTENTIAL ? "pot" : "pot+grad") +
+                                          " lambda=" + std::to_string(lambda);
+                direct_parity_subcases(DMK_YUKAWA, n_dim, eval, label, lambda);
+            }
+        }
+    }
+}
+
+TEST_CASE_GENERIC("[GPU] direct 2d Yukawa vs host Bessel K0", 1) {
+    for (double lambda : {0.1, 1.0, 6.0, 30.0}) {
+        const std::string label = "lambda=" + std::to_string(lambda);
+        SUBCASE(label.c_str()) { check_yukawa_2d_against_host_bessel(lambda); }
     }
 }
 

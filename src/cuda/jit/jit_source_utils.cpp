@@ -147,6 +147,32 @@ std::size_t jit_source_hash(std::string_view filename) {
     return h;
 }
 
+std::size_t jit_header_hash(std::string_view header_name) {
+    static std::map<std::string, std::size_t> cache;
+    static std::mutex mtx;
+    const std::string name(header_name);
+    std::lock_guard<std::mutex> lock(mtx);
+    const auto it = cache.find(name);
+    if (it != cache.end())
+        return it->second;
+
+    const char *text = nullptr;
+    const int n = embedded_jit_header_count();
+    for (int i = 0; i < n && !text; ++i)
+        if (name == embedded_jit_header_name(i))
+            text = embedded_jit_header_source(i);
+    if (!text)
+        throw std::runtime_error("jit_header_hash: not an embedded JIT header: " + name);
+
+    std::size_t h = 1469598103934665603ULL;
+    for (const char *c = text; *c; ++c) {
+        h ^= static_cast<unsigned char>(*c);
+        h *= 1099511628211ULL;
+    }
+    cache.emplace(name, h);
+    return h;
+}
+
 SplitSource load_split_jit_source(std::string_view filename, std::string_view label) {
     const auto source_path = jit_source_path(filename);
 

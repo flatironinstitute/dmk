@@ -56,8 +56,12 @@ TuningParams autotune_config(const std::string &tune_key, const std::string &ker
 /// collapse onto it. Only valid where the extent is fixed at compile time.
 TuningParams clamp_tiles(TuningParams params, const std::vector<std::pair<const char *, int>> &tile_extents);
 
-/// Opt in to >48KB dynamic shared memory for a compiled kernel (no-op below the
-/// static limit). Must be called before launching with that shared_bytes.
+/// Static __shared__ bytes a compiled kernel uses; shares the per-block budget with the dynamic
+/// request, so the opt-in threshold has to include it.
+std::size_t static_smem(const jit::JitKernel &kernel);
+
+/// Opt in to >48KB shared memory for a compiled kernel (no-op below the static limit). Must be
+/// called before launching with that shared_bytes.
 void set_max_dynamic_smem(const jit::JitKernel &kernel, std::size_t shared_bytes);
 
 /// Properties of the current device, queried once and cached. GPU eval is

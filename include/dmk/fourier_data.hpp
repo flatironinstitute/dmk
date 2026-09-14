@@ -67,14 +67,18 @@ template <typename Real, int DIM>
 void get_difference_kernel_ft(bool init, dmk_ikernel kernel, const double *rpars, Real beta, int npw, Real boxsize,
                               Prolate0Fun &pf, sctl::Vector<Real> &windowed_kernel);
 
-// Windowed scalar-kernel FT (Laplace, Yukawa, Sqrt-Laplace; 2D and 3D) in ESP's reciprocal-lattice
-// convention, sampled on kappa = sqrt(i)*dk (dk = 2*pi/boxsize). freespace=false: periodic root-box
-// symbol (k=0 dropped for the non-screened kernels). freespace=true: the same symbol with its bare
-// Green's-function FT truncated at radius rl (Vico-Greengard) and the k=0 mode kept finite.
+// Windowed kernel FT in the reciprocal-lattice convention, sampled on kappa = sqrt(i)*dk
+// (dk = 2*pi/boxsize), used by the tree's periodic root box and by ESP. Distinct from the tree's
+// plane-wave-convention get_windowed_kernel_ft above, which samples on kappa = sqrt(i)/boxsize and
+// carries the plane-wave quadrature weight instead of the bare ghat prefactor.
+//
+// periodic=true: reciprocal-sum symbol, k=0 dropped for the non-screened kernels; rl is unused.
+// periodic=false: the same symbol with its bare Green's-function FT truncated at radius rl
+// (Vico-Greengard) and the k=0 mode kept finite.
 template <typename Real, int DIM>
-void get_periodic_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int n_pw_periodic,
-                                     Real boxsize, Real sigma1, Prolate0Fun &pf, sctl::Vector<Real> &kernel_ft,
-                                     bool freespace = false, Real rl = 0);
+void get_lattice_windowed_kernel_ft(dmk_ikernel kernel, const double *rpars, Real beta, int n_pw, Real boxsize,
+                                    Real sigma1, Real rl, bool periodic, Prolate0Fun &pf,
+                                    sctl::Vector<Real> &kernel_ft);
 
 // Real-space value at r=0 of the windowed log kernel at the given box scale (the log-kernel
 // self-interaction constant). Used by the tree's self correction and by ESP.

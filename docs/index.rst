@@ -35,5 +35,6 @@ gridpoint, even in a fully adaptive context.
    install
    math
    quickstart
+   features
    api
    refs
