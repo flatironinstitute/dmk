@@ -4,9 +4,6 @@
 [submodule "extern/spdlog"]
 	path = extern/spdlog
 	url = https://github.com/gabime/spdlog
-[submodule "extern/nanobench"]
-	path = extern/nanobench
-	url = https://github.com/martinus/nanobench
 [submodule "extern/doctest"]
 	path = extern/doctest
 	url = https://github.com/doctest/doctest
