@@ -206,11 +206,11 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
 
     sctl::Profile::Tic("broadcast_get_halo", &comm_);
     // Now grab sorted particle data with the halo, so we have it for direct evaluations
-    this->template Broadcast<Real>("pdmk_src");
-    this->template Broadcast<Real>("pdmk_charge");
+    this->Broadcast("pdmk_src");
+    this->Broadcast("pdmk_charge");
     if (params.kernel == DMK_STRESSLET) {
-        this->template Broadcast<Real>("pdmk_normal");
-        this->template Broadcast<Real>("pdmk_density");
+        this->Broadcast("pdmk_normal");
+        this->Broadcast("pdmk_density");
         this->GetData(normal_sorted_with_halo, normal_cnt_with_halo, "pdmk_normal");
         this->GetData(density_sorted_with_halo, density_cnt_with_halo, "pdmk_density");
     }
@@ -242,6 +242,8 @@ void DMKPtTree<Real, DIM>::build_tree_for_gpu(const sctl::Vector<Real> &r_src, c
     sctl::Profile::Tic("get_non_halo", &comm_);
     this->GetData(r_src_sorted_owned, r_src_cnt_owned, "pdmk_src");
     this->GetData(r_trg_sorted_owned, r_trg_cnt_owned, "pdmk_trg");
+    this->GetScatterIdx(scatter_idx_src, "pdmk_src");
+    this->GetScatterIdx(scatter_idx_trg, "pdmk_trg");
     sctl::Profile::Toc();
 
     logger->debug("gpu tree build completed");
@@ -332,11 +334,11 @@ void DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal
     }
 
     // Broadcast to halo/ghost nodes and retrieve
-    this->template Broadcast<Real>("pdmk_charge");
+    this->Broadcast("pdmk_charge");
     this->GetData(charge_sorted_with_halo, charge_cnt_with_halo, "pdmk_charge");
     if (params.kernel == DMK_STRESSLET) {
-        this->template Broadcast<Real>("pdmk_normal");
-        this->template Broadcast<Real>("pdmk_density");
+        this->Broadcast("pdmk_normal");
+        this->Broadcast("pdmk_density");
         this->GetData(normal_sorted_with_halo, normal_cnt_with_halo, "pdmk_normal");
         this->GetData(density_sorted_with_halo, density_cnt_with_halo, "pdmk_density");
     }
@@ -493,7 +495,7 @@ void DMKPtTree<Real, DIM>::broadcast_global_leaf_status() {
 
     sctl::Vector<bool> is_global_leaf_halo;
     this->AddData("is_global_leaf", is_global_leaf, counts);
-    this->template Broadcast<bool>("is_global_leaf");
+    this->Broadcast("is_global_leaf");
     this->GetData(is_global_leaf_halo, counts_dum, "is_global_leaf");
 
     long offset = 0;
@@ -742,7 +744,7 @@ void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
 
     proxy_coeffs_downward.ReInit(n_coeffs_down * n_proxy_boxes_downward);
 
-    this->template AddData<Real>("proxy_coeffs", n_coeffs_up * n_proxy_boxes_upward, counts_upward);
+    this->template AddData<Real>("proxy_coeffs", 1, counts_upward);
     this->GetData(proxy_coeffs_upward, counts_upward, "proxy_coeffs");
 
     proxy_coeffs_offsets.ReInit(n_boxes());

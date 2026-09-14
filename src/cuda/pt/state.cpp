@@ -339,8 +339,8 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree) {
     part.trg_counts = int_span(tree.trg_counts_owned);
     part.r_src_offsets = long_span(tree.r_src_offsets_owned);
     part.r_trg_offsets = long_span(tree.r_trg_offsets_owned);
-    part.scatter_index_src = long_span(tree.GetScatterIdx("pdmk_src"));
-    part.scatter_index_trg = long_span(tree.GetScatterIdx("pdmk_trg"));
+    part.scatter_index_src = long_span(tree.scatter_idx_src);
+    part.scatter_index_trg = long_span(tree.scatter_idx_trg);
     if (part.is_stresslet) {
         part.charge_offsets = long_span(tree.density_offsets_with_halo);
         part.normal_offsets = long_span(tree.normal_offsets_with_halo);

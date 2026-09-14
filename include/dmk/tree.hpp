@@ -596,6 +596,10 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> r_trg_cnt_owned;
     sctl::Vector<sctl::Long> r_trg_offsets_owned;
 
+    /// tree order -> input order, one entry per owned particle; filled by build_tree_for_gpu
+    sctl::Vector<sctl::Long> scatter_idx_src;
+    sctl::Vector<sctl::Long> scatter_idx_trg;
+
     sctl::Vector<Real> pot_src_sorted;
     sctl::Vector<sctl::Long> pot_src_cnt;
     sctl::Vector<sctl::Long> pot_src_offsets;
