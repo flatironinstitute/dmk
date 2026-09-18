@@ -65,7 +65,8 @@ endif()
 set(Build_Tests OFF CACHE BOOL "" FORCE)
 set(HDF5Support OFF CACHE BOOL "" FORCE)
 
-set(DMK_CXX_FLAGS "-DSCTL_MAX_DEPTH=62;-D${DMK_VECLIB_DEFINE}")
+set(DMK_SCTL_MAX_DEPTH 20) # 3*(20+1) = 63 bits: a 3D Morton code fits one word
+set(DMK_CXX_FLAGS "-DSCTL_MAX_DEPTH=${DMK_SCTL_MAX_DEPTH};-D${DMK_VECLIB_DEFINE}")
 if (DMK_BUILD_TESTS)
   set(DMK_TEST_SRC src/doctest.cpp)
 else()
