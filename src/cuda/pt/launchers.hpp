@@ -60,8 +60,7 @@ TuningParams clamp_tiles(TuningParams params, const std::vector<std::pair<const 
 /// static limit). Must be called before launching with that shared_bytes.
 void set_max_dynamic_smem(const jit::JitKernel &kernel, std::size_t shared_bytes);
 
-/// Properties of the current device, queried once and cached. GPU eval is
-/// single-device (single rank).
+/// Properties of the device this rank selected, queried once and cached.
 const cudaDeviceProp &device_prop();
 
 /// Max opt-in dynamic shared memory per block for the current device.

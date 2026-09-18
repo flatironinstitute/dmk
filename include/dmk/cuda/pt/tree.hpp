@@ -1,14 +1,14 @@
 #pragma once
 
 /// @file
-/// Point-tree GPU evaluator. `pt::Tree` owns a private CPU `DMKPtTree` used only
-/// for host precompute (build_tree_for_gpu / generate_metadata_for_gpu /
-/// init_planewave_data) and charge sorting, then runs its own device pipeline
-/// over a `pt::State`.
+/// Point-tree GPU evaluator. `pt::Tree` owns a `device_tree::PtTree`, which holds the nodes and
+/// moves particle data in and out, and a `DMKPtTree` that runs the host precompute over a host copy
+/// of its nodes; the device pipeline then runs over a `pt::State`.
 
 #include <memory>
 
 #include <dmk.h>
+#include <dmk/cuda/device_tree.hpp>
 #include <dmk/cuda/pt/state.hpp>
 #include <dmk/tree.hpp>
 #include <sctl.hpp>
@@ -29,7 +29,10 @@ class Tree {
 
   private:
     std::unique_ptr<DMKPtTree<Real, DIM>> tree_;
+    std::unique_ptr<device_tree::PtTree<Real, DIM>> dev_tree_;
     std::unique_ptr<State<Real, DIM>> state_;
+    sctl::Long n_src_local_ = 0;    ///< sources this rank supplied, the order update_charges is given
+    sctl::Long n_trg_local_ = 0;    ///< targets this rank supplied
 };
 
 } // namespace dmk::cuda::pt

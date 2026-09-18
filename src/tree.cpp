@@ -175,7 +175,8 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
     sctl::Profile::Toc();
 
     sctl::Profile::Tic("update_refinement", &comm_);
-    this->UpdateRefinement(r_src, params.n_per_leaf, balance21, params.use_periodic, halo);
+    const auto periodicity = params.use_periodic ? sctl::Periodicity::XYZ : sctl::Periodicity::NONE;
+    this->UpdateRefinement(r_src, params.n_per_leaf, balance21, periodicity, halo);
     sctl::Profile::Toc();
 
     sctl::Profile::Tic("get_non_halo", &comm_);
@@ -204,11 +205,11 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
 
     sctl::Profile::Tic("broadcast_get_halo", &comm_);
     // Now grab sorted particle data with the halo, so we have it for direct evaluations
-    this->template Broadcast<Real>("pdmk_src");
-    this->template Broadcast<Real>("pdmk_charge");
+    this->Broadcast("pdmk_src");
+    this->Broadcast("pdmk_charge");
     if (params.kernel == DMK_STRESSLET) {
-        this->template Broadcast<Real>("pdmk_normal");
-        this->template Broadcast<Real>("pdmk_density");
+        this->Broadcast("pdmk_normal");
+        this->Broadcast("pdmk_density");
         this->GetData(normal_sorted_with_halo, normal_cnt_with_halo, "pdmk_normal");
         this->GetData(density_sorted_with_halo, density_cnt_with_halo, "pdmk_density");
     }
@@ -220,28 +221,17 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
 }
 
 template <typename Real, int DIM>
-void DMKPtTree<Real, DIM>::build_tree_for_gpu(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &r_trg) {
-    sctl::Profile::Scoped profile("build_tree_for_gpu", &comm_);
-    logger->info("gpu tree build started");
-
-    constexpr bool balance21 = true;
-    constexpr int halo = 0;
-
-    sctl::Profile::Tic("add_particles", &comm_);
-    this->AddParticles("pdmk_src", r_src);
-    this->AddParticles("pdmk_trg", r_trg);
-    sctl::Profile::Toc();
-
-    sctl::Profile::Tic("update_refinement", &comm_);
-    this->UpdateRefinement(r_src, params.n_per_leaf, balance21, params.use_periodic, halo);
-    sctl::Profile::Toc();
-
-    sctl::Profile::Tic("get_non_halo", &comm_);
-    this->GetData(r_src_sorted_owned, r_src_cnt_owned, "pdmk_src");
-    this->GetData(r_trg_sorted_owned, r_trg_cnt_owned, "pdmk_trg");
-    sctl::Profile::Toc();
-
-    logger->debug("gpu tree build completed");
+void DMKPtTree<Real, DIM>::adopt_device_tree(sctl::Long node_begin, sctl::Long node_end) {
+    sctl::Profile::Scoped profile("adopt_device_tree", &comm_);
+    owned_node_begin = node_begin;
+    { // the owned nodes are contiguous, and the source broadcast leaves their counts unchanged
+        const auto &cnt = r_src_cnt_with_halo;
+        r_src_cnt_owned.ReInit(cnt.Dim());
+        r_src_cnt_owned.SetZero();
+        std::copy(cnt.begin() + node_begin, cnt.begin() + node_end, r_src_cnt_owned.begin() + node_begin);
+    }
+    topology_adopted = true;
+    logger->debug("adopted the device tree's {} nodes", node_mid_host.Dim());
 }
 
 template <typename Real, int DIM>
@@ -266,14 +256,10 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     if (debug_omit_direct)
         logger->debug("Ignoring direct interactions");
     if (params.eval_path == DMK_EVAL_PATH_GPU) {
-#ifdef DMK_GPU_OFFLOAD
-        // Host precompute only; the device pipeline lives in dmk::cuda::pt::Tree,
-        // which owns this tree and sorts charges onto the device itself.
-        build_tree_for_gpu(r_src, r_trg);
-        generate_metadata_for_gpu();
-#else
+#ifndef DMK_GPU_OFFLOAD
         throw std::runtime_error("DMK was built without DMK_GPU_OFFLOAD; only DMK_EVAL_PATH_CPU is available");
 #endif
+        // dmk::cuda::pt::Tree builds the device tree and calls adopt_device_tree
     } else {
         build_tree(r_src, charge, normal, r_trg);
         generate_metadata();
@@ -329,11 +315,11 @@ void DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal
     }
 
     // Broadcast to halo/ghost nodes and retrieve
-    this->template Broadcast<Real>("pdmk_charge");
+    this->Broadcast("pdmk_charge");
     this->GetData(charge_sorted_with_halo, charge_cnt_with_halo, "pdmk_charge");
     if (params.kernel == DMK_STRESSLET) {
-        this->template Broadcast<Real>("pdmk_normal");
-        this->template Broadcast<Real>("pdmk_density");
+        this->Broadcast("pdmk_normal");
+        this->Broadcast("pdmk_density");
         this->GetData(normal_sorted_with_halo, normal_cnt_with_halo, "pdmk_normal");
         this->GetData(density_sorted_with_halo, density_cnt_with_halo, "pdmk_density");
     }
@@ -477,7 +463,7 @@ void DMKPtTree<Real, DIM>::broadcast_global_leaf_status() {
 
     sctl::Vector<bool> is_global_leaf_halo;
     this->AddData("is_global_leaf", is_global_leaf, counts);
-    this->template Broadcast<bool>("is_global_leaf");
+    this->Broadcast("is_global_leaf");
     this->GetData(is_global_leaf_halo, counts_dum, "is_global_leaf");
 
     long offset = 0;
@@ -709,7 +695,10 @@ void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
     long n_proxy_boxes_upward = 0;
     long n_proxy_boxes_downward = 0;
     for (int i = 0; i < n_boxes(); ++i) {
-        if (ifpwexp[i] && src_counts_with_halo[i] > 0) {
+        // The GPU pass adds every colleague's plane wave, so a ghost held without its particles
+        // still needs the slot ReduceBroadcast fills; the CPU pass pairs only boxes with a leaf.
+        const bool has_sources = topology_adopted ? src_counts_global[i] > 0 : src_counts_with_halo[i] > 0;
+        if (ifpwexp[i] && has_sources) {
             counts_upward[i] = n_coeffs_up;
             n_proxy_boxes_upward++;
         } else {
@@ -724,10 +713,13 @@ void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
         }
     }
 
+    proxy_coeffs_counts = counts_upward;
     proxy_coeffs_downward.ReInit(n_coeffs_down * n_proxy_boxes_downward);
 
-    this->template AddData<Real>("proxy_coeffs", n_coeffs_up * n_proxy_boxes_upward, counts_upward);
-    this->GetData(proxy_coeffs_upward, counts_upward, "proxy_coeffs");
+    if (!topology_adopted) { // the GPU path keeps these on the device tree
+        this->template AddData<Real>("proxy_coeffs", 1, counts_upward);
+        this->GetData(proxy_coeffs_upward, counts_upward, "proxy_coeffs");
+    }
 
     proxy_coeffs_offsets.ReInit(n_boxes());
     proxy_coeffs_offsets_downward.ReInit(n_boxes());
@@ -1028,28 +1020,24 @@ void DMKPtTree<Real, DIM>::generate_metadata_for_gpu() {
     logger->debug("generating GPU tree traversal metadata");
     assert(
         charge_sorted_owned.Dim() == 0 && pot_src_sorted.Dim() == 0 &&
-        "generate_metadata_for_gpu expects build_tree_for_gpu (positions only) — host charge/pot arrays must be empty");
+        "generate_metadata_for_gpu expects adopt_device_tree: host charge/pot arrays must be empty");
+    assert(is_global_leaf.Dim() == (sctl::Long)n_boxes() && src_counts_global.Dim() == (sctl::Long)n_boxes() &&
+           "generate_metadata_for_gpu expects the device tree's global leaf status and source counts");
 
-    // The CPU build registers charge/normal/density/pot particle data with
-    // PtTree, which populates these per-box count vectors via GetData. The
-    // GPU build skips those registrations (the data lives on the device), so
-    // mirror the per-box source/target counts here. Single-rank: no halo
-    // exchange, so "with_halo" counts equal "owned".
-    r_src_cnt_with_halo = r_src_cnt_owned;
+    // per-box data counts; the GPU build keeps the data itself on the device
     charge_cnt_owned = r_src_cnt_owned;
-    charge_cnt_with_halo = r_src_cnt_owned;
+    charge_cnt_with_halo = r_src_cnt_with_halo;
     pot_src_cnt = r_src_cnt_owned;
     pot_trg_cnt = r_trg_cnt_owned;
     if (params.kernel == DMK_STRESSLET) {
-        normal_cnt_with_halo = r_src_cnt_owned;
-        density_cnt_with_halo = r_src_cnt_owned;
+        normal_cnt_with_halo = r_src_cnt_with_halo;
+        density_cnt_with_halo = r_src_cnt_with_halo;
     }
 
     compute_data_offsets();
     compute_level_indices_and_boxsizes();
     compute_box_centers();
     accumulate_subtree_counts();
-    broadcast_global_leaf_status();
     compute_proxy_expansion_flags();
     compute_proxy_evaluation_flags();
     build_direct_interaction_lists();
@@ -1197,7 +1185,9 @@ void DMKPtTree<Real, DIM>::init_planewave_data() {
             } else
                 pw_out_offsets[box] = -1;
         }
-        pw_out.ReInit(last_offset);
+        pw_out_size = last_offset;
+        if (!topology_adopted) // the GPU path keeps pw_out on the device
+            pw_out.ReInit(last_offset);
     }
 }
 

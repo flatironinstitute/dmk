@@ -592,6 +592,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> r_src_cnt_owned;
     sctl::Vector<sctl::Long> r_src_offsets_owned;
 
+    sctl::Long owned_node_begin = 0;  ///< first of the contiguous owned nodes (GPU path)
+
     sctl::Vector<Real> r_trg_sorted_owned;
     sctl::Vector<sctl::Long> r_trg_cnt_owned;
     sctl::Vector<sctl::Long> r_trg_offsets_owned;
@@ -629,11 +631,14 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> density_offsets_with_halo;
 
     sctl::Vector<Real> proxy_coeffs_upward;
+    sctl::Vector<sctl::Long> proxy_coeffs_counts;  ///< per-box element count
+    sctl::Vector<sctl::Long> src_counts_global;    ///< sources under each box on all ranks (GPU path)
     sctl::Vector<sctl::Long> proxy_coeffs_offsets;
     sctl::Vector<Real> proxy_coeffs_downward;
     sctl::Vector<sctl::Long> proxy_coeffs_offsets_downward;
 
     sctl::Vector<std::complex<Real>> pw_out;
+    sctl::Long pw_out_size = 0;  ///< extent of pw_out, allocated here or not
     sctl::Vector<sctl::Long> pw_out_offsets;
 
     sctl::Vector<bool> ifpwexp;
@@ -697,17 +702,35 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<Real> c2p;
     sctl::Vector<Real> p2c;
 
+    // node topology copied from the device tree by dmk::cuda::pt::Tree
+    sctl::Vector<sctl::Morton<DIM>> node_mid_host;
+    sctl::Vector<typename sctl::Tree<DIM>::NodeAttr> node_attr_host;
+    sctl::Vector<typename sctl::Tree<DIM>::NodeLists> node_lst_host;
+    bool topology_adopted = false;
+
     DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, const sctl::Vector<Real> &r_src,
               const sctl::Vector<Real> &charge, const sctl::Vector<Real> &normals, const sctl::Vector<Real> &r_trg);
 
     int n_levels() const { return level_indices.Dim(); }
     std::size_t n_boxes() const { return this->GetNodeMID().Dim(); }
 
+    // the base's topology, or the adopted copy; these hide the base's accessors
+    const sctl::Vector<sctl::Morton<DIM>> &GetNodeMID() const {
+        return topology_adopted ? node_mid_host : sctl::PtTree<Real, DIM>::GetNodeMID();
+    }
+    const sctl::Vector<typename sctl::Tree<DIM>::NodeAttr> &GetNodeAttr() const {
+        return topology_adopted ? node_attr_host : sctl::PtTree<Real, DIM>::GetNodeAttr();
+    }
+    const sctl::Vector<typename sctl::Tree<DIM>::NodeLists> &GetNodeLists() const {
+        return topology_adopted ? node_lst_host : sctl::PtTree<Real, DIM>::GetNodeLists();
+    }
+
     // Add data and refine tree
     void build_tree(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &charge,
                     const sctl::Vector<Real> &normals, const sctl::Vector<Real> &r_trg);
 
-    void build_tree_for_gpu(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &r_trg);
+    /// Use the device tree's nodes; this rank owns [node_begin, node_end).
+    void adopt_device_tree(sctl::Long node_begin, sctl::Long node_end);
 
     // Metadata generation subroutines
     void compute_data_offsets();

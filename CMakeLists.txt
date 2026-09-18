@@ -301,8 +301,17 @@ if (DMK_GPU_OFFLOAD)
               src/cuda/pt/proxy2pw.cpp
               src/cuda/pt/pw2proxy.cpp
               src/cuda/pt/launchers.cpp
+              src/cuda/device_tree.cu
               ${DMK_CUDA_JIT_SRC}
               )
+  # the one unit nvcc compiles; the rest is host-compiled with NVRTC-built kernels
+  set_source_files_properties(src/cuda/device_tree.cu PROPERTIES LANGUAGE CUDA)
+  target_compile_options(DMKOBJS_CUDA PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
+    $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fopenmp>)
+  if (NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set_target_properties(DMKOBJS_CUDA PROPERTIES CUDA_ARCHITECTURES native)
+  endif()
   set_target_properties(DMKOBJS_CUDA PROPERTIES POSITION_INDEPENDENT_CODE ON)
   target_include_directories(DMKOBJS_CUDA PUBLIC
     ${DMK_INCLUDES}

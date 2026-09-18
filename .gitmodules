@@ -1,6 +1,6 @@
 [submodule "extern/SCTL"]
 	path = extern/SCTL
-	url = https://github.com/blackwer/SCTL
+	url = https://github.com/dmalhotra/SCTL
 [submodule "extern/spdlog"]
 	path = extern/spdlog
 	url = https://github.com/gabime/spdlog

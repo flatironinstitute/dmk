@@ -199,9 +199,9 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     }
 
     dmk::cuda::DirectByBoxArgs<Real> a_src = base;
-    a_src.r_target_flat = s.particles.d_r_src.data();
-    a_src.r_target_offsets = s.particles.d_r_src_offsets.data();
-    a_src.target_counts = s.particles.d_src_counts.data();
+    a_src.r_target_flat = s.particles.d_r_src_owned.data();
+    a_src.r_target_offsets = s.particles.d_r_src_offsets_owned.data();
+    a_src.target_counts = s.particles.d_src_counts_owned.data();
     a_src.pot_flat = s.outputs.d_pot_direct_src.data();
     a_src.pot_offsets = s.outputs.d_pot_src_offsets.data();
 
