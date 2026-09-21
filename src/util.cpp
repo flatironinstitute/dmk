@@ -1,6 +1,5 @@
 #include <dmk.h>
 #include <dmk/chebychev.hpp>
-#include <dmk/fortran.h>
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
 

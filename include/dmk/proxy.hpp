@@ -1,8 +1,6 @@
 #ifndef DMK_PROXY_HPP
 #define DMK_PROXY_HPP
 
-#include <dmk/fortran.h>
-
 #include <complex>
 #include <dmk/types.hpp>
 #include <sctl.hpp>

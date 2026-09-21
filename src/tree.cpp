@@ -2,10 +2,10 @@
 #include <cassert>
 #include <cmath>
 #include <dmk.h>
+#include <dmk/aot_kernels.hpp>
 #include <dmk/chebychev.hpp>
 #include <dmk/direct.hpp>
 #include <dmk/error.hpp>
-#include <dmk/fortran.h>
 #include <dmk/fourier_data.hpp>
 #include <dmk/legeexps.hpp>
 #include <dmk/logger.h>
@@ -19,14 +19,53 @@
 #include <dmk/util.hpp>
 #include <filesystem>
 #include <fstream>
+#include <limits>
+#include <map>
+#include <mutex>
 #include <omp.h>
 #include <sctl/profile.hpp>
+#include <tuple>
 #include <unistd.h>
 
 #include <dmk/nvtx_wrapper.h>
 #include <dmk/omp_wrapper.hpp>
 
 namespace dmk {
+
+namespace {
+
+/// Identifies a configuration whose precomputed tables are interchangeable: everything
+/// `build_shared_precompute` builds depends on these values and on nothing about where the
+/// particles are. `n_levels` stands in for `boxsize`, which is just 2^-L per level.
+using PrecomputeKey = std::tuple<int, int, int, int, double, double, double, int, int, int, int, int>;
+
+/// The tables themselves. Held for the life of the process, so views into them never dangle.
+template <typename Real, int DIM>
+struct PrecomputeEntry {
+    sctl::Vector<Real> c2p, p2c;
+    sctl::Vector<Real> w0, w0_grad; ///< self-interaction constants, one per level
+    FourierData<Real> fourier;
+    typename DMKPtTree<Real, DIM>::LevelFourierData window;
+    std::vector<typename DMKPtTree<Real, DIM>::LevelFourierData> difference;
+};
+
+/// Re-point `dst` at `src`'s storage instead of copying it: the plane-wave tables run to several
+/// megabytes, which is the same order as the cost of rebuilding them.
+template <typename T>
+void bind_view(sctl::Vector<T> &dst, sctl::Vector<T> &src) {
+    sctl::Vector<T> view(src.Dim(), src.begin(), false);
+    dst.Swap(view);
+}
+
+template <typename LFD>
+void bind_view_levels(LFD &dst, LFD &src) {
+    bind_view(dst.poly2pw, src.poly2pw);
+    bind_view(dst.pw2poly, src.pw2poly);
+    bind_view(dst.radialft, src.radialft);
+    bind_view(dst.wpwshift, src.wpwshift);
+}
+
+} // namespace
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::dump(const std::string &prefix) const {
@@ -54,7 +93,7 @@ void DMKPtTree<Real, DIM>::dump(const std::string &prefix) const {
     };
 
     sctl::Vector<bool> is_ghost(n_boxes());
-    const auto &node_attr = this->GetNodeAttr();
+    const auto &node_attr = box_attr();
     for (int i = 0; i < n_boxes(); ++i)
         is_ghost[i] = node_attr[i].Ghost;
 
@@ -63,7 +102,7 @@ void DMKPtTree<Real, DIM>::dump(const std::string &prefix) const {
         is_leaf[i] = node_attr[i].Leaf;
 
     sctl::Vector<sctl::Morton<DIM>> morton_ids(n_boxes());
-    const auto node_mid = this->GetNodeMID();
+    const auto node_mid = box_mid();
     for (int i = 0; i < n_boxes(); ++i)
         morton_ids[i] = node_mid[i];
 
@@ -175,7 +214,8 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
     sctl::Profile::Toc();
 
     sctl::Profile::Tic("update_refinement", &comm_);
-    this->UpdateRefinement(r_src, params.n_per_leaf, balance21, params.use_periodic, halo);
+    this->UpdateRefinement(r_src, params.n_per_leaf, balance21,
+                           params.use_periodic ? sctl::all_periodic(DIM) : sctl::Periodicity::NONE, halo);
     sctl::Profile::Toc();
 
     sctl::Profile::Tic("get_non_halo", &comm_);
@@ -191,7 +231,7 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
     // only gets a pointer which gets re-used on Broadcast
     {
         sctl::Vector<Real> data;
-        sctl::Vector<long> count;
+        sctl::Vector<sctl::Long> count;
         this->GetData(data, count, "pdmk_src");
         r_src_sorted_owned = data;
         r_src_cnt_owned = count;
@@ -204,11 +244,11 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
 
     sctl::Profile::Tic("broadcast_get_halo", &comm_);
     // Now grab sorted particle data with the halo, so we have it for direct evaluations
-    this->template Broadcast<Real>("pdmk_src");
-    this->template Broadcast<Real>("pdmk_charge");
+    this->Broadcast("pdmk_src");
+    this->Broadcast("pdmk_charge");
     if (params.kernel == DMK_STRESSLET) {
-        this->template Broadcast<Real>("pdmk_normal");
-        this->template Broadcast<Real>("pdmk_density");
+        this->Broadcast("pdmk_normal");
+        this->Broadcast("pdmk_density");
         this->GetData(normal_sorted_with_halo, normal_cnt_with_halo, "pdmk_normal");
         this->GetData(density_sorted_with_halo, density_cnt_with_halo, "pdmk_density");
     }
@@ -220,28 +260,17 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
 }
 
 template <typename Real, int DIM>
-void DMKPtTree<Real, DIM>::build_tree_for_gpu(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &r_trg) {
-    sctl::Profile::Scoped profile("build_tree_for_gpu", &comm_);
-    logger->info("gpu tree build started");
-
-    constexpr bool balance21 = true;
-    constexpr int halo = 0;
-
-    sctl::Profile::Tic("add_particles", &comm_);
-    this->AddParticles("pdmk_src", r_src);
-    this->AddParticles("pdmk_trg", r_trg);
-    sctl::Profile::Toc();
-
-    sctl::Profile::Tic("update_refinement", &comm_);
-    this->UpdateRefinement(r_src, params.n_per_leaf, balance21, params.use_periodic, halo);
-    sctl::Profile::Toc();
-
-    sctl::Profile::Tic("get_non_halo", &comm_);
-    this->GetData(r_src_sorted_owned, r_src_cnt_owned, "pdmk_src");
-    this->GetData(r_trg_sorted_owned, r_trg_cnt_owned, "pdmk_trg");
-    sctl::Profile::Toc();
-
-    logger->debug("gpu tree build completed");
+void DMKPtTree<Real, DIM>::adopt_device_tree(sctl::Long node_begin, sctl::Long node_end) {
+    sctl::Profile::Scoped profile("adopt_device_tree", &comm_);
+    owned_node_begin = node_begin;
+    { // the owned nodes are contiguous, and the source broadcast leaves their counts unchanged
+        const auto &cnt = r_src_cnt_with_halo;
+        r_src_cnt_owned.ReInit(cnt.Dim());
+        r_src_cnt_owned.SetZero();
+        std::copy(cnt.begin() + node_begin, cnt.begin() + node_end, r_src_cnt_owned.begin() + node_begin);
+    }
+    topology_adopted = true;
+    logger->debug("adopted the device tree's {} nodes", node_mid_host.Dim());
 }
 
 template <typename Real, int DIM>
@@ -254,7 +283,7 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
       kernel_output_dim_trg(get_kernel_output_dim(params.n_dim, params.kernel, params.eval_trg)),
       kernel_output_dim_max(std::max(kernel_output_dim_src, kernel_output_dim_trg)),
       n_tables_up(get_table_count_up<DIM>(params.kernel)), n_tables_down(get_table_count_down<DIM>(params.kernel)),
-      n_digits(std::round(log10(1.0 / params_.eps) - 0.1)), expansion_constants(params),
+      n_digits(util::digits_from_eps(params_.eps)), expansion_constants(params),
       logger(dmk::get_logger(comm, params.log_level)), rank_logger(dmk::get_rank_logger(comm, params.log_level)) {
     debug_omit_pw = (params.debug_flags & DMK_DEBUG_OMIT_PW) || util::env_is_set("DMK_DEBUG_OMIT_PW");
     debug_omit_direct = (params.debug_flags & DMK_DEBUG_OMIT_DIRECT) || util::env_is_set("DMK_DEBUG_OMIT_DIRECT");
@@ -266,14 +295,10 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     if (debug_omit_direct)
         logger->debug("Ignoring direct interactions");
     if (params.eval_path == DMK_EVAL_PATH_GPU) {
-#ifdef DMK_GPU_OFFLOAD
-        // Host precompute only; the device pipeline lives in dmk::cuda::pt::Tree,
-        // which owns this tree and sorts charges onto the device itself.
-        build_tree_for_gpu(r_src, r_trg);
-        generate_metadata_for_gpu();
-#else
+#ifndef DMK_GPU_OFFLOAD
         throw std::runtime_error("DMK was built without DMK_GPU_OFFLOAD; only DMK_EVAL_PATH_CPU is available");
 #endif
+        // dmk::cuda::pt::Tree builds the device tree and calls adopt_device_tree
     } else {
         build_tree(r_src, charge, normal, r_trg);
         generate_metadata();
@@ -322,18 +347,18 @@ void DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal
     // Retrieve the sorted owned charges
     {
         sctl::Vector<Real> data;
-        sctl::Vector<long> count;
+        sctl::Vector<sctl::Long> count;
         this->GetData(data, count, "pdmk_charge");
         charge_sorted_owned = data;
         charge_cnt_owned = count;
     }
 
     // Broadcast to halo/ghost nodes and retrieve
-    this->template Broadcast<Real>("pdmk_charge");
+    this->Broadcast("pdmk_charge");
     this->GetData(charge_sorted_with_halo, charge_cnt_with_halo, "pdmk_charge");
     if (params.kernel == DMK_STRESSLET) {
-        this->template Broadcast<Real>("pdmk_normal");
-        this->template Broadcast<Real>("pdmk_density");
+        this->Broadcast("pdmk_normal");
+        this->Broadcast("pdmk_density");
         this->GetData(normal_sorted_with_halo, normal_cnt_with_halo, "pdmk_normal");
         this->GetData(density_sorted_with_halo, density_cnt_with_halo, "pdmk_density");
     }
@@ -344,7 +369,7 @@ void DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::compute_data_offsets() {
     sctl::Profile::Scoped profile("compute_data_offsets", &comm_);
-    const auto &node_mid = this->GetNodeMID();
+    const auto &node_mid = box_mid();
     r_src_offsets_with_halo.ReInit(n_boxes());
     r_src_offsets_owned.ReInit(n_boxes());
     r_trg_offsets_owned.ReInit(n_boxes());
@@ -359,14 +384,29 @@ void DMKPtTree<Real, DIM>::compute_data_offsets() {
         pot_trg_offsets[0] = charge_offsets_owned[0] = charge_offsets_with_halo[0] = normal_offsets_with_halo[0] =
             density_offsets_with_halo[0] = 0;
 
-    for (int i = 1; i < n_boxes(); ++i) {
-        r_src_offsets_owned[i] = r_src_offsets_owned[i - 1] + DIM * r_src_cnt_owned[i - 1];
-        r_src_offsets_with_halo[i] = r_src_offsets_with_halo[i - 1] + DIM * r_src_cnt_with_halo[i - 1];
-        r_trg_offsets_owned[i] = r_trg_offsets_owned[i - 1] + DIM * r_trg_cnt_owned[i - 1];
-        pot_src_offsets[i] = pot_src_offsets[i - 1] + kernel_output_dim_src * pot_src_cnt[i - 1];
-        pot_trg_offsets[i] = pot_trg_offsets[i - 1] + kernel_output_dim_trg * pot_trg_cnt[i - 1];
-        charge_offsets_owned[i] = charge_offsets_owned[i - 1] + n_tables_up * charge_cnt_owned[i - 1];
-        charge_offsets_with_halo[i] = charge_offsets_with_halo[i - 1] + n_tables_up * charge_cnt_with_halo[i - 1];
+    // Seven independent running sums over the same boxes. Splitting one of them needs a two-pass
+    // scan, which is not worth it for a chain this short; running all seven at once is.
+    const int n_box = n_boxes();
+    const auto scan = [n_box](sctl::Vector<sctl::Long> &out, const sctl::Vector<sctl::Long> &cnt, long stride) {
+        for (int i = 1; i < n_box; ++i)
+            out[i] = out[i - 1] + stride * cnt[i - 1];
+    };
+#pragma omp parallel sections
+    {
+#pragma omp section
+        scan(r_src_offsets_owned, r_src_cnt_owned, DIM);
+#pragma omp section
+        scan(r_src_offsets_with_halo, r_src_cnt_with_halo, DIM);
+#pragma omp section
+        scan(r_trg_offsets_owned, r_trg_cnt_owned, DIM);
+#pragma omp section
+        scan(pot_src_offsets, pot_src_cnt, kernel_output_dim_src);
+#pragma omp section
+        scan(pot_trg_offsets, pot_trg_cnt, kernel_output_dim_trg);
+#pragma omp section
+        scan(charge_offsets_owned, charge_cnt_owned, n_tables_up);
+#pragma omp section
+        scan(charge_offsets_with_halo, charge_cnt_with_halo, n_tables_up);
     }
 
     if (params.kernel == DMK_STRESSLET) {
@@ -380,14 +420,62 @@ void DMKPtTree<Real, DIM>::compute_data_offsets() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::compute_level_indices_and_boxsizes() {
     sctl::Profile::Scoped profile("compute_level_indices_and_boxsizes", &comm_);
-    const auto &node_mid = this->GetNodeMID();
-    level_indices.ReInit(SCTL_MAX_DEPTH);
+    const auto &node_mid = box_mid();
+    const int n_box = n_boxes();
+    constexpr int n_depth = SCTL_MAX_DEPTH + 1; // Depth() runs 0..SCTL_MAX_DEPTH inclusive
+    level_indices.ReInit(n_depth);
+
+    // Counting sort rather than PushBack per box: each thread histograms its own contiguous range
+    // of boxes, and the per-thread starting slots are laid out in that same order, so every level
+    // still comes out in increasing box order.
+    const int n_thread = std::max(1, omp_get_max_threads());
+    std::vector<int> slot((std::size_t)n_thread * n_depth, 0);
+#pragma omp parallel num_threads(n_thread)
+    {
+        const int t = omp_get_thread_num();
+        const int lo = (int)((long)n_box * t / n_thread);
+        const int hi = (int)((long)n_box * (t + 1) / n_thread);
+        int *const h = &slot[(std::size_t)t * n_depth];
+        for (int i = lo; i < hi; ++i)
+            h[node_mid[i].Depth()]++;
+    }
     uint8_t max_depth = 0;
-    for (int i = 0; i < n_boxes(); ++i) {
-        level_indices[node_mid[i].Depth()].PushBack(i);
-        max_depth = std::max(node_mid[i].Depth(), max_depth);
+    for (int d = 0; d < n_depth; ++d) {
+        int acc = 0;
+        for (int t = 0; t < n_thread; ++t) {
+            const int n = slot[(std::size_t)t * n_depth + d];
+            slot[(std::size_t)t * n_depth + d] = acc;
+            acc += n;
+        }
+        level_indices[d].ReInit(acc);
+        if (acc)
+            max_depth = d;
     }
     max_depth++;
+#pragma omp parallel num_threads(n_thread)
+    {
+        const int t = omp_get_thread_num();
+        const int lo = (int)((long)n_box * t / n_thread);
+        const int hi = (int)((long)n_box * (t + 1) / n_thread);
+        int *const at = &slot[(std::size_t)t * n_depth];
+        for (int i = lo; i < hi; ++i) {
+            const int d = node_mid[i].Depth();
+            level_indices[d][at[d]++] = i;
+        }
+    }
+
+    // A box at depth d spans 2^-d, so a distance taken between coordinates of order one keeps
+    // only eps_machine * 2^d of relative accuracy. Past that depth the near field cannot reach
+    // the requested tolerance however the kernel is evaluated. Depth follows from the point
+    // distribution rather than from anything the caller sets directly, so this reports rather
+    // than refuses; n_per_leaf is the knob that makes the tree shallower.
+    const double coord_eps = std::numeric_limits<Real>::epsilon();
+    const int depth_supported = static_cast<int>(std::floor(std::log2(params.eps / coord_eps)));
+    if (max_depth - 1 > depth_supported)
+        logger->warn("tree reached depth {} but coordinates in this precision support only depth {} "
+                     "at eps={:.1e}; the near field will not reach that tolerance. Raise n_per_leaf "
+                     "to flatten the tree, loosen eps, or use the double-precision entry point.",
+                     max_depth - 1, depth_supported, params.eps);
 
     level_indices.ReInit(max_depth);
     boxsize.ReInit(max_depth + 1);
@@ -400,7 +488,7 @@ template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::compute_box_centers() {
     sctl::Profile::Scoped profile("compute_box_centers", &comm_);
 
-    const auto &node_mid = this->GetNodeMID();
+    const auto &node_mid = box_mid();
     centers.ReInit(n_boxes() * DIM);
     Real scale = 1.0;
     for (int i_level = 0; i_level < n_levels(); ++i_level) {
@@ -416,37 +504,46 @@ void DMKPtTree<Real, DIM>::compute_box_centers() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::accumulate_subtree_counts() {
     sctl::Profile::Scoped profile("accumulate_subtree_counts", &comm_);
-    const auto &node_mid = this->GetNodeMID();
-    const auto &node_lists = this->GetNodeLists();
+    const auto &node_lists = box_lists();
     src_counts_with_halo.ReInit(n_boxes());
-    src_counts_with_halo.SetZero();
     src_counts_owned.ReInit(n_boxes());
-    src_counts_owned.SetZero();
     trg_counts_owned.ReInit(n_boxes());
-    trg_counts_owned.SetZero();
+    constexpr int n_children = 1 << DIM;
 
-    n_trg_max_ = 0;
+    // Pull from the children instead of pushing to the parent: a subtree count is the box's own
+    // count plus its children's, and those are final once the level below is done. Siblings share a
+    // parent, so the pushing form cannot be parallelised within a level, while this one can.
+    sctl::Long trg_max = 0;
     for (int i_level = n_levels() - 1; i_level >= 0; --i_level) {
-        for (auto i_node : level_indices[i_level]) {
-            src_counts_with_halo[i_node] += r_src_cnt_with_halo[i_node];
-            src_counts_owned[i_node] += r_src_cnt_owned[i_node];
-            trg_counts_owned[i_node] += r_trg_cnt_owned[i_node];
-            n_trg_max_ = std::max(r_trg_cnt_owned[i_node], n_trg_max_);
-
-            const int parent = node_lists[i_node].parent;
-            if (parent != -1) {
-                src_counts_with_halo[parent] += src_counts_with_halo[i_node];
-                src_counts_owned[parent] += src_counts_owned[i_node];
-                trg_counts_owned[parent] += trg_counts_owned[i_node];
+        const auto &lvl = level_indices[i_level];
+        const int n_lvl = lvl.Dim();
+#pragma omp parallel for schedule(static) reduction(max : trg_max)
+        for (int idx = 0; idx < n_lvl; ++idx) {
+            const int i_node = lvl[idx];
+            sctl::Long src_halo = r_src_cnt_with_halo[i_node];
+            sctl::Long src_own = r_src_cnt_owned[i_node];
+            sctl::Long trg_own = r_trg_cnt_owned[i_node];
+            for (int i_child = 0; i_child < n_children; ++i_child) {
+                const int child = node_lists[i_node].child[i_child];
+                if (child < 0)
+                    continue;
+                src_halo += src_counts_with_halo[child];
+                src_own += src_counts_owned[child];
+                trg_own += trg_counts_owned[child];
             }
+            src_counts_with_halo[i_node] = src_halo;
+            src_counts_owned[i_node] = src_own;
+            trg_counts_owned[i_node] = trg_own;
+            trg_max = std::max(r_trg_cnt_owned[i_node], trg_max);
         }
     }
+    n_trg_max_ = trg_max;
 }
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::gather_owned_source_positions() {
     sctl::Profile::Scoped profile("gather_owned_source_positions", &comm_);
-    const auto &node_attr = this->GetNodeAttr();
+    const auto &node_attr = box_attr();
     r_src_sorted_owned.ReInit(DIM * src_counts_owned[0]);
     r_src_offsets_owned.ReInit(n_boxes());
     r_src_offsets_owned[0] = 0;
@@ -463,8 +560,8 @@ void DMKPtTree<Real, DIM>::gather_owned_source_positions() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::broadcast_global_leaf_status() {
     sctl::Profile::Scoped profile("broadcast_global_leaf_status", &comm_);
-    const auto &node_attr = this->GetNodeAttr();
-    const auto &node_lists = this->GetNodeLists();
+    const auto &node_attr = box_attr();
+    const auto &node_lists = box_lists();
     is_global_leaf.ReInit(n_boxes());
     is_global_leaf.SetZero();
     for (int box = 0; box < n_boxes(); ++box)
@@ -477,7 +574,7 @@ void DMKPtTree<Real, DIM>::broadcast_global_leaf_status() {
 
     sctl::Vector<bool> is_global_leaf_halo;
     this->AddData("is_global_leaf", is_global_leaf, counts);
-    this->template Broadcast<bool>("is_global_leaf");
+    this->Broadcast("is_global_leaf");
     this->GetData(is_global_leaf_halo, counts_dum, "is_global_leaf");
 
     long offset = 0;
@@ -494,11 +591,13 @@ void DMKPtTree<Real, DIM>::broadcast_global_leaf_status() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::compute_proxy_expansion_flags() {
     sctl::Profile::Scoped profile("compute_proxy_expansion_flags", &comm_);
-    const auto &node_lists = this->GetNodeLists();
+    const auto &node_lists = box_lists();
     ifpwexp.ReInit(n_boxes());
     ifpwexp.SetZero();
     ifpwexp[0] = true;
 
+    // Independent per box, and every write is `true`, so ifpwexp[0] above cannot be lost.
+#pragma omp parallel for schedule(static)
     for (int box = 0; box < n_boxes(); ++box) {
         if (!is_global_leaf[box]) {
             ifpwexp[box] = true;
@@ -519,12 +618,18 @@ void DMKPtTree<Real, DIM>::compute_proxy_expansion_flags() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::compute_proxy_evaluation_flags() {
     sctl::Profile::Scoped profile("compute_proxy_evaluation_flags", &comm_);
-    const auto &node_lists = this->GetNodeLists();
+    const auto &node_lists = box_lists();
     iftensprodeval.ReInit(n_boxes());
     iftensprodeval.SetZero();
 
+    // Independent within a level: a box writes only its own flag and its own children's, and no box
+    // has two parents. Levels stay ordered, because a box set from above at level L may be
+    // overwritten when level L+1 reaches it -- which is what the serial sweep does too.
     for (const auto &level_boxes : level_indices) {
-        for (auto box : level_boxes) {
+        const int n_lvl = level_boxes.Dim();
+#pragma omp parallel for schedule(static)
+        for (int idx = 0; idx < n_lvl; ++idx) {
+            const int box = level_boxes[idx];
             if (!(ifpwexp[box] && (src_counts_owned[box] + trg_counts_owned[box])))
                 continue;
 
@@ -552,7 +657,7 @@ void DMKPtTree<Real, DIM>::compute_proxy_evaluation_flags() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_plane_wave_interaction_lists() {
     sctl::Profile::Scoped profile("build_plane_wave_interaction_lists", &comm_);
-    const auto &node_lists = this->GetNodeLists();
+    const auto &node_lists = box_lists();
     nlistpw_.resize(n_boxes());
     listpw_.resize(n_boxes());
 
@@ -591,9 +696,9 @@ static std::array<int, DIM> compute_periodic_shift_from_slot(int k, Real bsize, 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_direct_interaction_lists() {
     sctl::Profile::Scoped profile("build_direct_interaction_lists", &comm_);
-    const auto &node_mid = this->GetNodeMID();
-    const auto &node_attr = this->GetNodeAttr();
-    const auto &node_lists = this->GetNodeLists();
+    const auto &node_mid = box_mid();
+    const auto &node_attr = box_attr();
+    const auto &node_lists = box_lists();
     list1_.resize(n_boxes());
     nlist1_.assign(n_boxes(), 0);
     list1_shift_.resize(n_boxes());
@@ -664,9 +769,10 @@ void DMKPtTree<Real, DIM>::build_direct_interaction_lists() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_upward_pass_work_lists() {
     sctl::Profile::Scoped profile("build_upward_pass_work_lists", &comm_);
-    const auto &node_lists = this->GetNodeLists();
+    const auto &node_lists = box_lists();
     has_proxy_from_children.ReInit(n_boxes());
     charge2proxy_groups.clear();
+    charge2proxy_groups.reserve(n_boxes());
 
     for (int i_level = n_levels() - 1; i_level >= 0; --i_level) {
         for (auto i_box : level_indices[i_level]) {
@@ -709,7 +815,10 @@ void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
     long n_proxy_boxes_upward = 0;
     long n_proxy_boxes_downward = 0;
     for (int i = 0; i < n_boxes(); ++i) {
-        if (ifpwexp[i] && src_counts_with_halo[i] > 0) {
+        // The GPU pass adds every colleague's plane wave, so a ghost held without its particles
+        // still needs the slot ReduceBroadcast fills; the CPU pass pairs only boxes with a leaf.
+        const bool has_sources = topology_adopted ? src_counts_global[i] > 0 : src_counts_with_halo[i] > 0;
+        if (ifpwexp[i] && has_sources) {
             counts_upward[i] = n_coeffs_up;
             n_proxy_boxes_upward++;
         } else {
@@ -724,10 +833,13 @@ void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
         }
     }
 
+    proxy_coeffs_counts = counts_upward;
     proxy_coeffs_downward.ReInit(n_coeffs_down * n_proxy_boxes_downward);
 
-    this->template AddData<Real>("proxy_coeffs", n_coeffs_up * n_proxy_boxes_upward, counts_upward);
-    this->GetData(proxy_coeffs_upward, counts_upward, "proxy_coeffs");
+    if (!topology_adopted) { // the GPU path keeps these on the device tree
+        this->template AddData<Real>("proxy_coeffs", 1, counts_upward);
+        this->GetData(proxy_coeffs_upward, counts_upward, "proxy_coeffs");
+    }
 
     proxy_coeffs_offsets.ReInit(n_boxes());
     proxy_coeffs_offsets_downward.ReInit(n_boxes());
@@ -754,8 +866,70 @@ void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
 }
 
 template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::build_shared_precompute() {
+    sctl::Profile::Scoped profile("shared_precompute", &comm_);
+    static std::mutex mtx;
+    static std::map<PrecomputeKey, PrecomputeEntry<Real, DIM>> cache;
+
+    const PrecomputeKey key{static_cast<int>(params.kernel),
+                            static_cast<int>(params.eval_src),
+                            DIM,
+                            params.use_periodic ? 1 : 0,
+                            params.eps,
+                            params.fparam,
+                            expansion_constants.beta,
+                            expansion_constants.n_order,
+                            expansion_constants.n_pw_win,
+                            expansion_constants.n_pw_diff,
+                            expansion_constants.n_pw_periodic,
+                            n_levels()};
+
+    std::lock_guard<std::mutex> lock(mtx);
+    const auto [it, fresh] = cache.try_emplace(key);
+    auto &entry = it->second;
+    if (fresh) { // build into the members as before, then hand the storage to the cache
+        std::tie(c2p, p2c) = dmk::chebyshev::get_c2p_p2c_matrices<Real>(DIM, expansion_constants.n_order);
+        fourier_data =
+            FourierData<Real>(params.kernel, DIM, params.eps, expansion_constants.n_pw_win,
+                              expansion_constants.n_pw_diff, params.fparam, expansion_constants.beta, boxsize);
+        precompute_window_difference_data();
+        { // one call per level, and each is expensive enough to dominate the metadata pass
+            const int n_lvl = n_levels() + 1;
+            entry.w0.ReInit(n_lvl);
+            for (int i = 0; i < n_lvl; ++i)
+                entry.w0[i] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i, boxsize[i]);
+            if (params.kernel == DMK_LAPLACE_DIPOLE && params.eval_src >= DMK_POTENTIAL_GRAD) {
+                entry.w0_grad.ReInit(n_lvl);
+                for (int i = 0; i < n_lvl; ++i)
+                    entry.w0_grad[i] =
+                        get_dipole_grad_self_constant<Real, DIM>(fourier_data, params.kernel, i, boxsize[i]);
+            }
+        }
+        entry.c2p.Swap(c2p);
+        entry.p2c.Swap(p2c);
+        entry.fourier = fourier_data;
+        entry.window = std::move(window_fourier_data);
+        entry.difference = std::move(difference_fourier_data);
+    }
+
+    // FourierData is scalars, kernel parameters and the prolate function -- cheap to copy, and its
+    // constructor is what costs. The tables are shared rather than copied.
+    fourier_data = entry.fourier;
+    bind_view(c2p, entry.c2p);
+    bind_view(p2c, entry.p2c);
+    bind_view(self_w0, entry.w0);
+    bind_view(self_w0_grad, entry.w0_grad);
+    bind_view_levels(window_fourier_data, entry.window);
+    difference_fourier_data.resize(entry.difference.size());
+    for (std::size_t i = 0; i < entry.difference.size(); ++i)
+        bind_view_levels(difference_fourier_data[i], entry.difference[i]);
+}
+
+template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
-    sctl::Profile::Scoped profile("precompute_window_difference_data", &comm_);
+    // No Profile scope here: this runs only on a build_shared_precompute miss, and a scope that
+    // appears in some reps but not others shifts every following column of the profile CSV, whose
+    // header is emitted once. build_shared_precompute brackets it.
     sctl::Vector<Real> kernel_ft;
 
     if (params.use_periodic) {
@@ -767,8 +941,8 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
         const long n_pw_modes_periodic = sctl::pow<DIM - 1>(n_pw_periodic) * ((n_pw_periodic + 1) / 2);
         const int n_fourier = DIM * sctl::pow<2>(n_pw_periodic / 2) + 1;
 
-        get_periodic_windowed_kernel_ft<Real, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_pw_periodic,
-                                                   boxsize[0], sigma1, fourier_data.prolate0_fun, kernel_ft);
+        get_lattice_windowed_kernel_ft<Real, DIM>(params.kernel, &params.fparam, fourier_data.beta(), n_pw_periodic,
+                                                  boxsize[0], sigma1, 0, true, fourier_data.prolate0_fun, kernel_ft);
 
         window_fourier_data.radialft.ReInit(n_pw_modes_periodic);
         util::mk_tensor_product_fourier_transform(
@@ -825,18 +999,25 @@ void DMKPtTree<Real, DIM>::precompute_window_difference_data() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_direct_work_lists() {
     sctl::Profile::Scoped profile("build_direct_work_lists", &comm_);
-    const auto &node_attr = this->GetNodeAttr();
+    const auto &node_attr = box_attr();
+
+    // Predicate in parallel, compaction serial (one pass over a byte per box), so the
+    // append order -- and hence the sort input -- is unchanged.
+    std::vector<char> keep(n_boxes());
+#pragma omp parallel for schedule(static)
+    for (int i_box = 0; i_box < (int)n_boxes(); ++i_box)
+        keep[i_box] = (is_global_leaf[i_box] && !node_attr[i_box].Ghost && nlist1_[i_box] > 0 &&
+                       src_counts_owned[i_box] + trg_counts_owned[i_box] > 0);
 
     direct_work.clear();
     direct_work.reserve(n_boxes());
-    for (int i_box = 0; i_box < n_boxes(); ++i_box) {
-        if (is_global_leaf[i_box] && !node_attr[i_box].Ghost && nlist1_[i_box] > 0 &&
-            src_counts_owned[i_box] + trg_counts_owned[i_box] > 0)
+    for (int i_box = 0; i_box < (int)n_boxes(); ++i_box)
+        if (keep[i_box])
             direct_work.push_back(i_box);
-    }
 
     std::vector<std::pair<long, int>> est_work(direct_work.size());
-    for (int i = 0; i < direct_work.size(); ++i) {
+#pragma omp parallel for schedule(static)
+    for (int i = 0; i < (int)direct_work.size(); ++i) {
         const int box = direct_work[i];
         long src = 0;
         for (auto j : list1(box))
@@ -889,9 +1070,11 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
     // iftensprodeval leaf; child must be a real, non-empty box.
     {
         constexpr int n_children = 1u << DIM;
-        const auto &node_mid_local = this->GetNodeMID();
-        const auto &node_lists_local = this->GetNodeLists();
+        const auto &node_mid_local = box_mid();
+        const auto &node_lists_local = box_lists();
         tensorprod_pairs_per_level.assign(n_levels(), {});
+        for (int L = 0; L < n_levels(); ++L)
+            tensorprod_pairs_per_level[L].reserve(level_indices[L].Dim());
         for (int b = 0; b < n_boxes(); ++b) {
             const int nboxpts = src_counts_owned[b] + trg_counts_owned[b];
             if (!ifpwexp[b] || !nboxpts || iftensprodeval[b])
@@ -918,8 +1101,9 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
     // AOT/JIT evaluator, so a failure there is fatal (an empty evaluator array
     // would silently corrupt results).
     if (params.kernel != DMK_YUKAWA) {
-        auto src_eval = make_evaluator_aot<Real>(params.kernel, params.eval_src, DIM, n_digits, 3);
-        auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.eval_trg, DIM, n_digits, 3);
+        const auto coeffs = get_local_correction_coeffs<Real>(params.kernel, DIM, n_digits, expansion_constants.beta);
+        auto src_eval = make_evaluator_aot<Real>(params.kernel, params.eval_src, DIM, n_digits, 3, coeffs);
+        auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.eval_trg, DIM, n_digits, 3, coeffs);
 #ifdef DMK_USE_JIT
         if (!util::env_is_set("DMK_DEBUG_FORCE_AOT")) {
             src_eval =
@@ -932,23 +1116,23 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
         evaluator_by_level_src.assign(n_lvl, src_eval);
         evaluator_by_level_trg.assign(n_lvl, trg_eval);
     } else {
+        // Yukawa's coefficients depend on lambda*bsize, so they are per level and their count is not
+        // a function of the digit count. The getters dispatch on that count, which is what compiles
+        // the Horner length in rather than leaving it a dynamic loop bound.
+        constexpr int MaxVecLen = sctl::DefaultVecLen<Real>();
         for (int level = 0; level < n_lvl; ++level) {
             auto coeffs = fourier_data.local_correction_coeffs(level, n_digits);
 
-            if constexpr (DIM == 3) {
-                // 3D Yukawa: single monomial fit Q, evaluated as horner(x)*Rinv.
-                std::vector<Real> reg(coeffs.reg_poly.begin(), coeffs.reg_poly.end());
-                evaluator_by_level_src.push_back(
-                    make_evaluator_yukawa<Real>(params.eval_src, DIM, n_digits, std::move(reg)));
-            } else {
-                // 2D Yukawa: log-split fit [PA | PB], evaluated as log(r/bsize)*PA + PB.
-                const int n_log = coeffs.log_poly.size();
-                std::vector<Real> c;
-                c.insert(c.end(), coeffs.log_poly.begin(), coeffs.log_poly.end());
-                c.insert(c.end(), coeffs.reg_poly.begin(), coeffs.reg_poly.end());
-                evaluator_by_level_src.push_back(
-                    make_evaluator_yukawa<Real>(params.eval_src, DIM, n_digits, std::move(c), n_log));
-            }
+            // 3D is a single monomial fit Q evaluated as horner(x)*Rinv; 2D is the log split
+            // [PA | PB], evaluated as log(r/bsize)*PA + PB.
+            std::vector<std::vector<Real>> cf;
+            if constexpr (DIM == 2)
+                cf.emplace_back(coeffs.log_poly.begin(), coeffs.log_poly.end());
+            cf.emplace_back(coeffs.reg_poly.begin(), coeffs.reg_poly.end());
+            if constexpr (DIM == 3)
+                evaluator_by_level_src.push_back(get_yukawa_3d_kernel<Real, MaxVecLen>(params.eval_src, n_digits, cf));
+            else
+                evaluator_by_level_src.push_back(get_yukawa_2d_kernel<Real, MaxVecLen>(params.eval_src, n_digits, cf));
         }
         // FIXME: assumes the same src/trg output configuration
         evaluator_by_level_trg = evaluator_by_level_src;
@@ -957,19 +1141,15 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::build_self_correction_work_list() {
-    const auto &node_mid = this->GetNodeMID();
-    const int n_lvl = n_levels() + 1;
-    std::vector<Real> w0(n_lvl);
-    for (int i = 0; i < n_lvl; ++i)
-        w0[i] = get_self_interaction_constant<Real, DIM>(fourier_data, params.kernel, i, boxsize[i]);
-
+    sctl::Profile::Scoped profile("build_self_correction_work_list", &comm_);
+    const auto &node_mid = box_mid();
+    // self_w0/self_w0_grad come from the shared precompute: one value per level, and computing them
+    // cost more than everything else in the metadata pass put together.
+    const auto &w0 = self_w0;
+    const auto &w0_grad = self_w0_grad;
     // The dipole factor is a gradient correction applied at component offset 1, and is
     // read only by the GPU path -- correct_for_self_interactions recomputes its own.
     const bool dipole_grad = params.kernel == DMK_LAPLACE_DIPOLE && params.eval_src >= DMK_POTENTIAL_GRAD;
-    std::vector<Real> w0_grad(n_lvl);
-    if (dipole_grad)
-        for (int i = 0; i < n_lvl; ++i)
-            w0_grad[i] = get_dipole_grad_self_constant<Real, DIM>(fourier_data, params.kernel, i, boxsize[i]);
 
     self_correction_work.resize(direct_work.size());
 #pragma omp parallel for schedule(static)
@@ -1012,10 +1192,7 @@ void DMKPtTree<Real, DIM>::generate_metadata() {
     build_direct_work_lists();
     allocate_proxy_coefficients();
     proxy_down_zeroed.resize(n_boxes());
-    std::tie(c2p, p2c) = dmk::chebyshev::get_c2p_p2c_matrices<Real>(DIM, expansion_constants.n_order);
-    fourier_data = FourierData<Real>(params.kernel, DIM, params.eps, expansion_constants.n_pw_win,
-                                     expansion_constants.n_pw_diff, params.fparam, expansion_constants.beta, boxsize);
-    precompute_window_difference_data();
+    build_shared_precompute();
     build_evaluators();
     build_self_correction_work_list();
 
@@ -1026,42 +1203,38 @@ template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::generate_metadata_for_gpu() {
     sctl::Profile::Scoped profile("generate_metadata_for_gpu", &comm_);
     logger->debug("generating GPU tree traversal metadata");
-    assert(
-        charge_sorted_owned.Dim() == 0 && pot_src_sorted.Dim() == 0 &&
-        "generate_metadata_for_gpu expects build_tree_for_gpu (positions only) — host charge/pot arrays must be empty");
+    assert(charge_sorted_owned.Dim() == 0 && pot_src_sorted.Dim() == 0 &&
+           "generate_metadata_for_gpu expects adopt_device_tree: host charge/pot arrays must be empty");
+    assert(is_global_leaf.Dim() == (sctl::Long)n_boxes() && src_counts_global.Dim() == (sctl::Long)n_boxes() &&
+           "generate_metadata_for_gpu expects the device tree's global leaf status and source counts");
 
-    // The CPU build registers charge/normal/density/pot particle data with
-    // PtTree, which populates these per-box count vectors via GetData. The
-    // GPU build skips those registrations (the data lives on the device), so
-    // mirror the per-box source/target counts here. Single-rank: no halo
-    // exchange, so "with_halo" counts equal "owned".
-    r_src_cnt_with_halo = r_src_cnt_owned;
+    // per-box data counts; the GPU build keeps the data itself on the device
     charge_cnt_owned = r_src_cnt_owned;
-    charge_cnt_with_halo = r_src_cnt_owned;
+    charge_cnt_with_halo = r_src_cnt_with_halo;
     pot_src_cnt = r_src_cnt_owned;
     pot_trg_cnt = r_trg_cnt_owned;
     if (params.kernel == DMK_STRESSLET) {
-        normal_cnt_with_halo = r_src_cnt_owned;
-        density_cnt_with_halo = r_src_cnt_owned;
+        normal_cnt_with_halo = r_src_cnt_with_halo;
+        density_cnt_with_halo = r_src_cnt_with_halo;
     }
 
     compute_data_offsets();
     compute_level_indices_and_boxsizes();
-    compute_box_centers();
+    if (!device_metadata)
+        compute_box_centers();
     accumulate_subtree_counts();
-    broadcast_global_leaf_status();
     compute_proxy_expansion_flags();
     compute_proxy_evaluation_flags();
-    build_direct_interaction_lists();
+    if (!device_metadata)
+        build_direct_interaction_lists();
     build_upward_pass_work_lists();
-    build_direct_work_lists();
+    if (!device_metadata)
+        build_direct_work_lists();
     allocate_proxy_coefficients();
-    std::tie(c2p, p2c) = dmk::chebyshev::get_c2p_p2c_matrices<Real>(DIM, expansion_constants.n_order);
-    fourier_data = FourierData<Real>(params.kernel, DIM, params.eps, expansion_constants.n_pw_win,
-                                     expansion_constants.n_pw_diff, params.fparam, expansion_constants.beta, boxsize);
-    precompute_window_difference_data();
+    build_shared_precompute();
     build_evaluators();
-    build_self_correction_work_list();
+    if (!device_metadata)
+        build_self_correction_work_list();
 
     logger->debug("done generating GPU tree traversal metadata");
 }
@@ -1101,7 +1274,7 @@ void DMKPtTree<Real, DIM>::cpu_upward_pass() {
     proxy_coeffs_upward = 0;
 
     constexpr int n_children = 1u << DIM;
-    const auto &node_lists = this->GetNodeLists();
+    const auto &node_lists = box_lists();
     sctl::Profile::Toc();
 
     {
@@ -1179,6 +1352,7 @@ void DMKPtTree<Real, DIM>::cpu_upward_pass() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::init_planewave_data() {
+    sctl::Profile::Scoped profile("init_planewave_data", &comm_);
     // Only care about diff, windowed is in a temp data structure
     const int n_pw = expansion_constants.n_pw_diff;
     const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
@@ -1197,7 +1371,9 @@ void DMKPtTree<Real, DIM>::init_planewave_data() {
             } else
                 pw_out_offsets[box] = -1;
         }
-        pw_out.ReInit(last_offset);
+        pw_out_size = last_offset;
+        if (!topology_adopted) // the GPU path keeps pw_out on the device
+            pw_out.ReInit(last_offset);
     }
 }
 
@@ -1212,7 +1388,7 @@ void DMKPtTree<Real, DIM>::form_outgoing_expansions() {
     const int n_pw_modes_diff = sctl::pow<DIM - 1>(n_pw_diff) * ((n_pw_diff + 1) / 2);
     const int n_pw_per_box_win = n_pw_modes_win * n_tables_down;
     const int n_pw_per_box_diff = n_pw_modes_diff * n_tables_down;
-    const auto &node_mid = this->GetNodeMID();
+    const auto &node_mid = box_mid();
 
     auto pw_view = [](int n_pw, int n_tables, auto &pw_vec) {
         if constexpr (DIM == 2)
@@ -1339,8 +1515,8 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
     const int n_pw_diff = expansion_constants.n_pw_diff;
     const int n_pw_modes = expansion_constants.n_exp_modes_diff;
     const int n_pw_per_box = n_pw_modes * n_tables_down;
-    const auto &node_lists = this->GetNodeLists();
-    const auto &node_attr = this->GetNodeAttr();
+    const auto &node_lists = box_lists();
+    const auto &node_attr = box_attr();
     const Real sc = 2.0 / boxsize;
     const bool grad_kernel = params.kernel == DMK_LAPLACE || params.kernel == DMK_LAPLACE_DIPOLE ||
                              params.kernel == DMK_YUKAWA || params.kernel == DMK_SQRT_LAPLACE;
@@ -1445,16 +1621,14 @@ void DMKPtTree<Real, DIM>::correct_for_self_interactions() {
     sctl::Profile::Scoped profile("correct_for_self");
 
     // LAPLACE_DIPOLE has a gradient self-correction (w0_grad on the grad
-    // components) rather than the scalar potential correction the other kernels
-    // use, so it takes a separate path and recomputes w0_grad locally.
+    // components) rather than the scalar potential correction the other kernels use, so it takes a
+    // separate path. self_w0_grad is filled under exactly this condition by the shared precompute;
+    // this used to rebuild it here, once per thread, on every eval.
     if (params.kernel == DMK_LAPLACE_DIPOLE) {
         if (params.eval_src < DMK_POTENTIAL_GRAD)
             return;
-        const auto &node_mid = this->GetNodeMID();
-        const int n_lvl = n_levels() + 1;
-        std::vector<Real> w0_grad(n_lvl);
-        for (int i = 0; i < n_lvl; ++i)
-            w0_grad[i] = get_dipole_grad_self_constant<Real, DIM>(fourier_data, params.kernel, i, boxsize[i]);
+        const auto &node_mid = box_mid();
+        const auto &w0_grad = self_w0_grad;
 #pragma omp for schedule(dynamic)
         for (int idx = 0; idx < direct_work.size(); ++idx) {
             const int trg_box = direct_work[idx];
@@ -1494,9 +1668,9 @@ void DMKPtTree<Real, DIM>::correct_for_self_interactions() {
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
     sctl::Profile::Scoped profile("evaluate_direct_interactions", &comm_);
-    const auto &node_attr = this->GetNodeAttr();
-    const auto &node_mid = this->GetNodeMID();
-    const auto &node_lists = this->GetNodeLists();
+    const auto &node_attr = box_attr();
+    const auto &node_mid = box_mid();
+    const auto &node_lists = box_lists();
 
     // For PBC: precompute the periodic shift for each (trg_box, nbr_index) pair.
     // The nbr array index k encodes a direction (dx,dy,dz) ∈ {-1,0,+1}^DIM.
@@ -1520,7 +1694,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
         const bool is_stresslet = params.kernel == DMK_STRESSLET;
         const int normal_dim = is_stresslet ? DIM : 0;
         const int direct_charge_dim = kernel_input_dim;
-        const long trg_buff_cnt = std::max(long(params.n_per_leaf), n_trg_max_);
+        const sctl::Long trg_buff_cnt = std::max(sctl::Long(params.n_per_leaf), n_trg_max_);
 
         util::StackOrHeapBuffer<Real, DIM * MAX_PTS> r_buf(DIM * params.n_per_leaf);
         util::StackOrHeapBuffer<Real, MAX_CHARGE_DIM * MAX_PTS> charge_buf(direct_charge_dim * params.n_per_leaf);
@@ -1794,7 +1968,7 @@ MPI_TEST_CASE("[DMK] 3D: Proxy charges on upward pass, 2 ranks", 2) {
         tree_single.GetParticleData(pot_trg_single, "pdmk_pot_trg");
 
         sleep(test_rank);
-        auto &node_mid = tree.GetNodeMID();
+        auto &node_mid = tree.box_mid();
         for (int ibox = 0; ibox < tree.n_boxes(); ++ibox) {
             std::array<double, 3> x, x_single;
             for (int i = 0; i < 3; ++i)

@@ -72,8 +72,16 @@ int resident_blocks_per_sm(std::size_t shared_bytes, int block_size) {
     return std::max(1, std::min(by_shared, p.maxThreadsPerMultiProcessor / block_size));
 }
 
+std::size_t static_smem(const jit::JitKernel &kernel) {
+    int bytes = 0;
+    if (cuFuncGetAttribute(&bytes, CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, kernel.function()) != CUDA_SUCCESS)
+        return 0;
+    return std::size_t(bytes);
+}
+
 void set_max_dynamic_smem(const jit::JitKernel &kernel, std::size_t shared_bytes) {
-    if (shared_bytes <= 48 * 1024)
+    // The 48 KiB default budget covers static and dynamic shared together.
+    if (shared_bytes + static_smem(kernel) <= 48 * 1024)
         return;
     const CUresult res = cuFuncSetAttribute(kernel.function(), CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
                                             static_cast<int>(shared_bytes));

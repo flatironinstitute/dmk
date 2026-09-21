@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-Exploratory visualization of measure_error_esp output, and calibration of the
+Exploratory visualization of `measure_error --solver esp` output, and calibration of the
 requested->effective tolerance curves.
 
 For each (kernel, dim) it plots achieved accuracy (-log10 relative L2) against the
-requested digits, for potential and force. The key output is a conservative LOWER
+requested digits, for potential and gradient. The key output is a conservative LOWER
 ENVELOPE per metric: a line achieved >= a*digits + b that lies beneath *every* point
 (all r_c), so it is a guaranteed floor. Inverting it gives the minimal tolerance to
 request to reach a target accuracy -- i.e. the fewest digits for the most guaranteed
-digits. The force envelope is what feeds esp_grad_eps() in include/dmk/esp.hpp; the
+digits. The gradient envelope is what feeds esp_grad_eps() in include/dmk/esp.hpp; the
 potential envelope should sit near y=x ("what you ask is what you get").
 
 To CALIBRATE (map requested -> achieved rawly), run the sweep with the derivative
 bump disabled so requested digits == internal resolution:
-    DMK_ESP_NO_GRAD_BUMP=1 ./examples/measure_error_esp -k all -d 0 > raw.csv
+    DMK_ESP_NO_GRAD_BUMP=1 ./examples/measure_error --solver esp -g -k all -d 0 > raw.csv
     python scripts/analyze_esp_error.py raw.csv
-Run WITHOUT the env var to validate that the baked-in bump makes force meet target.
+Run WITHOUT the env var to validate that the baked-in bump makes the gradient meet target.
 
 Usage:
     python scripts/analyze_esp_error.py results.csv
@@ -33,7 +33,9 @@ def load(path):
     data = []
     with open(path) as f:
         lines = [ln for ln in f if ln.strip() and not ln.startswith("#")]
-    for r in csv.DictReader(lines):
+    # Rows are padded for readability, so fields (and the header names) carry leading blanks;
+    # skipinitialspace strips both. pandas users want read_csv(..., comment='#', skipinitialspace=True).
+    for r in csv.DictReader(lines, skipinitialspace=True):
         try:
             data.append(
                 dict(
@@ -41,12 +43,19 @@ def load(path):
                     dim=int(r["dim"]),
                     digits=int(r["digits"]),
                     r_c=float(r["r_c"]),
-                    pot_l2=float(r["pot_l2"]),
-                    force_l2=float(r["force_l2"]),
+                    pot_l2=float(r["L2_rel"]),
+                    grad_l2=float(r["grad_L2_rel"]),
                 )
             )
         except ValueError:
             continue  # FAILED rows
+        except KeyError as e:
+            # The gradient columns only exist when the sweep was run with -g, and the
+            # gradient envelope is the whole point of this script.
+            raise SystemExit(
+                f"{path}: missing column {e}. Re-run the sweep with -g:\n"
+                "    DMK_ESP_NO_GRAD_BUMP=1 ./examples/measure_error --solver esp -g -k all -d 0 > raw.csv"
+            )
     return data
 
 
@@ -105,7 +114,7 @@ def main():
         ax = axes[i // ncol][i % ncol]
         rows = [r for r in data if r["kernel"] == kernel and r["dim"] == dim]
 
-        for metric, color, label in (("pot_l2", "tab:blue", "pot"), ("force_l2", "tab:red", "force")):
+        for metric, color, label in (("pot_l2", "tab:blue", "pot"), ("grad_l2", "tab:red", "grad")):
             # every (r_c, digit) point -- the envelope must sit beneath all of them
             dd = np.array([r["digits"] for r in rows], float)
             aa = np.array([achieved(r[metric]) for r in rows], float)

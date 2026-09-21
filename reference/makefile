@@ -6,8 +6,8 @@
 #FC = gfortran
 
 CC = icx
-CXX = icpx
-FC = ifx
+CXX = icpc
+FC = ifort
 
 CLINK = -lstdc++
 FLINK = $(CLINK)
@@ -22,7 +22,6 @@ CFLAGS= -fPIC -O3 -march=native -funroll-loops -std=c99
 CXXFLAGS= -std=c++17 -DSCTL_PROFILE=-1 -fPIC -O3 -march=native -funroll-loops
 #-fsanitize=address -g -rdynamic
 
-FAST_KER = ON
 ifeq ($(FAST_KER),ON)
   CXXFLAGS= -std=c++17 -DSCTL_PROFILE=-1 -DSCTL_HAVE_SVML -fPIC -O3 -march=native -funroll-loops
 # gcc flags
@@ -103,20 +102,18 @@ DYLIBS += $(LBLAS) $(LDBLASINC)
 # vectorized kernel directory
 SRCDIR = ./vec-kernels/src
 INCDIR = ./vec-kernels/include
-VCLDIR = ./extern/VCL/version2
+VCLDIR = ../extern/VCL/version2
 #
 # objects to compile
 # 
 # Common objects
-COM = src/common
+COM = common
 COMOBJS = $(COM)/prini_new.o \
 	$(COM)/hkrand.o \
 	$(COM)/dlaran.o \
 	$(COM)/cumsum.o \
 	$(COM)/fmmcommon2d.o \
 	$(COM)/lapack_f77.o \
-	$(COM)/voltab2d.o \
-	$(COM)/voltab3d.o \
 	$(COM)/specialfunctions/calck0.o \
 	$(COM)/specialfunctions/calck1.o \
 	$(COM)/specialfunctions/besk0.o \
@@ -142,10 +139,10 @@ COMOBJS = $(COM)/prini_new.o \
 	$(COM)/tensor_prod_routs.o
 
 
-COMOBJS+= $(SRCDIR)/libkernels2.o
+COMOBJS+= $(SRCDIR)/libkernels.o
 
 # point DMK objects
-PDMK = src/pdmk
+PDMK = pdmk
 PDMKOBJS = $(PDMK)/lndiv.o \
 	$(PDMK)/lndiv_fast.o \
 	$(PDMK)/kernelevaluation/y2dkernels.o \
@@ -159,19 +156,18 @@ PDMKOBJS = $(PDMK)/lndiv.o \
 	$(PDMK)/kernel_FT.o \
 	$(PDMK)/stokes_kernel_FT.o \
 	$(PDMK)/pdmk_pwrouts.o \
-	$(PDMK)/pdmk4.o 
+	$(PDMK)/pdmk.o 
 
 # Test objects
 OBJS = $(COMOBJS) $(PDMKOBJS)
 
 
 
-.PHONY: usage lib install test-static test-dyn python test-dipole
-.PHONY: test-l3d-laplace-dipole-pdmk
+.PHONY: usage lib install test-static test-dyn python 
 
 default: usage
 
-$(SRCDIR)/libkernels2.o: $(SRCDIR)/libkernels2.cpp
+$(SRCDIR)/libkernels.o: $(SRCDIR)/libkernels.cpp
 		$(CXX) $(CXXFLAGS) -I$(VCLDIR) -I$(INCDIR) -c $^ -o $@
 
 usage:
@@ -182,7 +178,6 @@ usage:
 	@echo "  make lib - compile the main library (in lib/ and lib-static/)"
 	@echo "  make test-static - compile and run validation tests"
 	@echo "  make test-dyn - test successful installation by validation tests linked to dynamic library"
-	@echo "  make test-dipole - compile and run 3D Laplace dipole validation test"
 	@echo "  make objclean - removal all object files, preserving lib"
 	@echo "  make clean - also remove lib and demo executables"
 	@echo ""
@@ -246,14 +241,6 @@ test-dyn: $(DYNAMICLIB)  test/pdmk-dyn
 test/pdmk-static:
 	$(FC) $(FFLAGS) test/pdmk/testpdmk.f -o test/pdmk/int2-pdmk lib-static/$(STATICLIB) $(LIBS) 
 
-test-dipole: test-l3d-laplace-dipole-pdmk
-
-test-l3d-laplace-dipole-pdmk: test/pdmk/test_l3d_laplace_dipole_pdmk
-	test/pdmk/test_l3d_laplace_dipole_pdmk
-
-test/pdmk/test_l3d_laplace_dipole_pdmk: $(STATICLIB) test/pdmk/test_l3d_laplace_dipole_pdmk.f
-	$(FC) $(FFLAGS) test/pdmk/test_l3d_laplace_dipole_pdmk.f -o test/pdmk/test_l3d_laplace_dipole_pdmk lib-static/$(STATICLIB) $(LIBS)
-
 #
 # Linking test files to dynamic libraries
 #
@@ -268,7 +255,6 @@ test/pdmk-dyn:
 clean: objclean
 	rm -f lib-static/*.a lib/*.so
 	rm -f test/pdmk/int2-pdmk
-	rm -f test/pdmk/test_l3d_laplace_dipole_pdmk
 	rm -f test/bdmk/int2-bdmk
 
 objclean: 

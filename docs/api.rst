@@ -1,8 +1,9 @@
 C API reference
 ===============
 
-The public interface is the C header ``include/dmk.h``. This page is generated from that
-header via Doxygen and Breathe, so it stays in sync with the source.
+The public interface is the C header ``dmk.h`` (``include/dmk.h`` in the source tree), included
+as ``#include <dmk.h>``. This page is generated from that header via Doxygen and Breathe, so it
+stays in sync with the source.
 
 Every double-precision entry point has a single-precision counterpart suffixed with ``f``
 (e.g. ``pdmk_tree_create`` / ``pdmk_tree_createf``). Only the double-precision forms are
@@ -46,6 +47,14 @@ Tree lifecycle
 
 .. doxygenfunction:: pdmk
 
+Direct summation
+----------------
+
+Brute-force evaluation with no tree and no approximation, used as the reference for
+validating a tree solve. See :doc:`features` for the combinations it implements.
+
+.. doxygenfunction:: pdmk_direct
+
 Profiling
 ---------
 
@@ -55,8 +64,9 @@ ESP: Ewald summation with prolates
 ----------------------------------
 
 DMK includes an experimental periodic (and free-space) electrostatics solver based on
-prolate spheroidal wave functions. Particles lie in the cubic box
-:math:`[-L/2,\, L/2)^{n}`.
+prolate spheroidal wave functions. Particles lie in the unit box
+:math:`[0,\, 1)^{n}`, the same convention as the tree path. Evaluation is at the sources
+only, with a single ``eval_type``; see :doc:`features` for the supported combinations.
 
 .. doxygenstruct:: pdmk_esp_params
    :members:

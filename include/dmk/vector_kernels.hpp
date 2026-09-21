@@ -18,6 +18,8 @@
 #include <dmk/util.hpp>
 
 #include <cassert>
+#include <cmath>
+#include <limits>
 #include <sctl.hpp>
 #include <stdexcept>
 
@@ -1477,7 +1479,10 @@ void laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Rea
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
     const int eval_level = (EVAL_LEVEL > 0) ? EVAL_LEVEL : eval_level_rt;
-    const int transform_poly = n_digits < 6;
+    // Worth doing only while the polynomial is short. Past roughly six digits it has enough
+    // work of its own to cover the rsqrt latency, and moving the rsqrt off the front of the
+    // dependency chain stops buying anything.
+    int transform_poly = n_digits < 6;
 
     Real coeffs_mod[64];
     if (transform_poly) {
@@ -1490,9 +1495,23 @@ void laplace_3d_poly_all_pairs(int eval_level_rt, int n_digits_rt, Real rsc, Rea
         for (int i = 0; i < n_coeffs; ++i)
             for (int j = n_coeffs - 1; j > i; --j)
                 coeffs_mod_d[j - 1] += cen * coeffs_mod_d[j];
+
+        // cen is -1/rsc, so coefficient j of the r-form is rsc^j times a quantity that does not
+        // depend on rsc: the fold costs no accuracy at any depth, and the Horner evaluation at
+        // r ~ 1/rsc takes the scaling back out. What it does spend is exponent range, and the
+        // coefficients are held in Real. Deep enough trees push rsc^(n_coeffs-1) past what Real
+        // represents, so the mapped-variable form is used from there on.
+        double coeff_max = 0.0;
         for (int i = 0; i < n_coeffs; ++i)
-            coeffs_mod[i] = coeffs_mod_d[i];
-        coeffs = coeffs_mod;
+            coeff_max = std::max(coeff_max, std::abs(coeffs_mod_d[i]));
+        constexpr double headroom = 256.0;
+        if (coeff_max * headroom > double(std::numeric_limits<Real>::max())) {
+            transform_poly = 0;
+        } else {
+            for (int i = 0; i < n_coeffs; ++i)
+                coeffs_mod[i] = coeffs_mod_d[i];
+            coeffs = coeffs_mod;
+        }
     }
 
     LaplacePolyEvaluator3D<Real, MaxVecLen> evaluator{thresh2,  d2max,          rsc,       cen, coeffs, n_coeffs,
@@ -1518,7 +1537,10 @@ void laplace_3d_poly_all_pairs_ranges(int eval_level_rt, int n_digits_rt, Real r
     const int n_digits = is_static ? N_DIGITS : n_digits_rt;
     const int n_coeffs = is_static ? N_COEFFS : n_coeffs_rt_0;
     const int eval_level = (EVAL_LEVEL > 0) ? EVAL_LEVEL : eval_level_rt;
-    const int transform_poly = n_digits < 6;
+    // Worth doing only while the polynomial is short. Past roughly six digits it has enough
+    // work of its own to cover the rsqrt latency, and moving the rsqrt off the front of the
+    // dependency chain stops buying anything.
+    int transform_poly = n_digits < 6;
 
     Real coeffs_mod[64];
     if (transform_poly) {
@@ -1531,9 +1553,23 @@ void laplace_3d_poly_all_pairs_ranges(int eval_level_rt, int n_digits_rt, Real r
         for (int i = 0; i < n_coeffs; ++i)
             for (int j = n_coeffs - 1; j > i; --j)
                 coeffs_mod_d[j - 1] += cen * coeffs_mod_d[j];
+
+        // cen is -1/rsc, so coefficient j of the r-form is rsc^j times a quantity that does not
+        // depend on rsc: the fold costs no accuracy at any depth, and the Horner evaluation at
+        // r ~ 1/rsc takes the scaling back out. What it does spend is exponent range, and the
+        // coefficients are held in Real. Deep enough trees push rsc^(n_coeffs-1) past what Real
+        // represents, so the mapped-variable form is used from there on.
+        double coeff_max = 0.0;
         for (int i = 0; i < n_coeffs; ++i)
-            coeffs_mod[i] = coeffs_mod_d[i];
-        coeffs = coeffs_mod;
+            coeff_max = std::max(coeff_max, std::abs(coeffs_mod_d[i]));
+        constexpr double headroom = 256.0;
+        if (coeff_max * headroom > double(std::numeric_limits<Real>::max())) {
+            transform_poly = 0;
+        } else {
+            for (int i = 0; i < n_coeffs; ++i)
+                coeffs_mod[i] = coeffs_mod_d[i];
+            coeffs = coeffs_mod;
+        }
     }
 
     LaplacePolyEvaluator3D<Real, MaxVecLen> evaluator{thresh2,  d2max,          rsc,       cen, coeffs, n_coeffs,

@@ -1,9 +1,8 @@
-#ifndef DMK_PERIODIC_REFERENCE_HPP
-#define DMK_PERIODIC_REFERENCE_HPP
+#pragma once
 
-// Ground-truth periodic references for validating the DMK/ESP solvers. Shared by
-// test_pbc_periodic.cpp and the benchmarks. Header-only; the only DMK dependency is
-// get_direct_evaluator (Yukawa image sum), so consumers must link the dmk library.
+// Ground-truth periodic references for validating the DMK/ESP solvers. Shared by the periodic
+// tests and the benchmarks. Header-only; the only DMK dependency is get_direct_evaluator (Yukawa
+// image sum), so consumers must link the dmk library.
 
 #include <cmath>
 #include <complex>
@@ -306,5 +305,3 @@ struct EwaldRef {
 };
 
 } // namespace dmk::pbc_ref
-
-#endif // DMK_PERIODIC_REFERENCE_HPP

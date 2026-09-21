@@ -21,9 +21,7 @@ typedef enum {
 typedef enum {
     DMK_POTENTIAL = 1,
     DMK_POTENTIAL_GRAD = 2,
-    DMK_POTENTIAL_GRAD_HESSIAN = 3,
-    DMK_VELOCITY = 4,
-    DMK_VELOCITY_PRESSURE = 5,
+    DMK_VELOCITY = 3,
 } dmk_eval_type;
 
 // Selects which compute path eval() uses. The CPU path is always available.
@@ -80,9 +78,9 @@ typedef struct pdmk_params {
     double eps DMK_DEFAULT(1e-3);               ///< target precision
     dmk_ikernel kernel DMK_DEFAULT(DMK_YUKAWA); ///< evaluation kernel
     dmk_eval_type
-        eval_src DMK_DEFAULT(DMK_POTENTIAL); ///< level to compute at sources (potential, pot+grad, pot+grad+hess)
+        eval_src DMK_DEFAULT(DMK_POTENTIAL); ///< level to compute at sources (potential, pot+grad, velocity)
     dmk_eval_type
-        eval_trg DMK_DEFAULT(DMK_POTENTIAL); ///< level to compute at sources (potential, pot+grad, pot+grad+hess)
+        eval_trg DMK_DEFAULT(DMK_POTENTIAL); ///< level to compute at targets (potential, pot+grad, velocity)
     double fparam DMK_DEFAULT(6.0);          ///< param for selected potential (Yukawa lambda param)
     int use_periodic DMK_DEFAULT(false);     ///< use periodic boundary conditions (in all dimensions, currently)
     int n_per_leaf DMK_DEFAULT(200);         ///< tuning: number of particles per leaf in N-tree
@@ -90,6 +88,9 @@ typedef struct pdmk_params {
     uint32_t debug_flags DMK_DEFAULT(0);     ///< Debug params bit field, see above
     double debug_params[8] DMK_DEFAULT({0}); ///< 0: beta, 1: order, rest: placeholders
     dmk_eval_path eval_path DMK_DEFAULT(DMK_EVAL_PATH_CPU); ///< CPU / GPU
+    ///< CUDA device to run on when eval_path is GPU. A process is pinned to the first device
+    ///< it uses (the JIT module caches are per-device); typical MPI use is one device per rank.
+    int gpu_device_id DMK_DEFAULT(0);
 } pdmk_params;
 // clang-format on
 
@@ -120,11 +121,15 @@ pdmk_tree pdmk_tree_create(dmk_communicator comm, pdmk_params params, int n_src,
                            const double *charge, const double *normal, int n_trg, const double *r_trg);
 
 // ESP (Ewald Sum with PSWF kernels)
-// Particles lie in the cubic box [-L/2, L/2)^n_dim.
+// Particles lie in the unit box [0, 1)^n_dim, the same convention as the tree path.
 
 // Short-range method selection bits for pdmk_esp_params.esp_flags. The three strategies
 // (source-pruning granularity, within-cell spatial sort, Newton's-third-law reciprocal) are
 // independent. The default combination below is the empirically fastest.
+//
+// On the GPU path the pruning granularities are mutually exclusive rather than independent:
+// PRUNE_SOURCE takes precedence over PRUNE_TILE, and neither bit means dense. DMK_ESP_N3L,
+// esp_bins and esp_stile are CPU-only, and are reported once at plan creation if set.
 enum {
     DMK_ESP_PRUNE_TILE = 1u << 0,   ///< sub-cell tile-vs-tile AABB pruning
     DMK_ESP_PRUNE_SOURCE = 1u << 1, ///< per-source point-vs-target-box pruning (finest granularity)
@@ -133,8 +138,7 @@ enum {
 };
 
 typedef struct pdmk_esp_params {
-    double L DMK_DEFAULT(1.0);                          ///< periodic box side length
-    double r_c DMK_DEFAULT(0.05);                       ///< real-space cutoff radius
+    double r_c DMK_DEFAULT(0.05);                       ///< real-space cutoff radius (<= 1/3)
     double eps DMK_DEFAULT(1e-6);                       ///< target precision
     int log_level DMK_DEFAULT(6);                       ///< 0: trace … 6: off (matches dmk_log_level)
     dmk_ikernel kernel DMK_DEFAULT(DMK_LAPLACE);        ///< Pair interaction to calculate
@@ -148,6 +152,8 @@ typedef struct pdmk_esp_params {
     uint32_t esp_flags DMK_DEFAULT(DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L | DMK_ESP_MORTON);
     int esp_bins DMK_DEFAULT(2);  ///< octant-bin count per axis when DMK_ESP_MORTON is clear
     int esp_stile DMK_DEFAULT(0); ///< source-tile width for DMK_ESP_PRUNE_TILE (0 -> SIMD width)
+    dmk_eval_path eval_path DMK_DEFAULT(DMK_EVAL_PATH_CPU); ///< GPU is 3D only; see esp_flags above
+    int gpu_device_id DMK_DEFAULT(0);                       ///< CUDA device, when eval_path is GPU
 } pdmk_esp_params;
 
 // Opaque plan handle (heap-allocated internally).
@@ -157,19 +163,20 @@ pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator comm, pdmk_esp_params params
 pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator comm, pdmk_esp_params params);
 
 // normal is the per-source orientation array required by the Stresslet (DIM comps per source) and
-// ignored (may be NULL) by every other kernel.
-void pdmk_esp_eval(dmk_communicator comm, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
-                   const double *normal, double *pot_src);
-void pdmk_esp_evalf(dmk_communicator comm, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,
-                    const float *normal, float *pot_src);
+// ignored (may be NULL) by every other kernel. pot_src is written interleaved per source,
+// [pot, d/dx, ...] for the potential-family kernels and [vx, vy, vz] for the velocity kernels.
+dmk_error pdmk_esp_eval(dmk_communicator comm, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
+                        const double *normal, double *pot_src);
+dmk_error pdmk_esp_evalf(dmk_communicator comm, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,
+                         const float *normal, float *pot_src);
 
 void pdmk_esp_plan_destroy(pdmk_esp_plan plan);
 void pdmk_esp_plan_destroyf(pdmk_esp_plan plan);
 
-void pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double *r_src, const double *charges,
-              const double *normal, double *pot_src);
-void pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const float *r_src, const float *charges,
-               const float *normal, float *pot_src);
+dmk_error pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const double *r_src, const double *charges,
+                   const double *normal, double *pot_src);
+dmk_error pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const float *r_src, const float *charges,
+                    const float *normal, float *pot_src);
 
 dmk_error pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const double *normal);
 dmk_error pdmk_tree_update_chargesf(pdmk_tree tree, const float *charge, const float *normal);
@@ -182,6 +189,30 @@ dmk_error pdmk(dmk_communicator comm, pdmk_params params, int n_src, const doubl
                const double *normal, int n_trg, const double *r_trg, double *pot_src, double *pot_trg);
 dmk_error pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
                 const float *normal, int n_trg, const float *r_trg, float *pot_src, float *pot_trg);
+
+/// Direct (brute-force) evaluation of the same sum pdmk approximates: every source against
+/// every target, no tree and no approximation, so the cost is O(n_src * n_trg). Intended as
+/// the reference path for validating pdmk, not for production-size problems.
+///
+/// Reads n_dim, kernel, eval_src, eval_trg, fparam, eval_path and gpu_device_id from params;
+/// eps and n_per_leaf are not used, and use_periodic must be 0 (a periodic request is rejected
+/// rather than silently ignored). The direct kernels implement DMK_POTENTIAL,
+/// DMK_POTENTIAL_GRAD and DMK_VELOCITY only.
+///
+/// eval_path selects CPU or GPU. Unlike the tree path the GPU direct kernel has no dimension
+/// or rank restriction -- it is a plain all-pairs sum over the gathered sources -- so every
+/// kernel/dimension combination below is available on either path.
+///
+/// Under MPI the sources are gathered across comm, so r_src/charge/normal are this rank's
+/// slice while pot_src/pot_trg hold the results for this rank's own points -- the same
+/// distributed convention as pdmk. Either output may be NULL to skip evaluating at that
+/// point set; the corresponding eval type is then not validated. Outputs are overwritten,
+/// not accumulated into.
+dmk_error pdmk_direct(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
+                      const double *normal, int n_trg, const double *r_trg, double *pot_src, double *pot_trg);
+/// Single-precision pdmk_direct.
+dmk_error pdmk_directf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src, const float *charge,
+                       const float *normal, int n_trg, const float *r_trg, float *pot_src, float *pot_trg);
 #ifdef __cplusplus
 }
 #endif

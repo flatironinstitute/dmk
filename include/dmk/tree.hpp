@@ -592,6 +592,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> r_src_cnt_owned;
     sctl::Vector<sctl::Long> r_src_offsets_owned;
 
+    sctl::Long owned_node_begin = 0; ///< first of the contiguous owned nodes (GPU path)
+
     sctl::Vector<Real> r_trg_sorted_owned;
     sctl::Vector<sctl::Long> r_trg_cnt_owned;
     sctl::Vector<sctl::Long> r_trg_offsets_owned;
@@ -629,11 +631,14 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> density_offsets_with_halo;
 
     sctl::Vector<Real> proxy_coeffs_upward;
+    sctl::Vector<sctl::Long> proxy_coeffs_counts; ///< per-box element count
+    sctl::Vector<sctl::Long> src_counts_global;   ///< sources under each box on all ranks (GPU path)
     sctl::Vector<sctl::Long> proxy_coeffs_offsets;
     sctl::Vector<Real> proxy_coeffs_downward;
     sctl::Vector<sctl::Long> proxy_coeffs_offsets_downward;
 
     sctl::Vector<std::complex<Real>> pw_out;
+    sctl::Long pw_out_size = 0; ///< extent of pw_out, allocated here or not
     sctl::Vector<sctl::Long> pw_out_offsets;
 
     sctl::Vector<bool> ifpwexp;
@@ -697,17 +702,49 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<Real> c2p;
     sctl::Vector<Real> p2c;
 
+    // node topology copied from the device tree by dmk::cuda::pt::Tree
+    sctl::Vector<sctl::Morton<DIM>> node_mid_host;
+    sctl::Vector<typename sctl::Tree<DIM>::NodeAttr> node_attr_host;
+    sctl::Vector<typename sctl::Tree<DIM>::NodeLists> node_lst_host;
+    bool topology_adopted = false;
+    /// Set when dmk::cuda::pt derives the per-box geometry, interaction lists and direct-work
+    /// order on the device instead. The passes that produce them are skipped here, and nothing on
+    /// the host reads their outputs on that path.
+    bool device_metadata = false;
+
     DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, const sctl::Vector<Real> &r_src,
               const sctl::Vector<Real> &charge, const sctl::Vector<Real> &normals, const sctl::Vector<Real> &r_trg);
 
     int n_levels() const { return level_indices.Dim(); }
-    std::size_t n_boxes() const { return this->GetNodeMID().Dim(); }
+    std::size_t n_boxes() const { return box_mid().Dim(); }
+
+    using NodeAttr = typename sctl::Tree<DIM>::NodeAttr;
+    using NodeLists = typename sctl::Tree<DIM>::NodeLists;
+
+    /// Tree topology, from whichever tree built it. Every metadata routine reads the tree through
+    /// these three, so the paths diverge in one place rather than at thirty call sites; the
+    /// accessors below pick the base's storage or the adopted device copy.
+    const sctl::Vector<sctl::Morton<DIM>> &box_mid() const { return this->GetNodeMID(); }
+    const sctl::Vector<NodeAttr> &box_attr() const { return this->GetNodeAttr(); }
+    const sctl::Vector<NodeLists> &box_lists() const { return this->GetNodeLists(); }
+
+    // the base's topology, or the adopted copy; these hide the base's accessors
+    const sctl::Vector<sctl::Morton<DIM>> &GetNodeMID() const {
+        return topology_adopted ? node_mid_host : sctl::PtTree<Real, DIM>::GetNodeMID();
+    }
+    const sctl::Vector<typename sctl::Tree<DIM>::NodeAttr> &GetNodeAttr() const {
+        return topology_adopted ? node_attr_host : sctl::PtTree<Real, DIM>::GetNodeAttr();
+    }
+    const sctl::Vector<typename sctl::Tree<DIM>::NodeLists> &GetNodeLists() const {
+        return topology_adopted ? node_lst_host : sctl::PtTree<Real, DIM>::GetNodeLists();
+    }
 
     // Add data and refine tree
     void build_tree(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &charge,
                     const sctl::Vector<Real> &normals, const sctl::Vector<Real> &r_trg);
 
-    void build_tree_for_gpu(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &r_trg);
+    /// Use the device tree's nodes; this rank owns [node_begin, node_end).
+    void adopt_device_tree(sctl::Long node_begin, sctl::Long node_end);
 
     // Metadata generation subroutines
     void compute_data_offsets();
@@ -724,6 +761,12 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void build_direct_work_lists();
     void allocate_proxy_coefficients();
     void precompute_window_difference_data();
+    /// c2p/p2c, fourier_data and the plane-wave tables, from a process-wide cache keyed on the
+    /// configuration and the tree depth. Calls precompute_window_difference_data on a miss.
+    void build_shared_precompute();
+    /// Per-level self-interaction constants, from the shared precompute. Views; do not resize.
+    sctl::Vector<Real> self_w0;
+    sctl::Vector<Real> self_w0_grad;
     void build_evaluators();
     void build_self_correction_work_list();
     void generate_metadata();
@@ -746,6 +789,15 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
 
     // Internal data accessors
     std::span<const int> list1(int i_box) const { return std::span<const int>(list1_[i_box].data(), nlist1_[i_box]); }
+    /// list1_ is one fixed-stride row per box, which is already the layout the device kernel
+    /// indexes, so the GPU path spans it instead of flattening a copy. Slots past nlist1_[box] are
+    /// unwritten and never read: the kernel bounds its loop by the count.
+    static constexpr int list1_stride() { return nlist1_max_; }
+    std::span<const int> list1_flat() const {
+        return list1_.empty() ? std::span<const int>()
+                              : std::span<const int>(list1_[0].data(), list1_.size() * nlist1_max_);
+    }
+    std::span<const int> nlist1() const { return std::span<const int>(nlist1_.data(), nlist1_.size()); }
     std::span<const std::array<int, DIM>> list1_shift(int i_box) const {
         return std::span<const std::array<int, DIM>>(list1_shift_[i_box].data(), nlist1_[i_box]);
     }
@@ -892,7 +944,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     std::vector<std::array<int, nlistpw_max_>> listpw_;
     std::vector<int> nlistpw_;
 
-    long n_trg_max_;
+    sctl::Long n_trg_max_;
 
     // If proxy_view_downward(i_box) has been zeroed yet.
     std::vector<int> proxy_down_zeroed;

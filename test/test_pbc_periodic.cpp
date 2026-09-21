@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <complex>
 #include <cstdio>
+#include <map>
 #include <random>
 #include <set>
 #include <string>
@@ -9,12 +10,11 @@
 #include <dmk.h>
 #include <dmk/direct.hpp>
 #include <dmk/fourier_data.hpp>
+#include <dmk/periodic_reference.hpp>
 #include <dmk/tensorprod.hpp>
 #include <dmk/testing.hpp>
 #include <dmk/tree.hpp>
 #include <dmk/util.hpp>
-
-#include "periodic_reference.hpp"
 
 #include <sctl.hpp>
 
@@ -28,49 +28,55 @@ struct PbcRefSrc {
     double r[3];
     double charge;
     int level;
+    int box;
+    bool pw; ///< ifpwexp: this box's self-interaction residual is taken one level finer
 };
 struct PbcRefTrg {
     double r[3];
     int level;
+    int box;
 };
 
 // Reference for evaluate_direct_interactions under PBC (Laplace 3D): sum DMK's own residual
-// evaluator over the 3x3x3 periodic images. Pairs are grouped by max(src,trg) leaf level, which
-// sets the box scaling (rsc = 2/bsize, cen = -bsize/2, d2max = bsize^2) exactly as tree.cpp does.
+// evaluator over the 3x3x3 periodic images. The residual level is a property of the box *pair*,
+// not of either box alone, so points are grouped by box rather than by level: a self-pair whose
+// box carries a planewave expansion is evaluated one level finer, matching tree.cpp, and every
+// other pair takes max(src, trg) level.
 std::vector<double> pbc_direct_ref(const dmk::residual_evaluator_func<double> &eval,
                                    const std::vector<PbcRefSrc> &sources, const std::vector<PbcRefTrg> &targets,
                                    const sctl::Vector<double> &boxsize) {
     constexpr double thresh2 = 1e-30;
     std::vector<double> ref(targets.size(), 0.0);
 
-    std::set<int> src_levels, trg_levels;
-    for (const auto &s : sources)
-        src_levels.insert(s.level);
-    for (const auto &t : targets)
-        trg_levels.insert(t.level);
+    std::map<int, std::vector<int>> src_by_box, trg_by_box;
+    for (int i = 0; i < (int)sources.size(); ++i)
+        src_by_box[sources[i].box].push_back(i);
+    for (int i = 0; i < (int)targets.size(); ++i)
+        trg_by_box[targets[i].box].push_back(i);
 
-    for (int sl : src_levels) {
-        std::vector<double> src_r, src_c;
-        for (const auto &s : sources)
-            if (s.level == sl) {
-                src_r.insert(src_r.end(), {s.r[0], s.r[1], s.r[2]});
-                src_c.push_back(s.charge);
-            }
-        const int n_src = src_c.size();
+    for (const auto &[src_box, sidx] : src_by_box) {
+        const int n_src = sidx.size();
+        std::vector<double> src_r(3 * n_src), src_c(n_src);
+        for (int k = 0; k < n_src; ++k) {
+            for (int d = 0; d < 3; ++d)
+                src_r[k * 3 + d] = sources[sidx[k]].r[d];
+            src_c[k] = sources[sidx[k]].charge;
+        }
 
-        for (int tl : trg_levels) {
-            std::vector<double> trg_r;
-            std::vector<int> gidx;
-            for (int i = 0; i < (int)targets.size(); ++i)
-                if (targets[i].level == tl) {
-                    trg_r.insert(trg_r.end(), {targets[i].r[0], targets[i].r[1], targets[i].r[2]});
-                    gidx.push_back(i);
-                }
-            const int n_trg = gidx.size();
-            if (!n_src || !n_trg)
-                continue;
+        for (const auto &[trg_box, tidx] : trg_by_box) {
+            const int n_trg = tidx.size();
+            std::vector<double> trg_r(3 * n_trg);
+            for (int k = 0; k < n_trg; ++k)
+                for (int d = 0; d < 3; ++d)
+                    trg_r[k * 3 + d] = targets[tidx[k]].r[d];
 
-            const double bsize = boxsize[std::max(sl, tl)];
+            int level = sources[sidx[0]].level;
+            if (src_box == trg_box && sources[sidx[0]].pw)
+                level += 1;
+            else
+                level = std::max(level, targets[tidx[0]].level);
+
+            const double bsize = boxsize[level];
             const double rsc = 2.0 / bsize, cen = -bsize / 2.0, d2max = bsize * bsize;
             std::vector<double> pot(n_trg, 0.0), shifted(3 * n_src);
             for (int mx = -1; mx <= 1; ++mx)
@@ -85,7 +91,7 @@ std::vector<double> pbc_direct_ref(const dmk::residual_evaluator_func<double> &e
                              trg_r.data(), pot.data());
                     }
             for (int k = 0; k < n_trg; ++k)
-                ref[gidx[k]] += pot[k];
+                ref[tidx[k]] += pot[k];
         }
     }
     return ref;
@@ -103,19 +109,16 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC direct verification", 1) {
     auto sctl_comm = sctl::Comm::Self();
 #endif
 
-    std::default_random_engine eng(42);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-
     sctl::Vector<double> r_src(n_dim * n_src), r_trg(n_dim * n_trg);
     sctl::Vector<double> charges(n_src);
     sctl::Vector<double> normals;
 
-    for (int i = 0; i < n_src * n_dim; ++i)
-        r_src[i] = rng(eng);
-    for (int i = 0; i < n_trg * n_dim; ++i)
-        r_trg[i] = rng(eng);
-    for (int i = 0; i < n_src; ++i)
-        charges[i] = rng(eng) - 0.5;
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so the tree comes out mixed-depth.
+    sctl::Vector<double> normals_unused;
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, r_trg, normals_unused, charges,
+                              /*seed=*/42);
     {
         double sum = 0.0;
         for (int i = 0; i < n_src; ++i)
@@ -162,7 +165,8 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC direct verification", 1) {
                 const double *rp = tree.r_src_owned_ptr(box);
                 const double *cp = tree.charge_owned_ptr(box);
                 for (int i = 0; i < n; ++i)
-                    sources.push_back({{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, cp[i], level});
+                    sources.push_back(
+                        {{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, cp[i], level, box, tree.ifpwexp[box]});
             }
 
             std::vector<PbcRefTrg> targets;
@@ -176,12 +180,24 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC direct verification", 1) {
                 const int level = node_mid[box].Depth();
                 const double *rp = tree.r_trg_owned_ptr(box);
                 for (int i = 0; i < n; ++i) {
-                    targets.push_back({{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, level});
+                    targets.push_back({{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, level, box});
                     pot_offsets.push_back((int)tree.pot_trg_offsets[box] + i);
                 }
             }
 
-            auto eval = dmk::make_evaluator_aot<double>(DMK_LAPLACE, DMK_POTENTIAL, n_dim, pc.n_digits, 3);
+            // A single-level tree leaves every leaf without a planewave expansion, which retires the
+            // self-box residual level and the asymmetric-depth filtering from this test without
+            // anything going red.
+            int min_level = 1 << 30, max_level = 0;
+            for (const auto &s : sources) {
+                min_level = std::min(min_level, s.level);
+                max_level = std::max(max_level, s.level);
+            }
+            REQUIRE(max_level > min_level);
+
+            const auto ref_coeffs = dmk::get_local_correction_coeffs<double>(DMK_LAPLACE, n_dim, pc.n_digits,
+                                                                             tree.expansion_constants.beta);
+            auto eval = dmk::make_evaluator_aot<double>(DMK_LAPLACE, DMK_POTENTIAL, n_dim, pc.n_digits, 3, ref_coeffs);
             const std::vector<double> ref_pot = pbc_direct_ref(eval, sources, targets, tree.boxsize);
 
             const int n_test = std::min((int)targets.size(), 200);
@@ -227,40 +243,44 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC asymmetric-depth shift", 1) {
     auto sctl_comm = sctl::Comm::Self();
 #endif
 
-    std::default_random_engine eng(7);
+    // The slab geometry below is purpose-built for this test, so it stays here rather than becoming
+    // a named Distribution; only the draw comes from util.hpp, which is what makes it reproducible
+    // across standard libraries.
+    dmk::util::TestRng rng(7);
+    auto in = [&](double lo, double hi) { return lo + (hi - lo) * rng(); };
     // Sources: all clustered in x ∈ [0, 0.04] — forces deep refinement there.
-    std::uniform_real_distribution<double> src_x(0.001, 0.04);
-    std::uniform_real_distribution<double> src_yz(0.001, 0.999);
+    auto src_x = [&] { return in(0.001, 0.04); };
+    auto src_yz = [&] { return in(0.001, 0.999); };
     // Filler sources scattered across the domain (zero charge) to keep the
     // uniform-side boxes from being pruned.
-    std::uniform_real_distribution<double> filler(0.06, 0.999);
+    auto filler = [&] { return in(0.06, 0.999); };
     // Targets: confined to x ∈ [0.7, 0.99] — far from cluster in direct sense,
     // but the PBC wrap brings the cluster (shifted by +1 in x) to x ∈ [1, 1.04]
     // which is adjacent to the target slab. This is exactly the buggy regime:
     // the trg_box (shallow) sees src_box (deep) via a nonzero periodic shift.
-    std::uniform_real_distribution<double> trg_x(0.7, 0.99);
-    std::uniform_real_distribution<double> trg_yz(0.001, 0.999);
+    auto trg_x = [&] { return in(0.7, 0.99); };
+    auto trg_yz = [&] { return in(0.001, 0.999); };
 
     sctl::Vector<double> r_src(n_dim * n_src), r_trg(n_dim * n_trg);
     sctl::Vector<double> charges(n_src);
     sctl::Vector<double> normals;
 
     for (int i = 0; i < n_cluster; ++i) {
-        r_src[i * n_dim + 0] = src_x(eng);
-        r_src[i * n_dim + 1] = src_yz(eng);
-        r_src[i * n_dim + 2] = src_yz(eng);
+        r_src[i * n_dim + 0] = src_x();
+        r_src[i * n_dim + 1] = src_yz();
+        r_src[i * n_dim + 2] = src_yz();
     }
     for (int i = n_cluster; i < n_src; ++i)
         for (int d = 0; d < n_dim; ++d)
-            r_src[i * n_dim + d] = filler(eng);
+            r_src[i * n_dim + d] = filler();
     for (int i = 0; i < n_trg; ++i) {
-        r_trg[i * n_dim + 0] = trg_x(eng);
-        r_trg[i * n_dim + 1] = trg_yz(eng);
-        r_trg[i * n_dim + 2] = trg_yz(eng);
+        r_trg[i * n_dim + 0] = trg_x();
+        r_trg[i * n_dim + 1] = trg_yz();
+        r_trg[i * n_dim + 2] = trg_yz();
     }
-    std::uniform_real_distribution<double> chg(0.0, 1.0);
+    auto chg = [&] { return in(0.0, 1.0); };
     for (int i = 0; i < n_cluster; ++i)
-        charges[i] = chg(eng) - 0.5;
+        charges[i] = chg() - 0.5;
     for (int i = n_cluster; i < n_src; ++i)
         charges[i] = 0.0;
     {
@@ -301,7 +321,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC asymmetric-depth shift", 1) {
         const double *rp = tree.r_src_owned_ptr(box);
         const double *cp = tree.charge_owned_ptr(box);
         for (int i = 0; i < n; ++i)
-            sources.push_back({{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, cp[i], level});
+            sources.push_back({{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, cp[i], level, box, tree.ifpwexp[box]});
     }
 
     std::vector<PbcRefTrg> targets;
@@ -315,7 +335,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC asymmetric-depth shift", 1) {
         const int level = node_mid[box].Depth();
         const double *rp = tree.r_trg_owned_ptr(box);
         for (int i = 0; i < n; ++i) {
-            targets.push_back({{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, level});
+            targets.push_back({{rp[i * 3], rp[i * 3 + 1], rp[i * 3 + 2]}, level, box});
             pot_offsets.push_back((int)tree.pot_trg_offsets[box] + i);
         }
     }
@@ -335,7 +355,9 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC asymmetric-depth shift", 1) {
                     " n_levels=", tree.n_levels(), " n_boxes=", tree.n_boxes());
     REQUIRE(max_level > min_level); // if this fails, tune cluster/filler to force asymmetry
 
-    auto eval = dmk::make_evaluator_aot<double>(DMK_LAPLACE, DMK_POTENTIAL, n_dim, 6, 3);
+    const auto ref_coeffs =
+        dmk::get_local_correction_coeffs<double>(DMK_LAPLACE, n_dim, 6, tree.expansion_constants.beta);
+    auto eval = dmk::make_evaluator_aot<double>(DMK_LAPLACE, DMK_POTENTIAL, n_dim, 6, 3, ref_coeffs);
     const std::vector<double> ref_pot = pbc_direct_ref(eval, sources, targets, tree.boxsize);
 
     const int n_test = (int)targets.size();
@@ -353,6 +375,10 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC asymmetric-depth shift", 1) {
     CHECK(l2_err < 1e-5);
 }
 
+// n_per_leaf above n_src collapses the tree to a single box, where the root-level periodic kernel
+// stands in for the level-0 outgoing expansion and list1 holds the root under all 3^DIM image
+// shifts -- a distinct code path from the multilevel case below, checked against the same Ewald
+// reference so this asserts physics rather than tree structure.
 TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level public API", 1) {
     constexpr int n_dim = 3;
     constexpr int n_src = 8;
@@ -369,29 +395,104 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level public API", 1) {
     sctl::Vector<double> r_trg({0.15, 0.15, 0.15, 0.35, 0.35, 0.35, 0.65, 0.65, 0.65, 0.85, 0.85, 0.85});
     sctl::Vector<double> charges(n_src);
     sctl::Vector<double> normal(n_src * n_dim);
-    sctl::Vector<double> pot_src(n_src);
-    sctl::Vector<double> pot_trg(n_trg);
 
     normal.SetZero();
     for (int i = 0; i < n_src; ++i)
         charges[i] = (i % 2 == 0 ? 1.0 : -1.0) / n_src;
 
-    pdmk_params params;
-    params.eps = 1e-6;
-    params.n_dim = n_dim;
-    params.n_per_leaf = 1000000;
-    params.eval_src = DMK_POTENTIAL;
-    params.eval_trg = DMK_POTENTIAL;
-    params.kernel = DMK_LAPLACE;
-    params.use_periodic = true;
-    params.log_level = 6;
+    const double L = 1.0;
+    dmk::pbc_ref::EwaldRef ewald(DMK_LAPLACE, n_dim, n_src, &r_src[0], &charges[0], L);
 
-    pdmk_tree tree = pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &normal[0], n_trg, &r_trg[0]);
-    pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
-    pdmk_tree_destroy(tree);
+    struct PrecisionCase {
+        int n_digits;
+        double eps;
+        double tol_pot;
+        double tol_grad;
+    };
+    const PrecisionCase cases[] = {
+        {3, 1e-3, 1e-2, 1e-1},
+        {6, 1e-6, 1e-4, 1e-3},
+        {9, 1e-9, 1e-7, 1e-6},
+        {12, 1e-12, 1e-10, 1e-9},
+    };
 
-    CHECK(pot_src.Dim() == n_src);
-    CHECK(pot_trg.Dim() == n_trg);
+    for (const auto &pc : cases) {
+        for (int with_grad = 0; with_grad <= 1; ++with_grad) {
+            const auto eval = with_grad ? DMK_POTENTIAL_GRAD : DMK_POTENTIAL;
+            const int odim = with_grad ? 1 + n_dim : 1;
+            const std::string label = "n_digits=" + std::to_string(pc.n_digits) + (with_grad ? " pot+grad" : " pot");
+
+            SUBCASE(label.c_str()) {
+                pdmk_params params;
+                params.eps = pc.eps;
+                params.n_dim = n_dim;
+                params.n_per_leaf = 1000000;
+                params.eval_src = eval;
+                params.eval_trg = eval;
+                params.kernel = DMK_LAPLACE;
+                params.use_periodic = true;
+                params.log_level = 6;
+
+                sctl::Vector<double> pot_src(n_src * odim), pot_trg(n_trg * odim);
+                pot_src.SetZero();
+                pot_trg.SetZero();
+
+                pdmk_tree tree =
+                    pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &normal[0], n_trg, &r_trg[0]);
+                REQUIRE_MESSAGE(tree != nullptr, "tree_create failed: ", std::string(pdmk_last_error_message()));
+                const dmk_error rc = pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
+                pdmk_tree_destroy(tree);
+                REQUIRE_MESSAGE(rc == DMK_SUCCESS, "eval failed: ", std::string(pdmk_last_error_message()));
+
+                double err2_pot_src = 0, ref2_pot_src = 0;
+                double err2_grad_src = 0, ref2_grad_src = 0;
+                for (int i = 0; i < n_src; ++i) {
+                    double ewald_pot;
+                    double ewald_grad[3];
+                    ewald.eval(&r_src[i * n_dim], i, ewald_pot, with_grad ? ewald_grad : nullptr);
+                    err2_pot_src += sctl::pow<2>(pot_src[i * odim] - ewald_pot);
+                    ref2_pot_src += sctl::pow<2>(ewald_pot);
+                    if (with_grad) {
+                        for (int dd = 0; dd < n_dim; ++dd) {
+                            err2_grad_src += sctl::pow<2>(pot_src[i * odim + 1 + dd] - ewald_grad[dd]);
+                            ref2_grad_src += sctl::pow<2>(ewald_grad[dd]);
+                        }
+                    }
+                }
+
+                double err2_pot_trg = 0, ref2_pot_trg = 0;
+                double err2_grad_trg = 0, ref2_grad_trg = 0;
+                for (int i = 0; i < n_trg; ++i) {
+                    double ewald_pot;
+                    double ewald_grad[3];
+                    ewald.eval(&r_trg[i * n_dim], -1, ewald_pot, with_grad ? ewald_grad : nullptr);
+                    err2_pot_trg += sctl::pow<2>(pot_trg[i * odim] - ewald_pot);
+                    ref2_pot_trg += sctl::pow<2>(ewald_pot);
+                    if (with_grad) {
+                        for (int dd = 0; dd < n_dim; ++dd) {
+                            err2_grad_trg += sctl::pow<2>(pot_trg[i * odim + 1 + dd] - ewald_grad[dd]);
+                            ref2_grad_trg += sctl::pow<2>(ewald_grad[dd]);
+                        }
+                    }
+                }
+
+                const double l2_pot_src = dmk::pbc_ref::safe_l2(err2_pot_src, ref2_pot_src);
+                const double l2_pot_trg = dmk::pbc_ref::safe_l2(err2_pot_trg, ref2_pot_trg);
+
+                VERBOSE_MESSAGE("PBC single-level: ", label, " pot_src=", l2_pot_src, " pot_trg=", l2_pot_trg);
+                CHECK(l2_pot_src < pc.tol_pot);
+                CHECK(l2_pot_trg < pc.tol_pot);
+
+                if (with_grad) {
+                    const double l2_grad_src = dmk::pbc_ref::safe_l2(err2_grad_src, ref2_grad_src);
+                    const double l2_grad_trg = dmk::pbc_ref::safe_l2(err2_grad_trg, ref2_grad_trg);
+                    VERBOSE_MESSAGE("  grad_src=", l2_grad_src, " grad_trg=", l2_grad_trg);
+                    CHECK(l2_grad_src < pc.tol_grad);
+                    CHECK(l2_grad_trg < pc.tol_grad);
+                }
+            }
+        }
+    }
 }
 
 TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC single-level root pw_out must be zeroed", 1) {
@@ -475,9 +576,6 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
     auto comm = nullptr;
 #endif
 
-    std::default_random_engine eng(99);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-
     sctl::Vector<double> r_src(n_dim * n_src), r_trg(n_dim * n_trg);
     sctl::Vector<double> charges(n_src);
     sctl::Vector<double> rnormal(n_dim * n_src);
@@ -485,12 +583,12 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
     rnormal.SetZero();
     dipstr.SetZero();
 
-    for (int i = 0; i < n_src * n_dim; ++i)
-        r_src[i] = rng(eng);
-    for (int i = 0; i < n_trg * n_dim; ++i)
-        r_trg[i] = rng(eng);
-    for (int i = 0; i < n_src; ++i)
-        charges[i] = rng(eng) - 0.5;
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so the tree comes out mixed-depth.
+    sctl::Vector<double> normals_unused;
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, r_trg, normals_unused, charges,
+                              /*seed=*/99);
     {
         double sum = 0.0;
         for (int i = 0; i < n_src; ++i)
@@ -525,7 +623,7 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
                 pdmk_params params;
                 params.eps = pc.eps;
                 params.n_dim = n_dim;
-                params.n_per_leaf = 50;
+                params.n_per_leaf = 40;
                 params.eval_src = eval;
                 params.eval_trg = eval;
                 params.kernel = DMK_LAPLACE;
@@ -604,22 +702,19 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Yukawa PBC full pipeline vs lattice sum", 1) {
     auto comm = nullptr;
 #endif
 
-    std::default_random_engine eng(123);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-
     sctl::Vector<double> r_src(n_dim * n_src), r_trg(n_dim * n_trg);
     sctl::Vector<double> charges(n_src);
     sctl::Vector<double> rnormal(n_dim * n_src);
     rnormal.SetZero();
 
-    for (int i = 0; i < n_src * n_dim; ++i)
-        r_src[i] = rng(eng);
-    for (int i = 0; i < n_trg * n_dim; ++i)
-        r_trg[i] = rng(eng);
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so the tree comes out mixed-depth.
+    sctl::Vector<double> normals_unused;
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, r_trg, normals_unused, charges,
+                              /*seed=*/123);
     // Yukawa periodic sums converge absolutely, so charges need not be neutral; a
     // non-neutral set also exercises the finite k=0 mode of the periodic root kernel.
-    for (int i = 0; i < n_src; ++i)
-        charges[i] = rng(eng) - 0.5;
 
     const double L = 1.0;
     const double lambda = 6.0;
@@ -735,20 +830,17 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
     auto comm = nullptr;
 #endif
 
-    std::default_random_engine eng(7);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-
     sctl::Vector<double> r_src(n_dim * n_src), r_trg(n_dim * n_trg);
     sctl::Vector<double> charges(n_src);
     sctl::Vector<double> rnormal(n_dim * n_src);
     rnormal.SetZero();
 
-    for (int i = 0; i < n_src * n_dim; ++i)
-        r_src[i] = rng(eng);
-    for (int i = 0; i < n_trg * n_dim; ++i)
-        r_trg[i] = rng(eng);
-    for (int i = 0; i < n_src; ++i)
-        charges[i] = rng(eng) - 0.5;
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so the tree comes out mixed-depth.
+    sctl::Vector<double> normals_unused;
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, r_trg, normals_unused, charges,
+                              /*seed=*/7);
     { // 1/r^2 periodic requires charge neutrality
         double sum = 0.0;
         for (int i = 0; i < n_src; ++i)
@@ -848,20 +940,17 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Yukawa PBC full pipeline vs lattice sum", 1) {
     auto comm = nullptr;
 #endif
 
-    std::default_random_engine eng(321);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-
     sctl::Vector<double> r_src(n_dim * n_src), r_trg(n_dim * n_trg);
     sctl::Vector<double> charges(n_src);
     sctl::Vector<double> rnormal(n_dim * n_src);
     rnormal.SetZero();
 
-    for (int i = 0; i < n_src * n_dim; ++i)
-        r_src[i] = rng(eng);
-    for (int i = 0; i < n_trg * n_dim; ++i)
-        r_trg[i] = rng(eng);
-    for (int i = 0; i < n_src; ++i)
-        charges[i] = rng(eng) - 0.5; // non-neutral: exercises the finite k=0 mode
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so the tree comes out mixed-depth.
+    sctl::Vector<double> normals_unused;
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, r_trg, normals_unused, charges,
+                              /*seed=*/321);
 
     const double L = 1.0;
     const double lambda = 4.0;
@@ -958,20 +1047,17 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
     auto comm = nullptr;
 #endif
 
-    std::default_random_engine eng(54);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-
     sctl::Vector<double> r_src(n_dim * n_src), r_trg(n_dim * n_trg);
     sctl::Vector<double> charges(n_src);
     sctl::Vector<double> rnormal(n_dim * n_src);
     rnormal.SetZero();
 
-    for (int i = 0; i < n_src * n_dim; ++i)
-        r_src[i] = rng(eng);
-    for (int i = 0; i < n_trg * n_dim; ++i)
-        r_trg[i] = rng(eng);
-    for (int i = 0; i < n_src; ++i)
-        charges[i] = rng(eng) - 0.5;
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so the tree comes out mixed-depth.
+    sctl::Vector<double> normals_unused;
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, r_trg, normals_unused, charges,
+                              /*seed=*/54);
     { // 1/r periodic requires charge neutrality
         double sum = 0.0;
         for (int i = 0; i < n_src; ++i)
@@ -1072,20 +1158,17 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Laplace PBC full pipeline vs Ewald", 1) {
     auto comm = nullptr;
 #endif
 
-    std::default_random_engine eng(88);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-
     sctl::Vector<double> r_src(n_dim * n_src), r_trg(n_dim * n_trg);
     sctl::Vector<double> charges(n_src);
     sctl::Vector<double> rnormal(n_dim * n_src);
     rnormal.SetZero();
 
-    for (int i = 0; i < n_src * n_dim; ++i)
-        r_src[i] = rng(eng);
-    for (int i = 0; i < n_trg * n_dim; ++i)
-        r_trg[i] = rng(eng);
-    for (int i = 0; i < n_src; ++i)
-        charges[i] = rng(eng) - 0.5;
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so the tree comes out mixed-depth.
+    sctl::Vector<double> normals_unused;
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, r_trg, normals_unused, charges,
+                              /*seed=*/88);
     { // log periodic requires charge neutrality
         double sum = 0.0;
         for (int i = 0; i < n_src; ++i)
@@ -1172,14 +1255,12 @@ void pbc_inputs(dmk_ikernel kernel, sctl::Vector<double> &r_src, sctl::Vector<do
     rnormal.ReInit(PBC_N_DIM * PBC_N_SRC);
     rnormal.SetZero();
 
-    std::default_random_engine eng(99);
-    std::uniform_real_distribution<double> rng(0.01, 0.99);
-    for (int i = 0; i < PBC_N_SRC * PBC_N_DIM; ++i)
-        r_src[i] = rng(eng);
-    for (int i = 0; i < PBC_N_TRG * PBC_N_DIM; ++i)
-        r_trg[i] = rng(eng);
-    for (int i = 0; i < PBC_N_SRC; ++i)
-        charges[i] = rng(eng) - 0.5;
+    // Point sets come from util.hpp, which owns the RNG and the distributions. Graded rather than
+    // uniform so the tree comes out mixed-depth.
+    sctl::Vector<double> normals_unused;
+    dmk::util::init_test_data(PBC_N_DIM, 1, PBC_N_SRC, PBC_N_TRG, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, r_trg, normals_unused, charges,
+                              /*seed=*/99);
 
     if (kernel != DMK_YUKAWA) {
         double sum = 0.0;

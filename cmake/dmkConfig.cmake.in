@@ -17,6 +17,9 @@ endif()
 if (DMK_GPU_OFFLOAD)
   find_dependency(CUDAToolkit)
 endif()
+if (DMK_USE_JIT)
+  find_dependency(LLVM CONFIG)
+endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/dmkTargets.cmake")
 

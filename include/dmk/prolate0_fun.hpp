@@ -3,6 +3,7 @@
 #define PROLATE0_FUN_HPP
 
 #include <array>
+#include <cmath>
 #include <stdexcept>
 #include <vector>
 
@@ -18,6 +19,11 @@ struct Prolate0Fun {
         prol0ini(ier, c, workarray.data(), rlam20, rkhi, lenw, keep, ltot);
         if (ier)
             throw std::runtime_error("Unable to init Prolate0Fun");
+
+        psi0_zero = eval_val(0.0);
+        // Eigenvalue of the truncated Fourier transform: \int_{-1}^{1} psi0(u) exp(i*c*t*u) du =
+        // lambda0 * psi0(t) for |t| <= 1. Equivalently 2*\int_0^1 psi0(u) cos(c*t*u) du = lambda0*psi0(t).
+        lambda0 = std::sqrt(2.0 * rlam20 / c);
     }
 
     // evaluate prolate0 function val and derivative
@@ -56,6 +62,7 @@ struct Prolate0Fun {
     int lenw, keep, ltot;
     std::vector<double> workarray;
     double rlam20, rkhi;
+    double psi0_zero, lambda0;
 };
 
 } // namespace dmk

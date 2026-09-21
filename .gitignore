@@ -53,6 +53,8 @@ out
 /.cache
 /build*
 
-# Generated documentation output (Sphinx build + Doxygen XML)
+# Generated documentation output (Sphinx build + Doxygen XML/HTML/LaTeX)
 docs/_build/
 docs/doxygen/
+docs/html/
+docs/latex/

@@ -13,6 +13,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace dmk::cuda_helpers {
@@ -24,6 +25,27 @@ namespace dmk::cuda_helpers {
             throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(_e));                            \
     } while (0)
 
+// Makes `device` current for the lifetime of the guard and restores the caller's device
+// afterwards, so a DMK call never leaves the ambient device changed. Non-throwing: it runs
+// in destructors, and the device id is range-checked at tree creation.
+class ScopedDevice {
+  public:
+    explicit ScopedDevice(int device) noexcept {
+        if (cudaGetDevice(&previous_) == cudaSuccess && device != previous_)
+            restore_ = cudaSetDevice(device) == cudaSuccess;
+    }
+    ~ScopedDevice() {
+        if (restore_)
+            cudaSetDevice(previous_);
+    }
+    ScopedDevice(const ScopedDevice &) = delete;
+    ScopedDevice &operator=(const ScopedDevice &) = delete;
+
+  private:
+    int previous_ = 0;
+    bool restore_ = false;
+};
+
 // Runtime-API launches record a fault here instead of returning it; call from an entry
 // point that has already synced.
 inline void check_device_errors(const char *where) {
@@ -32,7 +54,141 @@ inline void check_device_errors(const char *where) {
         throw std::runtime_error(std::string("CUDA error at ") + where + ": " + cudaGetErrorString(err));
 }
 
-// RAII wrapper around a `cudaMalloc`'d region. Move-only. `resize()` is a
+// Device allocations are cached host-side and only fall through to the driver on a miss, because
+// even a `cudaMallocAsync` hit is a driver round trip (~3 us) against ~20 ns for the scan below,
+// and one build makes dozens. The driver calls underneath are the stream-ordered ones: `cudaFree`
+// drains the device -- called with a kernel in flight it blocks the host for that kernel's full
+// duration -- while `cudaFreeAsync` returns immediately.
+//
+// A block is reused only for the same size on the same stream, so its next use is ordered after
+// its last one. Freeing a block another stream is still reading remains the caller's to avoid.
+// Not thread-safe, and single-device by construction (bind_gpu_device pins the process).
+struct DeviceBlock {
+    void *p;
+    std::size_t bytes;
+    cudaStream_t stream;
+};
+
+inline std::vector<DeviceBlock> &device_pool() {
+    static std::vector<DeviceBlock> pool;
+    return pool;
+}
+
+inline std::size_t &pool_held() {
+    static std::size_t held = 0;
+    return held;
+}
+
+// Stream for allocations whose consumer stream is not known at the call site. Non-blocking, so
+// waiting on it never waits on work queued elsewhere.
+inline cudaStream_t alloc_stream() {
+    static cudaStream_t stream = [] {
+        cudaStream_t s = nullptr;
+        DMK_CHECK_CUDA(cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking));
+        int device = 0;
+        cudaMemPool_t pool;
+        if (cudaGetDevice(&device) == cudaSuccess && cudaDeviceGetDefaultMemPool(&pool, device) == cudaSuccess) {
+            // The pool otherwise hands every block back to the OS at each synchronization.
+            std::uint64_t retain_max = std::uint64_t(4) << 30;
+            cudaMemPoolSetAttribute(pool, cudaMemPoolAttrReleaseThreshold, &retain_max);
+        }
+        return s;
+    }();
+    return stream;
+}
+
+inline void *pool_take(std::size_t bytes, cudaStream_t stream) {
+    auto &pool = device_pool();
+    for (auto it = pool.begin(); it != pool.end(); ++it) {
+        if (it->bytes != bytes || it->stream != stream)
+            continue;
+        void *const p = it->p;
+        pool_held() -= it->bytes;
+        pool.erase(it);
+        return p;
+    }
+    return nullptr;
+}
+
+inline void *pool_alloc(std::size_t bytes, cudaStream_t stream) {
+    if (!bytes)
+        return nullptr;
+    if (void *const cached = pool_take(bytes, stream))
+        return cached;
+    void *p = nullptr;
+    DMK_CHECK_CUDA(cudaMallocAsync(&p, bytes, stream));
+    return p;
+}
+
+// For memory whose consumer stream is not known at the call site: a fresh block is allocated on a
+// stream of its own and waited for, so it is valid on any stream afterwards. The wait is for the
+// allocation alone and never for work queued on other streams -- about 2 us, and only on a miss.
+inline void *pool_alloc(std::size_t bytes) {
+    if (!bytes)
+        return nullptr;
+    if (void *const cached = pool_take(bytes, alloc_stream()))
+        return cached;
+    void *p = nullptr;
+    DMK_CHECK_CUDA(cudaMallocAsync(&p, bytes, alloc_stream()));
+    DMK_CHECK_CUDA(cudaStreamSynchronize(alloc_stream()));
+    return p;
+}
+
+inline void pool_free(void *p, std::size_t bytes, cudaStream_t stream) {
+    if (!p)
+        return;
+    // Retaining one problem's working set is the point; retaining every size a long-running process
+    // has ever asked for is not, so past the cap blocks go back to the driver.
+    constexpr std::size_t retain_max = std::size_t(4) << 30;
+    if (pool_held() + bytes > retain_max) {
+        cudaFreeAsync(p, stream);
+        return;
+    }
+    pool_held() += bytes;
+    device_pool().push_back({p, bytes, stream});
+}
+
+// Page-locked host staging, pooled for the same reason: page-locking a few megabytes costs far more
+// than the transfer it serves.
+inline std::vector<std::pair<void *, std::size_t>> &pinned_pool() {
+    static std::vector<std::pair<void *, std::size_t>> pool;
+    return pool;
+}
+
+inline std::pair<char *, std::size_t> pinned_alloc(std::size_t bytes) {
+    auto &pool = pinned_pool();
+    for (auto it = pool.begin(); it != pool.end(); ++it)
+        if (it->second >= bytes) {
+            const auto block = *it;
+            pool.erase(it);
+            return {static_cast<char *>(block.first), block.second};
+        }
+    void *p = nullptr;
+    if (cudaMallocHost(&p, bytes) != cudaSuccess)
+        return {nullptr, 0};
+    return {static_cast<char *>(p), bytes};
+}
+
+inline void pinned_free(char *p, std::size_t bytes) {
+    if (!p)
+        return;
+    // Tighter cap than the device pool: page-locked pages come out of the machine's pool, not the
+    // card's.
+    constexpr std::size_t retain_max = std::size_t(256) << 20;
+    auto &pool = pinned_pool();
+    std::size_t held = bytes;
+    for (const auto &b : pool)
+        held += b.second;
+    if (held > retain_max) {
+        cudaFreeHost(p);
+        return;
+    }
+    pool.emplace_back(p, bytes);
+}
+
+// RAII wrapper around a pooled device region. Move-only. Must not have static storage duration:
+// the destructor frees, and a free from a static destructor reaches a CUDA context that may
+// already be gone. `resize()` is a
 // no-op if the requested size matches what's already allocated, otherwise it
 // frees and re-allocates (no realloc — caller's responsibility if old data
 // matters).
@@ -43,17 +199,23 @@ class DeviceBuffer {
     explicit DeviceBuffer(std::size_t n) { resize(n); }
     ~DeviceBuffer() { reset(); }
 
-    DeviceBuffer(DeviceBuffer &&o) noexcept : p_(o.p_), n_(o.n_) {
+    DeviceBuffer(DeviceBuffer &&o) noexcept : p_(o.p_), n_(o.n_), stream_(o.stream_), owned_(o.owned_) {
         o.p_ = nullptr;
         o.n_ = 0;
+        o.stream_ = nullptr;
+        o.owned_ = true;
     }
     DeviceBuffer &operator=(DeviceBuffer &&o) noexcept {
         if (this != &o) {
             reset();
             p_ = o.p_;
             n_ = o.n_;
+            stream_ = o.stream_;
+            owned_ = o.owned_;
             o.p_ = nullptr;
             o.n_ = 0;
+            o.stream_ = nullptr;
+            o.owned_ = true;
         }
         return *this;
     }
@@ -61,21 +223,46 @@ class DeviceBuffer {
     DeviceBuffer &operator=(const DeviceBuffer &) = delete;
 
     void resize(std::size_t n) {
-        if (n == n_)
+        // An adopted region is someone else's, so a resize must allocate rather than reuse it,
+        // even when the size already matches.
+        if (n == n_ && owned_)
             return;
         reset();
         if (n) {
-            DMK_CHECK_CUDA(cudaMalloc(&p_, n * sizeof(T)));
+            p_ = static_cast<T *>(pool_alloc(n * sizeof(T)));
+            stream_ = alloc_stream();
+            n_ = n;
+        }
+    }
+
+    // For a buffer used on one known stream: the allocation is ordered in it, and so is the free.
+    void resize(std::size_t n, cudaStream_t stream) {
+        if (n == n_ && owned_)
+            return;
+        reset();
+        if (n) {
+            p_ = static_cast<T *>(pool_alloc(n * sizeof(T), stream));
+            stream_ = stream;
             n_ = n;
         }
     }
 
     void reset() {
-        if (p_) {
-            cudaFree(p_);
-            p_ = nullptr;
-        }
+        if (p_ && owned_)
+            pool_free(p_, n_ * sizeof(T), stream_);
+        p_ = nullptr;
         n_ = 0;
+        stream_ = nullptr;
+        owned_ = true;
+    }
+
+    // Point at device memory owned elsewhere, so `data()` and `size()` read as usual but nothing
+    // is freed: the device tree owns its metadata and outlives the State that reads it.
+    void adopt(const T *p, std::size_t n) {
+        reset();
+        p_ = const_cast<T *>(p);
+        n_ = n;
+        owned_ = false;
     }
 
     void upload(const T *src, std::size_t n) {
@@ -84,18 +271,17 @@ class DeviceBuffer {
             DMK_CHECK_CUDA(cudaMemcpy(p_, src, n * sizeof(T), cudaMemcpyHostToDevice));
     }
     void upload_async(const T *src, std::size_t n, cudaStream_t stream) {
-        resize(n);
+        resize(n, stream);
         if (n)
             DMK_CHECK_CUDA(cudaMemcpyAsync(p_, src, n * sizeof(T), cudaMemcpyHostToDevice, stream));
     }
     // Grow-only upload for reused scratch whose element count varies call-to-call
     // (e.g. per-launch arg arrays): grows the allocation to fit but never shrinks,
-    // so a size that oscillates does not free/realloc every call. cudaFree
-    // synchronizes the whole device, so avoiding it off the hot path matters.
+    // so a size that oscillates does not free/realloc every call.
     // size() reflects capacity after this, not the last upload's count.
     void upload_async_grow(const T *src, std::size_t n, cudaStream_t stream) {
         if (n > n_)
-            resize(n);
+            resize(n, stream);
         if (n)
             DMK_CHECK_CUDA(cudaMemcpyAsync(p_, src, n * sizeof(T), cudaMemcpyHostToDevice, stream));
     }
@@ -113,6 +299,8 @@ class DeviceBuffer {
   private:
     T *p_ = nullptr;
     std::size_t n_ = 0;
+    cudaStream_t stream_ = nullptr; ///< the stream the allocation is ordered in, and the free will be
+    bool owned_ = true;             ///< false after adopt(): the region belongs to someone else
 };
 
 // RAII wrapper around a cudaStream. Default-constructed instance carries no

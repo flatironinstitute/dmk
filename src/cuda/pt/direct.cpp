@@ -199,9 +199,9 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     }
 
     dmk::cuda::DirectByBoxArgs<Real> a_src = base;
-    a_src.r_target_flat = s.particles.d_r_src.data();
-    a_src.r_target_offsets = s.particles.d_r_src_offsets.data();
-    a_src.target_counts = s.particles.d_src_counts.data();
+    a_src.r_target_flat = s.particles.d_r_src_owned.data();
+    a_src.r_target_offsets = s.particles.d_r_src_offsets_owned.data();
+    a_src.target_counts = s.particles.d_src_counts_owned.data();
     a_src.pot_flat = s.outputs.d_pot_direct_src.data();
     a_src.pot_offsets = s.outputs.d_pot_src_offsets.data();
 
@@ -247,7 +247,8 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
         // reused for another and the comparison measures nothing.
         tune_key_ss << "|pf=" << prefilter << "|ct=" << cull_tile << "|pfs=" << prefilter_stats << "|eu=" << eval_unroll
                     << "|ss=" << stage_src;
-        tune_key_ss << "|src=" << jit::jit_source_hash("pt/direct.cu");
+        tune_key_ss << "|src=" << jit::jit_source_hash("pt/direct.cu")
+                    << "|ev=" << jit::jit_header_hash("dmk/cuda/poly_evaluators_device.hpp");
         const std::string tune_key = tune_key_ss.str();
 
         // `plans` is process-wide and hits before coefficients are generated, so its
