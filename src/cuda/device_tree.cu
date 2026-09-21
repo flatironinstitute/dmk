@@ -4,6 +4,7 @@
 #include "sctl/tree.txx"
 #include "sctl/experimental/gpu-tree.hpp"
 #include "dmk/cuda/device_tree.hpp"
+#include "dmk/cuda/device_vector.hpp"
 
 #include <thrust/copy.h>
 #include <thrust/device_ptr.h>
@@ -14,16 +15,16 @@ namespace detail_deviceTree {
 
 /** The caller's buffer as a device-side range. */
 template <class T>
-gpu_tree::DeviceVector<T> toDevice(const T *src, Long n, MemSpace space) {
+DeviceVector<T> toDevice(const T *src, Long n, MemSpace space) {
     if (space == MemSpace::Host)
-        return gpu_tree::DeviceVector<T>(src, src + n);
+        return DeviceVector<T>(src, src + n);
     const thrust::device_ptr<const T> p(src);
-    return gpu_tree::DeviceVector<T>(p, p + n);
+    return DeviceVector<T>(p, p + n);
 }
 
 /** The tree's buffer into the caller's. */
 template <class T>
-void fromDevice(const gpu_tree::DeviceVector<T> &src, T *dst, MemSpace space) {
+void fromDevice(const DeviceVector<T> &src, T *dst, MemSpace space) {
     if (space == MemSpace::Host)
         thrust::copy(src.begin(), src.end(), dst);
     else
@@ -31,7 +32,7 @@ void fromDevice(const gpu_tree::DeviceVector<T> &src, T *dst, MemSpace space) {
 }
 
 template <class T>
-const T *raw(const gpu_tree::DeviceVector<T> &v) {
+const T *raw(const DeviceVector<T> &v) {
     return thrust::raw_pointer_cast(v.data());
 }
 
@@ -39,7 +40,7 @@ const T *raw(const gpu_tree::DeviceVector<T> &v) {
 
 template <class Real, Integer DIM>
 struct PtTree<Real, DIM>::Impl {
-    using Tree = gpu_tree::PtTree<Real, DIM, gpu_tree::DeviceVector>;
+    using Tree = gpu_tree::PtTree<Real, DIM, DeviceVector>;
 
     explicit Impl(const Comm &comm) : tree(comm) {}
 
@@ -81,7 +82,7 @@ void PtTree<Real, DIM>::AddParticleData(const std::string &data_name, const std:
 
 template <class Real, Integer DIM>
 void PtTree<Real, DIM>::GetParticleData(const std::string &data_name, Real *out, Long n, MemSpace space) const {
-    gpu_tree::DeviceVector<Real> v;
+    DeviceVector<Real> v;
     p_->tree.GetParticleData(v, data_name);
     SCTL_ASSERT_MSG((Long)v.size() == n, "device_tree::PtTree::GetParticleData: n does not match the data.");
     detail_deviceTree::fromDevice(v, out, space);

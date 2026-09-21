@@ -868,9 +868,6 @@ void run_dmk_benchmark(Config cfg) {
         pdmk_print_profile_data(MYCOMM, 'c');
         if (rank == 0)
             std::cout << std::endl << std::flush;
-        // Drawing to terminal takes time away from the GPU *sigh*.
-        if (cfg.eval_path == DMK_EVAL_PATH_GPU)
-            std::this_thread::sleep_for(std::chrono::milliseconds(26));
     }
 
     unpin_host_buffer(pot_dmk_src, pinned_src);

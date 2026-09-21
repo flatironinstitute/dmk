@@ -3,7 +3,7 @@
 
 #include "metadata.hpp"
 
-#include <sctl/experimental/gpu-vector.hpp> // gpu_tree::detail's device block pool
+#include "dmk/cuda/device_vector.hpp" // device_block_alloc/free
 
 #include <thrust/execution_policy.h>
 #include <thrust/functional.h>
@@ -46,9 +46,9 @@ constexpr int n_child_slots() {
 struct PoolAlloc {
     using value_type = char;
     char *allocate(std::ptrdiff_t n) {
-        return static_cast<char *>(gpu_tree::detail::device_block_alloc((std::size_t)n));
+        return static_cast<char *>(dmk::cuda::device_block_alloc((std::size_t)n));
     }
-    void deallocate(char *p, std::size_t n) { gpu_tree::detail::device_block_free(p, n); }
+    void deallocate(char *p, std::size_t) { dmk::cuda::device_block_free(p); }
 };
 
 template <typename Real, int DIM>
@@ -219,12 +219,12 @@ struct Scratch {
         if (!host || !n)
             return;
         bytes = (std::size_t)n * sizeof(T);
-        p = static_cast<T *>(gpu_tree::detail::device_block_alloc(bytes));
+        p = static_cast<T *>(dmk::cuda::device_block_alloc(bytes));
         DMK_CUDA_OK(cudaMemcpyAsync(p, host, bytes, cudaMemcpyHostToDevice, 0));
     }
     ~Scratch() {
         if (p)
-            gpu_tree::detail::device_block_free(p, bytes);
+            dmk::cuda::device_block_free(p);
     }
     Scratch(const Scratch &) = delete;
     Scratch &operator=(const Scratch &) = delete;
