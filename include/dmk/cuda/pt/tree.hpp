@@ -40,12 +40,24 @@ class Tree {
     const sctl::Comm &GetComm() const { return tree_->comm(); }
 
   private:
+    /// Starts the caller's charges (and normals) across on their own stream; scatter_charges waits
+    /// on them. From a page-locked buffer this is a DMA the tree build hides; a pageable buffer still
+    /// costs the driver's staging copy on the host, so callers refilling one buffer should register it.
+    void stage_charges(const Real *charge, const Real *normal);
+    void scatter_charges();
+    void bind_charges();
+
     std::unique_ptr<DMKPtTree<Real, DIM>> tree_;
     std::unique_ptr<device_tree::PtTree<Real, DIM>> dev_tree_;
     std::unique_ptr<DeviceMetadata<Real, DIM>> md_; ///< declared before state_, which adopts its buffers
     std::unique_ptr<State<Real, DIM>> state_;
     sctl::Long n_src_local_ = 0; ///< sources this rank supplied, the order update_charges is given
     sctl::Long n_trg_local_ = 0; ///< targets this rank supplied
+    int charge_dof_ = 0;
+    bool stresslet_ = false;
+    cuda_helpers::DeviceBuffer<Real> d_charge_in_, d_normal_in_; ///< the caller's arrays, user order
+    cuda_helpers::DeviceEvent charge_ready_;                     ///< the staging copies have landed
+    cuda_helpers::DeviceEvent charge_consumed_; ///< the tree has read them; the next staging waits on it
 };
 
 } // namespace dmk::cuda::pt

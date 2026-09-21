@@ -22,6 +22,7 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <numeric>
 #include <omp.h>
 #include <sctl/profile.hpp>
 #include <tuple>
@@ -263,14 +264,15 @@ template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::adopt_device_tree(sctl::Long node_begin, sctl::Long node_end) {
     sctl::Profile::Scoped profile("adopt_device_tree", &comm_);
     owned_node_begin = node_begin;
-    { // the owned nodes are contiguous, and the source broadcast leaves their counts unchanged
-        const auto &cnt = r_src_cnt_with_halo;
-        r_src_cnt_owned.ReInit(cnt.Dim());
-        r_src_cnt_owned.SetZero();
-        std::copy(cnt.begin() + node_begin, cnt.begin() + node_end, r_src_cnt_owned.begin() + node_begin);
-    }
+    owned_node_end = node_end;
+    n_boxes_adopted = r_src_cnt_with_halo.Dim();
+    // The source broadcast leaves the owned nodes' counts unchanged, so the halo counts over the
+    // owned run are the owned counts.
+    n_src_before_owned = std::accumulate(r_src_cnt_with_halo.begin(), r_src_cnt_with_halo.begin() + node_begin, 0L);
+    n_src_owned = std::accumulate(r_src_cnt_with_halo.begin() + node_begin, r_src_cnt_with_halo.begin() + node_end, 0L);
+    n_trg_owned = std::accumulate(r_trg_cnt_owned.begin(), r_trg_cnt_owned.end(), 0L);
     topology_adopted = true;
-    logger->debug("adopted the device tree's {} nodes", node_mid_host.Dim());
+    logger->debug("adopted the device tree's {} nodes", n_boxes_adopted);
 }
 
 template <typename Real, int DIM>
@@ -469,6 +471,13 @@ void DMKPtTree<Real, DIM>::compute_level_indices_and_boxsizes() {
     // the requested tolerance however the kernel is evaluated. Depth follows from the point
     // distribution rather than from anything the caller sets directly, so this reports rather
     // than refuses; n_per_leaf is the knob that makes the tree shallower.
+    level_indices.ReInit(max_depth);
+    warn_if_too_deep(max_depth);
+    set_level_tables(max_depth);
+}
+
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::warn_if_too_deep(int max_depth) {
     const double coord_eps = std::numeric_limits<Real>::epsilon();
     const int depth_supported = static_cast<int>(std::floor(std::log2(params.eps / coord_eps)));
     if (max_depth - 1 > depth_supported)
@@ -476,8 +485,11 @@ void DMKPtTree<Real, DIM>::compute_level_indices_and_boxsizes() {
                      "at eps={:.1e}; the near field will not reach that tolerance. Raise n_per_leaf "
                      "to flatten the tree, loosen eps, or use the double-precision entry point.",
                      max_depth - 1, depth_supported, params.eps);
+}
 
-    level_indices.ReInit(max_depth);
+template <typename Real, int DIM>
+void DMKPtTree<Real, DIM>::set_level_tables(int max_depth) {
+    n_levels_ = max_depth;
     boxsize.ReInit(max_depth + 1);
     boxsize[0] = 1.0;
     for (int i = 1; i < max_depth + 1; ++i)
@@ -815,10 +827,7 @@ void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
     long n_proxy_boxes_upward = 0;
     long n_proxy_boxes_downward = 0;
     for (int i = 0; i < n_boxes(); ++i) {
-        // The GPU pass adds every colleague's plane wave, so a ghost held without its particles
-        // still needs the slot ReduceBroadcast fills; the CPU pass pairs only boxes with a leaf.
-        const bool has_sources = topology_adopted ? src_counts_global[i] > 0 : src_counts_with_halo[i] > 0;
-        if (ifpwexp[i] && has_sources) {
+        if (ifpwexp[i] && src_counts_with_halo[i] > 0) {
             counts_upward[i] = n_coeffs_up;
             n_proxy_boxes_upward++;
         } else {
@@ -834,12 +843,11 @@ void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
     }
 
     proxy_coeffs_counts = counts_upward;
-    proxy_coeffs_downward.ReInit(n_coeffs_down * n_proxy_boxes_downward);
+    proxy_coeffs_downward_dim = n_coeffs_down * n_proxy_boxes_downward;
+    proxy_coeffs_downward.ReInit(proxy_coeffs_downward_dim);
 
-    if (!topology_adopted) { // the GPU path keeps these on the device tree
-        this->template AddData<Real>("proxy_coeffs", 1, counts_upward);
-        this->GetData(proxy_coeffs_upward, counts_upward, "proxy_coeffs");
-    }
+    this->template AddData<Real>("proxy_coeffs", 1, counts_upward);
+    this->GetData(proxy_coeffs_upward, counts_upward, "proxy_coeffs");
 
     proxy_coeffs_offsets.ReInit(n_boxes());
     proxy_coeffs_offsets_downward.ReInit(n_boxes());
@@ -1059,38 +1067,6 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
         direct_d2max[lvl] = bsize * bsize;
     }
 
-    eval_targets_box_list.clear();
-    eval_targets_box_list.reserve(n_boxes());
-    for (int b = 0; b < n_boxes(); ++b)
-        if (iftensprodeval[b])
-            eval_targets_box_list.push_back(b);
-
-    // Per-level tensorprod pairs. Mirrors form_eval_expansions's CPU loop
-    // gating: parent must do PW work (ifpwexp && nboxpts) and not be an
-    // iftensprodeval leaf; child must be a real, non-empty box.
-    {
-        constexpr int n_children = 1u << DIM;
-        const auto &node_mid_local = box_mid();
-        const auto &node_lists_local = box_lists();
-        tensorprod_pairs_per_level.assign(n_levels(), {});
-        for (int L = 0; L < n_levels(); ++L)
-            tensorprod_pairs_per_level[L].reserve(level_indices[L].Dim());
-        for (int b = 0; b < n_boxes(); ++b) {
-            const int nboxpts = src_counts_owned[b] + trg_counts_owned[b];
-            if (!ifpwexp[b] || !nboxpts || iftensprodeval[b])
-                continue;
-            const int level = node_mid_local[b].Depth();
-            for (int i_child = 0; i_child < n_children; ++i_child) {
-                const int child = node_lists_local[b].child[i_child];
-                if (child < 0)
-                    continue;
-                if (!(src_counts_owned[child] + trg_counts_owned[child]))
-                    continue;
-                tensorprod_pairs_per_level[level].push_back({b, child, i_child});
-            }
-        }
-    }
-
     // CPU evaluator lambdas — direct.cpp consumes these. The GPU direct path
     // has its own kernels and ignores evaluator_by_level_*.
     if (params.eval_path == DMK_EVAL_PATH_GPU)
@@ -1178,8 +1154,12 @@ void DMKPtTree<Real, DIM>::generate_metadata() {
     sctl::Profile::Scoped profile("generate_metadata", &comm_);
     logger->debug("generating tree traversal metadata and other constants");
 
+    nvtxRangePush("mld_data_offsets");
     compute_data_offsets();
+    nvtxRangePop();
+    nvtxRangePush("mld_level_idx");
     compute_level_indices_and_boxsizes();
+    nvtxRangePop();
     compute_box_centers();
     accumulate_subtree_counts();
     gather_owned_source_positions();
@@ -1200,45 +1180,12 @@ void DMKPtTree<Real, DIM>::generate_metadata() {
 }
 
 template <typename Real, int DIM>
-void DMKPtTree<Real, DIM>::generate_metadata_for_gpu() {
-    nvtxRangePush("generate_metadata_for_gpu");
-    sctl::Profile::Scoped profile("generate_metadata_for_gpu", &comm_);
-    logger->debug("generating GPU tree traversal metadata");
-    assert(charge_sorted_owned.Dim() == 0 && pot_src_sorted.Dim() == 0 &&
-           "generate_metadata_for_gpu expects adopt_device_tree: host charge/pot arrays must be empty");
-    assert(is_global_leaf.Dim() == (sctl::Long)n_boxes() && src_counts_global.Dim() == (sctl::Long)n_boxes() &&
-           "generate_metadata_for_gpu expects the device tree's global leaf status and source counts");
-
-    // per-box data counts; the GPU build keeps the data itself on the device
-    charge_cnt_owned = r_src_cnt_owned;
-    charge_cnt_with_halo = r_src_cnt_with_halo;
-    pot_src_cnt = r_src_cnt_owned;
-    pot_trg_cnt = r_trg_cnt_owned;
-    if (params.kernel == DMK_STRESSLET) {
-        normal_cnt_with_halo = r_src_cnt_with_halo;
-        density_cnt_with_halo = r_src_cnt_with_halo;
-    }
-
-    compute_data_offsets();
-    compute_level_indices_and_boxsizes();
-    if (!device_metadata)
-        compute_box_centers();
-    accumulate_subtree_counts();
-    compute_proxy_expansion_flags();
-    compute_proxy_evaluation_flags();
-    if (!device_metadata)
-        build_direct_interaction_lists();
-    build_upward_pass_work_lists();
-    if (!device_metadata)
-        build_direct_work_lists();
-    allocate_proxy_coefficients();
+void DMKPtTree<Real, DIM>::metadata_for_gpu(int max_depth) {
+    sctl::Profile::Scoped profile("metadata_for_gpu", &comm_);
+    warn_if_too_deep(max_depth);
+    set_level_tables(max_depth);
     build_shared_precompute();
     build_evaluators();
-    if (!device_metadata)
-        build_self_correction_work_list();
-
-    logger->debug("done generating GPU tree traversal metadata");
-    nvtxRangePop();
 }
 
 /// @brief Fill out the proxy coefficients used in the upward pass
@@ -1375,8 +1322,7 @@ void DMKPtTree<Real, DIM>::init_planewave_data() {
                 pw_out_offsets[box] = -1;
         }
         pw_out_size = last_offset;
-        if (!topology_adopted) // the GPU path keeps pw_out on the device
-            pw_out.ReInit(last_offset);
+        pw_out.ReInit(last_offset);
     }
     nvtxRangePop();
 }

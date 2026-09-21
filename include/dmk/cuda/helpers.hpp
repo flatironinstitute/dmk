@@ -186,6 +186,41 @@ inline void pinned_free(char *p, std::size_t bytes) {
     pool.emplace_back(p, bytes);
 }
 
+// Stream for caller-buffer uploads that should cross while other work runs. Non-blocking, so it
+// never waits on the legacy stream; consumers wait on an event instead.
+inline cudaStream_t upload_stream() {
+    static cudaStream_t stream = [] {
+        cudaStream_t s = nullptr;
+        DMK_CHECK_CUDA(cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking));
+        return s;
+    }();
+    return stream;
+}
+
+// The two streams every State runs its eval on. Process-wide, like the pool: a tree is a
+// one-device object and creating a pair per tree was measurable in the build.
+inline cudaStream_t direct_stream() {
+    static cudaStream_t stream = [] {
+        cudaStream_t s = nullptr;
+        DMK_CHECK_CUDA(cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking));
+        return s;
+    }();
+    return stream;
+}
+// Priority only biases which of the *ready* blocks the scheduler picks next; it never preempts. The
+// near-field kernel's blocks would otherwise hold every SM until they tail off, starving the
+// far-field chain for most of the eval even though it is enqueued at the same time.
+inline cudaStream_t downward_stream() {
+    static cudaStream_t stream = [] {
+        cudaStream_t s = nullptr;
+        int least = 0, greatest = 0;
+        DMK_CHECK_CUDA(cudaDeviceGetStreamPriorityRange(&least, &greatest));
+        DMK_CHECK_CUDA(cudaStreamCreateWithPriority(&s, cudaStreamNonBlocking, greatest));
+        return s;
+    }();
+    return stream;
+}
+
 // RAII wrapper around a pooled device region. Move-only. Must not have static storage duration:
 // the destructor frees, and a free from a static destructor reaches a CUDA context that may
 // already be gone. `resize()` is a

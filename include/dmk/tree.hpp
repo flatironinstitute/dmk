@@ -583,6 +583,9 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<int> src_counts_owned;
     sctl::Vector<int> trg_counts_owned;
     sctl::Vector<int> src_counts_with_halo;
+    sctl::Long n_trg_max_ = 0; ///< largest single-box owned target count
+    /// Elements in the downward proxy buffer; the GPU path needs the size, not the storage.
+    sctl::Long proxy_coeffs_downward_dim = 0;
 
     sctl::Vector<Real> r_src_sorted_with_halo;
     sctl::Vector<sctl::Long> r_src_cnt_with_halo;
@@ -592,7 +595,13 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> r_src_cnt_owned;
     sctl::Vector<sctl::Long> r_src_offsets_owned;
 
-    sctl::Long owned_node_begin = 0; ///< first of the contiguous owned nodes (GPU path)
+    // The adopted device tree's owned nodes are one contiguous run; these are the only per-particle
+    // totals the host keeps about it.
+    sctl::Long owned_node_begin = 0;
+    sctl::Long owned_node_end = 0;
+    sctl::Long n_src_owned = 0;
+    sctl::Long n_trg_owned = 0;
+    sctl::Long n_src_before_owned = 0; ///< halo sources sorted ahead of the owned run
 
     sctl::Vector<Real> r_trg_sorted_owned;
     sctl::Vector<sctl::Long> r_trg_cnt_owned;
@@ -602,17 +611,9 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> pot_src_cnt;
     sctl::Vector<sctl::Long> pot_src_offsets;
 
-    sctl::Vector<Real> grad_src_sorted;
-    sctl::Vector<sctl::Long> grad_src_cnt;
-    sctl::Vector<sctl::Long> grad_src_offsets;
-
     sctl::Vector<Real> pot_trg_sorted;
     sctl::Vector<sctl::Long> pot_trg_cnt;
     sctl::Vector<sctl::Long> pot_trg_offsets;
-
-    sctl::Vector<Real> grad_trg_sorted;
-    sctl::Vector<sctl::Long> grad_trg_cnt;
-    sctl::Vector<sctl::Long> grad_trg_offsets;
 
     sctl::Vector<Real> charge_sorted_owned;
     sctl::Vector<sctl::Long> charge_cnt_owned;
@@ -652,23 +653,6 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     // STRESSLET (no correction needed).
     std::vector<Real> self_correction_work;
 
-    // Boxes with iftensprodeval[b] == true, in tree order. Each entry is a
-    // leaf-of-eval where proxy::eval_targets runs on the proxy expansion.
-    // Precomputed once in build_evaluators(); consumed by the GPU eval_targets
-    // path (CPU path still iterates all boxes and checks the flag inline).
-    std::vector<int> eval_targets_box_list;
-
-    // Per-level list of (parent, child, child_octant) tuples for the
-    // tensorprod transforms: parent at level L, child at level L+1. Matches
-    // the per-box conditions in form_eval_expansions's CPU loop. One GPU
-    // tensorprod batch kernel per level consumes this list.
-    struct TensorprodPair {
-        int parent;
-        int child;
-        int child_octant; // 0..(2^DIM - 1); selects p2c slab
-    };
-    std::vector<std::vector<TensorprodPair>> tensorprod_pairs_per_level;
-
     sctl::Vector<bool> has_proxy_from_children;
     struct Charge2ProxyGroup {
         int center_box;
@@ -707,16 +691,15 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<typename sctl::Tree<DIM>::NodeAttr> node_attr_host;
     sctl::Vector<typename sctl::Tree<DIM>::NodeLists> node_lst_host;
     bool topology_adopted = false;
-    /// Set when dmk::cuda::pt derives the per-box geometry, interaction lists and direct-work
-    /// order on the device instead. The passes that produce them are skipped here, and nothing on
-    /// the host reads their outputs on that path.
-    bool device_metadata = false;
 
     DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, const sctl::Vector<Real> &r_src,
               const sctl::Vector<Real> &charge, const sctl::Vector<Real> &normals, const sctl::Vector<Real> &r_trg);
 
-    int n_levels() const { return level_indices.Dim(); }
-    std::size_t n_boxes() const { return box_mid().Dim(); }
+    int n_levels() const { return n_levels_; }
+    int n_levels_ = 0;
+    /// The adopted tree carries its own count: the host copy of the node arrays is optional there.
+    std::size_t n_boxes() const { return topology_adopted ? (std::size_t)n_boxes_adopted : box_mid().Dim(); }
+    sctl::Long n_boxes_adopted = 0;
 
     using NodeAttr = typename sctl::Tree<DIM>::NodeAttr;
     using NodeLists = typename sctl::Tree<DIM>::NodeLists;
@@ -749,6 +732,8 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     // Metadata generation subroutines
     void compute_data_offsets();
     void compute_level_indices_and_boxsizes();
+    void set_level_tables(int max_depth);
+    void warn_if_too_deep(int max_depth);
     void compute_box_centers();
     void accumulate_subtree_counts();
     void gather_owned_source_positions();
@@ -770,7 +755,9 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     void build_evaluators();
     void build_self_correction_work_list();
     void generate_metadata();
-    void generate_metadata_for_gpu();
+    /// The per-level tables the GPU path still needs from the host; every per-box quantity is
+    /// derived on the device.
+    void metadata_for_gpu(int max_depth);
     void init_planewave_data();
 
     // Subtasks for downward pass
@@ -943,8 +930,6 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     // listpw_ contains source boxes in the pw interaction
     std::vector<std::array<int, nlistpw_max_>> listpw_;
     std::vector<int> nlistpw_;
-
-    sctl::Long n_trg_max_;
 
     // If proxy_view_downward(i_box) has been zeroed yet.
     std::vector<int> proxy_down_zeroed;

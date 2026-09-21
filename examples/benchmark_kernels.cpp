@@ -239,6 +239,17 @@ void unpin_host_buffer([[maybe_unused]] std::vector<Real> &buf, [[maybe_unused]]
 #endif
 }
 
+/// Pinned for the buffer's lifetime in this scope. DMK uploads the inputs asynchronously from
+/// whatever it is handed; page-locked they are a DMA the tree build hides, pageable they cost the
+/// driver's staging copy on the host. The caller owns the buffers, so the caller registers them.
+template <typename Real>
+struct PinnedBuffer {
+    std::vector<Real> &buf;
+    bool pinned;
+    PinnedBuffer(std::vector<Real> &b, bool enable) : buf(b), pinned(pin_host_buffer(b, enable)) {}
+    ~PinnedBuffer() { unpin_host_buffer(buf, pinned); }
+};
+
 // Brute-force nearest-source distance to a point at r_pts[p*n_dim..]. O(n_src). Diagnostics
 // only. If r_pts and r_src are the same array, also skip the self-pair (R == 0).
 template <typename Real>
@@ -675,6 +686,8 @@ void run_dmk_benchmark(Config cfg) {
     std::vector<Real> r_src, r_trg, charges, normals;
     generate_and_scatter<Real>(n_dim, charge_dim, n_src, n_trg, cfg.dist, true, r_src, r_trg, charges, normals,
                                cfg.seed, cfg.use_periodic, rank, np);
+    const PinnedBuffer<Real> pin_r_src(r_src, cfg.pin_host), pin_r_trg(r_trg, cfg.pin_host),
+        pin_charges(charges, cfg.pin_host), pin_normals(normals, cfg.pin_host);
 
     auto create_tree = [&]() -> pdmk_tree {
         const Real *r_trg_ptr = with_trg ? r_trg.data() : nullptr;
@@ -1445,7 +1458,7 @@ void print_usage(const char *argv0) {
               << "  --bench-build         Also benchmark tree build time\n"
               << "  --no-bench-eval       Skip eval benchmark (build only)\n"
               << "  --bench-update-charges  Also benchmark pdmk_tree_update_charges\n"
-              << "  --pin                 Page-lock the potential buffers (GPU path: unstaged D2H)\n"
+              << "  --pin                 Page-lock the input and potential buffers (GPU path: unstaged transfers)\n"
               << "\n"
               << "--solver esp only:\n"
               << "  -c r_c                Real-space cutoff (default: auto-picked for accuracy)\n"

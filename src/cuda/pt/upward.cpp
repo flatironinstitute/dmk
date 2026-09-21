@@ -105,7 +105,7 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
                                     f.n_order * f.n_order * f.n_order * f.n_tables_up, stream);
 
         // ---- charge2proxy (leaf sources -> center-box proxy coeffs) ----
-        if (w.n_c2p_groups && w.n_c2p_active_groups) {
+        if (w.n_c2p_groups) {
             static JitCache cache;
             dmk::cuda::Charge2ProxyArgs<Real> a;
             a.n_groups = w.n_c2p_groups;
@@ -126,9 +126,8 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
             a.proxy_flat = s.scratch.d_proxy_coeffs_upward.data();
             a.proxy_offsets = s.scratch.d_proxy_offsets_upward.data();
             a.group_perm = w.d_c2p_group_perm.data();
-            a.n_active_groups = w.n_c2p_active_groups;
             const int *group_perm = w.d_c2p_group_perm.data();
-            const int n_launch = w.n_c2p_active_groups;
+            const int n_launch = w.n_c2p_groups;
 
             auto launch_one = [&](const TuningParams &p, cudaStream_t st, bool compile_only) {
                 JitKey key;

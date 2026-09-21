@@ -6,29 +6,18 @@
 #include "dmk/cuda/device_tree.hpp"
 #include "dmk/cuda/device_vector.hpp"
 
-#include <thrust/copy.h>
 #include <thrust/device_ptr.h>
 
 namespace dmk::cuda::device_tree {
 
 namespace detail_deviceTree {
 
-/** The caller's buffer as a device-side range. */
+/** The caller's buffer as a device-side range: a copy of host memory, a view of device memory. */
 template <class T>
 DeviceVector<T> toDevice(const T *src, Long n, MemSpace space) {
     if (space == MemSpace::Host)
         return DeviceVector<T>(src, src + n);
-    const thrust::device_ptr<const T> p(src);
-    return DeviceVector<T>(p, p + n);
-}
-
-/** The tree's buffer into the caller's. */
-template <class T>
-void fromDevice(const DeviceVector<T> &src, T *dst, MemSpace space) {
-    if (space == MemSpace::Host)
-        thrust::copy(src.begin(), src.end(), dst);
-    else
-        thrust::copy(src.begin(), src.end(), thrust::device_ptr<T>(dst));
+    return DeviceVector<T>::view(const_cast<T *>(src), n);
 }
 
 template <class T>
@@ -82,10 +71,14 @@ void PtTree<Real, DIM>::AddParticleData(const std::string &data_name, const std:
 
 template <class Real, Integer DIM>
 void PtTree<Real, DIM>::GetParticleData(const std::string &data_name, Real *out, Long n, MemSpace space) const {
-    DeviceVector<Real> v;
-    p_->tree.GetParticleData(v, data_name);
-    SCTL_ASSERT_MSG((Long)v.size() == n, "device_tree::PtTree::GetParticleData: n does not match the data.");
-    detail_deviceTree::fromDevice(v, out, space);
+    using View = gpu_tree::DataView<Real, DeviceVector>;
+    if (space == MemSpace::Device) {
+        p_->tree.GetParticleData(View{out, n}, data_name);
+        return;
+    }
+    DeviceVector<Real> stage(n);
+    p_->tree.GetParticleData(View{thrust::raw_pointer_cast(stage.data()), n}, data_name);
+    gpu_tree::detail::deviceToHost(stage.data(), n, out);
 }
 
 template <class Real, Integer DIM>

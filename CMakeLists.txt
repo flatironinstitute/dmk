@@ -69,7 +69,7 @@ set(HDF5Support OFF CACHE BOOL "" FORCE)
 # and the GPU tree's local_sort reach their radix paths instead of a comparison sort. Depth 20 is
 # far past anything DMK can use: coordinates carry only eps_machine*2^d of relative accuracy, so
 # double at eps=1e-12 supports about depth 12 and float much less (see
-# compute_level_indices_and_boxsizes).
+# DMKPtTree::warn_if_too_deep).
 set(DMK_CXX_FLAGS "-DSCTL_MAX_DEPTH=20")
 if (DMK_VECLIB_DEFINE)
   list(APPEND DMK_CXX_FLAGS "-D${DMK_VECLIB_DEFINE}")

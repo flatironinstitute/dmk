@@ -78,6 +78,20 @@ struct NvtxPass {
 
 /// Copies the device tree's node topology and per-node particle counts into the host tree.
 template <class Real, int DIM>
+void copyTreeCounts(device_tree::PtTree<Real, DIM> &dev_tree, bool has_trg, DMKPtTree<Real, DIM> &out) {
+    sctl::Vector<sctl::Long> cnt;
+    dev_tree.Data("pdmk_src", cnt);
+    out.r_src_cnt_with_halo = cnt;
+    if (has_trg) {
+        dev_tree.Data("pdmk_trg", cnt);
+        out.r_trg_cnt_owned = cnt;
+    } else {
+        out.r_trg_cnt_owned.ReInit(cnt.Dim());
+        out.r_trg_cnt_owned.SetZero();
+    }
+}
+
+template <typename Real, int DIM>
 void copyTreeToHost(device_tree::PtTree<Real, DIM> &dev_tree, bool has_trg, DMKPtTree<Real, DIM> &out) {
     constexpr int n_child = 1 << DIM;
     constexpr int n_nbr = sctl::pow<DIM>(3);
@@ -105,9 +119,8 @@ void copyTreeToHost(device_tree::PtTree<Real, DIM> &dev_tree, bool has_trg, DMKP
     const std::size_t b_attr = n_nodes * sizeof(device_tree::NodeAttr);
     const std::size_t b_par = n_nodes * sizeof(sctl::Long);
     const std::size_t b_child = (std::size_t)n_nodes * n_child * sizeof(sctl::Long);
-    const std::size_t b_nbr = (std::size_t)n_nodes * n_nbr * sizeof(sctl::Long);
     const std::size_t o_attr = pad(b_mid), o_par = pad(o_attr + b_attr), o_child = pad(o_par + b_par),
-                      o_nbr = pad(o_child + b_child), total = pad(o_nbr + b_nbr);
+                      total = pad(o_child + b_child);
 
     const auto stage = n_nodes ? cuda_helpers::pinned_alloc(total) : std::pair<char *, std::size_t>{nullptr, 0};
     // sctl::Long elements so the fallback is at least as aligned as the arrays read out of it
@@ -122,14 +135,12 @@ void copyTreeToHost(device_tree::PtTree<Real, DIM> &dev_tree, bool has_trg, DMKP
         grab(o_attr, attr.data(), b_attr);
         grab(o_par, lists.parent.data(), b_par);
         grab(o_child, lists.child.data(), b_child);
-        grab(o_nbr, lists.nbr.data(), b_nbr);
         DMK_CHECK_CUDA(cudaStreamSynchronize(0));
 
         const auto *h_mid = reinterpret_cast<const sctl::Morton<DIM> *>(buf);
         const auto *h_attr = reinterpret_cast<const device_tree::NodeAttr *>(buf + o_attr);
         const auto *h_par = reinterpret_cast<const sctl::Long *>(buf + o_par);
         const auto *h_child = reinterpret_cast<const sctl::Long *>(buf + o_child);
-        const auto *h_nbr = reinterpret_cast<const sctl::Long *>(buf + o_nbr);
 
 // SoA on the device, one struct per node on the host; one pass over the staging block.
 #pragma omp parallel for schedule(static)
@@ -142,39 +153,12 @@ void copyTreeToHost(device_tree::PtTree<Real, DIM> &dev_tree, bool has_trg, DMKP
             l.parent = h_par[i];
             for (int k = 0; k < n_child; ++k)
                 l.child[k] = h_child[i * n_child + k];
-            for (int k = 0; k < n_nbr; ++k)
-                l.nbr[k] = h_nbr[i * n_nbr + k];
         }
     }
     if (stage.first)
         cuda_helpers::pinned_free(stage.first, stage.second);
 
-    { // per-node particle counts
-        sctl::Vector<sctl::Long> cnt;
-        dev_tree.Data("pdmk_src", cnt);
-        out.r_src_cnt_with_halo = cnt;
-
-        if (has_trg) {
-            dev_tree.Data("pdmk_trg", cnt);
-            out.r_trg_cnt_owned = cnt;
-        } else {
-            out.r_trg_cnt_owned.ReInit(n_nodes);
-            out.r_trg_cnt_owned.SetZero();
-        }
-    }
-}
-
-/// Replaces a particle data set with `data`; returns a device pointer to it in tree order.
-template <class Tree, class Real>
-Real *scatterParticleData(Tree &tree, const std::string &name, const std::string &group, const Real *data, sctl::Long n,
-                          sctl::Long &n_out) {
-    using MemSpace = device_tree::MemSpace;
-    tree.AddParticleData(name, group, data, n, MemSpace::Host);
-    tree.Broadcast(name); // the near field reads a box's sources on every rank holding the box
-    sctl::Vector<sctl::Long> cnt;
-    const auto span = tree.Data(name, cnt);
-    n_out = span.size();
-    return span.data();
+    copyTreeCounts<Real, DIM>(dev_tree, has_trg, out);
 }
 
 } // namespace
@@ -198,14 +182,140 @@ void bind_gpu_device(int device_id) {
                                                       std::to_string(device_id) + ")");
 }
 
-/// Owns the device metadata buffers for as long as the State that adopted them.
+/// One device allocation per element type, handed out in slices: the metadata is some fifty
+/// per-box arrays, and fifty pool lookups per build is host time the tree build can feel.
+template <typename T>
+struct Arena {
+    cuda_helpers::DeviceBuffer<T> buf;
+    std::size_t used = 0;
+    void reserve(std::size_t n) {
+        buf.resize(n);
+        used = 0;
+    }
+    T *take(std::size_t n) {
+        T *const p = buf.data() + used;
+        used += n;
+        return p;
+    }
+};
+
+/// Owns the device metadata buffers for as long as the State that adopted them. Sized once, before
+/// the depth is known, against the deepest tree the Morton ids can represent.
 template <typename Real, int DIM>
 struct DeviceMetadata {
-    cuda_helpers::DeviceBuffer<Real> centers, self_corr;
-    cuda_helpers::DeviceBuffer<int> box_levels, list1, list1_count, direct_work, summary;
-    cuda_helpers::DeviceBuffer<signed char> list1_shift;
-    cuda_helpers::DeviceBuffer<long> cost;
+    Arena<int> ints, scratch_ints;
+    Arena<long> longs, scratch_longs;
+    Arena<unsigned char> bytes;
+    Arena<signed char> shifts;
+    Arena<Real> reals;
+    cuda_helpers::DeviceBuffer<ShiftPwGroupSrc> shift_src;
+    /// max_depth | proxy counts | proxy totals | join block | the two per-node count arrays on their way up
+    std::pair<char *, std::size_t> pinned{nullptr, 0};
+    long *h_counts = nullptr;
+    BoxStatusOutputs bo;
+    DeviceMetadataInputs<Real, DIM> in;
     DeviceMetadataOutputs<Real> out;
+    ~DeviceMetadata() {
+        if (pinned.first)
+            cuda_helpers::pinned_free(pinned.first, pinned.second);
+        if (bo.ready)
+            cudaEventDestroy(bo.ready);
+        if (out.proxy_ready)
+            cudaEventDestroy(out.proxy_ready);
+    }
+
+    void allocate(long nb, int stride, bool periodic, int shift_group) {
+        constexpr int nl = kMaxLevels;
+        const std::size_t n = nb;
+        const long bound = shift_groups_bound(nb, nl, shift_group);
+        out.n_groups_bound = bound;
+
+        ints.reserve(n * (28 + stride) + 2 * (bound + 1)); // the last n is the multi-rank global count
+        bo.d_src_counts_with_halo = ints.take(n);
+        bo.d_src_counts_owned = ints.take(n);
+        bo.d_trg_counts_owned = ints.take(n);
+        out.d_box_levels = ints.take(n);
+        out.d_list1 = ints.take(n * stride);
+        out.d_list1_count = ints.take(n);
+        out.d_sorted = ints.take(2 * n);
+        out.d_c2p_center_boxes = ints.take(n);
+        out.d_c2p_levels = ints.take(n);
+        out.d_c2p_src_box_flat_offsets = ints.take(n);
+        out.d_c2p_n_src_boxes_per_group = ints.take(n);
+        out.d_c2p_src_boxes_flat = ints.take(n);
+        out.d_tp_parents = ints.take(n);
+        out.d_tp_children = ints.take(n);
+        out.d_tp_octants = ints.take(n);
+        out.d_tp_assign_dst = ints.take(n);
+        out.d_eval_targets = ints.take(n);
+        out.d_tp_up_src = ints.take(n);
+        out.d_tp_up_dst = ints.take(n);
+        out.d_tp_up_octants = ints.take(n);
+        out.d_tp_up_assign = ints.take(n);
+        out.d_tp_up_par = ints.take(n);
+        out.d_tp_up_par_begin = ints.take(n);
+        out.d_tp_up_par_count = ints.take(n);
+        out.d_pw_eval_flat = ints.take(n);
+        out.d_pw_form_flat = ints.take(n);
+        out.d_proxy_zero_boxes = ints.take(n);
+        out.d_shift_counts = ints.take(bound + 1);
+        out.d_shift_offsets = ints.take(bound + 1);
+
+        longs.reserve(3 * (n + 1) + n_offset_kinds * n + 4 * n + 2 + join_size(nl));
+        bo.d_count_scan = longs.take(3 * (n + 1));
+        bo.d_offsets = longs.take(n_offset_kinds * n);
+        out.d_proxy_off_up = longs.take(n);
+        out.d_proxy_off_down = longs.take(n);
+        out.d_proxy_counts_up = longs.take(n);
+        out.d_pw_out_offsets = longs.take(n);
+        out.d_proxy_totals = longs.take(2);
+        out.d_join = longs.take(join_size(nl));
+
+        bytes.reserve(5 * n);
+        bo.d_is_global_leaf = bytes.take(n);
+        bo.d_ifpwexp = bytes.take(n);
+        bo.d_iftensprodeval = bytes.take(n);
+        out.d_is_c2p_center = bytes.take(n);
+        out.d_is_tp_up_par = bytes.take(n);
+        shifts.reserve(periodic ? n * stride * DIM : 0);
+        out.d_list1_shift = periodic ? shifts.take(n * stride * DIM) : nullptr;
+
+        reals.reserve(n * DIM + n);
+        out.d_centers = reals.take(n * DIM);
+        out.d_self_correction_work = reals.take(n);
+
+        scratch_longs.reserve(2 * n + scan_scratch_bytes(nb) / sizeof(long));
+        out.d_sort_keys = scratch_longs.take(2 * n);
+        out.d_scan = scratch_longs.take(scan_scratch_bytes(nb) / sizeof(long));
+        scratch_ints.reserve(n_chunks(nb) * kMaxLevels * 2 + level_scratch_size(nl));
+        out.d_chunk_table = scratch_ints.take(n_chunks(nb) * kMaxLevels * 2);
+        out.d_level_scratch = scratch_ints.take(level_scratch_size(nl));
+
+        pinned = cuda_helpers::pinned_alloc((1 + n + 2 + join_size(nl) + 2 * n) * sizeof(long));
+        long *const h = reinterpret_cast<long *>(pinned.first);
+        bo.h_max_depth = h;
+        out.h_proxy_counts_up = h + 1;
+        out.h_proxy_totals = h + 1 + n;
+        out.h_join = h + 3 + n;
+        h_counts = h + 3 + n + join_size(nl);
+        bo.d_zero = out.d_level_scratch;
+        bo.n_zero = level_scratch_size(nl);
+        DMK_CHECK_CUDA(cudaEventCreateWithFlags(&bo.ready, cudaEventDisableTiming));
+        DMK_CHECK_CUDA(cudaEventCreateWithFlags(&out.proxy_ready, cudaEventDisableTiming));
+
+        out.d_is_global_leaf = bo.d_is_global_leaf;
+        out.d_ifpwexp = bo.d_ifpwexp;
+        out.d_src_counts_with_halo = bo.d_src_counts_with_halo;
+        out.d_src_counts_owned = bo.d_src_counts_owned;
+        out.d_trg_counts_owned = bo.d_trg_counts_owned;
+        out.d_offsets = bo.d_offsets;
+    }
+
+    /// The pass is joined; what only it read can go back to the pool.
+    void release_scratch() {
+        scratch_ints.buf.reset();
+        scratch_longs.buf.reset();
+    }
 };
 
 template <typename Real, int DIM>
@@ -218,6 +328,9 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
     n_src_local_ = r_src.Dim() / DIM;
     n_trg_local_ = r_trg.Dim() / DIM;
     const sctl::Long n_trg = n_trg_local_;
+    charge_dof_ = get_kernel_input_dim(DIM, params.kernel);
+    stresslet_ = params.kernel == DMK_STRESSLET;
+    stage_charges(charge.Dim() ? &charge[0] : nullptr, normal.Dim() ? &normal[0] : nullptr);
 
     { // build the device tree
         sctl::Profile::Scoped profile("build_device_tree", &comm);
@@ -251,24 +364,30 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
         nvtxRangePop();
     }
 
-    // host precompute only, over a copy of the device tree's nodes
+    // host precompute only, over the device tree's per-node counts
     nvtxRangePush("cpu_tree_init");
     tree_ = std::make_unique<DMKPtTree<Real, DIM>>(comm, params, r_src, charge, normal, r_trg);
     nvtxRangePop();
     {
         NvtxPass gprof("copy_tree_to_host", stream);
         sctl::Profile::Scoped profile("copy_tree_to_host", &comm);
-        copyTreeToHost<Real, DIM>(*dev_tree_, n_trg != 0, *tree_);
+        // The AoS node arrays are only needed by the multi-rank node_status walk and by the tree
+        // dump; everything else on this path reads the device tree directly.
+        const bool want_dump = (params.debug_flags & DMK_DEBUG_DUMP_TREE) || util::env_is_set("DMK_DEBUG_DUMP_TREE");
+        if (comm.Size() > 1 || want_dump)
+            copyTreeToHost<Real, DIM>(*dev_tree_, n_trg != 0, *tree_);
+        else
+            copyTreeCounts<Real, DIM>(*dev_tree_, n_trg != 0, *tree_);
     }
+    sctl::Long node_begin = 0;
+    sctl::Long node_end = 0;
     { // adopt its nodes
         NvtxPass gprof("adopt_nodes", stream);
         sctl::Profile::Scoped profile("adopt_nodes", &comm);
-        sctl::Long node_begin = 0;
-        sctl::Long node_end = 0;
         dev_tree_->OwnedRange(node_begin, node_end);
         tree_->adopt_device_tree(node_begin, node_end);
     }
-    { // global leaf status and the sources under each box, over all ranks
+    if (comm.Size() > 1) { // box_status derives both on the device for a single rank
         NvtxPass gprof("node_status", stream);
         sctl::Profile::Scoped profile("node_status", &comm);
         const auto &attr = tree_->GetNodeAttr();
@@ -281,11 +400,12 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
         sctl::Vector<sctl::Long> under(n_boxes);
         { // sources this rank owns under each box: a subtree's counts are one run in Morton order
             const auto &nl = tree_->GetNodeLists();
-            const auto &cnt = tree_->r_src_cnt_owned;
+            const auto &cnt = tree_->r_src_cnt_with_halo;
             constexpr int n_child = 1 << DIM;
             sctl::ScratchBuf<sctl::Long> off(n_boxes + 1);
-            sctl::omp_par::scan(cnt.begin(), off.begin(), n_boxes, sctl::Long(0));
-            off[n_boxes] = off[n_boxes - 1] + cnt[n_boxes - 1];
+            off[0] = 0;
+            for (sctl::Long i = 0; i < n_boxes; ++i)
+                off[i + 1] = off[i] + (i >= node_begin && i < node_end ? cnt[i] : 0);
 #pragma omp parallel for schedule(static)
             for (sctl::Long i = 0; i < n_boxes; ++i) {
                 sctl::Long j = i; // the run ends at the next sibling of i or of its nearest ancestor with one
@@ -295,7 +415,7 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
                 under[i] = end - off[i];
             }
         }
-        if (comm.Size() > 1) { // reduced over every holder: refined here, and sources owned under
+        { // reduced over every holder: refined here, and sources owned under
             sctl::ScratchBuf<sctl::Long> ones(n_boxes);
 #pragma omp parallel for schedule(static)
             for (sctl::Long i = 0; i < n_boxes; ++i)
@@ -332,50 +452,102 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
         tree_->is_global_leaf.Swap(leaf);
         tree_->src_counts_global.Swap(under);
     }
-    tree_->device_metadata = true; // the passes guarded by it run on the device just below
-    tree_->generate_metadata_for_gpu();
-    tree_->init_planewave_data();
 
-    { // per-box geometry, interaction lists and direct-work order, on the device
+    const sctl::Long nb = tree_->n_boxes();
+    const int stride = DMKPtTree<Real, DIM>::list1_stride();
+    const int shift_group = shift_group_size(tree_->n_tables_down);
+    md_ = std::make_unique<DeviceMetadata<Real, DIM>>();
+    { // subtree counts, both expansion flags and the particle offsets, enqueued only
+        NvtxPass gprof("box_status", stream);
+        sctl::Profile::Scoped profile("box_status", &comm);
+        md_->allocate(nb, stride, params.use_periodic, shift_group);
+        if (nb) {
+            const auto lists = dev_tree_->Lists();
+            BoxStatusInputs<DIM> bi;
+            bi.d_mid = dev_tree_->NodeMID().data();
+            bi.d_parent = lists.parent.data();
+            bi.d_child = lists.child.data();
+            bi.d_nbr = lists.nbr.data();
+            bi.d_attr = dev_tree_->NodeAttrs().data();
+            // Single rank: leafness is the node's own attribute, so box_status derives it and
+            // node_status above never ran.
+            bi.h_is_global_leaf =
+                comm.Size() > 1 ? reinterpret_cast<const unsigned char *>(&tree_->is_global_leaf[0]) : nullptr;
+            // Through the page-locked block: from pageable memory the runtime would first drain the
+            // stream, which now holds the whole tree build.
+            std::copy(&tree_->r_src_cnt_with_halo[0], &tree_->r_src_cnt_with_halo[0] + nb, md_->h_counts);
+            bi.h_src_cnt_with_halo = md_->h_counts;
+            if (tree_->r_trg_cnt_owned.Dim()) {
+                std::copy(&tree_->r_trg_cnt_owned[0], &tree_->r_trg_cnt_owned[0] + nb, md_->h_counts + nb);
+                bi.h_trg_cnt_owned = md_->h_counts + nb;
+            }
+            bi.owned_begin = node_begin;
+            bi.owned_end = node_end;
+            bi.n_boxes = nb;
+            bi.charge_dof = tree_->kernel_input_dim;
+            bi.n_tables_up = tree_->n_tables_up;
+            bi.dof_src = tree_->kernel_output_dim_src;
+            bi.dof_trg = tree_->kernel_output_dim_trg;
+            box_status<DIM>(bi, md_->bo);
+        }
+    }
+    { // sorts the staged charges; needs only the tree, so it overlaps the pass above
+        NvtxPass gprof("scatter_charges", stream);
+        sctl::Profile::Scoped profile("scatter_charges", &comm);
+        scatter_charges();
+    }
+    { // the depth is the one thing the host needs from the device before it can size its tables
+        NvtxPass gprof("metadata_for_gpu", stream);
+        sctl::Profile::Scoped profile("metadata_for_gpu", &comm);
+        int max_depth = 1;
+        if (nb) {
+            DMK_CHECK_CUDA(cudaEventSynchronize(md_->bo.ready));
+            max_depth = (int)*md_->bo.h_max_depth + 1;
+        }
+        tree_->metadata_for_gpu(max_depth);
+    }
+
+    { // per-box geometry, interaction lists and work lists, on the device
         NvtxPass gprof("device_metadata", stream);
         sctl::Profile::Scoped profile("device_metadata", &comm);
-        const long nb = (long)tree_->n_boxes();
-        const long stride = DMKPtTree<Real, DIM>::list1_stride();
-        md_ = std::make_unique<DeviceMetadata<Real, DIM>>();
         auto &m = *md_;
-        m.centers.resize(nb * DIM);
-        m.box_levels.resize(nb);
-        m.list1.resize(nb * stride);
-        m.list1_count.resize(nb);
-        m.direct_work.resize(nb);
-        m.self_corr.resize(nb);
-        m.cost.resize(nb);
-        m.summary.resize(2);
-        if (params.use_periodic)
-            m.list1_shift.resize(nb * stride * DIM);
+        if (nb && comm.Size() > 1) { // reduced across ranks, so not the device's own subtree sums
+            int *const d_global = m.ints.take(nb);
+            std::vector<int> global(nb);
+            for (long i = 0; i < nb; ++i)
+                global[i] = (int)tree_->src_counts_global[i];
+            DMK_CHECK_CUDA(cudaMemcpyAsync(d_global, global.data(), nb * sizeof(int), cudaMemcpyHostToDevice, 0));
+            DMK_CHECK_CUDA(cudaStreamSynchronize(0));
+            m.in.d_src_cnt_global = d_global;
+        } else {
+            m.in.d_src_cnt_global = m.bo.d_src_counts_owned;
+        }
 
-        DeviceMetadataInputs<Real, DIM> mi;
+        auto &mi = m.in;
         mi.d_mid = dev_tree_->NodeMID().data();
         mi.d_attr = dev_tree_->NodeAttrs().data();
         const auto lists = dev_tree_->Lists();
         mi.d_parent = lists.parent.data();
         mi.d_child = lists.child.data();
         mi.d_nbr = lists.nbr.data();
-        // sctl::Vector<bool> stores a byte per element
-        mi.is_global_leaf = nb ? reinterpret_cast<const unsigned char *>(&tree_->is_global_leaf[0]) : nullptr;
-        mi.ifpwexp = nb ? reinterpret_cast<const unsigned char *>(&tree_->ifpwexp[0]) : nullptr;
-        mi.src_cnt_with_halo = &tree_->src_counts_with_halo[0];
-        mi.src_cnt_owned = &tree_->src_counts_owned[0];
-        mi.trg_cnt_owned = &tree_->trg_counts_owned[0];
-        mi.boxsize = &tree_->boxsize[0];
-        mi.w0 = tree_->self_w0.Dim() ? &tree_->self_w0[0] : nullptr;
-        mi.w0_grad = tree_->self_w0_grad.Dim() ? &tree_->self_w0_grad[0] : nullptr;
+        mi.d_is_global_leaf = m.bo.d_is_global_leaf;
+        mi.d_ifpwexp = m.bo.d_ifpwexp;
+        mi.d_iftensprodeval = m.bo.d_iftensprodeval;
+        mi.d_src_cnt_with_halo = m.bo.d_src_counts_with_halo;
+        mi.d_src_cnt_owned = m.bo.d_src_counts_owned;
+        mi.d_trg_cnt_owned = m.bo.d_trg_counts_owned;
+        mi.n_coeffs_up = tree_->n_tables_up * sctl::pow<DIM>(tree_->expansion_constants.n_order);
+        mi.n_coeffs_down = tree_->n_tables_down * sctl::pow<DIM>(tree_->expansion_constants.n_order);
         mi.n_boxes = nb;
-        mi.n_boxsize = tree_->boxsize.Dim();
-        mi.n_w0 = tree_->self_w0.Dim();
         mi.n_levels = tree_->n_levels();
-        mi.nlist1_stride = (int)stride;
+        mi.nlist1_stride = stride;
         mi.periodic = params.use_periodic;
+        mi.skip_root_form = params.use_periodic;
+        mi.shift_group = shift_group;
+        {
+            const int n_pw = tree_->expansion_constants.n_pw_diff;
+            mi.n_pw_per_box = (long)sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2) * tree_->n_tables_down;
+        }
         // Same choice build_self_correction_work_list makes on the host path.
         if (params.kernel == DMK_STRESSLET)
             mi.self_mode = SelfCorrectionMode::zero;
@@ -384,25 +556,37 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
                 params.eval_src >= DMK_POTENTIAL_GRAD ? SelfCorrectionMode::w0_grad : SelfCorrectionMode::zero;
         else
             mi.self_mode = SelfCorrectionMode::w0;
-
-        auto &mo = m.out;
-        mo.d_centers = m.centers.data();
-        mo.d_box_levels = m.box_levels.data();
-        mo.d_list1 = m.list1.data();
-        mo.d_list1_count = m.list1_count.data();
-        mo.d_list1_shift = params.use_periodic ? m.list1_shift.data() : nullptr;
-        mo.d_direct_work = m.direct_work.data();
-        mo.d_self_correction_work = m.self_corr.data();
-        mo.d_cost_scratch = m.cost.data();
-        mo.d_summary = m.summary.data();
-        compute_device_metadata<Real, DIM>(mi, mo);
+        const auto &w0 = mi.self_mode == SelfCorrectionMode::w0_grad ? tree_->self_w0_grad : tree_->self_w0;
+        for (sctl::Long i = 0; i < w0.Dim() && i <= kMaxLevels; ++i)
+            mi.w0.v[i] = w0[i];
+        compute_device_metadata<Real, DIM>(mi, m.out);
     }
 
+    { // only the proxy readbacks, which the pass enqueues first; the rest of it is still running
+        finish_proxy_metadata<Real>(md_->out);
+        if (nb) {
+            tree_->proxy_coeffs_counts.ReInit(nb, sctl::Ptr2Itr<sctl::Long>(md_->out.h_proxy_counts_up, nb), false);
+            tree_->proxy_coeffs_downward_dim = md_->out.h_proxy_totals[1];
+        }
+    }
     dev_tree_->AddData("proxy_coeffs", 1, tree_->proxy_coeffs_counts); // the tree sums these across ranks
-    {                                                                  // build the device state
+    {
+        NvtxPass gprof("device_metadata_join", stream);
+        sctl::Profile::Scoped profile("device_metadata_join", &comm);
+        finish_device_metadata<Real>(md_->out, tree_->n_levels());
+        tree_->pw_out_size = md_->out.pw_out_size;
+        md_->shift_src.resize(md_->out.n_shift_src);
+        fill_shift_groups<Real, DIM>(md_->in, md_->out, md_->shift_src.data());
+        md_->release_scratch();
+    }
+
+    { // build the device state
         sctl::Profile::Scoped profile("state_ctor", &comm);
         NvtxPass gprof("state_ctor", stream);
-        auto inputs = to_build_inputs(*tree_, &md_->out);
+        auto inputs = to_build_inputs(*tree_, md_->out);
+        inputs.topology.d_nbr = reinterpret_cast<const long *>(dev_tree_->Lists().nbr.data());
+        inputs.worklists.d_shift_group_src = md_->shift_src.data();
+        inputs.worklists.d_shift_group_offsets = md_->out.d_shift_offsets;
         { // views into the tree's storage
             sctl::Vector<sctl::Long> cnt;
             inputs.scratch.d_proxy_coeffs = dev_tree_->Data("proxy_coeffs", cnt);
@@ -414,10 +598,9 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
     }
 
     {
-        sctl::Profile::Scoped profile("upload_and_sort_charges", &comm);
-        NvtxPass gprof("upload_and_sort_charges", stream);
-        update_charges(charge.Dim() ? &charge[0] : nullptr,
-                       (params.kernel == DMK_STRESSLET && normal.Dim()) ? &normal[0] : nullptr);
+        sctl::Profile::Scoped profile("bind_charges", &comm);
+        NvtxPass gprof("bind_charges", stream);
+        bind_charges();
     }
     cuda_helpers::check_device_errors("tree create");
     nvtxRangePop();
@@ -440,8 +623,8 @@ void Tree<Real, DIM>::eval() {
     // downward_stream; `finalize` joins them (direct_stream waits on the
     // downward-stream eval writes), sums the near+far potentials, descatters to
     // user order in d_pot_*_final, and syncs.
-    const auto ds = state_->direct_stream.get();
-    const auto ws = state_->downward_stream.get();
+    const auto ds = state_->direct_stream;
+    const auto ws = state_->downward_stream;
     {
         // Neither proxy buffer is zeroed: every box either has a writer that assigns before it
         // accumulates, or is cleared per-slab inside the pass that reads it.
@@ -514,16 +697,56 @@ void Tree<Real, DIM>::desort_potentials(Real *pot_src, Real *pot_trg) {
 }
 
 template <typename Real, int DIM>
-void Tree<Real, DIM>::update_charges(const Real *charge, const Real *normal) {
-    const sctl::Long n_src = n_src_local_;
-    const int charge_dof = tree_->kernel_input_dim;
-    sctl::Long n_charge = 0;
-    sctl::Long n_normal = 0;
-    Real *d_charge = scatterParticleData(*dev_tree_, "pdmk_charge", "pdmk_src", charge, n_src * charge_dof, n_charge);
+void Tree<Real, DIM>::stage_charges(const Real *charge, const Real *normal) {
+    const cudaStream_t s = cuda_helpers::upload_stream();
+    if (charge_consumed_.get()) // the previous scatter is still reading the buffers being refilled
+        DMK_CHECK_CUDA(cudaStreamWaitEvent(s, charge_consumed_, 0));
+    d_charge_in_.upload_async(charge, n_src_local_ * charge_dof_, s);
+    if (stresslet_)
+        d_normal_in_.upload_async(normal, n_src_local_ * DIM, s);
+    if (!charge_ready_.get())
+        charge_ready_ = cuda_helpers::DeviceEvent::disable_timing();
+    DMK_CHECK_CUDA(cudaEventRecord(charge_ready_, s));
+}
+
+template <typename Real, int DIM>
+void Tree<Real, DIM>::scatter_charges() {
+    using MemSpace = device_tree::MemSpace;
+    DMK_CHECK_CUDA(cudaStreamWaitEvent(0, charge_ready_, 0));
+    // the near field reads a box's sources on every rank holding the box, hence the broadcast
+    dev_tree_->AddParticleData("pdmk_charge", "pdmk_src", d_charge_in_.data(), d_charge_in_.size(), MemSpace::Device);
+    dev_tree_->Broadcast("pdmk_charge");
+    if (stresslet_) {
+        dev_tree_->AddParticleData("pdmk_normal", "pdmk_src", d_normal_in_.data(), d_normal_in_.size(),
+                                   MemSpace::Device);
+        dev_tree_->Broadcast("pdmk_normal");
+    }
+    if (!charge_consumed_.get())
+        charge_consumed_ = cuda_helpers::DeviceEvent::disable_timing();
+    DMK_CHECK_CUDA(cudaEventRecord(charge_consumed_, 0));
+}
+
+template <typename Real, int DIM>
+void Tree<Real, DIM>::bind_charges() {
+    // Re-queried rather than carried from the scatter: any node data registered in between may
+    // have moved the particle arena.
+    sctl::Vector<sctl::Long> cnt;
+    const auto charge_span = dev_tree_->Data("pdmk_charge", cnt);
     Real *d_normal = nullptr;
-    if (tree_->params.kernel == DMK_STRESSLET)
-        d_normal = scatterParticleData(*dev_tree_, "pdmk_normal", "pdmk_src", normal, n_src * DIM, n_normal);
-    state_->set_charges(d_charge, n_charge, d_normal, n_normal);
+    sctl::Long n_normal = 0;
+    if (tree_->params.kernel == DMK_STRESSLET) {
+        const auto normal_span = dev_tree_->Data("pdmk_normal", cnt);
+        d_normal = normal_span.data();
+        n_normal = normal_span.size();
+    }
+    state_->set_charges(charge_span.data(), charge_span.size(), d_normal, n_normal);
+}
+
+template <typename Real, int DIM>
+void Tree<Real, DIM>::update_charges(const Real *charge, const Real *normal) {
+    stage_charges(charge, normal);
+    scatter_charges();
+    bind_charges();
     cuda_helpers::check_device_errors("tree update_charges");
 }
 
