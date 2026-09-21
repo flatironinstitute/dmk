@@ -52,7 +52,9 @@ void launch_proxy2pw(std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, cudaStr
         return;
 
     static JitCache cache;
-    static cuda_helpers::DeviceBuffer<dmk::cuda::Proxy2PwArgs<Real>> d_args;
+    // Never destroyed: a static DeviceBuffer's destructor would free device memory from a
+    // static destructor, by which point the CUDA context may already be gone.
+    static auto &d_args = *new cuda_helpers::DeviceBuffer<dmk::cuda::Proxy2PwArgs<Real>>();
     d_args.upload_async_grow(args_h.data(), args_h.size(), stream);
     const int n_args = static_cast<int>(args_h.size());
     const auto a0 = args_h[0];
@@ -65,7 +67,9 @@ void launch_proxy2pw(std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, cudaStr
     // so the slice stays small.
     const bool smem_global =
         p2pw_shared_bytes(max_n_order, max_n_pw, Z_TILE_MIN, ff2_copies, sizeof(Real)) > max_shared;
-    static cuda_helpers::DeviceBuffer<unsigned char> d_scratch;
+    // Never destroyed: a static DeviceBuffer's destructor would free device memory from a
+    // static destructor, by which point the CUDA context may already be gone.
+    static auto &d_scratch = *new cuda_helpers::DeviceBuffer<unsigned char>();
 
     auto launch_one = [&](const TuningParams &p, cudaStream_t st, bool compile_only) {
         const std::size_t shared = p2pw_shared_bytes(max_n_order, max_n_pw, p.at("Z_TILE"), ff2_copies, sizeof(Real));

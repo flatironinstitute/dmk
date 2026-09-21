@@ -113,7 +113,7 @@ void short_range_gpu(GpuState &gpu, int n, const Real *d_pos_aos, const Real *d_
     build_cell_list_gpu<Real>(gpu, n, nc, dims.charge_dim, d_pos_aos, d_charges, &d_cell_start, &d_orig, &d_xs, &d_ys,
                               &d_zs, &d_qs);
 
-    ensure_capacity(gpu.d_scratch_pg, gpu.scratch_pg_cap, std::size_t(out_dim) * n * sizeof(Real));
+    ensure_capacity(gpu.d_scratch_pg, gpu.scratch_pg_cap, std::size_t(out_dim) * n * sizeof(Real), gpu.stream);
     Real *d_pg_sorted = reinterpret_cast<Real *>(gpu.d_scratch_pg);
 
     // Poly variable: R^2 for 3D Sqrt-Laplace, R otherwise. Both map [0, r_c] onto [-1, 1]; matches
@@ -143,7 +143,8 @@ void short_range_gpu(GpuState &gpu, int n, const Real *d_pos_aos, const Real *d_
     const bool prune_stats = pruned && util::env_is_set("DMK_ESP_PRUNE_STATS");
     unsigned long long *d_prune_stats = nullptr;
     if (prune_stats) {
-        ensure_capacity(gpu.d_scratch_prune_stats, gpu.scratch_prune_stats_cap, 4 * sizeof(unsigned long long));
+        ensure_capacity(gpu.d_scratch_prune_stats, gpu.scratch_prune_stats_cap, 4 * sizeof(unsigned long long),
+                        gpu.stream);
         d_prune_stats = reinterpret_cast<unsigned long long *>(gpu.d_scratch_prune_stats);
         cudaMemsetAsync(d_prune_stats, 0, 4 * sizeof(unsigned long long), gpu.stream);
     }

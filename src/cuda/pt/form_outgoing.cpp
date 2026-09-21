@@ -40,7 +40,9 @@ void launch_multiply_cd2p(JitCache &cache, std::vector<dmk::cuda::MultiplyCd2pAr
         return;
 
     constexpr int BLOCK = 128;
-    static cuda_helpers::DeviceBuffer<dmk::cuda::MultiplyCd2pArgs<Real>> d_args;
+    // Never destroyed: a static DeviceBuffer's destructor would free device memory from a
+    // static destructor, by which point the CUDA context may already be gone.
+    static auto &d_args = *new cuda_helpers::DeviceBuffer<dmk::cuda::MultiplyCd2pArgs<Real>>();
     d_args.upload_async_grow(args_h.data(), args_h.size(), stream);
     const int n_args = static_cast<int>(args_h.size());
 

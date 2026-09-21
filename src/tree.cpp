@@ -27,9 +27,6 @@
 #include <tuple>
 #include <unistd.h>
 
-#ifdef DMK_GPU_OFFLOAD
-#endif
-
 #include <dmk/nvtx_wrapper.h>
 #include <dmk/omp_wrapper.hpp>
 

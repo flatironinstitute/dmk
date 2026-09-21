@@ -1445,13 +1445,16 @@ inline pdmk_tree pdmk_tree_create(dmk_communicator comm, const pdmk_params &para
 
 #ifdef DMK_GPU_OFFLOAD
     if (params.eval_path == DMK_EVAL_PATH_GPU) {
-        if (params.n_dim == 2)
-            return new pdmk_tree_impl{pdmk_tree_variant(std::make_unique<dmk::cuda::pt::Tree<Real, 2>>(
-                                          sctl_comm, params, r_src_vec, charge_vec, normal_vec, r_trg_vec)),
-                                      n_src, n_trg};
-        return new pdmk_tree_impl{pdmk_tree_variant(std::make_unique<dmk::cuda::pt::Tree<Real, 3>>(
-                                      sctl_comm, params, r_src_vec, charge_vec, normal_vec, r_trg_vec)),
-                                  n_src, n_trg};
+        nvtxRangePush("build_tree");
+        const auto res = (params.n_dim == 2)
+                             ? new pdmk_tree_impl{pdmk_tree_variant(std::make_unique<dmk::cuda::pt::Tree<Real, 2>>(
+                                                      sctl_comm, params, r_src_vec, charge_vec, normal_vec, r_trg_vec)),
+                                                  n_src, n_trg}
+                             : new pdmk_tree_impl{pdmk_tree_variant(std::make_unique<dmk::cuda::pt::Tree<Real, 3>>(
+                                                      sctl_comm, params, r_src_vec, charge_vec, normal_vec, r_trg_vec)),
+                                                  n_src, n_trg};
+        nvtxRangePop();
+        return res;
     }
 #endif
 

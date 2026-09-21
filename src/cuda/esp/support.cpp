@@ -85,7 +85,7 @@ void build_cell_list_gpu(GpuState &gpu, int n, int nc, int charge_dim, const Rea
     if (gpu.sort_mode == GpuSortMode::Morton) {
         // Wider keys than Bins, so the shared scratch is sized differently.
         ensure_capacity(gpu.d_scratch_idx, gpu.scratch_idx_cap,
-                        std::size_t(n) * sizeof(unsigned long long) + std::size_t(n) * sizeof(int));
+                        std::size_t(n) * sizeof(unsigned long long) + std::size_t(n) * sizeof(int), gpu.stream);
         unsigned long long *d_cell_idx = reinterpret_cast<unsigned long long *>(gpu.d_scratch_idx);
         d_orig = reinterpret_cast<int *>(d_cell_idx + n);
         a.cell_idx64 = d_cell_idx;
@@ -95,7 +95,7 @@ void build_cell_list_gpu(GpuState &gpu, int n, int nc, int charge_dim, const Rea
         sort_cell_keys(d_cell_idx, d_orig, n, ncells, kMortonBuckets, gpu.d_cell_start, gpu.stream);
     } else {
         // Both int, so key and permutation share one 2n-int scratch.
-        ensure_capacity(gpu.d_scratch_idx, gpu.scratch_idx_cap, 2 * std::size_t(n) * sizeof(int));
+        ensure_capacity(gpu.d_scratch_idx, gpu.scratch_idx_cap, 2 * std::size_t(n) * sizeof(int), gpu.stream);
         int *d_cell_idx = reinterpret_cast<int *>(gpu.d_scratch_idx);
         d_orig = d_cell_idx + n;
         a.cell_idx = d_cell_idx;
@@ -107,7 +107,7 @@ void build_cell_list_gpu(GpuState &gpu, int n, int nc, int charge_dim, const Rea
 
     // One (3 + charge_dim) * n Real scratch: three coordinate planes then the payload planes.
     ensure_capacity(gpu.d_scratch_sorted, gpu.scratch_sorted_cap,
-                    std::size_t(3 + charge_dim) * std::size_t(n) * sizeof(Real));
+                    std::size_t(3 + charge_dim) * std::size_t(n) * sizeof(Real), gpu.stream);
     Real *d_xs = reinterpret_cast<Real *>(gpu.d_scratch_sorted);
     Real *d_ys = d_xs + n;
     Real *d_zs = d_ys + n;

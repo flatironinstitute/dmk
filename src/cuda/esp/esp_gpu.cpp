@@ -302,7 +302,7 @@ static void long_range_gpu(GpuState &gpu, int n, const KernelDims &dims, const R
             throw std::runtime_error("long_range_gpu: cufinufft_setpts interp failed, ier=" + std::to_string(ier));
     }
 
-    ensure_capacity(gpu.d_scratch_nu_c, gpu.scratch_nu_c_cap, std::size_t(n) * sizeof(ComplexT<Real>));
+    ensure_capacity(gpu.d_scratch_nu_c, gpu.scratch_nu_c_cap, std::size_t(n) * sizeof(ComplexT<Real>), gpu.stream);
     auto *d_nu_c = reinterpret_cast<ComplexT<Real> *>(gpu.d_scratch_nu_c);
 
     for (int k = 0; k < odim; ++k) {
@@ -368,12 +368,12 @@ static EvalBuffers<Real> upload_inputs(GpuState *gpu, int n, const KernelDims &d
     EvalBuffers<Real> b;
 
     ensure_capacity(gpu->d_scratch_pos, gpu->scratch_pos_cap,
-                    std::size_t(3 + dims.charge_dim) * std::size_t(n) * sizeof(Real));
+                    std::size_t(3 + dims.charge_dim) * std::size_t(n) * sizeof(Real), gpu->stream);
     b.pos_aos = reinterpret_cast<Real *>(gpu->d_scratch_pos);
     b.charges = b.pos_aos + 3 * n;
 
-    ensure_capacity(gpu->d_scratch_out, gpu->scratch_out_cap,
-                    std::size_t(dims.out_dim) * std::size_t(n) * sizeof(Real));
+    ensure_capacity(gpu->d_scratch_out, gpu->scratch_out_cap, std::size_t(dims.out_dim) * std::size_t(n) * sizeof(Real),
+                    gpu->stream);
     Real *out0 = reinterpret_cast<Real *>(gpu->d_scratch_out);
     for (int k = 0; k < dims.out_dim; ++k)
         b.out[k] = out0 + std::size_t(k) * n;
@@ -407,12 +407,12 @@ template <typename Real>
 static void pack_long_range_inputs(GpuState *gpu, int n, const KernelDims &dims, Real scale, const EvalBuffers<Real> &b,
                                    Real *&d_x, Real *&d_y, Real *&d_z, ComplexT<Real> *&d_c) {
     NvtxRange range("eval/long_range_setup");
-    ensure_capacity(gpu->d_scratch_lr_xyz, gpu->scratch_lr_xyz_cap, 3 * std::size_t(n) * sizeof(Real));
+    ensure_capacity(gpu->d_scratch_lr_xyz, gpu->scratch_lr_xyz_cap, 3 * std::size_t(n) * sizeof(Real), gpu->stream);
     d_x = reinterpret_cast<Real *>(gpu->d_scratch_lr_xyz);
     d_y = d_x + n;
     d_z = d_y + n;
     ensure_capacity(gpu->d_scratch_lr_c, gpu->scratch_lr_c_cap,
-                    std::size_t(dims.n_channels) * std::size_t(n) * sizeof(ComplexT<Real>));
+                    std::size_t(dims.n_channels) * std::size_t(n) * sizeof(ComplexT<Real>), gpu->stream);
     d_c = reinterpret_cast<ComplexT<Real> *>(gpu->d_scratch_lr_c);
 
     cuda::EspSupportArgs<Real, ComplexT<Real>> a;

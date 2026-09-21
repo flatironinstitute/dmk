@@ -2,6 +2,7 @@
 // GpuState and the shared helpers the ESP GPU launchers need. Private to src/cuda/esp/.
 
 #include <dmk.h>
+#include <dmk/cuda/helpers.hpp>
 #include <dmk/direct.hpp>
 #include <dmk/esp.hpp>
 
@@ -139,36 +140,27 @@ struct GpuState {
             cudaFree(d_off_tab);
         if (d_cell_start)
             cudaFree(d_cell_start);
-        if (d_scratch_pos)
-            cudaFree(d_scratch_pos);
-        if (d_scratch_out)
-            cudaFree(d_scratch_out);
-        if (d_scratch_idx)
-            cudaFree(d_scratch_idx);
-        if (d_scratch_sorted)
-            cudaFree(d_scratch_sorted);
-        if (d_scratch_pg)
-            cudaFree(d_scratch_pg);
-        if (d_scratch_lr_xyz)
-            cudaFree(d_scratch_lr_xyz);
-        if (d_scratch_lr_c)
-            cudaFree(d_scratch_lr_c);
-        if (d_scratch_nu_c)
-            cudaFree(d_scratch_nu_c);
-        if (d_scratch_prune_stats)
-            cudaFree(d_scratch_prune_stats);
+        cuda_helpers::pool_free(d_scratch_pos, scratch_pos_cap, stream);
+        cuda_helpers::pool_free(d_scratch_out, scratch_out_cap, stream);
+        cuda_helpers::pool_free(d_scratch_idx, scratch_idx_cap, stream);
+        cuda_helpers::pool_free(d_scratch_sorted, scratch_sorted_cap, stream);
+        cuda_helpers::pool_free(d_scratch_pg, scratch_pg_cap, stream);
+        cuda_helpers::pool_free(d_scratch_lr_xyz, scratch_lr_xyz_cap, stream);
+        cuda_helpers::pool_free(d_scratch_lr_c, scratch_lr_c_cap, stream);
+        cuda_helpers::pool_free(d_scratch_nu_c, scratch_nu_c_cap, stream);
+        cuda_helpers::pool_free(d_scratch_prune_stats, scratch_prune_stats_cap, stream);
         if (stream)
             cudaStreamDestroy(stream);
     }
 };
 
-inline void ensure_capacity(void *&ptr, size_t &cap, size_t needed_bytes) {
+// Both the free and the allocation are ordered in `stream`, so the old block is not recycled
+// until the work already queued there has finished with it.
+inline void ensure_capacity(void *&ptr, size_t &cap, size_t needed_bytes, cudaStream_t stream) {
     if (cap >= needed_bytes)
         return;
-    if (ptr)
-        cudaFree(ptr);
-    if (cudaMalloc(&ptr, needed_bytes) != cudaSuccess)
-        throw std::runtime_error("ensure_capacity: cudaMalloc failed");
+    cuda_helpers::pool_free(ptr, cap, stream);
+    ptr = cuda_helpers::pool_alloc(needed_bytes, stream);
     cap = needed_bytes;
 }
 
