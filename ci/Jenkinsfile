@@ -114,9 +114,9 @@ try {
           ]) {
             sh 'which nvcc'
             sh 'git submodule update --init --recursive'
-            sh 'cmake -B build . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/build/install -DCMAKE_CXX_COMPILER=g++ -DDMK_GPU_OFFLOAD=on -DDMK_HAVE_MPI=off -DCMAKE_CUDA_ARCHITECTURES=80 -DDMK_BUILD_TESTS=ON'
+            sh 'cmake -B build . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/build/install -DCMAKE_CXX_COMPILER=g++ -DDMK_GPU_OFFLOAD=on -DDMK_HAVE_MPI=on -DMPI_C_COMPILER=/opt/ompi/bin/mpicc -DMPI_CXX_COMPILER=/opt/ompi/bin/mpicxx -DCMAKE_CUDA_ARCHITECTURES=80 -DDMK_BUILD_TESTS=ON'
             sh 'cd build && make -j$PARALLEL'
-            sh './build/test/test_all -nc'
+            sh 'mpirun -n 2 --bind-to none ./build/test/test_all -nc'
           }
         }
       }
