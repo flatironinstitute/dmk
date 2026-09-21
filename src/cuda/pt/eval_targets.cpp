@@ -116,16 +116,16 @@ void eval_targets(State<Real, DIM> &s, cudaStream_t stream) {
     args.centers = f.d_centers.data();
 
     if (o.pot_src_size) {
-        args.r_target_flat = s.particles.r_src_ptr;
-        args.r_target_offsets = s.particles.d_r_src_offsets.data();
-        args.target_counts = s.particles.d_src_counts.data();
+        args.r_target_flat = s.particles.d_r_src_owned.data();
+        args.r_target_offsets = s.particles.d_r_src_offsets_owned.data();
+        args.target_counts = s.particles.d_src_counts_owned.data();
         args.pot_flat = o.d_pot_eval_src.data();
         args.pot_offsets = o.d_pot_src_offsets.data();
         launch_eval_side<Real, DIM>(eval_cache, args, eval_level_for(o.eval_src), f.n_charge_dim, stream);
     }
 
     if (o.pot_trg_size) {
-        args.r_target_flat = s.particles.r_trg_ptr;
+        args.r_target_flat = s.particles.d_r_trg.data();
         args.r_target_offsets = s.particles.d_r_trg_offsets.data();
         args.target_counts = s.particles.d_trg_counts.data();
         args.pot_flat = o.d_pot_eval_trg.data();

@@ -1,26 +1,31 @@
 #pragma once
 
 /// @file
-/// Point-tree GPU evaluator. `pt::Tree` owns a private CPU `DMKPtTree` used only
-/// for host precompute (build_tree_for_gpu / generate_metadata_for_gpu /
-/// init_planewave_data) and charge sorting, then runs its own device pipeline
-/// over a `pt::State`.
+/// Point-tree GPU evaluator. `pt::Tree` owns a `device_tree::PtTree`, which holds the nodes and
+/// moves particle data in and out, and a `DMKPtTree` that runs the host precompute over a host copy
+/// of its nodes; the device pipeline then runs over a `pt::State`.
 
 #include <memory>
 
 #include <dmk.h>
+#include <dmk/cuda/device_tree.hpp>
 #include <dmk/cuda/pt/state.hpp>
 #include <dmk/tree.hpp>
 #include <sctl.hpp>
 
 namespace dmk::cuda::pt {
 
-/// Range-check `device_id` against the visible CUDA devices and pin the process to it.
-/// Throws api_error(DMK_ERR_INVALID_ARGUMENT) for an out-of-range id, or for a second,
-/// different id: the JIT module caches, autotune records and cached device properties are
-/// function-local statics bound to the device that was current when they were first
-/// touched, so one process drives one GPU (one device per rank under MPI).
+/// Pin this process to one CUDA device. A negative id defers the choice to the tree, which
+/// resolves it against its communicator; any other value is taken as given and must be in range.
+/// The choice is made once and cannot be changed: the JIT module caches, autotune records and
+/// cached device properties are function-local statics bound to the device that was current when
+/// they were first touched, so one process drives one GPU (one device per rank under MPI).
 void bind_gpu_device(int device_id);
+
+/// Device storage behind the per-box metadata; defined in tree.cpp, which is the only place that
+/// needs its layout.
+template <typename Real, int DIM>
+struct DeviceMetadata;
 
 template <typename Real, int DIM>
 class Tree {
@@ -36,8 +41,11 @@ class Tree {
 
   private:
     std::unique_ptr<DMKPtTree<Real, DIM>> tree_;
+    std::unique_ptr<device_tree::PtTree<Real, DIM>> dev_tree_;
+    std::unique_ptr<DeviceMetadata<Real, DIM>> md_; ///< declared before state_, which adopts its buffers
     std::unique_ptr<State<Real, DIM>> state_;
-    int device_id_ = 0;
+    sctl::Long n_src_local_ = 0; ///< sources this rank supplied, the order update_charges is given
+    sctl::Long n_trg_local_ = 0; ///< targets this rank supplied
 };
 
 } // namespace dmk::cuda::pt

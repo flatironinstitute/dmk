@@ -28,7 +28,6 @@
 #include <unistd.h>
 
 #ifdef DMK_GPU_OFFLOAD
-#include "cuda/pt/gpu_tree_build.hpp"
 #endif
 
 #include <dmk/nvtx_wrapper.h>
@@ -264,72 +263,17 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
 }
 
 template <typename Real, int DIM>
-void DMKPtTree<Real, DIM>::build_tree_for_gpu(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &r_trg) {
-    sctl::Profile::Scoped profile("build_tree_for_gpu", &comm_);
-    logger->info("gpu tree build started");
-
-    constexpr bool balance21 = true;
-    constexpr int halo = 0;
-
-#ifdef DMK_GPU_OFFLOAD
-    if (util::env_is_set("DMK_GPU_TREE")) {
-        // The device build hands back the topology as a host mirror in sctl::Tree's layout, so the
-        // metadata routines are unchanged, and leaves the sorted coordinates on the device, where
-        // the passes want them. Nothing is uploaded and no permutation crosses to the host: the
-        // charges ride the tree's own scatter instead.
-        sctl::Profile::Tic("gpu_tree_create", &comm_);
-        cuda::pt::GpuTreeTopology<DIM> topo;
-        cuda::pt::GpuTreeParticles<Real> part;
-        gpu_tree = cuda::pt::gpu_tree_create<Real, DIM>(r_src.Dim() ? &r_src[0] : nullptr, r_src.Dim() / DIM,
-                                                        r_trg.Dim() ? &r_trg[0] : nullptr, r_trg.Dim() / DIM,
-                                                        params.n_per_leaf, params.use_periodic, topo, part);
-
-        mirror_node_mid.Swap(topo.node_mid);
-        mirror_node_attr.Swap(topo.node_attr);
-        mirror_node_lists.Swap(topo.node_lists);
-        topology_mirrored = true;
-
-        r_src_cnt_owned.Swap(part.src_cnt);
-        r_trg_cnt_owned.Swap(part.trg_cnt);
-        d_r_src_sorted = part.d_r_src;
-        d_r_trg_sorted = part.d_r_trg;
-        n_src_sorted = part.n_src;
-        n_trg_sorted = part.n_trg;
-        sctl::Profile::Toc();
-
-        logger->debug("gpu tree build completed (device)");
-        return;
+void DMKPtTree<Real, DIM>::adopt_device_tree(sctl::Long node_begin, sctl::Long node_end) {
+    sctl::Profile::Scoped profile("adopt_device_tree", &comm_);
+    owned_node_begin = node_begin;
+    { // the owned nodes are contiguous, and the source broadcast leaves their counts unchanged
+        const auto &cnt = r_src_cnt_with_halo;
+        r_src_cnt_owned.ReInit(cnt.Dim());
+        r_src_cnt_owned.SetZero();
+        std::copy(cnt.begin() + node_begin, cnt.begin() + node_end, r_src_cnt_owned.begin() + node_begin);
     }
-#endif
-
-    sctl::Profile::Tic("add_particles", &comm_);
-    this->AddParticles("pdmk_src", r_src);
-    this->AddParticles("pdmk_trg", r_trg);
-    sctl::Profile::Toc();
-
-    sctl::Profile::Tic("update_refinement", &comm_);
-    this->UpdateRefinement(r_src, params.n_per_leaf, balance21,
-                           params.use_periodic ? sctl::all_periodic(DIM) : sctl::Periodicity::NONE, halo);
-    sctl::Profile::Toc();
-
-    sctl::Profile::Tic("get_non_halo", &comm_);
-    this->GetData(r_src_sorted_owned, r_src_cnt_owned, "pdmk_src");
-    this->GetData(r_trg_sorted_owned, r_trg_cnt_owned, "pdmk_trg");
-    this->GetScatterIdx(scatter_idx_src, "pdmk_src");
-    this->GetScatterIdx(scatter_idx_trg, "pdmk_trg");
-    n_src_sorted = r_src_sorted_owned.Dim() / DIM;
-    n_trg_sorted = r_trg_sorted_owned.Dim() / DIM;
-    sctl::Profile::Toc();
-
-    logger->debug("gpu tree build completed");
-}
-
-template <typename Real, int DIM>
-DMKPtTree<Real, DIM>::~DMKPtTree() {
-#ifdef DMK_GPU_OFFLOAD
-    if (gpu_tree)
-        cuda::pt::gpu_tree_destroy<Real, DIM>(gpu_tree);
-#endif
+    topology_adopted = true;
+    logger->debug("adopted the device tree's {} nodes", node_mid_host.Dim());
 }
 
 template <typename Real, int DIM>
@@ -354,14 +298,10 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
     if (debug_omit_direct)
         logger->debug("Ignoring direct interactions");
     if (params.eval_path == DMK_EVAL_PATH_GPU) {
-#ifdef DMK_GPU_OFFLOAD
-        // Host precompute only; the device pipeline lives in dmk::cuda::pt::Tree,
-        // which owns this tree and sorts charges onto the device itself.
-        build_tree_for_gpu(r_src, r_trg);
-        generate_metadata_for_gpu();
-#else
+#ifndef DMK_GPU_OFFLOAD
         throw std::runtime_error("DMK was built without DMK_GPU_OFFLOAD; only DMK_EVAL_PATH_CPU is available");
 #endif
+        // dmk::cuda::pt::Tree builds the device tree and calls adopt_device_tree
     } else {
         build_tree(r_src, charge, normal, r_trg);
         generate_metadata();
@@ -635,14 +575,6 @@ void DMKPtTree<Real, DIM>::broadcast_global_leaf_status() {
     for (int i = 0; i < n_boxes(); ++i)
         counts[i] = 1;
 
-    if (topology_mirrored) {
-        // One rank: a box is a global leaf exactly when it is a local leaf, and the halo exchange
-        // below is a no-op. The sctl base cannot serve it anyway -- see allocate_proxy_coefficients.
-        for (int i = 0; i < n_boxes(); ++i)
-            is_global_leaf[i] = node_attr[i].Leaf;
-        return;
-    }
-
     sctl::Vector<bool> is_global_leaf_halo;
     this->AddData("is_global_leaf", is_global_leaf, counts);
     this->Broadcast("is_global_leaf");
@@ -886,7 +818,10 @@ void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
     long n_proxy_boxes_upward = 0;
     long n_proxy_boxes_downward = 0;
     for (int i = 0; i < n_boxes(); ++i) {
-        if (ifpwexp[i] && src_counts_with_halo[i] > 0) {
+        // The GPU pass adds every colleague's plane wave, so a ghost held without its particles
+        // still needs the slot ReduceBroadcast fills; the CPU pass pairs only boxes with a leaf.
+        const bool has_sources = topology_adopted ? src_counts_global[i] > 0 : src_counts_with_halo[i] > 0;
+        if (ifpwexp[i] && has_sources) {
             counts_upward[i] = n_coeffs_up;
             n_proxy_boxes_upward++;
         } else {
@@ -901,14 +836,10 @@ void DMKPtTree<Real, DIM>::allocate_proxy_coefficients() {
         }
     }
 
-    proxy_coeffs_upward_size = (sctl::Long)n_coeffs_up * n_proxy_boxes_upward;
-    proxy_coeffs_downward_size = (sctl::Long)n_coeffs_down * n_proxy_boxes_downward;
+    proxy_coeffs_counts = counts_upward;
+    proxy_coeffs_downward.ReInit(n_coeffs_down * n_proxy_boxes_downward);
 
-    // A mirrored topology means the sctl base holds only its seed tree, so its AddData -- which
-    // requires one count per base node -- cannot be used, and nothing on that path reads the host
-    // arrays anyway. Registering "proxy_coeffs" also exists for the CPU pass's ReduceBroadcast.
-    if (!topology_mirrored) {
-        proxy_coeffs_downward.ReInit(proxy_coeffs_downward_size);
+    if (!topology_adopted) { // the GPU path keeps these on the device tree
         this->template AddData<Real>("proxy_coeffs", 1, counts_upward);
         this->GetData(proxy_coeffs_upward, counts_upward, "proxy_coeffs");
     }
@@ -1275,47 +1206,26 @@ template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::generate_metadata_for_gpu() {
     sctl::Profile::Scoped profile("generate_metadata_for_gpu", &comm_);
     logger->debug("generating GPU tree traversal metadata");
-    assert(
-        charge_sorted_owned.Dim() == 0 && pot_src_sorted.Dim() == 0 &&
-        "generate_metadata_for_gpu expects build_tree_for_gpu (positions only) — host charge/pot arrays must be empty");
+    assert(charge_sorted_owned.Dim() == 0 && pot_src_sorted.Dim() == 0 &&
+           "generate_metadata_for_gpu expects adopt_device_tree: host charge/pot arrays must be empty");
+    assert(is_global_leaf.Dim() == (sctl::Long)n_boxes() && src_counts_global.Dim() == (sctl::Long)n_boxes() &&
+           "generate_metadata_for_gpu expects the device tree's global leaf status and source counts");
 
-    // The CPU build registers charge/normal/density/pot particle data with
-    // PtTree, which populates these per-box count vectors via GetData. The
-    // GPU build skips those registrations (the data lives on the device), so
-    // mirror the per-box source/target counts here. Single-rank: no halo
-    // exchange, so "with_halo" counts equal "owned".
-    sctl::Profile::Tic("mirror_counts", &comm_);
-#pragma omp parallel sections
-    {
-#pragma omp section
-        r_src_cnt_with_halo = r_src_cnt_owned;
-#pragma omp section
-        charge_cnt_owned = r_src_cnt_owned;
-#pragma omp section
-        charge_cnt_with_halo = r_src_cnt_owned;
-#pragma omp section
-        pot_src_cnt = r_src_cnt_owned;
-#pragma omp section
-        pot_trg_cnt = r_trg_cnt_owned;
-    }
+    // per-box data counts; the GPU build keeps the data itself on the device
+    charge_cnt_owned = r_src_cnt_owned;
+    charge_cnt_with_halo = r_src_cnt_with_halo;
+    pot_src_cnt = r_src_cnt_owned;
+    pot_trg_cnt = r_trg_cnt_owned;
     if (params.kernel == DMK_STRESSLET) {
-        normal_cnt_with_halo = r_src_cnt_owned;
-        density_cnt_with_halo = r_src_cnt_owned;
+        normal_cnt_with_halo = r_src_cnt_with_halo;
+        density_cnt_with_halo = r_src_cnt_with_halo;
     }
-
-    sctl::Profile::Toc();
-
-    // list1, direct_work, self_correction_work and the box centers have no host reader on this path
-    // -- only the device passes consume them -- so with a device tree gpu_tree_metadata derives them
-    // straight into device memory instead. ifpwexp stays: several host routines below still read it.
-    const bool device_metadata = gpu_tree != nullptr;
 
     compute_data_offsets();
     compute_level_indices_and_boxsizes();
     if (!device_metadata)
         compute_box_centers();
     accumulate_subtree_counts();
-    broadcast_global_leaf_status();
     compute_proxy_expansion_flags();
     compute_proxy_evaluation_flags();
     if (!device_metadata)
@@ -1465,7 +1375,7 @@ void DMKPtTree<Real, DIM>::init_planewave_data() {
                 pw_out_offsets[box] = -1;
         }
         pw_out_size = last_offset;
-        if (params.eval_path != DMK_EVAL_PATH_GPU)
+        if (!topology_adopted) // the GPU path keeps pw_out on the device
             pw_out.ReInit(last_offset);
     }
 }

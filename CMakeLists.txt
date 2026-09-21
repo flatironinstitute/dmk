@@ -157,9 +157,7 @@ if (DMK_GPU_OFFLOAD)
   )
 
   list(APPEND DMK_CXX_FLAGS "-DDMK_GPU_OFFLOAD")
-  # --expt-relaxed-constexpr: SCTL's experimental GPU tree calls constexpr host functions from
-  # device code (sctl::pow in the node-list strides, among others).
-  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo --expt-relaxed-constexpr")
+  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
 endif()
 
 set(DMK_CUDA_JIT_SRC
@@ -297,7 +295,6 @@ if (DMK_GPU_OFFLOAD)
               src/cuda/esp/short_range.cpp
               src/cuda/esp/support.cpp
               src/cuda/esp/sort.cu
-              src/cuda/pt/gpu_tree_build.cu
               src/cuda/pt/state.cpp
               src/cuda/pt/tree.cpp
               src/cuda/pt/direct.cpp
@@ -311,8 +308,18 @@ if (DMK_GPU_OFFLOAD)
               src/cuda/pt/pw2proxy.cpp
               src/cuda/pt/launchers.cpp
               src/cuda/direct/direct_freespace.cpp
+              src/cuda/device_tree.cu
+              src/cuda/pt/metadata.cu
               ${DMK_CUDA_JIT_SRC}
               )
+  # the one unit nvcc compiles; the rest is host-compiled with NVRTC-built kernels
+  set_source_files_properties(src/cuda/device_tree.cu src/cuda/pt/metadata.cu PROPERTIES LANGUAGE CUDA)
+  target_compile_options(DMKOBJS_CUDA PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
+    $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fopenmp>)
+  if (NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set_target_properties(DMKOBJS_CUDA PROPERTIES CUDA_ARCHITECTURES native)
+  endif()
   set_target_properties(DMKOBJS_CUDA PROPERTIES POSITION_INDEPENDENT_CODE ON)
   target_include_directories(DMKOBJS_CUDA PUBLIC
     ${DMK_INCLUDES}

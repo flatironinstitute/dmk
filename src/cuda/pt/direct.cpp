@@ -188,25 +188,25 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     base.direct_cen = s.fourier.d_direct_cen.data();
     base.direct_d2max = s.fourier.d_direct_d2max.data();
     base.cull_stats = prefilter_stats ? d_cull_stats : nullptr;
-    base.r_src_flat = s.particles.r_src_ptr;
+    base.r_src_flat = s.particles.d_r_src.data();
     base.r_src_offsets = s.particles.d_r_src_offsets.data();
     base.src_counts = s.particles.d_src_counts.data();
-    base.charge_flat = s.particles.charge_ptr;
+    base.charge_flat = s.particles.d_charge.data();
     base.charge_offsets = s.particles.d_charge_offsets.data();
     if (normal_dim > 0) {
-        base.normal_flat = s.particles.normal_ptr;
+        base.normal_flat = s.particles.d_normal.data();
         base.normal_offsets = s.particles.d_normal_offsets.data();
     }
 
     dmk::cuda::DirectByBoxArgs<Real> a_src = base;
-    a_src.r_target_flat = s.particles.r_src_ptr;
-    a_src.r_target_offsets = s.particles.d_r_src_offsets.data();
-    a_src.target_counts = s.particles.d_src_counts.data();
+    a_src.r_target_flat = s.particles.d_r_src_owned.data();
+    a_src.r_target_offsets = s.particles.d_r_src_offsets_owned.data();
+    a_src.target_counts = s.particles.d_src_counts_owned.data();
     a_src.pot_flat = s.outputs.d_pot_direct_src.data();
     a_src.pot_offsets = s.outputs.d_pot_src_offsets.data();
 
     dmk::cuda::DirectByBoxArgs<Real> a_trg = base;
-    a_trg.r_target_flat = s.particles.r_trg_ptr;
+    a_trg.r_target_flat = s.particles.d_r_trg.data();
     a_trg.r_target_offsets = s.particles.d_r_trg_offsets.data();
     a_trg.target_counts = s.particles.d_trg_counts.data();
     a_trg.pot_flat = s.outputs.d_pot_direct_trg.data();

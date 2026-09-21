@@ -142,12 +142,14 @@ void validate_create_args(dmk_communicator comm, const pdmk_params &params, int 
 #else
         if (params.n_dim != 3)
             fail("eval_path=GPU is only supported in 3D (the plane-wave pipeline is 3D-only)");
-#ifdef DMK_HAVE_MPI
-        const int n_ranks = sctl::Comm(mpi_comm_or_self(comm)).Size();
-        if (n_ranks > 1)
-            fail("eval_path=GPU is single-rank only (the upward-pass broadcast has no device path), got " +
-                 std::to_string(n_ranks) + " ranks");
-#endif
+        // The periodic root kernel is scalar-only: get_periodic_windowed_kernel_ft throws
+        // for Stokeslet/Stresslet and the periodic root branch never routes to the dipole
+        // multiply, so these are unsupported on the CPU too.
+        const bool scalar_kernel =
+            params.kernel == DMK_LAPLACE || params.kernel == DMK_SQRT_LAPLACE || params.kernel == DMK_YUKAWA;
+        if (params.use_periodic && !scalar_kernel)
+            fail("eval_path=GPU does not support periodic boundary conditions for kernel " +
+                 std::string(util::to_string(params.kernel)));
         dmk::cuda::pt::bind_gpu_device(params.gpu_device_id);
 #endif
     } else if (params.eval_path != DMK_EVAL_PATH_CPU) {

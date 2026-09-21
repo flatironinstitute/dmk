@@ -118,12 +118,11 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
             a.src_boxes_flat = w.d_c2p_src_boxes_flat.data();
             a.centers = f.d_centers.data();
             a.inv_box_scale = f.d_inv_box_scale.data();
-            a.r_src = s.particles.r_src_ptr;
-            a.r_src_offsets = s.particles.d_r_src_offsets.data();
-            a.src_counts = s.particles.d_src_counts.data();
-            a.charge = is_stresslet ? s.particles.charge_outer_ptr : s.particles.charge_ptr;
-            a.charge_offsets =
-                is_stresslet ? s.particles.d_charge_outer_offsets.data() : s.particles.d_charge_offsets.data();
+            a.r_src = s.particles.d_r_src_owned.data();
+            a.r_src_offsets = s.particles.d_r_src_offsets_owned.data();
+            a.src_counts = s.particles.d_src_counts_owned.data();
+            a.charge = is_stresslet ? s.particles.d_charge_outer.data() : s.particles.d_charge_owned.data();
+            a.charge_offsets = s.particles.d_charge_offsets_owned.data();
             a.proxy_flat = s.scratch.d_proxy_coeffs_upward.data();
             a.proxy_offsets = s.scratch.d_proxy_offsets_upward.data();
             a.group_perm = w.d_c2p_group_perm.data();

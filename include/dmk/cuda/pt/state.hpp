@@ -30,13 +30,10 @@ struct DMKPtTree;
 
 namespace cuda::pt {
 
-/// Owner of a device-resident tree (src/cuda/pt/gpu_tree_build.cu); opaque here.
-template <typename Real, int DIM>
-struct GpuTree;
-
-/// Per-box metadata the device tree derived on its own (src/cuda/pt/gpu_tree_build.hpp).
+/// Per-box metadata the device derived instead of the host; defined in src/cuda/pt/metadata.hpp,
+/// which this header deliberately does not include (it is an nvcc-facing header).
 template <typename Real>
-struct GpuTreeMetadata;
+struct DeviceMetadataOutputs;
 
 using cuda_helpers::DeviceBuffer;
 
@@ -61,29 +58,21 @@ struct BuildInputs {
         std::vector<int> shift_nbr_offsets;        ///< [n_boxes+1] CSR offsets into shift_nbr (shift group build)
     } topology;
 
-    /// Sorted source/target coordinates, charges, and the sort permutation.
+    /// Sorted source/target coordinates and charges.
     struct Particles {
-        bool is_stresslet = false;   ///< selects the outer(force,normal) proxy path
-        std::span<const Real> r_src; ///< sorted source coords (direct/upward)
-        std::span<const Real> r_trg; ///< sorted target coords (direct/eval_targets)
-        /// Set instead of r_src/r_trg when the tree was built on the device and the sorted
-        /// coordinates are already there: the State aliases them rather than uploading.
-        const Real *d_r_src = nullptr;
-        const Real *d_r_trg = nullptr;
-        /// Set with d_r_src/d_r_trg: the tree that owns them also owns the particle scatter, so
-        /// charges and potentials ride it instead of DMK's own permutation kernels.
-        GpuTree<Real, DIM> *gpu_tree = nullptr;
-        long n_src = 0; ///< particles in r_src/d_r_src; the spans may be empty
-        long n_trg = 0;
-        std::span<const int> src_counts;            ///< [n_boxes] owned sources per box
+        bool is_stresslet = false;                  ///< selects the outer(force,normal) proxy path
+        std::span<Real> d_r_src;                    ///< sorted source coords, in the tree's device memory
+        std::span<Real> d_r_trg;                    ///< sorted target coords, in the tree's device memory
+        std::span<const int> src_counts;            ///< [n_boxes] sources per box, ghosts included
         std::span<const int> trg_counts;            ///< [n_boxes] owned targets per box
         std::span<const long> r_src_offsets;        ///< [n_boxes+1] into r_src
         std::span<const long> r_trg_offsets;        ///< [n_boxes+1] into r_trg
-        std::span<const long> charge_offsets;       ///< [n_boxes+1] into d_charge (upward/direct)
+        std::span<const long> charge_offsets;       ///< [n_boxes+1] into d_charge (direct)
         std::span<const long> normal_offsets;       ///< stresslet: [n_boxes+1] into d_normal
-        std::span<const long> charge_outer_offsets; ///< stresslet: [n_boxes+1] into d_charge_outer
-        std::span<const long> scatter_index_src;    ///< sorted->user source perm (upload/finalize)
-        std::span<const long> scatter_index_trg;    ///< sorted->user target perm (finalize)
+        long owned_node_begin = 0;                  ///< first of the contiguous owned nodes
+        std::span<const int> src_counts_owned;      ///< [n_boxes] owned sources per box
+        std::span<const long> r_src_offsets_owned;  ///< [n_boxes] into the owned sources, coords
+        std::span<const long> charge_offsets_owned; ///< [n_boxes] into the owned sources, charges
     } particles;
 
     /// Fourier transforms plus per-level/per-box geometry constants consumed by
@@ -179,9 +168,9 @@ struct BuildInputs {
         long tensorprod_scratch_stride_reals = 0;     ///< = 2*n_order^DIM per pair slab
         long pw_in_stride_reals = 0;                  ///< = 2*n_charge_dim*n_pw_modes per slot
         long pw_form_stride_reals = 0;                ///< stresslet: 2*n_tables_up*n_pw_modes per slot
-        std::size_t proxy_coeffs_upward_dim = 0;      ///< upward proxy buffer size (reals)
         std::size_t proxy_coeffs_downward_dim = 0;    ///< downward proxy buffer size (reals)
         std::size_t pw_out_dim = 0;                   ///< pw_out complex count (d_pw_out reals = 2x)
+        std::span<Real> d_proxy_coeffs;               ///< the tree's own upward proxy storage
         std::span<const long> proxy_offsets_upward;   ///< [n_boxes] into d_proxy_coeffs_upward
         std::span<const long> proxy_offsets_downward; ///< [n_boxes] into d_proxy_coeffs_downward
         std::span<const long> pw_out_offsets;         ///< [n_boxes] into d_pw_out, -1 = none
@@ -200,17 +189,17 @@ struct BuildInputs {
         std::span<const long> pot_trg_offsets;  ///< [n_boxes+1] into target pot
     } outputs;
 
-    /// Set when the tree built its own metadata on the device: the list1, direct-work and
-    /// self-correction arrays are already resident and the State aliases them rather than
-    /// uploading, so the corresponding host spans above are left empty.
-    const GpuTreeMetadata<Real> *device_metadata = nullptr;
+    /// Set when the tree derived its per-box geometry, interaction lists and direct-work order on
+    /// the device: those arrays are already resident and the State adopts them, so the
+    /// corresponding host spans above are left empty.
+    const DeviceMetadataOutputs<Real> *device_metadata = nullptr;
 };
 
 /// Populate a BuildInputs from a host-precomputed tree (build_tree_for_gpu +
 /// generate_metadata_for_gpu must have run). The only place that reads tree
-/// internals for the V2 path. `md` is non-null when the device tree derived its own metadata.
+/// internals for the V2 path.
 template <typename Real, int DIM>
-BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree, GpuTreeMetadata<Real> *md = nullptr);
+BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree, const DeviceMetadataOutputs<Real> *md = nullptr);
 
 /// Grouped device state for the V2 point-tree pipeline. Uploaded verbatim from
 /// a BuildInputs; the only state that must outlive the producer tree is the
@@ -237,35 +226,26 @@ struct State {
         DeviceBuffer<unsigned char> d_ifpwexp;   ///< has-PW-expansion flag (upward/form_outgoing/downward)
     } topology;
 
-    /// Sorted source/target coordinates, charges, and the sort permutation.
+    /// Sorted source/target coordinates and charges.
     struct Particles {
-        /// Sorted coordinates, as the passes read them. They point at d_r_src/d_r_trg when this
-        /// State uploaded them, and at tree-owned device memory when the tree was built on the
-        /// device and they are already there. The tree outlives the State, so aliasing is safe.
-        const Real *r_src_ptr = nullptr;
-        const Real *r_trg_ptr = nullptr;
-        long n_src = 0; ///< particles behind r_src_ptr, wherever it points
-        long n_trg = 0;
-        /// Charges as the passes read them: the owned buffers below when this State scattered
-        /// them, or tree-owned device memory when the tree did.
-        const Real *charge_ptr = nullptr;
-        const Real *normal_ptr = nullptr;
-        const Real *charge_outer_ptr = nullptr;
-        GpuTree<Real, DIM> *gpu_tree = nullptr;    ///< non-null when the tree owns the scatter
-        DeviceBuffer<Real> d_r_src;                ///< sorted source coords (direct/upward)
+        std::span<Real> d_r_src;                   ///< sorted source coords, the tree's storage (direct)
         DeviceBuffer<long> d_r_src_offsets;        ///< per-box offsets into d_r_src
-        DeviceBuffer<int> d_src_counts;            ///< owned sources per box
-        DeviceBuffer<Real> d_charge;               ///< sorted charges, input dof per source (upward/direct)
+        DeviceBuffer<int> d_src_counts;            ///< sources per box, ghosts included
+        std::span<Real> d_charge;                  ///< sorted charges, input dof per source (direct)
         DeviceBuffer<long> d_charge_offsets;       ///< per-box offsets into d_charge
-        DeviceBuffer<Real> d_normal;               ///< stresslet: sorted normals (upward)
+        std::span<Real> d_normal;                  ///< stresslet: sorted normals, the tree's storage (direct)
         DeviceBuffer<long> d_normal_offsets;       ///< stresslet: per-box offsets into d_normal
         DeviceBuffer<Real> d_charge_outer;         ///< stresslet: outer(force,normal) proxy charges (upward)
-        DeviceBuffer<long> d_charge_outer_offsets; ///< stresslet: per-box offsets into d_charge_outer
-        DeviceBuffer<Real> d_r_trg;                ///< sorted target coords (direct/eval_targets)
+        std::span<Real> d_r_trg;                   ///< sorted target coords, the tree's storage (direct/eval_targets)
         DeviceBuffer<long> d_r_trg_offsets;        ///< per-box offsets into d_r_trg
         DeviceBuffer<int> d_trg_counts;            ///< owned targets per box
-        DeviceBuffer<long> d_scatter_index_src;    ///< sorted->user source perm (upload/finalize)
-        DeviceBuffer<long> d_scatter_index_trg;    ///< sorted->user target perm (finalize)
+        std::span<Real> d_r_src_owned;             ///< owned part of d_r_src (upward/direct/eval_targets)
+        DeviceBuffer<long> d_r_src_offsets_owned;  ///< per-box offsets into d_r_src_owned
+        DeviceBuffer<int> d_src_counts_owned;      ///< owned sources per box
+        std::span<Real> d_charge_owned;            ///< owned part of d_charge (upward)
+        DeviceBuffer<long> d_charge_offsets_owned; ///< per-box offsets into d_charge_owned / d_charge_outer
+        long charge_offset_owned = 0;              ///< start of the owned part of d_charge
+        long normal_offset_owned = 0;              ///< stresslet: the same in d_normal
     } particles;
 
     /// Fourier transforms plus per-level/per-box geometry constants.
@@ -383,7 +363,7 @@ struct State {
         DeviceBuffer<Real> d_window_pw_form_out;  ///< stresslet root windowed multiply out (form_outgoing)
         DeviceBuffer<int> d_box0_id;              ///< single {0} scratch for root-only kernels
 
-        DeviceBuffer<Real> d_proxy_coeffs_upward;   ///< upward proxy expansion (produced upward, read form_outgoing)
+        std::span<Real> d_proxy_coeffs_upward;      ///< upward proxy expansion, the tree's storage
         DeviceBuffer<long> d_proxy_offsets_upward;  ///< per-box offsets into d_proxy_coeffs_upward
         DeviceBuffer<Real> d_proxy_coeffs_downward; ///< downward proxy expansion (produced downward, read eval_targets)
         DeviceBuffer<long> d_proxy_offsets_downward; ///< per-box offsets into d_proxy_coeffs_downward
@@ -405,12 +385,8 @@ struct State {
         DeviceBuffer<Real> d_pot_direct_trg;    ///< near-field trg pot, sorted order (direct pass)
         DeviceBuffer<Real> d_pot_eval_src;      ///< far-field src pot, sorted order (eval_targets)
         DeviceBuffer<Real> d_pot_eval_trg;      ///< far-field trg pot, sorted order (eval_targets)
-        /// Where finalize writes near+far when the tree owns the scatter: tree-order storage the
-        /// tree then maps back to the caller's order in desort_potentials.
-        Real *pot_src_tree = nullptr;
-        Real *pot_trg_tree = nullptr;
-        DeviceBuffer<Real> d_pot_src_final; ///< descattered user-order source pot (finalize->desort)
-        DeviceBuffer<Real> d_pot_trg_final; ///< descattered user-order target pot (finalize->desort)
+        DeviceBuffer<Real> d_pot_src_final;     ///< descattered user-order source pot (finalize->desort)
+        DeviceBuffer<Real> d_pot_trg_final;     ///< descattered user-order target pot (finalize->desort)
     } outputs;
 
     /// Direct runs concurrently with the upward+downward chain; eval waits on
@@ -423,7 +399,8 @@ struct State {
     cuda_helpers::DeviceStream downward_stream;
 
     /// Upload raw (user-order) charges/normals and sort them onto the tree.
-    void upload_and_sort_charges(const Real *charges, const Real *normals, long n_src);
+    /// Charges, and for the stresslet normals, as device pointers in the tree's particle order.
+    void set_charges(Real *d_charge_sorted, long n_charge, Real *d_normal_sorted, long n_normal);
 
     /// Merge the direct (near) + eval (far) sorted potentials and descatter into
     /// user order (d_pot_*_final). direct_stream waits on the eval writes queued

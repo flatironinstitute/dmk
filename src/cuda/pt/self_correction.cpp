@@ -48,8 +48,8 @@ void self_correction(State<Real, DIM> &s, cudaStream_t stream) {
     dmk::cuda::SelfCorrectionArgs<Real> sc;
     sc.direct_work = s.topology.d_direct_work.data();
     sc.correction_factors = s.worklists.d_self_correction_work.data();
-    sc.src_counts = s.particles.d_src_counts.data();
-    sc.charge = s.particles.charge_ptr;
+    sc.src_counts = s.particles.d_src_counts_owned.data();
+    sc.charge = s.particles.d_charge.data();
     sc.charge_offsets = s.particles.d_charge_offsets.data();
     sc.pot_src = o.d_pot_direct_src.data();
     sc.pot_src_offsets = o.d_pot_src_offsets.data();

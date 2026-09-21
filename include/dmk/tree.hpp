@@ -16,15 +16,6 @@
 
 namespace dmk {
 
-#ifdef DMK_GPU_OFFLOAD
-namespace cuda::pt {
-/// Owner of the device-resident tree; defined in src/cuda/pt/gpu_tree_build.cu. Held here as an
-/// opaque pointer so this header stays clear of thrust.
-template <typename Real, int DIM>
-struct GpuTree;
-} // namespace cuda::pt
-#endif
-
 template <int DIM>
 struct ExpansionConstants {
     double beta;           // PSWF bandwidth parameter
@@ -601,33 +592,11 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> r_src_cnt_owned;
     sctl::Vector<sctl::Long> r_src_offsets_owned;
 
+    sctl::Long owned_node_begin = 0; ///< first of the contiguous owned nodes (GPU path)
+
     sctl::Vector<Real> r_trg_sorted_owned;
     sctl::Vector<sctl::Long> r_trg_cnt_owned;
     sctl::Vector<sctl::Long> r_trg_offsets_owned;
-
-    /// tree order -> input order, one entry per owned particle; filled by build_tree_for_gpu
-    sctl::Vector<sctl::Long> scatter_idx_src;
-    sctl::Vector<sctl::Long> scatter_idx_trg;
-
-    /// Host mirror of a device-side tree's topology, in the sctl::Tree layout the metadata
-    /// routines already expect. Read it through box_mid()/box_attr()/box_lists(), which fall
-    /// back to the sctl::PtTree base while `topology_mirrored` is false.
-    bool topology_mirrored = false;
-#ifdef DMK_GPU_OFFLOAD
-    /// Set when DMK_GPU_TREE selects the device tree build. Owns the sorted coordinates and every
-    /// particle data set attached to them, so it must outlive the device State.
-    cuda::pt::GpuTree<Real, DIM> *gpu_tree = nullptr;
-#endif
-    /// Sorted coordinates on the device, when the device tree built them; null otherwise, and then
-    /// r_src_sorted_owned/r_trg_sorted_owned hold them on the host instead.
-    const Real *d_r_src_sorted = nullptr;
-    const Real *d_r_trg_sorted = nullptr;
-    /// Particles in tree order, wherever the coordinates live.
-    sctl::Long n_src_sorted = 0;
-    sctl::Long n_trg_sorted = 0;
-    sctl::Vector<sctl::Morton<DIM>> mirror_node_mid;
-    sctl::Vector<typename sctl::Tree<DIM>::NodeAttr> mirror_node_attr;
-    sctl::Vector<typename sctl::Tree<DIM>::NodeLists> mirror_node_lists;
 
     sctl::Vector<Real> pot_src_sorted;
     sctl::Vector<sctl::Long> pot_src_cnt;
@@ -661,21 +630,16 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> density_cnt_with_halo;
     sctl::Vector<sctl::Long> density_offsets_with_halo;
 
-    /// Lengths proxy_coeffs_upward/downward would have. As with pw_out_size, a device-side tree
-    /// needs only the sizes, to allocate its own buffers.
-    sctl::Long proxy_coeffs_upward_size = 0;
-    sctl::Long proxy_coeffs_downward_size = 0;
-
     sctl::Vector<Real> proxy_coeffs_upward;
+    sctl::Vector<sctl::Long> proxy_coeffs_counts; ///< per-box element count
+    sctl::Vector<sctl::Long> src_counts_global;   ///< sources under each box on all ranks (GPU path)
     sctl::Vector<sctl::Long> proxy_coeffs_offsets;
     sctl::Vector<Real> proxy_coeffs_downward;
     sctl::Vector<sctl::Long> proxy_coeffs_offsets_downward;
 
     sctl::Vector<std::complex<Real>> pw_out;
+    sctl::Long pw_out_size = 0; ///< extent of pw_out, allocated here or not
     sctl::Vector<sctl::Long> pw_out_offsets;
-    /// Length pw_out would have. The GPU path only needs the size, to allocate its device buffer,
-    /// so the host array itself is left unallocated there -- it is the largest in the run.
-    sctl::Long pw_out_size = 0;
 
     sctl::Vector<bool> ifpwexp;
     sctl::Vector<bool> iftensprodeval;
@@ -738,7 +702,15 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<Real> c2p;
     sctl::Vector<Real> p2c;
 
-    ~DMKPtTree();
+    // node topology copied from the device tree by dmk::cuda::pt::Tree
+    sctl::Vector<sctl::Morton<DIM>> node_mid_host;
+    sctl::Vector<typename sctl::Tree<DIM>::NodeAttr> node_attr_host;
+    sctl::Vector<typename sctl::Tree<DIM>::NodeLists> node_lst_host;
+    bool topology_adopted = false;
+    /// Set when dmk::cuda::pt derives the per-box geometry, interaction lists and direct-work
+    /// order on the device instead. The passes that produce them are skipped here, and nothing on
+    /// the host reads their outputs on that path.
+    bool device_metadata = false;
 
     DMKPtTree(const sctl::Comm &comm, const pdmk_params &params_, const sctl::Vector<Real> &r_src,
               const sctl::Vector<Real> &charge, const sctl::Vector<Real> &normals, const sctl::Vector<Real> &r_trg);
@@ -749,28 +721,30 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     using NodeAttr = typename sctl::Tree<DIM>::NodeAttr;
     using NodeLists = typename sctl::Tree<DIM>::NodeLists;
 
-    /// Tree topology, from whichever tree built it: the sctl::PtTree base, or the host mirror a
-    /// device-side build hands back. Every metadata routine reads the tree through these three, so
-    /// the paths diverge in one place rather than at thirty call sites.
-    ///
-    /// Read the tree through these and never through this->GetNodeMID() and friends: the base's
-    /// constructor seeds a coarsest-uniform-grid tree, so where the mirror is in use the base is
-    /// non-empty but wrong, and a stray direct call would silently traverse that seed instead.
-    const sctl::Vector<sctl::Morton<DIM>> &box_mid() const {
-        return topology_mirrored ? mirror_node_mid : this->GetNodeMID();
+    /// Tree topology, from whichever tree built it. Every metadata routine reads the tree through
+    /// these three, so the paths diverge in one place rather than at thirty call sites; the
+    /// accessors below pick the base's storage or the adopted device copy.
+    const sctl::Vector<sctl::Morton<DIM>> &box_mid() const { return this->GetNodeMID(); }
+    const sctl::Vector<NodeAttr> &box_attr() const { return this->GetNodeAttr(); }
+    const sctl::Vector<NodeLists> &box_lists() const { return this->GetNodeLists(); }
+
+    // the base's topology, or the adopted copy; these hide the base's accessors
+    const sctl::Vector<sctl::Morton<DIM>> &GetNodeMID() const {
+        return topology_adopted ? node_mid_host : sctl::PtTree<Real, DIM>::GetNodeMID();
     }
-    const sctl::Vector<NodeAttr> &box_attr() const {
-        return topology_mirrored ? mirror_node_attr : this->GetNodeAttr();
+    const sctl::Vector<typename sctl::Tree<DIM>::NodeAttr> &GetNodeAttr() const {
+        return topology_adopted ? node_attr_host : sctl::PtTree<Real, DIM>::GetNodeAttr();
     }
-    const sctl::Vector<NodeLists> &box_lists() const {
-        return topology_mirrored ? mirror_node_lists : this->GetNodeLists();
+    const sctl::Vector<typename sctl::Tree<DIM>::NodeLists> &GetNodeLists() const {
+        return topology_adopted ? node_lst_host : sctl::PtTree<Real, DIM>::GetNodeLists();
     }
 
     // Add data and refine tree
     void build_tree(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &charge,
                     const sctl::Vector<Real> &normals, const sctl::Vector<Real> &r_trg);
 
-    void build_tree_for_gpu(const sctl::Vector<Real> &r_src, const sctl::Vector<Real> &r_trg);
+    /// Use the device tree's nodes; this rank owns [node_begin, node_end).
+    void adopt_device_tree(sctl::Long node_begin, sctl::Long node_end);
 
     // Metadata generation subroutines
     void compute_data_offsets();
