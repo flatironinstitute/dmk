@@ -212,6 +212,8 @@ template <typename Real, int DIM>
 Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const sctl::Vector<Real> &r_src,
                       const sctl::Vector<Real> &charge, const sctl::Vector<Real> &normal,
                       const sctl::Vector<Real> &r_trg) {
+    const cudaStream_t stream = 0;
+    NvtxPass treeprof("build_tree", stream);
     selectDevice(comm, params.log_level, params.gpu_device_id);
     n_src_local_ = r_src.Dim() / DIM;
     n_trg_local_ = r_trg.Dim() / DIM;
@@ -219,6 +221,7 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
 
     { // build the device tree
         sctl::Profile::Scoped profile("build_device_tree", &comm);
+        nvtxRangePush("build_device_tree");
         using MemSpace = device_tree::MemSpace;
         constexpr bool balance21 = true;
         constexpr int halo = 0;
@@ -245,15 +248,20 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
                 dev_tree_->AddParticleData("pdmk_pot_trg", "pdmk_trg", dof_trg);
         }
         dev_tree_->Broadcast("pdmk_src");
+        nvtxRangePop();
     }
 
     // host precompute only, over a copy of the device tree's nodes
+    nvtxRangePush("cpu_tree_init");
     tree_ = std::make_unique<DMKPtTree<Real, DIM>>(comm, params, r_src, charge, normal, r_trg);
+    nvtxRangePop();
     {
+        NvtxPass gprof("copy_tree_to_host", stream);
         sctl::Profile::Scoped profile("copy_tree_to_host", &comm);
         copyTreeToHost<Real, DIM>(*dev_tree_, n_trg != 0, *tree_);
     }
     { // adopt its nodes
+        NvtxPass gprof("adopt_nodes", stream);
         sctl::Profile::Scoped profile("adopt_nodes", &comm);
         sctl::Long node_begin = 0;
         sctl::Long node_end = 0;
@@ -261,6 +269,7 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
         tree_->adopt_device_tree(node_begin, node_end);
     }
     { // global leaf status and the sources under each box, over all ranks
+        NvtxPass gprof("node_status", stream);
         sctl::Profile::Scoped profile("node_status", &comm);
         const auto &attr = tree_->GetNodeAttr();
         const sctl::Long n_boxes = attr.Dim();
@@ -328,6 +337,7 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
     tree_->init_planewave_data();
 
     { // per-box geometry, interaction lists and direct-work order, on the device
+        NvtxPass gprof("device_metadata", stream);
         sctl::Profile::Scoped profile("device_metadata", &comm);
         const long nb = (long)tree_->n_boxes();
         const long stride = DMKPtTree<Real, DIM>::list1_stride();
@@ -391,6 +401,7 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
     dev_tree_->AddData("proxy_coeffs", 1, tree_->proxy_coeffs_counts); // the tree sums these across ranks
     {                                                                  // build the device state
         sctl::Profile::Scoped profile("state_ctor", &comm);
+        NvtxPass gprof("state_ctor", stream);
         auto inputs = to_build_inputs(*tree_, &md_->out);
         { // views into the tree's storage
             sctl::Vector<sctl::Long> cnt;
@@ -404,10 +415,12 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
 
     {
         sctl::Profile::Scoped profile("upload_and_sort_charges", &comm);
+        NvtxPass gprof("upload_and_sort_charges", stream);
         update_charges(charge.Dim() ? &charge[0] : nullptr,
                        (params.kernel == DMK_STRESSLET && normal.Dim()) ? &normal[0] : nullptr);
     }
     cuda_helpers::check_device_errors("tree create");
+    nvtxRangePop();
 }
 
 template <typename Real, int DIM>

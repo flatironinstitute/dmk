@@ -1201,6 +1201,7 @@ void DMKPtTree<Real, DIM>::generate_metadata() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::generate_metadata_for_gpu() {
+    nvtxRangePush("generate_metadata_for_gpu");
     sctl::Profile::Scoped profile("generate_metadata_for_gpu", &comm_);
     logger->debug("generating GPU tree traversal metadata");
     assert(charge_sorted_owned.Dim() == 0 && pot_src_sorted.Dim() == 0 &&
@@ -1237,6 +1238,7 @@ void DMKPtTree<Real, DIM>::generate_metadata_for_gpu() {
         build_self_correction_work_list();
 
     logger->debug("done generating GPU tree traversal metadata");
+    nvtxRangePop();
 }
 
 /// @brief Fill out the proxy coefficients used in the upward pass
@@ -1352,6 +1354,7 @@ void DMKPtTree<Real, DIM>::cpu_upward_pass() {
 
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::init_planewave_data() {
+    nvtxRangePush("init_planewave_data");
     sctl::Profile::Scoped profile("init_planewave_data", &comm_);
     // Only care about diff, windowed is in a temp data structure
     const int n_pw = expansion_constants.n_pw_diff;
@@ -1375,6 +1378,7 @@ void DMKPtTree<Real, DIM>::init_planewave_data() {
         if (!topology_adopted) // the GPU path keeps pw_out on the device
             pw_out.ReInit(last_offset);
     }
+    nvtxRangePop();
 }
 
 template <typename Real, int DIM>
