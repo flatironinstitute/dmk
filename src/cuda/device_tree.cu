@@ -6,30 +6,16 @@
 #include "dmk/cuda/device_tree.hpp"
 #include "dmk/cuda/device_vector.hpp"
 
-#include <thrust/copy.h>
 #include <thrust/device_ptr.h>
 
 namespace dmk::cuda::device_tree {
 
 namespace detail_deviceTree {
 
-/** The caller's buffer as a device-side range. */
 template <class T>
-DeviceVector<T> toDevice(const T *src, Long n, MemSpace space) {
-    if (space == MemSpace::Host)
-        return DeviceVector<T>(src, src + n);
-    const thrust::device_ptr<const T> p(src);
-    return DeviceVector<T>(p, p + n);
-}
-
-/** The tree's buffer into the caller's. */
+using Scratch = gpu_tree::DeviceScratch<T, DeviceVector>;
 template <class T>
-void fromDevice(const DeviceVector<T> &src, T *dst, MemSpace space) {
-    if (space == MemSpace::Host)
-        thrust::copy(src.begin(), src.end(), dst);
-    else
-        thrust::copy(src.begin(), src.end(), thrust::device_ptr<T>(dst));
-}
+using View = gpu_tree::DataView<T, DeviceVector>;
 
 template <class T>
 const T *raw(const DeviceVector<T> &v) {
@@ -58,21 +44,36 @@ PtTree<Real, DIM>::~PtTree() {
 template <class Real, Integer DIM>
 void PtTree<Real, DIM>::UpdateRefinement(const Real *coord, Long n, MemSpace space, Long M, bool balance21,
                                          Periodicity periodicity, Integer halo_size) {
-    const auto x = detail_deviceTree::toDevice(coord, n * DIM, space);
-    p_->tree.UpdateRefinement(x, M, balance21, periodicity, halo_size);
+    if (space == MemSpace::Device) {
+        p_->tree.UpdateRefinement(detail_deviceTree::View<const Real>{coord, n * DIM}, M, balance21, periodicity, halo_size);
+        return;
+    }
+    detail_deviceTree::Scratch<Real> stage(n * DIM);
+    gpu_tree::detail::hostToDevice(coord, n * DIM, stage.data());
+    p_->tree.UpdateRefinement(stage, M, balance21, periodicity, halo_size);
 }
 
 template <class Real, Integer DIM>
 void PtTree<Real, DIM>::AddParticles(const std::string &name, const Real *coord, Long n, MemSpace space) {
-    const auto x = detail_deviceTree::toDevice(coord, n * DIM, space);
-    p_->tree.AddParticles(name, x);
+    if (space == MemSpace::Device) {
+        p_->tree.AddParticles(name, detail_deviceTree::View<const Real>{coord, n * DIM});
+        return;
+    }
+    detail_deviceTree::Scratch<Real> stage(n * DIM);
+    gpu_tree::detail::hostToDevice(coord, n * DIM, stage.data());
+    p_->tree.AddParticles(name, stage);
 }
 
 template <class Real, Integer DIM>
 void PtTree<Real, DIM>::AddParticleData(const std::string &data_name, const std::string &particle_name,
                                         const Real *data, Long n, MemSpace space) {
-    const auto v = detail_deviceTree::toDevice(data, n, space);
-    p_->tree.AddParticleData(data_name, particle_name, v);
+    if (space == MemSpace::Device) {
+        p_->tree.AddParticleData(data_name, particle_name, detail_deviceTree::View<const Real>{data, n});
+        return;
+    }
+    detail_deviceTree::Scratch<Real> stage(n);
+    gpu_tree::detail::hostToDevice(data, n, stage.data());
+    p_->tree.AddParticleData(data_name, particle_name, stage);
 }
 
 template <class Real, Integer DIM>
@@ -82,10 +83,13 @@ void PtTree<Real, DIM>::AddParticleData(const std::string &data_name, const std:
 
 template <class Real, Integer DIM>
 void PtTree<Real, DIM>::GetParticleData(const std::string &data_name, Real *out, Long n, MemSpace space) const {
-    DeviceVector<Real> v;
-    p_->tree.GetParticleData(v, data_name);
-    SCTL_ASSERT_MSG((Long)v.size() == n, "device_tree::PtTree::GetParticleData: n does not match the data.");
-    detail_deviceTree::fromDevice(v, out, space);
+    if (space == MemSpace::Device) {
+        p_->tree.GetParticleData(detail_deviceTree::View<Real>{out, n}, data_name);
+        return;
+    }
+    detail_deviceTree::Scratch<Real> stage(n);
+    p_->tree.GetParticleData(stage, data_name);
+    gpu_tree::detail::deviceToHost(stage.data(), n, out);
 }
 
 template <class Real, Integer DIM>
