@@ -1,15 +1,13 @@
 // Free-space brute-force direct summation device kernel. The launcher prepends a prelude
 // defining Real, DMK_DIRECT_KERNEL_NAME, the DMK_DIRECT_EVALUATOR typedef, and the
 // BLOCK_SIZE / SRC_TILE constants. Mirrors the free-space evaluators in
-// include/dmk/vector_kernels.hpp.
-//
-// 1/sqrt(R2) rather than the residual kernel's rsqrt.approx.ftz.f32: this is the reference
-// path, and the CPU side refines its rsqrt to full precision.
+// include/dmk/vector_kernels.hpp, contracted with the source strength and accumulated into vt.
 
 #include <dmk/cuda/bessel_device.hpp>
 #include <dmk/cuda/direct_freespace_kernelargs.hpp>
+#include <dmk/cuda/poly_evaluators_device.hpp>
 
-__device__ __forceinline__ Real dmk_rinv(Real R2) { return R2 > Real{0} ? rsqrt(R2) : Real{0}; }
+__device__ __forceinline__ Real dmk_rinv(Real R2) { return R2 > Real{0} ? dmk_rsqrt(R2) : Real{0}; }
 
 template <int EVAL_LEVEL>
 struct LaplaceFreeEvaluator2D {
@@ -21,15 +19,15 @@ struct LaplaceFreeEvaluator2D {
 
     Real lambda;
 
-    __device__ inline void operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[2]) const {
+    __device__ inline void operator()(Real (&vt)[KERNEL_OUTPUT_DIM], const Real (&dX)[2], const Real (&vs)[1]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1];
-        u[0][0] = R2 > Real{0} ? Real{0.5} * log(R2) : Real{0};
+        vt[0] = fma(R2 > Real{0} ? Real{0.5} * log(R2) : Real{0}, vs[0], vt[0]);
         if constexpr (KERNEL_OUTPUT_DIM > 1) {
             const Real Rinv = dmk_rinv(R2);
-            const Real Rinv2 = Rinv * Rinv;
+            const Real g = vs[0] * Rinv * Rinv;
 #pragma unroll
             for (int i = 0; i < 2; ++i)
-                u[0][1 + i] = dX[i] * Rinv2;
+                vt[1 + i] = fma(dX[i], g, vt[1 + i]);
         }
     }
 };
@@ -44,15 +42,15 @@ struct LaplaceFreeEvaluator3D {
 
     Real lambda;
 
-    __device__ inline void operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[3]) const {
+    __device__ inline void operator()(Real (&vt)[KERNEL_OUTPUT_DIM], const Real (&dX)[3], const Real (&vs)[1]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
         const Real Rinv = dmk_rinv(R2);
-        u[0][0] = Rinv;
+        vt[0] = fma(Rinv, vs[0], vt[0]);
         if constexpr (KERNEL_OUTPUT_DIM > 1) {
-            const Real Rinv3 = Rinv * Rinv * Rinv;
+            const Real g = -vs[0] * Rinv * Rinv * Rinv;
 #pragma unroll
             for (int i = 0; i < 3; ++i)
-                u[0][1 + i] = -dX[i] * Rinv3;
+                vt[1 + i] = fma(dX[i], g, vt[1 + i]);
         }
     }
 };
@@ -67,15 +65,15 @@ struct SqrtLaplaceFreeEvaluator2D {
 
     Real lambda;
 
-    __device__ inline void operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[2]) const {
+    __device__ inline void operator()(Real (&vt)[KERNEL_OUTPUT_DIM], const Real (&dX)[2], const Real (&vs)[1]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1];
         const Real Rinv = dmk_rinv(R2);
-        u[0][0] = Rinv;
+        vt[0] = fma(Rinv, vs[0], vt[0]);
         if constexpr (KERNEL_OUTPUT_DIM > 1) {
-            const Real Rinv3 = Rinv * Rinv * Rinv;
+            const Real g = -vs[0] * Rinv * Rinv * Rinv;
 #pragma unroll
             for (int i = 0; i < 2; ++i)
-                u[0][1 + i] = -dX[i] * Rinv3;
+                vt[1 + i] = fma(dX[i], g, vt[1 + i]);
         }
     }
 };
@@ -90,16 +88,16 @@ struct SqrtLaplaceFreeEvaluator3D {
 
     Real lambda;
 
-    __device__ inline void operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[3]) const {
+    __device__ inline void operator()(Real (&vt)[KERNEL_OUTPUT_DIM], const Real (&dX)[3], const Real (&vs)[1]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
         const Real Rinv = dmk_rinv(R2);
         const Real Rinv2 = Rinv * Rinv;
-        u[0][0] = Rinv2;
+        vt[0] = fma(Rinv2, vs[0], vt[0]);
         if constexpr (KERNEL_OUTPUT_DIM > 1) {
-            const Real g = Real{-2} * Rinv2 * Rinv2;
+            const Real g = Real{-2} * vs[0] * Rinv2 * Rinv2;
 #pragma unroll
             for (int i = 0; i < 3; ++i)
-                u[0][1 + i] = dX[i] * g;
+                vt[1 + i] = fma(dX[i], g, vt[1 + i]);
         }
     }
 };
@@ -114,17 +112,17 @@ struct YukawaFreeEvaluator3D {
 
     Real lambda;
 
-    __device__ inline void operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[3]) const {
+    __device__ inline void operator()(Real (&vt)[KERNEL_OUTPUT_DIM], const Real (&dX)[3], const Real (&vs)[1]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
         const Real Rinv = dmk_rinv(R2);
         const Real R = Rinv * R2;
-        const Real E = exp(-lambda * R);
-        u[0][0] = Rinv * E;
+        const Real qE = vs[0] * exp(-lambda * R);
+        vt[0] = fma(Rinv, qE, vt[0]);
         if constexpr (KERNEL_OUTPUT_DIM > 1) {
-            const Real g = -E * Rinv * Rinv * (lambda + Rinv);
+            const Real g = -qE * Rinv * Rinv * (lambda + Rinv);
 #pragma unroll
             for (int i = 0; i < 3; ++i)
-                u[0][1 + i] = dX[i] * g;
+                vt[1 + i] = fma(dX[i], g, vt[1 + i]);
         }
     }
 };
@@ -140,29 +138,25 @@ struct YukawaFreeEvaluator2D {
 
     Real lambda;
 
-    __device__ inline void operator()(Real (&u)[1][KERNEL_OUTPUT_DIM], const Real (&dX)[2]) const {
+    __device__ inline void operator()(Real (&vt)[KERNEL_OUTPUT_DIM], const Real (&dX)[2], const Real (&vs)[1]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1];
         // K0/K1 at zero are infinite, and the gradient would form inf * 0 before a select
         // could discard it.
-        if (!(R2 > Real{0})) {
-#pragma unroll
-            for (int k = 0; k < KERNEL_OUTPUT_DIM; ++k)
-                u[0][k] = Real{0};
+        if (!(R2 > Real{0}))
             return;
-        }
         const Real Rinv = Real{1} / sqrt(R2);
         const Real arg = lambda * (R2 * Rinv);
-        u[0][0] = dmk::cuda::bessel::k0(arg);
+        vt[0] = fma(dmk::cuda::bessel::k0(arg), vs[0], vt[0]);
         if constexpr (KERNEL_OUTPUT_DIM > 1) {
-            const Real g = -lambda * dmk::cuda::bessel::k1(arg) * Rinv;
+            const Real g = -lambda * vs[0] * dmk::cuda::bessel::k1(arg) * Rinv;
 #pragma unroll
             for (int i = 0; i < 2; ++i)
-                u[0][1 + i] = dX[i] * g;
+                vt[1 + i] = fma(dX[i], g, vt[1 + i]);
         }
     }
 };
 
-// u[k][j] is the response of output j to dipole strength component k. The sign differs from 3D.
+// The sign differs from 3D.
 template <int EVAL_LEVEL>
 struct LaplaceDipoleFreeEvaluator2D {
     static constexpr int SPATIAL_DIM = 2;
@@ -173,25 +167,17 @@ struct LaplaceDipoleFreeEvaluator2D {
 
     Real lambda;
 
-    __device__ inline void operator()(Real (&u)[2][KERNEL_OUTPUT_DIM], const Real (&dX)[2]) const {
+    __device__ inline void operator()(Real (&vt)[KERNEL_OUTPUT_DIM], const Real (&dX)[2], const Real (&vs)[2]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1];
         const Real Rinv = dmk_rinv(R2);
         const Real Rinv2 = Rinv * Rinv;
-#pragma unroll
-        for (int k = 0; k < 2; ++k)
-            u[k][0] = -dX[k] * Rinv2;
+        const Real rd = dX[0] * vs[0] + dX[1] * vs[1];
+        vt[0] = fma(-Rinv2, rd, vt[0]);
         if constexpr (KERNEL_OUTPUT_DIM > 1) {
-            const Real Rinv4 = Rinv2 * Rinv2;
+            const Real g = Real{2} * rd * Rinv2 * Rinv2;
 #pragma unroll
-            for (int k = 0; k < 2; ++k) {
-#pragma unroll
-                for (int i = 0; i < 2; ++i) {
-                    Real val = Real{2} * dX[k] * dX[i] * Rinv4;
-                    if (i == k)
-                        val = val - Rinv2;
-                    u[k][1 + i] = val;
-                }
-            }
+            for (int i = 0; i < 2; ++i)
+                vt[1 + i] = fma(dX[i], g, fma(-Rinv2, vs[i], vt[1 + i]));
         }
     }
 };
@@ -206,25 +192,18 @@ struct LaplaceDipoleFreeEvaluator3D {
 
     Real lambda;
 
-    __device__ inline void operator()(Real (&u)[3][KERNEL_OUTPUT_DIM], const Real (&dX)[3]) const {
+    __device__ inline void operator()(Real (&vt)[KERNEL_OUTPUT_DIM], const Real (&dX)[3], const Real (&vs)[3]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
         const Real Rinv = dmk_rinv(R2);
-        const Real Rinv3 = Rinv * Rinv * Rinv;
-#pragma unroll
-        for (int k = 0; k < 3; ++k)
-            u[k][0] = dX[k] * Rinv3;
+        const Real Rinv2 = Rinv * Rinv;
+        const Real Rinv3 = Rinv2 * Rinv;
+        const Real rd = dX[0] * vs[0] + dX[1] * vs[1] + dX[2] * vs[2];
+        vt[0] = fma(Rinv3, rd, vt[0]);
         if constexpr (KERNEL_OUTPUT_DIM > 1) {
-            const Real Rinv5 = Rinv3 * Rinv * Rinv;
+            const Real g = Real{-3} * rd * Rinv3 * Rinv2;
 #pragma unroll
-            for (int k = 0; k < 3; ++k) {
-#pragma unroll
-                for (int i = 0; i < 3; ++i) {
-                    Real val = Real{-3} * dX[k] * dX[i] * Rinv5;
-                    if (i == k)
-                        val = val + Rinv3;
-                    u[k][1 + i] = val;
-                }
-            }
+            for (int i = 0; i < 3; ++i)
+                vt[1 + i] = fma(dX[i], g, fma(Rinv3, vs[i], vt[1 + i]));
         }
     }
 };
@@ -239,20 +218,14 @@ struct StokesletFreeEvaluator3D {
 
     Real lambda;
 
-    __device__ inline void operator()(Real (&u)[3][3], const Real (&dX)[3]) const {
+    __device__ inline void operator()(Real (&vt)[3], const Real (&dX)[3], const Real (&vs)[3]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
         const Real Rinv = dmk_rinv(R2);
-        const Real Rinv3 = Rinv * Rinv * Rinv;
+        const Real rf = dX[0] * vs[0] + dX[1] * vs[1] + dX[2] * vs[2];
+        const Real t = rf * Rinv * Rinv;
 #pragma unroll
-        for (int i = 0; i < 3; ++i) {
-#pragma unroll
-            for (int j = 0; j < 3; ++j) {
-                Real val = dX[j] * dX[i] * Rinv3;
-                if (i == j)
-                    val += Rinv;
-                u[i][j] = val;
-            }
-        }
+        for (int i = 0; i < 3; ++i)
+            vt[i] = fma(Rinv, fma(dX[i], t, vs[i]), vt[i]);
     }
 };
 
@@ -265,73 +238,68 @@ struct StressletFreeEvaluator3D {
 
     Real lambda;
 
-    __device__ inline void operator()(Real (&u)[3][3], const Real (&dX)[3], const Real (&ns)[3]) const {
+    __device__ inline void operator()(Real (&vt)[3], const Real (&dX)[3], const Real (&vs)[3],
+                                      const Real (&ns)[3]) const {
         const Real R2 = dX[0] * dX[0] + dX[1] * dX[1] + dX[2] * dX[2];
         const Real Rinv = dmk_rinv(R2);
-        const Real Rinv5 = Rinv * Rinv * Rinv * Rinv * Rinv;
+        const Real Rinv2 = Rinv * Rinv;
         const Real rdotn = dX[0] * ns[0] + dX[1] * ns[1] + dX[2] * ns[2];
-        const Real factor = Real{-3} * rdotn * Rinv5;
+        const Real rf = dX[0] * vs[0] + dX[1] * vs[1] + dX[2] * vs[2];
+        const Real g = Real{-3} * rdotn * rf * Rinv2 * Rinv2 * Rinv;
 #pragma unroll
-        for (int j = 0; j < 3; ++j) {
-            const Real fj = dX[j] * factor;
-#pragma unroll
-            for (int i = 0; i < 3; ++i)
-                u[j][i] = fj * dX[i];
-        }
+        for (int i = 0; i < 3; ++i)
+            vt[i] = fma(dX[i], g, vt[i]);
     }
 };
 
-template <typename Eval>
-__device__ __forceinline__ void free_eval_accumulate(const Eval &evaluator, Real (&vt)[Eval::KERNEL_OUTPUT_DIM],
-                                                     const Real (&dX)[Eval::SPATIAL_DIM],
-                                                     const Real (&vs)[Eval::KERNEL_INPUT_DIM]) {
-    Real U[Eval::KERNEL_INPUT_DIM][Eval::KERNEL_OUTPUT_DIM];
-    evaluator(U, dX);
-#pragma unroll
-    for (int k0 = 0; k0 < Eval::KERNEL_INPUT_DIM; ++k0) {
-#pragma unroll
-        for (int k1 = 0; k1 < Eval::KERNEL_OUTPUT_DIM; ++k1)
-            vt[k1] = fma(U[k0][k1], vs[k0], vt[k1]);
-    }
-}
-
-template <typename Eval>
-__device__ __forceinline__ void
-free_eval_accumulate(const Eval &evaluator, Real (&vt)[Eval::KERNEL_OUTPUT_DIM], const Real (&dX)[Eval::SPATIAL_DIM],
-                     const Real (&vs)[Eval::KERNEL_INPUT_DIM], const Real (&ns)[Eval::NORMAL_DIM]) {
-    Real U[Eval::KERNEL_INPUT_DIM][Eval::KERNEL_OUTPUT_DIM];
-    evaluator(U, dX, ns);
-#pragma unroll
-    for (int k0 = 0; k0 < Eval::KERNEL_INPUT_DIM; ++k0) {
-#pragma unroll
-        for (int k1 = 0; k1 < Eval::KERNEL_OUTPUT_DIM; ++k1)
-            vt[k1] = fma(U[k0][k1], vs[k0], vt[k1]);
-    }
-}
-
-// One thread per target, grid-strided; sources stream through shared memory in TILE-sized
-// chunks. The target loop bound is uniform across the block, so a thread with no target still
-// reaches every __syncthreads.
-template <typename Eval, int TILE>
+// Each block owns BLOCK_SIZE / SPLIT targets, grid-strided; sources stream through shared memory
+// in TILE-sized chunks of 16-byte-padded records, and each of SPLIT thread groups takes a TILE /
+// SPLIT slice of every chunk. The target loop bound is uniform across the block, so a thread with
+// no target still reaches every __syncthreads.
+template <typename Eval, int TILE, int SPLIT>
 __device__ __forceinline__ void DirectFreespaceBody(dmk::cuda::DirectFreespaceArgs<Real> a) {
     constexpr int DIM = Eval::SPATIAL_DIM;
     constexpr int KID = Eval::KERNEL_INPUT_DIM;
     constexpr int KOD = Eval::KERNEL_OUTPUT_DIM;
     constexpr int ND = Eval::NORMAL_DIM;
+    constexpr int VEC = 16 / sizeof(Real);
+    constexpr int REC = (DIM + KID + ND + VEC - 1) / VEC * VEC;
+    constexpr int TPB = BLOCK_SIZE / SPLIT;
+    constexpr int SUB = TILE / SPLIT;
+    constexpr int STAGED = TILE / BLOCK_SIZE;
+    static_assert(TPB * SPLIT == BLOCK_SIZE && SUB * SPLIT == TILE && STAGED * BLOCK_SIZE == TILE);
 
     extern __shared__ __align__(16) unsigned char smem_raw[];
-    Real *smem = reinterpret_cast<Real *>(smem_raw);
-    Real *const s_r_src = smem;
-    smem += TILE * DIM;
-    Real *const s_charge = smem;
-    smem += TILE * KID;
-    Real *const s_normal = smem;
+    Real *const s_src = reinterpret_cast<Real *>(smem_raw);
+    Real *const s_part = s_src + TILE * REC;
 
     const Eval evaluator{a.lambda};
-    const int stride = blockDim.x * gridDim.x;
+    const int group = threadIdx.x / TPB;
+    const int lt = threadIdx.x % TPB;
+    const int stride = TPB * gridDim.x;
 
-    for (int t_base = blockIdx.x * blockDim.x; t_base < a.n_trg; t_base += stride) {
-        const int t = t_base + threadIdx.x;
+    // Next tile, staged in registers while the current one is evaluated.
+    Real staged[STAGED][REC];
+    auto load_tile = [&](int s0) {
+#pragma unroll
+        for (int j = 0; j < STAGED; ++j) {
+            const int s = s0 + threadIdx.x + j * BLOCK_SIZE;
+            if (s < a.n_src) {
+#pragma unroll
+                for (int k = 0; k < DIM; ++k)
+                    staged[j][k] = a.r_src[s * DIM + k];
+#pragma unroll
+                for (int k = 0; k < KID; ++k)
+                    staged[j][DIM + k] = a.charge[s * KID + k];
+#pragma unroll
+                for (int k = 0; k < ND; ++k)
+                    staged[j][DIM + KID + k] = a.normal[s * ND + k];
+            }
+        }
+    };
+
+    for (int t_base = blockIdx.x * TPB; t_base < a.n_trg; t_base += stride) {
+        const int t = t_base + lt;
         const bool active = t < a.n_trg;
 
         Real xt[DIM];
@@ -346,48 +314,71 @@ __device__ __forceinline__ void DirectFreespaceBody(dmk::cuda::DirectFreespaceAr
         for (int k = 0; k < KOD; ++k)
             vt[k] = Real{0};
 
+        load_tile(0);
         for (int s0 = 0; s0 < a.n_src; s0 += TILE) {
             const int rem = a.n_src - s0;
             const int count = rem < TILE ? rem : TILE;
 
             __syncthreads();
-            for (int i = threadIdx.x; i < count * DIM; i += blockDim.x)
-                s_r_src[i] = a.r_src[s0 * DIM + i];
-            for (int i = threadIdx.x; i < count * KID; i += blockDim.x)
-                s_charge[i] = a.charge[s0 * KID + i];
-            if constexpr (ND > 0) {
-                for (int i = threadIdx.x; i < count * ND; i += blockDim.x)
-                    s_normal[i] = a.normal[s0 * ND + i];
+#pragma unroll
+            for (int j = 0; j < STAGED; ++j) {
+                const int s = threadIdx.x + j * BLOCK_SIZE;
+                if (s < count) {
+#pragma unroll
+                    for (int k = 0; k < DIM + KID + ND; ++k)
+                        s_src[s * REC + k] = staged[j][k];
+                }
             }
             __syncthreads();
+
+            if (s0 + TILE < a.n_src)
+                load_tile(s0 + TILE);
 
             if (!active)
                 continue;
 
-            for (int s = 0; s < count; ++s) {
+            const int lo = group * SUB;
+            const int hi = lo + SUB < count ? lo + SUB : count;
+            for (int s = lo; s < hi; ++s) {
+                const Real *rec = s_src + s * REC;
                 Real dX[DIM];
 #pragma unroll
                 for (int k = 0; k < DIM; ++k)
-                    dX[k] = xt[k] - s_r_src[s * DIM + k];
+                    dX[k] = xt[k] - rec[k];
 
                 Real vs[KID];
 #pragma unroll
                 for (int k = 0; k < KID; ++k)
-                    vs[k] = s_charge[s * KID + k];
+                    vs[k] = rec[DIM + k];
 
                 if constexpr (ND > 0) {
                     Real ns[ND > 0 ? ND : 1];
 #pragma unroll
                     for (int k = 0; k < ND; ++k)
-                        ns[k] = s_normal[s * ND + k];
-                    free_eval_accumulate(evaluator, vt, dX, vs, ns);
+                        ns[k] = rec[DIM + KID + k];
+                    evaluator(vt, dX, vs, ns);
                 } else {
-                    free_eval_accumulate(evaluator, vt, dX, vs);
+                    evaluator(vt, dX, vs);
                 }
             }
         }
 
-        if (active) {
+        if constexpr (SPLIT > 1) {
+#pragma unroll
+            for (int k = 0; k < KOD; ++k)
+                s_part[(group * KOD + k) * TPB + lt] = vt[k];
+            __syncthreads();
+            if (group == 0) {
+#pragma unroll
+                for (int k = 0; k < KOD; ++k) {
+#pragma unroll
+                    for (int g = 1; g < SPLIT; ++g)
+                        vt[k] += s_part[(g * KOD + k) * TPB + lt];
+                }
+            }
+        }
+
+        if (active && group == 0) {
 #pragma unroll
             for (int k = 0; k < KOD; ++k)
                 a.pot[t * KOD + k] = vt[k] * Eval::scale_factor;
@@ -401,5 +392,5 @@ using DirectArgs = dmk::cuda::DirectFreespaceArgs<Real>;
 // KERNEL_START
 
 extern "C" __global__ void __launch_bounds__(BLOCK_SIZE) DMK_DIRECT_KERNEL_NAME(DirectArgs a) {
-    DirectFreespaceBody<Evaluator, SRC_TILE>(a);
+    DirectFreespaceBody<Evaluator, SRC_TILE, SRC_SPLIT>(a);
 }

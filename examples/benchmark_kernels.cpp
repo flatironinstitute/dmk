@@ -14,6 +14,7 @@
 #include <getopt.h>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <random>
 #include <span>
@@ -35,7 +36,7 @@
 #define MYCOMM nullptr
 #endif
 
-enum class Solver { DMK, ESP };
+enum class Solver { DMK, ESP, DIRECT };
 
 struct Config {
     Solver solver = Solver::DMK;
@@ -43,7 +44,6 @@ struct Config {
     // Shared
     int n_src = 100'000;
     int n_dim = 3;
-    double eps = 1e-5;
     char prec = 'f';
     dmk_ikernel kernel = DMK_LAPLACE;
     double fparam = 6.0;
@@ -53,16 +53,20 @@ struct Config {
     bool with_grad = false;
     dmk_eval_path eval_path = DMK_EVAL_PATH_CPU;
     int gpu_device_id = 0;
+    long seed = 0;
+    dmk::util::Distribution dist = dmk::util::Distribution::Uniform;
+    bool pin_host = false;
+
+    // DMK and ESP
+    double eps = 1e-5;
     bool use_periodic = false;
 
-    // DMK only
+    // DMK and direct
     int n_trg = 0;
-    int n_per_leaf = 280;
-    dmk::util::Distribution dist = dmk::util::Distribution::Uniform;
-    bool enable_direct = true;
-    long seed = 0;
     int n_show_outliers = 0; // print top-N worst points per block to stderr (0 = off)
-    bool pin_host = false;
+
+    // DMK only
+    int n_per_leaf = 280;
     bool bench_build = false;
     bool bench_eval = true;
     bool bench_update_charges = false;
@@ -294,7 +298,7 @@ void print_outliers(const std::vector<Real> &computed, const std::vector<Real> &
 
     const bool has_charges = !pt_charges.empty() && charge_dim > 0;
     const int n = std::min(n_show, int(ranked.size()));
-    os << "# " << label << " top " << n << " outliers (by |dmk - ref| over comps " << comp_begin << ".." << comp_end
+    os << "# " << label << " top " << n << " outliers (by |got - ref| over comps " << comp_begin << ".." << comp_end
        << "):\n";
     std::vector<double> nn_outliers(n);
     for (int k = 0; k < n; ++k) {
@@ -317,7 +321,7 @@ void print_outliers(const std::vector<Real> &computed, const std::vector<Real> &
             os << (d ? ", " : "") << double(r_pts[p * n_dim + d]);
         os << ") |diff|=" << absdiff << " |ref|=" << refnorm << " relerr=" << relerr;
         os << " r_nn_src=" << r_nn;
-        os << "\n#       dmk=(";
+        os << "\n#       got=(";
         for (int c = comp_begin; c < comp_end; ++c)
             os << (c > comp_begin ? ", " : "") << double(computed[p * kdim + c]);
         os << ")\n#       ref=(";
@@ -365,19 +369,19 @@ void print_outliers(const std::vector<Real> &computed, const std::vector<Real> &
        << ") min=" << (nn_all.empty() ? 0.0 : nn_all.front()) << " median=" << med(nn_all) << "\n";
 }
 
-// neutralize: init_test_data's charges are not neutral, and a periodic lattice sum needs them to be,
-// so the per-component mean is removed before the sources are handed out.
+// periodic: init_test_data's charges are not neutral, and a periodic lattice sum needs them to be,
+// so the per-component mean is removed before the sources are handed out, and init_test_data's
+// fixed corner sources are left out, since 0 and 1 - eps are periodic images of each other.
 template <typename Real>
 void generate_and_scatter(int n_dim, int charge_dim, size_t n_src, size_t n_trg, dmk::util::Distribution dist,
-                          bool set_fixed_charges, std::vector<Real> &r_src, std::vector<Real> &r_trg,
-                          std::vector<Real> &charges, std::vector<Real> &normals, long seed, bool neutralize, int rank,
-                          int np) {
+                          std::vector<Real> &r_src, std::vector<Real> &r_trg, std::vector<Real> &charges,
+                          std::vector<Real> &normals, long seed, bool periodic, int rank, int np) {
     std::vector<Real> r_src_all, r_trg_all, charges_all, normals_all;
 
     if (rank == 0) {
-        dmk::util::init_test_data(n_dim, charge_dim, int(n_src), int(n_trg), dist, set_fixed_charges, r_src_all,
-                                  r_trg_all, normals_all, charges_all, seed);
-        if (neutralize)
+        dmk::util::init_test_data(n_dim, charge_dim, int(n_src), int(n_trg), dist, !periodic, r_src_all, r_trg_all,
+                                  normals_all, charges_all, seed);
+        if (periodic)
             for (int c = 0; c < charge_dim; ++c) {
                 double mean = 0.0;
                 for (size_t i = 0; i < n_src; ++i)
@@ -576,7 +580,8 @@ void print_update_csv_row(const TimingResult &t, std::ostream &os) {
 
 void print_dmk_config_comment(const Config &cfg, int np, int n_threads, std::ostream &os) {
     const std::string_view kernel_str = dmk::util::to_string(cfg.kernel);
-    os << "# mpi_ranks:            " << np << "\n"
+    os << "# solver:               " << (cfg.solver == Solver::DIRECT ? "direct" : "dmk") << "\n"
+       << "# mpi_ranks:            " << np << "\n"
        << "# omp_threads_per_rank: " << n_threads << "\n"
        << "# n_src:                " << cfg.n_src << "\n"
        << "# n_trg:                " << cfg.n_trg << "\n"
@@ -588,17 +593,18 @@ void print_dmk_config_comment(const Config &cfg, int np, int n_threads, std::ost
        << "# precision:            " << (cfg.prec == 'd' ? "double" : "float") << "\n"
        << "# dist:                 " << int(cfg.dist) << "\n"
        << "# seed:                 " << cfg.seed << "\n"
-       << "# eps:                  " << cfg.eps << "\n"
-       << "# n_per_leaf:           " << cfg.n_per_leaf << "\n"
        << "# n_runs:               " << cfg.n_runs << "\n"
-       << "# direct_enabled:       " << cfg.enable_direct << "\n"
        << "# n_direct:             " << cfg.n_direct << "\n"
        << "# n_show_outliers:      " << cfg.n_show_outliers << "\n"
        << "# log_level:            " << cfg.log_level << "\n"
        << "# eval_path:            " << cfg.eval_path << "\n"
-       << "# bench_build:          " << cfg.bench_build << "\n"
-       << "# bench_eval:           " << cfg.bench_eval << "\n"
-       << "# bench_update_charges: " << cfg.bench_update_charges << "\n";
+       << "# pin_host:             " << cfg.pin_host << "\n";
+    if (cfg.solver == Solver::DMK)
+        os << "# eps:                  " << cfg.eps << "\n"
+           << "# n_per_leaf:           " << cfg.n_per_leaf << "\n"
+           << "# bench_build:          " << cfg.bench_build << "\n"
+           << "# bench_eval:           " << cfg.bench_eval << "\n"
+           << "# bench_update_charges: " << cfg.bench_update_charges << "\n";
 }
 
 struct ErrorBlock {
@@ -626,8 +632,8 @@ void print_csv_block(std::ostream &os, const ErrorBlock &b, bool with_grad) {
         emit(b.grad);
 }
 
-void print_csv_header(std::ostream &os, bool with_grad, bool with_trg) {
-    os << "dmk_time,dmk_pts_s,dmk_pts_s_rank,dmk_pts_s_thread";
+void print_csv_header(std::ostream &os, bool with_grad, bool with_trg, const std::string &prefix = "dmk") {
+    os << prefix << "_time," << prefix << "_pts_s," << prefix << "_pts_s_rank," << prefix << "_pts_s_thread";
     print_csv_header_block(os, "src", with_grad);
     if (with_trg)
         print_csv_header_block(os, "trg", with_grad);
@@ -641,34 +647,10 @@ void print_csv_row(const TimingResult &t, const ErrorBlock &src, const ErrorBloc
         print_csv_block(os, *trg, with_grad);
 }
 
-template <typename Real>
-void run_dmk_benchmark(Config cfg) {
-    int rank = 0, np = 1;
-#ifdef DMK_HAVE_MPI
-    MPI_Comm_rank(MYCOMM, &rank);
-    MPI_Comm_size(MYCOMM, &np);
-#endif
-
-    const int n_dim = cfg.n_dim;
-    const int n_threads = MY_OMP_GET_MAX_THREADS();
-
-    // EwaldRef's 2D log split carries no self term, so it is only exact at points that are not
-    // sources; this driver always verifies at sources.
-    if (cfg.use_periodic && cfg.kernel == DMK_LAPLACE && n_dim == 2 && cfg.enable_direct) {
-        if (rank == 0)
-            std::cout << "# note: periodic laplace in 2D has no independent reference; errors reported as nan\n";
-        cfg.enable_direct = false;
-    }
-
-    const int n_src = cfg.n_src;
-    const int n_trg = cfg.n_trg;
-    const int n_src_per_rank = local_count(n_src, np, rank);
-    const int n_trg_per_rank = local_count(n_trg, np, rank);
-    const bool with_trg = n_trg > 0;
-
+pdmk_params make_tree_params(const Config &cfg) {
     pdmk_params params{};
     params.eps = cfg.eps;
-    params.n_dim = n_dim;
+    params.n_dim = cfg.n_dim;
     params.n_per_leaf = cfg.n_per_leaf;
     params.log_level = cfg.log_level;
     params.kernel = cfg.kernel;
@@ -679,33 +661,193 @@ void run_dmk_benchmark(Config cfg) {
     params.eval_trg = params.eval_src;
     if (cfg.kernel == DMK_YUKAWA)
         params.fparam = cfg.fparam;
+    return params;
+}
 
-    const int charge_dim = dmk::get_kernel_input_dim(n_dim, params.kernel);
-    const int pot_dim = dmk::get_kernel_output_dim(n_dim, cfg.kernel, params.eval_src);
+// Direct reference at the first n_direct source positions, and at target positions if requested.
+template <typename Real>
+void compute_reference_blocks(const Config &cfg, int charge_dim, const std::vector<Real> &r_src,
+                              const std::vector<Real> &charges, const std::vector<Real> &normals,
+                              const std::vector<Real> &r_trg, std::vector<Real> &pot_direct_src,
+                              std::vector<Real> &pot_direct_trg, int rank, int np) {
+    const int n_dim = cfg.n_dim;
+    const int n_direct_global = std::min(cfg.n_direct, cfg.n_src);
+    const int n_direct_per_rank = local_count(n_direct_global, np, rank);
+
+    if (n_direct_global == cfg.n_src) {
+        run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_src, pot_direct_src, true, rank, np);
+    } else {
+        std::vector<Real> r_eval(r_src.begin(), r_src.begin() + size_t(n_direct_per_rank) * n_dim);
+        run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_eval, pot_direct_src, true, rank, np);
+    }
+
+    if (cfg.n_trg > 0) {
+        const int n_direct_trg_global = std::min(n_direct_global, cfg.n_trg);
+        const int n_direct_trg_per_rank = local_count(n_direct_trg_global, np, rank);
+        std::vector<Real> r_eval(r_trg.begin(), r_trg.begin() + size_t(n_direct_trg_per_rank) * n_dim);
+        run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_eval, pot_direct_trg, false, rank, np);
+    }
+}
+
+template <typename Real>
+void fill_error_block(const Config &cfg, int pot_dim, const std::vector<Real> &pot, const std::vector<Real> &pot_dir,
+                      ErrorBlock &out, int rank, int np) {
+    if (pot.empty() || pot_dir.empty())
+        return;
+    int n_compare = std::min(int(pot_dir.size()), int(pot.size()));
+    n_compare = (n_compare / pot_dim) * pot_dim;
+    if (n_compare == 0)
+        return;
+    std::vector<Real> sub(pot.begin(), pot.begin() + n_compare);
+    std::vector<Real> dir_sub(pot_dir.begin(), pot_dir.begin() + n_compare);
+    if (cfg.with_grad) {
+        out.pot = compute_error(sub, dir_sub, rank, np, pot_dim, 0, 1, cfg.use_periodic);
+        out.grad = compute_error(sub, dir_sub, rank, np, pot_dim, 1, pot_dim);
+    } else {
+        out.pot = compute_error(sub, dir_sub, rank, np, pot_dim, 0, pot_dim, cfg.use_periodic);
+    }
+    out.have = true;
+}
+
+// Bracket the timed loop on the GPU path, so `nsys/ncu -c cudaProfilerApi` excludes setup and warmup.
+void profiler_start([[maybe_unused]] const Config &cfg) {
+#ifdef DMK_GPU_OFFLOAD
+    if (cfg.eval_path == DMK_EVAL_PATH_GPU)
+        cudaProfilerStart();
+#endif
+}
+
+void profiler_stop([[maybe_unused]] const Config &cfg) {
+#ifdef DMK_GPU_OFFLOAD
+    if (cfg.eval_path == DMK_EVAL_PATH_GPU)
+        cudaProfilerStop();
+#endif
+}
+
+// Setup shared by the DMK and DIRECT benchmarks: per-rank inputs (optionally page-locked), the
+// kernel parameters, and the untimed direct reference the error columns are formed against.
+template <typename Real>
+struct BenchProblem {
+    int rank = 0, np = 1, n_threads = 1;
+    pdmk_params params{};
+    int charge_dim = 0, pot_dim = 0;
+    int n_src_per_rank = 0, n_trg_per_rank = 0;
+    bool with_trg = false;
 
     std::vector<Real> r_src, r_trg, charges, normals;
-    generate_and_scatter<Real>(n_dim, charge_dim, n_src, n_trg, cfg.dist, true, r_src, r_trg, charges, normals,
-                               cfg.seed, cfg.use_periodic, rank, np);
-    const PinnedBuffer<Real> pin_r_src(r_src, cfg.pin_host), pin_r_trg(r_trg, cfg.pin_host),
-        pin_charges(charges, cfg.pin_host), pin_normals(normals, cfg.pin_host);
+    std::vector<Real> pot_direct_src, pot_direct_trg;
+    std::unique_ptr<PinnedBuffer<Real>> pin_r_src, pin_r_trg, pin_charges, pin_normals;
+
+    explicit BenchProblem(const Config &cfg) {
+#ifdef DMK_HAVE_MPI
+        MPI_Comm_rank(MYCOMM, &rank);
+        MPI_Comm_size(MYCOMM, &np);
+#endif
+        n_threads = MY_OMP_GET_MAX_THREADS();
+
+        params = make_tree_params(cfg);
+        charge_dim = dmk::get_kernel_input_dim(cfg.n_dim, params.kernel);
+        pot_dim = dmk::get_kernel_output_dim(cfg.n_dim, cfg.kernel, params.eval_src);
+        n_src_per_rank = local_count(cfg.n_src, np, rank);
+        n_trg_per_rank = local_count(cfg.n_trg, np, rank);
+        with_trg = cfg.n_trg > 0;
+
+        generate_and_scatter<Real>(cfg.n_dim, charge_dim, cfg.n_src, cfg.n_trg, cfg.dist, r_src, r_trg, charges,
+                                   normals, cfg.seed, cfg.use_periodic, rank, np);
+        // Page-lock after generation: the buffers must exist before cudaHostRegister sees them.
+        pin_r_src = std::make_unique<PinnedBuffer<Real>>(r_src, cfg.pin_host);
+        pin_r_trg = std::make_unique<PinnedBuffer<Real>>(r_trg, cfg.pin_host);
+        pin_charges = std::make_unique<PinnedBuffer<Real>>(charges, cfg.pin_host);
+        pin_normals = std::make_unique<PinnedBuffer<Real>>(normals, cfg.pin_host);
+    }
+
+    void compute_references(const Config &cfg) {
+        if (cfg.n_direct <= 0 || !pot_direct_src.empty())
+            return;
+        compute_reference_blocks(cfg, charge_dim, r_src, charges, normals, r_trg, pot_direct_src, pot_direct_trg, rank,
+                                 np);
+    }
+
+    // Error blocks vs the reference plus the CSV row. No trailing newline: callers may append
+    // their own columns to the row.
+    void report_eval_row(const Config &cfg, const TimingResult &t, const std::vector<Real> &pot_src,
+                         const std::vector<Real> &pot_trg) const {
+        ErrorBlock src_err, trg_err;
+        fill_error_block(cfg, pot_dim, pot_src, pot_direct_src, src_err, rank, np);
+        if (with_trg)
+            fill_error_block(cfg, pot_dim, pot_trg, pot_direct_trg, trg_err, rank, np);
+        if (rank == 0)
+            print_csv_row(t, src_err, with_trg ? &trg_err : nullptr, cfg.with_grad, std::cout);
+    }
+
+    // Top-N worst points per block against the reference, to stderr.
+    void report_outliers(const Config &cfg, const std::vector<Real> &pot_src, const std::vector<Real> &pot_trg) const {
+        const int n_show = cfg.n_show_outliers;
+        const int n_dim = cfg.n_dim;
+        const std::vector<Real> empty_charges;
+        print_outliers(pot_src, pot_direct_src, r_src, r_src, /*same_set=*/true, charges, charge_dim, n_dim, pot_dim, 0,
+                       cfg.with_grad ? 1 : pot_dim, n_show, "src pot", rank, std::cerr);
+        if (cfg.with_grad)
+            print_outliers(pot_src, pot_direct_src, r_src, r_src, /*same_set=*/true, charges, charge_dim, n_dim,
+                           pot_dim, 1, pot_dim, n_show, "src grad", rank, std::cerr);
+        if (with_trg) {
+            print_outliers(pot_trg, pot_direct_trg, r_trg, r_src, /*same_set=*/false, empty_charges, 0, n_dim, pot_dim,
+                           0, cfg.with_grad ? 1 : pot_dim, n_show, "trg pot", rank, std::cerr);
+            if (cfg.with_grad)
+                print_outliers(pot_trg, pot_direct_trg, r_trg, r_src, /*same_set=*/false, empty_charges, 0, n_dim,
+                               pot_dim, 1, pot_dim, n_show, "trg grad", rank, std::cerr);
+        }
+    }
+};
+
+// Pre-sized, page-locked output buffers: the registration has to outlive every run, and pre-sizing
+// keeps a reallocation out of each timed iteration.
+template <typename Real>
+struct PotBuffers {
+    std::vector<Real> src, trg;
+    std::unique_ptr<PinnedBuffer<Real>> pin_src, pin_trg;
+
+    PotBuffers(const Config &cfg, const BenchProblem<Real> &pb) {
+        src.resize(size_t(pb.n_src_per_rank) * pb.pot_dim);
+        trg.resize(size_t(pb.n_trg_per_rank) * pb.pot_dim);
+        pin_src = std::make_unique<PinnedBuffer<Real>>(src, cfg.pin_host);
+        pin_trg = std::make_unique<PinnedBuffer<Real>>(trg, cfg.pin_host);
+    }
+};
+
+template <typename Real>
+void run_dmk_benchmark(Config cfg) {
+    BenchProblem<Real> pb(cfg);
+
+    const int n_dim = cfg.n_dim;
+    const int n_src = cfg.n_src;
+    const int n_trg = cfg.n_trg;
+
+    // EwaldRef's 2D log split carries no self term, so it is only exact at points that are not
+    // sources; this driver always verifies at sources.
+    if (cfg.use_periodic && cfg.kernel == DMK_LAPLACE && n_dim == 2 && cfg.n_direct > 0) {
+        if (pb.rank == 0)
+            std::cout << "# note: periodic laplace in 2D has no independent reference; errors reported as nan\n";
+        cfg.n_direct = 0;
+    }
 
     auto create_tree = [&]() -> pdmk_tree {
-        const Real *r_trg_ptr = with_trg ? r_trg.data() : nullptr;
+        const Real *r_trg_ptr = pb.with_trg ? pb.r_trg.data() : nullptr;
         pdmk_tree tree;
         if constexpr (std::is_same_v<Real, float>)
-            tree = pdmk_tree_createf(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), normals.data(),
-                                     n_trg_per_rank, r_trg_ptr);
+            tree = pdmk_tree_createf(MYCOMM, pb.params, pb.n_src_per_rank, pb.r_src.data(), pb.charges.data(),
+                                     pb.normals.data(), pb.n_trg_per_rank, r_trg_ptr);
         else
-            tree = pdmk_tree_create(MYCOMM, params, n_src_per_rank, r_src.data(), charges.data(), normals.data(),
-                                    n_trg_per_rank, r_trg_ptr);
+            tree = pdmk_tree_create(MYCOMM, pb.params, pb.n_src_per_rank, pb.r_src.data(), pb.charges.data(),
+                                    pb.normals.data(), pb.n_trg_per_rank, r_trg_ptr);
         if (!tree)
             throw std::runtime_error(pdmk_last_error_message());
         return tree;
     };
 
     if (cfg.bench_build) {
-        if (rank == 0) {
-            print_dmk_config_comment(cfg, np, n_threads, std::cout);
+        if (pb.rank == 0) {
+            print_dmk_config_comment(cfg, pb.np, pb.n_threads, std::cout);
             print_build_csv_header(std::cout);
             std::cout << std::flush;
         }
@@ -719,22 +861,22 @@ void run_dmk_benchmark(Config cfg) {
             double ft = MY_OMP_GET_WTIME();
             pdmk_tree_destroy(tree);
 
-            TimingResult t = make_timing(ft - st, n_src, n_src_per_rank, n_threads);
+            TimingResult t = make_timing(ft - st, n_src, pb.n_src_per_rank, pb.n_threads);
 
             if (run == 0) {
-                if (rank == 0)
+                if (pb.rank == 0)
                     std::cout << ",";
                 pdmk_print_profile_data(MYCOMM, 'h');
-                if (rank == 0)
+                if (pb.rank == 0)
                     std::cout << "\n";
             }
 
-            if (rank == 0) {
+            if (pb.rank == 0) {
                 print_build_csv_row(t, std::cout);
                 std::cout << ",";
             }
             pdmk_print_profile_data(MYCOMM, 'c');
-            if (rank == 0)
+            if (pb.rank == 0)
                 std::cout << "\n" << std::flush;
         }
     }
@@ -744,32 +886,32 @@ void run_dmk_benchmark(Config cfg) {
         tree = create_tree();
 
     if (cfg.bench_update_charges) {
-        if (rank == 0) {
+        if (pb.rank == 0) {
             if (!cfg.bench_build)
-                print_dmk_config_comment(cfg, np, n_threads, std::cout);
+                print_dmk_config_comment(cfg, pb.np, pb.n_threads, std::cout);
             print_update_csv_header(std::cout);
             std::cout << std::flush;
         }
         for (int run = 0; run < cfg.n_runs; ++run) {
             sctl::Profile::reset();
-            const Real *normal_ptr = (cfg.kernel == DMK_STRESSLET) ? normals.data() : nullptr;
-            double dt = run_update_charges<Real>(tree, charges, normal_ptr);
-            TimingResult t = make_timing(dt, n_src, n_src_per_rank, n_threads);
+            const Real *normal_ptr = (cfg.kernel == DMK_STRESSLET) ? pb.normals.data() : nullptr;
+            double dt = run_update_charges<Real>(tree, pb.charges, normal_ptr);
+            TimingResult t = make_timing(dt, n_src, pb.n_src_per_rank, pb.n_threads);
 
             if (run == 0) {
-                if (rank == 0)
+                if (pb.rank == 0)
                     std::cout << ",";
                 pdmk_print_profile_data(MYCOMM, 'h');
-                if (rank == 0)
+                if (pb.rank == 0)
                     std::cout << "\n";
             }
 
-            if (rank == 0) {
+            if (pb.rank == 0) {
                 print_update_csv_row(t, std::cout);
                 std::cout << ",";
             }
             pdmk_print_profile_data(MYCOMM, 'c');
-            if (rank == 0)
+            if (pb.rank == 0)
                 std::cout << "\n" << std::flush;
         }
     }
@@ -780,113 +922,104 @@ void run_dmk_benchmark(Config cfg) {
         return;
     }
 
-    // Direct reference at source positions, and at target positions if requested.
-    std::vector<Real> pot_direct_src, pot_direct_trg;
-    if (cfg.enable_direct && cfg.n_direct > 0) {
-        const int n_direct_global = std::min(cfg.n_direct, n_src);
-        const int n_direct_per_rank = local_count(n_direct_global, np, rank);
-
-        if (n_direct_global == n_src) {
-            run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_src, pot_direct_src, true, rank, np);
-        } else {
-            std::vector<Real> r_eval(r_src.begin(), r_src.begin() + size_t(n_direct_per_rank) * n_dim);
-            run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_eval, pot_direct_src, true, rank, np);
-        }
-
-        if (with_trg) {
-            const int n_direct_trg_global = std::min(n_direct_global, n_trg);
-            const int n_direct_trg_per_rank = local_count(n_direct_trg_global, np, rank);
-            std::vector<Real> r_eval(r_trg.begin(), r_trg.begin() + size_t(n_direct_trg_per_rank) * n_dim);
-            run_direct(cfg, n_dim, charge_dim, r_src, charges, normals, r_eval, pot_direct_trg, false, rank, np);
-        }
-    }
+    // Untimed direct reference at source positions, and at target positions if requested.
+    pb.compute_references(cfg);
 
 #ifdef DMK_HAVE_MPI
     MPI_Barrier(MYCOMM);
 #endif
 
-    if (rank == 0) {
+    if (pb.rank == 0) {
         if (!cfg.bench_build && !cfg.bench_update_charges)
-            print_dmk_config_comment(cfg, np, n_threads, std::cout);
-        print_csv_header(std::cout, cfg.with_grad, with_trg);
+            print_dmk_config_comment(cfg, pb.np, pb.n_threads, std::cout);
+        print_csv_header(std::cout, cfg.with_grad, pb.with_trg);
         std::cout << std::flush;
     }
 
-    auto fill_block = [&](const std::vector<Real> &pot_dmk, const std::vector<Real> &pot_dir, ErrorBlock &out) {
-        if (pot_dmk.empty() || pot_dir.empty())
-            return;
-        int n_compare = std::min(int(pot_dir.size()), int(pot_dmk.size()));
-        n_compare = (n_compare / pot_dim) * pot_dim;
-        if (n_compare == 0)
-            return;
-        std::vector<Real> dmk_sub(pot_dmk.begin(), pot_dmk.begin() + n_compare);
-        std::vector<Real> dir_sub(pot_dir.begin(), pot_dir.begin() + n_compare);
-        if (cfg.with_grad) {
-            out.pot = compute_error(dmk_sub, dir_sub, rank, np, pot_dim, 0, 1, cfg.use_periodic);
-            out.grad = compute_error(dmk_sub, dir_sub, rank, np, pot_dim, 1, pot_dim);
-        } else {
-            out.pot = compute_error(dmk_sub, dir_sub, rank, np, pot_dim, 0, pot_dim, cfg.use_periodic);
-        }
-        out.have = true;
-    };
-
-    // Allocated once and pre-sized: the page-locking has to outlive every run, and it keeps a
-    // reallocation out of each timed iteration.
-    std::vector<Real> pot_dmk_src(size_t(n_src_per_rank) * pot_dim);
-    std::vector<Real> pot_dmk_trg(size_t(n_trg_per_rank) * pot_dim);
-    const bool pinned_src = pin_host_buffer(pot_dmk_src, cfg.pin_host);
-    const bool pinned_trg = pin_host_buffer(pot_dmk_trg, cfg.pin_host);
-
+    PotBuffers<Real> pot(cfg, pb);
+    profiler_start(cfg);
     for (int run = 0; run < cfg.n_runs; ++run) {
         sctl::Profile::reset();
-        double dt = run_dmk<Real>(tree, pot_dmk_src, pot_dmk_trg, n_src_per_rank, n_trg_per_rank, pot_dim, rank, np);
-        TimingResult t = make_timing(dt, n_src + n_trg, n_src_per_rank + n_trg_per_rank, n_threads);
+        const double dt =
+            run_dmk<Real>(tree, pot.src, pot.trg, pb.n_src_per_rank, pb.n_trg_per_rank, pb.pot_dim, pb.rank, pb.np);
+        const TimingResult t = make_timing(dt, n_src + n_trg, pb.n_src_per_rank + pb.n_trg_per_rank, pb.n_threads);
 
         if (run == 0) {
-            if (rank == 0)
+            if (pb.rank == 0)
                 std::cout << ",";
             pdmk_print_profile_data(MYCOMM, 'h');
-            if (rank == 0)
+            if (pb.rank == 0)
                 std::cout << "\n";
+            pb.report_outliers(cfg, pot.src, pot.trg);
         }
 
-        ErrorBlock src_err, trg_err;
-        if (cfg.enable_direct) {
-            fill_block(pot_dmk_src, pot_direct_src, src_err);
-            if (with_trg)
-                fill_block(pot_dmk_trg, pot_direct_trg, trg_err);
-        }
-
-        if (run == 0 && cfg.enable_direct && cfg.n_show_outliers > 0) {
-            const int n_show = cfg.n_show_outliers;
-            const std::vector<Real> empty_charges;
-            print_outliers(pot_dmk_src, pot_direct_src, r_src, r_src, /*same_set=*/true, charges, charge_dim, n_dim,
-                           pot_dim, 0, cfg.with_grad ? 1 : pot_dim, n_show, "src pot", rank, std::cerr);
-            if (cfg.with_grad)
-                print_outliers(pot_dmk_src, pot_direct_src, r_src, r_src, /*same_set=*/true, charges, charge_dim, n_dim,
-                               pot_dim, 1, pot_dim, n_show, "src grad", rank, std::cerr);
-            if (with_trg) {
-                print_outliers(pot_dmk_trg, pot_direct_trg, r_trg, r_src, /*same_set=*/false, empty_charges, 0, n_dim,
-                               pot_dim, 0, cfg.with_grad ? 1 : pot_dim, n_show, "trg pot", rank, std::cerr);
-                if (cfg.with_grad)
-                    print_outliers(pot_dmk_trg, pot_direct_trg, r_trg, r_src, /*same_set=*/false, empty_charges, 0,
-                                   n_dim, pot_dim, 1, pot_dim, n_show, "trg grad", rank, std::cerr);
-            }
-        }
-
-        if (rank == 0)
-            print_csv_row(t, src_err, with_trg ? &trg_err : nullptr, cfg.with_grad, std::cout);
-        if (rank == 0)
+        pb.report_eval_row(cfg, t, pot.src, pot.trg);
+        if (pb.rank == 0)
             std::cout << ",";
         pdmk_print_profile_data(MYCOMM, 'c');
-        if (rank == 0)
+        if (pb.rank == 0)
             std::cout << std::endl << std::flush;
     }
-
-    unpin_host_buffer(pot_dmk_src, pinned_src);
-    unpin_host_buffer(pot_dmk_trg, pinned_trg);
+    profiler_stop(cfg);
 
     pdmk_tree_destroy(tree);
+}
+
+// ---------------------------------------------------------------------------
+// Direct (all-pairs) sum
+// ---------------------------------------------------------------------------
+
+template <typename Real>
+void direct_eval(const pdmk_params &params, int n_src, const std::vector<Real> &r_src, const std::vector<Real> &charges,
+                 const std::vector<Real> &normals, int n_trg, const Real *r_trg, Real *pot_src, Real *pot_trg) {
+    dmk_error rc;
+    if constexpr (std::is_same_v<Real, float>)
+        rc = pdmk_directf(MYCOMM, params, n_src, r_src.data(), charges.data(), normals.data(), n_trg, r_trg, pot_src,
+                          pot_trg);
+    else
+        rc = pdmk_direct(MYCOMM, params, n_src, r_src.data(), charges.data(), normals.data(), n_trg, r_trg, pot_src,
+                         pot_trg);
+    if (rc != DMK_SUCCESS)
+        throw std::runtime_error(std::string("pdmk_direct failed: ") + pdmk_last_error_message());
+}
+
+template <typename Real>
+void run_direct_benchmark(Config cfg) {
+    BenchProblem<Real> pb(cfg);
+
+    // Untimed warm-up: the first GPU call compiles the kernel. A few targets suffice to pay for that.
+    const int n_warm = std::min(pb.n_src_per_rank, 64);
+    std::vector<Real> pot_warm(size_t(n_warm) * pb.pot_dim);
+    direct_eval<Real>(pb.params, pb.n_src_per_rank, pb.r_src, pb.charges, pb.normals, n_warm, pb.r_src.data(), nullptr,
+                      pot_warm.data());
+
+    pb.compute_references(cfg);
+
+    if (pb.rank == 0) {
+        print_dmk_config_comment(cfg, pb.np, pb.n_threads, std::cout);
+        print_csv_header(std::cout, cfg.with_grad, pb.with_trg, "direct");
+        std::cout << "\n" << std::flush;
+    }
+
+    PotBuffers<Real> pot(cfg, pb);
+    profiler_start(cfg);
+    for (int run = 0; run < cfg.n_runs; ++run) {
+#ifdef DMK_HAVE_MPI
+        MPI_Barrier(MYCOMM);
+#endif
+        const double st = MY_OMP_GET_WTIME();
+        direct_eval<Real>(pb.params, pb.n_src_per_rank, pb.r_src, pb.charges, pb.normals, pb.n_trg_per_rank,
+                          pb.r_trg.data(), pot.src.data(), pb.with_trg ? pot.trg.data() : nullptr);
+        const double dt = MY_OMP_GET_WTIME() - st;
+        pb.report_eval_row(cfg,
+                           make_timing(dt, cfg.n_src + cfg.n_trg, pb.n_src_per_rank + pb.n_trg_per_rank, pb.n_threads),
+                           pot.src, pot.trg);
+        if (pb.rank == 0)
+            std::cout << std::endl;
+        if (run == 0)
+            pb.report_outliers(cfg, pot.src, pot.trg);
+    }
+    profiler_stop(cfg);
 }
 
 // ---------------------------------------------------------------------------
@@ -961,53 +1094,6 @@ void esp_plan_destroy(pdmk_esp_plan plan) {
         pdmk_esp_plan_destroyf(plan);
     else
         pdmk_esp_plan_destroy(plan);
-}
-
-// Positions are uniform on the unit box [0, 1)^n_dim
-template <typename Real>
-std::vector<Real> generate_positions(int n, int n_dim, long seed = 42) {
-    std::default_random_engine eng(seed);
-    std::uniform_real_distribution<double> rng(0.0, 1.0);
-    std::vector<Real> r(size_t(n) * n_dim);
-    for (size_t i = 0; i < r.size(); ++i)
-        r[i] = Real(rng(eng));
-    return r;
-}
-
-// Scalar charges alternate ±1 so the system is neutral, which periodic Ewald requires.
-template <typename Real>
-std::vector<Real> generate_charges(int n, int input_dim = 1, long seed = 7) {
-    if (input_dim == 1) {
-        std::vector<Real> q(n);
-        for (int i = 0; i < n; ++i)
-            q[i] = Real(1 - 2 * (i & 1));
-        return q;
-    }
-    std::default_random_engine eng(seed);
-    std::uniform_real_distribution<double> rng(-0.5, 0.5);
-    std::vector<Real> q(size_t(n) * input_dim);
-    for (auto &v : q)
-        v = Real(rng(eng));
-    return q;
-}
-
-template <typename Real>
-std::vector<Real> generate_normals(int n, int n_dim, long seed = 11) {
-    std::default_random_engine eng(seed);
-    std::uniform_real_distribution<double> rng(-1.0, 1.0);
-    std::vector<Real> nv(size_t(n) * n_dim);
-    for (int i = 0; i < n; ++i) {
-        double s = 0.0;
-        for (int d = 0; d < n_dim; ++d) {
-            const double x = rng(eng);
-            nv[i * n_dim + d] = Real(x);
-            s += x * x;
-        }
-        const double inv = s > 0 ? 1.0 / std::sqrt(s) : 1.0;
-        for (int d = 0; d < n_dim; ++d)
-            nv[i * n_dim + d] = Real(nv[i * n_dim + d] * inv);
-    }
-    return nv;
 }
 
 // Reference potential at the first n_direct sources, self-interaction excluded. False if this
@@ -1087,6 +1173,8 @@ void print_esp_config(const Config &cfg, int n_threads, std::ostream &os) {
        << "# fparam:      " << cfg.fparam << "\n"
        << "# sigma:       " << cfg.sigma << "\n"
        << "# boundary:    " << (cfg.use_periodic ? "periodic" : "free-space") << "\n"
+       << "# dist:        " << int(cfg.dist) << "\n"
+       << "# seed:        " << cfg.seed << "\n"
        << "# n_runs:      " << cfg.n_runs << "\n"
        << "# n_direct:    " << cfg.n_direct << "\n"
        << "# prec:        " << (cfg.prec == 'd' ? "double" : "float") << "\n"
@@ -1096,7 +1184,8 @@ void print_esp_config(const Config &cfg, int n_threads, std::ostream &os) {
        << "# check_grad:  " << (cfg.check_grad ? "true" : "false") << "\n"
        << "# log_level:   " << cfg.log_level << "\n"
        << "# short_range: " << sr_summary(cfg.esp_flags, cfg.esp_bins, cfg.esp_stile) << "\n"
-       << "# omp_threads: " << n_threads << "\n";
+       << "# omp_threads: " << n_threads << "\n"
+       << "# pin_host:    " << cfg.pin_host << "\n";
     if (cfg.eval_path == DMK_EVAL_PATH_GPU)
         os << "# gpu_device:  " << cfg.gpu_device_id << "\n"
            << "# cpu_baseline:" << (cfg.skip_cpu_baseline ? "false" : "true") << "\n";
@@ -1192,11 +1281,11 @@ void warmup(const Config &cfg) {
     const int input_dim = dmk::get_kernel_input_dim(cfg.n_dim, cfg.kernel);
     const dmk_eval_type et = esp_pot_eval_type(cfg.kernel);
     const int out_dim = dmk::get_kernel_output_dim(cfg.n_dim, cfg.kernel, et);
-    auto r_w = generate_positions<Real>(nw, cfg.n_dim);
-    auto q_w = generate_charges<Real>(nw, input_dim);
-    std::vector<Real> nrm_w;
-    if (needs_normal(cfg.kernel))
-        nrm_w = generate_normals<Real>(nw, cfg.n_dim);
+    std::vector<Real> r_w, r_trg_w, q_w, nrm_w;
+    generate_and_scatter<Real>(cfg.n_dim, input_dim, nw, 0, cfg.dist, r_w, r_trg_w, q_w, nrm_w, cfg.seed,
+                               cfg.use_periodic, 0, 1);
+    if (!needs_normal(cfg.kernel))
+        nrm_w.clear();
     pdmk_esp_params params = make_params(cfg, cfg.r_c, et, cfg.eval_path);
     pdmk_esp_plan plan = esp_plan_create<Real>(params);
     std::vector<Real> pot(size_t(nw) * out_dim);
@@ -1216,6 +1305,7 @@ void run_esp_phase(const Config &cfg, int n, const std::vector<Real> &r_src, con
     pdmk_esp_plan plan = esp_plan_create<Real>(make_params(cfg, cfg.r_c, eval_type, cfg.eval_path));
 
     std::vector<Real> pot(size_t(n) * out_dim);
+    const PinnedBuffer<Real> pin_pot(pot, cfg.pin_host);
 
     double cpu_time = std::numeric_limits<double>::quiet_NaN();
     std::vector<Real> cpu_pot;
@@ -1246,11 +1336,7 @@ void run_esp_phase(const Config &cfg, int n, const std::vector<Real> &r_src, con
     pdmk_print_profile_data(nullptr, 'h');
     std::cout << "\n" << std::flush;
 
-    // Brackets only the timed loop, so `nsys/ncu -c cudaProfilerApi` excludes setup and warmup.
-#ifdef DMK_GPU_OFFLOAD
-    if (on_gpu)
-        cudaProfilerStart();
-#endif
+    profiler_start(cfg);
     double gpu_time_sum = 0;
     for (int run = 0; run < cfg.n_runs; ++run) {
         sctl::Profile::reset();
@@ -1270,10 +1356,7 @@ void run_esp_phase(const Config &cfg, int n, const std::vector<Real> &r_src, con
         pdmk_print_profile_data(nullptr, 'c');
         std::cout << "\n" << std::flush;
     }
-#ifdef DMK_GPU_OFFLOAD
-    if (on_gpu)
-        cudaProfilerStop();
-#endif
+    profiler_stop(cfg);
 
     if (want_cpu_baseline) {
         const double gpu_time_avg = gpu_time_sum / cfg.n_runs;
@@ -1333,9 +1416,14 @@ void run_esp_benchmark(Config cfg) {
     const int input_dim = dmk::get_kernel_input_dim(cfg.n_dim, cfg.kernel);
     const bool with_normal = needs_normal(cfg.kernel);
 
-    auto r_src_d = generate_positions<double>(n, cfg.n_dim);
-    auto charges_d = generate_charges<double>(n, input_dim);
-    auto normals_d = with_normal ? generate_normals<double>(n, cfg.n_dim) : std::vector<double>{};
+    // Drawn at working precision and widened, so the double-precision reference sees the evaluated points.
+    std::vector<Real> r_src, r_trg, charges, normals;
+    generate_and_scatter<Real>(cfg.n_dim, input_dim, n, 0, cfg.dist, r_src, r_trg, charges, normals, cfg.seed,
+                               cfg.use_periodic, 0, 1);
+    if (!with_normal)
+        normals.clear();
+    const std::vector<double> r_src_d(r_src.begin(), r_src.end()), charges_d(charges.begin(), charges.end()),
+        normals_d(normals.begin(), normals.end());
 
     std::vector<double> ref;
     bool have_ref = false;
@@ -1345,16 +1433,8 @@ void run_esp_benchmark(Config cfg) {
     init_sensible_defaults(cfg, r_src_d, charges_d, normals_d, ref, have_ref);
     print_esp_config(cfg, n_threads, std::cout);
 
-    std::vector<Real> r_src(size_t(n) * cfg.n_dim), charges(size_t(n) * input_dim), normals;
-    for (size_t i = 0; i < r_src.size(); ++i)
-        r_src[i] = Real(r_src_d[i]);
-    for (size_t i = 0; i < charges.size(); ++i)
-        charges[i] = Real(charges_d[i]);
-    if (with_normal) {
-        normals.resize(normals_d.size());
-        for (size_t i = 0; i < normals.size(); ++i)
-            normals[i] = Real(normals_d[i]);
-    }
+    const PinnedBuffer<Real> pin_r_src(r_src, cfg.pin_host), pin_charges(charges, cfg.pin_host),
+        pin_normals(normals, cfg.pin_host);
 
     const dmk_eval_type pot_et = esp_pot_eval_type(cfg.kernel);
     const char *pot_phase = is_velocity_kernel(cfg.kernel) ? "eval_velocity" : "eval_potential";
@@ -1380,8 +1460,6 @@ void run_esp_benchmark(Config cfg) {
 
 enum {
     OPT_SOLVER = 256,
-    OPT_DIRECT,
-    OPT_NO_DIRECT,
     OPT_BENCH_BUILD,
     OPT_NO_BENCH_EVAL,
     OPT_BENCH_UPDATE_CHARGES,
@@ -1401,8 +1479,6 @@ enum {
 
 static const struct option long_opts[] = {
     {"solver", required_argument, nullptr, OPT_SOLVER},
-    {"direct", no_argument, nullptr, OPT_DIRECT},
-    {"no-direct", no_argument, nullptr, OPT_NO_DIRECT},
     {"bench-build", no_argument, nullptr, OPT_BENCH_BUILD},
     {"no-bench-eval", no_argument, nullptr, OPT_NO_BENCH_EVAL},
     {"bench-update-charges", no_argument, nullptr, OPT_BENCH_UPDATE_CHARGES},
@@ -1426,16 +1502,16 @@ static const char *short_opts = "N:T:n:e:t:r:D:l:s:k:d:f:O:p:u:c:gFh?";
 void print_usage(const char *argv0) {
     std::cout << "Usage: " << argv0 << " [options]\n"
               << "\n"
-              << "Test driver for DMK and ESP on CPU and GPU. --solver picks the backend and -p the eval path;\n"
-              << "options are grouped below by which solver reads them.\n"
+              << "Test driver for DMK, ESP and the direct sum on CPU and GPU. --solver picks the backend and -p\n"
+              << "the eval path; options are grouped below by which solver reads them.\n"
               << "\n"
-              << "  --solver dmk|esp      Backend (default dmk)\n"
+              << "  --solver dmk|esp|direct\n"
+              << "                        Backend (default dmk). direct is the O(N^2) all-pairs sum (pdmk_direct)\n"
               << "  -p c|g                Eval path: (c)pu or (g)pu (default c)\n"
               << "\n"
               << "Shared:\n"
               << "  -N n_src              Number of source points (default 1e5)\n"
               << "  -d dim                2 or 3\n"
-              << "  -e eps                Tolerance (default 1e-5)\n"
               << "  -t f|d                Precision (default float)\n"
               << "  -k kernel             laplace, sqrt_laplace, yukawa, stokeslet, stresslet, laplace_dipole\n"
               << "  -f fparam             Yukawa screening parameter (default 6.0)\n"
@@ -1444,21 +1520,25 @@ void print_usage(const char *argv0) {
               << "                        0 skips the reference entirely (default 10000)\n"
               << "  -l log_level          DMK log verbosity 0-6\n"
               << "  -g                    Potential + gradient.\n"
-              << "  --periodic            Periodic boundaries (default free-space)\n"
+              << "  -s seed               Integer seed for random numbers\n"
+              << "  -u dist               0=uniform (default), 1=lobed_sphere, 2=box_partial_facet, 3=graded_volume\n"
               << "  --gpu-device n        CUDA device id when -p g (default 0)\n"
+              << "  --pin                 Page-lock the input and potential buffers (GPU path: unstaged transfers)\n"
               << "  -h                    Help\n"
               << "\n"
-              << "--solver dmk only:\n"
+              << "--solver dmk and esp:\n"
+              << "  -e eps                Tolerance (default 1e-5)\n"
+              << "  --periodic            Periodic boundaries (default free-space)\n"
+              << "\n"
+              << "--solver dmk and direct:\n"
               << "  -T n_trg              Separate target points (default 0 = source self-eval only)\n"
-              << "  -n n_per_leaf         DMK leaf size\n"
-              << "  -s seed               Integer seed for random numbers\n"
-              << "  -u dist               0=uniform (default), 1=sphere_surface, 2=box_partial_facet\n"
               << "  -O n_outliers         Print top-N worst points per block to stderr (default 0 = off)\n"
-              << "  --direct/--no-direct  Enable/disable direct reference\n"
+              << "\n"
+              << "--solver dmk only:\n"
+              << "  -n n_per_leaf         DMK leaf size (default 280)\n"
               << "  --bench-build         Also benchmark tree build time\n"
-              << "  --no-bench-eval       Skip eval benchmark (build only)\n"
+              << "  --no-bench-eval       Skip eval benchmark, build only\n"
               << "  --bench-update-charges  Also benchmark pdmk_tree_update_charges\n"
-              << "  --pin                 Page-lock the input and potential buffers (GPU path: unstaged transfers)\n"
               << "\n"
               << "--solver esp only:\n"
               << "  -c r_c                Real-space cutoff (default: auto-picked for accuracy)\n"
@@ -1482,11 +1562,13 @@ void print_usage(const char *argv0) {
               << "\n"
               << "Output CSV columns:\n"
               << "  dmk: one table, dmk_time,dmk_pts_s,... plus per-phase profiler columns\n"
+              << "       (preceded by a build_time,... table with --bench-build)\n"
+              << "  direct: one table, direct_time,direct_pts_s,... plus error columns\n"
               << "  esp: one '# phase:' block per phase, run,total_time,pts_per_s[,l2_rel_err]\n"
               << "       [,l2_rel_err_vs_cpu]\n"
               << "  Per-phase profiler breakdown requires -DDMK_INSTRUMENT=ON.\n"
               << "\n"
-              << "Profiling the GPU path with Nsight: the timed loop is bracketed with\n"
+              << "Profiling the GPU path with Nsight: each solver's timed eval loop is bracketed with\n"
               << "cudaProfilerStart/Stop, so -c cudaProfilerApi captures only that region:\n"
               << "  nsys profile -c cudaProfilerApi -o report " << argv0
               << " --solver esp -p g --skip-cpu-baseline -r 5\n";
@@ -1510,8 +1592,10 @@ Config parse_args(int argc, char *argv[]) {
                 cfg.solver = Solver::DMK;
             else if (std::strcmp(optarg, "esp") == 0)
                 cfg.solver = Solver::ESP;
+            else if (std::strcmp(optarg, "direct") == 0)
+                cfg.solver = Solver::DIRECT;
             else {
-                std::cerr << "Unknown solver: " << optarg << " (expected dmk or esp)\n";
+                std::cerr << "Unknown solver: " << optarg << " (expected dmk, esp or direct)\n";
                 std::exit(1);
             }
             break;
@@ -1587,12 +1671,6 @@ Config parse_args(int argc, char *argv[]) {
             break;
         case 'F':
             cfg.check_grad = true;
-            break;
-        case OPT_DIRECT:
-            cfg.enable_direct = true;
-            break;
-        case OPT_NO_DIRECT:
-            cfg.enable_direct = false;
             break;
         case OPT_BENCH_BUILD:
             cfg.bench_build = true;
@@ -1681,6 +1759,11 @@ int main(int argc, char *argv[]) {
                 run_esp_benchmark<double>(cfg);
             else
                 run_esp_benchmark<float>(cfg);
+        } else if (cfg.solver == Solver::DIRECT) {
+            if (cfg.prec == 'd')
+                run_direct_benchmark<double>(cfg);
+            else
+                run_direct_benchmark<float>(cfg);
         } else {
             if (cfg.prec == 'd')
                 run_dmk_benchmark<double>(cfg);

@@ -27,6 +27,7 @@ using jit::JitKey;
 // reference path is usually called on.
 constexpr int kBlockSize = 256;
 constexpr int kSrcTile = 256;
+constexpr int kSrcSplit = 4;
 
 // 1 = potential / velocity, 2 = potential + gradient, matching pt::direct.
 int eval_level_for(dmk_eval_type ev) {
@@ -102,6 +103,7 @@ void direct_freespace(const pdmk_params &params, dmk_eval_type eval, int n_src, 
     key.sm_minor = cache.sm_minor();
     key.params["BLOCK_SIZE"] = kBlockSize;
     key.params["SRC_TILE"] = kSrcTile;
+    key.params["SRC_SPLIT"] = kSrcSplit;
 
     const std::shared_ptr<jit::JitKernel> kernel = cache.get_kernel_from_source(key, [&] {
         const std::string prelude = "#define DMK_DIRECT_KERNEL_NAME " + kernel_name + "\n\n" +
@@ -121,8 +123,11 @@ void direct_freespace(const pdmk_params &params, dmk_eval_type eval, int n_src, 
     a.pot = d_pot.data();
 
     // Must match the carve-up in DirectFreespaceBody.
-    const std::size_t shared_bytes = std::size_t(kSrcTile) * (dim + input_dim + normal_dim) * sizeof(Real);
-    const int grid = (n_trg + kBlockSize - 1) / kBlockSize;
+    constexpr int vec = 16 / sizeof(Real);
+    const int rec = (dim + input_dim + normal_dim + vec - 1) / vec * vec;
+    const std::size_t shared_bytes = (std::size_t(kSrcTile) * rec + kBlockSize * out_dim) * sizeof(Real);
+    const int targets_per_block = kBlockSize / kSrcSplit;
+    const int grid = (n_trg + targets_per_block - 1) / targets_per_block;
     kernel->launch(dim3(grid, 1, 1), dim3(kBlockSize, 1, 1), shared_bytes, cudaStream_t{0}, a);
 
     DMK_CHECK_CUDA(cudaMemcpy(pot, d_pot.data(), d_pot.size_bytes(), cudaMemcpyDeviceToHost));
