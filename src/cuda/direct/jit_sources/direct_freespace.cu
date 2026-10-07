@@ -9,9 +9,7 @@
 #include <dmk/cuda/bessel_device.hpp>
 #include <dmk/cuda/direct_freespace_kernelargs.hpp>
 
-// Rinv == 0 at a coincident pair, which zeros every product. The 2D log and 2D Yukawa kernels
-// are singular at the origin in a way a zero Rinv cannot absorb, so they branch instead.
-__device__ __forceinline__ Real dmk_rinv(Real R2) { return R2 > Real{0} ? Real{1} / sqrt(R2) : Real{0}; }
+__device__ __forceinline__ Real dmk_rinv(Real R2) { return R2 > Real{0} ? rsqrt(R2) : Real{0}; }
 
 template <int EVAL_LEVEL>
 struct LaplaceFreeEvaluator2D {
