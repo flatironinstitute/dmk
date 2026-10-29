@@ -482,7 +482,7 @@ DMK_ALWAYS_INLINE void EvalPairsRanges(int Ns, const typename uKernelEvaluator::
                         }
                     for (Integer k1 = 0; k1 < KERNEL_OUTPUT_DIM; k1++) {
                         const Real sgn = (k1 == 0) ? scale_factor : -scale_factor;
-                        pot_src[si * KERNEL_OUTPUT_DIM + k1] += sgn * reduce_add(racc[k1]);
+                        pot_src[si * KERNEL_OUTPUT_DIM + k1] += sgn * sctl::reduce(racc[k1]);
                     }
                 }
             }

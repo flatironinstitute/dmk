@@ -53,9 +53,6 @@ option(DMK_GPU_OFFLOAD "Enable GPU offloading via CUDA" OFF)
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Intel")
   set(DMK_VECLIB_DEFINE "SCTL_HAVE_SVML")
-elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  # SCTL declares libmvec's vector entry points directly, and they resolve only against glibc.
-  set(DMK_VECLIB_DEFINE "SCTL_HAVE_LIBMVEC")
 else()
   set(DMK_VECLIB_DEFINE "")
 endif()
