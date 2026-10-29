@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
+#include <mutex>
 #include <span>
 #include <string>
 #include <variant>
@@ -75,14 +77,33 @@ std::string &last_error_buffer() {
 } // namespace
 
 #ifdef DMK_HAVE_MPI
-/// The C API documents a null communicator as "self". A null handle is not MPI_COMM_NULL -- in Open
-/// MPI the latter is a real pointer to a sentinel object -- so both cases have to be tested.
+/// A serial caller passes a null communicator without having started MPI, which sctl::Comm needs. Start
+/// it, and finalize at exit only if we started it.
+void ensure_mpi_initialized() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        int initialized;
+        MPI_Initialized(&initialized);
+        if (initialized)
+            return;
+        sctl::Comm::MPI_Init(nullptr, nullptr);
+        // Not sctl::Comm::MPI_Finalize: SCTL's handle registries are statics built after this handler
+        // is registered, so they are already destroyed when it runs.
+        std::atexit([] {
+            int finalized;
+            MPI_Finalized(&finalized);
+            if (!finalized)
+                MPI_Finalize();
+        });
+    });
+}
+
+/// Null means this process alone. Zero is never a valid MPI handle (MPI-5 ABI, Open MPI, MPICH).
 inline MPI_Comm mpi_comm_or_self(dmk_communicator comm) {
-    if constexpr (std::is_pointer_v<MPI_Comm>) {
-        if (comm == MPI_Comm{})
-            return MPI_COMM_SELF;
-    }
-    return comm == MPI_COMM_NULL ? MPI_COMM_SELF : comm;
+    if (comm != MPI_Comm{})
+        return comm;
+    ensure_mpi_initialized();
+    return MPI_COMM_SELF;
 }
 #endif
 
@@ -308,7 +329,8 @@ void pdmk_direct(dmk_communicator comm, const pdmk_params &params, int n_src, co
 
 #ifdef DMK_HAVE_MPI
     const MPI_Comm mpi_comm = mpi_comm_or_self(comm);
-    const int n_ranks = sctl::Comm(mpi_comm).Size();
+    int n_ranks;
+    MPI_Comm_size(mpi_comm, &n_ranks);
     if (n_ranks > 1) {
         const MPI_Datatype mpi_t = std::is_same_v<Real, float> ? MPI_FLOAT : MPI_DOUBLE;
         std::vector<int> n_per_rank(n_ranks);
@@ -1572,8 +1594,7 @@ void esp_report_inert_gpu_tuning(const pdmk_esp_params &params) {
     if (esp_prune_tile(params) && !esp_prune_source(params) && params.esp_stile != 0)
         inert += " esp_stile";
     if (!inert.empty())
-        get_logger(sctl::Comm::Self(), params.log_level)
-            ->info("esp: GPU plan ignores CPU-only short-range tuning:{}", inert);
+        get_logger(params.log_level)->info("esp: GPU plan ignores CPU-only short-range tuning:{}", inert);
 }
 #endif
 

@@ -10,43 +10,45 @@ namespace dmk {
 std::shared_ptr<spdlog::logger> logger_;
 std::shared_ptr<spdlog::logger> rank_logger_;
 auto log_level_ = spdlog::level::off;
-dmk_communicator comm_;
+
+namespace {
+// Keyed on rank 0 rather than the MPI_Comm, since sctl::Comm dups its handle.
+bool is_root_ = true;
+
+void make_logger(bool is_root) {
+    is_root_ = is_root;
+    spdlog::cfg::load_env_levels();
+    spdlog::sink_ptr sink;
+    if (is_root)
+        sink = std::make_shared<spdlog::sinks::ansicolor_stderr_sink_mt>();
+    else
+        sink = std::make_shared<spdlog::sinks::null_sink_mt>();
+    logger_ = std::make_shared<spdlog::logger>("DMK", sink);
+#ifdef DMK_HAVE_MPI
+    logger_->set_pattern("[%T.%e] [%8i] [%n] [%l] %v");
+#else
+    logger_->set_pattern("[%T.%e] [%n] [%l] %v");
+#endif
+}
+} // namespace
 
 std::shared_ptr<spdlog::logger> &get_logger(const sctl::Comm &comm) {
-    static bool first_call = true;
-
-#ifdef DMK_HAVE_MPI
-    if (first_call || comm.GetMPI_Comm() != comm_) {
-        first_call = false;
-        spdlog::cfg::load_env_levels();
-        comm_ = comm.GetMPI_Comm();
-
-        if (comm.Rank() == 0)
-            logger_ = std::make_shared<spdlog::logger>(
-                spdlog::logger("DMK", std::make_shared<spdlog::sinks::ansicolor_stderr_sink_mt>()));
-        else
-            logger_ = std::make_shared<spdlog::logger>(
-                spdlog::logger("DMK", std::make_shared<spdlog::sinks::null_sink_mt>()));
-        logger_->set_pattern("[%T.%e] [%8i] [%n] [%l] %v");
-    }
-#else
-    if (first_call) {
-        first_call = false;
-        spdlog::cfg::load_env_levels();
-        logger_ = std::make_shared<spdlog::logger>(
-            spdlog::logger("DMK", std::make_shared<spdlog::sinks::ansicolor_stderr_sink_mt>()));
-        logger_->set_pattern("[%T.%e] [%n] [%l] %v");
-    }
-#endif
+    if (!logger_ || (comm.Rank() == 0) != is_root_)
+        make_logger(comm.Rank() == 0);
     logger_->set_level(log_level_);
     return logger_;
 }
 
 std::shared_ptr<spdlog::logger> &get_logger() {
     if (!logger_)
-        return get_logger(sctl::Comm::Self());
+        make_logger(true);
     logger_->set_level(log_level_);
     return logger_;
+}
+
+std::shared_ptr<spdlog::logger> &get_logger(int level) {
+    log_level_ = spdlog::level::level_enum(level);
+    return get_logger();
 }
 
 std::shared_ptr<spdlog::logger> &get_logger(const sctl::Comm &comm, int level) {
@@ -57,10 +59,11 @@ std::shared_ptr<spdlog::logger> &get_logger(const sctl::Comm &comm, int level) {
 std::shared_ptr<spdlog::logger> &get_rank_logger(const sctl::Comm &comm) {
 #ifdef DMK_HAVE_MPI
     static bool first_call = true;
+    static int rank = -1;
 
-    if (first_call || comm.GetMPI_Comm() != comm_) {
+    if (first_call || comm.Rank() != rank) {
         first_call = false;
-        comm_ = comm.GetMPI_Comm();
+        rank = comm.Rank();
         spdlog::cfg::load_env_levels();
 
         rank_logger_ = std::make_shared<spdlog::logger>(spdlog::logger(
