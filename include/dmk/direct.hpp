@@ -5,7 +5,7 @@
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
 
-#include <format>
+#include <spdlog/fmt/fmt.h>
 #include <stdexcept>
 
 namespace dmk {
@@ -69,7 +69,7 @@ inline int get_kernel_output_dim(int dim, dmk_ikernel kernel, dmk_eval_type flag
     }
     using dmk::util::to_string;
     throw std::runtime_error(
-        std::format("Invalid kernel/output combination {} + {}\n", to_string(kernel), to_string(flags)));
+        fmt::format("Invalid kernel/output combination {} + {}\n", to_string(kernel), to_string(flags)));
 }
 
 template <typename Real>

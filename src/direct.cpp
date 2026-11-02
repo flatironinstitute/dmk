@@ -7,8 +7,8 @@
 #include <dmk/util.hpp>
 #include <dmk/vector_kernels.hpp>
 
-#include <format>
 #include <mutex>
+#include <spdlog/fmt/fmt.h>
 #include <stdexcept>
 #include <tuple>
 #include <typeinfo>
@@ -478,7 +478,7 @@ residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_ty
     constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
 
     auto build_func_name = [&](const std::string &base_name, int n_polynomials = 1) {
-        std::string args = std::format("void {}<{}, {}, -1, -1", base_name, T_str, VECWIDTH);
+        std::string args = fmt::format("void {}<{}, {}, -1, -1", base_name, T_str, VECWIDTH);
         for (int i = 0; i < n_polynomials; ++i)
             args += ", -1";
         return args + ">";
@@ -486,15 +486,15 @@ residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_ty
     const auto func_name = [&]() {
         switch (kernel) {
         case dmk_ikernel::DMK_LAPLACE:
-            return build_func_name(std::format("laplace_{}d_poly_all_pairs", n_dim), 1);
+            return build_func_name(fmt::format("laplace_{}d_poly_all_pairs", n_dim), 1);
         case dmk_ikernel::DMK_SQRT_LAPLACE:
-            return build_func_name(std::format("sqrt_laplace_{}d_poly_all_pairs", n_dim), 1);
+            return build_func_name(fmt::format("sqrt_laplace_{}d_poly_all_pairs", n_dim), 1);
         case dmk_ikernel::DMK_STOKESLET:
-            return build_func_name(std::format("stokeslet_{}d_poly_all_pairs", n_dim), 2);
+            return build_func_name(fmt::format("stokeslet_{}d_poly_all_pairs", n_dim), 2);
         case dmk_ikernel::DMK_STRESSLET:
-            return build_func_name(std::format("stresslet_{}d_poly_all_pairs", n_dim), 2);
+            return build_func_name(fmt::format("stresslet_{}d_poly_all_pairs", n_dim), 2);
         case dmk_ikernel::DMK_LAPLACE_DIPOLE:
-            return build_func_name(std::format("laplace_dipole_{}d_poly_all_pairs", n_dim), 1);
+            return build_func_name(fmt::format("laplace_dipole_{}d_poly_all_pairs", n_dim), 1);
         default:
             throw std::runtime_error("Unsupported kernel for direct evaluator");
         }
@@ -536,19 +536,19 @@ static std::string esp_poly_template(dmk_ikernel kernel, int n_dim, bool ranges)
     const char *suffix = ranges ? "_poly_all_pairs_ranges" : "_poly_all_pairs";
     std::string base;
     if (kernel == DMK_SQRT_LAPLACE)
-        base = std::format("sqrt_laplace_{}d", n_dim);
+        base = fmt::format("sqrt_laplace_{}d", n_dim);
     else if (kernel == DMK_YUKAWA && n_dim == 3)
         base = "laplace_3d"; // Yukawa 3D reuses laplace_3d (both P(r)/r)
     else if (kernel == DMK_YUKAWA && n_dim == 2)
         base = "yukawa_2d"; // 2D K0: log-split, its own evaluator
     else if (kernel == DMK_LAPLACE)
-        base = std::format("laplace_{}d", n_dim);
+        base = fmt::format("laplace_{}d", n_dim);
     else if (kernel == DMK_LAPLACE_DIPOLE)
-        base = std::format("laplace_dipole_{}d", n_dim);
+        base = fmt::format("laplace_dipole_{}d", n_dim);
     else if (kernel == DMK_STOKESLET)
-        base = std::format("stokeslet_{}d", n_dim);
+        base = fmt::format("stokeslet_{}d", n_dim);
     else if (kernel == DMK_STRESSLET)
-        base = std::format("stresslet_{}d", n_dim);
+        base = fmt::format("stresslet_{}d", n_dim);
     else
         throw std::runtime_error("ESP JIT: unsupported kernel/dim");
     return base + suffix;
@@ -564,7 +564,7 @@ residual_evaluator_func<Real> make_esp_evaluator_jit(dmk_ikernel kernel, double 
     constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
 
     const auto coeffs = get_esp_correction_coeffs<Real>(kernel, fparam, r_c, n_dim, n_digits, beta);
-    std::string args = std::format("void {}<{}, {}, -1, -1", esp_poly_template(kernel, n_dim, false), T_str, VECWIDTH);
+    std::string args = fmt::format("void {}<{}, {}, -1, -1", esp_poly_template(kernel, n_dim, false), T_str, VECWIDTH);
     for (size_t i = 0; i < coeffs.size(); ++i)
         args += ", -1";
     const std::string func_name = args + ">";
@@ -612,7 +612,7 @@ residual_evaluator_range_func<Real> make_esp_range_evaluator_jit(dmk_ikernel ker
     constexpr auto T_str = std::is_same_v<Real, float> ? "float" : "double";
 
     const auto coeffs = get_esp_correction_coeffs<Real>(kernel, fparam, r_c, n_dim, n_digits, beta);
-    std::string args = std::format("void {}<{}, {}, -1, -1", esp_poly_template(kernel, n_dim, true), T_str, VECWIDTH);
+    std::string args = fmt::format("void {}<{}, {}, -1, -1", esp_poly_template(kernel, n_dim, true), T_str, VECWIDTH);
     for (size_t i = 0; i < coeffs.size(); ++i)
         args += ", -1";
     const std::string func_name = args + ">";
@@ -730,7 +730,7 @@ direct_evaluator_func<Real> get_direct_evaluator(dmk_ikernel kernel, dmk_eval_ty
             };
         break;
     }
-    throw std::runtime_error(std::format("No direct evaluator for kernel {} in {}D", util::to_string(kernel), n_dim));
+    throw std::runtime_error(fmt::format("No direct evaluator for kernel {} in {}D", util::to_string(kernel), n_dim));
 }
 
 template std::vector<std::vector<float>> get_local_correction_coeffs<float>(dmk_ikernel kernel, int n_dim, int n_digits,

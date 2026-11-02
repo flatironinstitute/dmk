@@ -11,8 +11,8 @@
 
 #include <algorithm>
 #include <complex.h>
-#include <format>
 #include <sctl.hpp>
+#include <spdlog/fmt/fmt.h>
 #include <stdexcept>
 #include <string>
 
@@ -1154,7 +1154,7 @@ typename FourierData<Real>::LocalCorrectionCoeffs FourierData<Real>::local_corre
         out.reg_poly = make_polyfit_abs_error<double>(n_digits, f, -1.0, 1.0);
         if (out.reg_poly.empty())
             throw std::runtime_error(
-                std::format("Yukawa local correction fit failed at level {} (lambda={}, bsize={}, "
+                fmt::format("Yukawa local correction fit failed at level {} (lambda={}, bsize={}, "
                             "lambda*bsize={}): exp(-lambda*r) too stiff for a degree<32 polynomial",
                             i_level, double(rlambda), double(bsize), double(rlambda * bsize)));
         return out;
@@ -1186,7 +1186,7 @@ typename FourierData<Real>::LocalCorrectionCoeffs FourierData<Real>::local_corre
     out.reg_poly = make_polyfit_abs_error<double>(n_digits, fb, -1.0, 1.0);
     if (out.log_poly.empty() || out.reg_poly.empty())
         throw std::runtime_error(
-            std::format("Yukawa 2D local correction fit failed at level {} (lambda={}, bsize={}, lambda*bsize={}): "
+            fmt::format("Yukawa 2D local correction fit failed at level {} (lambda={}, bsize={}, lambda*bsize={}): "
                         "residual too stiff for a degree<32 polynomial",
                         i_level, lam, bs, lam * bs));
     return out;
