@@ -113,6 +113,12 @@ if (DMK_GPU_OFFLOAD)
   find_package(CUDAToolkit REQUIRED)
   set(DMK_GPU_TARGET CUDA::cudart)
   set(DMK_CUDA_JIT_TARGETS CUDA::cuda_driver CUDA::nvrtc)
+  # CUDA::nvtx3 exists even when the headers do not, and some SDK packages (Yggdrasil's) omit them
+  find_path(DMK_NVTX3_INCLUDE_DIR nvtx3/nvToolsExt.h PATHS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
+  if (DMK_NVTX3_INCLUDE_DIR)
+    list(APPEND DMK_GPU_TARGET CUDA::nvtx3)
+    list(APPEND DMK_CXX_FLAGS "-DDMK_HAVE_NVTX")
+  endif()
   set(DMK_CUDA_JIT_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
   # Root that embedded JIT source keys are relative to; feeds both the embed script and
   # DMK_JIT_SOURCE_DIR, which have to agree.
@@ -314,9 +320,6 @@ if (DMK_GPU_OFFLOAD)
   target_compile_options(DMKOBJS_CUDA PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
     $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fopenmp>)
-  if (NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-    set_target_properties(DMKOBJS_CUDA PROPERTIES CUDA_ARCHITECTURES native)
-  endif()
   set_target_properties(DMKOBJS_CUDA PROPERTIES POSITION_INDEPENDENT_CODE ON)
   target_include_directories(DMKOBJS_CUDA PUBLIC
     ${DMK_INCLUDES}

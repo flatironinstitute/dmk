@@ -1,5 +1,5 @@
 #include <dmk/cuda/pt/state.hpp>
-#include <nvtx3/nvToolsExt.h>
+#include <dmk/nvtx_wrapper.h>
 
 #include "metadata.hpp"
 
