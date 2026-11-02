@@ -17,7 +17,6 @@ namespace dmk::cuda::jit {
 class JitCache {
   public:
     JitCache();
-    explicit JitCache(std::vector<std::string> include_dirs);
 
     std::shared_ptr<JitKernel> get_kernel_from_source(const JitKey &key, const std::string &source,
                                                       const std::string &name_expression = {});
@@ -30,14 +29,9 @@ class JitCache {
     int sm_minor() const { return sm_minor_; }
 
   private:
-    std::vector<std::string> make_nvrtc_options() const;
-
     std::mutex mutex_;
     std::unordered_map<std::string, std::shared_ptr<JitKernel>> cache_;
     JitCompiler compiler_;
-
-    std::vector<std::string> include_dirs_;
-    std::vector<std::string> extra_options_;
 
     int device_ = 0;
     int sm_major_ = 0;

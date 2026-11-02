@@ -2,8 +2,7 @@
 
 #include <dmk_jit_config.hpp>
 
-#include <cstdlib>
-#include <fstream>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <sstream>
@@ -73,48 +72,6 @@ int required_int_param(const JitKey &key, const char *name, std::string_view lab
     return it->second;
 }
 
-const char *jit_source_override() {
-    const char *env = std::getenv("DMK_JIT_SOURCE_DIR");
-    return (env && *env) ? env : nullptr;
-}
-
-std::filesystem::path jit_source_root() {
-    // Override before macro: the macro is always defined in a CUDA build, so testing it first
-    // would make the environment variable unreachable.
-    if (const char *env = jit_source_override()) {
-        return std::filesystem::path(env);
-    }
-
-#ifdef DMK_JIT_SOURCE_DIR
-    return std::filesystem::path(DMK_JIT_SOURCE_DIR);
-#else
-    return std::filesystem::path("src/cuda");
-#endif
-}
-
-std::filesystem::path jit_source_path(std::string_view filename) {
-    const std::filesystem::path logical{filename};
-
-    // Flat keys (no stage component) name a file directly under the root.
-    if (!logical.has_parent_path()) {
-        return jit_source_root() / logical;
-    }
-
-    return jit_source_root() / logical.parent_path() / "jit_sources" / logical.filename();
-}
-
-std::string read_text_file(const std::filesystem::path &path, std::string_view label) {
-    std::ifstream in(path, std::ios::binary);
-
-    if (!in) {
-        throw std::runtime_error(std::string(label) + " JIT: failed to open source file: " + path.string());
-    }
-
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
-}
-
 SplitSource split_at_kernel_start(const std::string &source, std::string_view label) {
     constexpr const char *marker = "// KERNEL_START";
 
@@ -129,6 +86,30 @@ SplitSource split_at_kernel_start(const std::string &source, std::string_view la
     return SplitSource{source.substr(0, pos), source.substr(kernel_pos)};
 }
 
+namespace {
+// Physical path of a logical source key. Embedded keys are "<stage>/<file>.cu" -- the
+// jit_sources component is stripped, see cmake/embed_jit_sources.cmake -- but on disk the file
+// is at "<root>/<stage>/jit_sources/<file>.cu".
+std::filesystem::path jit_source_path(std::string_view filename) {
+    const std::filesystem::path root(DMK_JIT_SOURCE_DIR);
+    const std::filesystem::path logical{filename};
+
+    // Flat keys (no stage component) name a file directly under the root.
+    if (!logical.has_parent_path()) {
+        return root / logical;
+    }
+
+    return root / logical.parent_path() / "jit_sources" / logical.filename();
+}
+
+std::string_view jit_source_text(std::string_view filename, std::string_view label) {
+    const std::string_view *embedded = find_embedded_jit_source(filename);
+    if (!embedded)
+        throw std::runtime_error(std::string(label) + " JIT: no embedded source for: " + std::string(filename));
+    return *embedded;
+}
+} // namespace
+
 std::size_t jit_source_hash(std::string_view filename) {
     static std::map<std::string, std::size_t> cache;
     static std::mutex mtx;
@@ -137,7 +118,7 @@ std::size_t jit_source_hash(std::string_view filename) {
     const auto it = cache.find(name);
     if (it != cache.end())
         return it->second;
-    const std::string text = read_text_file(jit_source_path(filename), filename);
+    const std::string_view text = jit_source_text(filename, filename);
     std::size_t h = 1469598103934665603ULL;
     for (unsigned char c : text) {
         h ^= c;
@@ -174,30 +155,16 @@ std::size_t jit_header_hash(std::string_view header_name) {
 }
 
 SplitSource load_split_jit_source(std::string_view filename, std::string_view label) {
-    const auto source_path = jit_source_path(filename);
-
-    std::string source;
-    if (jit_source_override()) {
-        source = read_text_file(source_path, label);
-    } else {
-        const std::string_view *embedded = find_embedded_jit_source(filename);
-
-        if (!embedded) {
-            throw std::runtime_error(std::string(label) + " JIT: no embedded source for: " + std::string(filename));
-        }
-
-        source = std::string(*embedded);
-    }
+    const std::string source(jit_source_text(filename, label));
 
     SplitSource split = split_at_kernel_start(source, label);
 
     // Path baked into the #line directives, which is how -lineinfo consumers like ncu locate
-    // the source. Absolute, because a profiler cannot reconstruct the process's working
-    // directory. Against the embedded copy it asserts the build tree still matches: edit a .cu
-    // without rebuilding and the line numbers no longer describe the text.
+    // the source. It names the source tree's copy, so edit a .cu without rebuilding and the line
+    // numbers no longer describe the text.
     constexpr const char *marker = "// KERNEL_START";
     const std::size_t marker_pos = source.find(marker);
-    const std::filesystem::path profile_path = std::filesystem::absolute(source_path).lexically_normal();
+    const std::filesystem::path profile_path = jit_source_path(filename);
     const std::size_t kernel_pos = first_kernel_source_pos(source, marker_pos, std::string_view(marker).size());
 
     split.header = line_directive(1, profile_path) + split.header;
