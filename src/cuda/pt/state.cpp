@@ -551,15 +551,11 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     scratch.tensorprod_scratch_stride_reals = si.tensorprod_scratch_stride_reals;
     scratch.pw_in_stride_reals = si.pw_in_stride_reals;
     scratch.pw_form_stride_reals = si.pw_form_stride_reals;
-    if (si.d_proxy_coeffs.size()) {
+    // Neither proxy buffer is zeroed: every eval assigns each slab it reads before accumulating into it.
+    if (si.d_proxy_coeffs.size())
         scratch.d_proxy_coeffs_upward = si.d_proxy_coeffs;
-        DMK_CHECK_CUDA(
-            cudaMemset(scratch.d_proxy_coeffs_upward.data(), 0, scratch.d_proxy_coeffs_upward.size() * sizeof(Real)));
-    }
-    if (si.proxy_coeffs_downward_dim) {
+    if (si.proxy_coeffs_downward_dim)
         scratch.d_proxy_coeffs_downward.resize(si.proxy_coeffs_downward_dim);
-        scratch.d_proxy_coeffs_downward.zero_async();
-    }
     scratch.d_proxy_offsets_upward.adopt(md.d_proxy_off_up, nb);
     scratch.d_proxy_offsets_downward.adopt(md.d_proxy_off_down, nb);
     scratch.d_pw_out_offsets.adopt(md.d_pw_out_offsets, nb);
@@ -607,10 +603,11 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     direct_stream = cuda_helpers::direct_stream();
     downward_stream = cuda_helpers::downward_stream();
 
-    scratch.d_pw_out.zero_async(downward_stream);
-    // shift_pw writes only the live prefix of each slab, so the dead tail must read zero and stay
-    // that way: nothing else ever writes this pool.
-    scratch.d_pw_in_pool.zero_async(downward_stream);
+    // shift_pw's self term reads a slab that proxy2pw may not write (a target-only box, or the root
+    // under PBC). Only then must pw_out start at zero. pw_in_pool needs no clearing: pw2proxy reads
+    // only the live modes, which shift_pw writes.
+    if (si.pw_out_dim != (std::size_t)n_pw_form * fourier.n_charge_dim * fourier.n_pw_modes)
+        scratch.d_pw_out.zero_async(downward_stream);
     outputs.d_pot_eval_src.zero_async(downward_stream);
     outputs.d_pot_eval_trg.zero_async(downward_stream);
     outputs.d_pot_direct_src.zero_async(direct_stream);

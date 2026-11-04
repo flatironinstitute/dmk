@@ -88,8 +88,9 @@ inline cudaStream_t alloc_stream() {
         int device = 0;
         cudaMemPool_t pool;
         if (cudaGetDevice(&device) == cudaSuccess && cudaDeviceGetDefaultMemPool(&pool, device) == cudaSuccess) {
-            // The pool otherwise hands every block back to the OS at each synchronization.
-            std::uint64_t retain_max = std::uint64_t(4) << 30;
+            // Keep everything the pool has reserved: released blocks are handed back to the OS at the
+            // next synchronization and re-mapped by the next allocation.
+            std::uint64_t retain_max = UINT64_MAX;
             cudaMemPoolSetAttribute(pool, cudaMemPoolAttrReleaseThreshold, &retain_max);
         }
         return s;
