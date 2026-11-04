@@ -156,6 +156,8 @@ struct State {
     struct Topology {
         int nlist1_stride = 0;                        ///< max near source boxes per box
         int n_neighbors = 0;                          ///< 3^DIM neighbor slots per box
+        int direct_occupancy_src = 0;                 ///< mean box occupancy seen by a source target (direct tuning)
+        int direct_occupancy_trg = 0;                 ///< the same for separate targets
         DeviceBuffer<int> d_direct_work;              ///< target boxes with near-field work (direct)
         DeviceBuffer<int> d_list1_flat;               ///< near source boxes per box (direct)
         DeviceBuffer<int> d_list1_count;              ///< valid list1 entries per box (direct)

@@ -13,6 +13,8 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -98,6 +100,11 @@ const char *evaluator_family(dmk_ikernel kernel, int dim) {
 bool takes_eval_level(dmk_ikernel kernel) {
     return kernel == DMK_LAPLACE || kernel == DMK_SQRT_LAPLACE || kernel == DMK_LAPLACE_DIPOLE;
 }
+
+// The direct tuning bucket. One block per target box, so the optimum is roughly the smallest
+// BLOCK_SIZE x TARGETS_PER_THREAD covering a box, and a config tuned at one occupancy can cost
+// several times its tuned runtime at another. Both axes are powers of two, hence octaves.
+long octave(int occupancy) { return std::lround(std::log2(std::max(occupancy, 1))); }
 
 int eval_level_for(dmk_eval_type ev) {
     if (ev == DMK_POTENTIAL || ev == DMK_VELOCITY)
@@ -229,13 +236,14 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     // the tuning launch, so its pot buffer must match that level's output dim. One
     // coefficient pack serves both levels: beta carries the gradient bandlimiting, so
     // the gradient is the analytic derivative of the same polynomial.
-    auto resolve = [&](int eval_level, const dmk::cuda::DirectByBoxArgs<Real> &bench_args)
+    auto resolve = [&](int eval_level, long occupancy_octave, const dmk::cuda::DirectByBoxArgs<Real> &bench_args)
         -> std::pair<std::shared_ptr<jit::JitKernel>, TuningParams> {
         // Shape-only: the tuning optimum (and the persistent JSON key) depends on
         // launch geometry, not on the coefficient values.
         std::ostringstream tune_key_ss;
         tune_key_ss << "PtDirect|real=" << jit_real_name<Real>() << "|kernel=" << int(s.kernel) << "|dim=" << DIM
                     << "|vps=" << values_per_source << "|nlist1=" << s.topology.nlist1_stride << "|el=" << eval_level;
+        tune_key_ss << "|occ=" << occupancy_octave;
         // Pack degrees change the unrolled Horner's register profile, so they need their own
         // tuning entry. n_digits and beta determine the degrees; direct_coeffs_by_level is
         // populated for Yukawa only and so cannot carry this alone.
@@ -361,8 +369,12 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
 
     const int el_src = eval_level_for(s.outputs.eval_src);
     const int el_trg = eval_level_for(s.outputs.eval_trg);
-    const auto plan_src = resolve(el_src, a_src);
-    const auto plan_trg = (el_trg == el_src || s.outputs.pot_trg_size == 0) ? plan_src : resolve(el_trg, a_trg);
+    const long oct_src = octave(s.topology.direct_occupancy_src);
+    const long oct_trg = octave(s.topology.direct_occupancy_trg);
+    const auto plan_src = resolve(el_src, oct_src, a_src);
+    const auto plan_trg = (s.outputs.pot_trg_size == 0 || (el_trg == el_src && oct_trg == oct_src))
+                              ? plan_src
+                              : resolve(el_trg, oct_trg, a_trg);
 
     launch_with(plan_src.first, plan_src.second, a_src, stream);
     launch_with(plan_trg.first, plan_trg.second, a_trg, stream);

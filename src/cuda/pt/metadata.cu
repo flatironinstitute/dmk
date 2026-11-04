@@ -338,6 +338,8 @@ __global__ void k_box_predicates(const sctl::Morton<DIM> *__restrict__ mid, cons
         scan[b] = {0, 0, 0, 0, 0, 0};
         join[join_n_direct_work] = 0;
         join[join_min_direct_level] = n_levels;
+        for (int k = join_direct_src; k <= join_direct_trg_sq; ++k)
+            join[k] = 0;
     }
     if (b < n_boxes) {
         LevelScratch ls(level_scratch, n_levels);
@@ -745,20 +747,35 @@ __global__ void k_direct_work_cost(const Attr *attr, const unsigned char *leaf, 
     keys[box] = cost + kDirectGroup;
 }
 
-/// After the sort: the work-list length and its shallowest level, and the self-correction factor
-/// parallel to the list. Must match the level the direct residual uses.
+/// After the sort: the work-list length and its shallowest level, the self-correction factor
+/// parallel to the list, and the occupancy sums of the direct tuning key. The self-correction
+/// factor must match the level the direct residual uses.
 template <typename Real>
 __global__ void k_direct_summary(const long *__restrict__ keys, const int *__restrict__ direct_work,
                                  const int *__restrict__ levels, const unsigned char *__restrict__ ifpwexp,
+                                 const int *__restrict__ src_cnt_owned, const int *__restrict__ trg_cnt_owned,
                                  LevelTable<Real> w0, bool has_w0, long n_boxes, long *__restrict__ join,
                                  Real *__restrict__ self_corr) {
     const long i = blockIdx.x * (long)blockDim.x + threadIdx.x;
-    if (i >= n_boxes || keys[i] < kDirectGroup)
-        return;
-    const int box = direct_work[i];
-    atomicAdd(reinterpret_cast<unsigned long long *>(join + join_n_direct_work), 1ull);
-    atomicMin(reinterpret_cast<unsigned long long *>(join + join_min_direct_level), (unsigned long long)levels[box]);
-    self_corr[i] = has_w0 ? w0.v[levels[box] + ifpwexp[box]] : Real{0};
+    long occ[4] = {};
+    if (i < n_boxes && keys[i] >= kDirectGroup) {
+        const int box = direct_work[i];
+        atomicAdd(reinterpret_cast<unsigned long long *>(join + join_n_direct_work), 1ull);
+        atomicMin(reinterpret_cast<unsigned long long *>(join + join_min_direct_level),
+                  (unsigned long long)levels[box]);
+        self_corr[i] = has_w0 ? w0.v[levels[box] + ifpwexp[box]] : Real{0};
+        const long s = src_cnt_owned[box], t = trg_cnt_owned[box];
+        occ[0] = s;
+        occ[1] = s * s;
+        occ[2] = t;
+        occ[3] = t * t;
+    }
+    for (int k = 0; k < 4; ++k) {
+        for (int o = 16; o; o >>= 1)
+            occ[k] += __shfl_down_sync(FULL, occ[k], o);
+        if (!(threadIdx.x & 31) && occ[k])
+            atomicAdd(reinterpret_cast<unsigned long long *>(join + join_direct_src + k), (unsigned long long)occ[k]);
+    }
 }
 
 // ---- shift_pw groups -------------------------------------------------------------------------
@@ -1045,8 +1062,9 @@ void compute_device_metadata(const DeviceMetadataInputs<Real, DIM> &in, DeviceMe
     thrust::stable_sort_by_key(policy(alloc), out.d_sort_keys, out.d_sort_keys + 2 * n_boxes, out.d_sorted,
                                thrust::greater<long>());
     const bool has_w0 = in.self_mode != SelfCorrectionMode::zero;
-    k_direct_summary<Real><<<grid, BLOCK>>>(out.d_sort_keys, out.d_sorted, out.d_box_levels, in.d_ifpwexp, in.w0,
-                                            has_w0, n_boxes, out.d_join, out.d_self_correction_work);
+    k_direct_summary<Real><<<grid, BLOCK>>>(out.d_sort_keys, out.d_sorted, out.d_box_levels, in.d_ifpwexp,
+                                            in.d_src_cnt_owned, in.d_trg_cnt_owned, in.w0, has_w0, n_boxes, out.d_join,
+                                            out.d_self_correction_work);
 
     { // shift_pw group sizes; the lists themselves wait for the join to size their storage
         const ShiftGroupArgs a = shift_args(in, out);
@@ -1084,6 +1102,8 @@ void finish_device_metadata(DeviceMetadataOutputs<Real> &out, int n_levels) {
     out.n_proxy_zero_boxes = (int)j[join_n_zero];
     out.pw_out_size = j[join_pw_out_size];
     out.n_shift_src = (int)j[join_shift_total];
+    out.direct_occupancy_src = j[join_direct_src] ? (int)(j[join_direct_src_sq] / j[join_direct_src]) : 0;
+    out.direct_occupancy_trg = j[join_direct_trg] ? (int)(j[join_direct_trg_sq] / j[join_direct_trg]) : 0;
     out.n_shift_groups = (int)out.h_table(5)[n_levels];
     out.max_tp_per_level = 0;
     out.max_tp_up_per_level = 0;

@@ -421,6 +421,8 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     // --- Topology, adopted: derived on the device and owned by the tree, which outlives this ---
     topology.nlist1_stride = in.topology.nlist1_stride;
     topology.n_neighbors = in.topology.n_neighbors;
+    topology.direct_occupancy_src = md.direct_occupancy_src;
+    topology.direct_occupancy_trg = md.direct_occupancy_trg;
     topology.d_direct_work.adopt(md.d_sorted, md.n_direct_work);
     topology.d_list1_flat.adopt(md.d_list1, nb * topology.nlist1_stride);
     topology.d_list1_count.adopt(md.d_list1_count, nb);

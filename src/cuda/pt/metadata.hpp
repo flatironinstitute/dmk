@@ -116,7 +116,7 @@ struct DeviceMetadataInputs {
     SelfCorrectionMode self_mode = SelfCorrectionMode::w0;
 };
 
-/// The one block the host reads back at the join, as longs: eight scalars then six per-level
+/// The one block the host reads back at the join, as longs: twelve scalars then six per-level
 /// tables of n_levels+1 entries each.
 enum JoinSlot {
     join_n_direct_work = 0,
@@ -127,7 +127,11 @@ enum JoinSlot {
     join_n_zero,
     join_pw_out_size,
     join_shift_total,
-    join_tables ///< tp_off | tp_up_off | tp_up_par_off | pw_eval_off | pw_form_off | group_base
+    join_direct_src,    ///< owned sources summed over the direct work list
+    join_direct_src_sq, ///< their squares, summed
+    join_direct_trg,    ///< owned targets summed over the direct work list
+    join_direct_trg_sq, ///< their squares, summed
+    join_tables         ///< tp_off | tp_up_off | tp_up_par_off | pw_eval_off | pw_form_off | group_base
 };
 constexpr int join_size(int n_levels) { return join_tables + 6 * (n_levels + 1); }
 
@@ -221,6 +225,10 @@ struct DeviceMetadataOutputs {
     /// Shallowest box in the direct work list, or n_levels if it is empty. Yukawa fits one residual
     /// polynomial per level starting here, which is a host decision.
     int min_direct_level = 0;
+    /// Mean box occupancy seen by a target of the direct work list (sum n^2 / sum n), for sources
+    /// as targets and for separate targets. 0 when there are none.
+    int direct_occupancy_src = 0;
+    int direct_occupancy_trg = 0;
     const long *h_table(int which) const { return h_join + join_tables + which * (n_levels_ + 1); }
     int n_levels_ = 0;
 };
