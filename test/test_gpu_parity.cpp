@@ -13,6 +13,7 @@
 
 #include <dmk.h>
 #include <dmk/bessel.hpp>
+#include <dmk/cuda/helpers.hpp>
 #include <dmk/direct.hpp>
 #include <dmk/testing.hpp>
 #include <dmk/util.hpp>
@@ -36,6 +37,12 @@ pdmk_tree create_tree(dmk_communicator comm, pdmk_params params, int n_src, cons
 }
 dmk_error eval_tree(pdmk_tree tree, double *pot_src, double *pot_trg) { return pdmk_tree_eval(tree, pot_src, pot_trg); }
 dmk_error eval_tree(pdmk_tree tree, float *pot_src, float *pot_trg) { return pdmk_tree_evalf(tree, pot_src, pot_trg); }
+dmk_error update_charges(pdmk_tree tree, const double *charge, const double *normal) {
+    return pdmk_tree_update_charges(tree, charge, normal);
+}
+dmk_error update_charges(pdmk_tree tree, const float *charge, const float *normal) {
+    return pdmk_tree_update_chargesf(tree, charge, normal);
+}
 
 std::vector<double> to_std(const auto &v) {
     std::vector<double> out(v.Dim());
@@ -172,6 +179,74 @@ void parity_subcases(dmk_ikernel kernel, dmk_eval_type eval, const std::string &
     const std::string label_f = label + " float";
     SUBCASE(label_d.c_str()) { check_accuracy<double>(kernel, eval, 1e-6, fparam); }
     SUBCASE(label_f.c_str()) { check_accuracy<float>(kernel, eval, 1e-3, fparam); }
+}
+
+/// memory_space = DEVICE: every array in device memory, through a charge update. The updated
+/// charges are the originals reversed, so a stale charge set fails the second reference.
+template <typename Real>
+void check_device_memory(double eps) {
+    using dmk::cuda_helpers::DeviceBuffer;
+    constexpr int n_dim = 3;
+    constexpr int n_src = 20000;
+    constexpr int n_trg = 20000;
+    const int odim = dmk::get_kernel_output_dim(n_dim, DMK_LAPLACE, DMK_POTENTIAL_GRAD);
+
+    sctl::Vector<Real> r_src, r_trg, rnormal, charges;
+    dmk::util::init_test_data(n_dim, 1, n_src, n_trg, /*uniform=*/false, /*set_fixed_charges=*/false, r_src, r_trg,
+                              rnormal, charges, /*seed=*/0);
+    sctl::Vector<Real> reversed(n_src);
+    for (int i = 0; i < n_src; ++i)
+        reversed[i] = charges[n_src - 1 - i];
+
+    DeviceBuffer<Real> d_r_src, d_r_trg, d_normal, d_charges, d_reversed;
+    DeviceBuffer<Real> d_pot_src(std::size_t(n_src) * odim), d_pot_trg(std::size_t(n_trg) * odim);
+    d_r_src.upload(&r_src[0], r_src.Dim());
+    d_r_trg.upload(&r_trg[0], r_trg.Dim());
+    d_normal.upload(&rnormal[0], rnormal.Dim());
+    d_charges.upload(&charges[0], charges.Dim());
+    d_reversed.upload(&reversed[0], reversed.Dim());
+
+    pdmk_params params;
+    params.eps = eps;
+    params.n_dim = n_dim;
+    params.kernel = DMK_LAPLACE;
+    params.eval_src = DMK_POTENTIAL_GRAD;
+    params.eval_trg = DMK_POTENTIAL_GRAD;
+    params.n_per_leaf = 250;
+    params.log_level = 6;
+    params.eval_path = DMK_EVAL_PATH_GPU;
+    params.memory_space = DMK_MEMORY_DEVICE;
+
+    pdmk_tree tree = create_tree(DMK_TEST_COMM_SELF, params, n_src, d_r_src.data(), d_charges.data(), d_normal.data(),
+                                 n_trg, d_r_trg.data());
+    REQUIRE_MESSAGE(tree != nullptr, std::string(pdmk_last_error_message()));
+
+    const int n_check = std::min(N_CHECK, n_trg);
+    const std::vector<double> r_src_d = to_std(r_src), r_trg_d = to_std(r_trg);
+    const std::vector<double> r_eval_src(r_src_d.begin(), r_src_d.begin() + std::size_t(n_check) * n_dim);
+    const std::vector<double> r_eval_trg(r_trg_d.begin(), r_trg_d.begin() + std::size_t(n_check) * n_dim);
+
+    for (const auto *q : {&charges, &reversed}) {
+        if (q == &reversed)
+            REQUIRE(update_charges(tree, d_reversed.data(), nullptr) == DMK_SUCCESS);
+        REQUIRE_MESSAGE(eval_tree(tree, d_pot_src.data(), d_pot_trg.data()) == DMK_SUCCESS,
+                        std::string(pdmk_last_error_message()));
+
+        std::vector<Real> pot_src(d_pot_src.size()), pot_trg(d_pot_trg.size());
+        DMK_CHECK_CUDA(cudaMemcpy(pot_src.data(), d_pot_src.data(), d_pot_src.size_bytes(), cudaMemcpyDeviceToHost));
+        DMK_CHECK_CUDA(cudaMemcpy(pot_trg.data(), d_pot_trg.data(), d_pot_trg.size_bytes(), cudaMemcpyDeviceToHost));
+
+        std::vector<double> ref_src, ref_trg;
+        const std::vector<double> q_d = to_std(*q), no_normals;
+        dmk::compute_direct(n_dim, r_src_d, q_d, no_normals, r_eval_src, ref_src, DMK_LAPLACE, DMK_POTENTIAL_GRAD, 0.0);
+        dmk::compute_direct(n_dim, r_src_d, q_d, no_normals, r_eval_trg, ref_trg, DMK_LAPLACE, DMK_POTENTIAL_GRAD, 0.0);
+
+        CHECK(rel_l2(pot_src, ref_src, odim, 0, 1) < eps);
+        CHECK(rel_l2(pot_trg, ref_trg, odim, 0, 1) < eps);
+        CHECK(rel_l2(pot_src, ref_src, odim, 1, n_dim) < eps);
+        CHECK(rel_l2(pot_trg, ref_trg, odim, 1, n_dim) < eps);
+    }
+    pdmk_tree_destroy(tree);
 }
 
 dmk_error direct_sum(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
@@ -406,6 +481,11 @@ TEST_CASE_GENERIC("[GPU] 3d Yukawa parity", 1) {
             parity_subcases(DMK_YUKAWA, eval, label, lambda);
         }
     }
+}
+
+TEST_CASE_GENERIC("[GPU] 3d device memory", 1) {
+    SUBCASE("double") { check_device_memory<double>(1e-6); }
+    SUBCASE("float") { check_device_memory<float>(1e-3); }
 }
 
 TEST_CASE_GENERIC("[GPU] direct scalar kernels vs CPU direct", 1) {

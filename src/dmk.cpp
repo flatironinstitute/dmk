@@ -176,6 +176,8 @@ void validate_create_args(dmk_communicator comm, const pdmk_params &params, int 
     } else if (params.eval_path != DMK_EVAL_PATH_CPU) {
         fail("Invalid eval_path: " + std::to_string(int(params.eval_path)));
     }
+    if (params.memory_space == DMK_MEMORY_DEVICE && params.eval_path != DMK_EVAL_PATH_GPU)
+        fail("memory_space=DEVICE requires eval_path=GPU");
 
     // Reject unsupported kernel/eval-type combinations
     try {
@@ -277,6 +279,8 @@ void validate_direct_args(const pdmk_params &params, int n_src, const Real *r_sr
 
     if (params.use_periodic)
         fail("the direct path has no periodic implementation; use_periodic must be 0");
+    if (params.memory_space != DMK_MEMORY_HOST)
+        fail("the direct path takes host arrays only; memory_space must be HOST");
 
     // An all-pairs sum has none of the tree path's 3D-only or single-rank restrictions: sources
     // are gathered on the host before any device work.

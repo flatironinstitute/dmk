@@ -55,6 +55,7 @@ class Tree {
     sctl::Long n_trg_local_ = 0; ///< targets this rank supplied
     int charge_dof_ = 0;
     bool stresslet_ = false;
+    device_tree::MemSpace space_ = device_tree::MemSpace::Host;  ///< where the caller's arrays live
     cuda_helpers::DeviceBuffer<Real> d_charge_in_, d_normal_in_; ///< the caller's arrays, user order
     cuda_helpers::DeviceEvent charge_ready_;                     ///< the staging copies have landed
     cuda_helpers::DeviceEvent charge_consumed_; ///< the tree has read them; the next staging waits on it

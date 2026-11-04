@@ -300,15 +300,16 @@ class DeviceBuffer {
         owned_ = false;
     }
 
+    // `src` may be host or device memory: the copy direction is inferred from the pointer.
     void upload(const T *src, std::size_t n) {
         resize(n);
         if (n)
-            DMK_CHECK_CUDA(cudaMemcpy(p_, src, n * sizeof(T), cudaMemcpyHostToDevice));
+            DMK_CHECK_CUDA(cudaMemcpy(p_, src, n * sizeof(T), cudaMemcpyDefault));
     }
     void upload_async(const T *src, std::size_t n, cudaStream_t stream) {
         resize(n, stream);
         if (n)
-            DMK_CHECK_CUDA(cudaMemcpyAsync(p_, src, n * sizeof(T), cudaMemcpyHostToDevice, stream));
+            DMK_CHECK_CUDA(cudaMemcpyAsync(p_, src, n * sizeof(T), cudaMemcpyDefault, stream));
     }
     // Grow-only upload for reused scratch whose element count varies call-to-call
     // (e.g. per-launch arg arrays): grows the allocation to fit but never shrinks,

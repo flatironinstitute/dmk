@@ -330,6 +330,7 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
     const sctl::Long n_trg = n_trg_local_;
     charge_dof_ = get_kernel_input_dim(DIM, params.kernel);
     stresslet_ = params.kernel == DMK_STRESSLET;
+    space_ = params.memory_space == DMK_MEMORY_DEVICE ? device_tree::MemSpace::Device : device_tree::MemSpace::Host;
     stage_charges(charge.Dim() ? &charge[0] : nullptr, normal.Dim() ? &normal[0] : nullptr);
 
     { // build the device tree
@@ -342,15 +343,18 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
         const sctl::Long n_src = n_src_local_;
 
         dev_tree_ = std::make_unique<device_tree::PtTree<Real, DIM>>(comm);
-        { // one upload serves the refinement and the source set
+        { // a host array is uploaded once to serve both the refinement and the source set
             cuda_helpers::DeviceBuffer<Real> d_src;
-            d_src.upload(n_src ? &r_src[0] : nullptr, r_src.Dim());
-            dev_tree_->UpdateRefinement(d_src.data(), n_src, MemSpace::Device, params.n_per_leaf, balance21,
-                                        periodicity, halo);
-            dev_tree_->AddParticles("pdmk_src", d_src.data(), n_src, MemSpace::Device);
+            const Real *src = n_src ? &r_src[0] : nullptr;
+            if (space_ == MemSpace::Host) {
+                d_src.upload(src, r_src.Dim());
+                src = d_src.data();
+            }
+            dev_tree_->UpdateRefinement(src, n_src, MemSpace::Device, params.n_per_leaf, balance21, periodicity, halo);
+            dev_tree_->AddParticles("pdmk_src", src, n_src, MemSpace::Device);
         }
         if (n_trg)
-            dev_tree_->AddParticles("pdmk_trg", &r_trg[0], n_trg, MemSpace::Host);
+            dev_tree_->AddParticles("pdmk_trg", &r_trg[0], n_trg, space_);
 
         { // registered before the source broadcast, so sized to the owned sources
             const int dof_src = get_kernel_output_dim(DIM, params.kernel, params.eval_src);
@@ -688,12 +692,14 @@ void Tree<Real, DIM>::desort_potentials(Real *pot_src, Real *pot_trg) {
         const auto view = dev_tree_->Data(name, cnt);
         SCTL_ASSERT_MSG(view.size() == n_sorted, "pt::Tree::desort_potentials: the tree holds a different count");
         DMK_CHECK_CUDA(cudaMemcpy(view.data(), d_sorted, n_sorted * sizeof(Real), cudaMemcpyDeviceToDevice));
-        dev_tree_->GetParticleData(name, out, n_out, MemSpace::Host);
+        dev_tree_->GetParticleData(name, out, n_out, space_);
     };
     if (o.pot_src_size)
         give_back("pdmk_pot_src", o.d_pot_src_final.data(), o.pot_src_size, pot_src, n_src_local_ * o.pot_src_dof);
     if (o.pot_trg_size)
         give_back("pdmk_pot_trg", o.d_pot_trg_final.data(), o.pot_trg_size, pot_trg, n_trg_local_ * o.pot_trg_dof);
+    if (space_ == MemSpace::Device) // the scatter into the caller's arrays is still in flight on the legacy stream
+        DMK_CHECK_CUDA(cudaStreamSynchronize(0));
 }
 
 template <typename Real, int DIM>
@@ -707,6 +713,9 @@ void Tree<Real, DIM>::stage_charges(const Real *charge, const Real *normal) {
     if (!charge_ready_.get())
         charge_ready_ = cuda_helpers::DeviceEvent::disable_timing();
     DMK_CHECK_CUDA(cudaEventRecord(charge_ready_, s));
+    // From device memory the copy may still be reading the caller's arrays, which are theirs again on return.
+    if (space_ == device_tree::MemSpace::Device)
+        DMK_CHECK_CUDA(cudaEventSynchronize(charge_ready_));
 }
 
 template <typename Real, int DIM>

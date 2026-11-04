@@ -27,6 +27,7 @@
 #ifdef DMK_GPU_OFFLOAD
 #include <cuda_profiler_api.h>
 #include <cuda_runtime.h>
+#include <dmk/cuda/helpers.hpp>
 #endif
 
 #ifdef DMK_HAVE_MPI
@@ -70,6 +71,7 @@ struct Config {
     bool bench_build = false;
     bool bench_eval = true;
     bool bench_update_charges = false;
+    bool device_arrays = false;
 
     // ESP only
     double r_c = -1.0;
@@ -518,22 +520,17 @@ void run_direct(const Config &cfg, int n_dim, int charge_dim, const std::vector<
 }
 
 template <typename Real>
-double run_dmk(pdmk_tree tree, std::vector<Real> &pot_src, std::vector<Real> &pot_trg, int n_src_per_rank,
-               int n_trg_per_rank, int kdim, int rank, int np) {
-    pot_src.resize(size_t(n_src_per_rank) * kdim);
-    pot_trg.resize(size_t(n_trg_per_rank) * kdim);
-
+double run_dmk(pdmk_tree tree, Real *pot_src, Real *pot_trg) {
 #ifdef DMK_HAVE_MPI
     MPI_Barrier(MYCOMM);
 #endif
 
-    Real *pot_trg_ptr = n_trg_per_rank > 0 ? pot_trg.data() : nullptr;
     double st = MY_OMP_GET_WTIME();
     int rc;
     if constexpr (std::is_same_v<Real, float>)
-        rc = pdmk_tree_evalf(tree, pot_src.data(), pot_trg_ptr);
+        rc = pdmk_tree_evalf(tree, pot_src, pot_trg);
     else
-        rc = pdmk_tree_eval(tree, pot_src.data(), pot_trg_ptr);
+        rc = pdmk_tree_eval(tree, pot_src, pot_trg);
     double ft = MY_OMP_GET_WTIME();
 
     if (rc != 0) {
@@ -544,7 +541,7 @@ double run_dmk(pdmk_tree tree, std::vector<Real> &pot_src, std::vector<Real> &po
 }
 
 template <typename Real>
-double run_update_charges(pdmk_tree tree, const std::vector<Real> &charges, const Real *normal) {
+double run_update_charges(pdmk_tree tree, const Real *charges, const Real *normal) {
 #ifdef DMK_HAVE_MPI
     MPI_Barrier(MYCOMM);
 #endif
@@ -552,9 +549,9 @@ double run_update_charges(pdmk_tree tree, const std::vector<Real> &charges, cons
     double st = omp_get_wtime();
     int rc;
     if constexpr (std::is_same_v<Real, float>)
-        rc = pdmk_tree_update_chargesf(tree, charges.data(), normal);
+        rc = pdmk_tree_update_chargesf(tree, charges, normal);
     else
-        rc = pdmk_tree_update_charges(tree, charges.data(), normal);
+        rc = pdmk_tree_update_charges(tree, charges, normal);
     double ft = omp_get_wtime();
 
     if (rc != 0) {
@@ -604,7 +601,8 @@ void print_dmk_config_comment(const Config &cfg, int np, int n_threads, std::ost
            << "# n_per_leaf:           " << cfg.n_per_leaf << "\n"
            << "# bench_build:          " << cfg.bench_build << "\n"
            << "# bench_eval:           " << cfg.bench_eval << "\n"
-           << "# bench_update_charges: " << cfg.bench_update_charges << "\n";
+           << "# bench_update_charges: " << cfg.bench_update_charges << "\n"
+           << "# device_arrays:        " << cfg.device_arrays << "\n";
 }
 
 struct ErrorBlock {
@@ -831,15 +829,36 @@ void run_dmk_benchmark(Config cfg) {
         cfg.n_direct = 0;
     }
 
+    // --device: inputs and results live in device memory, uploaded once here, so the timed calls carry
+    // no host transfers. Results come back untimed for the error columns.
+    const Real *r_src = pb.r_src.data(), *r_trg = pb.with_trg ? pb.r_trg.data() : nullptr;
+    const Real *charges = pb.charges.data(), *normals = pb.normals.data();
+#ifdef DMK_GPU_OFFLOAD
+    dmk::cuda_helpers::DeviceBuffer<Real> d_r_src, d_r_trg, d_charges, d_normals;
+    if (cfg.device_arrays) {
+        pb.params.memory_space = DMK_MEMORY_DEVICE;
+        d_r_src.upload(pb.r_src.data(), pb.r_src.size());
+        d_r_trg.upload(pb.r_trg.data(), pb.r_trg.size());
+        d_charges.upload(pb.charges.data(), pb.charges.size());
+        d_normals.upload(pb.normals.data(), pb.normals.size());
+        r_src = d_r_src.data();
+        r_trg = pb.with_trg ? d_r_trg.data() : nullptr;
+        charges = d_charges.data();
+        normals = d_normals.data();
+    }
+#else
+    if (cfg.device_arrays)
+        throw std::runtime_error("--device needs a DMK_GPU_OFFLOAD build");
+#endif
+
     auto create_tree = [&]() -> pdmk_tree {
-        const Real *r_trg_ptr = pb.with_trg ? pb.r_trg.data() : nullptr;
         pdmk_tree tree;
         if constexpr (std::is_same_v<Real, float>)
-            tree = pdmk_tree_createf(MYCOMM, pb.params, pb.n_src_per_rank, pb.r_src.data(), pb.charges.data(),
-                                     pb.normals.data(), pb.n_trg_per_rank, r_trg_ptr);
+            tree = pdmk_tree_createf(MYCOMM, pb.params, pb.n_src_per_rank, r_src, charges, normals, pb.n_trg_per_rank,
+                                     r_trg);
         else
-            tree = pdmk_tree_create(MYCOMM, pb.params, pb.n_src_per_rank, pb.r_src.data(), pb.charges.data(),
-                                    pb.normals.data(), pb.n_trg_per_rank, r_trg_ptr);
+            tree = pdmk_tree_create(MYCOMM, pb.params, pb.n_src_per_rank, r_src, charges, normals, pb.n_trg_per_rank,
+                                    r_trg);
         if (!tree)
             throw std::runtime_error(pdmk_last_error_message());
         return tree;
@@ -894,8 +913,8 @@ void run_dmk_benchmark(Config cfg) {
         }
         for (int run = 0; run < cfg.n_runs; ++run) {
             sctl::Profile::reset();
-            const Real *normal_ptr = (cfg.kernel == DMK_STRESSLET) ? pb.normals.data() : nullptr;
-            double dt = run_update_charges<Real>(tree, pb.charges, normal_ptr);
+            const Real *normal_ptr = (cfg.kernel == DMK_STRESSLET) ? normals : nullptr;
+            double dt = run_update_charges<Real>(tree, charges, normal_ptr);
             TimingResult t = make_timing(dt, n_src, pb.n_src_per_rank, pb.n_threads);
 
             if (run == 0) {
@@ -937,11 +956,29 @@ void run_dmk_benchmark(Config cfg) {
     }
 
     PotBuffers<Real> pot(cfg, pb);
+    Real *pot_src = pot.src.data(), *pot_trg = pb.n_trg_per_rank > 0 ? pot.trg.data() : nullptr;
+#ifdef DMK_GPU_OFFLOAD
+    dmk::cuda_helpers::DeviceBuffer<Real> d_pot_src, d_pot_trg;
+    if (cfg.device_arrays) {
+        d_pot_src.resize(pot.src.size());
+        d_pot_trg.resize(pot.trg.size());
+        pot_src = d_pot_src.data();
+        pot_trg = pb.n_trg_per_rank > 0 ? d_pot_trg.data() : nullptr;
+    }
+#endif
     profiler_start(cfg);
     for (int run = 0; run < cfg.n_runs; ++run) {
         sctl::Profile::reset();
-        const double dt =
-            run_dmk<Real>(tree, pot.src, pot.trg, pb.n_src_per_rank, pb.n_trg_per_rank, pb.pot_dim, pb.rank, pb.np);
+        const double dt = run_dmk<Real>(tree, pot_src, pot_trg);
+#ifdef DMK_GPU_OFFLOAD
+        if (cfg.device_arrays) {
+            DMK_CHECK_CUDA(
+                cudaMemcpy(pot.src.data(), d_pot_src.data(), d_pot_src.size_bytes(), cudaMemcpyDeviceToHost));
+            if (d_pot_trg.size())
+                DMK_CHECK_CUDA(
+                    cudaMemcpy(pot.trg.data(), d_pot_trg.data(), d_pot_trg.size_bytes(), cudaMemcpyDeviceToHost));
+        }
+#endif
         const TimingResult t = make_timing(dt, n_src + n_trg, pb.n_src_per_rank + pb.n_trg_per_rank, pb.n_threads);
 
         if (run == 0) {
@@ -1475,6 +1512,7 @@ enum {
     OPT_MORTON,
     OPT_BINS,
     OPT_STILE,
+    OPT_DEVICE,
 };
 
 static const struct option long_opts[] = {
@@ -1494,6 +1532,7 @@ static const struct option long_opts[] = {
     {"morton", required_argument, nullptr, OPT_MORTON},
     {"bins", required_argument, nullptr, OPT_BINS},
     {"stile", required_argument, nullptr, OPT_STILE},
+    {"device", no_argument, nullptr, OPT_DEVICE},
     {nullptr, 0, nullptr, 0},
 };
 
@@ -1539,6 +1578,7 @@ void print_usage(const char *argv0) {
               << "  --bench-build         Also benchmark tree build time\n"
               << "  --no-bench-eval       Skip eval benchmark, build only\n"
               << "  --bench-update-charges  Also benchmark pdmk_tree_update_charges\n"
+              << "  --device              Inputs and results in device memory, so no timed host transfers (-p g)\n"
               << "\n"
               << "--solver esp only:\n"
               << "  -c r_c                Real-space cutoff (default: auto-picked for accuracy)\n"
@@ -1686,6 +1726,9 @@ Config parse_args(int argc, char *argv[]) {
             break;
         case OPT_PIN:
             cfg.pin_host = true;
+            break;
+        case OPT_DEVICE:
+            cfg.device_arrays = true;
             break;
         case OPT_BENCH_PLAN:
             cfg.bench_plan = true;

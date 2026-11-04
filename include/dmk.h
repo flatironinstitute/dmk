@@ -31,6 +31,12 @@ typedef enum {
     DMK_EVAL_PATH_GPU = 1,
 } dmk_eval_path;
 
+// Where the arrays given to the tree entry points live; see pdmk_params.memory_space.
+typedef enum {
+    DMK_MEMORY_HOST = 0,
+    DMK_MEMORY_DEVICE = 1,
+} dmk_memory_space;
+
 typedef enum {
     DMK_SUCCESS = 0,              ///< no error
     DMK_ERR_INVALID_ARGUMENT = 1, ///< null ptr, negative count, eps<=0, bad dim/kernel/eval value
@@ -91,6 +97,13 @@ typedef struct pdmk_params {
     ///< CUDA device to run on when eval_path is GPU. A process is pinned to the first device
     ///< it uses (the JIT module caches are per-device); typical MPI use is one device per rank.
     int gpu_device_id DMK_DEFAULT(0);
+    ///< Where every array passed for a tree lives: the create inputs, the update_charges inputs and
+    ///< the eval outputs, and likewise for pdmk/pdmkf. DMK_MEMORY_DEVICE requires eval_path GPU and
+    ///< takes CUDA device (or managed) pointers on gpu_device_id, laid out as the host arrays are.
+    ///< The pointers are not checked, and DMK does not wait on the caller's streams: writes to the
+    ///< inputs must be complete before the call. Inputs may be reused, and outputs are complete,
+    ///< once the call returns. pdmk_direct and ESP take host arrays only.
+    dmk_memory_space memory_space DMK_DEFAULT(DMK_MEMORY_HOST);
 } pdmk_params;
 // clang-format on
 
@@ -195,9 +208,9 @@ dmk_error pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const floa
 /// the reference path for validating pdmk, not for production-size problems.
 ///
 /// Reads n_dim, kernel, eval_src, eval_trg, fparam, eval_path and gpu_device_id from params;
-/// eps and n_per_leaf are not used, and use_periodic must be 0 (a periodic request is rejected
-/// rather than silently ignored). The direct kernels implement DMK_POTENTIAL,
-/// DMK_POTENTIAL_GRAD and DMK_VELOCITY only.
+/// eps and n_per_leaf are not used, use_periodic must be 0 and memory_space DMK_MEMORY_HOST
+/// (either request is rejected rather than silently ignored). The direct kernels implement
+/// DMK_POTENTIAL, DMK_POTENTIAL_GRAD and DMK_VELOCITY only.
 ///
 /// eval_path selects CPU or GPU. Unlike the tree path the GPU direct kernel has no dimension
 /// or rank restriction -- it is a plain all-pairs sum over the gathered sources -- so every

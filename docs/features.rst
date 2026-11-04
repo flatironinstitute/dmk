@@ -139,6 +139,14 @@ the JIT module caches, autotune records and cached device properties are bound t
 device, so requesting a different one later fails rather than silently reusing modules
 compiled for the first. Under MPI, use one device per rank.
 
+``memory_space`` says where the arrays passed for a tree live. ``DMK_MEMORY_DEVICE`` requires
+``DMK_EVAL_PATH_GPU`` and takes CUDA device (or managed) pointers on ``gpu_device_id`` for every
+array of that tree: the create inputs, the ``update_charges`` inputs and the eval outputs, laid
+out as the host arrays are. Inputs and results then never cross the host bus. DMK does not check
+the pointers or wait on the caller's streams, so writes to the inputs must be complete before the
+call; inputs may be reused, and outputs are complete, once the call returns. ``pdmk_direct`` and
+ESP take host arrays only.
+
 Direct summation
 ----------------
 
