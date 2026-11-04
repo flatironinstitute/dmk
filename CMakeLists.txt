@@ -160,7 +160,6 @@ if (DMK_GPU_OFFLOAD)
   )
 
   list(APPEND DMK_CXX_FLAGS "-DDMK_GPU_OFFLOAD")
-  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
 endif()
 
 set(DMK_CUDA_JIT_SRC
@@ -319,7 +318,8 @@ if (DMK_GPU_OFFLOAD)
   set_source_files_properties(src/cuda/device_tree.cu src/cuda/pt/metadata.cu PROPERTIES LANGUAGE CUDA)
   target_compile_options(DMKOBJS_CUDA PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
-    $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fopenmp>)
+    $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fopenmp>
+    $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Debug,RelWithDebInfo>>:-lineinfo>)
   set_target_properties(DMKOBJS_CUDA PROPERTIES POSITION_INDEPENDENT_CODE ON)
   target_include_directories(DMKOBJS_CUDA PUBLIC
     ${DMK_INCLUDES}
