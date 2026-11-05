@@ -20,18 +20,22 @@ using jit::jit_real_name;
 using jit::JitCache;
 using jit::JitKey;
 
-// Must match the kernel's k_pad: A^T rows padded so the last k2 tile stays in its row.
-int pw2proxy_k_pad(int n_order, int k2r) { return ((n_order + k2r - 1) / k2r * k2r + 3) / 4 * 4; }
+// k2 tiles of one parity per thread; must match the kernel.
+int pw2proxy_k2_tiles(int n_order, int k2r) {
+    return ((n_order + 1) / 2 + k2r - 1) / k2r + (n_order / 2 + k2r - 1) / k2r;
+}
 
-std::size_t pw2proxy_shared_bytes(int max_n_pw, int max_n_pw2, int max_n_order, int k2r, bool pencil_smem, bool slab,
+// Must match the kernel's k_pad: alpha rows padded so the last k2 tile of each parity stays in its group.
+int pw2proxy_k_pad(int n_order, int k2r) { return (pw2proxy_k2_tiles(n_order, k2r) * k2r + 3) / 4 * 4; }
+
+std::size_t pw2proxy_shared_bytes(int max_n_pw, int max_n_pw2, int max_n_order, int k2r, bool pencil_smem,
                                   std::size_t sizeof_real) {
-    const std::size_t complex_count = std::size_t(max_n_pw) * pw2proxy_k_pad(max_n_order, k2r) +
-                                      std::size_t(max_n_pw) * max_n_order +
-                                      (slab ? std::size_t(max_n_pw) * max_n_pw : 0);
+    const std::size_t complex_count = std::size_t(max_n_pw) * max_n_order + std::size_t(max_n_pw) * max_n_pw;
+    const std::size_t real_count = std::size_t(max_n_pw2) * pw2proxy_k_pad(max_n_order, k2r);
     // The unpacked pencil table and the per-slab ranges lead the block, as int4 so they stay
     // 16-byte aligned.
     const std::size_t int4_count = (pencil_smem ? std::size_t(max_n_pw) * max_n_pw2 : 0) + max_n_pw2;
-    return int4_count * 4 * sizeof(int) + complex_count * (2 * sizeof_real);
+    return int4_count * 4 * sizeof(int) + (2 * complex_count + real_count) * sizeof_real;
 }
 
 } // namespace
@@ -63,24 +67,23 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
     // Keep the unpacked table only where it still fits beside everything else; past that it is
     // the difference between fitting in shared and having no runnable config at all.
     const bool pencil_smem =
-        pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, 1, true, true, sizeof(Real)) <= max_shared;
-    // At the highest double-precision digit counts A^T, H and the slab outgrow the per-block shared
-    // limit. The kernel then runs against a private slice of a global buffer and reads modes in place.
+        pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, 1, true, sizeof(Real)) <= max_shared;
+    // At the highest double-precision digit counts alpha, H and the slab outgrow the per-block shared
+    // limit. The kernel then runs against a private slice of a global buffer instead.
     const bool smem_global =
-        pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, 1, false, true, sizeof(Real)) > max_shared;
+        pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, 1, false, sizeof(Real)) > max_shared;
     // Never destroyed: a static DeviceBuffer's destructor would free device memory from a
     // static destructor, by which point the CUDA context may already be gone.
     static auto &d_scratch = *new cuda_helpers::DeviceBuffer<unsigned char>();
 
     const auto shared_bytes = [&](const TuningParams &p) {
-        return pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, p.at("K2R"), pencil_smem, !smem_global,
-                                     sizeof(Real));
+        return pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, p.at("K2R"), pencil_smem, sizeof(Real));
     };
     // A thread's k3 columns stay in registers while they fit; past that they accumulate in place
     // in the output, which only the high-digit double configs reach.
     const auto acc_reg = [&](const TuningParams &p) {
         const int k2r = p.at("K2R");
-        const int items = a0.n_order * ((a0.n_order + k2r - 1) / k2r);
+        const int items = a0.n_order * pw2proxy_k2_tiles(a0.n_order, k2r);
         const int rounds = (items + p.at("BLOCK_SIZE") - 1) / p.at("BLOCK_SIZE");
         return rounds * k2r * a0.n_order * int(sizeof(Real) / sizeof(float)) <= 96;
     };
@@ -98,7 +101,6 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
                       {"N_PW2", a0.n_pw2},
                       {"N_CHARGE_DIM", a0.n_charge_dim},
                       {"K2R", p.at("K2R")},
-                      {"M2R", p.at("M2R")},
                       {"BLOCK_SIZE", p.at("BLOCK_SIZE")},
                       {"MIN_BLOCKS", p.at("MIN_BLOCKS")},
                       {"ACC_REG", acc_reg(p) ? 1 : 0},
@@ -148,14 +150,14 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
     const cudaDeviceProp &prop = device_prop();
 
     const std::vector<TuningParameter> space{
-        {"K2R", {1, 2, 3}}, {"M2R", {1, 2}}, {"BLOCK_SIZE", {128, 192, 256, 384}}, {"MIN_BLOCKS", {1, 2, 4}}};
-    const TuningParams defaults{{"K2R", 2}, {"M2R", 1}, {"BLOCK_SIZE", 192}, {"MIN_BLOCKS", 1}};
+        {"K2R", {1, 2, 3}}, {"BLOCK_SIZE", {128, 192, 256, 384}}, {"MIN_BLOCKS", {1, 2, 4}}};
+    const TuningParams defaults{{"K2R", 2}, {"BLOCK_SIZE", 192}, {"MIN_BLOCKS", 1}};
 
     const auto constraint = [&](const TuningParams &p) {
         const int bs = p.at("BLOCK_SIZE");
         if (bs <= 0 || bs > prop.maxThreadsPerBlock || bs % 32 != 0)
             return false;
-        if (p.at("K2R") <= 0 || p.at("M2R") <= 0)
+        if (p.at("K2R") <= 0)
             return false;
         if (p.at("MIN_BLOCKS") > resident_blocks_per_sm(smem_global ? 0 : shared_bytes(p), bs))
             return false;
@@ -163,7 +165,7 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
     };
 
     const auto canonicalize = [&](TuningParams p) {
-        return clamp_tiles(std::move(p), {{"K2R", a0.n_order}, {"M2R", a0.n_pw}});
+        return clamp_tiles(std::move(p), {{"K2R", (a0.n_order + 1) / 2}});
     };
 
     autotuned_launch<Real>(tk, "PtPwToProxyMultiLevelKernel", space, defaults, constraint, launch_one, proxy_flat,

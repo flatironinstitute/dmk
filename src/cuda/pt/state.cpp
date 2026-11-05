@@ -160,23 +160,24 @@ void build_fourier_tables(const BuildInputs<Real, DIM> &in, DMKPtTree<Real, DIM>
         for (int L = 0; L < n_levels && !live[m]; ++L)
             live[m] = radialft_flat[(std::size_t)L * fou.radialft_per_level_reals + m] != Real{0};
 
-    // For a radial mask the live m1 at fixed (m2, m3) form a single contiguous run, which lets
-    // proxy2pw and pw2proxy get a slot by arithmetic off an n_pw*n_pw2 table. Verify rather than
-    // assume it: a gap anywhere makes that arithmetic wrong, so fall back to no pruning.
+    // Each (m2, m3) pencil keeps one run of m1 symmetric about the zero mode: everything from its
+    // first live mode to its last, widened to its mirror. A dead mode inside the run is harmless, as
+    // its FT is zero. One run lets proxy2pw and pw2proxy get a slot by arithmetic off an n_pw*n_pw2
+    // table, and the symmetry lets pw2proxy pair each mode with its mirror in place.
     const int n_pencil = fou.n_pw_modes / fou.n_pw;
     pencil_slots.assign(2 * (std::size_t)n_pencil, 0);
     full_of_compact.clear();
-    bool contiguous = true;
-    for (int p = 0; p < n_pencil && contiguous; ++p) {
+    for (int p = 0; p < n_pencil; ++p) {
         const char *row = &live[(std::size_t)p * fou.n_pw];
-        int lo = 0;
+        int lo = 0, hi = fou.n_pw;
         while (lo < fou.n_pw && !row[lo])
             ++lo;
-        int hi = lo;
-        while (hi < fou.n_pw && row[hi])
-            ++hi;
-        for (int i = hi; i < fou.n_pw; ++i)
-            contiguous = contiguous && !row[i];
+        while (hi > lo && !row[hi - 1])
+            --hi;
+        if (lo < hi) {
+            lo = std::min(lo, fou.n_pw - hi);
+            hi = fou.n_pw - lo;
+        }
 
         pencil_slots[2 * p] = (int)full_of_compact.size() - lo;
         pencil_slots[2 * p + 1] = lo | (hi << 16);
@@ -184,13 +185,12 @@ void build_fourier_tables(const BuildInputs<Real, DIM> &in, DMKPtTree<Real, DIM>
             full_of_compact.push_back(p * fou.n_pw + m1);
     }
 
-    const int n_live = contiguous ? (int)full_of_compact.size() : fou.n_pw_modes;
+    const int n_live = (int)full_of_compact.size();
     ftab.n_pw_live = n_live;
 
     if (n_live == fou.n_pw_modes) {
-        // Nothing to prune -- either the FT is nonzero everywhere, as for the quadrature-built
-        // kernels, or a pencil had a gap. Drop the tables so the kernels take their cube-order
-        // path; the permutation below would be a no-op.
+        // Nothing to prune, as for the quadrature-built kernels whose FT is nonzero everywhere. Drop
+        // the tables so the kernels take their cube-order path; the permutation below would be a no-op.
         pencil_slots.clear();
         full_of_compact.clear();
     } else {

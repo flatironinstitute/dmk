@@ -1,6 +1,6 @@
 // V2 pw2proxy (batched multilevel): projects plane-wave modes back onto proxy
 // coefficients (additive). The launcher prepends `using Real` + N_ORDER / N_PW
-// / N_PW2 / N_CHARGE_DIM / K2R / M2R / BLOCK_SIZE / MIN_BLOCKS / ACC_REG /
+// / N_PW2 / N_CHARGE_DIM / K2R / BLOCK_SIZE / MIN_BLOCKS / ACC_REG /
 // PENCIL_SMEM / SMEM_GLOBAL. One launch covers all levels via a device array of
 // per-level args (n_args == 1 for the windowed root). Accumulates into proxy_flat.
 //
@@ -10,16 +10,24 @@
 // supplies the conjugate half and halve() keeps the self-conjugate plane from counting twice. m3 is
 // contracted last, so everything before it stays complex and the final step is real.
 //
+// A takes modes to Chebyshev coefficients on nodes symmetric about 0, so A(k, m) = alpha(k, m) is real
+// and even in m for even k, and A(k, m) = i alpha(k, m) with alpha odd in m for odd k. Pairing each
+// mode m < H = N_PW/2 with its mirror N_PW-1-m, even k see only the pair's sum and odd k only its
+// difference, against a real table over m <= H.
+//
 // The contraction is sum factorization, scheduled after Swirydowicz, Chalmers, Karakus & Warburton,
 // "Acceleration of tensor-product operations for high-order finite element methods" (IJHPCA 2019).
 // One block per box streams the modes one m3 slab at a time, so pw_in is read exactly once:
-//   a: H(k1, m2) = sum_m1 A(k1, m1) pw(m1, m2, m3), over each pencil's live run only
+//   fold: each pencil's m1 and mirror become their sum and difference, in place
+//   a: H(k1, m2) = sum_m1 A(k1, m1) pw(m1, m2, m3), for a pencil and its mirror together, kept as
+//      their sum and difference in the same way
 //   b: J(k1, k2) = sum_m2 A(k2, m2) H(k1, m2)
 //   c: acc(k1, k2, k3) += Re(halve(m3) A(k3, m3) J(k1, k2))
-// A thread owns (k1, K2R consecutive k2) through b and c and keeps their k3 columns in registers.
+// A thread owns (k1, K2R k2 of one parity) through b and c and keeps their k3 columns in registers.
 //
 // Modes past the kernel's band edge are zero and are compacted out of pw_in. Each (m2, m3) pencil's
-// live m1 form one contiguous run, so step a skips the dead modes exactly rather than masking them.
+// live m1 form one contiguous run symmetric about H, so the fold and step a skip the dead modes
+// exactly rather than masking them.
 
 #include <dmk/cuda/pw2proxy_kernelargs.hpp>
 
@@ -42,18 +50,9 @@ __device__ __forceinline__ complx<Real> complx_load(const Real *__restrict__ p, 
 }
 
 template <typename Real>
-__device__ __forceinline__ void complx_madd(complx<Real> &acc, const complx<Real> a, const complx<Real> b) {
-    acc.r = fma(a.r, b.r, acc.r);
-    acc.r = fma(-a.i, b.i, acc.r);
-    acc.i = fma(a.r, b.i, acc.i);
-    acc.i = fma(a.i, b.r, acc.i);
-}
-
-template <typename Real>
-__device__ __forceinline__ Real complx_real_madd(Real acc, const complx<Real> a, const complx<Real> b) {
-    acc = fma(a.r, b.r, acc);
-    acc = fma(-a.i, b.i, acc);
-    return acc;
+__device__ __forceinline__ void complx_madd_real(complx<Real> &acc, Real a, const complx<Real> b) {
+    acc.r = fma(a, b.r, acc.r);
+    acc.i = fma(a, b.i, acc.i);
 }
 
 // KERNEL_START
@@ -84,17 +83,23 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
 
     constexpr int n_pw = N_PW;
     constexpr int n_pw2 = N_PW2;
+    constexpr int H = N_PW / 2;
+    static_assert(N_PW % 2 == 1 && N_PW2 == H + 1, "modes pair as m and N_PW-1-m around the zero mode H");
     constexpr int n_order = N_ORDER;
     constexpr int n_order2 = n_order * n_order;
     constexpr int n_order3 = n_order2 * n_order;
     constexpr int n_pw_modes = n_pw * n_pw * n_pw2;
     constexpr int n_pencil = n_pw * n_pw2;
-    constexpr int k2_tiles = (n_order + K2R - 1) / K2R;
-    // A^T rows are padded so a k2 tile never reads past its row; the padding is zero.
-    constexpr int k_pad = ((k2_tiles * K2R + 3) / 4) * 4;
-    constexpr int n_items = n_order * k2_tiles;
+    // A k2 tile is K2R coefficients of one parity. The table holds the even k, then the odd k, each
+    // padded to whole tiles so a tile never reads into the next group; the padding is zero.
+    constexpr int TE = ((n_order + 1) / 2 + K2R - 1) / K2R;
+    constexpr int TO = (n_order / 2 + K2R - 1) / K2R;
+    constexpr int ODD0 = TE * K2R;
+    constexpr int k_pad = ((ODD0 + TO * K2R + 3) / 4) * 4;
+    constexpr int n_items = n_order * (TE + TO);
     constexpr int ROUNDS = (n_items + BLOCK_SIZE - 1) / BLOCK_SIZE;
     constexpr int SLAB_REG = (n_pw * n_pw + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    const auto kcol = [](int k) { return (k & 1) ? ODD0 + k / 2 : k / 2; };
 
     // Live modes sit at the front of the slab, which keeps its full-cube stride. Pencils are
     // packed in cube order, so each m3 slab of live modes is one contiguous run.
@@ -134,14 +139,21 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
 
     // Per slab: its first and one-past-last slot, then the m2 range holding live pencils.
     int4 *__restrict__ s_range = s_pencil + (PENCIL_SMEM ? n_pencil : 0);
-    complx<Real> *__restrict__ s_A_T = reinterpret_cast<complx<Real> *>(s_range + n_pw2);
-    complx<Real> *__restrict__ s_H = s_A_T + n_pw * k_pad;
+    Real *__restrict__ s_alpha = reinterpret_cast<Real *>(s_range + n_pw2);
+    complx<Real> *__restrict__ s_H = reinterpret_cast<complx<Real> *>(s_alpha + n_pw2 * k_pad);
     complx<Real> *__restrict__ s_slab = s_H + n_pw * n_order;
 
-    for (int idx = threadIdx.x; idx < n_pw * k_pad; idx += BLOCK_SIZE) {
+    // alpha(m, k) at row m <= H, column kcol(k): Re A for even k, Im A for odd k, which vanishes at m = H.
+    for (int idx = threadIdx.x; idx < n_pw2 * k_pad; idx += BLOCK_SIZE) {
         const int m = idx / k_pad;
-        const int k = idx - m * k_pad;
-        s_A_T[idx] = k < n_order ? complx_load(a.pw2poly, k * n_pw + m) : complx_zero<Real>();
+        const int c = idx - m * k_pad;
+        const int k = c < ODD0 ? 2 * c : 2 * (c - ODD0) + 1;
+        Real v = Real{0};
+        if (k < n_order && !((k & 1) && m == H)) {
+            const complx<Real> z = complx_load(a.pw2poly, k * n_pw + m);
+            v = (k & 1) ? z.i : z.r;
+        }
+        s_alpha[idx] = v;
     }
 
     if constexpr (PENCIL_SMEM) {
@@ -170,7 +182,8 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
     Real *__restrict__ proxy_box = a.proxy_flat + proxy_off;
 
     // The next slab is fetched into registers while the current one is reduced, and lands in
-    // shared once step a has let go of the buffer. The global-scratch path reads modes in place.
+    // shared once step a has let go of the buffer. The global-scratch path copies each slab when
+    // it starts instead.
     complx<Real> pre[SLAB_REG];
     const auto fetch = [&](int step) {
         const int d = step / n_pw2;
@@ -207,6 +220,9 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
         const int m3 = step - d * n_pw2;
         const int4 r = s_range[m3];
         const int m2_lo = r.z, m2_hi = r.w;
+        // Pencil m2 = p pairs with n_pw-1-p, for p from the low end of the live range up to H.
+        const int p_lo = min(m2_lo, n_pw - m2_hi);
+        const int n_pairs = m2_lo < m2_hi ? H + 1 - p_lo : 0;
         Real *__restrict__ proxy_d = proxy_box + d * n_order3;
 
         if constexpr (ACC_REG) {
@@ -221,51 +237,66 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
             }
         }
 
-        // Step a. A pencil's slots sit at a fixed offset from its m1, so `base + m1` is the slot
-        // relative to the slab start. Each thread takes M2R adjacent pencils, which share every
-        // A load over the union of their runs.
-        const complx<Real> *__restrict__ slab =
-            SMEM_GLOBAL ? reinterpret_cast<const complx<Real> *>(pw_in_box + 2 * d * n_pw_modes) + r.x : s_slab;
-        const int n_groups = (m2_hi - m2_lo + M2R - 1) / M2R;
-        for (int it = threadIdx.x; it < n_order * n_groups; it += BLOCK_SIZE) {
+        if constexpr (SMEM_GLOBAL) {
+            const complx<Real> *__restrict__ src =
+                reinterpret_cast<const complx<Real> *>(pw_in_box + 2 * d * n_pw_modes) + r.x;
+            for (int i = threadIdx.x; i < r.y - r.x; i += BLOCK_SIZE)
+                s_slab[i] = src[i];
+            __syncthreads();
+        }
+
+        // Fold. A pencil's slots sit at a fixed offset from its m1, so `pen + m1` is the slot; m1 < H
+        // takes the sum and its mirror the difference.
+        for (int it = threadIdx.x; it < (m2_hi - m2_lo) * H; it += BLOCK_SIZE) {
+            const int q = it / H;
+            const int m1 = it - q * H;
+            const int4 pv = pencil_at(m2_lo + q + m3 * n_pw);
+            if (m1 >= pv.y && pv.y < pv.z) {
+                complx<Real> *__restrict__ pen = s_slab + (pv.x - r.x);
+                const complx<Real> u = pen[m1];
+                const complx<Real> v = pen[n_pw - 1 - m1];
+                pen[m1] = complx<Real>{u.r + v.r, u.i + v.i};
+                pen[n_pw - 1 - m1] = complx<Real>{u.r - v.r, u.i - v.i};
+            }
+        }
+
+        __syncthreads();
+
+        // Step a. Even k1 read the sums and odd k1 the differences, with A's factor i applied at the end.
+        for (int it = threadIdx.x; it < n_order * n_pairs; it += BLOCK_SIZE) {
             const int k1 = it % n_order;
-            const int m2_base = m2_lo + (it / n_order) * M2R;
+            const int p = p_lo + it / n_order;
+            const int pm = n_pw - 1 - p;
+            const bool odd = k1 & 1;
+            const Real *__restrict__ al = s_alpha + kcol(k1);
+            const int4 v0 = pencil_at(p + m3 * n_pw);
+            const int4 v1 = pencil_at(pm + m3 * n_pw);
+            const complx<Real> *__restrict__ pen0 = s_slab + (v0.x - r.x);
+            const complx<Real> *__restrict__ pen1 = s_slab + (v1.x - r.x);
+            const int lo0 = v0.y < v0.z ? v0.y : n_pw;
+            const int lo1 = (p < H && v1.y < v1.z) ? v1.y : n_pw;
 
-            int base[M2R], lo[M2R], hi[M2R];
-            int u_lo = n_pw, u_hi = 0;
-#pragma unroll
-            for (int q = 0; q < M2R; ++q) {
-                lo[q] = hi[q] = base[q] = 0;
-                if (m2_base + q < m2_hi) {
-                    const int4 pv = pencil_at(m2_base + q + m3 * n_pw);
-                    base[q] = pv.x - r.x;
-                    lo[q] = pv.y;
-                    hi[q] = pv.z;
-                    if (pv.y < pv.z) {
-                        u_lo = min(u_lo, pv.y);
-                        u_hi = max(u_hi, pv.z);
-                    }
-                }
-            }
-
-            complx<Real> h[M2R];
-#pragma unroll
-            for (int q = 0; q < M2R; ++q)
-                h[q] = complx_zero<Real>();
-
+            complx<Real> h0 = complx_zero<Real>(), h1 = complx_zero<Real>();
 #pragma unroll 4
-            for (int m1 = u_lo; m1 < u_hi; ++m1) {
-                const complx<Real> am = s_A_T[m1 * k_pad + k1];
-#pragma unroll
-                for (int q = 0; q < M2R; ++q)
-                    if (M2R == 1 || unsigned(m1 - lo[q]) < unsigned(hi[q] - lo[q]))
-                        complx_madd(h[q], am, slab[base[q] + m1]);
+            for (int m1 = min(lo0, lo1); m1 <= H; ++m1) {
+                const Real am = al[m1 * k_pad];
+                const int s = odd ? n_pw - 1 - m1 : m1;
+                if (m1 >= lo0)
+                    complx_madd_real(h0, am, pen0[s]);
+                if (m1 >= lo1)
+                    complx_madd_real(h1, am, pen1[s]);
+            }
+            if (odd) {
+                h0 = complx<Real>{-h0.i, h0.r};
+                h1 = complx<Real>{-h1.i, h1.r};
             }
 
-#pragma unroll
-            for (int q = 0; q < M2R; ++q)
-                if (m2_base + q < m2_hi)
-                    s_H[(m2_base + q) * n_order + k1] = h[q];
+            if (p < H) {
+                s_H[p * n_order + k1] = complx<Real>{h0.r + h1.r, h0.i + h1.i};
+                s_H[pm * n_order + k1] = complx<Real>{h0.r - h1.r, h0.i - h1.i};
+            } else {
+                s_H[p * n_order + k1] = h0;
+            }
         }
 
         __syncthreads();
@@ -276,53 +307,58 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
         }
 
         // Steps b and c. Every round's J is formed first so one pass over k3 serves them all and
-        // each A(k3, m3) is loaded once. A round past the last item computes on item 0 and is
+        // each alpha(m3, k3) is loaded once. A round past the last item computes on item 0 and is
         // never stored.
-        int k1s[ROUNDS], k2b[ROUNDS];
-        bool live[ROUNDS];
+        int k1s[ROUNDS], j0[ROUNDS], col[ROUNDS];
+        bool live[ROUNDS], oddk2[ROUNDS];
         complx<Real> J[ROUNDS][K2R];
 #pragma unroll
         for (int rd = 0; rd < ROUNDS; ++rd) {
             const int it = threadIdx.x + rd * BLOCK_SIZE;
             live[rd] = it < n_items;
+            const int t = live[rd] ? it / n_order : 0;
             k1s[rd] = live[rd] ? it % n_order : 0;
-            k2b[rd] = live[rd] ? (it / n_order) * K2R : 0;
+            oddk2[rd] = t >= TE;
+            j0[rd] = (oddk2[rd] ? t - TE : t) * K2R;
+            col[rd] = (oddk2[rd] ? ODD0 : 0) + j0[rd];
 #pragma unroll
             for (int k2r = 0; k2r < K2R; ++k2r)
                 J[rd][k2r] = complx_zero<Real>();
         }
 
-        for (int m2 = m2_lo; m2 < m2_hi; ++m2) {
+        for (int p = p_lo; p < p_lo + n_pairs; ++p) {
+            const Real *__restrict__ arow = s_alpha + p * k_pad;
 #pragma unroll
             for (int rd = 0; rd < ROUNDS; ++rd) {
                 if (rd > 0 && !live[rd])
                     break;
-                const complx<Real> hv = s_H[m2 * n_order + k1s[rd]];
+                const complx<Real> hv = s_H[(oddk2[rd] ? n_pw - 1 - p : p) * n_order + k1s[rd]];
 #pragma unroll
                 for (int k2r = 0; k2r < K2R; ++k2r)
-                    complx_madd(J[rd][k2r], s_A_T[m2 * k_pad + k2b[rd] + k2r], hv);
+                    complx_madd_real(J[rd][k2r], arow[col[rd] + k2r], hv);
             }
         }
 
-        // The self-conjugate plane is halved, as the 2 Re below counts it twice.
-        const Real scale = (m3 >= n_pw / 2) ? Real{0.5} : Real{1};
+        // A's factor i for odd k2, and the self-conjugate plane is halved, as the 2 Re below counts it twice.
+        const Real scale = (m3 == H) ? Real{0.5} : Real{1};
 #pragma unroll
         for (int rd = 0; rd < ROUNDS; ++rd)
 #pragma unroll
             for (int k2r = 0; k2r < K2R; ++k2r) {
-                J[rd][k2r].r *= scale;
-                J[rd][k2r].i *= scale;
+                const complx<Real> v = J[rd][k2r];
+                J[rd][k2r] = oddk2[rd] ? complx<Real>{-scale * v.i, scale * v.r} : complx<Real>{scale * v.r, scale * v.i};
             }
 
+        // Re(A(k3, m3) J) is alpha J.r for even k3 and -alpha J.i for odd k3.
         if constexpr (ACC_REG) {
 #pragma unroll
             for (int k3 = 0; k3 < n_order; ++k3) {
-                const complx<Real> a3 = s_A_T[m3 * k_pad + k3];
+                const Real a3 = s_alpha[m3 * k_pad + kcol(k3)];
 #pragma unroll
                 for (int rd = 0; rd < ROUNDS; ++rd)
 #pragma unroll
                     for (int k2r = 0; k2r < K2R; ++k2r)
-                        acc[rd][k2r][k3] = complx_real_madd(acc[rd][k2r][k3], a3, J[rd][k2r]);
+                        acc[rd][k2r][k3] = fma(a3, (k3 & 1) ? -J[rd][k2r].i : J[rd][k2r].r, acc[rd][k2r][k3]);
             }
 
             if (m3 == n_pw2 - 1) {
@@ -330,11 +366,12 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
                 for (int rd = 0; rd < ROUNDS; ++rd) {
 #pragma unroll
                     for (int k2r = 0; k2r < K2R; ++k2r) {
-                        if (!live[rd] || k2b[rd] + k2r >= n_order)
+                        const int k2 = 2 * (j0[rd] + k2r) + oddk2[rd];
+                        if (!live[rd] || k2 >= n_order)
                             continue;
 #pragma unroll
                         for (int k3 = 0; k3 < n_order; ++k3) {
-                            Real *out = proxy_d + k1s[rd] + (k2b[rd] + k2r) * n_order + k3 * n_order2;
+                            Real *out = proxy_d + k1s[rd] + k2 * n_order + k3 * n_order2;
                             if (assign)
                                 *out = Real{2} * acc[rd][k2r][k3];
                             else
@@ -345,16 +382,17 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
             }
         } else {
             for (int k3 = 0; k3 < n_order; ++k3) {
-                const complx<Real> a3 = s_A_T[m3 * k_pad + k3];
+                const Real a3 = s_alpha[m3 * k_pad + kcol(k3)];
 #pragma unroll
                 for (int rd = 0; rd < ROUNDS; ++rd) {
 #pragma unroll
                     for (int k2r = 0; k2r < K2R; ++k2r) {
-                        if (!live[rd] || k2b[rd] + k2r >= n_order)
+                        const int k2 = 2 * (j0[rd] + k2r) + oddk2[rd];
+                        if (!live[rd] || k2 >= n_order)
                             continue;
-                        Real *out = proxy_d + k1s[rd] + (k2b[rd] + k2r) * n_order + k3 * n_order2;
+                        Real *out = proxy_d + k1s[rd] + k2 * n_order + k3 * n_order2;
                         const Real prev = (assign && m3 == 0) ? Real{0} : *out;
-                        *out = prev + Real{2} * complx_real_madd(Real{0}, a3, J[rd][k2r]);
+                        *out = prev + Real{2} * a3 * ((k3 & 1) ? -J[rd][k2r].i : J[rd][k2r].r);
                     }
                 }
             }
