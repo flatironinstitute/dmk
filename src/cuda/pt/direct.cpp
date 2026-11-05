@@ -377,7 +377,8 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
                               : resolve(el_trg, oct_trg, a_trg);
 
     launch_with(plan_src.first, plan_src.second, a_src, stream);
-    launch_with(plan_trg.first, plan_trg.second, a_trg, stream);
+    if (s.outputs.pot_trg_size)
+        launch_with(plan_trg.first, plan_trg.second, a_trg, stream);
 
     if (prefilter_stats) {
         unsigned long long h[kCullStats] = {};

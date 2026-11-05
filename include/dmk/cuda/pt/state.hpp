@@ -79,7 +79,7 @@ struct BuildInputs {
         int pw2poly_per_level_reals = 0;             ///< = 2*n_pw*n_order
         int poly2pw_per_level_reals = 0;             ///< = 2*n_pw*n_order
         int radialft_per_level_reals = 0;            ///< = n_pw_modes
-        int wpwshift_per_level_reals = 0;            ///< = 2*n_neighbors*n_pw_modes
+        int phase_per_level_reals = 0;               ///< = 2*n_pw
         std::vector<Real> hpw_per_level;             ///< [n_levels] hpw_diff/boxsize (form_outgoing/downward)
         int n_pw_live = 0;                           ///< live modes per slab; == n_pw_modes when nothing is prunable
         int proxy_ball_r2 = 0;                       ///< squared ball radius in (i,j,k); 0 keeps every coefficient
@@ -105,8 +105,8 @@ struct BuildInputs {
         std::vector<int> pw_form_box_offset; ///< [n_levels+1] into the proxy2pw boxes
         std::vector<int> pw_form_box_count;  ///< [n_levels]
         std::vector<long> pw_in_pool_base;   ///< [n_levels] pw_in slab base (prefix sum of pw_eval_box_count)
-        const ShiftPwGroupSrc *d_shift_group_src = nullptr; ///< merged shift sources, CSR by group, device
-        const int *d_shift_group_offsets = nullptr;         ///< [n_groups+1] CSR offsets, device
+
+        const ShiftPwHalo *d_shift_halo = nullptr; ///< [n_groups] shift group halos, device
     } worklists;
 
     /// Pipeline scratch/intermediate buffers and their strides.
@@ -207,11 +207,12 @@ struct State {
         int pw2poly_per_level_reals = 0;      ///< flat stride for d_pw2poly_flat
         int poly2pw_per_level_reals = 0;      ///< flat stride for d_poly2pw_flat
         int radialft_per_level_reals = 0;     ///< flat stride for d_radialft_flat
-        int wpwshift_per_level_reals = 0;     ///< flat stride for d_wpwshift_flat
+        int phase_per_level_reals = 0;        ///< flat stride for d_phase_flat
         DeviceBuffer<Real> d_pw2poly_flat;    ///< per-level PW->proxy (downward pw2proxy)
         DeviceBuffer<Real> d_poly2pw_flat;    ///< per-level proxy->PW (form_outgoing proxy2pw)
         DeviceBuffer<Real> d_radialft_flat;   ///< per-level per-mode kernel FT (form_outgoing multiply)
-        DeviceBuffer<Real> d_wpwshift_flat;   ///< per-level PW translation per neighbor (downward shift_pw)
+        DeviceBuffer<Real> d_phase_flat;      ///< per-level e^{i theta_j} per PW index (downward shift_pw)
+        DeviceBuffer<int> d_mode_axes;        ///< per live slot: its per-axis PW indices (downward shift_pw)
         DeviceBuffer<int> d_pencil_slots;     ///< per-(m2,m3) slot arithmetic for proxy2pw/pw2proxy
         DeviceBuffer<int> d_full_of_compact;  ///< slab slot -> cube index (multiply, for its k vector)
         int n_pw_live = 0;                    ///< live modes per slab; == n_pw_modes when nothing is prunable
@@ -236,13 +237,13 @@ struct State {
             const Real *pw2poly;
             const Real *poly2pw;
             const Real *radialft;
-            const Real *wpwshift;
+            const Real *phase;
         };
         Slab slab(int level) const {
             return {d_pw2poly_flat.data() + (long)level * pw2poly_per_level_reals,
                     d_poly2pw_flat.data() + (long)level * poly2pw_per_level_reals,
                     d_radialft_flat.data() + (long)level * radialft_per_level_reals,
-                    d_wpwshift_flat.data() + (long)level * wpwshift_per_level_reals};
+                    d_phase_flat.data() + (long)level * phase_per_level_reals};
         }
     } fourier;
 
@@ -265,16 +266,15 @@ struct State {
         DeviceBuffer<int> d_tp_up_assign;              ///< [n_pairs] pair is its parent's first writer
         DeviceBuffer<int> d_proxy_zero_boxes;          ///< upward proxy slabs no writer touches
         int n_proxy_zero_boxes = 0;
-        DeviceBuffer<int> d_tp_up_par;                   ///< upward tensorprod parents, one entry each
-        DeviceBuffer<int> d_tp_up_par_child_begin;       ///< [n_par] first child in d_tp_up_src_boxes
-        DeviceBuffer<int> d_tp_up_par_child_count;       ///< [n_par] children of that parent
-        DeviceBuffer<int> d_pw_eval_box_flat;            ///< per-level PW-work boxes (downward)
-        DeviceBuffer<ShiftPwGroupSrc> d_shift_group_src; ///< merged shift sources, CSR by group (downward)
-        DeviceBuffer<int> d_shift_group_offsets;         ///< [n_groups+1] CSR offsets into d_shift_group_src
-        DeviceBuffer<int> d_pw_form_box_flat;            ///< per-level proxy2pw boxes (form_outgoing)
-        int n_eval_boxes = 0;                            ///< |eval_targets_box_list| (eval_targets)
-        DeviceBuffer<int> d_eval_targets_box_list;       ///< leaf-of-eval boxes (eval_targets)
-        DeviceBuffer<Real> d_self_correction_work;       ///< [n_direct_work] self-correction factors (self_correction)
+        DeviceBuffer<int> d_tp_up_par;             ///< upward tensorprod parents, one entry each
+        DeviceBuffer<int> d_tp_up_par_child_begin; ///< [n_par] first child in d_tp_up_src_boxes
+        DeviceBuffer<int> d_tp_up_par_child_count; ///< [n_par] children of that parent
+        DeviceBuffer<int> d_pw_eval_box_flat;      ///< per-level PW-work boxes (downward)
+        DeviceBuffer<ShiftPwHalo> d_shift_halo;    ///< one halo per shift group (downward)
+        DeviceBuffer<int> d_pw_form_box_flat;      ///< per-level proxy2pw boxes (form_outgoing)
+        int n_eval_boxes = 0;                      ///< |eval_targets_box_list| (eval_targets)
+        DeviceBuffer<int> d_eval_targets_box_list; ///< leaf-of-eval boxes (eval_targets)
+        DeviceBuffer<Real> d_self_correction_work; ///< [n_direct_work] self-correction factors (self_correction)
 
         // Per-level prefix sums that drive kernel launches (host-resident).
         std::vector<long> pw_in_pool_base_h;   ///< [n_levels] pw_in slab base per level

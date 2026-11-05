@@ -420,7 +420,7 @@ __global__ void k_chunk_scan(int *__restrict__ table, long n_chunks, int *__rest
 /// Per-level prefix sums, the scan totals and the summary scalars. A few hundred entries: staged
 /// through shared memory and walked by one thread, which beats a device scan's launches.
 template <int DIM>
-__global__ void k_level_scan(int *__restrict__ level_scratch, int n_levels, int shift_group,
+__global__ void k_level_scan(int *__restrict__ level_scratch, int n_levels,
                              const ScanIn *__restrict__ scan, long n_boxes, long n_pw_per_box,
                              long *__restrict__ join, long *__restrict__ proxy_totals) {
     constexpr int NC = n_child_slots<DIM>();
@@ -433,7 +433,7 @@ __global__ void k_level_scan(int *__restrict__ level_scratch, int n_levels, int 
     if (!threadIdx.x) {
         LevelScratch ls(s, n_levels);
         JoinTables T(join, n_levels);
-        long tp = 0, pair = 0, par = 0, eval = 0, form = 0, groups = 0, max_form = 0;
+        long tp = 0, pair = 0, par = 0, eval = 0, form = 0, max_form = 0;
         for (int L = 0; L < n_levels; ++L) {
             T.tp_off[L] = tp;
             tp += ls.tp[L];
@@ -450,11 +450,9 @@ __global__ void k_level_scan(int *__restrict__ level_scratch, int n_levels, int 
             }
             T.pw_eval_off[L] = eval;
             T.pw_form_off[L] = form;
-            T.group_base[L] = groups;
             const int ne = ls.pw_tot[L * 2], nf = ls.pw_tot[L * 2 + 1];
             eval += ne;
             form += nf;
-            groups += (ne + shift_group - 1) / shift_group;
             max_form = nf > max_form ? nf : max_form;
         }
         T.tp_off[n_levels] = tp;
@@ -462,7 +460,6 @@ __global__ void k_level_scan(int *__restrict__ level_scratch, int n_levels, int 
         T.tp_up_par_off[n_levels] = par;
         T.pw_eval_off[n_levels] = eval;
         T.pw_form_off[n_levels] = form;
-        T.group_base[n_levels] = groups;
         join[join_max_pw_form] = max_form;
         const ScanIn tot = scan[n_boxes];
         join[join_n_c2p_groups] = tot.c2p >> 32;
@@ -780,194 +777,146 @@ __global__ void k_direct_summary(const long *__restrict__ keys, const int *__res
 
 // ---- shift_pw groups -------------------------------------------------------------------------
 
-/// Warp-uniform view of one group: its member boxes and how many there are.
-struct ShiftGroupArgs {
+/// A shift group is the plane-wave eval boxes of one parent. Siblings are consecutive in each
+/// level's eval list, and a level's first box never shares a parent with the previous level's
+/// last, so a group starts wherever the parent changes. One flag per eval entry, 0 past the list.
+__global__ void k_group_heads(const int *__restrict__ eval_flat, const sctl::Long *__restrict__ parent,
+                              const long *__restrict__ eval_off, int n_levels, long n_boxes, int *__restrict__ heads) {
+    const long i = blockIdx.x * (long)blockDim.x + threadIdx.x;
+    if (i > n_boxes)
+        return;
+    heads[i] = i < eval_off[n_levels] && (i == 0 || parent[eval_flat[i]] != parent[eval_flat[i - 1]]);
+}
+
+/// From the scanned flags: each group's first eval entry, the list length after the last group,
+/// and each level's first group in the join block.
+__global__ void k_group_begin(const int *__restrict__ eval_flat, const sctl::Long *__restrict__ parent,
+                              const long *__restrict__ eval_off, int n_levels, long n_boxes,
+                              const int *__restrict__ gid, int *__restrict__ group_begin,
+                              long *__restrict__ group_base) {
+    const long i = blockIdx.x * (long)blockDim.x + threadIdx.x;
+    if (i > n_boxes)
+        return;
+    const long n_eval = eval_off[n_levels];
+    if (i < n_eval ? i == 0 || parent[eval_flat[i]] != parent[eval_flat[i - 1]] : i == n_eval)
+        group_begin[gid[i]] = (int)i;
+    if (i <= n_levels)
+        group_base[i] = gid[eval_off[i]];
+}
+
+struct HaloArgs {
+    const int *eval_flat;
     const sctl::Long *nbr;
     const unsigned char *leaf;
     const long *pw_out_offsets;
-    const int *box_flat;
-    const long *level_box_offset; ///< [n_levels+1] device, in the join block
-    const long *level_group_base; ///< [n_levels+1] device, in the join block
+    const int *group_begin;
+    const long *eval_off; ///< [n_levels+1] device, in the join block
     int n_levels;
-    int shift_group;
-    int cap; ///< shared-memory slots reserved per group
+    int n_groups;
 };
 
-__device__ bool group_span(const ShiftGroupArgs &a, int g, const int *&box_ids, int &n_mem) {
-    if (g >= a.level_group_base[a.n_levels])
-        return false;
-    int L = 0;
-    while (L + 1 < a.n_levels && a.level_group_base[L + 1] <= g)
-        ++L;
-    const int begin = a.level_box_offset[L] + (g - a.level_group_base[L]) * a.shift_group;
-    const int rem = a.level_box_offset[L + 1] - begin;
-    n_mem = rem < a.shift_group ? rem : a.shift_group;
-    box_ids = a.box_flat + begin;
-    return true;
-}
-
-/// One surviving (member, neighbour slot) pair, in the order the slot walk visits them.
-struct alignas(16) ShiftCand {
-    long pw_off;
-    short idx; ///< member * n_nbr_slots + neighbour slot
-};
-
-/// Every member's neighbours screened 32 at a time, so the nbr -> leaf -> pw_out_offsets
-/// lookups issue in parallel instead of forming one dependent chain per pair. Compaction is
-/// ordered, so the walk that follows sees exactly the sequence the scalar loop produced.
+/// The 3^DIM-1-k digits of a neighbour slot k, most significant first, minus one: the slot's
+/// offset in the order the shift table is built.
 template <int DIM>
-__device__ int shift_group_cands(const ShiftGroupArgs &a, const int *__restrict__ box_ids, int n_mem,
-                                 ShiftCand *c) {
-    constexpr int NN = n_nbr_slots<DIM>();
-    const int lane = threadIdx.x & 31;
-    const int n_pair = n_mem * NN;
-    int n = 0;
-    for (int base = 0; base < n_pair; base += 32) {
-        const int idx = base + lane;
-        long pw_off = -1;
-        if (idx < n_pair) {
-            const int t = idx / NN;
-            const sctl::Long box = box_ids[t];
-            const sctl::Long nb = a.nbr[box * NN + (idx - t * NN)];
-            if (nb >= 0 && nb != box && !(a.leaf[box] && a.leaf[nb]))
-                pw_off = a.pw_out_offsets[nb];
-        }
-        const unsigned mask = __ballot_sync(FULL, pw_off >= 0);
-        if (pw_off >= 0) {
-            const int pos = n + __popc(mask & ((1u << lane) - 1));
-            c[pos].pw_off = pw_off;
-            c[pos].idx = (short)idx;
-        }
-        n += __popc(mask);
+__device__ void slot_offset(int k, int *o) {
+    int ind = n_nbr_slots<DIM>() - 1 - k;
+    for (int a = DIM - 1; a >= 0; --a) {
+        o[a] = ind % 3 - 1;
+        ind /= 3;
     }
-    return n;
 }
 
-/// One warp merges a group's members into a deduplicated source list in shared memory and
-/// returns its length. The scan for a free matching slot is the only parallel part; the
-/// slot order has to match the sequential "first free slot" rule, so the walk itself stays
-/// warp-uniform and lane 0 owns the writes.
-template <int DIM>
-__device__ int shift_group_slots(const ShiftCand *__restrict__ c, int n_cand, ShiftPwGroupSrc *s) {
-    constexpr int NN = n_nbr_slots<DIM>();
-    const int lane = threadIdx.x & 31;
-    int n_slots = 0;
-    for (int i = 0; i < n_cand; ++i) {
-        const long pw_off = c[i].pw_off;
-        const int t = c[i].idx / NN;
-        const int k = c[i].idx - t * NN;
+constexpr int kHaloWarps = 4;
 
-        int slot = -1;
-        for (int base = 0; base < n_slots; base += 32) {
-            const int q = base + lane;
-            const bool hit = q < n_slots && s[q].pw_off == pw_off && s[q].shift_ind[t] < 0;
-            const unsigned mask = __ballot_sync(FULL, hit);
-            if (mask) {
-                slot = base + __ffs(mask) - 1;
+/// One warp per group. A member's position is where it sits in the first member's neighbour list,
+/// with the frame then shifted so every member lands in {0,1}^DIM. The guards are the ones the
+/// translation always had: a neighbour slot holding the box itself is only ever the centre one,
+/// and leaf-leaf pairs belong to the direct pass.
+template <int DIM>
+__global__ void k_shift_halo(HaloArgs a, ShiftPwHalo *__restrict__ out) {
+    constexpr int NN = n_nbr_slots<DIM>();
+    __shared__ long s_off[kHaloWarps][64];
+    __shared__ unsigned s_take[kHaloWarps][64];
+    const int warp = threadIdx.x >> 5;
+    const int lane = threadIdx.x & 31;
+    const int g = blockIdx.x * kHaloWarps + warp;
+    if (g >= a.n_groups)
+        return;
+    const int begin = a.group_begin[g];
+    const int n_mem = a.group_begin[g + 1] - begin;
+    int level = 0;
+    while (level + 1 < a.n_levels && a.eval_off[level + 1] <= begin)
+        ++level;
+    const sctl::Long box0 = a.eval_flat[begin];
+
+    int rel[DIM] = {};
+    if (lane < n_mem) {
+        const sctl::Long box = a.eval_flat[begin + lane];
+        for (int k = 0; k < NN; ++k)
+            if (a.nbr[box0 * NN + k] == box) {
+                slot_offset<DIM>(k, rel);
                 break;
             }
-        }
-        const bool fresh = slot < 0;
-        if (fresh)
-            slot = n_slots++;
-        if (lane == 0) {
-            if (fresh) {
-                s[slot].pw_off = pw_off;
-                for (int u = 0; u < kShiftGroupMax; ++u)
-                    s[slot].shift_ind[u] = -1;
+    }
+    int p[DIM];
+    int slot = 0;
+    for (int ax = 0; ax < DIM; ++ax) {
+        int lo = lane < n_mem ? rel[ax] : 1;
+        for (int o = 16; o; o >>= 1)
+            lo = min(lo, __shfl_xor_sync(FULL, lo, o));
+        p[ax] = rel[ax] - lo;
+        slot = 2 * slot + p[ax];
+    }
+
+    for (int h = lane; h < 64; h += 32) {
+        s_off[warp][h] = -1;
+        s_take[warp][h] = 0;
+    }
+    __syncwarp();
+    for (int base = 0; base < n_mem * NN; base += 32) {
+        const int idx = base + lane;
+        const int t = idx < n_mem * NN ? idx / NN : 0;
+        const int t_slot = __shfl_sync(FULL, slot, t);
+        int tp[DIM];
+        for (int ax = 0; ax < DIM; ++ax)
+            tp[ax] = __shfl_sync(FULL, p[ax], t);
+        if (idx < n_mem * NN) {
+            const int k = idx - t * NN;
+            const sctl::Long box = a.eval_flat[begin + t];
+            const sctl::Long nb = a.nbr[box * NN + k];
+            const sctl::Long src = k == NN / 2 ? box : nb;
+            const bool take = k == NN / 2
+                                  ? a.pw_out_offsets[box] >= 0
+                                  : nb >= 0 && nb != box && !(a.leaf[box] && a.leaf[nb]) && a.pw_out_offsets[nb] >= 0;
+            if (take) {
+                int o[DIM];
+                slot_offset<DIM>(k, o);
+                int h = 0;
+                for (int ax = 0; ax < DIM; ++ax)
+                    h = 4 * h + tp[ax] + o[ax] + 1;
+                s_off[warp][h] = a.pw_out_offsets[src];
+                atomicOr(&s_take[warp][h], 1u << t_slot);
             }
-            s[slot].shift_ind[t] = (signed char)(NN - 1 - k);
         }
-        __syncwarp();
     }
-    return n_slots;
-}
-
-/// Shared slabs for one warp: the slot list it is building and the screened pairs feeding it.
-__device__ void shift_group_smem_split(char *smem, int warp, int n_warps, int cap, ShiftPwGroupSrc *&s,
-                                       ShiftCand *&c) {
-    s = reinterpret_cast<ShiftPwGroupSrc *>(smem) + (long)warp * cap;
-    c = reinterpret_cast<ShiftCand *>(reinterpret_cast<ShiftPwGroupSrc *>(smem) + (long)n_warps * cap) +
-        (long)warp * cap;
-}
-
-/// Runs over the group bound rather than the group count, which only the device knows at this
-/// point; slots past the count read zero so the scan's tail is the total.
-template <int DIM>
-__global__ void k_shift_group_count(ShiftGroupArgs a, long n_bound, int *__restrict__ counts) {
-    extern __shared__ char shift_group_smem[];
-    const int n_warps = blockDim.x >> 5;
-    const int warp = threadIdx.x >> 5;
-    const long g = blockIdx.x * (long)n_warps + warp;
-    if (g > n_bound)
-        return;
-    const int *box_ids;
-    int n_mem;
-    if (!group_span(a, (int)g, box_ids, n_mem)) {
-        if ((threadIdx.x & 31) == 0)
-            counts[g] = 0;
-        return;
+    __syncwarp();
+    ShiftPwHalo &dst = out[g];
+    for (int h = lane; h < 64; h += 32) {
+        dst.pw_off[h] = s_off[warp][h];
+        dst.take[h] = (unsigned char)s_take[warp][h];
     }
-    ShiftPwGroupSrc *s;
-    ShiftCand *c;
-    shift_group_smem_split(shift_group_smem, warp, n_warps, a.cap, s, c);
-    const int n_cand = shift_group_cands<DIM>(a, box_ids, n_mem, c);
-    const int n = shift_group_slots<DIM>(c, n_cand, s);
-    if ((threadIdx.x & 31) == 0)
-        counts[g] = n;
+    if (lane < 8)
+        dst.member[lane] = -1;
+    __syncwarp();
+    if (lane < n_mem)
+        dst.member[slot] = begin + lane - (int)a.eval_off[level];
 }
-
-template <int DIM>
-__global__ void k_shift_group_fill(ShiftGroupArgs a, const int *__restrict__ offsets,
-                                   ShiftPwGroupSrc *__restrict__ out) {
-    extern __shared__ char shift_group_smem[];
-    const int n_warps = blockDim.x >> 5;
-    const int warp = threadIdx.x >> 5;
-    const int g = blockIdx.x * n_warps + warp;
-    const int *box_ids;
-    int n_mem;
-    if (!group_span(a, g, box_ids, n_mem))
-        return;
-    ShiftPwGroupSrc *s;
-    ShiftCand *c;
-    shift_group_smem_split(shift_group_smem, warp, n_warps, a.cap, s, c);
-    const int n_cand = shift_group_cands<DIM>(a, box_ids, n_mem, c);
-    const int n = shift_group_slots<DIM>(c, n_cand, s);
-    ShiftPwGroupSrc *dst = out + offsets[g];
-    for (int i = threadIdx.x & 31; i < n; i += 32)
-        dst[i] = s[i];
-}
-
-__global__ void k_copy_int_to_long(const int *__restrict__ src, long *__restrict__ dst) { *dst = *src; }
-
-constexpr int kShiftWarps = 4;
-
-template <typename Real, int DIM>
-ShiftGroupArgs shift_args(const DeviceMetadataInputs<Real, DIM> &in, const DeviceMetadataOutputs<Real> &out) {
-    const JoinTables T(out.d_join, in.n_levels);
-    ShiftGroupArgs a;
-    a.nbr = in.d_nbr;
-    a.leaf = in.d_is_global_leaf;
-    a.pw_out_offsets = out.d_pw_out_offsets;
-    a.box_flat = out.d_pw_eval_flat;
-    a.level_box_offset = T.pw_eval_off;
-    a.level_group_base = T.group_base;
-    a.n_levels = in.n_levels;
-    a.shift_group = in.shift_group;
-    // A member contributes at most one new slot per neighbor slot, and its own slot never
-    // survives, so this bound is exact rather than a guess.
-    a.cap = in.shift_group * (n_nbr_slots<DIM>() - 1);
-    return a;
-}
-
-inline std::size_t shift_smem(int cap) { return (std::size_t)kShiftWarps * cap * (sizeof(ShiftPwGroupSrc) + sizeof(ShiftCand)); }
 
 } // namespace
 
 std::size_t scan_scratch_bytes(long n_boxes) { return (std::size_t)(n_boxes + 1) * sizeof(ScanIn); }
 long n_chunks(long n_boxes) { return (n_boxes + 1 + BLOCK - 1) / BLOCK; }
 int level_scratch_size(int n_levels) { return LevelScratch::size(n_levels); }
-long shift_groups_bound(long n_boxes, int n_levels, int shift_group) { return n_boxes / shift_group + n_levels; }
 
 template <int DIM>
 void box_status(const BoxStatusInputs<DIM> &in, BoxStatusOutputs &out) {
@@ -1033,7 +982,7 @@ void compute_device_metadata(const DeviceMetadataInputs<Real, DIM> &in, DeviceMe
     thrust::exclusive_scan(policy(alloc), scan, scan + n_boxes + 1, scan, ScanIn{0, 0, 0, 0, 0, 0}, ScanAdd());
     k_chunk_scan<<<kMaxLevels * 2, BLOCK>>>(out.d_chunk_table, chunks,
                                             LevelScratch(out.d_level_scratch, nl).pw_tot);
-    k_level_scan<DIM><<<1, BLOCK>>>(out.d_level_scratch, nl, in.shift_group, scan, n_boxes, in.n_pw_per_box,
+    k_level_scan<DIM><<<1, BLOCK>>>(out.d_level_scratch, nl, scan, n_boxes, in.n_pw_per_box,
                                     out.d_join, out.d_proxy_totals);
     DMK_CUDA_OK(cudaMemcpyAsync(out.h_proxy_totals, out.d_proxy_totals, 2 * sizeof(long), cudaMemcpyDeviceToHost, 0));
     DMK_CUDA_OK(cudaEventRecord(out.proxy_ready, 0));
@@ -1066,14 +1015,14 @@ void compute_device_metadata(const DeviceMetadataInputs<Real, DIM> &in, DeviceMe
                                             in.d_src_cnt_owned, in.d_trg_cnt_owned, in.w0, has_w0, n_boxes, out.d_join,
                                             out.d_self_correction_work);
 
-    { // shift_pw group sizes; the lists themselves wait for the join to size their storage
-        const ShiftGroupArgs a = shift_args(in, out);
-        const long bound = out.n_groups_bound;
-        const long sgrid = (bound + 1 + kShiftWarps - 1) / kShiftWarps;
-        k_shift_group_count<DIM><<<sgrid, kShiftWarps * 32, shift_smem(a.cap)>>>(a, bound, out.d_shift_counts);
-        thrust::exclusive_scan(policy(alloc), out.d_shift_counts, out.d_shift_counts + bound + 1,
-                               out.d_shift_offsets);
-        k_copy_int_to_long<<<1, 1>>>(out.d_shift_offsets + bound, out.d_join + join_shift_total);
+    { // shift_pw groups; their halos wait for the join to size their storage
+        const JoinTables T(out.d_join, nl);
+        k_group_heads<<<(n_boxes + 1 + BLOCK - 1) / BLOCK, BLOCK>>>(out.d_pw_eval_flat, in.d_parent, T.pw_eval_off, nl,
+                                                                    n_boxes, out.d_group_heads);
+        thrust::exclusive_scan(policy(alloc), out.d_group_heads, out.d_group_heads + n_boxes + 1, out.d_group_heads);
+        k_group_begin<<<(n_boxes + 1 + BLOCK - 1) / BLOCK, BLOCK>>>(out.d_pw_eval_flat, in.d_parent, T.pw_eval_off, nl,
+                                                                    n_boxes, out.d_group_heads, out.d_group_begin,
+                                                                    T.group_base);
     }
 }
 
@@ -1101,7 +1050,6 @@ void finish_device_metadata(DeviceMetadataOutputs<Real> &out, int n_levels) {
     out.max_pw_form_per_level = (int)j[join_max_pw_form];
     out.n_proxy_zero_boxes = (int)j[join_n_zero];
     out.pw_out_size = j[join_pw_out_size];
-    out.n_shift_src = (int)j[join_shift_total];
     out.direct_occupancy_src = j[join_direct_src] ? (int)(j[join_direct_src_sq] / j[join_direct_src]) : 0;
     out.direct_occupancy_trg = j[join_direct_trg] ? (int)(j[join_direct_trg_sq] / j[join_direct_trg]) : 0;
     out.n_shift_groups = (int)out.h_table(5)[n_levels];
@@ -1115,20 +1063,21 @@ void finish_device_metadata(DeviceMetadataOutputs<Real> &out, int n_levels) {
 }
 
 template <typename Real, int DIM>
-void fill_shift_groups(const DeviceMetadataInputs<Real, DIM> &in, const DeviceMetadataOutputs<Real> &out,
-                       ShiftPwGroupSrc *d_group_src) {
+void fill_shift_halos(const DeviceMetadataInputs<Real, DIM> &in, const DeviceMetadataOutputs<Real> &out,
+                      ShiftPwHalo *d_halo) {
     if (!out.n_shift_groups)
         return;
-    const ShiftGroupArgs a = shift_args(in, out);
-    const long sgrid = (out.n_shift_groups + kShiftWarps - 1) / kShiftWarps;
-    k_shift_group_fill<DIM><<<sgrid, kShiftWarps * 32, shift_smem(a.cap)>>>(a, out.d_shift_offsets, d_group_src);
+    const HaloArgs a{out.d_pw_eval_flat,   in.d_nbr,          in.d_is_global_leaf,
+                     out.d_pw_out_offsets, out.d_group_begin, JoinTables(out.d_join, in.n_levels).pw_eval_off,
+                     in.n_levels,          out.n_shift_groups};
+    k_shift_halo<DIM><<<(out.n_shift_groups + kHaloWarps - 1) / kHaloWarps, kHaloWarps * 32>>>(a, d_halo);
 }
 
 #define DMK_INSTANTIATE_METADATA(Real, DIM)                                                                            \
     template void compute_device_metadata<Real, DIM>(const DeviceMetadataInputs<Real, DIM> &,                          \
                                                      DeviceMetadataOutputs<Real> &);                                   \
-    template void fill_shift_groups<Real, DIM>(const DeviceMetadataInputs<Real, DIM> &,                                \
-                                               const DeviceMetadataOutputs<Real> &, ShiftPwGroupSrc *);
+    template void fill_shift_halos<Real, DIM>(const DeviceMetadataInputs<Real, DIM> &,                                 \
+                                              const DeviceMetadataOutputs<Real> &, ShiftPwHalo *);
 
 #define DMK_INSTANTIATE_FINISH(Real)                                                                                   \
     template void finish_device_metadata<Real>(DeviceMetadataOutputs<Real> &, int);                                    \

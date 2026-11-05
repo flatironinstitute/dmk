@@ -15,7 +15,6 @@
 
 #include <cuda_runtime.h>
 
-#include <algorithm>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -28,16 +27,15 @@ using jit::jit_real_name;
 using jit::JitCache;
 using jit::JitKey;
 
-// Batched neighbor plane-wave translation (one launch, all levels; n=1 unused).
+// Batched neighbor plane-wave translation (one launch, all levels).
 // Assigns into each box's pw_in_pool slab, so it is idempotent (no snapshot).
 template <typename Real>
-void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStream_t stream) {
-    if (args_h.empty())
-        return;
-    int max_groups = 0;
+void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, int n_pw_modes, int n_pw_live, int n_charge_dim,
+                     cudaStream_t stream) {
+    int n_groups = 0;
     for (const auto &a : args_h)
-        max_groups = std::max(max_groups, a.n_groups_at_level);
-    if (max_groups == 0)
+        n_groups += a.n_groups_at_level;
+    if (n_groups == 0)
         return;
 
     static JitCache cache;
@@ -46,7 +44,6 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
     static auto &d_args = *new cuda_helpers::DeviceBuffer<dmk::cuda::ShiftPwArgs<Real>>();
     d_args.upload_async_grow(args_h.data(), args_h.size(), stream);
     const int n_args = static_cast<int>(args_h.size());
-    const auto a0 = args_h[0];
 
     auto launch_one = [&](const TuningParams &p, cudaStream_t st, bool compile_only) {
         JitKey key;
@@ -54,26 +51,23 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
         key.real = jit_real_name<Real>();
         key.sm_major = cache.sm_major();
         key.sm_minor = cache.sm_minor();
-        key.params = {{"N_PW_MODES", a0.n_pw_modes},
-                      {"N_PW_LIVE", a0.n_pw_live},
-                      {"N_CHARGE_DIM", a0.n_charge_dim},
-                      {"N_NEIGHBORS", a0.n_neighbors},
-                      {"SHIFT_GROUP", dmk::cuda::shift_group_size(a0.n_charge_dim)},
-                      {"BLOCK_SIZE", p.at("BLOCK_SIZE")},
-                      {"NEIGHBOR_UNROLL", p.at("NEIGHBOR_UNROLL")}};
+        key.params = {{"N_PW_MODES", n_pw_modes},
+                      {"N_PW_LIVE", n_pw_live},
+                      {"N_CHARGE_DIM", n_charge_dim},
+                      {"BLOCK_SIZE", p.at("BLOCK_SIZE")}};
         auto kernel =
             cache.get_kernel_from_source(key, [&] { return make_stage_source("pt/shiftpw.cu", key, "", "PtShiftPw"); });
         const dmk::cuda::ShiftPwArgs<Real> *dev_args = d_args.data();
         int n = n_args;
         if (compile_only)
             return;
-        kernel->launch(dim3(max_groups, n_args, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), 0, st, dev_args, n);
+        const int n_windows = (n_pw_live + p.at("BLOCK_SIZE") - 1) / p.at("BLOCK_SIZE");
+        kernel->launch(dim3(n_groups, n_windows, 1), dim3(p.at("BLOCK_SIZE"), 1, 1), 0, st, dev_args, n);
     };
 
     std::ostringstream tune_key;
-    tune_key << "PtShiftPw|real=" << jit_real_name<Real>() << "|n_pw_modes=" << a0.n_pw_modes
-             << "|n_live=" << a0.n_pw_live << "|n_charge_dim=" << a0.n_charge_dim << "|n_neighbors=" << a0.n_neighbors
-             << "|shift_group=" << dmk::cuda::shift_group_size(a0.n_charge_dim);
+    tune_key << "PtShiftPw|real=" << jit_real_name<Real>() << "|n_pw_modes=" << n_pw_modes << "|n_live=" << n_pw_live
+             << "|n_charge_dim=" << n_charge_dim;
     tune_key << "|src=" << jit::jit_source_hash("pt/shiftpw.cu");
     const std::string tk = tune_key.str();
 
@@ -83,15 +77,11 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, cudaStre
     }
 
     const cudaDeviceProp &prop = device_prop();
-
-    // Each source loop iteration carries SHIFT_GROUP applications, so the useful unroll
-    // factors are small.
-    const std::vector<TuningParameter> space{{"BLOCK_SIZE", {64, 128, 256, 512, 768}},
-                                             {"NEIGHBOR_UNROLL", {1, 2, 3, 4}}};
-    const TuningParams defaults{{"BLOCK_SIZE", 256}, {"NEIGHBOR_UNROLL", 2}};
+    const std::vector<TuningParameter> space{{"BLOCK_SIZE", {64, 128, 256, 512, 768}}};
+    const TuningParams defaults{{"BLOCK_SIZE", 128}};
     const auto constraint = [&](const TuningParams &p) {
         const int bs = p.at("BLOCK_SIZE");
-        return bs > 0 && bs <= prop.maxThreadsPerBlock && bs % 32 == 0 && p.at("NEIGHBOR_UNROLL") > 0;
+        return bs > 0 && bs <= prop.maxThreadsPerBlock && bs % 32 == 0;
     };
 
     autotuned_launch<Real>(tk, "PtShiftPwKernel", space, defaults, constraint, launch_one,
@@ -110,7 +100,6 @@ void downward(State<Real, DIM> &s, cudaStream_t stream) {
         auto &sc = s.scratch;
 
         // ---- per-level shift_pw (-> pw_in_pool) + pw2proxy (-> proxy_downward) ----
-        const int shift_group = dmk::cuda::shift_group_size(f.n_charge_dim);
         std::vector<dmk::cuda::ShiftPwArgs<Real>> shift_h;
         std::vector<dmk::cuda::PwToProxyArgs<Real>> pw2p_h;
         for (int L = 0; L < s.n_levels; ++L) {
@@ -121,19 +110,12 @@ void downward(State<Real, DIM> &s, cudaStream_t stream) {
             Real *level_pw_in = sc.d_pw_in_pool.data() + w.pw_in_pool_base_h[L] * sc.pw_in_stride_reals;
 
             dmk::cuda::ShiftPwArgs<Real> sa;
-            sa.n_boxes_at_level = n_box;
-            sa.n_groups_at_level = (n_box + shift_group - 1) / shift_group;
-            sa.n_neighbors = s.topology.n_neighbors;
-            sa.n_charge_dim = f.n_charge_dim;
-            sa.n_pw_modes = f.n_pw_modes;
-            sa.n_pw_live = f.n_pw_live;
+            sa.n_groups_at_level = w.shift_group_base_h[L + 1] - w.shift_group_base_h[L];
             sa.pw_in_stride = sc.pw_in_stride_reals;
-            sa.box_ids = w.d_pw_eval_box_flat.data() + box_off;
-            sa.pw_out_offsets = sc.d_pw_out_offsets.data();
-            sa.group_src = w.d_shift_group_src.data();
-            sa.group_offsets = w.d_shift_group_offsets.data() + w.shift_group_base_h[L];
+            sa.halo = w.d_shift_halo.data() + w.shift_group_base_h[L];
+            sa.mode_axes = f.d_mode_axes.data();
+            sa.phase = f.slab(L).phase;
             sa.pw_out_flat = sc.d_pw_out.data();
-            sa.wpwshift = f.slab(L).wpwshift;
             sa.pw_in_pool = level_pw_in;
             shift_h.push_back(sa);
 
@@ -156,7 +138,7 @@ void downward(State<Real, DIM> &s, cudaStream_t stream) {
             pw2p_h.push_back(pa);
         }
 
-        launch_shift_pw<Real>(shift_h, stream);
+        launch_shift_pw<Real>(shift_h, f.n_pw_modes, f.n_pw_live, f.n_charge_dim, stream);
         launch_pw2proxy<Real>(pw2p_h, sc.d_proxy_coeffs_downward.data(), sc.d_proxy_coeffs_downward.size(), stream);
 
         // ---- per-level downward tensorprod (parent->child, p2c, non-atomic add) ----

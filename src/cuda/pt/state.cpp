@@ -34,8 +34,8 @@ namespace dmk::cuda::pt {
 /// direct-evaluation constants.
 template <typename Real>
 struct FourierTables {
-    DeviceBuffer<Real> pw2poly, poly2pw, radialft, wpwshift;
-    DeviceBuffer<int> pencil_slots, full_of_compact;
+    DeviceBuffer<Real> pw2poly, poly2pw, radialft, phase;
+    DeviceBuffer<int> pencil_slots, full_of_compact, mode_axes;
     int n_pw_live = 0;
     DeviceBuffer<Real> p2c, c2p;
     DeviceBuffer<Real> window_pw2poly, window_poly2pw, window_radialft;
@@ -119,20 +119,25 @@ void build_fourier_tables(const BuildInputs<Real, DIM> &in, DMKPtTree<Real, DIM>
     std::vector<Real> pw2poly_flat((std::size_t)n_levels * fou.pw2poly_per_level_reals);
     std::vector<Real> poly2pw_flat((std::size_t)n_levels * fou.poly2pw_per_level_reals);
     std::vector<Real> radialft_flat((std::size_t)n_levels * fou.radialft_per_level_reals);
-    std::vector<Real> wpwshift_flat((std::size_t)n_levels * fou.wpwshift_per_level_reals);
+    std::vector<Real> phase_flat((std::size_t)n_levels * fou.phase_per_level_reals);
     for (int L = 0; L < n_levels; ++L) {
         const auto &dfd = tree.difference_fourier_data[L];
         const Real *pw2poly = reinterpret_cast<const Real *>(&dfd.pw2poly[0]);
         const Real *poly2pw = reinterpret_cast<const Real *>(&dfd.poly2pw[0]);
-        const Real *wpwshift = reinterpret_cast<const Real *>(&dfd.wpwshift[0]);
         std::copy(pw2poly, pw2poly + fou.pw2poly_per_level_reals,
                   &pw2poly_flat[(std::size_t)L * fou.pw2poly_per_level_reals]);
         std::copy(poly2pw, poly2pw + fou.poly2pw_per_level_reals,
                   &poly2pw_flat[(std::size_t)L * fou.poly2pw_per_level_reals]);
         std::copy(&dfd.radialft[0], &dfd.radialft[0] + fou.radialft_per_level_reals,
                   &radialft_flat[(std::size_t)L * fou.radialft_per_level_reals]);
-        std::copy(wpwshift, wpwshift + fou.wpwshift_per_level_reals,
-                  &wpwshift_flat[(std::size_t)L * fou.wpwshift_per_level_reals]);
+        // The translation table is separable, w(o, (j_0, ..)) = prod_a e^{i o_a theta_{j_a}}, so its block
+        // for the offset (0, .., 0, +1) over the modes whose other indices are all 0 is e^{i theta_j}.
+        const Real *unit = reinterpret_cast<const Real *>(&dfd.wpwshift[0]) +
+                           (std::size_t)(topo.n_neighbors / 2 + 1) * 2 * fou.n_pw_modes;
+        for (int j = 0; j < fou.n_pw; ++j) {
+            phase_flat[(std::size_t)L * fou.phase_per_level_reals + 2 * j] = unit[j];
+            phase_flat[(std::size_t)L * fou.phase_per_level_reals + 2 * j + 1] = unit[fou.n_pw_modes + j];
+        }
     }
 
     // The kernel FT is tabulated against integer radius j1^2+j2^2+j3^2 and gathered onto the mode
@@ -189,28 +194,24 @@ void build_fourier_tables(const BuildInputs<Real, DIM> &in, DMKPtTree<Real, DIM>
         pencil_slots.clear();
         full_of_compact.clear();
     } else {
-        // Permute the two per-mode tables into slab order. A wpwshift neighbour block is split
-        // real-then-imaginary, so each half gathers separately.
+        // Permute the per-mode table into slab order.
         std::vector<Real> rad_new(fou.n_pw_modes);
-        std::vector<Real> ws_new(fou.wpwshift_per_level_reals);
         for (int L = 0; L < n_levels; ++L) {
             Real *rad = &radialft_flat[(std::size_t)L * fou.radialft_per_level_reals];
             std::fill(rad_new.begin(), rad_new.end(), Real{0});
             for (int c = 0; c < n_live; ++c)
                 rad_new[c] = rad[full_of_compact[c]];
             std::copy(rad_new.begin(), rad_new.end(), rad);
+        }
+    }
 
-            Real *ws = &wpwshift_flat[(std::size_t)L * fou.wpwshift_per_level_reals];
-            std::fill(ws_new.begin(), ws_new.end(), Real{0});
-            for (int ind = 0; ind < topo.n_neighbors; ++ind) {
-                const Real *src = ws + (std::size_t)ind * 2 * fou.n_pw_modes;
-                Real *dst = &ws_new[(std::size_t)ind * 2 * fou.n_pw_modes];
-                for (int c = 0; c < n_live; ++c) {
-                    dst[c] = src[full_of_compact[c]];
-                    dst[fou.n_pw_modes + c] = src[fou.n_pw_modes + full_of_compact[c]];
-                }
-            }
-            std::copy(ws_new.begin(), ws_new.end(), ws);
+    // Each live slot's index along every axis of the mode cube, axis 0 (the outermost) lowest.
+    std::vector<int> mode_axes(n_live);
+    for (int c = 0; c < n_live; ++c) {
+        int full = full_of_compact.empty() ? c : full_of_compact[c];
+        for (int a = DIM - 1; a >= 0; --a) {
+            mode_axes[c] |= (full % fou.n_pw) << (8 * a);
+            full /= fou.n_pw;
         }
     }
 
@@ -219,7 +220,8 @@ void build_fourier_tables(const BuildInputs<Real, DIM> &in, DMKPtTree<Real, DIM>
     ftab.pw2poly.upload(pw2poly_flat.data(), pw2poly_flat.size());
     ftab.poly2pw.upload(poly2pw_flat.data(), poly2pw_flat.size());
     ftab.radialft.upload(radialft_flat.data(), radialft_flat.size());
-    ftab.wpwshift.upload(wpwshift_flat.data(), wpwshift_flat.size());
+    ftab.phase.upload(phase_flat.data(), phase_flat.size());
+    ftab.mode_axes.upload(mode_axes.data(), mode_axes.size());
 
     const auto up = [](DeviceBuffer<Real> &d, const sctl::Vector<Real> &v) {
         d.upload(v.Dim() ? &v[0] : nullptr, v.Dim());
@@ -312,7 +314,7 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree, const DeviceM
     fou.pw2poly_per_level_reals = 2 * fou.n_pw * fou.n_order;
     fou.poly2pw_per_level_reals = 2 * fou.n_pw * fou.n_order;
     fou.radialft_per_level_reals = fou.n_pw_modes;
-    fou.wpwshift_per_level_reals = 2 * topo.n_neighbors * fou.n_pw_modes;
+    fou.phase_per_level_reals = 2 * fou.n_pw;
 
     fou.hpw_per_level.resize(n_levels);
     for (int L = 0; L < n_levels; ++L)
@@ -474,7 +476,7 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     fourier.pw2poly_per_level_reals = fi.pw2poly_per_level_reals;
     fourier.poly2pw_per_level_reals = fi.poly2pw_per_level_reals;
     fourier.radialft_per_level_reals = fi.radialft_per_level_reals;
-    fourier.wpwshift_per_level_reals = fi.wpwshift_per_level_reals;
+    fourier.phase_per_level_reals = fi.phase_per_level_reals;
     fourier.proxy_ball_r2 = fi.proxy_ball_r2;
     fourier.n_pw_live = fi.n_pw_live;
     fourier.d_centers.adopt(md.d_centers, nb * DIM);
@@ -484,7 +486,8 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
         adopt(fourier.d_pw2poly_flat, t.pw2poly);
         adopt(fourier.d_poly2pw_flat, t.poly2pw);
         adopt(fourier.d_radialft_flat, t.radialft);
-        adopt(fourier.d_wpwshift_flat, t.wpwshift);
+        adopt(fourier.d_phase_flat, t.phase);
+        adopt(fourier.d_mode_axes, t.mode_axes);
         adopt(fourier.d_pencil_slots, t.pencil_slots);
         adopt(fourier.d_full_of_compact, t.full_of_compact);
         adopt(fourier.d_window_pw2poly, t.window_pw2poly);
@@ -532,8 +535,7 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     const int n_pw_form = wi.pw_form_box_offset.empty() ? 0 : wi.pw_form_box_offset[n_levels];
     worklists.d_pw_eval_box_flat.adopt(md.d_pw_eval_flat, n_pw_eval);
     worklists.d_pw_form_box_flat.adopt(md.d_pw_form_flat, n_pw_form);
-    worklists.d_shift_group_src.adopt(wi.d_shift_group_src, md.n_shift_src);
-    worklists.d_shift_group_offsets.adopt(wi.d_shift_group_offsets, md.n_shift_groups + 1);
+    worklists.d_shift_halo.adopt(wi.d_shift_halo, md.n_shift_groups);
     worklists.d_self_correction_work.adopt(md.d_self_correction_work, md.n_direct_work);
     worklists.shift_group_base_h = wi.shift_group_base;
     worklists.pw_in_pool_base_h = wi.pw_in_pool_base;

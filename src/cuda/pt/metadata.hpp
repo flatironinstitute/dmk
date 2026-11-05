@@ -112,11 +112,10 @@ struct DeviceMetadataInputs {
     bool periodic = false;
     bool skip_root_form = false; ///< under PBC the root's difference kernel is skipped
     long n_pw_per_box = 0;
-    int shift_group = 0; ///< target boxes merged per shift_pw group
     SelfCorrectionMode self_mode = SelfCorrectionMode::w0;
 };
 
-/// The one block the host reads back at the join, as longs: twelve scalars then six per-level
+/// The one block the host reads back at the join, as longs: eleven scalars then six per-level
 /// tables of n_levels+1 entries each.
 enum JoinSlot {
     join_n_direct_work = 0,
@@ -126,7 +125,6 @@ enum JoinSlot {
     join_max_pw_form,
     join_n_zero,
     join_pw_out_size,
-    join_shift_total,
     join_direct_src,    ///< owned sources summed over the direct work list
     join_direct_src_sq, ///< their squares, summed
     join_direct_trg,    ///< owned targets summed over the direct work list
@@ -189,10 +187,9 @@ struct DeviceMetadataOutputs {
     int *d_tp_up_par_count = nullptr;
     unsigned char *d_is_tp_up_par = nullptr;
 
-    // shift_pw groups: counts and CSR offsets over the group bound, the source list once sized.
-    int *d_shift_counts = nullptr;  ///< [n_groups_bound+1]
-    int *d_shift_offsets = nullptr; ///< [n_groups_bound+1]
-    long n_groups_bound = 0;
+    // shift_pw groups: the plane-wave eval boxes of one parent each; their halos once sized.
+    int *d_group_heads = nullptr; ///< [n_boxes+1] shift group heads over the eval list, then their scan
+    int *d_group_begin = nullptr; ///< [n_boxes+1] first eval entry of each shift group, then the list length
 
     // Scratch the pass owns for its duration; the caller frees it after the join.
     void *d_scan = nullptr;         ///< [(n_boxes+1)*sizeof(ScanIn)]
@@ -220,7 +217,6 @@ struct DeviceMetadataOutputs {
     int max_tp_per_level = 0;
     int max_tp_up_per_level = 0;
     int n_shift_groups = 0;
-    int n_shift_src = 0;
     long pw_out_size = 0;
     /// Shallowest box in the direct work list, or n_levels if it is empty. Yukawa fits one residual
     /// polynomial per level starting here, which is a host decision.
@@ -237,7 +233,6 @@ struct DeviceMetadataOutputs {
 std::size_t scan_scratch_bytes(long n_boxes);
 long n_chunks(long n_boxes);
 int level_scratch_size(int n_levels);
-long shift_groups_bound(long n_boxes, int n_levels, int shift_group);
 
 /// Reproduces DMKPtTree::compute_box_centers, build_direct_interaction_lists,
 /// build_direct_work_lists, build_self_correction_work_list, build_upward_pass_work_lists's
@@ -255,9 +250,9 @@ void finish_proxy_metadata(const DeviceMetadataOutputs<Real> &out);
 template <typename Real>
 void finish_device_metadata(DeviceMetadataOutputs<Real> &out, int n_levels);
 
-/// The shift_pw source lists, once the join has sized them. `d_group_src` must hold n_shift_src.
+/// The shift_pw group halos, once the join has sized them. `d_halo` must hold n_shift_groups.
 template <typename Real, int DIM>
-void fill_shift_groups(const DeviceMetadataInputs<Real, DIM> &in, const DeviceMetadataOutputs<Real> &out,
-                       ShiftPwGroupSrc *d_group_src);
+void fill_shift_halos(const DeviceMetadataInputs<Real, DIM> &in, const DeviceMetadataOutputs<Real> &out,
+                      ShiftPwHalo *d_halo);
 
 } // namespace dmk::cuda::pt

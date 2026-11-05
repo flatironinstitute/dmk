@@ -208,7 +208,7 @@ struct DeviceMetadata {
     Arena<unsigned char> bytes;
     Arena<signed char> shifts;
     Arena<Real> reals;
-    cuda_helpers::DeviceBuffer<ShiftPwGroupSrc> shift_src;
+    cuda_helpers::DeviceBuffer<ShiftPwHalo> shift_halo;
     /// max_depth | proxy counts | proxy totals | join block | the two per-node count arrays on their way up
     std::pair<char *, std::size_t> pinned{nullptr, 0};
     long *h_counts = nullptr;
@@ -224,13 +224,11 @@ struct DeviceMetadata {
             cudaEventDestroy(out.proxy_ready);
     }
 
-    void allocate(long nb, int stride, bool periodic, int shift_group) {
+    void allocate(long nb, int stride, bool periodic) {
         constexpr int nl = kMaxLevels;
         const std::size_t n = nb;
-        const long bound = shift_groups_bound(nb, nl, shift_group);
-        out.n_groups_bound = bound;
 
-        ints.reserve(n * (28 + stride) + 2 * (bound + 1)); // the last n is the multi-rank global count
+        ints.reserve(n * (28 + stride) + 2 * (n + 1)); // the last n is the multi-rank global count
         bo.d_src_counts_with_halo = ints.take(n);
         bo.d_src_counts_owned = ints.take(n);
         bo.d_trg_counts_owned = ints.take(n);
@@ -258,8 +256,8 @@ struct DeviceMetadata {
         out.d_pw_eval_flat = ints.take(n);
         out.d_pw_form_flat = ints.take(n);
         out.d_proxy_zero_boxes = ints.take(n);
-        out.d_shift_counts = ints.take(bound + 1);
-        out.d_shift_offsets = ints.take(bound + 1);
+        out.d_group_heads = ints.take(n + 1);
+        out.d_group_begin = ints.take(n + 1);
 
         longs.reserve(3 * (n + 1) + n_offset_kinds * n + 4 * n + 2 + join_size(nl));
         bo.d_count_scan = longs.take(3 * (n + 1));
@@ -459,12 +457,11 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
 
     const sctl::Long nb = tree_->n_boxes();
     const int stride = DMKPtTree<Real, DIM>::list1_stride();
-    const int shift_group = shift_group_size(tree_->n_tables_down);
     md_ = std::make_unique<DeviceMetadata<Real, DIM>>();
     { // subtree counts, both expansion flags and the particle offsets, enqueued only
         NvtxPass gprof("box_status", stream);
         sctl::Profile::Scoped profile("box_status", &comm);
-        md_->allocate(nb, stride, params.use_periodic, shift_group);
+        md_->allocate(nb, stride, params.use_periodic);
         if (nb) {
             const auto lists = dev_tree_->Lists();
             BoxStatusInputs<DIM> bi;
@@ -547,7 +544,6 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
         mi.nlist1_stride = stride;
         mi.periodic = params.use_periodic;
         mi.skip_root_form = params.use_periodic;
-        mi.shift_group = shift_group;
         {
             const int n_pw = tree_->expansion_constants.n_pw_diff;
             mi.n_pw_per_box = (long)sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2) * tree_->n_tables_down;
@@ -579,8 +575,8 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
         sctl::Profile::Scoped profile("device_metadata_join", &comm);
         finish_device_metadata<Real>(md_->out, tree_->n_levels());
         tree_->pw_out_size = md_->out.pw_out_size;
-        md_->shift_src.resize(md_->out.n_shift_src);
-        fill_shift_groups<Real, DIM>(md_->in, md_->out, md_->shift_src.data());
+        md_->shift_halo.resize(md_->out.n_shift_groups);
+        fill_shift_halos<Real, DIM>(md_->in, md_->out, md_->shift_halo.data());
         md_->release_scratch();
     }
 
@@ -589,8 +585,7 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
         NvtxPass gprof("state_ctor", stream);
         auto inputs = to_build_inputs(*tree_, md_->out);
         inputs.topology.d_nbr = reinterpret_cast<const long *>(dev_tree_->Lists().nbr.data());
-        inputs.worklists.d_shift_group_src = md_->shift_src.data();
-        inputs.worklists.d_shift_group_offsets = md_->out.d_shift_offsets;
+        inputs.worklists.d_shift_halo = md_->shift_halo.data();
         { // views into the tree's storage
             sctl::Vector<sctl::Long> cnt;
             inputs.scratch.d_proxy_coeffs = dev_tree_->Data("proxy_coeffs", cnt);

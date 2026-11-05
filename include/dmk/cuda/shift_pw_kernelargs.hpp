@@ -1,69 +1,34 @@
 #pragma once
 
-#ifndef __CUDACC_RTC__
-#include <cstdlib>
-#endif
-
 namespace dmk::cuda {
 
-/// Upper bound on targets per shift_pw block, and the capacity of
-/// ShiftPwGroupSrc::shift_ind. 8 keeps that struct at 16 bytes.
-constexpr int kShiftGroupMax = 8;
-
-/// Target boxes per shift_pw block; the merge loop in state.cpp covers the
-/// grouping itself. A bigger group cuts source-slab traffic but the block holds
-/// acc[group][n_charge_dim] complex accumulators, and the kernel is latency-bound
-/// with occupancy limited by registers, so cap that accumulator at 16 registers.
-/// Powers of two only, since a group is a Morton run.
-/// DMK_SHIFT_GROUP overrides; 1 recovers the one-box-per-block kernel. Host-only,
-/// as NVRTC rejects unannotated functions and the kernel takes the chosen size as
-/// its SHIFT_GROUP define.
-#ifndef __CUDACC_RTC__
-inline int shift_group_size(int n_charge_dim) {
-    static const int forced = [] {
-        const char *v = std::getenv("DMK_SHIFT_GROUP");
-        return v ? std::atoi(v) : 0;
-    }();
-    if (forced > 0)
-        return forced < kShiftGroupMax ? forced : kShiftGroupMax;
-    int g = kShiftGroupMax;
-    while (g > 1 && 2 * g * n_charge_dim > 16)
-        g >>= 1;
-    return g;
-}
-#endif
-
-/// One distinct source box for a whole group, with the shift index each group
-/// member needs for it; -1 where that member is not a neighbour of this source.
-/// 16 bytes, so again one load per entry. Entries past the group's size are unused.
-struct alignas(16) ShiftPwGroupSrc {
-    long pw_off;
-    signed char shift_ind[kShiftGroupMax];
+/// One shift_pw group: the plane-wave-evaluating children of one parent (the root alone at level
+/// 0) and the 4^DIM neighbourhood they draw on. A member sits at p in {0,1}^DIM of the group's
+/// frame and a source at q in {-1,..,2}^DIM; the member takes the source exactly when q - p is one
+/// of its 3^DIM shift offsets, the source at q = p being the member itself.
+///
+/// The translation is separable, e^{i(q-p).theta} = e^{i q.theta} e^{-i p.theta}, so the kernel
+/// applies the first factor once per source and the second once per member, and between them a
+/// (source, member) pair is a plain add.
+///
+/// Halo position h = sum_a (q_a + 1) 4^(DIM-1-a); member slot t = sum_a p_a 2^(DIM-1-a). Sized
+/// for DIM = 3; a 2D group uses the leading entries.
+struct ShiftPwHalo {
+    long pw_off[64];        ///< source pw_out offset in complex units, -1 where there is none
+    unsigned char take[64]; ///< bit t set where member t takes that source
+    int member[8];          ///< level-local pw_in slot of member t, -1 where absent
 };
 
 template <typename Real>
 struct ShiftPwArgs {
-    int n_boxes_at_level = 0;
     int n_groups_at_level = 0;
-    int n_neighbors = 0;
-    int n_charge_dim = 0;
-    int n_pw_modes = 0;
-    int n_pw_live = 0;
-
     long pw_in_stride = 0;
 
-    const int *box_ids = nullptr;
-    const long *pw_out_offsets = nullptr;
-
-    // Merged shift lists, CSR by level-local group index: group g owns entries
-    // group_src[group_offsets[g] .. group_offsets[g + 1]). Group g's members are
-    // level-local boxes g*SHIFT_GROUP .. +SHIFT_GROUP, clipped to n_boxes_at_level.
-    const ShiftPwGroupSrc *group_src = nullptr;
-    const int *group_offsets = nullptr;
+    const ShiftPwHalo *halo = nullptr; ///< this level's groups
+    const int *mode_axes = nullptr;    ///< per live slot: its per-axis mode indices, 8 bits each, axis 0 lowest
+    const Real *phase = nullptr;       ///< this level's e^{i theta_j}, [n_pw] complex
 
     const Real *pw_out_flat = nullptr;
-    const Real *wpwshift = nullptr;
-
     Real *pw_in_pool = nullptr;
 };
 } // namespace dmk::cuda
