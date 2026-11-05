@@ -22,9 +22,9 @@ using jit::JitKey;
 
 std::size_t p2pw_shared_bytes(int n_order, int n_pw, int z_tile, int ff2_copies, std::size_t sizeof_real) {
     const std::size_t complex_count = std::size_t(z_tile) * std::size_t(n_order) * n_order +
-                                      std::size_t(ff2_copies) * z_tile * std::size_t(n_order) * n_pw +
-                                      std::size_t(n_order) * n_pw;
-    return std::size_t{2} * complex_count * sizeof_real;
+                                      std::size_t(ff2_copies) * z_tile * std::size_t(n_order) * n_pw;
+    const std::size_t real_count = std::size_t(n_order) * ((n_pw + 1) / 2);
+    return (std::size_t{2} * complex_count + real_count) * sizeof_real;
 }
 
 // Smallest tile the kernel can run, hence the smallest shared footprint it can have. The
@@ -139,13 +139,13 @@ void launch_proxy2pw(std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, cudaStr
     const std::vector<TuningParameter> space{{"BLOCK_SIZE", {64, 128, 256}},
                                              {"Z_TILE", {Z_TILE_MIN, 2, 4}},
                                              {"I_TILE", {2, 4}},
-                                             {"M1_TILE", {2, 4, 6}},
-                                             {"M2_TILE", {2, 4}}};
+                                             {"M1_TILE", {1, 2, 3}},
+                                             {"M2_TILE", {1, 2, 4}}};
     // A fused phase 3 holds ff2_copies accumulator tiles at once, in shared and in registers, so
     // its defaults start narrower; the tuner widens them when it runs.
     const bool wide = ff2_copies == 1 && p2pw_shared_bytes(max_n_order, max_n_pw, 4, 1, sizeof(Real)) <= max_shared;
     const TuningParams defaults{
-        {"BLOCK_SIZE", 128}, {"Z_TILE", wide ? 4 : 2}, {"I_TILE", 4}, {"M1_TILE", 4}, {"M2_TILE", wide ? 4 : 2}};
+        {"BLOCK_SIZE", 128}, {"Z_TILE", wide ? 4 : 2}, {"I_TILE", 4}, {"M1_TILE", 2}, {"M2_TILE", wide ? 4 : 2}};
 
     const auto constraint = [&](const TuningParams &p) {
         const int bs = p.at("BLOCK_SIZE"), z = p.at("Z_TILE");
@@ -160,7 +160,7 @@ void launch_proxy2pw(std::vector<dmk::cuda::Proxy2PwArgs<Real>> &args_h, cudaStr
 
     const auto canonicalize = [&](TuningParams p) {
         return clamp_tiles(std::move(p),
-                           {{"Z_TILE", a0.n_pw2}, {"I_TILE", a0.n_order}, {"M1_TILE", a0.n_pw}, {"M2_TILE", a0.n_pw}});
+                           {{"Z_TILE", a0.n_pw2}, {"I_TILE", a0.n_order}, {"M1_TILE", a0.n_pw2}, {"M2_TILE", a0.n_pw}});
     };
 
     autotuned_launch<Real>(tk, "PtProxy2PwMultiLevelKernel", space, defaults, constraint, launch_one,
