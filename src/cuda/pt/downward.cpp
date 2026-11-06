@@ -163,8 +163,6 @@ void downward(State<Real, DIM> &s, cudaStream_t stream) {
             ta.proxy_flat = sc.d_proxy_coeffs_downward.data();
             ta.proxy_offsets = sc.d_proxy_offsets_downward.data();
             ta.umat_flat = f.d_p2c.data();
-            ta.scratch = sc.d_tensorprod_scratch.data();
-            ta.scratch_stride = sc.tensorprod_scratch_stride_reals;
             launch_tensorprod<Real>(ta, sc.d_proxy_coeffs_downward.size(), stream, L == tune_level);
         }
     }

@@ -1053,13 +1053,6 @@ void finish_device_metadata(DeviceMetadataOutputs<Real> &out, int n_levels) {
     out.direct_occupancy_src = j[join_direct_src] ? (int)(j[join_direct_src_sq] / j[join_direct_src]) : 0;
     out.direct_occupancy_trg = j[join_direct_trg] ? (int)(j[join_direct_trg_sq] / j[join_direct_trg]) : 0;
     out.n_shift_groups = (int)out.h_table(5)[n_levels];
-    out.max_tp_per_level = 0;
-    out.max_tp_up_per_level = 0;
-    for (int L = 0; L < n_levels; ++L) {
-        out.max_tp_per_level = std::max(out.max_tp_per_level, (int)(out.h_table(0)[L + 1] - out.h_table(0)[L]));
-        out.max_tp_up_per_level =
-            std::max(out.max_tp_up_per_level, (int)(out.h_table(1)[L + 1] - out.h_table(1)[L]));
-    }
 }
 
 template <typename Real, int DIM>

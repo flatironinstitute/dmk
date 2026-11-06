@@ -239,8 +239,8 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
             // Marks the first child of each parent charge2proxy does not write, so that child
             // assigns and the slab needs no pre-zeroing.
             ta.assign_dst = w.d_tp_up_assign.data() + off;
-            // One block per parent walks that parent's children, so the accumulation is
-            // block-local and needs no atomics.
+            // One block per parent folds that parent's children, so the accumulation is
+            // block-local.
             ta.par_boxes = w.d_tp_up_par.data() + par_off;
             ta.par_child_begin = w.d_tp_up_par_child_begin.data() + par_off;
             ta.par_child_count = w.d_tp_up_par_child_count.data() + par_off;
@@ -248,9 +248,7 @@ void upward(State<Real, DIM> &s, cudaStream_t stream) {
             ta.proxy_flat = s.scratch.d_proxy_coeffs_upward.data();
             ta.proxy_offsets = s.scratch.d_proxy_offsets_upward.data();
             ta.umat_flat = f.d_c2p.data();
-            ta.scratch = s.scratch.d_tensorprod_scratch.data();
-            ta.scratch_stride = s.scratch.tensorprod_scratch_stride_reals;
-            launch_tensorprod<Real>(ta, proxy_count, stream, L == tune_level);
+            launch_tensorprod_up<Real>(ta, proxy_count, stream, L == tune_level);
         }
     }
 }

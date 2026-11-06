@@ -214,8 +214,6 @@ struct DeviceMetadataOutputs {
     int n_eval_boxes = 0;
     int n_proxy_zero_boxes = 0;
     int max_pw_form_per_level = 0;
-    int max_tp_per_level = 0;
-    int max_tp_up_per_level = 0;
     int n_shift_groups = 0;
     long pw_out_size = 0;
     /// Shallowest box in the direct work list, or n_levels if it is empty. Yukawa fits one residual

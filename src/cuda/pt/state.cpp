@@ -378,8 +378,6 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree, const DeviceM
     level_table(md.h_table(3), w.pw_eval_box_offset, w.pw_eval_box_count);
     level_table(md.h_table(4), w.pw_form_box_offset, w.pw_form_box_count);
     w.shift_group_base.assign(md.h_table(5), md.h_table(5) + n_levels + 1);
-    w.max_tp_per_level = md.max_tp_per_level;
-    w.max_tp_up_per_level = md.max_tp_up_per_level;
     w.max_pw_form_per_level = md.max_pw_form_per_level;
 
     w.pw_in_pool_base.assign(n_levels, 0);
@@ -393,7 +391,6 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree, const DeviceM
 
     // --- Scratch strides / sizes ---
     auto &sc = in.scratch;
-    sc.tensorprod_scratch_stride_reals = 2L * fou.n_order * fou.n_order * fou.n_order; // 2 * n_order^3 ping-pong slab
     sc.pw_in_stride_reals = 2L * fou.n_charge_dim * fou.n_pw_modes;
     sc.pw_form_stride_reals = (fou.n_tables_up != fou.n_charge_dim) ? 2L * fou.n_tables_up * fou.n_pw_modes : 0;
     sc.proxy_coeffs_downward_dim = tree.proxy_coeffs_downward_dim;
@@ -552,7 +549,6 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
 
     // --- Scratch (buffers sized/zeroed here; contents produced by the passes) ---
     const auto &si = in.scratch;
-    scratch.tensorprod_scratch_stride_reals = si.tensorprod_scratch_stride_reals;
     scratch.pw_in_stride_reals = si.pw_in_stride_reals;
     scratch.pw_form_stride_reals = si.pw_form_stride_reals;
     // Neither proxy buffer is zeroed: every eval assigns each slab it reads before accumulating into it.
@@ -564,10 +560,6 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     scratch.d_proxy_offsets_downward.adopt(md.d_proxy_off_down, nb);
     scratch.d_pw_out_offsets.adopt(md.d_pw_out_offsets, nb);
     scratch.d_pw_out.resize(2 * si.pw_out_dim);
-
-    const int max_tp_any = std::max(wi.max_tp_per_level, wi.max_tp_up_per_level);
-    if (max_tp_any && scratch.tensorprod_scratch_stride_reals)
-        scratch.d_tensorprod_scratch.resize((std::size_t)max_tp_any * scratch.tensorprod_scratch_stride_reals);
 
     long total_slots = 0;
     for (int L = 0; L < n_levels; ++L)

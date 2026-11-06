@@ -90,8 +90,6 @@ struct BuildInputs {
 
     /// Per-level tables driving the pass launches; the lists they index are device-resident.
     struct Worklists {
-        int max_tp_per_level = 0;            ///< max downward tensorprod pairs on any level
-        int max_tp_up_per_level = 0;         ///< max upward tensorprod pairs on any level
         int max_pw_form_per_level = 0;       ///< max proxy2pw boxes on any level
         std::vector<int> tp_offset;          ///< [n_levels+1] into the downward pairs
         std::vector<int> tp_count;           ///< [n_levels]
@@ -111,7 +109,6 @@ struct BuildInputs {
 
     /// Pipeline scratch/intermediate buffers and their strides.
     struct Scratch {
-        long tensorprod_scratch_stride_reals = 0;  ///< = 2*n_order^DIM per pair slab
         long pw_in_stride_reals = 0;               ///< = 2*n_charge_dim*n_pw_modes per slot
         long pw_form_stride_reals = 0;             ///< stresslet: 2*n_tables_up*n_pw_modes per slot
         std::size_t proxy_coeffs_downward_dim = 0; ///< downward proxy buffer size (reals)
@@ -293,15 +290,13 @@ struct State {
 
     /// Pipeline scratch and intermediate expansion buffers.
     struct Scratch {
-        long tensorprod_scratch_stride_reals = 0; ///< ping-pong slab stride (up/down tensorprod)
-        long pw_in_stride_reals = 0;              ///< pw_in pool slot stride (downward)
-        long pw_form_stride_reals = 0;            ///< stresslet pw_form pool slot stride (form_outgoing)
-        DeviceBuffer<Real> d_tensorprod_scratch;  ///< ff/ff2 ping-pong (up/down tensorprod)
-        DeviceBuffer<Real> d_pw_in_pool;          ///< shift_pw output consumed by pw2proxy (downward)
-        DeviceBuffer<Real> d_pw_form_pool;        ///< stresslet proxy2pw->multiply intermediate (form_outgoing)
-        DeviceBuffer<Real> d_window_pw_form_in;   ///< root windowed proxy2pw scratch (form_outgoing)
-        DeviceBuffer<Real> d_window_pw_form_out;  ///< stresslet root windowed multiply out (form_outgoing)
-        DeviceBuffer<int> d_box0_id;              ///< single {0} scratch for root-only kernels
+        long pw_in_stride_reals = 0;             ///< pw_in pool slot stride (downward)
+        long pw_form_stride_reals = 0;           ///< stresslet pw_form pool slot stride (form_outgoing)
+        DeviceBuffer<Real> d_pw_in_pool;         ///< shift_pw output consumed by pw2proxy (downward)
+        DeviceBuffer<Real> d_pw_form_pool;       ///< stresslet proxy2pw->multiply intermediate (form_outgoing)
+        DeviceBuffer<Real> d_window_pw_form_in;  ///< root windowed proxy2pw scratch (form_outgoing)
+        DeviceBuffer<Real> d_window_pw_form_out; ///< stresslet root windowed multiply out (form_outgoing)
+        DeviceBuffer<int> d_box0_id;             ///< single {0} scratch for root-only kernels
 
         std::span<Real> d_proxy_coeffs_upward;      ///< upward proxy expansion, the tree's storage
         DeviceBuffer<long> d_proxy_offsets_upward;  ///< per-box offsets into d_proxy_coeffs_upward
