@@ -388,7 +388,9 @@ __global__ void k_box_predicates(const sctl::Morton<DIM> *__restrict__ mid, cons
         // anything read without a writer that assigns first would carry the previous eval's values.
         const bool read_set = pf || (b == 0 && proxy_up);
         const long zero = (read_set && !(live || k > 0)) ? 1 : 0;
-        const long pwout = (!b || proxy_up || trg_own[b]) ? 1 : 0;
+        // A pw_out slab only where proxy2pw writes one: shift_pw skips a box without a slab, which
+        // is what an unwritten zero slab contributed.
+        const long pwout = pf ? 1 : 0;
         scan[b] = {up, down, live ? ((1L << 32) | (long)n_src) : 0L, iftpeval[b] ? 1L : 0L, zero, pwout};
     }
     __syncthreads();

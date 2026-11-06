@@ -242,7 +242,7 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
             }
         };
 
-        // Matched table counts: proxy2pw for all levels up front into d_pw_out.
+        // Matched table counts: proxy2pw for all levels up front into d_pw_out_proxy_down.
         // Otherwise proxy2pw runs per level into d_pw_form_pool alongside the
         // multiply (below).
         if (!split_up_down) {
@@ -262,7 +262,7 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
                 pa.proxy_flat = sc.d_proxy_coeffs_upward.data();
                 pa.proxy_offsets = sc.d_proxy_offsets_upward.data();
                 pa.poly2pw = f.slab(L).poly2pw;
-                pa.dst_flat = sc.d_pw_out.data();
+                pa.dst_flat = sc.d_pw_out_proxy_down.data();
                 pa.dst_offsets = sc.d_pw_out_offsets.data();
                 pa.dst_stride_complex = 0;
                 pa.pencil_slots = f.d_pencil_slots.data();
@@ -306,16 +306,16 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
             if (fuse_levels)
                 continue;
 
-            Real *src = split_up_down ? sc.d_pw_form_pool.data() : sc.d_pw_out.data();
+            Real *src = split_up_down ? sc.d_pw_form_pool.data() : sc.d_pw_out_proxy_down.data();
             const long *src_offsets = split_up_down ? nullptr : sc.d_pw_out_offsets.data();
             const long src_stride = split_up_down ? sc.pw_form_stride_reals / 2 : 0L;
             multiply_at(n_box, f.n_pw, f.n_pw_live, f.pw_slab, f.d_full_of_compact.data(), f.hpw_per_level[L],
                         /*windowed=*/false, box_ids, f.slab(L).radialft, src, src_offsets, src_stride,
-                        sc.d_pw_out.data(), sc.d_pw_out_offsets.data(), 0);
+                        sc.d_pw_out_proxy_down.data(), sc.d_pw_out_offsets.data(), 0);
         }
         flush_cd2p();
 
-        // ---- windowed root -> d_proxy_coeffs_downward[0] ----
+        // ---- windowed root -> d_window_pw_form_*; downward turns it into box 0's proxies ----
         const long window_in_stride_complex = static_cast<long>(f.n_tables_up) * f.n_pw_modes_win;
 
         std::vector<dmk::cuda::Proxy2PwArgs<Real>> root_pa(1);
@@ -350,29 +350,6 @@ void form_outgoing(State<Real, DIM> &s, cudaStream_t stream) {
             // The root's modes and radialft differ from any level's, so it is its own launch.
             flush_cd2p();
         }
-
-        Real *pw_for_pw2proxy = split_up_down ? sc.d_window_pw_form_out.data() : sc.d_window_pw_form_in.data();
-
-        std::vector<dmk::cuda::PwToProxyArgs<Real>> root_pp(1);
-        {
-            auto &pp = root_pp[0];
-            pp.n_boxes_at_level = 1;
-            pp.n_order = f.n_order;
-            pp.n_pw = f.n_pw_win;
-            pp.n_pw2 = f.n_pw2_win;
-            pp.n_charge_dim = f.n_charge_dim;
-            pp.pw_in_stride = 0;
-            pp.pw_slab = f.n_pw_modes_win;
-            pp.box_ids = sc.d_box0_id.data();
-            pp.pw_in_pool = pw_for_pw2proxy;
-            pp.pw2poly = f.d_window_pw2poly.data();
-            pp.proxy_flat = sc.d_proxy_coeffs_downward.data();
-            pp.proxy_offsets = sc.d_proxy_offsets_downward.data();
-            // First writer of box 0 in the downward buffer.
-            pp.assign = 1;
-        }
-        launch_pw2proxy<Real>(root_pp, sc.d_proxy_coeffs_downward.data(), sc.d_proxy_coeffs_downward.size(), stream,
-                              "root");
     }
 }
 

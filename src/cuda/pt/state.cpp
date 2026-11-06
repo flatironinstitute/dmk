@@ -565,12 +565,15 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     // Neither proxy buffer is zeroed: every eval assigns each slab it reads before accumulating into it.
     if (si.d_proxy_coeffs.size())
         scratch.d_proxy_coeffs_upward = si.d_proxy_coeffs;
-    if (si.proxy_coeffs_downward_dim)
-        scratch.d_proxy_coeffs_downward.resize(si.proxy_coeffs_downward_dim);
     scratch.d_proxy_offsets_upward.adopt(md.d_proxy_off_up, nb);
     scratch.d_proxy_offsets_downward.adopt(md.d_proxy_off_down, nb);
     scratch.d_pw_out_offsets.adopt(md.d_pw_out_offsets, nb);
-    scratch.d_pw_out.resize(2 * si.pw_out_dim);
+    // One allocation holds the outgoing PW field and then the downward proxies: every write to the
+    // proxies comes after shift_pw, the field's last reader, and every read of them comes before
+    // the next eval's proxy2pw.
+    scratch.d_pw_out_proxy_down.resize(std::max<std::size_t>(2 * si.pw_out_dim, si.proxy_coeffs_downward_dim));
+    if (si.proxy_coeffs_downward_dim)
+        scratch.d_proxy_coeffs_downward.adopt(scratch.d_pw_out_proxy_down.data(), si.proxy_coeffs_downward_dim);
 
     long total_slots = 0;
     for (int L = 0; L < n_levels; ++L)
@@ -610,11 +613,6 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     direct_stream = cuda_helpers::direct_stream();
     downward_stream = cuda_helpers::downward_stream();
 
-    // shift_pw's self term reads a slab that proxy2pw may not write (a target-only box, or the root
-    // under PBC). Only then must pw_out start at zero. pw_in_pool needs no clearing: pw2proxy reads
-    // only the live modes, which shift_pw writes.
-    if (si.pw_out_dim != (std::size_t)n_pw_form * fourier.n_charge_dim * fourier.pw_slab)
-        scratch.d_pw_out.zero_async(downward_stream);
     outputs.d_pot_eval_src.zero_async(downward_stream);
     outputs.d_pot_eval_trg.zero_async(downward_stream);
     outputs.d_pot_direct_src.zero_async(direct_stream);

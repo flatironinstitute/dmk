@@ -113,7 +113,7 @@ struct BuildInputs {
         long pw_in_stride_reals = 0;               ///< = 2*n_charge_dim*pw_slab per slot
         long pw_form_stride_reals = 0;             ///< stresslet: 2*n_tables_up*pw_slab per slot
         std::size_t proxy_coeffs_downward_dim = 0; ///< downward proxy buffer size (reals)
-        std::size_t pw_out_dim = 0;                ///< pw_out complex count (d_pw_out reals = 2x)
+        std::size_t pw_out_dim = 0;                ///< outgoing PW field, complex count
         std::span<Real> d_proxy_coeffs;            ///< the tree's own upward proxy storage
     } scratch;
 
@@ -312,12 +312,12 @@ struct State {
         DeviceBuffer<Real> d_window_pw_form_out; ///< stresslet root windowed multiply out (form_outgoing)
         DeviceBuffer<int> d_box0_id;             ///< single {0} scratch for root-only kernels
 
-        std::span<Real> d_proxy_coeffs_upward;      ///< upward proxy expansion, the tree's storage
-        DeviceBuffer<long> d_proxy_offsets_upward;  ///< per-box offsets into d_proxy_coeffs_upward
-        DeviceBuffer<Real> d_proxy_coeffs_downward; ///< downward proxy expansion (produced downward, read eval_targets)
+        std::span<Real> d_proxy_coeffs_upward;       ///< upward proxy expansion, the tree's storage
+        DeviceBuffer<long> d_proxy_offsets_upward;   ///< per-box offsets into d_proxy_coeffs_upward
+        DeviceBuffer<Real> d_proxy_coeffs_downward;  ///< downward proxy expansion, a view into d_pw_out_proxy_down
         DeviceBuffer<long> d_proxy_offsets_downward; ///< per-box offsets into d_proxy_coeffs_downward
-        DeviceBuffer<Real> d_pw_out;         ///< outgoing PW field per box (produced form_outgoing, read downward)
-        DeviceBuffer<long> d_pw_out_offsets; ///< per-box offsets into d_pw_out, -1 = none
+        DeviceBuffer<Real> d_pw_out_proxy_down;      ///< outgoing PW field until shift_pw, then the downward proxies
+        DeviceBuffer<long> d_pw_out_offsets;         ///< per-box offsets of the outgoing PW field, -1 = none
     } scratch;
 
     /// Potential outputs.

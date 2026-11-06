@@ -115,7 +115,7 @@ void downward(State<Real, DIM> &s, cudaStream_t stream) {
             sa.halo = w.d_shift_halo.data() + w.shift_group_base_h[L];
             sa.mode_axes = f.d_mode_axes.data();
             sa.phase = f.slab(L).phase;
-            sa.pw_out_flat = sc.d_pw_out.data();
+            sa.pw_out_flat = sc.d_pw_out_proxy_down.data();
             sa.pw_in_pool = level_pw_in;
             shift_h.push_back(sa);
 
@@ -134,12 +134,36 @@ void downward(State<Real, DIM> &s, cudaStream_t stream) {
             pa.proxy_flat = sc.d_proxy_coeffs_downward.data();
             pa.proxy_offsets = sc.d_proxy_offsets_downward.data();
             // Runs ahead of every p2c tensorprod below, so it is each box's first writer.
-            // Level 0 is box 0, already written by form_outgoing's windowed root.
+            // Level 0 is box 0, already written by the windowed root.
             pa.assign = (L == 0) ? 0 : 1;
             pw2p_h.push_back(pa);
         }
 
         launch_shift_pw<Real>(shift_h, f.n_pw_live, f.pw_slab, f.n_charge_dim, stream);
+
+        // The downward proxies overwrite the outgoing PW field, so the windowed root's field becomes
+        // box 0's proxies only once shift_pw has read it.
+        {
+            const bool split_up_down = f.n_tables_up != f.n_charge_dim;
+            std::vector<dmk::cuda::PwToProxyArgs<Real>> root_pp(1);
+            auto &pp = root_pp[0];
+            pp.n_boxes_at_level = 1;
+            pp.n_order = f.n_order;
+            pp.n_pw = f.n_pw_win;
+            pp.n_pw2 = f.n_pw2_win;
+            pp.n_charge_dim = f.n_charge_dim;
+            pp.pw_in_stride = 0;
+            pp.pw_slab = f.n_pw_modes_win;
+            pp.box_ids = sc.d_box0_id.data();
+            pp.pw_in_pool = split_up_down ? sc.d_window_pw_form_out.data() : sc.d_window_pw_form_in.data();
+            pp.pw2poly = f.d_window_pw2poly.data();
+            pp.proxy_flat = sc.d_proxy_coeffs_downward.data();
+            pp.proxy_offsets = sc.d_proxy_offsets_downward.data();
+            // First writer of box 0 in the downward buffer.
+            pp.assign = 1;
+            launch_pw2proxy<Real>(root_pp, sc.d_proxy_coeffs_downward.data(), sc.d_proxy_coeffs_downward.size(), stream,
+                                  "root");
+        }
         launch_pw2proxy<Real>(pw2p_h, sc.d_proxy_coeffs_downward.data(), sc.d_proxy_coeffs_downward.size(), stream);
 
         // ---- per-level downward tensorprod (parent->child, p2c, non-atomic add) ----
