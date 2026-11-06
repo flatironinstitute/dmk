@@ -82,6 +82,7 @@ struct BuildInputs {
         int phase_per_level_reals = 0;               ///< = 2*n_pw
         std::vector<Real> hpw_per_level;             ///< [n_levels] hpw_diff/boxsize (form_outgoing/downward)
         int n_pw_live = 0;                           ///< live modes per slab; == n_pw_modes when nothing is prunable
+        int pw_slab = 0;                             ///< modes between consecutive charge-dim slabs (n_pw_live, padded)
         int proxy_ball_r2 = 0;                       ///< squared ball radius in (i,j,k); 0 keeps every coefficient
         const FourierTables<Real> *tables = nullptr; ///< every device table that depends only on the configuration
         std::vector<std::vector<Real>> direct_coeffs_by_level; ///< yukawa: residual poly per level (direct)
@@ -109,8 +110,8 @@ struct BuildInputs {
 
     /// Pipeline scratch/intermediate buffers and their strides.
     struct Scratch {
-        long pw_in_stride_reals = 0;               ///< = 2*n_charge_dim*n_pw_modes per slot
-        long pw_form_stride_reals = 0;             ///< stresslet: 2*n_tables_up*n_pw_modes per slot
+        long pw_in_stride_reals = 0;               ///< = 2*n_charge_dim*pw_slab per slot
+        long pw_form_stride_reals = 0;             ///< stresslet: 2*n_tables_up*pw_slab per slot
         std::size_t proxy_coeffs_downward_dim = 0; ///< downward proxy buffer size (reals)
         std::size_t pw_out_dim = 0;                ///< pw_out complex count (d_pw_out reals = 2x)
         std::span<Real> d_proxy_coeffs;            ///< the tree's own upward proxy storage
@@ -135,6 +136,18 @@ struct BuildInputs {
 /// that reads tree internals for the V2 path.
 template <typename Real, int DIM>
 BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree, const DeviceMetadataOutputs<Real> &md);
+
+/// Plane-wave slab layout: each (m2, m3) pencil's live run of m1, packed to the front of the slab.
+/// Both tables are empty when nothing prunes (n_live is then the cube).
+struct PwSlabLayout {
+    std::vector<int> pencil_slots; ///< per pencil: the slot m1 == 0 would land on, then lo | hi << 16
+    std::vector<int> full_of_compact;
+    int n_live = 0;
+    int slab = 0; ///< modes between consecutive charge-dim slabs: n_live, padded
+};
+
+template <typename Real, int DIM>
+PwSlabLayout pw_slab_layout(DMKPtTree<Real, DIM> &tree);
 
 /// Grouped device state for the V2 point-tree pipeline. Adopted from the device metadata or
 /// uploaded from a BuildInputs; the only state that must outlive the producer tree is the
@@ -213,6 +226,7 @@ struct State {
         DeviceBuffer<int> d_pencil_slots;     ///< per-(m2,m3) slot arithmetic for proxy2pw/pw2proxy
         DeviceBuffer<int> d_full_of_compact;  ///< slab slot -> cube index (multiply, for its k vector)
         int n_pw_live = 0;                    ///< live modes per slab; == n_pw_modes when nothing is prunable
+        int pw_slab = 0;                      ///< modes between consecutive charge-dim slabs (n_pw_live, padded)
         int proxy_ball_r2 = 0;                ///< squared ball radius in (i,j,k); 0 keeps every coefficient
         DeviceBuffer<Real> d_window_pw2poly;  ///< root windowed PW->proxy (downward)
         DeviceBuffer<Real> d_window_poly2pw;  ///< root windowed proxy->PW (form_outgoing)

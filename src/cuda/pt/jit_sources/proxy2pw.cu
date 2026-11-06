@@ -113,9 +113,9 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
         return;
     Real *pw_dst = a.dst_flat + 2 * dst_off_complex;
 
-    const int n_pw_modes = NPW * NPW * N_PW2;
+    const int pw_slab = a.pw_slab;
 
-    // Live modes sit at the front of the slab, which keeps its full-cube stride.
+    // Live modes sit at the front of the slab, which is pw_slab modes long.
     const int *__restrict__ pencil = a.pencil_slots;
 
     for (int idx = threadIdx.x; idx < N * N_PW2; idx += blockDim.x) {
@@ -322,14 +322,14 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
                             if constexpr (P2PW_MULTIPLY == 0) {
 #pragma unroll
                                 for (int dd = 0; dd < D_TILE; ++dd)
-                                    p2pw_store(pw_dst + 2 * (d_base + dd) * n_pw_modes, slot, v[dd]);
+                                    p2pw_store(pw_dst + 2 * (d_base + dd) * pw_slab, slot, v[dd]);
                             } else if constexpr (P2PW_MULTIPLY == 1) {
                                 const Real fk = a.radialft[slot];
 #pragma unroll
                                 for (int dd = 0; dd < D_TILE; ++dd) {
                                     v[dd].r *= fk;
                                     v[dd].i *= fk;
-                                    p2pw_store(pw_dst + 2 * (d_base + dd) * n_pw_modes, slot, v[dd]);
+                                    p2pw_store(pw_dst + 2 * (d_base + dd) * pw_slab, slot, v[dd]);
                                 }
                             } else {
                                 const Real kx = Real(m1 - H) * a.hpw;
@@ -360,8 +360,8 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
                                 }
 
                                 p2pw_store(pw_dst, slot, o0);
-                                p2pw_store(pw_dst + 2 * n_pw_modes, slot, o1);
-                                p2pw_store(pw_dst + 2 * 2 * n_pw_modes, slot, o2);
+                                p2pw_store(pw_dst + 2 * pw_slab, slot, o1);
+                                p2pw_store(pw_dst + 2 * 2 * pw_slab, slot, o2);
                             }
                         }
                     }

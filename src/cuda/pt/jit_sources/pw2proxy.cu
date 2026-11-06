@@ -88,7 +88,6 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
     constexpr int n_order = N_ORDER;
     constexpr int n_order2 = n_order * n_order;
     constexpr int n_order3 = n_order2 * n_order;
-    constexpr int n_pw_modes = n_pw * n_pw * n_pw2;
     constexpr int n_pencil = n_pw * n_pw2;
     // A k2 tile is K2R coefficients of one parity. The table holds the even k, then the odd k, each
     // padded to whole tiles so a tile never reads into the next group; the padding is zero.
@@ -189,7 +188,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
         const int d = step / n_pw2;
         const int4 r = s_range[step - d * n_pw2];
         const complx<Real> *__restrict__ src =
-            reinterpret_cast<const complx<Real> *>(pw_in_box + 2 * d * n_pw_modes) + r.x;
+            reinterpret_cast<const complx<Real> *>(pw_in_box + 2 * d * a.pw_slab) + r.x;
 #pragma unroll
         for (int j = 0; j < SLAB_REG; ++j) {
             const int i = threadIdx.x + j * BLOCK_SIZE;
@@ -239,7 +238,7 @@ extern "C" __global__ void __launch_bounds__(BLOCK_SIZE, MIN_BLOCKS)
 
         if constexpr (SMEM_GLOBAL) {
             const complx<Real> *__restrict__ src =
-                reinterpret_cast<const complx<Real> *>(pw_in_box + 2 * d * n_pw_modes) + r.x;
+                reinterpret_cast<const complx<Real> *>(pw_in_box + 2 * d * a.pw_slab) + r.x;
             for (int i = threadIdx.x; i < r.y - r.x; i += BLOCK_SIZE)
                 s_slab[i] = src[i];
             __syncthreads();

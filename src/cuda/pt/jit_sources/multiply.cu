@@ -21,14 +21,13 @@ __device__ __forceinline__ void MultiplyCd2pBody(MultiplyCd2pArgs<Real> a, int b
     if (off_complex < 0)
         return;
     Real *pw = a.pw_flat + 2 * off_complex;
-    // Live modes are the front of each charge dim's slab, so walk (dim, live) and re-expand to
-    // the slab stride.
+    // Each charge dim's slab leads with its n_pw_live live modes.
     const int total = a.n_pw_live * a.n_charge_dim;
     for (int idx = threadIdx.x; idx < total; idx += blockDim.x) {
         const int d = idx / a.n_pw_live;
         const int m = idx - d * a.n_pw_live;
         const Real f = a.radialft[m];
-        const int o = d * a.n_pw_modes + m;
+        const int o = d * a.pw_slab + m;
         pw[2 * o] *= f;
         pw[2 * o + 1] *= f;
     }
@@ -60,7 +59,7 @@ extern "C" __global__ void PtMultiplyStokeslet3DByBoxKernel(MultiplyStokeslet3DA
     Real *pw = a.pw_flat + 2 * off_complex;
 
     const int n_pw = a.n_pw;
-    const int n_pw_modes = a.n_pw_modes;
+    const int slab = a.pw_slab;
     const int npw_half = n_pw / 2;
     const Real hpw = a.hpw;
     auto ts = [&](int i) { return Real(i - npw_half) * hpw; };
@@ -69,8 +68,8 @@ extern "C" __global__ void PtMultiplyStokeslet3DByBoxKernel(MultiplyStokeslet3DA
 
     if (a.is_windowed && threadIdx.x == 0) {
         for (int d = 0; d < 3; ++d) {
-            cvec[2 * d + 0] = pw[2 * (n0 + d * n_pw_modes)];
-            cvec[2 * d + 1] = pw[2 * (n0 + d * n_pw_modes) + 1];
+            cvec[2 * d + 0] = pw[2 * (n0 + d * slab)];
+            cvec[2 * d + 1] = pw[2 * (n0 + d * slab) + 1];
         }
     }
     __syncthreads();
@@ -89,8 +88,8 @@ extern "C" __global__ void PtMultiplyStokeslet3DByBoxKernel(MultiplyStokeslet3DA
         const Real dd = (kx * kx + ky * ky + kz * kz) * f;
 
         const int off0 = 2 * n_idx;
-        const int off1 = 2 * (n_idx + n_pw_modes);
-        const int off2 = 2 * (n_idx + 2 * n_pw_modes);
+        const int off1 = 2 * (n_idx + slab);
+        const int off2 = 2 * (n_idx + 2 * slab);
         const Real p0r = pw[off0], p0i = pw[off0 + 1];
         const Real p1r = pw[off1], p1i = pw[off1 + 1];
         const Real p2r = pw[off2], p2i = pw[off2 + 1];
@@ -111,8 +110,8 @@ extern "C" __global__ void PtMultiplyStokeslet3DByBoxKernel(MultiplyStokeslet3DA
         if (threadIdx.x == 0) {
             const Real cval = Real(1) / (Real(1.7320508075688772935) + Real(1));
             for (int d = 0; d < 3; ++d) {
-                pw[2 * (n0 + d * n_pw_modes)] += cval * cvec[2 * d + 0];
-                pw[2 * (n0 + d * n_pw_modes) + 1] += cval * cvec[2 * d + 1];
+                pw[2 * (n0 + d * slab)] += cval * cvec[2 * d + 0];
+                pw[2 * (n0 + d * slab) + 1] += cval * cvec[2 * d + 1];
             }
         }
     }
@@ -131,7 +130,7 @@ extern "C" __global__ void PtMultiplyStresslet3DByBoxKernel(MultiplyStresslet3DA
     Real *dst = a.dst_flat + 2 * dst_off;
 
     const int n_pw = a.n_pw;
-    const int n_pw_modes = a.n_pw_modes;
+    const int slab = a.pw_slab;
     const int npw_half = n_pw / 2;
     const Real hpw = a.hpw;
     auto ts = [&](int i) { return Real(i - npw_half) * hpw; };
@@ -152,7 +151,7 @@ extern "C" __global__ void PtMultiplyStresslet3DByBoxKernel(MultiplyStresslet3DA
         Real Pr[3][3], Pi[3][3];
         for (int j = 0; j < 3; ++j) {
             for (int i = 0; i < 3; ++i) {
-                const int o = 2 * (n_idx + n_pw_modes * (i + 3 * j));
+                const int o = 2 * (n_idx + slab * (i + 3 * j));
                 Pr[i][j] = src[o];
                 Pi[i][j] = src[o + 1];
             }
@@ -182,7 +181,7 @@ extern "C" __global__ void PtMultiplyStresslet3DByBoxKernel(MultiplyStresslet3DA
         for (int i = 0; i < 3; ++i) {
             const Real ar = k[i] * zz_r + rksq * prod_r[i];
             const Real ai = k[i] * zz_i + rksq * prod_i[i];
-            const int o = 2 * (n_idx + n_pw_modes * i);
+            const int o = 2 * (n_idx + slab * i);
             dst[o] = f * ai;
             dst[o + 1] = -f * ar;
         }
@@ -203,7 +202,7 @@ extern "C" __global__ void PtMultiplyLaplaceDipole3DByBoxKernel(MultiplyLaplaceD
     Real *dst = a.dst_flat + 2 * dst_off;
 
     const int n_pw = a.n_pw;
-    const int n_pw_modes = a.n_pw_modes;
+    const int slab = a.pw_slab;
     const int npw_half = n_pw / 2;
     const Real hpw = a.hpw;
     auto ts = [&](int i) { return Real(i - npw_half) * hpw; };
@@ -219,7 +218,7 @@ extern "C" __global__ void PtMultiplyLaplaceDipole3DByBoxKernel(MultiplyLaplaceD
 
         Real dot_r = 0, dot_i = 0;
         for (int i = 0; i < 3; ++i) {
-            const int o = 2 * (n_idx + n_pw_modes * i);
+            const int o = 2 * (n_idx + slab * i);
             dot_r += k[i] * src[o];
             dot_i += k[i] * src[o + 1];
         }

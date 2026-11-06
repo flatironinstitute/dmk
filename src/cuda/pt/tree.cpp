@@ -544,10 +544,7 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
         mi.nlist1_stride = stride;
         mi.periodic = params.use_periodic;
         mi.skip_root_form = params.use_periodic;
-        {
-            const int n_pw = tree_->expansion_constants.n_pw_diff;
-            mi.n_pw_per_box = (long)sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2) * tree_->n_tables_down;
-        }
+        mi.n_pw_per_box = (long)pw_slab_layout(*tree_).slab * tree_->n_tables_down;
         // Same choice build_self_correction_work_list makes on the host path.
         if (params.kernel == DMK_STRESSLET)
             mi.self_mode = SelfCorrectionMode::zero;

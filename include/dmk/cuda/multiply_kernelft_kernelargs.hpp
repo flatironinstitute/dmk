@@ -7,8 +7,8 @@ template <typename Real>
 struct MultiplyCd2pArgs {
     int n_boxes_at_level = 0;
     int n_charge_dim = 0; // = n_tables_up == n_tables_down here
-    int n_pw_modes = 0;
     int n_pw_live = 0;
+    int pw_slab = 0; // modes between consecutive charge-dim slabs
 
     const int *box_ids = nullptr;         // [n_boxes_at_level]
     const Real *radialft = nullptr;       // [n_pw_live], slab order
@@ -23,8 +23,8 @@ struct MultiplyStokeslet3DArgs {
     int n_boxes_at_level = 0;
     int n_pw = 0;
     int n_pw2 = 0;
-    int n_pw_modes = 0;
     int n_pw_live = 0;
+    int pw_slab = 0; // modes between consecutive charge-dim slabs
     Real hpw = 0;
     bool is_windowed = false;
 
@@ -41,8 +41,8 @@ struct MultiplyStresslet3DArgs {
     int n_boxes_at_level = 0;
     int n_pw = 0;
     int n_pw2 = 0;
-    int n_pw_modes = 0;
     int n_pw_live = 0;
+    int pw_slab = 0; // modes between consecutive charge-dim slabs
     Real hpw = 0;
 
     const int *box_ids = nullptr;
@@ -60,8 +60,8 @@ template <typename Real>
 struct MultiplyLaplaceDipole3DArgs {
     int n_boxes_at_level = 0;
     int n_pw = 0;
-    int n_pw_modes = 0;
     int n_pw_live = 0;
+    int pw_slab = 0; // modes between consecutive charge-dim slabs
     Real hpw = 0;
 
     const int *box_ids = nullptr;

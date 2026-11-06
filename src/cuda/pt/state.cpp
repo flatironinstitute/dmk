@@ -36,7 +36,7 @@ template <typename Real>
 struct FourierTables {
     DeviceBuffer<Real> pw2poly, poly2pw, radialft, phase;
     DeviceBuffer<int> pencil_slots, full_of_compact, mode_axes;
-    int n_pw_live = 0;
+    int n_pw_live = 0, pw_slab = 0;
     DeviceBuffer<Real> p2c, c2p;
     DeviceBuffer<Real> window_pw2poly, window_poly2pw, window_radialft;
     DeviceBuffer<Real> inv_box_scale, direct_rsc, direct_cen, direct_d2max;
@@ -140,60 +140,11 @@ void build_fourier_tables(const BuildInputs<Real, DIM> &in, DMKPtTree<Real, DIM>
         }
     }
 
-    // The kernel FT is tabulated against integer radius j1^2+j2^2+j3^2 and gathered onto the mode
-    // cube, so modes past the band edge fall outside the prolate window's support and the multiply
-    // sets them to exactly zero. Taking the mask from the tabulated values rather than from the
-    // ball geometry means kernels that build the FT by quadrature, with no hard gate, keep every
-    // mode and simply see no pruning.
-    //
-    // Live modes move to the front of every slab so shift_pw and multiply walk a dense prefix.
-    // Slab size and every pw offset stay as the tree built them; only the order within a slab
-    // changes, and the dead tail is never read or written. DMK_PW_MASK=0 disables.
-    const bool prune = [] {
-        const char *v = std::getenv("DMK_PW_MASK");
-        return !v || std::atoi(v) != 0;
-    }();
-
-    std::vector<int> pencil_slots, full_of_compact;
-    std::vector<char> live(fou.n_pw_modes, !prune);
-    for (int m = 0; m < fou.n_pw_modes && prune; ++m)
-        for (int L = 0; L < n_levels && !live[m]; ++L)
-            live[m] = radialft_flat[(std::size_t)L * fou.radialft_per_level_reals + m] != Real{0};
-
-    // Each (m2, m3) pencil keeps one run of m1 symmetric about the zero mode: everything from its
-    // first live mode to its last, widened to its mirror. A dead mode inside the run is harmless, as
-    // its FT is zero. One run lets proxy2pw and pw2proxy get a slot by arithmetic off an n_pw*n_pw2
-    // table, and the symmetry lets pw2proxy pair each mode with its mirror in place.
-    const int n_pencil = fou.n_pw_modes / fou.n_pw;
-    pencil_slots.assign(2 * (std::size_t)n_pencil, 0);
-    full_of_compact.clear();
-    for (int p = 0; p < n_pencil; ++p) {
-        const char *row = &live[(std::size_t)p * fou.n_pw];
-        int lo = 0, hi = fou.n_pw;
-        while (lo < fou.n_pw && !row[lo])
-            ++lo;
-        while (hi > lo && !row[hi - 1])
-            --hi;
-        if (lo < hi) {
-            lo = std::min(lo, fou.n_pw - hi);
-            hi = fou.n_pw - lo;
-        }
-
-        pencil_slots[2 * p] = (int)full_of_compact.size() - lo;
-        pencil_slots[2 * p + 1] = lo | (hi << 16);
-        for (int m1 = lo; m1 < hi; ++m1)
-            full_of_compact.push_back(p * fou.n_pw + m1);
-    }
-
-    const int n_live = (int)full_of_compact.size();
+    auto [pencil_slots, full_of_compact, n_live, slab] = pw_slab_layout(tree);
     ftab.n_pw_live = n_live;
+    ftab.pw_slab = slab;
 
-    if (n_live == fou.n_pw_modes) {
-        // Nothing to prune, as for the quadrature-built kernels whose FT is nonzero everywhere. Drop
-        // the tables so the kernels take their cube-order path; the permutation below would be a no-op.
-        pencil_slots.clear();
-        full_of_compact.clear();
-    } else {
+    if (!full_of_compact.empty()) {
         // Permute the per-mode table into slab order.
         std::vector<Real> rad_new(fou.n_pw_modes);
         for (int L = 0; L < n_levels; ++L) {
@@ -246,6 +197,64 @@ void build_fourier_tables(const BuildInputs<Real, DIM> &in, DMKPtTree<Real, DIM>
 }
 
 } // namespace
+
+template <typename Real, int DIM>
+PwSlabLayout pw_slab_layout(DMKPtTree<Real, DIM> &tree) {
+    const int n_pw = tree.expansion_constants.n_pw_diff;
+    const int n_pw_modes = sctl::pow<DIM - 1>(n_pw) * ((n_pw + 1) / 2);
+    const int n_levels = tree.n_levels();
+
+    // The kernel FT is tabulated against integer radius j1^2+j2^2+j3^2 and gathered onto the mode
+    // cube, so modes past the band edge fall outside the prolate window's support and the multiply
+    // sets them to exactly zero. Taking the mask from the tabulated values rather than from the
+    // ball geometry means kernels that build the FT by quadrature, with no hard gate, keep every
+    // mode and simply see no pruning. DMK_PW_MASK=0 disables.
+    const bool prune = [] {
+        const char *v = std::getenv("DMK_PW_MASK");
+        return !v || std::atoi(v) != 0;
+    }();
+    std::vector<char> live(n_pw_modes, !prune);
+    for (int m = 0; m < n_pw_modes && prune; ++m)
+        for (int L = 0; L < n_levels && !live[m]; ++L)
+            live[m] = tree.difference_fourier_data[L].radialft[m] != Real{0};
+
+    // Each (m2, m3) pencil keeps one run of m1 symmetric about the zero mode: everything from its
+    // first live mode to its last, widened to its mirror. A dead mode inside the run is harmless, as
+    // its FT is zero. One run lets proxy2pw and pw2proxy get a slot by arithmetic off an n_pw*n_pw2
+    // table, and the symmetry lets pw2proxy pair each mode with its mirror in place.
+    PwSlabLayout out;
+    const int n_pencil = n_pw_modes / n_pw;
+    out.pencil_slots.assign(2 * (std::size_t)n_pencil, 0);
+    for (int p = 0; p < n_pencil; ++p) {
+        const char *row = &live[(std::size_t)p * n_pw];
+        int lo = 0, hi = n_pw;
+        while (lo < n_pw && !row[lo])
+            ++lo;
+        while (hi > lo && !row[hi - 1])
+            --hi;
+        if (lo < hi) {
+            lo = std::min(lo, n_pw - hi);
+            hi = n_pw - lo;
+        }
+
+        out.pencil_slots[2 * p] = (int)out.full_of_compact.size() - lo;
+        out.pencil_slots[2 * p + 1] = lo | (hi << 16);
+        for (int m1 = lo; m1 < hi; ++m1)
+            out.full_of_compact.push_back(p * n_pw + m1);
+    }
+
+    out.n_live = (int)out.full_of_compact.size();
+    // Padded to 32 modes so every slab starts 256-byte aligned: ShiftPw's streaming loads are
+    // L2-bound and a misaligned slab costs them an extra line per warp.
+    out.slab = (out.n_live + 31) / 32 * 32;
+    if (out.n_live == n_pw_modes) {
+        // Nothing to prune, as for the quadrature-built kernels whose FT is nonzero everywhere. Drop
+        // the tables so the kernels take their cube-order path.
+        out.pencil_slots.clear();
+        out.full_of_compact.clear();
+    }
+    return out;
+}
 
 template <typename Real, int DIM>
 BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree, const DeviceMetadataOutputs<Real> &md) {
@@ -341,6 +350,7 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree, const DeviceM
         build_fourier_tables(in, tree, ftab);
 
     fou.n_pw_live = ftab.n_pw_live;
+    fou.pw_slab = ftab.pw_slab;
     fou.tables = &ftab;
 
     // The proxy basis is radially compact to tolerance, so like the plane-wave grid its tensor
@@ -391,8 +401,8 @@ BuildInputs<Real, DIM> to_build_inputs(DMKPtTree<Real, DIM> &tree, const DeviceM
 
     // --- Scratch strides / sizes ---
     auto &sc = in.scratch;
-    sc.pw_in_stride_reals = 2L * fou.n_charge_dim * fou.n_pw_modes;
-    sc.pw_form_stride_reals = (fou.n_tables_up != fou.n_charge_dim) ? 2L * fou.n_tables_up * fou.n_pw_modes : 0;
+    sc.pw_in_stride_reals = 2L * fou.n_charge_dim * fou.pw_slab;
+    sc.pw_form_stride_reals = (fou.n_tables_up != fou.n_charge_dim) ? 2L * fou.n_tables_up * fou.pw_slab : 0;
     sc.proxy_coeffs_downward_dim = tree.proxy_coeffs_downward_dim;
     sc.pw_out_dim = tree.pw_out_size;
 
@@ -476,6 +486,7 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     fourier.phase_per_level_reals = fi.phase_per_level_reals;
     fourier.proxy_ball_r2 = fi.proxy_ball_r2;
     fourier.n_pw_live = fi.n_pw_live;
+    fourier.pw_slab = fi.pw_slab;
     fourier.d_centers.adopt(md.d_centers, nb * DIM);
     { // cached for the configuration and owned by the cache, which outlives every State
         const auto &t = *fi.tables;
@@ -602,7 +613,7 @@ State<Real, DIM>::State(const BuildInputs<Real, DIM> &in) {
     // shift_pw's self term reads a slab that proxy2pw may not write (a target-only box, or the root
     // under PBC). Only then must pw_out start at zero. pw_in_pool needs no clearing: pw2proxy reads
     // only the live modes, which shift_pw writes.
-    if (si.pw_out_dim != (std::size_t)n_pw_form * fourier.n_charge_dim * fourier.n_pw_modes)
+    if (si.pw_out_dim != (std::size_t)n_pw_form * fourier.n_charge_dim * fourier.pw_slab)
         scratch.d_pw_out.zero_async(downward_stream);
     outputs.d_pot_eval_src.zero_async(downward_stream);
     outputs.d_pot_eval_trg.zero_async(downward_stream);
@@ -662,6 +673,10 @@ void State<Real, DIM>::dump(DMKPtTree<Real, DIM> &tree) {
     write("dmk_proxy_coeffs", scratch.d_proxy_coeffs_upward.data(), scratch.d_proxy_coeffs_upward.size());
 }
 
+template PwSlabLayout pw_slab_layout<float, 2>(DMKPtTree<float, 2> &);
+template PwSlabLayout pw_slab_layout<float, 3>(DMKPtTree<float, 3> &);
+template PwSlabLayout pw_slab_layout<double, 2>(DMKPtTree<double, 2> &);
+template PwSlabLayout pw_slab_layout<double, 3>(DMKPtTree<double, 3> &);
 template BuildInputs<float, 2> to_build_inputs<float, 2>(DMKPtTree<float, 2> &, const DeviceMetadataOutputs<float> &);
 template BuildInputs<float, 3> to_build_inputs<float, 3>(DMKPtTree<float, 3> &, const DeviceMetadataOutputs<float> &);
 template BuildInputs<double, 2> to_build_inputs<double, 2>(DMKPtTree<double, 2> &,

@@ -30,7 +30,7 @@ using jit::JitKey;
 // Batched neighbor plane-wave translation (one launch, all levels).
 // Assigns into each box's pw_in_pool slab, so it is idempotent (no snapshot).
 template <typename Real>
-void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, int n_pw_modes, int n_pw_live, int n_charge_dim,
+void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, int n_pw_live, int pw_slab, int n_charge_dim,
                      cudaStream_t stream) {
     int n_groups = 0;
     for (const auto &a : args_h)
@@ -51,8 +51,8 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, int n_pw
         key.real = jit_real_name<Real>();
         key.sm_major = cache.sm_major();
         key.sm_minor = cache.sm_minor();
-        key.params = {{"N_PW_MODES", n_pw_modes},
-                      {"N_PW_LIVE", n_pw_live},
+        key.params = {{"N_PW_LIVE", n_pw_live},
+                      {"N_PW_SLAB", pw_slab},
                       {"N_CHARGE_DIM", n_charge_dim},
                       {"BLOCK_SIZE", p.at("BLOCK_SIZE")}};
         auto kernel =
@@ -66,7 +66,7 @@ void launch_shift_pw(std::vector<dmk::cuda::ShiftPwArgs<Real>> &args_h, int n_pw
     };
 
     std::ostringstream tune_key;
-    tune_key << "PtShiftPw|real=" << jit_real_name<Real>() << "|n_pw_modes=" << n_pw_modes << "|n_live=" << n_pw_live
+    tune_key << "PtShiftPw|real=" << jit_real_name<Real>() << "|n_live=" << n_pw_live << "|slab=" << pw_slab
              << "|n_charge_dim=" << n_charge_dim;
     tune_key << "|src=" << jit::jit_source_hash("pt/shiftpw.cu");
     const std::string tk = tune_key.str();
@@ -130,6 +130,7 @@ void downward(State<Real, DIM> &s, cudaStream_t stream) {
             pa.pw_in_pool = level_pw_in;
             pa.pw2poly = f.slab(L).pw2poly;
             pa.pencil_slots = f.d_pencil_slots.data();
+            pa.pw_slab = f.pw_slab;
             pa.proxy_flat = sc.d_proxy_coeffs_downward.data();
             pa.proxy_offsets = sc.d_proxy_offsets_downward.data();
             // Runs ahead of every p2c tensorprod below, so it is each box's first writer.
@@ -138,7 +139,7 @@ void downward(State<Real, DIM> &s, cudaStream_t stream) {
             pw2p_h.push_back(pa);
         }
 
-        launch_shift_pw<Real>(shift_h, f.n_pw_modes, f.n_pw_live, f.n_charge_dim, stream);
+        launch_shift_pw<Real>(shift_h, f.n_pw_live, f.pw_slab, f.n_charge_dim, stream);
         launch_pw2proxy<Real>(pw2p_h, sc.d_proxy_coeffs_downward.data(), sc.d_proxy_coeffs_downward.size(), stream);
 
         // ---- per-level downward tensorprod (parent->child, p2c, non-atomic add) ----

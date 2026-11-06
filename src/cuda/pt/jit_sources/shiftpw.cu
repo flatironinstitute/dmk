@@ -2,7 +2,7 @@
 // plane-wave fields into its own incoming field (per-level pw_in_pool slab).
 // One block covers one group -- the plane-wave-evaluating children of one parent --
 // over one window of BLOCK_SIZE modes, so each source slab is fetched once for the
-// whole group. The launcher prepends `using Real` + N_PW_MODES / N_PW_LIVE /
+// whole group. The launcher prepends `using Real` + N_PW_LIVE / N_PW_SLAB /
 // N_CHARGE_DIM / BLOCK_SIZE. One launch covers all levels via a device array of
 // per-level args. Assigns (not additive) into pw_in_pool. 3D only.
 
@@ -46,7 +46,6 @@ __device__ __forceinline__ complx<Real> mul_pow(complx<Real> x, complx<Real> c, 
 }
 
 __device__ __forceinline__ void ShiftPwBody(const ShiftPwArgs<Real> &a, int group, int window) {
-    constexpr int n_pw_modes = N_PW_MODES;
     constexpr int n_charge_dim = N_CHARGE_DIM;
 
     __shared__ long s_off[64];
@@ -101,7 +100,7 @@ __device__ __forceinline__ void ShiftPwBody(const ShiftPwArgs<Real> &a, int grou
                 complx<Real> zs[n_charge_dim];
 #pragma unroll
                 for (int d = 0; d < n_charge_dim; ++d)
-                    zs[d] = cmul(load_stream(&pw_out[off + d * n_pw_modes + m]), s);
+                    zs[d] = cmul(load_stream(&pw_out[off + d * N_PW_SLAB + m]), s);
                 const unsigned take = s_take[h];
 #pragma unroll
                 for (int t = 0; t < 8; ++t) {
@@ -130,7 +129,7 @@ __device__ __forceinline__ void ShiftPwBody(const ShiftPwArgs<Real> &a, int grou
         for (int d = 0; d < n_charge_dim; ++d) {
             complx<Real> v = mul_pow(acc[t][d], c[0], c2[0], -(t >> 2));
             v = mul_pow(v, c[1], c2[1], -((t >> 1) & 1));
-            pw_in[d * n_pw_modes + m] = mul_pow(v, c[2], c2[2], -(t & 1));
+            pw_in[d * N_PW_SLAB + m] = mul_pow(v, c[2], c2[2], -(t & 1));
         }
     }
 }
