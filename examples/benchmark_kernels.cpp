@@ -11,7 +11,9 @@
 #include <cstdint>
 #include <cstring>
 #include <exception>
+#include <fstream>
 #include <getopt.h>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -56,6 +58,7 @@ struct Config {
     int gpu_device_id = 0;
     long seed = 0;
     dmk::util::Distribution dist = dmk::util::Distribution::Uniform;
+    bool equal_charges = false;
     bool pin_host = false;
 
     // DMK and ESP
@@ -65,6 +68,7 @@ struct Config {
     // DMK and direct
     int n_trg = 0;
     int n_show_outliers = 0; // print top-N worst points per block to stderr (0 = off)
+    std::string err_dump;    // per-point errors to <err_dump>_<set>.txt (empty = off)
 
     // DMK only
     int n_per_leaf = 280;
@@ -126,10 +130,12 @@ dmk_ikernel parse_kernel(const char *s) {
 }
 
 // gauge: a periodic potential is fixed only up to an additive constant, so both sides are
-// mean-subtracted (over the compared components) before the error is formed.
+// mean-subtracted (over the compared components) before the error is formed. pt_diff and pt_ref,
+// when given, receive each point's |computed - reference| and |reference| over those components.
 template <typename Real>
 ErrorMetrics compute_error(const std::vector<Real> &computed, const std::vector<Real> &reference, int rank, int np,
-                           int kdim = 1, int comp_begin = 0, int comp_end = -1, bool gauge = false) {
+                           int kdim = 1, int comp_begin = 0, int comp_end = -1, bool gauge = false,
+                           std::vector<double> *pt_diff = nullptr, std::vector<double> *pt_ref = nullptr) {
     if (comp_end < 0)
         comp_end = kdim;
     double local_err2 = 0.0, local_ref2 = 0.0, local_maxre = 0.0;
@@ -157,14 +163,21 @@ ErrorMetrics compute_error(const std::vector<Real> &computed, const std::vector<
     }
 
     for (size_t p = 0; p < n_pts; ++p) {
+        double pt_err2 = 0.0, pt_ref2 = 0.0;
         for (int c = comp_begin; c < comp_end; ++c) {
             const size_t i = p * kdim + c;
             double diff = (double(computed[i]) - mean_c) - (double(reference[i]) - mean_r);
             double ref = double(reference[i]) - mean_r;
-            local_err2 += diff * diff;
-            local_ref2 += ref * ref;
+            pt_err2 += diff * diff;
+            pt_ref2 += ref * ref;
             if (std::abs(ref) > 0.0)
                 local_maxre = std::max(local_maxre, std::abs(diff / ref));
+        }
+        local_err2 += pt_err2;
+        local_ref2 += pt_ref2;
+        if (pt_diff) {
+            pt_diff->push_back(std::sqrt(pt_err2));
+            pt_ref->push_back(std::sqrt(pt_ref2));
         }
     }
 
@@ -377,12 +390,14 @@ void print_outliers(const std::vector<Real> &computed, const std::vector<Real> &
 template <typename Real>
 void generate_and_scatter(int n_dim, int charge_dim, size_t n_src, size_t n_trg, dmk::util::Distribution dist,
                           std::vector<Real> &r_src, std::vector<Real> &r_trg, std::vector<Real> &charges,
-                          std::vector<Real> &normals, long seed, bool periodic, int rank, int np) {
+                          std::vector<Real> &normals, long seed, bool periodic, bool equal_charges, int rank, int np) {
     std::vector<Real> r_src_all, r_trg_all, charges_all, normals_all;
 
     if (rank == 0) {
         dmk::util::init_test_data(n_dim, charge_dim, int(n_src), int(n_trg), dist, !periodic, r_src_all, r_trg_all,
                                   normals_all, charges_all, seed);
+        if (equal_charges)
+            std::fill(charges_all.begin(), charges_all.end(), Real(1.0 / n_src));
         if (periodic)
             for (int c = 0; c < charge_dim; ++c) {
                 double mean = 0.0;
@@ -589,6 +604,7 @@ void print_dmk_config_comment(const Config &cfg, int np, int n_threads, std::ost
        << "# with_grad:            " << cfg.with_grad << "\n"
        << "# precision:            " << (cfg.prec == 'd' ? "double" : "float") << "\n"
        << "# dist:                 " << int(cfg.dist) << "\n"
+       << "# equal_charges:        " << cfg.equal_charges << "\n"
        << "# seed:                 " << cfg.seed << "\n"
        << "# n_runs:               " << cfg.n_runs << "\n"
        << "# n_direct:             " << cfg.n_direct << "\n"
@@ -687,9 +703,15 @@ void compute_reference_blocks(const Config &cfg, int charge_dim, const std::vect
     }
 }
 
+// Each compared point's |computed - reference| and |reference| over the compared components.
+struct PointErrors {
+    std::vector<double> diff, ref;
+};
+
 template <typename Real>
 void fill_error_block(const Config &cfg, int pot_dim, const std::vector<Real> &pot, const std::vector<Real> &pot_dir,
-                      ErrorBlock &out, int rank, int np) {
+                      ErrorBlock &out, int rank, int np, PointErrors *pot_pts = nullptr,
+                      PointErrors *grad_pts = nullptr) {
     if (pot.empty() || pot_dir.empty())
         return;
     int n_compare = std::min(int(pot_dir.size()), int(pot.size()));
@@ -698,13 +720,61 @@ void fill_error_block(const Config &cfg, int pot_dim, const std::vector<Real> &p
         return;
     std::vector<Real> sub(pot.begin(), pot.begin() + n_compare);
     std::vector<Real> dir_sub(pot_dir.begin(), pot_dir.begin() + n_compare);
+    const auto diff = [](PointErrors *e) { return e ? &e->diff : nullptr; };
+    const auto ref = [](PointErrors *e) { return e ? &e->ref : nullptr; };
     if (cfg.with_grad) {
-        out.pot = compute_error(sub, dir_sub, rank, np, pot_dim, 0, 1, cfg.use_periodic);
-        out.grad = compute_error(sub, dir_sub, rank, np, pot_dim, 1, pot_dim);
+        out.pot = compute_error(sub, dir_sub, rank, np, pot_dim, 0, 1, cfg.use_periodic, diff(pot_pts), ref(pot_pts));
+        out.grad = compute_error(sub, dir_sub, rank, np, pot_dim, 1, pot_dim, false, diff(grad_pts), ref(grad_pts));
     } else {
-        out.pot = compute_error(sub, dir_sub, rank, np, pot_dim, 0, pot_dim, cfg.use_periodic);
+        out.pot =
+            compute_error(sub, dir_sub, rank, np, pot_dim, 0, pot_dim, cfg.use_periodic, diff(pot_pts), ref(pot_pts));
     }
     out.have = true;
+}
+
+void gather_to_root(std::vector<double> &v, [[maybe_unused]] int rank, [[maybe_unused]] int np) {
+#ifdef DMK_HAVE_MPI
+    const int n = int(v.size());
+    std::vector<int> cnt(np), disp(np, 0);
+    MPI_Gather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, 0, MYCOMM);
+    for (int i = 1; i < np; ++i)
+        disp[i] = disp[i - 1] + cnt[i - 1];
+    std::vector<double> all(rank == 0 ? size_t(disp[np - 1] + cnt[np - 1]) : 0);
+    MPI_Gatherv(v.data(), n, MPI_DOUBLE, all.data(), cnt.data(), disp.data(), MPI_DOUBLE, 0, MYCOMM);
+    v.swap(all);
+#endif
+}
+
+// Per-point error quantiles: |d| / |ref|, the relative force error of particle codes (jz-fmm,
+// Bonsai), and |d| / rms|ref|, which stays meaningful where signed charges nearly cancel the field.
+// No colon, so CSV readers keep it a comment.
+void print_error_distribution(const std::string &label, const PointErrors &e, std::ostream &os) {
+    if (e.diff.empty())
+        return;
+    double ref2 = 0.0;
+    for (double r : e.ref)
+        ref2 += r * r;
+    const double rms = std::sqrt(ref2 / e.ref.size());
+    std::vector<double> rel, nrm;
+    for (size_t i = 0; i < e.diff.size(); ++i) {
+        if (e.ref[i] > 0.0)
+            rel.push_back(e.diff[i] / e.ref[i]);
+        nrm.push_back(e.diff[i] / rms);
+    }
+    const auto quantiles = [&os](std::vector<double> &v, const char *name) {
+        if (v.empty())
+            return;
+        std::sort(v.begin(), v.end());
+        os << " " << name;
+        for (const char *p : {"50", "90", "99", "99.9", "99.99"})
+            os << " p" << p << "=" << v[std::max<size_t>(1, size_t(std::ceil(std::atof(p) / 100 * v.size()))) - 1];
+        os << " max=" << v.back();
+    };
+    os << "# err_dist " << label << " n=" << e.diff.size();
+    quantiles(rel, "rel");
+    os << " |";
+    quantiles(nrm, "rms");
+    os << "\n";
 }
 
 // Bracket the timed loop on the GPU path, so `nsys/ncu -c cudaProfilerApi` excludes setup and warmup.
@@ -751,7 +821,7 @@ struct BenchProblem {
         with_trg = cfg.n_trg > 0;
 
         generate_and_scatter<Real>(cfg.n_dim, charge_dim, cfg.n_src, cfg.n_trg, cfg.dist, r_src, r_trg, charges,
-                                   normals, cfg.seed, cfg.use_periodic, rank, np);
+                                   normals, cfg.seed, cfg.use_periodic, cfg.equal_charges, rank, np);
         // Page-lock after generation: the buffers must exist before cudaHostRegister sees them.
         pin_r_src = std::make_unique<PinnedBuffer<Real>>(r_src, cfg.pin_host);
         pin_r_trg = std::make_unique<PinnedBuffer<Real>>(r_trg, cfg.pin_host);
@@ -776,6 +846,37 @@ struct BenchProblem {
             fill_error_block(cfg, pot_dim, pot_trg, pot_direct_trg, trg_err, rank, np);
         if (rank == 0)
             print_csv_row(t, src_err, with_trg ? &trg_err : nullptr, cfg.with_grad, std::cout);
+    }
+
+    // Per-point error quantiles to stdout, and with --err-dump every point's errors to
+    // <err_dump>_<set>.txt.
+    void report_error_distribution(const Config &cfg, const std::vector<Real> &pot_src,
+                                   const std::vector<Real> &pot_trg) const {
+        const auto one = [&](const std::vector<Real> &pot, const std::vector<Real> &dir, const std::string &set) {
+            ErrorBlock b;
+            PointErrors pe, ge;
+            fill_error_block(cfg, pot_dim, pot, dir, b, rank, np, &pe, cfg.with_grad ? &ge : nullptr);
+            for (auto *v : {&pe.diff, &pe.ref, &ge.diff, &ge.ref})
+                gather_to_root(*v, rank, np);
+            if (rank != 0 || !b.have)
+                return;
+            print_error_distribution(cfg.with_grad ? set + " pot" : set, pe, std::cout);
+            if (cfg.with_grad)
+                print_error_distribution(set + " grad", ge, std::cout);
+            if (cfg.err_dump.empty())
+                return;
+            std::ofstream f(cfg.err_dump + "_" + set + ".txt");
+            f << (cfg.with_grad ? "# pot_diff pot_ref grad_diff grad_ref\n" : "# diff ref\n") << std::setprecision(9);
+            for (size_t i = 0; i < pe.diff.size(); ++i) {
+                f << pe.diff[i] << " " << pe.ref[i];
+                if (cfg.with_grad)
+                    f << " " << ge.diff[i] << " " << ge.ref[i];
+                f << "\n";
+            }
+        };
+        one(pot_src, pot_direct_src, "src");
+        if (with_trg)
+            one(pot_trg, pot_direct_trg, "trg");
     }
 
     // Top-N worst points per block against the reference, to stderr.
@@ -998,6 +1099,7 @@ void run_dmk_benchmark(Config cfg) {
             std::cout << std::endl << std::flush;
     }
     profiler_stop(cfg);
+    pb.report_error_distribution(cfg, pot.src, pot.trg);
 
     pdmk_tree_destroy(tree);
 }
@@ -1057,6 +1159,7 @@ void run_direct_benchmark(Config cfg) {
             pb.report_outliers(cfg, pot.src, pot.trg);
     }
     profiler_stop(cfg);
+    pb.report_error_distribution(cfg, pot.src, pot.trg);
 }
 
 // ---------------------------------------------------------------------------
@@ -1320,7 +1423,7 @@ void warmup(const Config &cfg) {
     const int out_dim = dmk::get_kernel_output_dim(cfg.n_dim, cfg.kernel, et);
     std::vector<Real> r_w, r_trg_w, q_w, nrm_w;
     generate_and_scatter<Real>(cfg.n_dim, input_dim, nw, 0, cfg.dist, r_w, r_trg_w, q_w, nrm_w, cfg.seed,
-                               cfg.use_periodic, 0, 1);
+                               cfg.use_periodic, cfg.equal_charges, 0, 1);
     if (!needs_normal(cfg.kernel))
         nrm_w.clear();
     pdmk_esp_params params = make_params(cfg, cfg.r_c, et, cfg.eval_path);
@@ -1456,7 +1559,7 @@ void run_esp_benchmark(Config cfg) {
     // Drawn at working precision and widened, so the double-precision reference sees the evaluated points.
     std::vector<Real> r_src, r_trg, charges, normals;
     generate_and_scatter<Real>(cfg.n_dim, input_dim, n, 0, cfg.dist, r_src, r_trg, charges, normals, cfg.seed,
-                               cfg.use_periodic, 0, 1);
+                               cfg.use_periodic, cfg.equal_charges, 0, 1);
     if (!with_normal)
         normals.clear();
     const std::vector<double> r_src_d(r_src.begin(), r_src.end()), charges_d(charges.begin(), charges.end()),
@@ -1513,6 +1616,8 @@ enum {
     OPT_BINS,
     OPT_STILE,
     OPT_DEVICE,
+    OPT_EQUAL_CHARGES,
+    OPT_ERR_DUMP,
 };
 
 static const struct option long_opts[] = {
@@ -1533,6 +1638,8 @@ static const struct option long_opts[] = {
     {"bins", required_argument, nullptr, OPT_BINS},
     {"stile", required_argument, nullptr, OPT_STILE},
     {"device", no_argument, nullptr, OPT_DEVICE},
+    {"equal-charges", no_argument, nullptr, OPT_EQUAL_CHARGES},
+    {"err-dump", required_argument, nullptr, OPT_ERR_DUMP},
     {nullptr, 0, nullptr, 0},
 };
 
@@ -1560,7 +1667,9 @@ void print_usage(const char *argv0) {
               << "  -l log_level          DMK log verbosity 0-6\n"
               << "  -g                    Potential + gradient.\n"
               << "  -s seed               Integer seed for random numbers\n"
-              << "  -u dist               0=uniform (default), 1=lobed_sphere, 2=box_partial_facet, 3=graded_volume\n"
+              << "  -u dist               0=uniform (default), 1=lobed_sphere, 2=box_partial_facet, 3=graded_volume,\n"
+              << "                        4=normal (sigma 1/12, centred)\n"
+              << "  --equal-charges       Every charge 1/N, as the masses of particle codes (free-space)\n"
               << "  --gpu-device n        CUDA device id when -p g (default 0)\n"
               << "  --pin                 Page-lock the input and potential buffers (GPU path: unstaged transfers)\n"
               << "  -h                    Help\n"
@@ -1572,6 +1681,8 @@ void print_usage(const char *argv0) {
               << "--solver dmk and direct:\n"
               << "  -T n_trg              Separate target points (default 0 = source self-eval only)\n"
               << "  -O n_outliers         Print top-N worst points per block to stderr (default 0 = off)\n"
+              << "  --err-dump prefix     Write each compared point's |error| and |reference| to\n"
+              << "                        <prefix>_src.txt (and _trg.txt); quantiles are always printed\n"
               << "\n"
               << "--solver dmk only:\n"
               << "  -n n_per_leaf         DMK leaf size (default 280)\n"
@@ -1718,6 +1829,12 @@ Config parse_args(int argc, char *argv[]) {
         case OPT_NO_BENCH_EVAL:
             cfg.bench_eval = false;
             break;
+        case OPT_EQUAL_CHARGES:
+            cfg.equal_charges = true;
+            break;
+        case OPT_ERR_DUMP:
+            cfg.err_dump = optarg;
+            break;
         case OPT_BENCH_UPDATE_CHARGES:
             cfg.bench_update_charges = true;
             break;
@@ -1786,6 +1903,8 @@ int main(int argc, char *argv[]) {
     int rc = 0;
     try {
         Config cfg = parse_args(argc, argv);
+        if (cfg.equal_charges && cfg.use_periodic)
+            throw std::runtime_error("--equal-charges is free-space only: a periodic sum needs neutral charges");
 
         if (cfg.solver == Solver::ESP) {
 #ifdef DMK_HAVE_MPI

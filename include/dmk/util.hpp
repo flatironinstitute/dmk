@@ -239,6 +239,26 @@ struct GradedVolume {
     TestRng rng;
 };
 
+// Isotropic normal distribution centred in the box with sigma = 1/12, so the box spans +-6 sigma;
+// init_test_data redraws the rare point beyond it.
+template <typename Real>
+struct NormalVolume {
+    NormalVolume(int n_dim, long seed) : DIM(n_dim), rng(seed) {};
+
+    inline void operator()(Real *res) {
+        for (int i = 0; i < DIM; ++i) {
+            const double u1 = 1.0 - rng(), u2 = rng(); // Box-Muller, u1 in (0, 1]
+            res[i] = Real(0.5 + std::sqrt(-2.0 * std::log(u1)) * std::cos(2.0 * M_PI * u2) / 12.0);
+        }
+    };
+
+    inline Real dist() { return rng(); };
+    constexpr int n_dim() { return DIM; }
+
+    const int DIM;
+    TestRng rng;
+};
+
 // A sphere (circle in 2D) deformed into radial lobes: the radius is a function of angle, dipping
 // inward over `polar_modes` lobes in the polar angle and `azimuthal_modes` lobes in the azimuth, so
 // surface density and the leaf occupancy that follows from it vary around the surface instead of
@@ -420,6 +440,7 @@ enum class Distribution : int {
     LobedNSphere = 1,
     NCubePartialFacet = 2,
     GradedVolume = 3,
+    Normal = 4,
 };
 
 inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, Distribution dist, bool set_fixed_charges,
@@ -435,6 +456,9 @@ inline void init_test_data(int n_dim, int nd, int n_src, int n_trg, Distribution
     if (dist == Distribution::GradedVolume)
         return init_test_data(n_dim, nd, n_src, n_trg, GradedVolume<Real>(n_dim, almost_one, seed), set_fixed_charges,
                               r_src, r_trg, r_normal, charges);
+    if (dist == Distribution::Normal)
+        return init_test_data(n_dim, nd, n_src, n_trg, NormalVolume<Real>(n_dim, seed), set_fixed_charges, r_src, r_trg,
+                              r_normal, charges);
     return init_test_data(n_dim, nd, n_src, n_trg, UniformVolume<Real>(n_dim, almost_one, seed), set_fixed_charges,
                           r_src, r_trg, r_normal, charges);
 }
