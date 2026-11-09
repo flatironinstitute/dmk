@@ -120,6 +120,9 @@ __global__ void k_subtree_flags(const sctl::Morton<DIM> *__restrict__ mid, const
                                 int *__restrict__ trg_own, unsigned char *__restrict__ ifpwexp,
                                 unsigned long long *__restrict__ depth_max) {
     const long i = blockIdx.x * (long)blockDim.x + threadIdx.x;
+    const unsigned depth = __reduce_max_sync(FULL, i < n_boxes ? (unsigned)mid[i].Depth() : 0u);
+    if (!(threadIdx.x & 31))
+        atomicMax(depth_max, (unsigned long long)depth);
     if (i >= n_boxes)
         return;
     constexpr int NC = n_child_slots<DIM>();
@@ -132,7 +135,6 @@ __global__ void k_subtree_flags(const sctl::Morton<DIM> *__restrict__ mid, const
     src_halo[i] = (int)(end.halo - beg.halo);
     src_own[i] = (int)(end.own - beg.own);
     trg_own[i] = (int)(end.trg - beg.trg);
-    atomicMax(depth_max, (unsigned long long)mid[i].Depth());
 
     unsigned char v = leaf[i] ? 0 : 1;
     for (int k = 0; k < NN && !v; ++k) {
@@ -757,11 +759,15 @@ __global__ void k_direct_summary(const long *__restrict__ keys, const int *__res
                                  Real *__restrict__ self_corr) {
     const long i = blockIdx.x * (long)blockDim.x + threadIdx.x;
     long occ[4] = {};
-    if (i < n_boxes && keys[i] >= kDirectGroup) {
-        const int box = direct_work[i];
-        atomicAdd(reinterpret_cast<unsigned long long *>(join + join_n_direct_work), 1ull);
-        atomicMin(reinterpret_cast<unsigned long long *>(join + join_min_direct_level),
-                  (unsigned long long)levels[box]);
+    const bool work = i < n_boxes && keys[i] >= kDirectGroup;
+    const int box = work ? direct_work[i] : 0;
+    const unsigned n_work = __popc(__ballot_sync(FULL, work));
+    const unsigned min_level = __reduce_min_sync(FULL, work ? (unsigned)levels[box] : ~0u);
+    if (!(threadIdx.x & 31) && n_work) {
+        atomicAdd(reinterpret_cast<unsigned long long *>(join + join_n_direct_work), (unsigned long long)n_work);
+        atomicMin(reinterpret_cast<unsigned long long *>(join + join_min_direct_level), (unsigned long long)min_level);
+    }
+    if (work) {
         self_corr[i] = has_w0 ? w0.v[levels[box] + ifpwexp[box]] : Real{0};
         const long s = src_cnt_owned[box], t = trg_cnt_owned[box];
         occ[0] = s;
