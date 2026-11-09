@@ -1,0 +1,31 @@
+name = "DMK"
+uuid = "93521277-6f6b-4b97-aa1e-82c8f4387fa3"
+authors = ["Robert Blackwell <rblackwell@flatironinstitute.org>"]
+version = "1.0.0"
+
+[deps]
+DMK_jll = "dd75985e-f840-5a39-a51a-8eefcb4c69b4"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+OpenBLAS32_jll = "656ef2d0-ae68-5445-9ca0-591084a874a2"
+
+[weakdeps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+
+[extensions]
+DMKCUDAExt = "CUDA"
+
+[sources]
+DMK_jll = {url = "https://github.com/flatironinstitute/dmk.git", rev = "tidying-1.0", subdir = "bindings/DMK_jll"}
+
+[compat]
+CUDA = "5, 6"
+DMK_jll = "0.9"
+LinearAlgebra = "1"
+OpenBLAS32_jll = "0.3"
+julia = "1.11"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

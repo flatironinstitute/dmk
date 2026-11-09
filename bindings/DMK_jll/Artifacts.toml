@@ -1,0 +1,656 @@
+[[DMK]]
+arch = "x86_64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "852e83c847843567915c6f21cd1512191b266649"
+lazy = true
+libc = "glibc"
+march = "x86_64"
+mpi = "mpiabi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "1909b792f2f8b96c8c144a46eee3c1b3d907adac2861f41aef47ec1a7982583d"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+x86_64-cuda+none-mpi+mpiabi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "61dc8e229df408283501e157468abb727be601f0"
+lazy = true
+libc = "glibc"
+march = "avx"
+mpi = "mpiabi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "ef106830a6023ca974952b967ceb3a55fd2fa6cc938a94ac3d6cb73d87980162"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx-cuda+none-mpi+mpiabi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "bb2ee322acb9c5f386655ae03b998f2e92ba5cce"
+lazy = true
+libc = "glibc"
+march = "avx2"
+mpi = "mpiabi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "b5e2802fa8e50ddc7dd170f0a14125d430c13ad4f6a8ea5281748b037401816f"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx2-cuda+none-mpi+mpiabi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "a24a07a6fccfed674b8496633d53cabb547314aa"
+lazy = true
+libc = "glibc"
+march = "avx512"
+mpi = "mpiabi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "37367aec7748c32f25bad4ceff60f61cd55a1b27e64b522a8ad26e247eede6eb"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx512-cuda+none-mpi+mpiabi.tar.gz"
+[[DMK]]
+arch = "aarch64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "57a256fef2f6c0395799dba7f261ff1c9776f86c"
+lazy = true
+libc = "glibc"
+mpi = "mpiabi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "c64f7d9d5aec46c747b19ab7d9182f9c6de59522c7f4fbae88aa368ce10a4b68"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.aarch64-linux-gnu-cxx11-cuda+none-mpi+mpiabi.tar.gz"
+[[DMK]]
+arch = "aarch64"
+cuda = "none"
+git-tree-sha1 = "891d7f19f27f013a53df51c6f78d5718fb3cec22"
+lazy = true
+mpi = "mpiabi"
+os = "macos"
+
+    [[DMK.download]]
+    sha256 = "a32e800ef45045969da4f69b88d6551c8d400eb13e89c01f6de43d874dc2f9d7"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.aarch64-apple-darwin-cuda+none-mpi+mpiabi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "40aadb56366da98db51e2703a898a7e195f82df8"
+lazy = true
+libc = "glibc"
+march = "x86_64"
+mpi = "mpich"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "ca2fe67f8070ef3c129b944d204abfba4767d37a689ce14833e16e0253c38b0b"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+x86_64-cuda+none-mpi+mpich.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "d458b4c4f13339c3a8dab68028679dbbf6eec12d"
+lazy = true
+libc = "glibc"
+march = "avx"
+mpi = "mpich"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "b47e16bbc65bf13a1b45871f0c156d7a7d9aadb2601beb631d6731392d7ea4c5"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx-cuda+none-mpi+mpich.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "fd6e7d43c6ac501b2d193c20534829df361a10e4"
+lazy = true
+libc = "glibc"
+march = "avx2"
+mpi = "mpich"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "6b6e56eb139cfde5f2a32497d718118a21fb670518c57cdd3e8f1eae8130fa9a"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx2-cuda+none-mpi+mpich.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "8e17655b5ce081c72ff2d58fba008deb8d7163fb"
+lazy = true
+libc = "glibc"
+march = "avx512"
+mpi = "mpich"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "c7e3afd812e024291d71d8249e6159d8203fec46fac15ffa75aa8dbae9ff3b1b"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx512-cuda+none-mpi+mpich.tar.gz"
+[[DMK]]
+arch = "aarch64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "13cb95173663e7527777837abcbe5b1e339d2667"
+lazy = true
+libc = "glibc"
+mpi = "mpich"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "5656e707b8cf0194687466aa3a9ba068d9dfe2f102562c0837d9eb0678ffd60d"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.aarch64-linux-gnu-cxx11-cuda+none-mpi+mpich.tar.gz"
+[[DMK]]
+arch = "aarch64"
+cuda = "none"
+git-tree-sha1 = "75e12bf57c4af5ed1576051f9928605c04010e8f"
+lazy = true
+mpi = "mpich"
+os = "macos"
+
+    [[DMK.download]]
+    sha256 = "d99854cc5376a830677547d62bbbe86fdedd70d0bf8dc7cdb5ca7fc14ce9b7eb"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.aarch64-apple-darwin-cuda+none-mpi+mpich.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "26a6caa946fec655733e3ed7fad440190cc6bd88"
+lazy = true
+libc = "glibc"
+march = "x86_64"
+mpi = "mpitrampoline"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "a3e78492ce2f7970d54dd13e6e774f4dcf227b5f460584a8580bf4bd56ac9d5b"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+x86_64-cuda+none-mpi+mpitrampoline.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "d3ef309c0299a840e6ed5642504844fc4b62eccf"
+lazy = true
+libc = "glibc"
+march = "avx"
+mpi = "mpitrampoline"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "29404e2f1223bfdf7043c69ef2770ef14f1ec1ec07a31198479b3beee19a6c16"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx-cuda+none-mpi+mpitrampoline.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "08051167e000228085c7eb0ae8861d3610229700"
+lazy = true
+libc = "glibc"
+march = "avx2"
+mpi = "mpitrampoline"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "fc85b4fb21cdb6d86a8facd6cfcc1f0a2f92693b5ff6fbf1ccfcfff645a6cb3c"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx2-cuda+none-mpi+mpitrampoline.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "d4cd2f16839093a9f5157eee8041560048e90e1a"
+lazy = true
+libc = "glibc"
+march = "avx512"
+mpi = "mpitrampoline"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "f0c4a60164ee8050fc35c14bd5adaa5fd7aa4add03733c53db26db8374863201"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx512-cuda+none-mpi+mpitrampoline.tar.gz"
+[[DMK]]
+arch = "aarch64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "7cffbcd84ed48904dbece0b36cd05d35659e0ef0"
+lazy = true
+libc = "glibc"
+mpi = "mpitrampoline"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "d81c234bf4cef408756bf59b0ced529fc2f38f5a83f5f1da921621596fe1f753"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.aarch64-linux-gnu-cxx11-cuda+none-mpi+mpitrampoline.tar.gz"
+[[DMK]]
+arch = "aarch64"
+cuda = "none"
+git-tree-sha1 = "63e09c1d00520fe125d61af5b8455013f5af9158"
+lazy = true
+mpi = "mpitrampoline"
+os = "macos"
+
+    [[DMK.download]]
+    sha256 = "beb1ab708606a8be75f2e0d78fcc6215fef7686cad47dd7b530cfa264df81cac"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.aarch64-apple-darwin-cuda+none-mpi+mpitrampoline.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "4c1a070dec48c04e32cfaa9f105ac902d2b5b3de"
+lazy = true
+libc = "glibc"
+march = "x86_64"
+mpi = "openmpi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "9ca15e332f7c6243e0dacb29ffa02338dddb0fca9a071b9cddae8d4cad66692e"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+x86_64-cuda+none-mpi+openmpi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "0e6659b158dab0ac548213f8f1855106b1f3658a"
+lazy = true
+libc = "glibc"
+march = "avx"
+mpi = "openmpi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "fb3fa5bb0fd5d9889be6661ac616ad460d79a126272537e9f8e9b4a26f786046"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx-cuda+none-mpi+openmpi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "c707fe9818c94da63d0c6fdab2f091a7afe2d227"
+lazy = true
+libc = "glibc"
+march = "avx2"
+mpi = "openmpi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "74c28542e9aced201f2ff31361eb56fcceb1bf98ddb5574725460326770fed31"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx2-cuda+none-mpi+openmpi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "9e9cbf4977dcf198cabad61a478c350c8d21e9e7"
+lazy = true
+libc = "glibc"
+march = "avx512"
+mpi = "openmpi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "e70b9923eec573e9b5fb74f46544367f80ace6075a7d691e21e3ad9e853e5b1e"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx512-cuda+none-mpi+openmpi.tar.gz"
+[[DMK]]
+arch = "aarch64"
+cuda = "none"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "8569743508cd3c1629aecf7554f95824cf245e45"
+lazy = true
+libc = "glibc"
+mpi = "openmpi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "d6b2a8dd2f817beb7b99a1c3874e34ab96138a1bfe75a1249b533eff1a639418"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.aarch64-linux-gnu-cxx11-cuda+none-mpi+openmpi.tar.gz"
+[[DMK]]
+arch = "aarch64"
+cuda = "none"
+git-tree-sha1 = "fff705e1161b84cf50ff8316cdd1fe083c853511"
+lazy = true
+mpi = "openmpi"
+os = "macos"
+
+    [[DMK.download]]
+    sha256 = "7fa8e53247a59611abcad885e7f839c90fa9e8529a97a1803f02a148474e2558"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.aarch64-apple-darwin-cuda+none-mpi+openmpi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "12.4"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "da001317e2fa8372c6796bcd5316f59947525efb"
+lazy = true
+libc = "glibc"
+march = "avx2"
+mpi = "mpiabi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "c308ccfee9642d42bc7e4cd8c445d9d4505406df3852631d9aac99cb55cfaf1c"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx2-cuda+12.4-mpi+mpiabi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "12.4"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "2ad551a020aab2e0df034d2840ff19e86dab6397"
+lazy = true
+libc = "glibc"
+march = "avx512"
+mpi = "mpiabi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "a3e9e723618938f0f7f562700421ed4ab6258a465f0cfcf62335b3aede6ecfe5"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx512-cuda+12.4-mpi+mpiabi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "12.8"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "29ee7b6135dff4d6f8db0b3a52cdc43934d2fdd8"
+lazy = true
+libc = "glibc"
+march = "avx2"
+mpi = "mpiabi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "c86a607055f20dabb28ecef18dc5d93753f4f90eff0de27c57e0971e796b45bc"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx2-cuda+12.8-mpi+mpiabi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "12.8"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "68a8a73183853d854d8dbf66ff3931b299830197"
+lazy = true
+libc = "glibc"
+march = "avx512"
+mpi = "mpiabi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "d46b300c25698dbc169479c65103cecf98e06c35a9639b48702abef9188af9fc"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx512-cuda+12.8-mpi+mpiabi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "13.0"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "753c5aa28f102e9dbaa06aa3c56dd0aae6390bfc"
+lazy = true
+libc = "glibc"
+march = "avx2"
+mpi = "mpiabi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "b3ec2d9a831b66c335846d89df0938d72b60784e5d48ceee7a5aebe84e1b4769"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx2-cuda+13.0-mpi+mpiabi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "13.0"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "6bcb52a6189fd0b1728097edcc7367ce6c22caa6"
+lazy = true
+libc = "glibc"
+march = "avx512"
+mpi = "mpiabi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "3e97fdc6aeb82203de7e6ecae53cf2c717ebae6ab6940c2bec7e1351516dfafd"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx512-cuda+13.0-mpi+mpiabi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "12.4"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "3fa0ecdc5ef8f98bfeb6872c282a0684eaff6a7b"
+lazy = true
+libc = "glibc"
+march = "avx2"
+mpi = "mpich"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "671729ac264f7b412a6c77ab194c9f76913ba70e4ee3f43a68f8761971216f86"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx2-cuda+12.4-mpi+mpich.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "12.4"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "5dcd640ce20745dde8e0357b31c06de1eb5e2bbf"
+lazy = true
+libc = "glibc"
+march = "avx512"
+mpi = "mpich"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "c5e0c20d95014b2391bf23f83ebf46d1764b77b79ac13df0145881ba85ab29d1"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx512-cuda+12.4-mpi+mpich.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "12.8"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "8916cf0e68809d3ed6d29030f0a6cd4c06c6e072"
+lazy = true
+libc = "glibc"
+march = "avx2"
+mpi = "mpich"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "9c57761ca6ffbbd2912d2b4cc348def7c112b606bfbaa853dbc8c9b9c5ab5e38"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx2-cuda+12.8-mpi+mpich.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "12.8"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "5c7efcbe5e599bb8840545716fdff2c6de44915e"
+lazy = true
+libc = "glibc"
+march = "avx512"
+mpi = "mpich"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "b5ee6859188e5c7e00c6b8bb33b6092da252eb60c38520e8252b69ea58a97919"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx512-cuda+12.8-mpi+mpich.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "13.0"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "3b1d2539085ede55e39eb11c1d28fd9057dab88c"
+lazy = true
+libc = "glibc"
+march = "avx2"
+mpi = "mpich"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "d504b311f460062d187820bda0d9ac79128553e70040dae18addd3298988f2bf"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx2-cuda+13.0-mpi+mpich.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "13.0"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "4e6121eedb58c5cca9ff1aee014f5fb6459f34af"
+lazy = true
+libc = "glibc"
+march = "avx512"
+mpi = "mpich"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "396bb5341e6469af4c80f416e64b5c560fa9dc19b84d5635262ed4b4b66c2aab"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx512-cuda+13.0-mpi+mpich.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "12.4"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "15d4443d76f6af468bc03c1e1ea09ff9096e5f4b"
+lazy = true
+libc = "glibc"
+march = "avx2"
+mpi = "mpitrampoline"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "83fa7f5c50b354d85b50d3d1120c577df419217eafef088e712c6c127f612bee"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx2-cuda+12.4-mpi+mpitrampoline.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "12.4"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "6d387a00fa4d078c6aa11349fa58ddfd73e8a394"
+lazy = true
+libc = "glibc"
+march = "avx512"
+mpi = "mpitrampoline"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "3393586bf69bb81c6ff35d6336c0e873db35511bad1d45944c3bedf03611f3fa"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx512-cuda+12.4-mpi+mpitrampoline.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "12.8"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "834050d9c1fc45ce59aee8005d4b54db0fc2cefb"
+lazy = true
+libc = "glibc"
+march = "avx2"
+mpi = "mpitrampoline"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "e035df0962cc57e57b3d65d5ef9ab907b7d64336187b42784820a50b8fb1932a"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx2-cuda+12.8-mpi+mpitrampoline.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "12.8"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "2479570de8a336a9f295c1c646c009f28842b46d"
+lazy = true
+libc = "glibc"
+march = "avx512"
+mpi = "mpitrampoline"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "87944566617ce3daf36e3a64bef86174a207ac77f7d24cd7b59ca0dbf5ecbfe9"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx512-cuda+12.8-mpi+mpitrampoline.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "13.0"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "309c5c05d243090c840d979c218ad5e48070efae"
+lazy = true
+libc = "glibc"
+march = "avx2"
+mpi = "mpitrampoline"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "c12b2fd777398c2972a7d2b7c412bb9995baa5b12e0a33319755b8b64112809f"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx2-cuda+13.0-mpi+mpitrampoline.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "13.0"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "6c9851c823c62dc0941360ee773ba401b55d5e6e"
+lazy = true
+libc = "glibc"
+march = "avx512"
+mpi = "mpitrampoline"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "b744e79dc282c3a14ac333fd49930127c815a7b0cac504e3144bf12c078300b3"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx512-cuda+13.0-mpi+mpitrampoline.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "12.4"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "746152bf40c7a2ee59ca43d20913b53ad2ead29f"
+lazy = true
+libc = "glibc"
+march = "avx2"
+mpi = "openmpi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "b0e5c94f0ad3e475db72fed410905054206826cc1bf47e78e4b2fc28b94f88bd"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx2-cuda+12.4-mpi+openmpi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "12.4"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "d1b4ff12b026cf2032278aab6f485a4be62ddc9e"
+lazy = true
+libc = "glibc"
+march = "avx512"
+mpi = "openmpi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "d9067b91b9f8db79b7cd1c308361b1419a61fecc98b061f13ac26a2275236793"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx512-cuda+12.4-mpi+openmpi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "12.8"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "32c920434e4eef8bce55201ecfd872e980b55bd8"
+lazy = true
+libc = "glibc"
+march = "avx2"
+mpi = "openmpi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "85b27e121bc533c5862080d99d0e401c0734175b0ea6fce9597bf99cbef603d5"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx2-cuda+12.8-mpi+openmpi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "12.8"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "33a411a678f0fccf31c0af92f29759b707fae3c1"
+lazy = true
+libc = "glibc"
+march = "avx512"
+mpi = "openmpi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "879f67660f6d5da3f67025b73aab005171ac33640ec23ee7e0c4c289b80d52f2"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx512-cuda+12.8-mpi+openmpi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "13.0"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "76b10b67d1714fdca9cdd75e402a5554ecfffd0f"
+lazy = true
+libc = "glibc"
+march = "avx2"
+mpi = "openmpi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "186bc4ebd01c0bcfaf197c8737579c246da33c80a03465ce1ac36c6006c30a3d"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx2-cuda+13.0-mpi+openmpi.tar.gz"
+[[DMK]]
+arch = "x86_64"
+cuda = "13.0"
+cxxstring_abi = "cxx11"
+git-tree-sha1 = "ecd7c850931950e93ecef3cec0eb30157e7e59d8"
+lazy = true
+libc = "glibc"
+march = "avx512"
+mpi = "openmpi"
+os = "linux"
+
+    [[DMK.download]]
+    sha256 = "8f7d65acea5c412133d7ea63091ec268a62ae62b4f85d0897315a97bfa4db2e9"
+    url = "https://users.flatironinstitute.org/~rblackwell/dmk_jll/0.9.0+0/DMK.v0.9.0.x86_64-linux-gnu-cxx11-march+avx512-cuda+13.0-mpi+openmpi.tar.gz"

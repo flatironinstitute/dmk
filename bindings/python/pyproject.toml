@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dmk"
+version = "1.0.0"
+description = "ctypes bindings for DMK, a framework for fast evaluation of radially symmetric kernels"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9"
+authors = [{ name = "Robert Blackwell", email = "rblackwell@flatironinstitute.org" }]
+
+[tool.setuptools]
+py-modules = ["dmk"]
