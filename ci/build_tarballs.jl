@@ -11,17 +11,19 @@ include(joinpath(YGGDRASIL_DIR, "platforms", "mpi.jl"))
 
 name = "DMK"
 dmk_root = dirname(@__DIR__)
-version = VersionNumber(readchomp(joinpath(dmk_root, "VERSION.txt")))
+dmk_commit = readchomp(`git -C $dmk_root rev-parse HEAD`)
+version = VersionNumber(readchomp(`git -C $dmk_root show $dmk_commit:VERSION.txt`))
 
-# DirectorySource cannot exclude anything and a checkout holds build trees, so stage the tracked files.
-dmk_src = mktempdir()
-for f in readlines(`git -C $dmk_root ls-files --recurse-submodules`)
-    mkpath(dirname(joinpath(dmk_src, f)))
-    cp(joinpath(dmk_root, f), joinpath(dmk_src, f))
+gitlinks = read(`git -C $dmk_root ls-tree -r $dmk_commit`, String)
+submodules = map(eachmatch(r"^160000 commit (\w+)\t(.+)$"m, gitlinks)) do m
+    url = readchomp(`git -C $dmk_root config --blob $dmk_commit:.gitmodules submodule.$(m[2]).url`)
+    return (; path=m[2], url, commit=m[1])
 end
+clone_dir(url) = replace(basename(url), r"\.git$" => "")
 
 sources = [
-    DirectorySource(dmk_src; target="DMK"),
+    GitSource("https://github.com/flatironinstitute/dmk.git", dmk_commit),
+    [GitSource(s.url, s.commit) for s in submodules]...,
     # finufft and polyfit, and what they fetch in turn, are pinned and downloaded at configure time;
     # nda instead clones these from branch heads unless they are already in its deps/
     GitSource("https://github.com/google/googletest.git", "dd0a37b8432bf8a0c3e33938ae9807d413db0cbd"),
@@ -29,13 +31,17 @@ sources = [
     GitSource("https://github.com/TRIQS/mpi.git", "c760e19bd79b3fb84fca2b1e861a3478047f6a42"),
 ]
 
-script = raw"""
+script = "submodules=($(join(("$(clone_dir(s.url)):$(s.path)" for s in submodules), ' ')))\n" * raw"""
 cd ${WORKSPACE}/srcdir
 apk del cmake
 
-mv -v googletest DMK/extern/nda/deps/GTest
-mv -v itertools DMK/extern/nda/deps/itertools
-mv -v mpi DMK/extern/nda/deps/mpi
+for s in "${submodules[@]}"; do
+    rmdir dmk/${s#*:}
+    mv -v ${s%%:*} dmk/${s#*:}
+done
+mv -v googletest dmk/extern/nda/deps/GTest
+mv -v itertools dmk/extern/nda/deps/itertools
+mv -v mpi dmk/extern/nda/deps/mpi
 
 if [[ "${target}" == *-apple-* ]]; then
     as_needed=-Wl,-dead_strip_dylibs
@@ -60,7 +66,7 @@ fi
 # nda's TRIQS mpi has FindMPI read the library version string, which needs try_run (impossible when
 # cross-compiling); it only uses the string to pick mpiexec flags for its tests. It also links
 # MPI::MPI_CXX, so as_needed drops the unused libmpicxx, which an MPICH configured with --disable-cxx lacks.
-cmake -S DMK -B build \
+cmake -S dmk -B build \
     -DCMAKE_INSTALL_PREFIX=${prefix} \
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TARGET_TOOLCHAIN} \
     -DCMAKE_FIND_ROOT_PATH=${prefix} \
