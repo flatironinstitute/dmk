@@ -634,7 +634,9 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Laplace PBC full pipeline vs Ewald", 1) {
 
                 pdmk_tree tree =
                     pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
-                pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
+                REQUIRE_MESSAGE(tree != nullptr, std::string(pdmk_last_error_message()));
+                CHECK_MESSAGE(pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]) == DMK_SUCCESS,
+                              std::string(pdmk_last_error_message()));
                 pdmk_tree_destroy(tree);
 
                 const int n_test = std::min(n_src, 100);
@@ -756,7 +758,9 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Yukawa PBC full pipeline vs lattice sum", 1) {
 
                 pdmk_tree tree =
                     pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
-                pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
+                REQUIRE_MESSAGE(tree != nullptr, std::string(pdmk_last_error_message()));
+                CHECK_MESSAGE(pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]) == DMK_SUCCESS,
+                              std::string(pdmk_last_error_message()));
                 pdmk_tree_destroy(tree);
 
                 const int n_test = std::min(n_src, 50);
@@ -881,7 +885,9 @@ TEST_CASE_GENERIC("[DMK] pdmk 3d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
                 sctl::Vector<double> pot_src(n_src * odim), pot_trg(n_trg * odim);
                 pdmk_tree tree =
                     pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
-                pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
+                REQUIRE_MESSAGE(tree != nullptr, std::string(pdmk_last_error_message()));
+                CHECK_MESSAGE(pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]) == DMK_SUCCESS,
+                              std::string(pdmk_last_error_message()));
                 pdmk_tree_destroy(tree);
 
                 const int n_test = std::min(n_src, 100);
@@ -986,7 +992,9 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Yukawa PBC full pipeline vs lattice sum", 1) {
                 sctl::Vector<double> pot_src(n_src * odim), pot_trg(n_trg * odim);
                 pdmk_tree tree =
                     pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
-                pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
+                REQUIRE_MESSAGE(tree != nullptr, std::string(pdmk_last_error_message()));
+                CHECK_MESSAGE(pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]) == DMK_SUCCESS,
+                              std::string(pdmk_last_error_message()));
                 pdmk_tree_destroy(tree);
 
                 const int n_test = std::min(n_src, 50);
@@ -1098,7 +1106,9 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Sqrt-Laplace PBC full pipeline vs Ewald", 1) {
                 sctl::Vector<double> pot_src(n_src * odim), pot_trg(n_trg * odim);
                 pdmk_tree tree =
                     pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
-                pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
+                REQUIRE_MESSAGE(tree != nullptr, std::string(pdmk_last_error_message()));
+                CHECK_MESSAGE(pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]) == DMK_SUCCESS,
+                              std::string(pdmk_last_error_message()));
                 pdmk_tree_destroy(tree);
 
                 const int n_test = std::min(n_src, 50);
@@ -1208,7 +1218,9 @@ TEST_CASE_GENERIC("[DMK] pdmk 2d Laplace PBC full pipeline vs Ewald", 1) {
                 sctl::Vector<double> pot_src(n_src * odim), pot_trg(n_trg * odim);
                 pdmk_tree tree =
                     pdmk_tree_create(comm, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
-                pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]);
+                REQUIRE_MESSAGE(tree != nullptr, std::string(pdmk_last_error_message()));
+                CHECK_MESSAGE(pdmk_tree_eval(tree, &pot_src[0], &pot_trg[0]) == DMK_SUCCESS,
+                              std::string(pdmk_last_error_message()));
                 pdmk_tree_destroy(tree);
 
                 // Targets only (avoids the log self-term).

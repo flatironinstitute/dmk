@@ -315,10 +315,11 @@ TEST_CASE_GENERIC("[ESP] C API pdmk_esp_eval interleaves gradients", 1) {
     params.eval_type = DMK_POTENTIAL_GRAD;
 
     pdmk_esp_plan plan = pdmk_esp_plan_create(nullptr, params);
-    REQUIRE(plan != nullptr);
+    REQUIRE_MESSAGE(plan != nullptr, std::string(pdmk_last_error_message()));
 
     std::vector<double> pot_src(N * 4);
-    pdmk_esp_eval(nullptr, plan, N, R_SRC, CHARGES, nullptr, pot_src.data());
+    CHECK_MESSAGE(pdmk_esp_eval(nullptr, plan, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_SUCCESS,
+                  std::string(pdmk_last_error_message()));
 
     dmk::EspPlan<double> *plan_cxx = new dmk::EspPlan<double>(params);
     auto esp = plan_cxx->eval(N, R_SRC, CHARGES);
@@ -421,7 +422,7 @@ TEST_CASE_GENERIC("[ESP] C API argument validation", 1) {
         CHECK(pdmk_esp(nullptr, stresslet, N, R_SRC, forces.data(), nullptr, vel.data()) == DMK_ERR_INVALID_ARGUMENT);
 
         pdmk_esp_plan plan = pdmk_esp_plan_create(nullptr, stresslet);
-        REQUIRE(plan != nullptr);
+        REQUIRE_MESSAGE(plan != nullptr, std::string(pdmk_last_error_message()));
         CHECK(pdmk_esp_eval(nullptr, plan, N, R_SRC, forces.data(), nullptr, vel.data()) == DMK_ERR_INVALID_ARGUMENT);
         pdmk_esp_plan_destroy(plan);
     }
@@ -434,7 +435,7 @@ TEST_CASE_GENERIC("[ESP] C API argument validation", 1) {
 
     SUBCASE("null arrays and negative n are rejected at eval") {
         pdmk_esp_plan plan = pdmk_esp_plan_create(nullptr, base);
-        REQUIRE(plan != nullptr);
+        REQUIRE_MESSAGE(plan != nullptr, std::string(pdmk_last_error_message()));
         CHECK(pdmk_esp_eval(nullptr, plan, N, nullptr, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
         CHECK(pdmk_esp_eval(nullptr, plan, N, R_SRC, nullptr, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
         CHECK(pdmk_esp_eval(nullptr, plan, N, R_SRC, CHARGES, nullptr, nullptr) == DMK_ERR_INVALID_ARGUMENT);
@@ -601,7 +602,9 @@ TEST_CASE_GENERIC("[ESP] 2d Laplace PBC vs DMK pipeline (gauge-removed)", 1) {
             std::vector<double> pot_src(n_src * odim), pot_trg(n_trg * odim);
             pdmk_tree tree = pdmk_tree_create(comm, params, n_src, r_src.data(), charges.data(), rnormal.data(), n_trg,
                                               r_trg.data());
-            pdmk_tree_eval(tree, pot_src.data(), pot_trg.data());
+            REQUIRE_MESSAGE(tree != nullptr, std::string(pdmk_last_error_message()));
+            CHECK_MESSAGE(pdmk_tree_eval(tree, pot_src.data(), pot_trg.data()) == DMK_SUCCESS,
+                          std::string(pdmk_last_error_message()));
             pdmk_tree_destroy(tree);
 
             pdmk_esp_params ep{};

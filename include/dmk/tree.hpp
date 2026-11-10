@@ -591,6 +591,7 @@ struct DMKPtTree : public sctl::PtTree<Real, DIM> {
     sctl::Vector<sctl::Long> r_src_cnt_with_halo;
     sctl::Vector<sctl::Long> r_src_offsets_with_halo;
 
+    sctl::Long n_src_local = 0; ///< sources the caller passed on this rank; the tree may own a different count
     sctl::Vector<Real> r_src_sorted_owned;
     sctl::Vector<sctl::Long> r_src_cnt_owned;
     sctl::Vector<sctl::Long> r_src_offsets_owned;

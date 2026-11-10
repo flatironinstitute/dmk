@@ -228,7 +228,8 @@ void check_device_memory(double eps) {
 
     for (const auto *q : {&charges, &reversed}) {
         if (q == &reversed)
-            REQUIRE(update_charges(tree, d_reversed.data(), nullptr) == DMK_SUCCESS);
+            REQUIRE_MESSAGE(update_charges(tree, d_reversed.data(), nullptr) == DMK_SUCCESS,
+                            std::string(pdmk_last_error_message()));
         REQUIRE_MESSAGE(eval_tree(tree, d_pot_src.data(), d_pot_trg.data()) == DMK_SUCCESS,
                         std::string(pdmk_last_error_message()));
 

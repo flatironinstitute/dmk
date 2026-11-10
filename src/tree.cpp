@@ -178,6 +178,7 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
     logger->info("base tree build started");
     const int n_src = r_src.Dim() / DIM;
     const int n_trg = r_trg.Dim() / DIM;
+    n_src_local = n_src;
 
     // 0: Initialization
     logger->debug("Building tree and sorting points");
@@ -313,7 +314,7 @@ void DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal
     auto &logger = dmk::get_logger(comm_, params.log_level);
     logger->info("update_charges started");
 
-    const int n_src = r_src_sorted_owned.Dim() / DIM;
+    const sctl::Long n_src = n_src_local;
 
     // Delete the old data and re-register with the new values. The PtTree
     // already knows the sort permutation from the "pdmk_src" particle set,
@@ -1088,7 +1089,6 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
                 make_evaluator_jit<Real>(params.kernel, params.eval_trg, DIM, n_digits, expansion_constants.beta, 3);
         }
 #endif
-        // FIXME: assumes the same src/trg output configuration
         evaluator_by_level_src.assign(n_lvl, src_eval);
         evaluator_by_level_trg.assign(n_lvl, trg_eval);
     } else {
@@ -1105,13 +1105,14 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
             if constexpr (DIM == 2)
                 cf.emplace_back(coeffs.log_poly.begin(), coeffs.log_poly.end());
             cf.emplace_back(coeffs.reg_poly.begin(), coeffs.reg_poly.end());
-            if constexpr (DIM == 3)
+            if constexpr (DIM == 3) {
                 evaluator_by_level_src.push_back(get_yukawa_3d_kernel<Real, MaxVecLen>(params.eval_src, n_digits, cf));
-            else
+                evaluator_by_level_trg.push_back(get_yukawa_3d_kernel<Real, MaxVecLen>(params.eval_trg, n_digits, cf));
+            } else {
                 evaluator_by_level_src.push_back(get_yukawa_2d_kernel<Real, MaxVecLen>(params.eval_src, n_digits, cf));
+                evaluator_by_level_trg.push_back(get_yukawa_2d_kernel<Real, MaxVecLen>(params.eval_trg, n_digits, cf));
+            }
         }
-        // FIXME: assumes the same src/trg output configuration
-        evaluator_by_level_trg = evaluator_by_level_src;
     }
 }
 
