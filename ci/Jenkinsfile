@@ -116,7 +116,13 @@ try {
             sh 'git submodule update --init --recursive'
             sh 'cmake -B build . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/build/install -DCMAKE_CXX_COMPILER=g++ -DDMK_GPU_OFFLOAD=on -DDMK_HAVE_MPI=on -DMPI_C_COMPILER=/opt/ompi/bin/mpicc -DMPI_CXX_COMPILER=/opt/ompi/bin/mpicxx -DCMAKE_CUDA_ARCHITECTURES=80 -DDMK_BUILD_TESTS=ON'
             sh 'cd build && make -j$PARALLEL'
-            sh 'mpirun -n 2 --bind-to none ./build/test/test_all -nc'
+            sh 'nvidia-smi --query-gpu=name,memory.total,memory.used --format=csv'
+            sh '''nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -lms 200 > gpumem.log &
+                  rc=0
+                  mpirun -n 2 --bind-to none ./build/test/test_all -nc || rc=$?
+                  kill $! || true
+                  echo "peak GPU memory used: $(sort -n gpumem.log | tail -1) MiB"
+                  exit $rc'''
           }
         }
       }
