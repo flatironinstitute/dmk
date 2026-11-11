@@ -534,7 +534,8 @@ static void run_esp_pbc(const EspPbcParams &c) {
                 }
             }
             const double l2p = dmk::pbc_ref::safe_l2(e2p, r2p);
-            CHECK_MESSAGE(l2p < eps, "eps=" << eps << (with_grad ? " pot+grad" : " pot") << " pot l2=" << l2p);
+            CHECK_MESSAGE(l2p < eps,
+                          "eps=" << eps << std::string(with_grad ? " pot+grad" : " pot") << " pot l2=" << l2p);
             if (with_grad) {
                 const double l2g = dmk::pbc_ref::safe_l2(e2g, r2g);
                 CHECK_MESSAGE(l2g < eps, "eps=" << eps << " grad l2=" << l2g);
@@ -728,7 +729,8 @@ static void run_esp_freespace(const EspFreeParams &c) {
                 }
             }
             const double l2p = dmk::pbc_ref::safe_l2(e2p, r2p);
-            CHECK_MESSAGE(l2p < eps, "eps=" << eps << (with_grad ? " pot+grad" : " pot") << " pot l2=" << l2p);
+            CHECK_MESSAGE(l2p < eps,
+                          "eps=" << eps << std::string(with_grad ? " pot+grad" : " pot") << " pot l2=" << l2p);
             if (with_grad) {
                 const double l2g = dmk::pbc_ref::safe_l2(e2g, r2g);
                 CHECK_MESSAGE(l2g < eps, "eps=" << eps << " grad l2=" << l2g);
@@ -811,7 +813,8 @@ static void run_esp_freespace_dipole(unsigned seed, int n_test) {
                     }
                 }
                 const double l2p = dmk::pbc_ref::safe_l2(e2p, r2p);
-                CHECK_MESSAGE(l2p < eps, "flags=" << flags << " eps=" << eps << (with_grad ? " pot+grad" : " pot")
+                CHECK_MESSAGE(l2p < eps, "flags=" << flags << " eps=" << eps
+                                                  << std::string(with_grad ? " pot+grad" : " pot")
                                                   << " pot l2=" << l2p);
                 if (with_grad) {
                     const double l2g = dmk::pbc_ref::safe_l2(e2g, r2g);
