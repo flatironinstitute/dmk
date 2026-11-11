@@ -1374,7 +1374,7 @@ struct PbcDepth {
     const char *label;
 };
 const PbcDepth pbc_depths[] = {
-    {50, "multilevel"},
+    {200, "multilevel"},
     {2 * PBC_N_SRC, "single-level"},
 };
 
