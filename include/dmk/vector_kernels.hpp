@@ -49,10 +49,12 @@ DMK_ALWAYS_INLINE auto dispatch_digits(int n_digits, F &&f, Args &&...args) {
 // JIT: Dispatch table to correct sctl call
 template <int N_DIGITS = -1, typename VecType>
 DMK_ALWAYS_INLINE VecType my_approx_rsqrt(const VecType &x, int digits) {
+    // Request one extra digit, since N_DIGITS is sometimes
+    // insufficient due to exponentiation
     if constexpr (N_DIGITS > 0) {
-        return sctl::approx_rsqrt<N_DIGITS>(x);
+        return sctl::approx_rsqrt<N_DIGITS + 1>(x);
     } else {
-        auto kernel = [&]<int DIGITS>() -> VecType { return sctl::approx_rsqrt<DIGITS>(x); };
+        auto kernel = [&]<int DIGITS>() -> VecType { return sctl::approx_rsqrt<DIGITS + 1>(x); };
         return dispatch_digits(digits, kernel);
     }
 }
