@@ -1068,8 +1068,9 @@ TEST_CASE_GENERIC("[DMK] pdmk mixed src/trg outputs", 1) {
         std::vector<double> r_src, r_trg, rnormal, charges;
         dmk::util::init_test_data(n_dim, 1, n_src, n_trg, true, false, r_src, r_trg, rnormal, charges, 0);
         for (auto kernel : {DMK_YUKAWA, DMK_LAPLACE, DMK_SQRT_LAPLACE}) {
-            for (auto [eval_src, eval_trg] :
+            for (auto evals :
                  {std::pair{DMK_POTENTIAL, DMK_POTENTIAL_GRAD}, std::pair{DMK_POTENTIAL_GRAD, DMK_POTENTIAL}}) {
+                const auto eval_src = evals.first, eval_trg = evals.second;
                 INFO(util::to_string(kernel), " ", n_dim, "d, src ", util::to_string(eval_src), ", trg ",
                      util::to_string(eval_trg));
                 params.kernel = kernel;
