@@ -347,18 +347,15 @@ void DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal
         this->AddParticleData("pdmk_charge", "pdmk_src", charge_vec);
     }
 
-    // Retrieve the sorted owned charges
-    {
-        sctl::Vector<Real> data;
-        sctl::Vector<sctl::Long> count;
-        this->GetData(data, count, "pdmk_charge");
-        charge_sorted_owned = data;
-        charge_cnt_owned = count;
-    }
-
     // Broadcast to halo/ghost nodes and retrieve
     this->Broadcast("pdmk_charge");
     this->GetData(charge_sorted_with_halo, charge_cnt_with_halo, "pdmk_charge");
+
+#pragma omp parallel for schedule(static)
+    for (int i = 0; i < n_boxes(); ++i)
+        if (charge_cnt_owned[i])
+            std::copy_n(charge_with_halo_ptr(i), n_tables_up * charge_cnt_owned[i], charge_owned_ptr(i));
+
     if (params.kernel == DMK_STRESSLET) {
         this->Broadcast("pdmk_normal");
         this->Broadcast("pdmk_density");
