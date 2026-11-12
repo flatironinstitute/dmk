@@ -320,7 +320,7 @@ void DMKPtTree<Real, DIM>::update_charges(const Real *charge, const Real *normal
     // already knows the sort permutation from the "pdmk_src" particle set,
     // so AddParticleData will sort the new data into tree order automatically.
     if (params.kernel == DMK_STRESSLET) {
-        if (!normal)
+        if (n_src && !normal)
             throw api_error(DMK_ERR_INVALID_ARGUMENT, "stresslet update_charges requires non-null normal");
 
         sctl::Vector<Real> normal_vec(n_src * DIM, const_cast<Real *>(normal), false);
@@ -1079,7 +1079,7 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
         auto src_eval = make_evaluator_aot<Real>(params.kernel, params.eval_src, DIM, n_digits, 3, coeffs);
         auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.eval_trg, DIM, n_digits, 3, coeffs);
 #ifdef DMK_USE_JIT
-        if (!util::env_is_set("DMK_DEBUG_FORCE_AOT")) {
+        if (!debug_force_aot) {
             src_eval =
                 make_evaluator_jit<Real>(params.kernel, params.eval_src, DIM, n_digits, expansion_constants.beta, 3);
             trg_eval =

@@ -111,6 +111,17 @@ void set_last_error(const std::string &msg) { last_error_buffer() = msg; }
 
 const char *last_error_message() { return last_error_buffer().c_str(); }
 
+template <typename Real>
+void validate_eps(double eps) {
+    constexpr Real machine_eps = std::numeric_limits<Real>::epsilon();
+    if (eps > 1e-2 || eps < 1e-12)
+        throw api_error(DMK_ERR_INVALID_ARGUMENT,
+                        fmt::format("tolerance 'eps' must lie on [1e-12, 1e-2], got {}", eps));
+    if (eps < machine_eps)
+        throw api_error(DMK_ERR_INVALID_ARGUMENT,
+                        fmt::format("tolerance 'eps' must be at least working precision {}, got {}", machine_eps, eps));
+}
+
 /// Validate C API inputs before any object is constructed. Throws api_error
 /// (DMK_ERR_INVALID_ARGUMENT) so the boundary guard converts to a clean code.
 template <typename Real>
@@ -120,20 +131,11 @@ void validate_create_args(dmk_communicator comm, const pdmk_params &params, int 
 
     if (params.n_dim != 2 && params.n_dim != 3)
         fail("Invalid dimension: " + std::to_string(params.n_dim));
-    if (params.eps > 1e-2 || params.eps < 1e-12)
-        fail("tolerance 'eps' must lie on [1e-12, 1e-2], got " + std::to_string(params.eps));
-    // Distances come from differencing coordinates held in Real, so no tolerance below its
-    // epsilon is reachable at any tree depth, let alone the depths a real distribution forces.
-    if (params.eps < std::numeric_limits<Real>::epsilon())
-        fail("tolerance 'eps'=" + std::to_string(params.eps) + " is below the epsilon of the " +
-             (sizeof(Real) == 4 ? std::string("single") : std::string("double")) +
-             "-precision entry point; use the double-precision entry point or a looser tolerance");
+    validate_eps<Real>(params.eps);
     if (params.n_per_leaf <= 0)
         fail("n_per_leaf must be positive, got " + std::to_string(params.n_per_leaf));
     if (n_src < 0 || n_trg < 0)
         fail("n_src and n_trg must be non-negative");
-    if (n_src == 0)
-        fail("n_src is zero: nothing to do");
     if (params.kernel < DMK_YUKAWA || params.kernel > DMK_LAPLACE_DIPOLE)
         fail("Invalid kernel: " + std::to_string(int(params.kernel)));
     if (params.kernel == DMK_YUKAWA && params.fparam <= 0.0)
@@ -187,13 +189,13 @@ void validate_create_args(dmk_communicator comm, const pdmk_params &params, int 
         fail(e.what());
     }
 
-    if (r_src == nullptr || charge == nullptr)
-        fail("r_src and charge must be non-null");
+    if (n_src > 0 && (r_src == nullptr || charge == nullptr))
+        fail("r_src and charge must be non-null when n_src > 0");
     if (n_trg > 0 && r_trg == nullptr)
         fail("r_trg must be non-null when n_trg > 0");
     // Stresslet reads a per-source normal in build_tree; a null pointer there is
     // an uncatchable segfault rather than an exception.
-    if (params.kernel == DMK_STRESSLET && normal == nullptr)
+    if (params.kernel == DMK_STRESSLET && n_src > 0 && normal == nullptr)
         fail("Stresslet requires a non-null normal array");
 }
 
@@ -206,14 +208,32 @@ void validate_eval_outputs(int n_src, const void *pot_src, int n_trg, const void
         throw api_error(DMK_ERR_INVALID_ARGUMENT, "pot_trg must be non-null when n_trg > 0");
 }
 
+void validate_esp_comm([[maybe_unused]] dmk_communicator comm) {
+#ifdef DMK_HAVE_MPI
+    int n_ranks = 1;
+    if (comm != MPI_Comm{})
+        MPI_Comm_size(comm, &n_ranks);
+    if (n_ranks > 1)
+        throw api_error(DMK_ERR_INVALID_ARGUMENT,
+                        "ESP runs on a single rank, got a communicator of size " + std::to_string(n_ranks));
+#endif
+}
+
 /// Validate ESP plan parameters. EspPlan, short_range and the GPU plan keep their own checks
 /// (they are usable directly from C++); running these first means every C API caller is
 /// rejected at plan creation with DMK_ERR_INVALID_ARGUMENT rather than at eval time.
-void validate_esp_args(const pdmk_esp_params &params) {
+template <typename Real>
+void validate_esp_args(dmk_communicator comm, const pdmk_esp_params &params) {
     auto fail = [](std::string msg) { throw api_error(DMK_ERR_INVALID_ARGUMENT, std::move(msg)); };
 
+    validate_esp_comm(comm);
     if (params.n_dim != 2 && params.n_dim != 3)
         fail("Invalid dimension: " + std::to_string(params.n_dim));
+    validate_eps<Real>(params.eps);
+    if (params.sigma <= 1.0)
+        fail("sigma must be greater than 1, got " + std::to_string(params.sigma));
+    if (!esp_morton(params) && params.esp_bins < 1)
+        fail("esp_bins must be positive when DMK_ESP_MORTON is clear, got " + std::to_string(params.esp_bins));
     if (params.kernel < DMK_YUKAWA || params.kernel > DMK_LAPLACE_DIPOLE)
         fail("Invalid kernel: " + std::to_string(int(params.kernel)));
     if (params.kernel == DMK_YUKAWA && params.fparam <= 0.0)
@@ -387,6 +407,17 @@ void pdmk_direct(dmk_communicator comm, const pdmk_params &params, int n_src, co
         eval_at(params.eval_trg, n_trg, r_trg, pot_trg);
 }
 
+void validate_source_count(const sctl::Comm &comm, int n_src) {
+    const sctl::Long n_local = n_src;
+    sctl::Long n_global;
+    comm.Allreduce(&n_local, &n_global, 1, sctl::CommOp::SUM);
+    // SCTL requires at least one source per rank
+    if (n_global < comm.Size())
+        throw api_error(DMK_ERR_INVALID_ARGUMENT, "total sources (" + std::to_string(n_global) +
+                                                      ") must be at least the number of ranks (" +
+                                                      std::to_string(comm.Size()) + ")");
+}
+
 template <typename T, int DIM>
 void pdmk(dmk_communicator comm, const pdmk_params &params, int n_src, const T *r_src, const T *charge, const T *normal,
           int n_trg, const T *r_trg, T *pot_src, T *pot_trg) {
@@ -395,6 +426,7 @@ void pdmk(dmk_communicator comm, const pdmk_params &params, int n_src, const T *
 #else
     const auto &sctl_comm = sctl::Comm().Self();
 #endif
+    validate_source_count(sctl_comm, n_src);
     auto &logger = dmk::get_logger(sctl_comm, params.log_level);
     auto &rank_logger = dmk::get_rank_logger(sctl_comm, params.log_level);
     logger->info("PDMK called");
@@ -942,6 +974,69 @@ MPI_TEST_CASE("[DMK] pdmk update_charges, uneven ranks", 2) {
         }
         CHECK(std::sqrt(err2 / ref2) < 1e-12);
     }
+}
+
+MPI_TEST_CASE("[DMK] pdmk rank with no sources", 2) {
+    constexpr int n_dim = 3;
+    constexpr int n_total = 20000;
+    // Rank 1 passes only targets, with null source arrays.
+    const bool empty = test_rank == 1;
+    const int n_src = empty ? 0 : n_total;
+    const int n_trg = empty ? n_total : 0;
+
+    for (auto kernel : {DMK_LAPLACE, DMK_STRESSLET}) {
+        INFO(util::to_string(kernel));
+        pdmk_params params;
+        params.eps = 1e-6;
+        params.n_dim = n_dim;
+        params.kernel = kernel;
+        params.eval_src = params.eval_trg = kernel == DMK_STRESSLET ? DMK_VELOCITY : DMK_POTENTIAL;
+        params.log_level = SPDLOG_LEVEL_OFF;
+        const int in_dim = get_kernel_input_dim(n_dim, kernel);
+        const int out_dim = get_kernel_output_dim(n_dim, kernel, params.eval_src);
+
+        std::vector<double> r_src, r_trg, rnormal, charges;
+        dmk::util::init_test_data(n_dim, in_dim, n_total, n_total, true, false, r_src, r_trg, rnormal, charges, 0);
+        const std::vector<double> new_charges(charges.rbegin(), charges.rend());
+
+        pdmk_tree tree =
+            pdmk_tree_create(test_comm, params, n_src, empty ? nullptr : r_src.data(), empty ? nullptr : charges.data(),
+                             empty ? nullptr : rnormal.data(), n_trg, empty ? r_trg.data() : nullptr);
+        REQUIRE_MESSAGE(tree != nullptr, std::string(pdmk_last_error_message()));
+        CHECK_MESSAGE(pdmk_tree_update_charges(tree, empty ? nullptr : new_charges.data(),
+                                               empty ? nullptr : rnormal.data()) == DMK_SUCCESS,
+                      std::string(pdmk_last_error_message()));
+        std::vector<double> pot_src(n_src * out_dim), pot_trg(n_trg * out_dim);
+        CHECK_MESSAGE(pdmk_tree_eval(tree, pot_src.data(), pot_trg.data()) == DMK_SUCCESS,
+                      std::string(pdmk_last_error_message()));
+        pdmk_tree_destroy(tree);
+
+        const auto &r_eval = empty ? r_trg : r_src;
+        const std::vector<double> normals = kernel == DMK_STRESSLET ? rnormal : std::vector<double>{};
+        std::vector<double> ref;
+        compute_direct(n_dim, r_src, new_charges, normals, r_eval, ref, kernel, params.eval_src);
+        const auto &pot = empty ? pot_trg : pot_src;
+        double err2{0.0}, ref2{0.0};
+        for (std::size_t i = 0; i < ref.size(); ++i) {
+            err2 += sctl::pow<2>(pot[i] - ref[i]);
+            ref2 += sctl::pow<2>(ref[i]);
+        }
+        CHECK(std::sqrt(err2 / ref2) < params.eps);
+    }
+}
+
+MPI_TEST_CASE("[DMK] pdmk rejects fewer sources than ranks", 2) {
+    pdmk_params params;
+    params.n_dim = 3;
+    params.kernel = DMK_LAPLACE;
+    params.log_level = SPDLOG_LEVEL_OFF;
+    const double r[3] = {0.5, 0.5, 0.5}, charge = 1.0;
+    double pot = 0;
+    for (MPI_Comm comm : {test_comm, MPI_COMM_SELF}) {
+        CHECK(pdmk_tree_create(comm, params, 0, nullptr, nullptr, nullptr, 1, r) == nullptr);
+        CHECK(pdmk(comm, params, 0, nullptr, nullptr, nullptr, 1, r, nullptr, &pot) == DMK_ERR_INVALID_ARGUMENT);
+    }
+    CHECK(pdmk_tree_create(test_comm, params, test_rank == 0, r, &charge, nullptr, 0, nullptr) == nullptr);
 }
 #endif
 
@@ -1593,6 +1688,7 @@ inline pdmk_tree pdmk_tree_create(dmk_communicator comm, const pdmk_params &para
     const sctl::Comm sctl_comm;
 #endif
     sctl::Profile::Scoped profile("pdmk_tree_create", &sctl_comm);
+    validate_source_count(sctl_comm, n_src);
     const int charge_dim =
         params.kernel == DMK_STRESSLET ? params.n_dim : get_kernel_input_dim(params.n_dim, params.kernel);
 
@@ -1814,6 +1910,11 @@ void pdmk_init_default_params(pdmk_params *params) {
         *params = pdmk_params{};
 }
 
+void pdmk_esp_init_default_params(pdmk_esp_params *params) {
+    if (params)
+        *params = pdmk_esp_params{};
+}
+
 const char *pdmk_last_error_message(void) { return dmk::last_error_message(); }
 
 dmk_error pdmk_print_profile_data(dmk_communicator comm, char type) {
@@ -1887,7 +1988,7 @@ dmk_error pdmk_tree_update_charges(pdmk_tree tree, const double *charge, const d
     return dmk::dmk_guard([&] {
         if (!tree)
             throw dmk::api_error(DMK_ERR_INVALID_ARGUMENT, "null tree handle");
-        if (!charge)
+        if (!charge && static_cast<pdmk_tree_impl *>(tree)->n_src > 0)
             throw dmk::api_error(DMK_ERR_INVALID_ARGUMENT, "null charge pointer");
         dmk::pdmk_tree_update_charges(tree, charge, normal);
     });
@@ -1897,7 +1998,7 @@ dmk_error pdmk_tree_update_chargesf(pdmk_tree tree, const float *charge, const f
     return dmk::dmk_guard([&] {
         if (!tree)
             throw dmk::api_error(DMK_ERR_INVALID_ARGUMENT, "null tree handle");
-        if (!charge)
+        if (!charge && static_cast<pdmk_tree_impl *>(tree)->n_src > 0)
             throw dmk::api_error(DMK_ERR_INVALID_ARGUMENT, "null charge pointer");
         dmk::pdmk_tree_update_charges(tree, charge, normal);
     });
@@ -1959,32 +2060,38 @@ dmk_error pdmk_direct(dmk_communicator comm, pdmk_params params, int n_src, cons
     });
 }
 
-pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator /*comm*/, pdmk_esp_params params) {
+pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator comm, pdmk_esp_params params) {
     pdmk_esp_plan result = nullptr;
     dmk::dmk_guard([&] {
-        dmk::validate_esp_args(params);
+        dmk::validate_esp_args<double>(comm, params);
         result = dmk::esp_plan_create_impl<double>(params);
     });
     return result;
 }
 
-pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator /*comm*/, pdmk_esp_params params) {
+pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator comm, pdmk_esp_params params) {
     pdmk_esp_plan result = nullptr;
     dmk::dmk_guard([&] {
-        dmk::validate_esp_args(params);
+        dmk::validate_esp_args<float>(comm, params);
         result = dmk::esp_plan_create_impl<float>(params);
     });
     return result;
 }
 
-dmk_error pdmk_esp_eval(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const double *r_src,
-                        const double *charges, const double *normal, double *pot_src) {
-    return dmk::dmk_guard([&] { dmk::pdmk_esp_eval_impl<double>(plan, n, r_src, charges, normal, pot_src); });
+dmk_error pdmk_esp_eval(dmk_communicator comm, pdmk_esp_plan plan, int n, const double *r_src, const double *charges,
+                        const double *normal, double *pot_src) {
+    return dmk::dmk_guard([&] {
+        dmk::validate_esp_comm(comm);
+        dmk::pdmk_esp_eval_impl<double>(plan, n, r_src, charges, normal, pot_src);
+    });
 }
 
-dmk_error pdmk_esp_evalf(dmk_communicator /*comm*/, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,
+dmk_error pdmk_esp_evalf(dmk_communicator comm, pdmk_esp_plan plan, int n, const float *r_src, const float *charges,
                          const float *normal, float *pot_src) {
-    return dmk::dmk_guard([&] { dmk::pdmk_esp_eval_impl<float>(plan, n, r_src, charges, normal, pot_src); });
+    return dmk::dmk_guard([&] {
+        dmk::validate_esp_comm(comm);
+        dmk::pdmk_esp_eval_impl<float>(plan, n, r_src, charges, normal, pot_src);
+    });
 }
 
 void pdmk_esp_plan_destroy(pdmk_esp_plan plan) { delete static_cast<pdmk_esp_plan_impl *>(plan); }
@@ -1997,7 +2104,7 @@ dmk_error pdmk_esp(dmk_communicator comm, pdmk_esp_params params, int n, const d
                    const double *normal, double *pot_src) {
     pdmk_esp_plan plan = nullptr;
     const dmk_error create_err = dmk::dmk_guard([&] {
-        dmk::validate_esp_args(params);
+        dmk::validate_esp_args<double>(comm, params);
         plan = dmk::esp_plan_create_impl<double>(params);
     });
     if (create_err != DMK_SUCCESS)
@@ -2011,7 +2118,7 @@ dmk_error pdmk_espf(dmk_communicator comm, pdmk_esp_params params, int n, const 
                     const float *normal, float *pot_src) {
     pdmk_esp_plan plan = nullptr;
     const dmk_error create_err = dmk::dmk_guard([&] {
-        dmk::validate_esp_args(params);
+        dmk::validate_esp_args<float>(comm, params);
         plan = dmk::esp_plan_create_impl<float>(params);
     });
     if (create_err != DMK_SUCCESS)

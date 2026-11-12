@@ -61,7 +61,6 @@ enum {
     DMK_DEBUG_FORCE_AOT = 1u << 3,      ///< Use ahead-of-time kernels, even when compiled with JIT support
     DMK_DEBUG_OVERRIDE_BETA = 1u << 4,  ///< Load beta from debug_params[0]
     DMK_DEBUG_OVERRIDE_ORDER = 1u << 5, ///< Load proxy expansion order from debug_params[1]
-    DMK_DEBUG_USE_PQ = 1u << 6,         ///< Use experimental priority queue for threading
 };
 
 enum {
@@ -126,7 +125,8 @@ const char *pdmk_last_error_message(void);
 
 // Tree lifecycle. *_create returns an opaque handle, or NULL on failure (call
 // pdmk_last_error_message for detail). All other entry points return a dmk_error
-// (DMK_SUCCESS == 0 on success).
+// (DMK_SUCCESS == 0 on success). The total n_src across comm must be at least its number of
+// ranks; a single rank may pass none.
 pdmk_tree pdmk_tree_createf(dmk_communicator comm, pdmk_params params, int n_src, const float *r_src,
                             const float *charge, const float *normal, int n_trg, const float *r_trg);
 dmk_error pdmk_tree_evalf(pdmk_tree tree, float *pot_src, float *pot_trg);
@@ -169,9 +169,13 @@ typedef struct pdmk_esp_params {
     int gpu_device_id DMK_DEFAULT(0);                       ///< CUDA device, when eval_path is GPU
 } pdmk_esp_params;
 
+// Does what it says :)
+void pdmk_esp_init_default_params(pdmk_esp_params *params);
+
 // Opaque plan handle (heap-allocated internally).
 typedef void *pdmk_esp_plan;
 
+// ESP is single-rank: comm must be NULL or have one rank.
 pdmk_esp_plan pdmk_esp_plan_create(dmk_communicator comm, pdmk_esp_params params);
 pdmk_esp_plan pdmk_esp_plan_createf(dmk_communicator comm, pdmk_esp_params params);
 

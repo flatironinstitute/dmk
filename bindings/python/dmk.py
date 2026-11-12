@@ -88,7 +88,6 @@ class DebugFlags(IntFlag):
     FORCE_AOT = 1 << 3
     OVERRIDE_BETA = 1 << 4
     OVERRIDE_ORDER = 1 << 5
-    USE_PQ = 1 << 6
 
 
 DEBUG_BETA_SLOT = 0
@@ -124,7 +123,7 @@ class PdmkParams(ctypes.Structure):
 class PdmkEspParams(ctypes.Structure):
     """Parameters for the ESP (Ewald Sum with PSWF kernels) path, an experimental feature.
 
-    Defaults are those documented in dmk.h; there is no C-side initializer.
+    Defaults come from pdmk_esp_init_default_params.
     """
 
     _fields_ = [
@@ -146,23 +145,8 @@ class PdmkEspParams(ctypes.Structure):
     ]
 
     def __init__(self, **kwargs):
-        super().__init__(
-            r_c=0.05,
-            eps=1e-6,
-            log_level=LogLevel.OFF,
-            kernel=Kernel.LAPLACE,
-            fparam=0.0,
-            n_dim=3,
-            eval_type=EvalType.POTENTIAL,
-            sigma=1.35,
-            use_periodic=1,
-            freespace_pad=0.0,
-            esp_flags=EspFlags.PRUNE_SOURCE | EspFlags.N3L | EspFlags.MORTON,
-            esp_bins=2,
-            esp_stile=0,
-            eval_path=EvalPath.CPU,
-            gpu_device_id=0,
-        )
+        super().__init__()
+        _lib.pdmk_esp_init_default_params(ctypes.byref(self))
         for key, value in kwargs.items():
             setattr(self, key, value)
 
@@ -197,6 +181,8 @@ _lib.pdmk_last_error_message.argtypes = []
 _lib.pdmk_last_error_message.restype = ctypes.c_char_p
 _lib.pdmk_init_default_params.argtypes = [ctypes.POINTER(PdmkParams)]
 _lib.pdmk_init_default_params.restype = None
+_lib.pdmk_esp_init_default_params.argtypes = [ctypes.POINTER(PdmkEspParams)]
+_lib.pdmk_esp_init_default_params.restype = None
 
 _lib.pdmk_tree_create.argtypes = [_Comm, PdmkParams, ctypes.c_int, _Dbl, _Dbl, _Dbl, ctypes.c_int, _Dbl]
 _lib.pdmk_tree_create.restype = _Tree
@@ -353,6 +339,11 @@ def pdmk_init_default_params():
     params = PdmkParams()
     _lib.pdmk_init_default_params(ctypes.byref(params))
     return params
+
+
+def pdmk_esp_init_default_params():
+    """A PdmkEspParams filled with the library defaults."""
+    return PdmkEspParams()
 
 
 # The memory_space of each live tree, which eval and update_charges check their arrays against

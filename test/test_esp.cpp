@@ -27,7 +27,8 @@ const double CHARGES[10] = {0.2, -0.2, 0.3, -0.3, 0.4, -0.4, 0.5, -0.5, 0.1, -0.
 
 // sigma defaults to pdmk_esp_params's own default (1.35), matching every test below.
 static pdmk_esp_params make_esp_params(double r_c, double eps, dmk_eval_type eval_type) {
-    pdmk_esp_params params{};
+    pdmk_esp_params params;
+    pdmk_esp_init_default_params(&params);
     params.r_c = r_c;
     params.eps = eps;
     params.eval_type = eval_type;
@@ -385,6 +386,40 @@ TEST_CASE_GENERIC("[ESP] C API argument validation", 1) {
         CHECK(pdmk_esp(nullptr, bad, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
     }
 
+    SUBCASE("eps outside [1e-12, 1e-2] is rejected") {
+        for (const double eps : {1e-1, 1e-13}) {
+            pdmk_esp_params bad = base;
+            bad.eps = eps;
+            CHECK(pdmk_esp_plan_create(nullptr, bad) == nullptr);
+            CHECK(pdmk_esp(nullptr, bad, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+        }
+    }
+
+    SUBCASE("eps below single-precision epsilon is rejected by the float entry points") {
+        pdmk_esp_params bad = base;
+        // At sigma=2 the spread-width cap admits eps=1e-9, so only the epsilon check rejects it.
+        bad.sigma = 2.0;
+        bad.eps = 1e-9;
+        CHECK(pdmk_esp_plan_createf(nullptr, bad) == nullptr);
+        CHECK(pdmk_espf(nullptr, bad, N, r_src_f.data(), charges_f.data(), nullptr, pot_src_f.data()) ==
+              DMK_ERR_INVALID_ARGUMENT);
+    }
+
+    SUBCASE("sigma at or below 1 is rejected") {
+        pdmk_esp_params bad = base;
+        bad.sigma = 1.0;
+        CHECK(pdmk_esp_plan_create(nullptr, bad) == nullptr);
+        CHECK(pdmk_esp(nullptr, bad, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+    }
+
+    SUBCASE("non-positive esp_bins is rejected when DMK_ESP_MORTON is clear") {
+        pdmk_esp_params bad = base;
+        bad.esp_flags &= ~DMK_ESP_MORTON;
+        bad.esp_bins = 0;
+        CHECK(pdmk_esp_plan_create(nullptr, bad) == nullptr);
+        CHECK(pdmk_esp(nullptr, bad, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+    }
+
     // Laplace-dipole, Stokeslet and Stresslet are 3D free-space only in ESP. use_periodic and n_dim
     // are set so that exactly one of the two restrictions is violated per subcase.
     SUBCASE("dipole and Stokes kernels are rejected in 2D") {
@@ -443,6 +478,20 @@ TEST_CASE_GENERIC("[ESP] C API argument validation", 1) {
         pdmk_esp_plan_destroy(plan);
     }
 }
+
+#ifdef DMK_HAVE_MPI
+MPI_TEST_CASE("[ESP] C API rejects a multi-rank communicator", 2) {
+    const pdmk_esp_params params = make_esp_params(R_C, 1e-6, DMK_POTENTIAL);
+    std::vector<double> pot_src(N);
+    CHECK(pdmk_esp_plan_create(test_comm, params) == nullptr);
+    CHECK(pdmk_esp(test_comm, params, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+
+    pdmk_esp_plan plan = pdmk_esp_plan_create(nullptr, params);
+    REQUIRE_MESSAGE(plan != nullptr, std::string(pdmk_last_error_message()));
+    CHECK(pdmk_esp_eval(test_comm, plan, N, R_SRC, CHARGES, nullptr, pot_src.data()) == DMK_ERR_INVALID_ARGUMENT);
+    pdmk_esp_plan_destroy(plan);
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Full periodic-pipeline ESP validation. Each case draws 2000 random sources in [0,L)^n_dim, builds

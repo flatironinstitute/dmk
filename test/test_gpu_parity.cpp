@@ -473,6 +473,28 @@ TEST_CASE_GENERIC("[GPU] 3d velocity kernels parity", 1) {
         parity_subcases(kernel, DMK_VELOCITY, std::string(dmk::util::to_string(kernel)), 0.0);
 }
 
+TEST_CASE_GENERIC("[GPU] 3d stresslet update_charges rejects a null normal", 1) {
+    constexpr int n_dim = 3, n_src = 2000, n_trg = 2000;
+    sctl::Vector<double> r_src, r_trg, rnormal, charges;
+    dmk::util::init_test_data(n_dim, dmk::get_kernel_input_dim(n_dim, DMK_STRESSLET), n_src, n_trg, false, false, r_src,
+                              r_trg, rnormal, charges, 0);
+
+    pdmk_params params;
+    params.eps = 1e-3;
+    params.n_dim = n_dim;
+    params.kernel = DMK_STRESSLET;
+    params.eval_src = DMK_VELOCITY;
+    params.eval_trg = DMK_VELOCITY;
+    params.log_level = 6;
+    params.eval_path = DMK_EVAL_PATH_GPU;
+
+    pdmk_tree tree =
+        pdmk_tree_create(DMK_TEST_COMM_SELF, params, n_src, &r_src[0], &charges[0], &rnormal[0], n_trg, &r_trg[0]);
+    REQUIRE_MESSAGE(tree != nullptr, std::string(pdmk_last_error_message()));
+    CHECK(pdmk_tree_update_charges(tree, &charges[0], nullptr) == DMK_ERR_INVALID_ARGUMENT);
+    pdmk_tree_destroy(tree);
+}
+
 // Sweeping lambda is what exercises the per-level coefficient packs.
 TEST_CASE_GENERIC("[GPU] 3d Yukawa parity", 1) {
     for (auto eval : {DMK_POTENTIAL, DMK_POTENTIAL_GRAD}) {

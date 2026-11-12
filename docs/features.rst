@@ -131,8 +131,8 @@ Compute paths
    * - ``DMK_EVAL_PATH_CPU``
      - Default. 2D and 3D, all kernels, MPI + OpenMP, periodic for the scalar kernels.
    * - ``DMK_EVAL_PATH_GPU``
-     - Requires ``-DDMK_GPU_OFFLOAD=ON``. 3D only and single-rank only, so it cannot be
-       combined with multi-rank MPI. Kernel/grad/periodicity support same as CPU.
+     - Requires ``-DDMK_GPU_OFFLOAD=ON``. 3D only. Under MPI the tree exchanges device buffers
+       directly, so the MPI must be CUDA-aware. Kernel/grad/periodicity support same as CPU.
 
 ``gpu_device_id`` selects the CUDA device. A process is pinned to the first device it uses:
 the JIT module caches, autotune records and cached device properties are bound to that
@@ -161,9 +161,9 @@ single-rank run of the same problem.
 
 ``eval_path`` selects CPU or GPU, and ``gpu_device_id`` applies as it does for the tree. The
 GPU direct kernel is a plain all-pairs sum rather than a plane-wave pipeline, so unlike
-``pdmk`` it carries no 3D-only or single-rank restriction: every kernel and dimension above is
-available on either path, in both precisions. Sources are gathered on the host first, so a
-multi-rank run works with one device per rank.
+``pdmk`` it carries no 3D-only restriction: every kernel and dimension above is available on
+either path, in both precisions. Sources are gathered on the host first, so a multi-rank run
+does not need a CUDA-aware MPI.
 
 Both paths evaluate the bare Green's function with correctly-rounded division and square root,
 so they agree to round-off but not bit-for-bit -- the summation order differs. Validate against
@@ -292,10 +292,11 @@ Parallelism
      - ``DMK_HAVE_OPENMP``, on by default. Threads within a rank.
    * - MPI
      - ``DMK_HAVE_MPI``, on by default. Points are distributed across ranks; each rank
-       passes its own slice and receives potentials for its own points. The GPU tree path is
-       single-rank, so it cannot be combined with multi-rank MPI; the GPU direct path gathers
-       sources on the host and runs under MPI with one device per rank. ESP ignores the
-       communicator.
+       passes its own slice and receives potentials for its own points. The tree needs at
+       least as many sources in total as ranks, though any one rank may pass none. The GPU
+       tree path exchanges device buffers directly and so needs a CUDA-aware MPI; the GPU
+       direct path gathers sources on the host and does not. ESP is single-rank and rejects a
+       communicator with more than one rank.
 
 Platforms
 ---------

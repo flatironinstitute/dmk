@@ -72,6 +72,8 @@ only, with a single ``eval_type``; see :doc:`features` for the supported combina
    :members:
    :undoc-members:
 
+.. doxygenfunction:: pdmk_esp_init_default_params
+
 .. doxygenfunction:: pdmk_esp_plan_create
 
 .. doxygenfunction:: pdmk_esp_eval

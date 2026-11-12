@@ -47,6 +47,6 @@ First tagged release. Prior history is summarized here rather than reconstructed
 ### Known limitations
 
 - Stokeslet, Stresslet and Laplace-dipole are 3D only.
-- The GPU *tree* path is 3D and single-rank; it cannot be combined with multi-rank MPI. The GPU
-  direct path has neither restriction.
+- The GPU *tree* path is 3D only, and under MPI needs a CUDA-aware MPI. The GPU direct path has
+  neither restriction.
 - Periodic boundary conditions are limited to the scalar kernels.

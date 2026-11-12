@@ -10,28 +10,17 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 
 #include <cub/block/block_scan.cuh>
 #include "metadata.hpp"
 
-#include "dmk/cuda/helpers.hpp" // pool_alloc/pool_free
+#include "dmk/cuda/helpers.hpp" // DMK_CHECK_CUDA, pool_alloc/pool_free
 
 #include <thrust/execution_policy.h>
 #include <thrust/functional.h>
 #include <thrust/scan.h>
 #include <thrust/sort.h>
 #include <thrust/system/cuda/execution_policy.h>
-
-#define DMK_CUDA_OK(call)                                                                                              \
-    do {                                                                                                               \
-        const cudaError_t err_ = (call);                                                                               \
-        if (err_ != cudaSuccess) {                                                                                     \
-            std::fprintf(stderr, "dmk metadata: %s failed: %s\n", #call, cudaGetErrorString(err_));                    \
-            std::abort();                                                                                              \
-        }                                                                                                              \
-    } while (0)
 
 namespace dmk::cuda::pt {
 namespace {
@@ -940,11 +929,13 @@ void box_status(const BoxStatusInputs<DIM> &in, BoxStatusOutputs &out) {
     auto *const d_halo_in = static_cast<sctl::Long *>(dmk::cuda_helpers::pool_alloc(b_up, 0));
     auto *const d_trg_in = d_halo_in + nb;
     auto *const d_depth = static_cast<unsigned long long *>(dmk::cuda_helpers::pool_alloc(sizeof(long long), 0));
-    DMK_CUDA_OK(cudaMemcpyAsync(d_halo_in, in.h_src_cnt_with_halo, nb * sizeof(sctl::Long), cudaMemcpyHostToDevice, 0));
+    DMK_CHECK_CUDA(
+        cudaMemcpyAsync(d_halo_in, in.h_src_cnt_with_halo, nb * sizeof(sctl::Long), cudaMemcpyHostToDevice, 0));
     if (in.h_trg_cnt_owned)
-        DMK_CUDA_OK(cudaMemcpyAsync(d_trg_in, in.h_trg_cnt_owned, nb * sizeof(sctl::Long), cudaMemcpyHostToDevice, 0));
+        DMK_CHECK_CUDA(
+            cudaMemcpyAsync(d_trg_in, in.h_trg_cnt_owned, nb * sizeof(sctl::Long), cudaMemcpyHostToDevice, 0));
     if (in.h_is_global_leaf)
-        DMK_CUDA_OK(cudaMemcpyAsync(out.d_is_global_leaf, in.h_is_global_leaf, nb, cudaMemcpyHostToDevice, 0));
+        DMK_CHECK_CUDA(cudaMemcpyAsync(out.d_is_global_leaf, in.h_is_global_leaf, nb, cudaMemcpyHostToDevice, 0));
 
     auto *const d_cnt = reinterpret_cast<Counts3 *>(out.d_count_scan);
     PoolAlloc alloc;
@@ -959,8 +950,8 @@ void box_status(const BoxStatusInputs<DIM> &in, BoxStatusOutputs &out) {
                                                out.d_trg_counts_owned, d_cnt, n_boxes, in.charge_dof, in.n_tables_up,
                                                in.dof_src, in.dof_trg, out.d_iftensprodeval, out.d_offsets,
                                                out.d_zero, out.n_zero);
-    DMK_CUDA_OK(cudaMemcpyAsync(out.h_max_depth, d_depth, sizeof(long), cudaMemcpyDeviceToHost, 0));
-    DMK_CUDA_OK(cudaEventRecord(out.ready, 0));
+    DMK_CHECK_CUDA(cudaMemcpyAsync(out.h_max_depth, d_depth, sizeof(long), cudaMemcpyDeviceToHost, 0));
+    DMK_CHECK_CUDA(cudaEventRecord(out.ready, 0));
     dmk::cuda_helpers::pool_free(d_depth, sizeof(long long), 0);
     dmk::cuda_helpers::pool_free(d_halo_in, b_up, 0);
 }
@@ -985,15 +976,16 @@ void compute_device_metadata(const DeviceMetadataInputs<Real, DIM> &in, DeviceMe
         out.d_is_tp_up_par, out.d_level_scratch, out.d_chunk_table, out.d_join);
     // Issued here and read only at AddData, well before the join; the destination is page-locked
     // so this does not drain the stream on the way out.
-    DMK_CUDA_OK(cudaMemcpyAsync(out.h_proxy_counts_up, out.d_proxy_counts_up, n_boxes * sizeof(long),
-                                cudaMemcpyDeviceToHost, 0));
+    DMK_CHECK_CUDA(cudaMemcpyAsync(out.h_proxy_counts_up, out.d_proxy_counts_up, n_boxes * sizeof(long),
+                                   cudaMemcpyDeviceToHost, 0));
     thrust::exclusive_scan(policy(alloc), scan, scan + n_boxes + 1, scan, ScanIn{0, 0, 0, 0, 0, 0}, ScanAdd());
     k_chunk_scan<<<kMaxLevels * 2, BLOCK>>>(out.d_chunk_table, chunks,
                                             LevelScratch(out.d_level_scratch, nl).pw_tot);
     k_level_scan<DIM><<<1, BLOCK>>>(out.d_level_scratch, nl, scan, n_boxes, in.n_pw_per_box,
                                     out.d_join, out.d_proxy_totals);
-    DMK_CUDA_OK(cudaMemcpyAsync(out.h_proxy_totals, out.d_proxy_totals, 2 * sizeof(long), cudaMemcpyDeviceToHost, 0));
-    DMK_CUDA_OK(cudaEventRecord(out.proxy_ready, 0));
+    DMK_CHECK_CUDA(
+        cudaMemcpyAsync(out.h_proxy_totals, out.d_proxy_totals, 2 * sizeof(long), cudaMemcpyDeviceToHost, 0));
+    DMK_CHECK_CUDA(cudaEventRecord(out.proxy_ready, 0));
 
     k_box_fill<DIM><<<grid, BLOCK>>>(
         in.d_child, in.d_ifpwexp, in.d_iftensprodeval, in.d_src_cnt_owned, in.d_trg_cnt_owned, in.d_src_cnt_global,
@@ -1037,7 +1029,7 @@ void compute_device_metadata(const DeviceMetadataInputs<Real, DIM> &in, DeviceMe
 template <typename Real>
 void finish_proxy_metadata(const DeviceMetadataOutputs<Real> &out) {
     if (out.proxy_ready && out.n_boxes)
-        DMK_CUDA_OK(cudaEventSynchronize(out.proxy_ready));
+        DMK_CHECK_CUDA(cudaEventSynchronize(out.proxy_ready));
 }
 
 template <typename Real>
@@ -1048,8 +1040,9 @@ void finish_device_metadata(DeviceMetadataOutputs<Real> &out, int n_levels) {
         std::fill(out.h_join, out.h_join + join_size(n_levels), 0L);
         return;
     }
-    DMK_CUDA_OK(cudaMemcpyAsync(out.h_join, out.d_join, join_size(n_levels) * sizeof(long), cudaMemcpyDeviceToHost, 0));
-    DMK_CUDA_OK(cudaStreamSynchronize(0));
+    DMK_CHECK_CUDA(
+        cudaMemcpyAsync(out.h_join, out.d_join, join_size(n_levels) * sizeof(long), cudaMemcpyDeviceToHost, 0));
+    DMK_CHECK_CUDA(cudaStreamSynchronize(0));
     const long *j = out.h_join;
     out.n_direct_work = (int)j[join_n_direct_work];
     out.min_direct_level = (int)j[join_min_direct_level];

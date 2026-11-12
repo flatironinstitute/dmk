@@ -745,6 +745,8 @@ void Tree<Real, DIM>::bind_charges() {
 
 template <typename Real, int DIM>
 void Tree<Real, DIM>::update_charges(const Real *charge, const Real *normal) {
+    if (stresslet_ && n_src_local_ && !normal)
+        throw api_error(DMK_ERR_INVALID_ARGUMENT, "stresslet update_charges requires non-null normal");
     stage_charges(charge, normal);
     scatter_charges();
     bind_charges();

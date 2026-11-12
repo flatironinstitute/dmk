@@ -67,7 +67,6 @@ const DMK_DEBUG_DUMP_TREE      = UInt32(1) << 2
 const DMK_DEBUG_FORCE_AOT      = UInt32(1) << 3
 const DMK_DEBUG_OVERRIDE_BETA  = UInt32(1) << 4
 const DMK_DEBUG_OVERRIDE_ORDER = UInt32(1) << 5
-const DMK_DEBUG_USE_PQ         = UInt32(1) << 6
 
 const DMK_DEBUG_BETA_SLOT  = 0
 const DMK_DEBUG_ORDER_SLOT = 1
@@ -139,12 +138,13 @@ mutable struct PdmkEspParams
     gpu_device_id::Cint
 end
 
-# Defaults from dmk.h (there is no C-side init function for ESP params).
-PdmkEspParams() = PdmkEspParams(
-    0.05, 1e-6, Cint(6), DMK_LAPLACE, 0.0, Cint(3), DMK_POTENTIAL,
-    1.35, Cint(1), 0.0,
-    DMK_ESP_PRUNE_SOURCE | DMK_ESP_N3L | DMK_ESP_MORTON, Cint(2), Cint(0),
-    DMK_EVAL_PATH_CPU, Cint(0))
+# Allocate and fill from the C-side defaults.
+function PdmkEspParams()
+    p = PdmkEspParams(0.0, 0.0, Cint(0), DMK_LAPLACE, 0.0, Cint(0), DMK_POTENTIAL,
+                      0.0, Cint(0), 0.0, UInt32(0), Cint(0), Cint(0), DMK_EVAL_PATH_CPU, Cint(0))
+    pdmk_esp_init_default_params(p)
+    return p
+end
 
 # Opaque ESP plan handle returned by pdmk_esp_plan_create*.
 const PdmkEspPlan = Ptr{Cvoid}
@@ -218,6 +218,11 @@ end
 
 function pdmk_init_default_params(params::PdmkParams)
     ccall((:pdmk_init_default_params, libdmk), Cvoid, (Ref{PdmkParams},), params)
+    return params
+end
+
+function pdmk_esp_init_default_params(params::PdmkEspParams)
+    ccall((:pdmk_esp_init_default_params, libdmk), Cvoid, (Ref{PdmkEspParams},), params)
     return params
 end
 
@@ -414,10 +419,10 @@ export PdmkParams, PdmkTree, PdmkEspParams, PdmkEspPlan, DmkCommunicator,
        DMK_LOG_CRITICAL, DMK_LOG_OFF,
        DMK_DEBUG_OMIT_PW, DMK_DEBUG_OMIT_DIRECT, DMK_DEBUG_DUMP_TREE,
        DMK_DEBUG_FORCE_AOT, DMK_DEBUG_OVERRIDE_BETA, DMK_DEBUG_OVERRIDE_ORDER,
-       DMK_DEBUG_USE_PQ, DMK_DEBUG_BETA_SLOT, DMK_DEBUG_ORDER_SLOT,
+       DMK_DEBUG_BETA_SLOT, DMK_DEBUG_ORDER_SLOT,
        DMK_ESP_PRUNE_TILE, DMK_ESP_PRUNE_SOURCE, DMK_ESP_N3L, DMK_ESP_MORTON,
        pdmk_version_string, pdmk_version, pdmk_git_commit,
-       pdmk_init_default_params,
+       pdmk_init_default_params, pdmk_esp_init_default_params,
        pdmk_tree_create, pdmk_tree_createf,
        pdmk_tree_eval, pdmk_tree_evalf,
        pdmk_tree_update_charges, pdmk_tree_update_chargesf,
