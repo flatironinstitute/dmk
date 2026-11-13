@@ -50,3 +50,6 @@ First tagged release. Prior history is summarized here rather than reconstructed
 - The GPU *tree* path is 3D only, and under MPI needs a CUDA-aware MPI. The GPU direct path has
   neither restriction.
 - Periodic boundary conditions are limited to the scalar kernels.
+- High depth trees, especially in fp32, can reach accuracy floors above requested epsilon (we've only got so many bits!)
+- Trees with DMK_NO_RESULT on sources (no potential calculation), calculate some unnecessary data, and so are slightly
+  suboptimal

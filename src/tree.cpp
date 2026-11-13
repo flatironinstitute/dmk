@@ -211,8 +211,10 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
     } else {
         this->AddParticleData("pdmk_charge", "pdmk_src", charge);
     }
-    this->AddParticleData("pdmk_pot_src", "pdmk_src", kernel_output_dim_src);
-    this->AddParticleData("pdmk_pot_trg", "pdmk_trg", kernel_output_dim_trg);
+    if (params.eval_src != DMK_NO_RESULT)
+        this->AddParticleData("pdmk_pot_src", "pdmk_src", kernel_output_dim_src);
+    if (params.eval_trg != DMK_NO_RESULT)
+        this->AddParticleData("pdmk_pot_trg", "pdmk_trg", kernel_output_dim_trg);
     sctl::Profile::Toc();
 
     sctl::Profile::Tic("update_refinement", &comm_);
@@ -226,8 +228,10 @@ void DMKPtTree<Real, DIM>::build_tree(const sctl::Vector<Real> &r_src, const sct
     // rank.
     // Planewaves only need owned particles and their charges for calculation
     this->GetData(r_trg_sorted_owned, r_trg_cnt_owned, "pdmk_trg");
-    this->GetData(pot_src_sorted, pot_src_cnt, "pdmk_pot_src");
-    this->GetData(pot_trg_sorted, pot_trg_cnt, "pdmk_pot_trg");
+    if (params.eval_src != DMK_NO_RESULT)
+        this->GetData(pot_src_sorted, pot_src_cnt, "pdmk_pot_src");
+    if (params.eval_trg != DMK_NO_RESULT)
+        this->GetData(pot_trg_sorted, pot_trg_cnt, "pdmk_pot_trg");
 
     // We need temporaries to copy from for things that we broadcast to the halo, since GetData
     // only gets a pointer which gets re-used on Broadcast
@@ -282,8 +286,10 @@ DMKPtTree<Real, DIM>::DMKPtTree(const sctl::Comm &comm, const pdmk_params &param
                                 const sctl::Vector<Real> &r_trg)
     : sctl::PtTree<Real, DIM>(comm), comm_(comm), params(params_),
       kernel_input_dim(get_kernel_input_dim(params.n_dim, params.kernel)),
-      kernel_output_dim_src(get_kernel_output_dim(params.n_dim, params.kernel, params.eval_src)),
-      kernel_output_dim_trg(get_kernel_output_dim(params.n_dim, params.kernel, params.eval_trg)),
+      kernel_output_dim_src(
+          params.eval_src == DMK_NO_RESULT ? 0 : get_kernel_output_dim(params.n_dim, params.kernel, params.eval_src)),
+      kernel_output_dim_trg(
+          params.eval_trg == DMK_NO_RESULT ? 0 : get_kernel_output_dim(params.n_dim, params.kernel, params.eval_trg)),
       kernel_output_dim_max(std::max(kernel_output_dim_src, kernel_output_dim_trg)),
       n_tables_up(get_table_count_up<DIM>(params.kernel)), n_tables_down(get_table_count_down<DIM>(params.kernel)),
       n_digits(util::digits_from_eps(params_.eps)), expansion_constants(params),
@@ -400,9 +406,11 @@ void DMKPtTree<Real, DIM>::compute_data_offsets() {
 #pragma omp section
         scan(r_trg_offsets_owned, r_trg_cnt_owned, DIM);
 #pragma omp section
-        scan(pot_src_offsets, pot_src_cnt, kernel_output_dim_src);
+        if (params.eval_src != DMK_NO_RESULT)
+            scan(pot_src_offsets, pot_src_cnt, kernel_output_dim_src);
 #pragma omp section
-        scan(pot_trg_offsets, pot_trg_cnt, kernel_output_dim_trg);
+        if (params.eval_trg != DMK_NO_RESULT)
+            scan(pot_trg_offsets, pot_trg_cnt, kernel_output_dim_trg);
 #pragma omp section
         scan(charge_offsets_owned, charge_cnt_owned, n_tables_up);
 #pragma omp section
@@ -1076,18 +1084,18 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
     // would silently corrupt results).
     if (params.kernel != DMK_YUKAWA) {
         const auto coeffs = get_local_correction_coeffs<Real>(params.kernel, DIM, n_digits, expansion_constants.beta);
-        auto src_eval = make_evaluator_aot<Real>(params.kernel, params.eval_src, DIM, n_digits, 3, coeffs);
-        auto trg_eval = make_evaluator_aot<Real>(params.kernel, params.eval_trg, DIM, n_digits, 3, coeffs);
+        const auto make_eval = [&](dmk_eval_type eval) {
+            auto f = make_evaluator_aot<Real>(params.kernel, eval, DIM, n_digits, 3, coeffs);
 #ifdef DMK_USE_JIT
-        if (!debug_force_aot) {
-            src_eval =
-                make_evaluator_jit<Real>(params.kernel, params.eval_src, DIM, n_digits, expansion_constants.beta, 3);
-            trg_eval =
-                make_evaluator_jit<Real>(params.kernel, params.eval_trg, DIM, n_digits, expansion_constants.beta, 3);
-        }
+            if (!debug_force_aot)
+                f = make_evaluator_jit<Real>(params.kernel, eval, DIM, n_digits, expansion_constants.beta, 3);
 #endif
-        evaluator_by_level_src.assign(n_lvl, src_eval);
-        evaluator_by_level_trg.assign(n_lvl, trg_eval);
+            return f;
+        };
+        if (params.eval_src != DMK_NO_RESULT)
+            evaluator_by_level_src.assign(n_lvl, make_eval(params.eval_src));
+        if (params.eval_trg != DMK_NO_RESULT)
+            evaluator_by_level_trg.assign(n_lvl, make_eval(params.eval_trg));
     } else {
         // Yukawa's coefficients depend on lambda*bsize, so they are per level and their count is not
         // a function of the digit count. The getters dispatch on that count, which is what compiles
@@ -1102,13 +1110,16 @@ void DMKPtTree<Real, DIM>::build_evaluators() {
             if constexpr (DIM == 2)
                 cf.emplace_back(coeffs.log_poly.begin(), coeffs.log_poly.end());
             cf.emplace_back(coeffs.reg_poly.begin(), coeffs.reg_poly.end());
-            if constexpr (DIM == 3) {
-                evaluator_by_level_src.push_back(get_yukawa_3d_kernel<Real, MaxVecLen>(params.eval_src, n_digits, cf));
-                evaluator_by_level_trg.push_back(get_yukawa_3d_kernel<Real, MaxVecLen>(params.eval_trg, n_digits, cf));
-            } else {
-                evaluator_by_level_src.push_back(get_yukawa_2d_kernel<Real, MaxVecLen>(params.eval_src, n_digits, cf));
-                evaluator_by_level_trg.push_back(get_yukawa_2d_kernel<Real, MaxVecLen>(params.eval_trg, n_digits, cf));
-            }
+            const auto make_eval = [&](dmk_eval_type eval) {
+                if constexpr (DIM == 3)
+                    return get_yukawa_3d_kernel<Real, MaxVecLen>(eval, n_digits, cf);
+                else
+                    return get_yukawa_2d_kernel<Real, MaxVecLen>(eval, n_digits, cf);
+            };
+            if (params.eval_src != DMK_NO_RESULT)
+                evaluator_by_level_src.push_back(make_eval(params.eval_src));
+            if (params.eval_trg != DMK_NO_RESULT)
+                evaluator_by_level_trg.push_back(make_eval(params.eval_trg));
         }
     }
 }
@@ -1535,7 +1546,7 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
             }
 
             if (iftensprodeval[box]) {
-                if (src_counts_owned[box]) {
+                if (params.eval_src != DMK_NO_RESULT && src_counts_owned[box]) {
                     if (need_grad_src)
                         proxy::eval_targets<Real, DIM, 2>(proxy_view_downward(box), r_src_owned_view(box),
                                                           center_view(box), sc, pot_src_view(box), workspace);
@@ -1543,7 +1554,7 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
                         proxy::eval_targets<Real, DIM, 1>(proxy_view_downward(box), r_src_owned_view(box),
                                                           center_view(box), sc, pot_src_view(box), workspace);
                 }
-                if (trg_counts_owned[box]) {
+                if (params.eval_trg != DMK_NO_RESULT && trg_counts_owned[box]) {
                     if (need_grad_trg)
                         proxy::eval_targets<Real, DIM, 2>(proxy_view_downward(box), r_trg_owned_view(box),
                                                           center_view(box), sc, pot_trg_view(box), workspace);
@@ -1567,6 +1578,8 @@ void DMKPtTree<Real, DIM>::form_eval_expansions(const sctl::Vector<int> &boxes,
 template <typename Real, int DIM>
 void DMKPtTree<Real, DIM>::correct_for_self_interactions() {
     sctl::Profile::Scoped profile("correct_for_self");
+    if (params.eval_src == DMK_NO_RESULT)
+        return;
 
     // LAPLACE_DIPOLE has a gradient self-correction (w0_grad on the grad
     // components) rather than the scalar potential correction the other kernels use, so it takes a
@@ -1727,7 +1740,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                     continue;
 
                 // Evaluate potential at owned source points in the target box
-                if (src_counts_owned[trg_box]) {
+                if (params.eval_src != DMK_NO_RESULT && src_counts_owned[trg_box]) {
                     int n_eval_trg = src_counts_owned[trg_box];
                     Real *eval_r_trg = r_src_owned_ptr(trg_box);
                     Real *eval_pot = pot_src_ptr(trg_box);
@@ -1751,7 +1764,7 @@ void DMKPtTree<Real, DIM>::evaluate_direct_interactions() {
                 }
 
                 // Evaluate potential at owned target points in the target box
-                if (trg_counts_owned[trg_box]) {
+                if (params.eval_trg != DMK_NO_RESULT && trg_counts_owned[trg_box]) {
                     int n_eval_trg = trg_counts_owned[trg_box];
                     Real *eval_r_trg = r_trg_owned_ptr(trg_box);
                     Real *eval_pot = pot_trg_ptr(trg_box);
@@ -1862,10 +1875,14 @@ void DMKPtTree<Real, DIM>::desort_potentials(Real *pot_src, Real *pot_trg) {
     nvtxRangePush("pdmk_tree_eval_sync");
 
     sctl::Vector<Real> res_src, res_trg;
-    this->GetParticleData(res_src, "pdmk_pot_src");
-    sctl::Vector<Real>(res_src.Dim(), pot_src, false) = res_src;
-    this->GetParticleData(res_trg, "pdmk_pot_trg");
-    sctl::Vector<Real>(res_trg.Dim(), pot_trg, false) = res_trg;
+    if (params.eval_src != DMK_NO_RESULT) {
+        this->GetParticleData(res_src, "pdmk_pot_src");
+        sctl::Vector<Real>(res_src.Dim(), pot_src, false) = res_src;
+    }
+    if (params.eval_trg != DMK_NO_RESULT) {
+        this->GetParticleData(res_trg, "pdmk_pot_trg");
+        sctl::Vector<Real>(res_trg.Dim(), pot_trg, false) = res_trg;
+    }
     sctl::Profile::Toc();
     nvtxRangePop();
     logger->info("De-sort complete");

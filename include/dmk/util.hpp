@@ -66,7 +66,8 @@ constexpr std::array<std::string_view, 6> ikernel_names = {
     "yukawa", "laplace", "sqrt_laplace", "stokeslet", "stresslet", "laplace_dipole",
 };
 
-constexpr std::array<std::string_view, 3> return_names = {
+constexpr std::array<std::string_view, 4> return_names = {
+    "no_result",
     "potential",
     "potential_grad",
     "velocity",
@@ -80,7 +81,7 @@ constexpr std::string_view to_string(dmk_ikernel k) noexcept {
 }
 
 constexpr std::string_view to_string(dmk_eval_type k) noexcept {
-    auto idx = static_cast<int>(k) - 1;
+    auto idx = static_cast<int>(k);
     if (idx >= 0 && idx < static_cast<int>(return_names.size()))
         return return_names[idx];
     return "unknown_eval_type";
@@ -115,11 +116,11 @@ constexpr std::optional<dmk_ikernel> ikernel_from_string(std::string_view s) noe
     return std::nullopt;
 }
 
-// Inverse of to_string for eval types (enum starts at 1). Same matching rules.
+// Inverse of to_string for eval types. Same matching rules.
 constexpr std::optional<dmk_eval_type> eval_type_from_string(std::string_view s) noexcept {
     for (int i = 0; i < static_cast<int>(return_names.size()); ++i)
         if (name_matches(s, return_names[i]))
-            return static_cast<dmk_eval_type>(i + 1);
+            return static_cast<dmk_eval_type>(i);
     return std::nullopt;
 }
 

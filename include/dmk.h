@@ -19,6 +19,7 @@ typedef enum {
 } dmk_ikernel;
 
 typedef enum {
+    DMK_NO_RESULT = 0, // skip this point set; its output pointer may be NULL
     DMK_POTENTIAL = 1,
     DMK_POTENTIAL_GRAD = 2,
     DMK_VELOCITY = 3,
@@ -83,9 +84,9 @@ typedef struct pdmk_params {
     double eps DMK_DEFAULT(1e-3);               ///< target precision
     dmk_ikernel kernel DMK_DEFAULT(DMK_YUKAWA); ///< evaluation kernel
     dmk_eval_type
-        eval_src DMK_DEFAULT(DMK_POTENTIAL); ///< level to compute at sources (potential, pot+grad, velocity)
+        eval_src DMK_DEFAULT(DMK_POTENTIAL); ///< level to compute at sources (none, potential, pot+grad, velocity)
     dmk_eval_type
-        eval_trg DMK_DEFAULT(DMK_POTENTIAL); ///< level to compute at targets (potential, pot+grad, velocity)
+        eval_trg DMK_DEFAULT(DMK_POTENTIAL); ///< level to compute at targets (none, potential, pot+grad, velocity)
     double fparam DMK_DEFAULT(6.0);          ///< param for selected potential (Yukawa lambda param)
     int use_periodic DMK_DEFAULT(false);     ///< use periodic boundary conditions (in all dimensions, currently)
     int n_per_leaf DMK_DEFAULT(200);         ///< tuning: number of particles per leaf in N-tree
@@ -223,8 +224,8 @@ dmk_error pdmkf(dmk_communicator comm, pdmk_params params, int n_src, const floa
 /// Under MPI the sources are gathered across comm, so r_src/charge/normal are this rank's
 /// slice while pot_src/pot_trg hold the results for this rank's own points -- the same
 /// distributed convention as pdmk. Either output may be NULL to skip evaluating at that
-/// point set; the corresponding eval type is then not validated. Outputs are overwritten,
-/// not accumulated into.
+/// point set, as with DMK_NO_RESULT; the corresponding eval type is then not validated.
+/// Outputs are overwritten, not accumulated into.
 dmk_error pdmk_direct(dmk_communicator comm, pdmk_params params, int n_src, const double *r_src, const double *charge,
                       const double *normal, int n_trg, const double *r_trg, double *pot_src, double *pot_trg);
 /// Single-precision pdmk_direct.

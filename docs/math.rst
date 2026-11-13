@@ -171,6 +171,8 @@ The quantities computed at sources and targets are selected independently with t
 
    * - Constant
      - Quantity
+   * - ``DMK_NO_RESULT``
+     - Nothing: the point set is skipped, and its output pointer may be ``NULL``.
    * - ``DMK_POTENTIAL``
      - Potential :math:`\phi` only.
    * - ``DMK_POTENTIAL_GRAD``

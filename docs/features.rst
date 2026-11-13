@@ -23,8 +23,9 @@ Kernels
 
 The tree path (``pdmk``, ``pdmk_tree_create``) supports the following combinations. "Eval
 types" is the base field ``eval_src`` and ``eval_trg`` may request for that kernel; they are
-selected independently. "Gradient" means the kernel also implements ``DMK_POTENTIAL_GRAD``,
-which returns the potential and its gradient together.
+selected independently, and either may be ``DMK_NO_RESULT`` to skip that point set.
+"Gradient" means the kernel also implements ``DMK_POTENTIAL_GRAD``, which returns the
+potential and its gradient together.
 
 .. list-table::
    :header-rows: 1

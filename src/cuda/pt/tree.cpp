@@ -355,12 +355,12 @@ Tree<Real, DIM>::Tree(const sctl::Comm &comm, const pdmk_params &params, const s
             dev_tree_->AddParticles("pdmk_trg", &r_trg[0], n_trg, space_);
 
         { // registered before the source broadcast, so sized to the owned sources
-            const int dof_src = get_kernel_output_dim(DIM, params.kernel, params.eval_src);
-            const int dof_trg = get_kernel_output_dim(DIM, params.kernel, params.eval_trg);
-            if (dof_src)
-                dev_tree_->AddParticleData("pdmk_pot_src", "pdmk_src", dof_src);
-            if (n_trg && dof_trg)
-                dev_tree_->AddParticleData("pdmk_pot_trg", "pdmk_trg", dof_trg);
+            if (params.eval_src != DMK_NO_RESULT)
+                dev_tree_->AddParticleData("pdmk_pot_src", "pdmk_src",
+                                           get_kernel_output_dim(DIM, params.kernel, params.eval_src));
+            if (n_trg && params.eval_trg != DMK_NO_RESULT)
+                dev_tree_->AddParticleData("pdmk_pot_trg", "pdmk_trg",
+                                           get_kernel_output_dim(DIM, params.kernel, params.eval_trg));
         }
         dev_tree_->Broadcast("pdmk_src");
         nvtxRangePop();

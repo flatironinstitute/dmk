@@ -29,6 +29,7 @@ end
 end
 
 @enum DmkEvalType::Cint begin
+    DMK_NO_RESULT      = 0
     DMK_POTENTIAL      = 1
     DMK_POTENTIAL_GRAD = 2
     DMK_VELOCITY       = 3
@@ -256,8 +257,8 @@ function pdmk_tree_createf(comm::DmkCommunicator, params::PdmkParams,
     return tree
 end
 
-# The tree path only accepts a `nothing` output for a point set that is empty; with
-# points present C returns DMK_ERR_INVALID_ARGUMENT.
+# The tree path only accepts a `nothing` output for a point set that is empty or whose eval
+# type is DMK_NO_RESULT; otherwise C returns DMK_ERR_INVALID_ARGUMENT.
 function pdmk_tree_eval(tree::PdmkTree,
                         pot_src::Union{DenseVector{Float64},Nothing},
                         pot_trg::Union{DenseVector{Float64},Nothing})
@@ -353,9 +354,11 @@ function pdmk_espf(comm::DmkCommunicator, params::PdmkEspParams, n::Integer,
                  comm, params, n, r_src, charges, normal, pot_src))
 end
 
-function _require_outputs(fn, n_src, pot_src, n_trg, pot_trg)
-    n_src > 0 && pot_src === nothing && error("$fn: pot_src is required when n_src > 0")
-    n_trg > 0 && pot_trg === nothing && error("$fn: pot_trg is required when n_trg > 0")
+function _require_outputs(fn, params, n_src, pot_src, n_trg, pot_trg)
+    n_src > 0 && params.eval_src != DMK_NO_RESULT && pot_src === nothing &&
+        error("$fn: pot_src is required when n_src > 0 unless eval_src is DMK_NO_RESULT")
+    n_trg > 0 && params.eval_trg != DMK_NO_RESULT && pot_trg === nothing &&
+        error("$fn: pot_trg is required when n_trg > 0 unless eval_trg is DMK_NO_RESULT")
 end
 
 function pdmk(comm::DmkCommunicator, params::PdmkParams, n_src::Integer,
@@ -364,7 +367,7 @@ function pdmk(comm::DmkCommunicator, params::PdmkParams, n_src::Integer,
               r_trg::Union{DenseVector{Float64},Nothing},
               pot_src::Union{DenseVector{Float64},Nothing},
               pot_trg::Union{DenseVector{Float64},Nothing})
-    _require_outputs("pdmk", n_src, pot_src, n_trg, pot_trg)
+    _require_outputs("pdmk", params, n_src, pot_src, n_trg, pot_trg)
     _check_arrays(params, r_src, charge, normal, r_trg, pot_src, pot_trg)
     _check(ccall((:pdmk, libdmk), DmkError,
                  (DmkCommunicator, PdmkParams, Cint, DmkPtr, DmkPtr, DmkPtr, Cint, DmkPtr, DmkPtr, DmkPtr),
@@ -377,7 +380,7 @@ function pdmkf(comm::DmkCommunicator, params::PdmkParams, n_src::Integer,
                r_trg::Union{DenseVector{Float32},Nothing},
                pot_src::Union{DenseVector{Float32},Nothing},
                pot_trg::Union{DenseVector{Float32},Nothing})
-    _require_outputs("pdmkf", n_src, pot_src, n_trg, pot_trg)
+    _require_outputs("pdmkf", params, n_src, pot_src, n_trg, pot_trg)
     _check_arrays(params, r_src, charge, normal, r_trg, pot_src, pot_trg)
     _check(ccall((:pdmkf, libdmk), DmkError,
                  (DmkCommunicator, PdmkParams, Cint, DmkPtr, DmkPtr, DmkPtr, Cint, DmkPtr, DmkPtr, DmkPtr),
@@ -412,7 +415,7 @@ export PdmkParams, PdmkTree, PdmkEspParams, PdmkEspPlan, DmkCommunicator,
        pdmk_last_error_message,
        DMK_YUKAWA, DMK_LAPLACE, DMK_SQRT_LAPLACE, DMK_STOKESLET, DMK_STRESSLET,
        DMK_LAPLACE_DIPOLE,
-       DMK_POTENTIAL, DMK_POTENTIAL_GRAD, DMK_VELOCITY,
+       DMK_NO_RESULT, DMK_POTENTIAL, DMK_POTENTIAL_GRAD, DMK_VELOCITY,
        DMK_EVAL_PATH_CPU, DMK_EVAL_PATH_GPU,
        DMK_MEMORY_HOST, DMK_MEMORY_DEVICE,
        DMK_LOG_TRACE, DMK_LOG_DEBUG, DMK_LOG_INFO, DMK_LOG_WARN, DMK_LOG_ERR,

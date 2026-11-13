@@ -50,6 +50,7 @@ class Kernel(IntEnum):
 
 
 class EvalType(IntEnum):
+    NO_RESULT = 0
     POTENTIAL = 1
     POTENTIAL_GRAD = 2
     VELOCITY = 3
@@ -310,13 +311,13 @@ def _check_handle(handle, name):
     return handle
 
 
-def _require_outputs(name, n_src, pot_src, n_trg, pot_trg):
-    """The tree path rejects a NULL output for a non-empty point set; only
-    pdmk_direct reads NULL as "skip this point set"."""
-    if n_src > 0 and pot_src is None:
-        raise DmkError(f"{name}: pot_src is required when n_src > 0")
-    if n_trg > 0 and pot_trg is None:
-        raise DmkError(f"{name}: pot_trg is required when n_trg > 0")
+def _require_outputs(name, params, n_src, pot_src, n_trg, pot_trg):
+    """The tree path rejects a NULL output for a non-empty point set unless its eval type is
+    NO_RESULT; only pdmk_direct also reads NULL as "skip this point set"."""
+    if n_src > 0 and params.eval_src != EvalType.NO_RESULT and pot_src is None:
+        raise DmkError(f"{name}: pot_src is required when n_src > 0 unless eval_src is NO_RESULT")
+    if n_trg > 0 and params.eval_trg != EvalType.NO_RESULT and pot_trg is None:
+        raise DmkError(f"{name}: pot_trg is required when n_trg > 0 unless eval_trg is NO_RESULT")
 
 
 def pdmk_version_string():
@@ -371,8 +372,8 @@ def pdmk_tree_createf(comm, params, n_src, r_src, charge, normal, n_trg, r_trg):
 
 
 def pdmk_tree_eval(tree, pot_src, pot_trg):
-    """None is accepted only for a point set that is empty; with points present the
-    library returns DMK_ERR_INVALID_ARGUMENT."""
+    """None is accepted only for a point set that is empty or whose eval type is NO_RESULT;
+    otherwise the library returns DMK_ERR_INVALID_ARGUMENT."""
     space = _tree_space[tree]
     _check(_lib.pdmk_tree_eval(tree, _ptr(pot_src, "d", space, True), _ptr(pot_trg, "d", space, True)),
            "pdmk_tree_eval")
@@ -411,7 +412,7 @@ def tree_handle(tree):
 
 
 def pdmk(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg):
-    _require_outputs("pdmk", n_src, pot_src, n_trg, pot_trg)
+    _require_outputs("pdmk", params, n_src, pot_src, n_trg, pot_trg)
     space = params.memory_space
     _check(_lib.pdmk(comm, params, n_src, _ptr(r_src, "d", space), _ptr(charge, "d", space),
                      _ptr(normal, "d", space), n_trg, _ptr(r_trg, "d", space),
@@ -419,7 +420,7 @@ def pdmk(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_
 
 
 def pdmkf(comm, params, n_src, r_src, charge, normal, n_trg, r_trg, pot_src, pot_trg):
-    _require_outputs("pdmkf", n_src, pot_src, n_trg, pot_trg)
+    _require_outputs("pdmkf", params, n_src, pot_src, n_trg, pot_trg)
     space = params.memory_space
     _check(_lib.pdmkf(comm, params, n_src, _ptr(r_src, "f", space), _ptr(charge, "f", space),
                       _ptr(normal, "f", space), n_trg, _ptr(r_trg, "f", space),

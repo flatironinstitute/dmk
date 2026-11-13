@@ -104,6 +104,8 @@ std::string getter_name(const KernelDef &k) { return std::format("get_{}_{}d_ker
 
 std::string eval_level_enum_name(dmk_eval_type el) {
     switch (el) {
+    case DMK_NO_RESULT:
+        return "DMK_NO_RESULT";
     case DMK_POTENTIAL:
         return "DMK_POTENTIAL";
     case DMK_POTENTIAL_GRAD:

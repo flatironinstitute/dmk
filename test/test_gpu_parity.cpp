@@ -495,6 +495,44 @@ TEST_CASE_GENERIC("[GPU] 3d stresslet update_charges rejects a null normal", 1) 
     pdmk_tree_destroy(tree);
 }
 
+TEST_CASE_GENERIC("[GPU] 3d DMK_NO_RESULT leaves the other point set unchanged", 1) {
+    constexpr int n_dim = 3, n_src = 20000, n_trg = 20000;
+    const std::pair<dmk_ikernel, dmk_eval_type> cases[] = {
+        {DMK_LAPLACE, DMK_POTENTIAL_GRAD}, {DMK_LAPLACE_DIPOLE, DMK_POTENTIAL_GRAD}, {DMK_STRESSLET, DMK_VELOCITY}};
+    for (const auto &[kernel, eval] : cases) {
+        INFO(dmk::util::to_string(kernel));
+        const int odim = dmk::get_kernel_output_dim(n_dim, kernel, eval);
+        sctl::Vector<double> r_src, r_trg, rnormal, charges;
+        dmk::util::init_test_data(n_dim, dmk::get_kernel_input_dim(n_dim, kernel), n_src, n_trg, false, false, r_src,
+                                  r_trg, rnormal, charges, 0);
+
+        const auto solve = [&](dmk_eval_type eval_src, dmk_eval_type eval_trg, double *pot_src, double *pot_trg) {
+            pdmk_params params;
+            params.eps = 1e-6;
+            params.n_dim = n_dim;
+            params.kernel = kernel;
+            params.eval_src = eval_src;
+            params.eval_trg = eval_trg;
+            params.log_level = 6;
+            params.eval_path = DMK_EVAL_PATH_GPU;
+            pdmk_tree tree = pdmk_tree_create(DMK_TEST_COMM_SELF, params, n_src, &r_src[0], &charges[0], &rnormal[0],
+                                              n_trg, &r_trg[0]);
+            REQUIRE_MESSAGE(tree != nullptr, std::string(pdmk_last_error_message()));
+            CHECK_MESSAGE(pdmk_tree_eval(tree, pot_src, pot_trg) == DMK_SUCCESS,
+                          std::string(pdmk_last_error_message()));
+            pdmk_tree_destroy(tree);
+        };
+
+        std::vector<double> pot_src(n_src * odim), pot_trg(n_trg * odim);
+        std::vector<double> src_only(n_src * odim), trg_only(n_trg * odim);
+        solve(eval, eval, pot_src.data(), pot_trg.data());
+        solve(DMK_NO_RESULT, eval, nullptr, trg_only.data());
+        solve(eval, DMK_NO_RESULT, src_only.data(), nullptr);
+        CHECK(rel_l2(trg_only, pot_trg, odim, 0, odim) < 1e-12);
+        CHECK(rel_l2(src_only, pot_src, odim, 0, odim) < 1e-12);
+    }
+}
+
 // Sweeping lambda is what exercises the per-level coefficient packs.
 TEST_CASE_GENERIC("[GPU] 3d Yukawa parity", 1) {
     for (auto eval : {DMK_POTENTIAL, DMK_POTENTIAL_GRAD}) {

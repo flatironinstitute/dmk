@@ -367,20 +367,17 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
         return plan;
     };
 
-    const int el_src = eval_level_for(s.outputs.eval_src);
-    const int el_trg = eval_level_for(s.outputs.eval_trg);
-    const long oct_src = octave(s.topology.direct_occupancy_src);
-    const long oct_trg = octave(s.topology.direct_occupancy_trg);
-    const auto plan_src = resolve(el_src, oct_src, a_src);
-    const auto plan_trg = (s.outputs.pot_trg_size == 0 || (el_trg == el_src && oct_trg == oct_src))
-                              ? plan_src
-                              : resolve(el_trg, oct_trg, a_trg);
+    std::pair<std::shared_ptr<jit::JitKernel>, TuningParams> plan;
+    if (s.outputs.pot_src_size) {
+        plan = resolve(eval_level_for(s.outputs.eval_src), octave(s.topology.direct_occupancy_src), a_src);
+        launch_with(plan.first, plan.second, a_src, stream);
+    }
+    if (s.outputs.pot_trg_size) {
+        plan = resolve(eval_level_for(s.outputs.eval_trg), octave(s.topology.direct_occupancy_trg), a_trg);
+        launch_with(plan.first, plan.second, a_trg, stream);
+    }
 
-    launch_with(plan_src.first, plan_src.second, a_src, stream);
-    if (s.outputs.pot_trg_size)
-        launch_with(plan_trg.first, plan_trg.second, a_trg, stream);
-
-    if (prefilter_stats) {
+    if (prefilter_stats && plan.first) {
         unsigned long long h[kCullStats] = {};
         DMK_CHECK_CUDA(cudaStreamSynchronize(stream));
         DMK_CHECK_CUDA(cudaMemcpy(h, d_cull_stats, sizeof(h), cudaMemcpyDeviceToHost));
@@ -397,7 +394,7 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
         // TARGETS_PER_THREAD decide which targets share a warp (and so how tight a cull
         // group's box is), and SRC_TILE sets the chunking. Stats runs use the defaults, not
         // the tuned config, so these are not necessarily production's numbers.
-        const TuningParams &cfg = plan_src.second;
+        const TuningParams &cfg = plan.second;
         std::fprintf(stderr,
                      "[dmk direct prefilter] pf=%d cull_tile=%d block=%d targets=%d src_tile=%d\n"
                      "  per (src,group): scanned=%llu survived=%.1f%% needed=%.1f%% (aabb slack %.1f pts)\n"
