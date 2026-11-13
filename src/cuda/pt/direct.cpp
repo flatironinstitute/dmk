@@ -13,6 +13,8 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -98,6 +100,11 @@ const char *evaluator_family(dmk_ikernel kernel, int dim) {
 bool takes_eval_level(dmk_ikernel kernel) {
     return kernel == DMK_LAPLACE || kernel == DMK_SQRT_LAPLACE || kernel == DMK_LAPLACE_DIPOLE;
 }
+
+// The direct tuning bucket. One block per target box, so the optimum is roughly the smallest
+// BLOCK_SIZE x TARGETS_PER_THREAD covering a box, and a config tuned at one occupancy can cost
+// several times its tuned runtime at another. Both axes are powers of two, hence octaves.
+long octave(int occupancy) { return std::lround(std::log2(std::max(occupancy, 1))); }
 
 int eval_level_for(dmk_eval_type ev) {
     if (ev == DMK_POTENTIAL || ev == DMK_VELOCITY)
@@ -199,9 +206,9 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     }
 
     dmk::cuda::DirectByBoxArgs<Real> a_src = base;
-    a_src.r_target_flat = s.particles.d_r_src.data();
-    a_src.r_target_offsets = s.particles.d_r_src_offsets.data();
-    a_src.target_counts = s.particles.d_src_counts.data();
+    a_src.r_target_flat = s.particles.d_r_src_owned.data();
+    a_src.r_target_offsets = s.particles.d_r_src_offsets_owned.data();
+    a_src.target_counts = s.particles.d_src_counts_owned.data();
     a_src.pot_flat = s.outputs.d_pot_direct_src.data();
     a_src.pot_offsets = s.outputs.d_pot_src_offsets.data();
 
@@ -229,13 +236,14 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
     // the tuning launch, so its pot buffer must match that level's output dim. One
     // coefficient pack serves both levels: beta carries the gradient bandlimiting, so
     // the gradient is the analytic derivative of the same polynomial.
-    auto resolve = [&](int eval_level, const dmk::cuda::DirectByBoxArgs<Real> &bench_args)
+    auto resolve = [&](int eval_level, long occupancy_octave, const dmk::cuda::DirectByBoxArgs<Real> &bench_args)
         -> std::pair<std::shared_ptr<jit::JitKernel>, TuningParams> {
         // Shape-only: the tuning optimum (and the persistent JSON key) depends on
         // launch geometry, not on the coefficient values.
         std::ostringstream tune_key_ss;
         tune_key_ss << "PtDirect|real=" << jit_real_name<Real>() << "|kernel=" << int(s.kernel) << "|dim=" << DIM
                     << "|vps=" << values_per_source << "|nlist1=" << s.topology.nlist1_stride << "|el=" << eval_level;
+        tune_key_ss << "|occ=" << occupancy_octave;
         // Pack degrees change the unrolled Horner's register profile, so they need their own
         // tuning entry. n_digits and beta determine the degrees; direct_coeffs_by_level is
         // populated for Yukawa only and so cannot carry this alone.
@@ -247,7 +255,8 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
         // reused for another and the comparison measures nothing.
         tune_key_ss << "|pf=" << prefilter << "|ct=" << cull_tile << "|pfs=" << prefilter_stats << "|eu=" << eval_unroll
                     << "|ss=" << stage_src;
-        tune_key_ss << "|src=" << jit::jit_source_hash("pt/direct.cu");
+        tune_key_ss << "|src=" << jit::jit_source_hash("pt/direct.cu")
+                    << "|ev=" << jit::jit_header_hash("dmk/cuda/poly_evaluators_device.hpp");
         const std::string tune_key = tune_key_ss.str();
 
         // `plans` is process-wide and hits before coefficients are generated, so its
@@ -358,15 +367,17 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
         return plan;
     };
 
-    const int el_src = eval_level_for(s.outputs.eval_src);
-    const int el_trg = eval_level_for(s.outputs.eval_trg);
-    const auto plan_src = resolve(el_src, a_src);
-    const auto plan_trg = (el_trg == el_src || s.outputs.pot_trg_size == 0) ? plan_src : resolve(el_trg, a_trg);
+    std::pair<std::shared_ptr<jit::JitKernel>, TuningParams> plan;
+    if (s.outputs.pot_src_size) {
+        plan = resolve(eval_level_for(s.outputs.eval_src), octave(s.topology.direct_occupancy_src), a_src);
+        launch_with(plan.first, plan.second, a_src, stream);
+    }
+    if (s.outputs.pot_trg_size) {
+        plan = resolve(eval_level_for(s.outputs.eval_trg), octave(s.topology.direct_occupancy_trg), a_trg);
+        launch_with(plan.first, plan.second, a_trg, stream);
+    }
 
-    launch_with(plan_src.first, plan_src.second, a_src, stream);
-    launch_with(plan_trg.first, plan_trg.second, a_trg, stream);
-
-    if (prefilter_stats) {
+    if (prefilter_stats && plan.first) {
         unsigned long long h[kCullStats] = {};
         DMK_CHECK_CUDA(cudaStreamSynchronize(stream));
         DMK_CHECK_CUDA(cudaMemcpy(h, d_cull_stats, sizeof(h), cudaMemcpyDeviceToHost));
@@ -383,7 +394,7 @@ void direct(State<Real, DIM> &s, cudaStream_t stream) {
         // TARGETS_PER_THREAD decide which targets share a warp (and so how tight a cull
         // group's box is), and SRC_TILE sets the chunking. Stats runs use the defaults, not
         // the tuned config, so these are not necessarily production's numbers.
-        const TuningParams &cfg = plan_src.second;
+        const TuningParams &cfg = plan.second;
         std::fprintf(stderr,
                      "[dmk direct prefilter] pf=%d cull_tile=%d block=%d targets=%d src_tile=%d\n"
                      "  per (src,group): scanned=%llu survived=%.1f%% needed=%.1f%% (aabb slack %.1f pts)\n"

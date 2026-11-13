@@ -35,11 +35,10 @@ struct TensorprodArgs {
     // downward, d_c2p for upward.
     const Real *umat_flat = nullptr;
 
-    // Per-block global scratch for the ff/ff2 ping-pong buffers. Block uses
-    // scratch + blockIdx.x * scratch_stride; ff occupies the first N3 reals,
-    // ff2 the next N3.
+    // Upward kernel only, set by its launcher when a slab's buffers exceed shared memory: block
+    // (x, y) runs against scratch + (y * gridDim.x + x) * scratch_stride.
     Real *scratch = nullptr;
-    long scratch_stride = 0; // reals; = 2 * n_order^3
+    long scratch_stride = 0; // reals
 };
 
 } // namespace dmk::cuda

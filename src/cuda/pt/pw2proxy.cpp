@@ -20,16 +20,22 @@ using jit::jit_real_name;
 using jit::JitCache;
 using jit::JitKey;
 
-std::size_t pw2proxy_shared_bytes(int max_n_pw, int max_n_pw2, int max_n_order, int k3_tile, bool pencil_smem,
+// k2 tiles of one parity per thread; must match the kernel.
+int pw2proxy_k2_tiles(int n_order, int k2r) {
+    return ((n_order + 1) / 2 + k2r - 1) / k2r + (n_order / 2 + k2r - 1) / k2r;
+}
+
+// Must match the kernel's k_pad: alpha rows padded so the last k2 tile of each parity stays in its group.
+int pw2proxy_k_pad(int n_order, int k2r) { return (pw2proxy_k2_tiles(n_order, k2r) * k2r + 3) / 4 * 4; }
+
+std::size_t pw2proxy_shared_bytes(int max_n_pw, int max_n_pw2, int max_n_order, int k2r, bool pencil_smem,
                                   std::size_t sizeof_real) {
-    const int max_k_pad = ((max_n_order + 3) / 4) * 4;
-    const int max_phase1_cols = max_n_pw * max_n_pw;
-    const std::size_t complex_count = std::size_t(max_n_pw) * std::size_t(max_k_pad) +
-                                      std::size_t(k3_tile) * std::size_t(max_phase1_cols) +
-                                      std::size_t(k3_tile) * std::size_t(max_n_order) * std::size_t(max_n_pw);
-    // The unpacked pencil table leads the block, as int4 so it stays 16-byte aligned.
-    const std::size_t pencil_bytes = pencil_smem ? std::size_t(max_n_pw) * max_n_pw2 * 4 * sizeof(int) : 0;
-    return pencil_bytes + complex_count * (2 * sizeof_real);
+    const std::size_t complex_count = std::size_t(max_n_pw) * max_n_order + std::size_t(max_n_pw) * max_n_pw;
+    const std::size_t real_count = std::size_t(max_n_pw2) * pw2proxy_k_pad(max_n_order, k2r);
+    // The unpacked pencil table and the per-slab ranges lead the block, as int4 so they stay
+    // 16-byte aligned.
+    const std::size_t int4_count = (pencil_smem ? std::size_t(max_n_pw) * max_n_pw2 : 0) + max_n_pw2;
+    return int4_count * 4 * sizeof(int) + (2 * complex_count + real_count) * sizeof_real;
 }
 
 } // namespace
@@ -50,30 +56,40 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
         return;
 
     static JitCache cache;
-    static cuda_helpers::DeviceBuffer<dmk::cuda::PwToProxyArgs<Real>> d_args;
+    // Never destroyed: a static DeviceBuffer's destructor would free device memory from a
+    // static destructor, by which point the CUDA context may already be gone.
+    static auto &d_args = *new cuda_helpers::DeviceBuffer<dmk::cuda::PwToProxyArgs<Real>>();
     d_args.upload_async_grow(args_h.data(), args_h.size(), stream);
     const int n_args = static_cast<int>(args_h.size());
     const auto a0 = args_h[0];
 
     const std::size_t max_shared = device_max_shared_bytes();
-    // Keep the unpacked table only where the narrowest tiling can still afford it; past that it is
+    // Keep the unpacked table only where it still fits beside everything else; past that it is
     // the difference between fitting in shared and having no runnable config at all.
     const bool pencil_smem =
         pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, 1, true, sizeof(Real)) <= max_shared;
-    // Past ~9 significant digits the phase buffers alone outgrow any per-block shared limit. The
-    // kernel then runs against a private slice of a global buffer instead, at the narrowest tiling
-    // so the slice stays small.
+    // At the highest double-precision digit counts alpha, H and the slab outgrow the per-block shared
+    // limit. The kernel then runs against a private slice of a global buffer instead.
     const bool smem_global =
         pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, 1, false, sizeof(Real)) > max_shared;
-    static cuda_helpers::DeviceBuffer<unsigned char> d_scratch;
+    // Never destroyed: a static DeviceBuffer's destructor would free device memory from a
+    // static destructor, by which point the CUDA context may already be gone.
+    static auto &d_scratch = *new cuda_helpers::DeviceBuffer<unsigned char>();
+
+    const auto shared_bytes = [&](const TuningParams &p) {
+        return pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, p.at("K2R"), pencil_smem, sizeof(Real));
+    };
+    // A thread's k3 columns stay in registers while they fit; past that they accumulate in place
+    // in the output, which only the high-digit double configs reach.
+    const auto acc_reg = [&](const TuningParams &p) {
+        const int k2r = p.at("K2R");
+        const int items = a0.n_order * pw2proxy_k2_tiles(a0.n_order, k2r);
+        const int rounds = (items + p.at("BLOCK_SIZE") - 1) / p.at("BLOCK_SIZE");
+        return rounds * k2r * a0.n_order * int(sizeof(Real) / sizeof(float)) <= 96;
+    };
 
     auto launch_one = [&](const TuningParams &p, cudaStream_t st, bool compile_only) {
-        const std::size_t shared =
-            pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, p.at("K3_TILE"), pencil_smem, sizeof(Real));
-
-        // Occupancy is register-bound once the working set leaves shared, and asking for the
-        // thread-limited maximum there would only buy blocks by spilling.
-        const int min_blocks = smem_global ? 1 : resident_blocks_per_sm(shared, p.at("BLOCK_SIZE"));
+        const std::size_t shared = shared_bytes(p);
 
         JitKey key;
         key.name = "PtPwToProxyMultiLevelKernel";
@@ -84,13 +100,10 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
                       {"N_PW", a0.n_pw},
                       {"N_PW2", a0.n_pw2},
                       {"N_CHARGE_DIM", a0.n_charge_dim},
-                      {"COL_REG", p.at("COL_REG")},
-                      {"K1_TILE", p.at("K1_TILE")},
-                      {"K2_TILE", p.at("K2_TILE")},
-                      {"K3_TILE", p.at("K3_TILE")},
-                      {"KR_TILE", p.at("KR_TILE")},
+                      {"K2R", p.at("K2R")},
                       {"BLOCK_SIZE", p.at("BLOCK_SIZE")},
-                      {"MIN_BLOCKS", min_blocks},
+                      {"MIN_BLOCKS", p.at("MIN_BLOCKS")},
+                      {"ACC_REG", acc_reg(p) ? 1 : 0},
                       {"PENCIL_SMEM", pencil_smem ? 1 : 0},
                       {"SMEM_GLOBAL", smem_global ? 1 : 0}};
         auto kernel = cache.get_kernel_from_source(
@@ -136,29 +149,23 @@ void launch_pw2proxy(std::vector<dmk::cuda::PwToProxyArgs<Real>> &args_h, Real *
 
     const cudaDeviceProp &prop = device_prop();
 
-    const std::vector<TuningParameter> space{{"COL_REG", {1, 2}},       {"K1_TILE", {1, 2, 3, 4}},
-                                             {"K2_TILE", {2, 3, 4}},    {"K3_TILE", {1, 2, 3, 4}},
-                                             {"KR_TILE", {3, 4, 8, 9}}, {"BLOCK_SIZE", {128, 256}}};
-    const TuningParams defaults{{"COL_REG", 1}, {"K1_TILE", 2}, {"K2_TILE", 3},
-                                {"K3_TILE", 3}, {"KR_TILE", 3}, {"BLOCK_SIZE", 256}};
+    const std::vector<TuningParameter> space{
+        {"K2R", {1, 2, 3}}, {"BLOCK_SIZE", {128, 192, 256, 384}}, {"MIN_BLOCKS", {1, 2, 4}}};
+    const TuningParams defaults{{"K2R", 2}, {"BLOCK_SIZE", 192}, {"MIN_BLOCKS", 1}};
 
     const auto constraint = [&](const TuningParams &p) {
         const int bs = p.at("BLOCK_SIZE");
         if (bs <= 0 || bs > prop.maxThreadsPerBlock || bs % 32 != 0)
             return false;
-        if (p.at("COL_REG") <= 0 || p.at("K1_TILE") <= 0 || p.at("K2_TILE") <= 0 || p.at("K3_TILE") <= 0 ||
-            p.at("KR_TILE") <= 0)
+        if (p.at("K2R") <= 0)
             return false;
-        if (smem_global)
-            return p.at("K3_TILE") == 1;
-        return pw2proxy_shared_bytes(max_n_pw, max_n_pw2, max_n_order, p.at("K3_TILE"), pencil_smem, sizeof(Real)) <=
-               max_shared;
+        if (p.at("MIN_BLOCKS") > resident_blocks_per_sm(smem_global ? 0 : shared_bytes(p), bs))
+            return false;
+        return smem_global || shared_bytes(p) <= max_shared;
     };
 
     const auto canonicalize = [&](TuningParams p) {
-        return clamp_tiles(
-            std::move(p),
-            {{"K1_TILE", a0.n_order}, {"K2_TILE", a0.n_order}, {"K3_TILE", a0.n_order}, {"KR_TILE", a0.n_pw}});
+        return clamp_tiles(std::move(p), {{"K2R", (a0.n_order + 1) / 2}});
     };
 
     autotuned_launch<Real>(tk, "PtPwToProxyMultiLevelKernel", space, defaults, constraint, launch_one, proxy_flat,

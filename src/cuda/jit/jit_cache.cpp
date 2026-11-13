@@ -1,5 +1,4 @@
 #include "jit_cache.hpp"
-#include <dmk_jit_config.hpp>
 
 namespace dmk::cuda::jit {
 
@@ -33,8 +32,6 @@ JitCache::JitCache() {
         throw std::runtime_error(std::string("cuInit failed: ") + (name ? name : "<unknown>") + ": " +
                                  (msg ? msg : "<no message>"));
     }
-    include_dirs_.push_back(DMK_JIT_INCLUDE_DIR);
-    include_dirs_.push_back(DMK_JIT_GENERATED_INCLUDE_DIR);
 
     {
         auto err = cudaGetDevice(&device_);
@@ -56,18 +53,6 @@ JitCache::JitCache() {
 
     sm_major_ = prop.major;
     sm_minor_ = prop.minor;
-}
-
-JitCache::JitCache(std::vector<std::string> include_dirs) : JitCache() { include_dirs_ = std::move(include_dirs); }
-
-std::vector<std::string> JitCache::make_nvrtc_options() const {
-    std::vector<std::string> opts = extra_options_;
-
-    for (const auto &dir : include_dirs_) {
-        opts.push_back("-I" + dir);
-    }
-
-    return opts;
 }
 
 std::shared_ptr<JitKernel> JitCache::get_kernel_from_source(const JitKey &key,
@@ -100,8 +85,7 @@ std::shared_ptr<JitKernel> JitCache::get_kernel_from_source(const JitKey &key, c
 
     // Unlocked so a tuning sweep can compile on every core. Two threads racing the same key
     // both compile; the emplace below keeps whichever finishes first.
-    CompiledBinary bin =
-        compiler_.compile(source, key.name + ".cu", key.sm_major, key.sm_minor, make_nvrtc_options(), name_expression);
+    CompiledBinary bin = compiler_.compile(source, key.name + ".cu", key.sm_major, key.sm_minor, {}, name_expression);
     CUmodule module = nullptr;
 
     CUresult res = cuModuleLoadData(&module, static_cast<const void *>(bin.image.data()));

@@ -51,10 +51,11 @@ double solve_error(auto comm, dmk_ikernel kernel, int n_src, int n_per_leaf, dou
     const int idim = dmk::get_kernel_input_dim(N_DIM, kernel);
 
     sctl::Vector<double> r_src, r_trg, rnormal, charges;
-    // Volume fill rather than the default spherical shell, so pair separations cover
-    // the whole residual cutoff rather than one radius.
-    dmk::util::init_test_data(N_DIM, idim, n_src, /*n_trg=*/0, /*uniform=*/true, /*set_fixed_charges=*/false, r_src,
-                              r_trg, rnormal, charges, /*seed=*/0);
+    // A volume fill, so pair separations cover the whole residual cutoff rather than one radius --
+    // but a graded one, so box occupancy varies and the tree refines unevenly, which is what the
+    // level indexing under test depends on.
+    dmk::util::init_test_data(N_DIM, idim, n_src, /*n_trg=*/0, dmk::util::Distribution::GradedVolume,
+                              /*set_fixed_charges=*/false, r_src, r_trg, rnormal, charges, /*seed=*/0);
 
     pdmk_params params;
     params.eps = eps;
@@ -93,7 +94,7 @@ TEST_CASE_GENERIC("[DMK] near-field level indexing across refinement", 1) {
     auto comm = nullptr;
 #endif
 
-    constexpr double EPS = 1e-6;
+    constexpr double EPS = 1.0E-7;
 
     struct Kernel {
         const char *name;
@@ -106,7 +107,7 @@ TEST_CASE_GENERIC("[DMK] near-field level indexing across refinement", 1) {
     struct Refinement {
         const char *name;
         int n_src;
-        int n_per_leaf; ///< above n_src keeps the root unsplit, so src_level hits n_levels()
+        int n_per_leaf;
     };
     const Refinement refinements[] = {{"single box", 200, 1000000}, {"refined", 5000, 100}};
 

@@ -25,6 +25,7 @@ struct PwToProxyArgs {
     // Per (m2,m3) pencil: the slot m1 == 0 would land on, then the live m1 range as lo | hi<<16.
     // Null means the slab is in cube order.
     const int *pencil_slots = nullptr;
+    int pw_slab = 0; // modes per charge-dim slab: the live count, or the cube in cube order
 };
 
 } // namespace dmk::cuda

@@ -18,7 +18,7 @@ struct TestData {
     std::vector<double> r_src, r_trg, charges, normals;
 
     TestData(int n_dim_, int charge_dim, long seed) : n_dim(n_dim_) {
-        dmk::util::init_test_data(n_dim, charge_dim, N_SRC, N_TRG, /*uniform=*/true,
+        dmk::util::init_test_data(n_dim, charge_dim, N_SRC, N_TRG, dmk::util::Distribution::GradedVolume,
                                   /*set_fixed_charges=*/false, r_src, r_trg, normals, charges, seed);
     }
 };
@@ -292,7 +292,7 @@ double rel_l2_error(const std::vector<double> &test, const std::vector<double> &
 
 } // namespace
 
-TEST_CASE("[DMK] direct eval: Yukawa 3D") {
+TEST_CASE_GENERIC("[DMK] direct eval: Yukawa 3D", 1) {
     TestData td(3, 1, SEED);
     const double lambda = 6.0;
 
@@ -306,7 +306,7 @@ TEST_CASE("[DMK] direct eval: Yukawa 3D") {
     CHECK(rel_l2_error(test, ref) < 1e-12);
 }
 
-TEST_CASE("[DMK] direct eval: Yukawa 3D + grad") {
+TEST_CASE_GENERIC("[DMK] direct eval: Yukawa 3D + grad", 1) {
     TestData td(3, 1, SEED);
     const double lambda = 6.0;
 
@@ -320,7 +320,7 @@ TEST_CASE("[DMK] direct eval: Yukawa 3D + grad") {
     CHECK(rel_l2_error(test, ref) < 1e-12);
 }
 
-TEST_CASE("[DMK] direct eval: Yukawa 2D") {
+TEST_CASE_GENERIC("[DMK] direct eval: Yukawa 2D", 1) {
     TestData td(2, 1, SEED);
     const double lambda = 6.0;
 
@@ -334,7 +334,7 @@ TEST_CASE("[DMK] direct eval: Yukawa 2D") {
     CHECK(rel_l2_error(test, ref) < 1e-12);
 }
 
-TEST_CASE("[DMK] direct eval: Yukawa 2D + grad") {
+TEST_CASE_GENERIC("[DMK] direct eval: Yukawa 2D + grad", 1) {
     TestData td(2, 1, SEED);
     const double lambda = 6.0;
 
@@ -348,7 +348,7 @@ TEST_CASE("[DMK] direct eval: Yukawa 2D + grad") {
     CHECK(rel_l2_error(test, ref) < 1e-12);
 }
 
-TEST_CASE("[DMK] direct eval: Laplace 3D") {
+TEST_CASE_GENERIC("[DMK] direct eval: Laplace 3D", 1) {
     TestData td(3, 1, SEED);
 
     std::vector<double> ref, test;
@@ -361,7 +361,7 @@ TEST_CASE("[DMK] direct eval: Laplace 3D") {
     CHECK(rel_l2_error(test, ref) < 1e-12);
 }
 
-TEST_CASE("[DMK] direct eval: Laplace 2D") {
+TEST_CASE_GENERIC("[DMK] direct eval: Laplace 2D", 1) {
     TestData td(2, 1, SEED);
 
     std::vector<double> ref, test;
@@ -374,7 +374,7 @@ TEST_CASE("[DMK] direct eval: Laplace 2D") {
     CHECK(rel_l2_error(test, ref) < 1e-12);
 }
 
-TEST_CASE("[DMK] direct eval: SqrtLaplace 2D") {
+TEST_CASE_GENERIC("[DMK] direct eval: SqrtLaplace 2D", 1) {
     TestData td(2, 1, SEED);
 
     std::vector<double> ref, test;
@@ -387,7 +387,7 @@ TEST_CASE("[DMK] direct eval: SqrtLaplace 2D") {
     CHECK(rel_l2_error(test, ref) < 1e-12);
 }
 
-TEST_CASE("[DMK] direct eval: SqrtLaplace 3D") {
+TEST_CASE_GENERIC("[DMK] direct eval: SqrtLaplace 3D", 1) {
     TestData td(3, 1, SEED);
 
     std::vector<double> ref, test;
@@ -400,7 +400,7 @@ TEST_CASE("[DMK] direct eval: SqrtLaplace 3D") {
     CHECK(rel_l2_error(test, ref) < 1e-12);
 }
 
-TEST_CASE("[DMK] direct eval: Stokeslet 3D") {
+TEST_CASE_GENERIC("[DMK] direct eval: Stokeslet 3D", 1) {
     TestData td(3, 3, SEED);
 
     std::vector<double> ref, test;
@@ -413,7 +413,7 @@ TEST_CASE("[DMK] direct eval: Stokeslet 3D") {
     CHECK(rel_l2_error(test, ref) < 1e-12);
 }
 
-TEST_CASE("[DMK] direct eval: Stresslet 3D") {
+TEST_CASE_GENERIC("[DMK] direct eval: Stresslet 3D", 1) {
     TestData td(3, 3, SEED);
 
     std::vector<double> ref, test;
@@ -426,7 +426,7 @@ TEST_CASE("[DMK] direct eval: Stresslet 3D") {
     CHECK(rel_l2_error(test, ref) < 1e-12);
 }
 
-TEST_CASE("[DMK] direct eval: Laplace dipole 3D") {
+TEST_CASE_GENERIC("[DMK] direct eval: Laplace dipole 3D", 1) {
     TestData td(3, 3, SEED);
 
     std::vector<double> ref, test;
@@ -439,7 +439,7 @@ TEST_CASE("[DMK] direct eval: Laplace dipole 3D") {
     CHECK(rel_l2_error(test, ref) < 1e-12);
 }
 
-TEST_CASE("[DMK] direct eval: Laplace dipole 2D") {
+TEST_CASE_GENERIC("[DMK] direct eval: Laplace dipole 2D", 1) {
     TestData td(2, 2, SEED);
 
     std::vector<double> ref, test;
@@ -452,7 +452,7 @@ TEST_CASE("[DMK] direct eval: Laplace dipole 2D") {
     CHECK(rel_l2_error(test, ref) < 1e-12);
 }
 
-TEST_CASE("[DMK] direct eval: Laplace dipole 3D + grad") {
+TEST_CASE_GENERIC("[DMK] direct eval: Laplace dipole 3D + grad", 1) {
     TestData td(3, 3, SEED);
 
     std::vector<double> ref, test;
@@ -465,7 +465,7 @@ TEST_CASE("[DMK] direct eval: Laplace dipole 3D + grad") {
     CHECK(rel_l2_error(test, ref) < 1e-12);
 }
 
-TEST_CASE("[DMK] direct eval: Laplace dipole 2D + grad") {
+TEST_CASE_GENERIC("[DMK] direct eval: Laplace dipole 2D + grad", 1) {
     TestData td(2, 2, SEED);
 
     std::vector<double> ref, test;

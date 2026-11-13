@@ -22,14 +22,14 @@ void direct(State<Real, DIM> &state, cudaStream_t stream);
 template <typename Real, int DIM>
 void upward(State<Real, DIM> &state, cudaStream_t stream);
 
-/// Form-outgoing pass: per-level proxy2pw + kernel-FT multiply (-> d_pw_out) and
-/// the windowed root (-> d_proxy_coeffs_downward[0]). Reads d_proxy_coeffs_upward.
+/// Form-outgoing pass: per-level proxy2pw + kernel-FT multiply (-> the outgoing PW field in
+/// d_pw_out_proxy_down) and the windowed root (-> d_window_pw_form_*). Reads d_proxy_coeffs_upward.
 template <typename Real, int DIM>
 void form_outgoing(State<Real, DIM> &state, cudaStream_t stream);
 
-/// Downward pass: per-level shift_pw (neighbor pw_out -> pw_in) + pw2proxy
-/// (pw_in -> proxy) then per-level parent->child tensorprod. Reads d_pw_out,
-/// accumulates into d_proxy_coeffs_downward on `stream`.
+/// Downward pass: per-level shift_pw (neighbor pw_out -> pw_in), then pw2proxy for the windowed
+/// root and every level (pw_in -> proxy), then per-level parent->child tensorprod. The downward
+/// proxies overwrite the outgoing PW field in d_pw_out_proxy_down once shift_pw has read it.
 template <typename Real, int DIM>
 void downward(State<Real, DIM> &state, cudaStream_t stream);
 

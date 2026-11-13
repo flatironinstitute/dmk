@@ -5,7 +5,7 @@
 #include <dmk/types.hpp>
 #include <dmk/util.hpp>
 
-#include <format>
+#include <spdlog/fmt/fmt.h>
 #include <stdexcept>
 
 namespace dmk {
@@ -39,24 +39,18 @@ inline int get_kernel_output_dim(int dim, dmk_ikernel kernel, dmk_eval_type flag
             return 1;
         if (flags == DMK_POTENTIAL_GRAD)
             return 1 + dim;
-        if (flags == DMK_POTENTIAL_GRAD_HESSIAN)
-            return 1 + dim + dim * dim;
         break;
     case DMK_LAPLACE:
         if (flags == DMK_POTENTIAL)
             return 1;
         if (flags == DMK_POTENTIAL_GRAD)
             return 1 + dim;
-        if (flags == DMK_POTENTIAL_GRAD_HESSIAN)
-            return 1 + dim + dim * dim;
         break;
     case DMK_SQRT_LAPLACE:
         if (flags == DMK_POTENTIAL)
             return 1;
         if (flags == DMK_POTENTIAL_GRAD)
             return 1 + dim;
-        if (flags == DMK_POTENTIAL_GRAD_HESSIAN)
-            return 1 + dim + dim * dim;
         break;
     case DMK_STOKESLET:
         if (flags == DMK_VELOCITY)
@@ -75,7 +69,7 @@ inline int get_kernel_output_dim(int dim, dmk_ikernel kernel, dmk_eval_type flag
     }
     using dmk::util::to_string;
     throw std::runtime_error(
-        std::format("Invalid kernel/output combination {} + {}\n", to_string(kernel), to_string(flags)));
+        fmt::format("Invalid kernel/output combination {} + {}\n", to_string(kernel), to_string(flags)));
 }
 
 template <typename Real>
@@ -116,7 +110,7 @@ std::vector<std::vector<Real>> get_esp_correction_coeffs(dmk_ikernel kernel, dou
                                                          int n_digits, double beta);
 template <typename Real>
 residual_evaluator_func<Real> make_evaluator_aot(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim, int n_digits,
-                                                 int unroll_factor);
+                                                 int unroll_factor, const std::vector<std::vector<Real>> &coeffs);
 template <typename Real>
 residual_evaluator_func<Real> make_evaluator_jit(dmk_ikernel kernel, dmk_eval_type eval_level, int n_dim, int n_digits,
                                                  double beta, int unroll_factor);
@@ -141,9 +135,6 @@ residual_evaluator_range_func<Real> make_esp_range_evaluator_aot(dmk_ikernel ker
 // (rather than the single scale-invariant set the other kernels use). In 3D
 // coeffs is a single monomial polynomial Q; in 2D it is the two concatenated
 // log-split polynomials [PA | PB] with n_coeffs_log = PA's length.
-template <typename Real>
-residual_evaluator_func<Real> make_evaluator_yukawa(dmk_eval_type eval_level, int n_dim, int n_digits,
-                                                    std::vector<Real> coeffs, int n_coeffs_log = 0);
 } // namespace dmk
 
 #endif

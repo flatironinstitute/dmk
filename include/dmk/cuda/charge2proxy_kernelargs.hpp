@@ -27,6 +27,5 @@ struct Charge2ProxyArgs {
     Real *proxy_flat = nullptr; // d_proxy_coeffs_upward (additive write)
     const long *proxy_offsets = nullptr;
     const int *group_perm = nullptr;
-    int n_active_groups = 0;
 };
 } // namespace dmk::cuda
